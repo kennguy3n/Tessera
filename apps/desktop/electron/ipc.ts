@@ -1,5 +1,4 @@
 import { ipcMain, BrowserWindow, app } from "electron";
-import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { loadConfig, updateConfig } from "./config";
@@ -640,12 +639,12 @@ export function registerIpcHandlers(): void {
         const bridge = getBridge();
         if (bridge && contentBytes.byteLength > 0) {
           const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
-          fs.mkdirSync(syncDir, { recursive: true });
+          await fsp.mkdir(syncDir, { recursive: true });
           const ext = exportMime
             ? (exportMime === "text/csv" ? ".csv" : ".txt")
             : (meta.name.includes(".") ? meta.name.substring(meta.name.lastIndexOf(".")) : "");
           const localPath = path.join(syncDir, `${fileId}${ext}`);
-          fs.writeFileSync(localPath, Buffer.from(contentBytes));
+          await fsp.writeFile(localPath, Buffer.from(contentBytes));
 
           try {
             // Upsert: reindex existing source instead of creating duplicate
@@ -669,16 +668,16 @@ export function registerIpcHandlers(): void {
     // Persist manifest of synced file paths for disconnect cleanup
     if (syncedPaths.length > 0) {
       const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
-      fs.mkdirSync(syncDir, { recursive: true });
+      await fsp.mkdir(syncDir, { recursive: true });
       const manifestPath = path.join(syncDir, "manifest.json");
       let existing: string[] = [];
       try {
-        existing = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as string[];
+        existing = JSON.parse(await fsp.readFile(manifestPath, "utf-8")) as string[];
       } catch {
         // No existing manifest
       }
       const merged = [...new Set([...existing, ...syncedPaths])];
-      fs.writeFileSync(manifestPath, JSON.stringify(merged));
+      await fsp.writeFile(manifestPath, JSON.stringify(merged));
     }
 
     return { added, modified, removed, status: "synced" };

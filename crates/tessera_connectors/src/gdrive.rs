@@ -261,7 +261,8 @@ impl GoogleDriveConnector {
     ) -> ConnectorResult<Vec<RemoteFile>> {
         let token = self.ensure_valid_token().await?;
         let parent = folder_id.unwrap_or("root");
-        let query = format!("'{parent}' in parents and trashed = false");
+        let escaped = parent.replace('\\', "\\\\").replace('\'', "\\'");
+        let query = format!("'{escaped}' in parents and trashed = false");
 
         let mut all_files = Vec::new();
         let mut page_token: Option<String> = None;
@@ -328,7 +329,11 @@ impl GoogleDriveConnector {
     pub async fn download_file(&mut self, file_id: &str) -> ConnectorResult<Vec<u8>> {
         let token = self.ensure_valid_token().await?;
 
-        let url = format!("{}/{file_id}?alt=media", self.files_url);
+        let url = format!(
+            "{}/{}?alt=media",
+            self.files_url,
+            urlencoding::encode(file_id)
+        );
         let resp = self.client.get(&url).bearer_auth(&token).send().await?;
 
         let status = resp.status();
