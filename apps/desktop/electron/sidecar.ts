@@ -30,6 +30,7 @@ export class ModelSidecar {
   private restartCount: number = 0;
   private startTime: number = 0;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
+  private _generationActive: boolean = false;
 
   constructor(options: Partial<SidecarOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -147,6 +148,16 @@ export class ModelSidecar {
     this.lastRequestTime = Date.now();
   }
 
+  markGenerationActive(): void {
+    this._generationActive = true;
+    this.lastRequestTime = Date.now();
+  }
+
+  markGenerationIdle(): void {
+    this._generationActive = false;
+    this.lastRequestTime = Date.now();
+  }
+
   private startHealthCheck(): void {
     this.healthCheckTimer = setInterval(async () => {
       if (this._isRunning) {
@@ -178,7 +189,7 @@ export class ModelSidecar {
   private startIdleMonitor(): void {
     this.idleTimer = setInterval(async () => {
       const idleTime = Date.now() - this.lastRequestTime;
-      if (idleTime > this.options.idleUnloadMs && this._isRunning) {
+      if (idleTime > this.options.idleUnloadMs && this._isRunning && !this._generationActive) {
         await this.stop();
       }
     }, 10_000);

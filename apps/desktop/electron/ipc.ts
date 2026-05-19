@@ -355,7 +355,7 @@ export function registerIpcHandlers(): void {
     if (!sidecar || !sidecar.isRunning) {
       throw new Error("Model runtime not running — start a model first");
     }
-    sidecar.recordActivity();
+    sidecar.markGenerationActive();
     const endpoint = sidecar.endpoint;
     const body = {
       prompt: request.prompt,
@@ -416,12 +416,18 @@ export function registerIpcHandlers(): void {
               token: parsed.content ?? "",
               done: parsed.stop ?? false,
             });
+            if (parsed.stop) {
+              sentDone = true;
+              streamDone = true;
+              break;
+            }
           } catch {
             // skip unparseable SSE lines
           }
         }
       }
     } finally {
+      sidecar.markGenerationIdle();
       if (activeGenerationController === controller) {
         activeGenerationController = null;
       }
