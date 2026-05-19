@@ -19,8 +19,9 @@ async function getValidAccessToken(provider: string): Promise<string> {
   }
 
   const config = loadConfig();
-  const clientId = (config as Record<string, unknown>).googleClientId as string | undefined;
-  const clientSecret = (config as Record<string, unknown>).googleClientSecret as string | undefined;
+  const configAny = config as unknown as Record<string, unknown>;
+  const clientId = configAny.googleClientId as string | undefined;
+  const clientSecret = configAny.googleClientSecret as string | undefined;
   if (!clientId || !clientSecret) {
     throw new Error("Google OAuth credentials not configured — cannot refresh token");
   }
@@ -329,7 +330,7 @@ export function registerIpcHandlers(): void {
     const sidecar = getModelSidecar();
     if (!sidecar) throw new Error("Model sidecar not initialized");
     if (sidecar.isRunning) return;
-    sidecar.options.modelPath = modelPath;
+    sidecar.setModelPath(modelPath);
     await sidecar.start();
   });
 
@@ -339,6 +340,8 @@ export function registerIpcHandlers(): void {
       await sidecar.stop();
     }
   });
+
+  let activeGenerationController: AbortController | null = null;
 
   ipcMain.handle("model:generate", async (event, request: {
     prompt: string;
@@ -359,8 +362,7 @@ export function registerIpcHandlers(): void {
     };
 
     const controller = new AbortController();
-    const abortHandler = () => controller.abort();
-    ipcMain.once("model:cancelJob", abortHandler);
+    activeGenerationController = controller;
 
     try {
       const resp = await fetch(`${endpoint}/completion`, {
@@ -380,12 +382,15 @@ export function registerIpcHandlers(): void {
 
       const decoder = new TextDecoder();
       const win = BrowserWindow.fromWebContents(event.sender);
+      let lineBuffer = "";
 
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        const text = decoder.decode(value, { stream: true });
-        for (const line of text.split("\n")) {
+        lineBuffer += decoder.decode(value, { stream: true });
+        const lines = lineBuffer.split("\n");
+        lineBuffer = lines.pop() ?? "";
+        for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const data = line.slice(6);
           if (data === "[DONE]") {
@@ -404,12 +409,14 @@ export function registerIpcHandlers(): void {
         }
       }
     } finally {
-      ipcMain.removeListener("model:cancelJob", abortHandler);
+      activeGenerationController = null;
     }
   });
 
   ipcMain.handle("model:cancelJob", async () => {
-    // The actual abort is handled by the once listener in model:generate
+    if (activeGenerationController) {
+      activeGenerationController.abort();
+    }
   });
 
   // --- Connectors ---
@@ -432,7 +439,7 @@ export function registerIpcHandlers(): void {
         expiresAt: Date.now() + tokens.expires_in * 1000,
         scopes: ["https://www.googleapis.com/auth/drive.readonly"],
       });
-      return { provider, status: "connected" };
+      return { provider, connected: true, status: "connected" };
     },
   );
 
@@ -442,7 +449,7 @@ export function registerIpcHandlers(): void {
       await revokeToken(stored.accessToken).catch(() => {});
       tokenVault.deleteTokens(provider);
     }
-    return { provider, status: "disconnected" };
+    return { provider, connected: false, status: "disconnected" };
   });
 
   ipcMain.handle("connectors:status", async (_event, provider: string) => {
@@ -459,7 +466,8 @@ export function registerIpcHandlers(): void {
     async (_event, folderId?: string, pageToken?: string) => {
       const accessToken = await getValidAccessToken("google_drive");
 
-      const query = `'${folderId ?? "root"}' in parents and trashed = false`;
+      const sanitizedFolderId = (folderId ?? "root").replace(/'/g, "\\'");
+      const query = `'${sanitizedFolderId}' in parents and trashed = false`;
       const params = new URLSearchParams({
         q: query,
         fields: "nextPageToken,files(id,name,mimeType,size,modifiedTime,parents)",
@@ -577,7 +585,9 @@ export function registerIpcHandlers(): void {
           const { app } = await import("electron");
           const syncDir = join(app.getPath("userData"), "gdrive-sync");
           mkdirSync(syncDir, { recursive: true });
-          const ext = exportMime ? (exportMime === "text/csv" ? ".csv" : ".txt") : "";
+          const ext = exportMime
+            ? (exportMime === "text/csv" ? ".csv" : ".txt")
+            : (meta.name.includes(".") ? meta.name.substring(meta.name.lastIndexOf(".")) : "");
           const localPath = join(syncDir, `${fileId}${ext}`);
           writeFileSync(localPath, Buffer.from(contentBytes));
 

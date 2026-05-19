@@ -3,7 +3,9 @@ use reqwest::Client;
 use serde::Deserialize;
 
 use crate::error::{ConnectorError, ConnectorResult};
-use crate::types::{AuthConfig, ConnectorStatus, FilePermission, RemoteFile, StoredTokens, SyncResult};
+use crate::types::{
+    AuthConfig, ConnectorStatus, FilePermission, RemoteFile, StoredTokens, SyncResult,
+};
 
 const DEFAULT_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const DEFAULT_REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
@@ -375,11 +377,9 @@ impl GoogleDriveConnector {
         body.get("startPageToken")
             .and_then(|v| v.as_str())
             .map(String::from)
-            .ok_or_else(|| {
-                ConnectorError::ProviderError {
-                    provider: "Google Drive".into(),
-                    message: "Missing startPageToken in response".into(),
-                }
+            .ok_or_else(|| ConnectorError::ProviderError {
+                provider: "Google Drive".into(),
+                message: "Missing startPageToken in response".into(),
             })
     }
 
@@ -446,12 +446,9 @@ impl GoogleDriveConnector {
         }
 
         self.last_sync = Some(Utc::now());
-        self.file_count = self.file_count.wrapping_add(
-            result
-                .added
-                .len()
-                .saturating_sub(result.removed.len()) as u64,
-        );
+        self.file_count = self
+            .file_count
+            .wrapping_add(result.added.len().saturating_sub(result.removed.len()) as u64);
         self.status = ConnectorStatus::Connected;
 
         Ok(result)
@@ -552,8 +549,7 @@ struct GooglePermission {
 }
 
 fn parse_rfc3339_or_now(s: &str) -> DateTime<Utc> {
-    chrono::DateTime::parse_from_rfc3339(s)
-        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc))
+    chrono::DateTime::parse_from_rfc3339(s).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc))
 }
 
 fn google_file_to_remote(gf: &GoogleDriveFile) -> RemoteFile {
@@ -644,9 +640,7 @@ mod tests {
             "secret".into(),
             "http://localhost:9876/callback".into(),
         )
-        .with_scopes(vec![
-            "https://www.googleapis.com/auth/drive.readonly".into(),
-        ]);
+        .with_scopes(vec!["https://www.googleapis.com/auth/drive.readonly".into()]);
 
         let url = GoogleDriveConnector::build_auth_url(&config);
         assert!(url.contains("client_id=my-client-id"));

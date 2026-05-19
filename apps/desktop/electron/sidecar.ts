@@ -20,7 +20,7 @@ const MAX_RESTART_RETRIES = 5;
 
 export class ModelSidecar {
   private process: ChildProcess | null = null;
-  public options: SidecarOptions;
+  private options: SidecarOptions;
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRequestTime: number = 0;
@@ -37,6 +37,13 @@ export class ModelSidecar {
 
   get endpoint(): string {
     return `http://127.0.0.1:${this.options.port}`;
+  }
+
+  setModelPath(modelPath: string): void {
+    if (this._isRunning) {
+      throw new Error("Cannot change model path while sidecar is running");
+    }
+    this.options.modelPath = modelPath;
   }
 
   async start(): Promise<void> {

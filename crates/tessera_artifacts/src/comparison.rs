@@ -18,10 +18,7 @@ pub struct Theme {
 }
 
 /// Compare two sets of text chunks and produce a structured comparison.
-pub fn compare_sources(
-    chunks_a: &[String],
-    chunks_b: &[String],
-) -> ComparisonResult {
+pub fn compare_sources(chunks_a: &[String], chunks_b: &[String]) -> ComparisonResult {
     let ngrams_a = extract_key_phrases(chunks_a);
     let ngrams_b = extract_key_phrases(chunks_b);
 
@@ -91,7 +88,11 @@ impl ComparisonResult {
             md.push_str("*No common themes found.*\n\n");
         } else {
             for theme in &self.common_themes {
-                let _ = writeln!(md, "- **{}** (mentioned {} times)", theme.label, theme.frequency);
+                let _ = writeln!(
+                    md,
+                    "- **{}** (mentioned {} times)",
+                    theme.label, theme.frequency
+                );
             }
             md.push('\n');
         }
@@ -123,18 +124,18 @@ impl ComparisonResult {
 /// Extract meaningful n-grams (bigrams/trigrams) from chunks, filtering stop words.
 fn extract_key_phrases(chunks: &[String]) -> HashMap<String, usize> {
     let stop_words: HashSet<&str> = [
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-        "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "shall", "can", "to", "of", "in", "for",
-        "on", "with", "at", "by", "from", "as", "into", "through", "during",
-        "before", "after", "above", "below", "between", "out", "off", "over",
-        "under", "again", "further", "then", "once", "and", "but", "or", "nor",
-        "not", "so", "very", "just", "about", "up", "it", "its", "this", "that",
-        "these", "those", "i", "we", "you", "he", "she", "they", "me", "him",
-        "her", "us", "them", "my", "our", "your", "his", "their", "all", "each",
-        "every", "both", "few", "more", "most", "other", "some", "such", "no",
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can",
+        "to", "of", "in", "for", "on", "with", "at", "by", "from", "as", "into", "through",
+        "during", "before", "after", "above", "below", "between", "out", "off", "over", "under",
+        "again", "further", "then", "once", "and", "but", "or", "nor", "not", "so", "very", "just",
+        "about", "up", "it", "its", "this", "that", "these", "those", "i", "we", "you", "he",
+        "she", "they", "me", "him", "her", "us", "them", "my", "our", "your", "his", "their",
+        "all", "each", "every", "both", "few", "more", "most", "other", "some", "such", "no",
         "only", "own", "same", "than", "too", "also",
-    ].into_iter().collect();
+    ]
+    .into_iter()
+    .collect();
 
     let mut phrases: HashMap<String, usize> = HashMap::new();
 
@@ -194,23 +195,39 @@ mod tests {
     #[test]
     fn compare_overlapping_sources() {
         let a = vec![
-            "The project requires database scaling. The team needs more servers for the database.".to_string(),
+            "The project requires database scaling. The team needs more servers for the database."
+                .to_string(),
         ];
         let b = vec![
-            "Database performance is critical. We need database optimization and more servers.".to_string(),
+            "Database performance is critical. We need database optimization and more servers."
+                .to_string(),
         ];
         let result = compare_sources(&a, &b);
         assert!(!result.common_themes.is_empty());
-        let common_labels: Vec<&str> = result.common_themes.iter().map(|t| t.label.as_str()).collect();
+        let common_labels: Vec<&str> = result
+            .common_themes
+            .iter()
+            .map(|t| t.label.as_str())
+            .collect();
         let has_database = common_labels.iter().any(|l| l.contains("database"));
-        assert!(has_database, "Expected 'database' in common themes: {:?}", common_labels);
+        assert!(
+            has_database,
+            "Expected 'database' in common themes: {:?}",
+            common_labels
+        );
     }
 
     #[test]
     fn markdown_output_has_sections() {
         let result = ComparisonResult {
-            common_themes: vec![Theme { label: "testing".to_string(), frequency: 5 }],
-            unique_to_a: vec![Theme { label: "rust".to_string(), frequency: 3 }],
+            common_themes: vec![Theme {
+                label: "testing".to_string(),
+                frequency: 5,
+            }],
+            unique_to_a: vec![Theme {
+                label: "rust".to_string(),
+                frequency: 3,
+            }],
             unique_to_b: vec![],
             similarity_score: 0.45,
         };
@@ -234,7 +251,8 @@ mod tests {
     #[test]
     fn similarity_score_within_valid_range() {
         let a = vec!["Some content about testing. More about testing tools.".to_string()];
-        let b = vec!["Different content about deployment. More about deployment tools.".to_string()];
+        let b =
+            vec!["Different content about deployment. More about deployment tools.".to_string()];
         let result = compare_sources(&a, &b);
         assert!(result.similarity_score >= 0.0);
         assert!(result.similarity_score <= 1.0);

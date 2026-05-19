@@ -55,11 +55,9 @@ impl ConnectorRegistry {
     }
 
     pub fn get_google_drive_mut(&mut self) -> Option<&mut GoogleDriveConnector> {
-        self.connectors
-            .get_mut("google_drive")
-            .map(|e| match e {
-                ConnectorEntry::GoogleDrive(c) => c,
-            })
+        self.connectors.get_mut("google_drive").map(|e| match e {
+            ConnectorEntry::GoogleDrive(c) => c,
+        })
     }
 
     pub fn remove(&mut self, provider: &str) -> bool {

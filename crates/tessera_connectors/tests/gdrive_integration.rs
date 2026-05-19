@@ -34,7 +34,10 @@ async fn authenticate_exchanges_code_for_tokens() {
 
     let tokens = connector.authenticate(&config).await.unwrap();
     assert_eq!(tokens.access_token, "ya29.mock-access-token");
-    assert_eq!(tokens.refresh_token.as_deref(), Some("1//mock-refresh-token"));
+    assert_eq!(
+        tokens.refresh_token.as_deref(),
+        Some("1//mock-refresh-token")
+    );
     assert_eq!(connector.status(), ConnectorStatus::Connected);
 }
 
@@ -88,7 +91,6 @@ async fn list_files_returns_files_and_folders() {
 
     let mut connector = GoogleDriveConnector::with_base_url(&server.uri());
     connector.set_access_token("test-token", 3600);
-    
 
     let files = connector.list_files(None).await.unwrap();
     assert_eq!(files.len(), 2);
@@ -142,7 +144,6 @@ async fn list_files_handles_pagination() {
 
     let mut connector = GoogleDriveConnector::with_base_url(&server.uri());
     connector.set_access_token("test-token", 3600);
-    
 
     let files = connector.list_files(None).await.unwrap();
     assert_eq!(files.len(), 2);
@@ -157,16 +158,13 @@ async fn download_file_returns_bytes() {
     Mock::given(method("GET"))
         .and(path("/drive/v3/files/file-123"))
         .and(query_param("alt", "media"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_bytes(b"PDF file content here".to_vec()),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"PDF file content here".to_vec()))
         .expect(1)
         .mount(&server)
         .await;
 
     let mut connector = GoogleDriveConnector::with_base_url(&server.uri());
     connector.set_access_token("test-token", 3600);
-    
 
     let bytes = connector.download_file("file-123").await.unwrap();
     assert_eq!(bytes, b"PDF file content here");
@@ -185,12 +183,14 @@ async fn download_file_not_found() {
 
     let mut connector = GoogleDriveConnector::with_base_url(&server.uri());
     connector.set_access_token("test-token", 3600);
-    
 
     let result = connector.download_file("missing-id").await;
     assert!(result.is_err());
     let err_str = format!("{:?}", result.unwrap_err());
-    assert!(err_str.contains("FileNotFound") || err_str.contains("not found"), "unexpected error: {err_str}");
+    assert!(
+        err_str.contains("FileNotFound") || err_str.contains("not found"),
+        "unexpected error: {err_str}"
+    );
 }
 
 #[tokio::test]
@@ -225,7 +225,6 @@ async fn sync_changes_processes_additions_and_removals() {
 
     let mut connector = GoogleDriveConnector::with_base_url(&server.uri());
     connector.set_access_token("test-token", 3600);
-    
 
     let result = connector.sync_changes(Some("old-token-123")).await.unwrap();
     assert_eq!(result.added.len(), 1);
@@ -249,12 +248,14 @@ async fn list_files_handles_rate_limit() {
 
     let mut connector = GoogleDriveConnector::with_base_url(&server.uri());
     connector.set_access_token("test-token", 3600);
-    
 
     let result = connector.list_files(None).await;
     assert!(result.is_err());
     let err_str = format!("{:?}", result.unwrap_err());
-    assert!(err_str.contains("RateLimited"), "unexpected error: {err_str}");
+    assert!(
+        err_str.contains("RateLimited"),
+        "unexpected error: {err_str}"
+    );
 }
 
 #[tokio::test]
@@ -294,5 +295,8 @@ async fn list_files_token_expired_returns_error() {
     let result = connector.list_files(None).await;
     assert!(result.is_err());
     let err_str = format!("{:?}", result.unwrap_err());
-    assert!(err_str.contains("TokenExpired"), "unexpected error: {err_str}");
+    assert!(
+        err_str.contains("TokenExpired"),
+        "unexpected error: {err_str}"
+    );
 }

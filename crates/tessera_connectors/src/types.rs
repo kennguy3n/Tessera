@@ -147,9 +147,7 @@ mod tests {
             "client-secret".into(),
             "http://localhost:9876/callback".into(),
         )
-        .with_scopes(vec![
-            "https://www.googleapis.com/auth/drive.readonly".into(),
-        ])
+        .with_scopes(vec!["https://www.googleapis.com/auth/drive.readonly".into()])
         .with_auth_code("code123".into());
 
         assert_eq!(config.client_id, "client-id");

@@ -19,7 +19,16 @@ function ensureVaultDir(): void {
   }
 }
 
+const VALID_PROVIDER_RE = /^[a-zA-Z0-9_-]+$/;
+
+function validateProvider(provider: string): void {
+  if (!VALID_PROVIDER_RE.test(provider)) {
+    throw new Error(`Invalid provider name: ${provider}`);
+  }
+}
+
 function vaultPath(provider: string): string {
+  validateProvider(provider);
   return path.join(VAULT_DIR(), `${provider}.enc`);
 }
 

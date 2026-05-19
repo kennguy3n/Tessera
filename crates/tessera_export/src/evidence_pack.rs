@@ -20,11 +20,9 @@ pub fn build_evidence_pack(
     citations: &[Citation],
     output_path: &str,
 ) -> Result<String> {
-    let file = std::fs::File::create(output_path)
-        .map_err(tessera_core::error::Error::Io)?;
+    let file = std::fs::File::create(output_path).map_err(tessera_core::error::Error::Io)?;
     let mut zip = ZipWriter::new(file);
-    let options = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     // artifact.md
     zip.start_file("artifact.md", options)
@@ -43,8 +41,8 @@ pub fn build_evidence_pack(
     // citations.json
     zip.start_file("citations.json", options)
         .map_err(|e| tessera_core::error::Error::Io(std::io::Error::other(e.to_string())))?;
-    let citations_json = serde_json::to_string_pretty(citations)
-        .unwrap_or_else(|_| "[]".to_string());
+    let citations_json =
+        serde_json::to_string_pretty(citations).unwrap_or_else(|_| "[]".to_string());
     zip.write_all(citations_json.as_bytes())
         .map_err(tessera_core::error::Error::Io)?;
 
@@ -54,8 +52,9 @@ pub fn build_evidence_pack(
         let sid = citation.source_id.to_string();
         if seen_sources.insert(sid.clone()) {
             let filename = format!("sources/{}.txt", sid);
-            zip.start_file(&filename, options)
-                .map_err(|e| tessera_core::error::Error::Io(std::io::Error::other(e.to_string())))?;
+            zip.start_file(&filename, options).map_err(|e| {
+                tessera_core::error::Error::Io(std::io::Error::other(e.to_string()))
+            })?;
             let excerpt = format!(
                 "Source: {}\nURI: {}\nType: {}\nUsed for: {}\nConfidence: {:.2}\n",
                 citation.source_title,
@@ -82,28 +81,22 @@ mod tests {
     use tessera_core::{ArtifactType, SourceId, SourceType};
 
     fn sample_artifact() -> Artifact {
-        let mut art = Artifact::new(
-            "Test Report".to_string(),
-            ArtifactType::Document,
-            None,
-        );
+        let mut art = Artifact::new("Test Report".to_string(), ArtifactType::Document, None);
         art.update_content("This is the report content.\n\nSection two.".to_string());
         art
     }
 
     fn sample_citations() -> Vec<Citation> {
-        vec![
-            Citation::new(
-                SourceId::new(),
-                SourceType::LocalFile,
-                "data-report.pdf".to_string(),
-                "file:///docs/data-report.pdf".to_string(),
-                blake3::hash(b"chunk1").to_hex().to_string(),
-                blake3::hash(b"file1").to_hex().to_string(),
-                "Problem Statement".to_string(),
-                0.92,
-            ),
-        ]
+        vec![Citation::new(
+            SourceId::new(),
+            SourceType::LocalFile,
+            "data-report.pdf".to_string(),
+            "file:///docs/data-report.pdf".to_string(),
+            blake3::hash(b"chunk1").to_hex().to_string(),
+            blake3::hash(b"file1").to_hex().to_string(),
+            "Problem Statement".to_string(),
+            0.92,
+        )]
     }
 
     #[test]

@@ -63,10 +63,7 @@ const DECISION_INDICATORS: &[&str] = &[
 
 /// Extract tasks and decisions from raw text chunks.
 /// Uses keyword-proximity heuristics to identify actionable sentences.
-pub fn extract_tasks_decisions(
-    chunks: &[String],
-    source_citation: &str,
-) -> Vec<ExtractedItem> {
+pub fn extract_tasks_decisions(chunks: &[String], source_citation: &str) -> Vec<ExtractedItem> {
     let mut items = Vec::new();
 
     for chunk in chunks {
@@ -99,7 +96,11 @@ pub fn extract_tasks_decisions(
         }
     }
 
-    items.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    items.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     items
 }
 
@@ -157,7 +158,10 @@ mod tests {
         ];
         let items = extract_tasks_decisions(&chunks, "meeting-notes.md");
         assert!(!items.is_empty());
-        let tasks: Vec<_> = items.iter().filter(|i| i.item_type == ItemType::Task).collect();
+        let tasks: Vec<_> = items
+            .iter()
+            .filter(|i| i.item_type == ItemType::Task)
+            .collect();
         assert!(!tasks.is_empty());
         assert!(tasks[0].text.to_lowercase().contains("must"));
         assert!(tasks[0].text.to_lowercase().contains("by end of"));
@@ -165,11 +169,13 @@ mod tests {
 
     #[test]
     fn extracts_decision() {
-        let chunks = vec![
-            "After discussion, we decided to use Postgres going forward.".to_string(),
-        ];
+        let chunks =
+            vec!["After discussion, we decided to use Postgres going forward.".to_string()];
         let items = extract_tasks_decisions(&chunks, "decision-log");
-        let decisions: Vec<_> = items.iter().filter(|i| i.item_type == ItemType::Decision).collect();
+        let decisions: Vec<_> = items
+            .iter()
+            .filter(|i| i.item_type == ItemType::Decision)
+            .collect();
         assert!(!decisions.is_empty());
         assert!(decisions[0].text.to_lowercase().contains("decided"));
     }

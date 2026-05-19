@@ -116,12 +116,14 @@ mod tests {
                 prompt: "Summarize the problem".to_string(),
                 chunks: vec![
                     SourceChunk {
-                        content: "The main challenge is scaling the database to handle 10x load.".to_string(),
+                        content: "The main challenge is scaling the database to handle 10x load."
+                            .to_string(),
                         source_path: "docs/scaling-report.pdf".to_string(),
                         relevance: 0.95,
                     },
                     SourceChunk {
-                        content: "Current latency exceeds SLA thresholds during peak hours.".to_string(),
+                        content: "Current latency exceeds SLA thresholds during peak hours."
+                            .to_string(),
                         source_path: "docs/monitoring.md".to_string(),
                         relevance: 0.88,
                     },
@@ -134,12 +136,8 @@ mod tests {
             },
         ];
 
-        let result = generate_draft_from_sources(
-            "Scale-Up PRD",
-            ArtifactType::Document,
-            &packs,
-        )
-        .unwrap();
+        let result =
+            generate_draft_from_sources("Scale-Up PRD", ArtifactType::Document, &packs).unwrap();
 
         assert_eq!(result.title, "Scale-Up PRD");
         assert_eq!(result.sections.len(), 2);
@@ -187,7 +185,8 @@ mod tests {
                 chunks: vec![],
             },
         ];
-        let result = generate_draft_from_sources("Empty PRD", ArtifactType::Document, &packs).unwrap();
+        let result =
+            generate_draft_from_sources("Empty PRD", ArtifactType::Document, &packs).unwrap();
         assert_eq!(result.sections.len(), 2);
         for section in &result.sections {
             assert!(section.body.contains("No source material"));

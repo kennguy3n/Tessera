@@ -143,11 +143,7 @@ mod tests {
             "gdrive-token"
         );
         assert_eq!(
-            store
-                .get_tokens("one_drive")
-                .unwrap()
-                .unwrap()
-                .access_token,
+            store.get_tokens("one_drive").unwrap().unwrap().access_token,
             "onedrive-token"
         );
 

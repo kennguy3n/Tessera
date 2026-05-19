@@ -394,10 +394,6 @@ pub fn bridge_generate_from_template(
     source_ids: Vec<String>,
 ) -> napi::Result<artifacts::ArtifactInfo> {
     let s = state()?;
-    let audit = s
-        .audit_logger
-        .lock()
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     let src_mgr = s
         .source_manager
         .lock()
@@ -410,14 +406,11 @@ pub fn bridge_generate_from_template(
     let template = tessera_templates::parser::load_template_by_id(&s.template_dir, &template_id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-    let selected_source_set: std::collections::HashSet<String> =
-        source_ids.into_iter().collect();
+    let selected_source_set: std::collections::HashSet<String> = source_ids.into_iter().collect();
 
     let mut section_contents = Vec::new();
     for section in &template.sections {
-        let hits = src_mgr
-            .search(&section.prompt, 20)
-            .unwrap_or_default();
+        let hits = src_mgr.search(&section.prompt, 20).unwrap_or_default();
         let filtered: Vec<_> = if selected_source_set.is_empty() {
             hits.into_iter().take(5).collect()
         } else {
@@ -432,18 +425,22 @@ pub fn bridge_generate_from_template(
             .collect::<Vec<_>>()
             .join("\n\n---\n\n");
         let content = if context.is_empty() {
-            format!("## {}\n\n*No source material found for this section.*\n", section.title)
+            format!(
+                "## {}\n\n*No source material found for this section.*\n",
+                section.title
+            )
         } else {
             format!("## {}\n\n{}\n", section.title, context)
         };
         section_contents.push(content);
     }
 
+    let template_name = template.name.clone();
     let full_content = section_contents.join("\n");
     let atype = template.artifact_type;
     let tid = tessera_core::TemplateId::from_string(&template_id);
     let art = art_mgr
-        .create(template.name.clone(), atype, Some(tid))
+        .create(template_name.clone(), atype, Some(tid))
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     art_mgr
         .update_content(&art.id, full_content)
@@ -452,7 +449,13 @@ pub fn bridge_generate_from_template(
         .get(&art.id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-    let _ = audit.log_artifact_created(&template.name);
+    drop(src_mgr);
+    drop(art_mgr);
+    let audit = s
+        .audit_logger
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let _ = audit.log_artifact_created(&template_name);
     drop(audit);
 
     Ok(artifacts::artifact_to_info(&updated))
@@ -470,44 +473,9 @@ pub fn bridge_extract_tasks_decisions(source_id: String) -> napi::Result<String>
         uuid::Uuid::parse_str(&source_id).map_err(|e| napi::Error::from_reason(e.to_string()))?;
     let sid = tessera_core::SourceId(source_uuid);
 
-    let chunks = src_mgr
-        .get_chunks_for_source(&sid)
-        .unwrap_or_default();
+    let chunks = src_mgr.get_chunks_for_source(&sid).unwrap_or_default();
 
-    let mut items: Vec<serde_json::Value> = Vec::new();
-    let task_patterns = [
-        "action item", "todo", "must", "should", "need to", "will",
-        "responsible for", "assigned to", "deadline", "by end of",
-    ];
-    let decision_patterns = [
-        "decided", "agreed", "approved", "resolved", "conclusion",
-        "recommendation", "determined", "we will", "going forward",
-    ];
-
-    for chunk in &chunks {
-        let lower = chunk.to_lowercase();
-        for sentence in lower.split('.') {
-            let trimmed = sentence.trim();
-            if trimmed.len() < 10 { continue; }
-            let is_task = task_patterns.iter().any(|p| trimmed.contains(p));
-            let is_decision = decision_patterns.iter().any(|p| trimmed.contains(p));
-            if is_task {
-                items.push(serde_json::json!({
-                    "itemType": "task",
-                    "text": trimmed,
-                    "sourceCitation": source_id,
-                    "confidence": 0.7
-                }));
-            } else if is_decision {
-                items.push(serde_json::json!({
-                    "itemType": "decision",
-                    "text": trimmed,
-                    "sourceCitation": source_id,
-                    "confidence": 0.7
-                }));
-            }
-        }
-    }
+    let items = tessera_artifacts::extraction::extract_tasks_decisions(&chunks, &source_id);
 
     serde_json::to_string(&items).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
@@ -554,7 +522,11 @@ pub fn bridge_compare_sources(
     );
 
     let art = art_mgr
-        .create("Source Comparison".to_string(), tessera_core::ArtifactType::Document, None)
+        .create(
+            "Source Comparison".to_string(),
+            tessera_core::ArtifactType::Document,
+            None,
+        )
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     art_mgr
         .update_content(&art.id, content)
@@ -587,12 +559,10 @@ pub fn bridge_export_evidence_pack(
         .get(&aid)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-    let citation_list = tracker
-        .list_for_artifact(&aid)
-        .unwrap_or_default();
+    let citation_list = tracker.list_for_artifact(&aid).unwrap_or_default();
 
-    let file = std::fs::File::create(&output_path)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let file =
+        std::fs::File::create(&output_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
