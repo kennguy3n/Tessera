@@ -89,17 +89,20 @@ impl PdfBuilder {
         let page_height = 792.0_f32;
         let margin = 72.0_f32;
 
-        // Build text stream
+        // Split lines into pages based on available vertical space
+        let mut pages: Vec<String> = Vec::new();
         let mut stream_content = String::new();
         stream_content.push_str("BT\n");
-
         let mut y = page_height - margin;
 
         for line in &self.lines {
             if line.text.is_empty() {
                 y -= line.font_size;
                 if y < margin {
-                    // Would need new page, but for simplicity wrap to top
+                    stream_content.push_str("ET\n");
+                    pages.push(stream_content);
+                    stream_content = String::new();
+                    stream_content.push_str("BT\n");
                     y = page_height - margin;
                 }
                 continue;
@@ -110,6 +113,10 @@ impl PdfBuilder {
             y -= line_height;
 
             if y < margin {
+                stream_content.push_str("ET\n");
+                pages.push(stream_content);
+                stream_content = String::new();
+                stream_content.push_str("BT\n");
                 y = page_height - margin - line_height;
             }
 
@@ -121,8 +128,21 @@ impl PdfBuilder {
         }
 
         stream_content.push_str("ET\n");
+        pages.push(stream_content);
 
-        // Build PDF structure
+        let page_count = pages.len();
+
+        // Build PDF structure with multiple pages.
+        // Object layout:
+        //   1: Catalog
+        //   2: Pages
+        //   3..3+N-1: Page objects (each referencing its content stream)
+        //   3+N..3+2N-1: Content stream objects
+        //   3+2N: Font (Helvetica)
+        //   3+2N+1: Font (Helvetica-Bold)
+        let font_obj_1 = 3 + 2 * page_count;
+        let font_obj_2 = font_obj_1 + 1;
+
         let mut pdf = Vec::new();
         let mut offsets: Vec<usize> = Vec::new();
 
@@ -135,36 +155,59 @@ impl PdfBuilder {
 
         // Object 2: Pages
         offsets.push(pdf.len());
-        pdf.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
-
-        // Object 3: Page
-        offsets.push(pdf.len());
-        let page_obj = format!(
-            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>\nendobj\n",
-            page_width as i32,
-            page_height as i32
+        let kids: Vec<String> = (0..page_count).map(|i| format!("{} 0 R", 3 + i)).collect();
+        let pages_obj = format!(
+            "2 0 obj\n<< /Type /Pages /Kids [{}] /Count {} >>\nendobj\n",
+            kids.join(" "),
+            page_count
         );
-        pdf.extend_from_slice(page_obj.as_bytes());
+        pdf.extend_from_slice(pages_obj.as_bytes());
 
-        // Object 4: Content stream
-        offsets.push(pdf.len());
-        let stream_bytes = stream_content.as_bytes();
-        let content_obj = format!("4 0 obj\n<< /Length {} >>\nstream\n", stream_bytes.len());
-        pdf.extend_from_slice(content_obj.as_bytes());
-        pdf.extend_from_slice(stream_bytes);
-        pdf.extend_from_slice(b"\nendstream\nendobj\n");
+        // Page objects (3..3+N-1)
+        for i in 0..page_count {
+            offsets.push(pdf.len());
+            let content_obj_num = 3 + page_count + i;
+            let page_obj = format!(
+                "{} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] /Contents {} 0 R /Resources << /Font << /F1 {} 0 R /F2 {} 0 R >> >> >>\nendobj\n",
+                3 + i,
+                page_width as i32,
+                page_height as i32,
+                content_obj_num,
+                font_obj_1,
+                font_obj_2
+            );
+            pdf.extend_from_slice(page_obj.as_bytes());
+        }
 
-        // Object 5: Font (Helvetica)
+        // Content stream objects (3+N..3+2N-1)
+        for (i, page_stream) in pages.iter().enumerate() {
+            offsets.push(pdf.len());
+            let obj_num = 3 + page_count + i;
+            let stream_bytes = page_stream.as_bytes();
+            let content_obj = format!(
+                "{} 0 obj\n<< /Length {} >>\nstream\n",
+                obj_num,
+                stream_bytes.len()
+            );
+            pdf.extend_from_slice(content_obj.as_bytes());
+            pdf.extend_from_slice(stream_bytes);
+            pdf.extend_from_slice(b"\nendstream\nendobj\n");
+        }
+
+        // Font objects
         offsets.push(pdf.len());
-        pdf.extend_from_slice(
-            b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        let font1 = format!(
+            "{} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+            font_obj_1
         );
+        pdf.extend_from_slice(font1.as_bytes());
 
-        // Object 6: Font (Helvetica-Bold)
         offsets.push(pdf.len());
-        pdf.extend_from_slice(
-            b"6 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n",
+        let font2 = format!(
+            "{} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n",
+            font_obj_2
         );
+        pdf.extend_from_slice(font2.as_bytes());
 
         // Cross-reference table
         let xref_offset = pdf.len();
@@ -261,5 +304,21 @@ mod tests {
         let pdf_str = String::from_utf8_lossy(&pdf);
         assert!(pdf_str.contains("Citations"));
         assert!(pdf_str.contains("reference.pdf"));
+    }
+
+    #[test]
+    fn pdf_multipage_long_content() {
+        let mut artifact = Artifact::new("Long Doc".to_string(), ArtifactType::Document, None);
+        // ~60 lines per page at 11pt * 1.4 line height on Letter (648pt usable)
+        // Generate enough lines to require at least 2 pages
+        let lines: Vec<String> = (0..80).map(|i| format!("Line number {i}")).collect();
+        artifact.update_content(lines.join("\n"));
+        let pdf = export_pdf(&artifact, &[]);
+        let pdf_str = String::from_utf8_lossy(&pdf);
+        // Multi-page: Pages object should list multiple kids
+        assert!(pdf_str.contains("/Count 2") || pdf_str.contains("/Count 3"));
+        // Content from both pages should be present
+        assert!(pdf_str.contains("Line number 0"));
+        assert!(pdf_str.contains("Line number 79"));
     }
 }

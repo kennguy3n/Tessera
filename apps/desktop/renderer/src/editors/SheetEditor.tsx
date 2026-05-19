@@ -166,12 +166,10 @@ export default function SheetEditor({
 
   const importCSV = useCallback(
     (csvText: string) => {
-      const lines = csvText.trim().split("\n");
+      const lines = parseCSVLines(csvText.trim());
       if (lines.length === 0) return;
-      const headers = lines[0].split(",").map((h) => h.trim());
-      const rows = lines.slice(1).map((line) =>
-        line.split(",").map((cell) => cell.trim()),
-      );
+      const headers = lines[0].map((h) => h.trim());
+      const rows = lines.slice(1).map((row) => row.map((cell) => cell.trim()));
       const updated: SheetContent = { columns: headers, rows };
       setSheet(updated);
       debouncedSave(updated);
@@ -278,6 +276,55 @@ function columnLabel(index: number): string {
     n = Math.floor(n / 26) - 1;
   }
   return label;
+}
+
+/** Parse CSV text respecting RFC 4180 quoted fields (handles commas inside quotes). */
+function parseCSVLines(text: string): string[][] {
+  const rows: string[][] = [];
+  let i = 0;
+  while (i < text.length) {
+    const row: string[] = [];
+    while (i < text.length) {
+      if (text[i] === '"') {
+        // Quoted field
+        i++;
+        let field = "";
+        while (i < text.length) {
+          if (text[i] === '"') {
+            if (i + 1 < text.length && text[i + 1] === '"') {
+              field += '"';
+              i += 2;
+            } else {
+              i++;
+              break;
+            }
+          } else {
+            field += text[i];
+            i++;
+          }
+        }
+        row.push(field);
+      } else {
+        // Unquoted field
+        let field = "";
+        while (i < text.length && text[i] !== ',' && text[i] !== '\n' && text[i] !== '\r') {
+          field += text[i];
+          i++;
+        }
+        row.push(field);
+      }
+      if (i < text.length && text[i] === ',') {
+        i++;
+      } else {
+        break;
+      }
+    }
+    // Skip line ending
+    if (i < text.length && text[i] === '\r') i++;
+    if (i < text.length && text[i] === '\n') i++;
+    rows.push(row);
+  }
+  return rows;
 }
 
 function parseSheetContent(content: string): SheetContent {

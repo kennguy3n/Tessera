@@ -217,6 +217,9 @@ pub fn bridge_export_artifact(
     format: String,
 ) -> napi::Result<exporter::ExportResult> {
     let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_exported(&artifact_id, &format);
+    }
     let art_mgr = s
         .artifact_manager
         .lock()
@@ -225,9 +228,6 @@ pub fn bridge_export_artifact(
         .citation_tracker
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_artifact_exported(&artifact_id, &format);
-    }
     exporter::export_artifact(&art_mgr, &tracker, &artifact_id, &format)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
