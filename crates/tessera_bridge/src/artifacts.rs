@@ -78,10 +78,7 @@ pub fn update_artifact_content(
     })
 }
 
-pub fn get_artifact(
-    manager: &ArtifactManager,
-    artifact_id: &str,
-) -> BridgeResult<ArtifactInfo> {
+pub fn get_artifact(manager: &ArtifactManager, artifact_id: &str) -> BridgeResult<ArtifactInfo> {
     let uuid =
         uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
     let artifact = manager.get(&ArtifactId(uuid)).map_err(BridgeError::Core)?;
@@ -117,10 +114,7 @@ pub fn list_artifacts(manager: &ArtifactManager) -> BridgeResult<Vec<ArtifactInf
         .collect())
 }
 
-pub fn delete_artifact(
-    manager: &ArtifactManager,
-    artifact_id: &str,
-) -> BridgeResult<()> {
+pub fn delete_artifact(manager: &ArtifactManager, artifact_id: &str) -> BridgeResult<()> {
     let uuid =
         uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
     manager.delete(&ArtifactId(uuid)).map_err(BridgeError::Core)

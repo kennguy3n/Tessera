@@ -147,10 +147,7 @@ impl PdfBuilder {
         // Object 4: Content stream
         offsets.push(pdf.len());
         let stream_bytes = stream_content.as_bytes();
-        let content_obj = format!(
-            "4 0 obj\n<< /Length {} >>\nstream\n",
-            stream_bytes.len()
-        );
+        let content_obj = format!("4 0 obj\n<< /Length {} >>\nstream\n", stream_bytes.len());
         pdf.extend_from_slice(content_obj.as_bytes());
         pdf.extend_from_slice(stream_bytes);
         pdf.extend_from_slice(b"\nendstream\nendobj\n");

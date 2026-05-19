@@ -103,11 +103,18 @@ pub fn search_sources(
     Ok(results.iter().map(SearchHitInfo::from).collect())
 }
 
-pub fn get_source_detail(manager: &SourceManager, source_id: &str) -> BridgeResult<SourceDetailInfo> {
+pub fn get_source_detail(
+    manager: &SourceManager,
+    source_id: &str,
+) -> BridgeResult<SourceDetailInfo> {
     let uuid =
         uuid::Uuid::parse_str(source_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
-    let source = manager.get_source(&SourceId(uuid)).map_err(BridgeError::Core)?;
-    let files = manager.list_indexed_files(&SourceId(uuid)).map_err(BridgeError::Core)?;
+    let source = manager
+        .get_source(&SourceId(uuid))
+        .map_err(BridgeError::Core)?;
+    let files = manager
+        .list_indexed_files(&SourceId(uuid))
+        .map_err(BridgeError::Core)?;
     let file_infos: Vec<IndexedFileInfo> = files
         .iter()
         .map(|f| IndexedFileInfo {
@@ -126,8 +133,12 @@ pub fn get_source_detail(manager: &SourceManager, source_id: &str) -> BridgeResu
 pub fn reindex_source(manager: &SourceManager, source_id: &str) -> BridgeResult<SourceInfo> {
     let uuid =
         uuid::Uuid::parse_str(source_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
-    manager.reindex_source(&SourceId(uuid)).map_err(BridgeError::Core)?;
-    let source = manager.get_source(&SourceId(uuid)).map_err(BridgeError::Core)?;
+    manager
+        .reindex_source(&SourceId(uuid))
+        .map_err(BridgeError::Core)?;
+    let source = manager
+        .get_source(&SourceId(uuid))
+        .map_err(BridgeError::Core)?;
     Ok(SourceInfo::from(&source))
 }
 

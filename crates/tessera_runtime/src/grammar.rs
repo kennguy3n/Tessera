@@ -94,9 +94,18 @@ mod tests {
             ArtifactType::Base,
         ] {
             let g = load_grammar(artifact_type);
-            assert!(g.contains("root ::="), "Grammar for {artifact_type:?} missing root rule");
-            assert!(g.contains("string ::="), "Grammar for {artifact_type:?} missing string rule");
-            assert!(g.contains("ws ::="), "Grammar for {artifact_type:?} missing ws rule");
+            assert!(
+                g.contains("root ::="),
+                "Grammar for {artifact_type:?} missing root rule"
+            );
+            assert!(
+                g.contains("string ::="),
+                "Grammar for {artifact_type:?} missing string rule"
+            );
+            assert!(
+                g.contains("ws ::="),
+                "Grammar for {artifact_type:?} missing ws rule"
+            );
         }
     }
 }

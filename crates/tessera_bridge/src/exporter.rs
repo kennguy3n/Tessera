@@ -21,8 +21,8 @@ pub fn export_artifact(
     artifact_id: &str,
     format: &str,
 ) -> BridgeResult<ExportResult> {
-    let uuid = uuid::Uuid::parse_str(artifact_id)
-        .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    let uuid =
+        uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
     let artifact = artifact_manager
         .get(&ArtifactId(uuid))
         .map_err(BridgeError::Core)?;
@@ -52,8 +52,8 @@ pub fn export_artifact_to_file(
     format: &str,
     path: &str,
 ) -> BridgeResult<()> {
-    let uuid = uuid::Uuid::parse_str(artifact_id)
-        .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    let uuid =
+        uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
     let artifact = artifact_manager
         .get(&ArtifactId(uuid))
         .map_err(BridgeError::Core)?;
@@ -103,8 +103,7 @@ mod tests {
             .create("Test".to_string(), ArtifactType::Document, None)
             .unwrap();
 
-        let result =
-            export_artifact(&manager, &tracker, &artifact.id.to_string(), "html").unwrap();
+        let result = export_artifact(&manager, &tracker, &artifact.id.to_string(), "html").unwrap();
         assert!(result.content.contains("<html"));
     }
 

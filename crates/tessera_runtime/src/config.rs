@@ -103,8 +103,6 @@ impl Default for RuntimeState {
     }
 }
 
-
-
 pub fn available_models() -> Vec<ModelInfo> {
     vec![
         ModelInfo {

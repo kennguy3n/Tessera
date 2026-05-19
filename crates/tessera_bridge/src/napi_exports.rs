@@ -25,8 +25,8 @@ struct AppState {
 
 #[napi]
 pub fn init_bridge(db_path: String, template_dir: String) -> napi::Result<()> {
-    let source_manager = SourceManager::new(&db_path, &[])
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let source_manager =
+        SourceManager::new(&db_path, &[]).map_err(|e| napi::Error::from_reason(e.to_string()))?;
     let artifact_manager =
         ArtifactManager::new(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
     let audit_logger =
@@ -60,9 +60,11 @@ pub fn bridge_add_local_folder(path: String) -> napi::Result<sources::SourceInfo
     if let Ok(logger) = s.audit_logger.lock() {
         let _ = logger.log_source_added(&path);
     }
-    let mgr = s.source_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::add_local_folder(&mgr, &path)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::add_local_folder(&mgr, &path).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi]
@@ -71,17 +73,21 @@ pub fn bridge_add_local_file(path: String) -> napi::Result<sources::SourceInfo> 
     if let Ok(logger) = s.audit_logger.lock() {
         let _ = logger.log_source_added(&path);
     }
-    let mgr = s.source_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::add_local_file(&mgr, &path)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::add_local_file(&mgr, &path).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi]
 pub fn bridge_list_sources() -> napi::Result<Vec<sources::SourceInfo>> {
     let s = state()?;
-    let mgr = s.source_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::list_sources(&mgr)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::list_sources(&mgr).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi]
@@ -90,9 +96,11 @@ pub fn bridge_remove_source(source_id: String) -> napi::Result<()> {
     if let Ok(logger) = s.audit_logger.lock() {
         let _ = logger.log_source_removed(&source_id);
     }
-    let mgr = s.source_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::remove_source(&mgr, &source_id)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::remove_source(&mgr, &source_id).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi]
@@ -101,7 +109,10 @@ pub fn bridge_search_sources(
     limit: u32,
 ) -> napi::Result<Vec<sources::SearchHitInfo>> {
     let s = state()?;
-    let mgr = s.source_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     sources::search_sources(&mgr, &query, limit as usize)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
@@ -109,7 +120,10 @@ pub fn bridge_search_sources(
 #[napi]
 pub fn bridge_get_source_detail(source_id: String) -> napi::Result<sources::SourceDetailInfo> {
     let s = state()?;
-    let mgr = s.source_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     sources::get_source_detail(&mgr, &source_id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
@@ -117,9 +131,11 @@ pub fn bridge_get_source_detail(source_id: String) -> napi::Result<sources::Sour
 #[napi]
 pub fn bridge_reindex_source(source_id: String) -> napi::Result<sources::SourceInfo> {
     let s = state()?;
-    let mgr = s.source_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::reindex_source(&mgr, &source_id)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::reindex_source(&mgr, &source_id).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 // --- Artifacts ---
@@ -134,14 +150,12 @@ pub fn bridge_create_artifact(
     if let Ok(logger) = s.audit_logger.lock() {
         let _ = logger.log_artifact_created(&title);
     }
-    let mgr = s.artifact_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    artifacts::create_artifact(
-        &mgr,
-        &title,
-        &artifact_type,
-        template_id.as_deref(),
-    )
-    .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let mgr = s
+        .artifact_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    artifacts::create_artifact(&mgr, &title, &artifact_type, template_id.as_deref())
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi]
@@ -150,7 +164,10 @@ pub fn bridge_update_artifact_content(
     content: String,
 ) -> napi::Result<artifacts::ArtifactInfo> {
     let s = state()?;
-    let mgr = s.artifact_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let mgr = s
+        .artifact_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     artifacts::update_artifact_content(&mgr, &artifact_id, &content)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
@@ -158,23 +175,30 @@ pub fn bridge_update_artifact_content(
 #[napi]
 pub fn bridge_get_artifact(artifact_id: String) -> napi::Result<artifacts::ArtifactInfo> {
     let s = state()?;
-    let mgr = s.artifact_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    artifacts::get_artifact(&mgr, &artifact_id)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let mgr = s
+        .artifact_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    artifacts::get_artifact(&mgr, &artifact_id).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi]
 pub fn bridge_list_artifacts() -> napi::Result<Vec<artifacts::ArtifactInfo>> {
     let s = state()?;
-    let mgr = s.artifact_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    artifacts::list_artifacts(&mgr)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let mgr = s
+        .artifact_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    artifacts::list_artifacts(&mgr).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi]
 pub fn bridge_delete_artifact(artifact_id: String) -> napi::Result<()> {
     let s = state()?;
-    let mgr = s.artifact_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let mgr = s
+        .artifact_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     artifacts::delete_artifact(&mgr, &artifact_id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
@@ -187,8 +211,14 @@ pub fn bridge_export_artifact(
     format: String,
 ) -> napi::Result<exporter::ExportResult> {
     let s = state()?;
-    let art_mgr = s.artifact_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let tracker = s.citation_tracker.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let art_mgr = s
+        .artifact_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let tracker = s
+        .citation_tracker
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     if let Ok(logger) = s.audit_logger.lock() {
         let _ = logger.log_artifact_exported(&artifact_id, &format);
     }
@@ -203,16 +233,16 @@ pub fn bridge_export_artifact_to_file(
     path: String,
 ) -> napi::Result<()> {
     let s = state()?;
-    let art_mgr = s.artifact_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let tracker = s.citation_tracker.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    exporter::export_artifact_to_file(
-        &art_mgr,
-        &tracker,
-        &artifact_id,
-        &format,
-        &path,
-    )
-    .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let art_mgr = s
+        .artifact_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let tracker = s
+        .citation_tracker
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    exporter::export_artifact_to_file(&art_mgr, &tracker, &artifact_id, &format, &path)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 // --- Templates ---
@@ -220,8 +250,7 @@ pub fn bridge_export_artifact_to_file(
 #[napi]
 pub fn bridge_list_templates() -> napi::Result<Vec<templates::TemplateInfo>> {
     let s = state()?;
-    templates::list_templates(&s.template_dir)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    templates::list_templates(&s.template_dir).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi]
@@ -236,7 +265,10 @@ pub fn bridge_get_template(template_id: String) -> napi::Result<Option<templates
 #[napi]
 pub fn bridge_list_citations(artifact_id: String) -> napi::Result<Vec<citations::CitationInfo>> {
     let s = state()?;
-    let tracker = s.citation_tracker.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let tracker = s
+        .citation_tracker
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     citations::list_citations(&tracker, &artifact_id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
@@ -246,15 +278,20 @@ pub fn bridge_add_citation(
     req: citations::AddCitationRequest,
 ) -> napi::Result<citations::CitationInfo> {
     let s = state()?;
-    let mut tracker = s.citation_tracker.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    citations::add_citation(&mut tracker, req)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let mut tracker = s
+        .citation_tracker
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    citations::add_citation(&mut tracker, req).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi]
 pub fn bridge_remove_citation(artifact_id: String, citation_id: String) -> napi::Result<()> {
     let s = state()?;
-    let mut tracker = s.citation_tracker.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let mut tracker = s
+        .citation_tracker
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     citations::remove_citation(&mut tracker, &artifact_id, &citation_id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
@@ -265,7 +302,10 @@ pub fn bridge_check_source_changed(
     current_hash: String,
 ) -> napi::Result<bool> {
     let s = state()?;
-    let tracker = s.citation_tracker.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let tracker = s
+        .citation_tracker
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     citations::check_source_changed(&tracker, &citation_id, &current_hash)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
@@ -273,11 +313,16 @@ pub fn bridge_check_source_changed(
 // --- Version History ---
 
 #[napi]
-pub fn bridge_list_versions(artifact_id: String) -> napi::Result<Vec<artifacts::ArtifactVersionInfo>> {
+pub fn bridge_list_versions(
+    artifact_id: String,
+) -> napi::Result<Vec<artifacts::ArtifactVersionInfo>> {
     let s = state()?;
-    let mgr = s.artifact_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let uuid = uuid::Uuid::parse_str(&artifact_id)
+    let mgr = s
+        .artifact_manager
+        .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let uuid =
+        uuid::Uuid::parse_str(&artifact_id).map_err(|e| napi::Error::from_reason(e.to_string()))?;
     let aid = tessera_core::ArtifactId(uuid);
     let versions = mgr
         .list_versions(&aid)
@@ -298,9 +343,12 @@ pub fn bridge_restore_version(
     version_number: u32,
 ) -> napi::Result<artifacts::ArtifactInfo> {
     let s = state()?;
-    let mgr = s.artifact_manager.lock().map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let uuid = uuid::Uuid::parse_str(&artifact_id)
+    let mgr = s
+        .artifact_manager
+        .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let uuid =
+        uuid::Uuid::parse_str(&artifact_id).map_err(|e| napi::Error::from_reason(e.to_string()))?;
     let aid = tessera_core::ArtifactId(uuid);
     let restored = mgr
         .restore_version(&aid, version_number)

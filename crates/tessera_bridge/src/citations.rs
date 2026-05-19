@@ -56,8 +56,8 @@ pub fn list_citations(
     tracker: &CitationTracker,
     artifact_id: &str,
 ) -> BridgeResult<Vec<CitationInfo>> {
-    let uuid = uuid::Uuid::parse_str(artifact_id)
-        .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    let uuid =
+        uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
     let citations = tracker.list_for_artifact(&ArtifactId(uuid));
     Ok(citations.iter().map(|c| CitationInfo::from(*c)).collect())
 }
@@ -96,10 +96,10 @@ pub fn remove_citation(
     artifact_id: &str,
     citation_id: &str,
 ) -> BridgeResult<()> {
-    let artifact_uuid = uuid::Uuid::parse_str(artifact_id)
-        .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
-    let citation_uuid = uuid::Uuid::parse_str(citation_id)
-        .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    let artifact_uuid =
+        uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    let citation_uuid =
+        uuid::Uuid::parse_str(citation_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
     tracker.remove(&ArtifactId(artifact_uuid), &CitationId(citation_uuid));
     Ok(())
 }
@@ -109,8 +109,8 @@ pub fn check_source_changed(
     citation_id: &str,
     current_hash: &str,
 ) -> BridgeResult<bool> {
-    let citation_uuid = uuid::Uuid::parse_str(citation_id)
-        .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    let citation_uuid =
+        uuid::Uuid::parse_str(citation_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
     tracker
         .check_source_changed(&CitationId(citation_uuid), current_hash)
         .ok_or_else(|| BridgeError::InvalidArgs("Citation not found".to_string()))

@@ -166,14 +166,28 @@ impl SourceStore {
                 let last_indexed_str: Option<String> = row.get(5)?;
 
                 let parsed_id = uuid::Uuid::parse_str(&id_str).map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
                 })?;
-                let parsed_type: SourceType = serde_json::from_str(&source_type_str).map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
-                })?;
-                let parsed_status: SourceStatus = serde_json::from_str(&status_str).map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
-                })?;
+                let parsed_type: SourceType =
+                    serde_json::from_str(&source_type_str).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                let parsed_status: SourceStatus =
+                    serde_json::from_str(&status_str).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            3,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
 
                 Ok(Source {
                     id: SourceId(parsed_id),

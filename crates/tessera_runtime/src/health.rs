@@ -34,10 +34,7 @@ pub async fn check_health(endpoint: &str) -> Result<HealthResponse> {
         .map_err(|e| HealthError::RequestFailed(e.to_string()))?;
 
     if !resp.status().is_success() {
-        return Err(HealthError::Unhealthy(format!(
-            "HTTP {}",
-            resp.status()
-        )));
+        return Err(HealthError::Unhealthy(format!("HTTP {}", resp.status())));
     }
 
     let body = resp
@@ -88,9 +85,10 @@ mod tests {
 
     #[test]
     fn parse_loading_response() {
-        let resp =
-            parse_health_response(r#"{"status":"loading model","slots_idle":0,"slots_processing":0}"#)
-                .unwrap();
+        let resp = parse_health_response(
+            r#"{"status":"loading model","slots_idle":0,"slots_processing":0}"#,
+        )
+        .unwrap();
         assert_eq!(resp.status, "loading model");
         assert!(!is_healthy(&resp));
     }

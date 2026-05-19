@@ -129,6 +129,7 @@ function resolveNativeAddon(): NativeBridge | null {
   for (const addonPath of possiblePaths) {
     if (fs.existsSync(addonPath)) {
       try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
         return require(addonPath) as NativeBridge;
       } catch {
         continue;

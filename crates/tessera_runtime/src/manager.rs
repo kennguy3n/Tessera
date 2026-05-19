@@ -238,7 +238,10 @@ mod tests {
     fn detect_tier() {
         let tier = RuntimeManager::detect_device_tier();
         // On CI machines with decent RAM this should be Medium or High
-        assert!(matches!(tier, DeviceTier::Low | DeviceTier::Medium | DeviceTier::High));
+        assert!(matches!(
+            tier,
+            DeviceTier::Low | DeviceTier::Medium | DeviceTier::High
+        ));
     }
 
     #[test]

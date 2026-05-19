@@ -185,8 +185,8 @@ impl ArtifactStore {
                         Box::new(e),
                     )
                 })?;
-                let parsed_type: tessera_core::ArtifactType =
-                    serde_json::from_str(&type_str).map_err(|e| {
+                let parsed_type: tessera_core::ArtifactType = serde_json::from_str(&type_str)
+                    .map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
                             2,
                             rusqlite::types::Type::Text,
@@ -202,13 +202,17 @@ impl ArtifactStore {
                         )
                     })?;
                 let parsed_template = match template_str {
-                    Some(s) => Some(uuid::Uuid::parse_str(&s).map(tessera_core::TemplateId).map_err(|e| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            3,
-                            rusqlite::types::Type::Text,
-                            Box::new(e),
-                        )
-                    })?),
+                    Some(s) => Some(
+                        uuid::Uuid::parse_str(&s)
+                            .map(tessera_core::TemplateId)
+                            .map_err(|e| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    3,
+                                    rusqlite::types::Type::Text,
+                                    Box::new(e),
+                                )
+                            })?,
+                    ),
                     None => None,
                 };
 
@@ -241,7 +245,12 @@ impl ArtifactStore {
         Ok(())
     }
 
-    pub fn save_version(&self, artifact_id: &ArtifactId, version_number: u32, content: &str) -> Result<()> {
+    pub fn save_version(
+        &self,
+        artifact_id: &ArtifactId,
+        version_number: u32,
+        content: &str,
+    ) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn
             .execute(
@@ -276,7 +285,11 @@ impl ArtifactStore {
         Ok(versions)
     }
 
-    pub fn get_version(&self, artifact_id: &ArtifactId, version_number: u32) -> Result<ArtifactVersion> {
+    pub fn get_version(
+        &self,
+        artifact_id: &ArtifactId,
+        version_number: u32,
+    ) -> Result<ArtifactVersion> {
         self.conn
             .query_row(
                 "SELECT version_number, content_snapshot, created_at FROM artifact_versions WHERE artifact_id = ?1 AND version_number = ?2",

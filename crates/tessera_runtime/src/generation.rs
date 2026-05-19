@@ -118,7 +118,10 @@ pub fn parse_sse_chunk(line: &str) -> Option<GenerateChunk> {
     }
     let parsed: serde_json::Value = serde_json::from_str(data).ok()?;
     let content = parsed.get("content")?.as_str()?.to_string();
-    let stop = parsed.get("stop").and_then(|v| v.as_bool()).unwrap_or(false);
+    let stop = parsed
+        .get("stop")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     Some(GenerateChunk { content, stop })
 }
 
@@ -128,16 +131,14 @@ mod tests {
 
     #[test]
     fn parse_sse_token() {
-        let chunk =
-            parse_sse_chunk(r#"data: {"content":"Hello","stop":false}"#).unwrap();
+        let chunk = parse_sse_chunk(r#"data: {"content":"Hello","stop":false}"#).unwrap();
         assert_eq!(chunk.content, "Hello");
         assert!(!chunk.stop);
     }
 
     #[test]
     fn parse_sse_stop() {
-        let chunk =
-            parse_sse_chunk(r#"data: {"content":"","stop":true}"#).unwrap();
+        let chunk = parse_sse_chunk(r#"data: {"content":"","stop":true}"#).unwrap();
         assert_eq!(chunk.content, "");
         assert!(chunk.stop);
     }

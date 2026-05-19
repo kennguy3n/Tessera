@@ -33,7 +33,8 @@ impl ArtifactManager {
     pub fn update_content(&self, id: &ArtifactId, content: String) -> Result<Artifact> {
         let mut artifact = self.store.get(id)?;
         // Auto-save a version snapshot of the current content before updating
-        self.store.save_version(id, artifact.version, &artifact.content)?;
+        self.store
+            .save_version(id, artifact.version, &artifact.content)?;
         artifact.update_content(content);
         self.store.update(&artifact)?;
         Ok(artifact)
