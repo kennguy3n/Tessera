@@ -426,6 +426,27 @@ impl SourceStore {
         Ok(count as u64)
     }
 
+    pub fn get_chunk_contents_for_source(&self, source_id: &SourceId) -> Result<Vec<String>> {
+        let id_str = source_id.to_string();
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT c.content FROM chunks c
+                 INNER JOIN indexed_files f ON c.indexed_file_id = f.id
+                 WHERE f.source_id = ?1
+                 ORDER BY c.chunk_index",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![id_str], |row| row.get::<_, String>(0))
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let mut contents = Vec::new();
+        for row in rows {
+            contents.push(row.map_err(|e| Error::Database(e.to_string()))?);
+        }
+        Ok(contents)
+    }
+
     pub fn get_current_file_hash(&self, file_path: &str) -> Result<Option<String>> {
         let result = self.conn.query_row(
             "SELECT hash FROM indexed_files WHERE path = ?1 ORDER BY rowid DESC LIMIT 1",

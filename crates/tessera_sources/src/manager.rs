@@ -85,6 +85,16 @@ impl SourceManager {
         self.store.get_current_file_hash(file_path)
     }
 
+    pub fn get_detail(&self, source_id: &SourceId) -> Result<(Source, Vec<IndexedFile>)> {
+        let source = self.store.get_source(source_id)?;
+        let files = self.store.list_indexed_files(source_id)?;
+        Ok((source, files))
+    }
+
+    pub fn get_chunks_for_source(&self, source_id: &SourceId) -> Result<Vec<String>> {
+        self.store.get_chunk_contents_for_source(source_id)
+    }
+
     pub fn reindex_source(&self, source_id: &SourceId) -> Result<()> {
         let source = self.store.get_source(source_id)?;
         let path = Path::new(&source.path);

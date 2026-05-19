@@ -88,6 +88,10 @@
           "type": "string",
           "description": "Hash of the cited content chunk for change detection"
         },
+        "sourceFileHash": {
+          "type": "string",
+          "description": "File-level hash at citation creation time, used for staleness detection"
+        },
         "page": {
           "type": ["integer", "null"],
           "minimum": 1,

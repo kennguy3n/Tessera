@@ -20,7 +20,7 @@ const MAX_RESTART_RETRIES = 5;
 
 export class ModelSidecar {
   private process: ChildProcess | null = null;
-  private options: SidecarOptions;
+  public options: SidecarOptions;
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRequestTime: number = 0;

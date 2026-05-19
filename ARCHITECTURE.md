@@ -339,6 +339,7 @@ tessera/
 │   ├── tessera_artifacts/       # Artifact creation, version history, storage
 │   ├── tessera_export/          # Export engine (MD, HTML, CSV, JSON, PDF)
 │   ├── tessera_citations/       # Citation tracking and provenance
+│   ├── tessera_connectors/      # Remote connectors (Google Drive, etc.)
 │   ├── tessera_runtime/         # Local model runtime management
 │   └── tessera_audit/           # Audit trail logging
 ├── sidecars/                    # Model runtime binaries

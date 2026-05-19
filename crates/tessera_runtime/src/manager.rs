@@ -268,4 +268,63 @@ mod tests {
         let mgr = RuntimeManager::new(config);
         assert!(!mgr.check_idle_timeout().await);
     }
+
+    #[tokio::test]
+    async fn start_missing_binary_returns_error() {
+        let config = RuntimeConfig {
+            binary_path: "/nonexistent/llama-server".to_string(),
+            ..RuntimeConfig::default()
+        };
+        let mgr = RuntimeManager::new(config);
+        let result = mgr.start("/also/nonexistent/model.gguf").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RuntimeError::BinaryNotFound(path) => assert!(path.contains("nonexistent")),
+            other => panic!("Expected BinaryNotFound, got: {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_when_already_stopped_is_ok() {
+        let config = RuntimeConfig::default();
+        let mgr = RuntimeManager::new(config);
+        let result = mgr.stop().await;
+        assert!(result.is_ok());
+        let state = mgr.get_status().await;
+        assert_eq!(state.status, RuntimeStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn mark_running_then_error_transitions() {
+        let config = RuntimeConfig::default();
+        let mgr = RuntimeManager::new(config);
+        mgr.mark_running().await;
+        let state = mgr.get_status().await;
+        assert_eq!(state.status, RuntimeStatus::Running);
+
+        mgr.mark_error().await;
+        let state = mgr.get_status().await;
+        assert_eq!(state.status, RuntimeStatus::Error);
+    }
+
+    #[tokio::test]
+    async fn endpoint_matches_config() {
+        let config = RuntimeConfig {
+            host: "127.0.0.1".to_string(),
+            port: 9999,
+            ..RuntimeConfig::default()
+        };
+        let mgr = RuntimeManager::new(config);
+        assert_eq!(mgr.endpoint(), "http://127.0.0.1:9999");
+    }
+
+    #[test]
+    fn list_available_models_not_empty() {
+        let models = RuntimeManager::list_available_models();
+        assert!(!models.is_empty());
+        for model in &models {
+            assert!(!model.name.is_empty());
+            assert!(model.required_ram_gb > 0.0);
+        }
+    }
 }

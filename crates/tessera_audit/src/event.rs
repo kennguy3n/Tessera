@@ -24,6 +24,9 @@ pub enum AuditEventType {
     ModelStarted,
     ModelStopped,
     SearchPerformed,
+    ConnectorConnected,
+    ConnectorSynced,
+    ConnectorDisconnected,
 }
 
 impl AuditEvent {

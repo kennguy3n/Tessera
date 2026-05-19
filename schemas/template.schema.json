@@ -77,15 +77,14 @@
         "prompt": {
           "type": "string",
           "minLength": 1,
-          "description": "Generation prompt for this section — sent to the LLM to produce content"
+          "description": "Generation prompt for this section"
         },
         "required_sources": {
           "type": "array",
           "items": {
-            "type": "string",
-            "enum": ["local_folder", "local_file", "google_drive", "one_drive", "notion", "jira", "confluence", "figma"]
+            "$ref": "#/definitions/RequiredSource"
           },
-          "description": "Source types that must be attached for this section to generate"
+          "description": "Source constraints for this section"
         },
         "max_tokens": {
           "type": "integer",
@@ -97,6 +96,22 @@
           "type": "string",
           "enum": ["prose", "bullets", "numbered_list", "table", "json"],
           "description": "Expected output structure for this section"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RequiredSource": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Source type requirement"
+        },
+        "min": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum number of sources of this type required"
         }
       },
       "additionalProperties": false

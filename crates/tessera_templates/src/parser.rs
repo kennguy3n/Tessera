@@ -14,6 +14,33 @@ pub fn parse_template_file(path: &Path) -> Result<Template> {
     parse_template(&content)
 }
 
+pub fn load_template_by_id(template_dir: &str, template_id: &str) -> Result<Template> {
+    let base = Path::new(template_dir);
+    let subdirs = ["documents", "slides", "sheets", "bases"];
+    for subdir in &subdirs {
+        let dir = base.join(subdir);
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(&dir).map_err(Error::Io)? {
+            let entry = entry.map_err(Error::Io)?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("yaml")
+                || path.extension().and_then(|e| e.to_str()) == Some("yml")
+            {
+                if let Ok(tmpl) = parse_template_file(&path) {
+                    if tmpl.id == template_id {
+                        return Ok(tmpl);
+                    }
+                }
+            }
+        }
+    }
+    Err(Error::TemplateValidation(format!(
+        "Template not found: {template_id}"
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

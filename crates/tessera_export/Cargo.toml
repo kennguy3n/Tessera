@@ -14,6 +14,7 @@ tessera_citations = { path = "../tessera_citations" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+zip = { workspace = true }
 
 [features]
 default = ["pdf"]
@@ -21,6 +22,7 @@ pdf = []
 
 [dev-dependencies]
 tempfile = { workspace = true }
+blake3 = { workspace = true }
 
 [lints]
 workspace = true

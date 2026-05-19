@@ -1,0 +1,28 @@
+[package]
+name = "tessera_connectors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Remote connector framework for Tessera — Google Drive, OneDrive, Notion, Jira, Confluence, Figma."
+
+[dependencies]
+tessera_core = { path = "../tessera_core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

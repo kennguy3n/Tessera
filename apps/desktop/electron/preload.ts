@@ -101,6 +101,22 @@ export interface ArtifactVersionInfo {
   createdAt: string;
 }
 
+export interface ConnectorFileInfo {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  modifiedTime: string | null;
+  isFolder: boolean;
+  parentId: string | null;
+}
+
+export interface ConnectorStatusInfo {
+  provider: string;
+  connected: boolean;
+  status: string;
+}
+
 export interface TesseraApi {
   sources: {
     addLocalFolder: (path: string) => Promise<SourceInfo>;
@@ -129,6 +145,10 @@ export interface TesseraApi {
     ) => Promise<void>;
     listVersions: (id: string) => Promise<ArtifactVersionInfo[]>;
     restoreVersion: (id: string, versionNumber: number) => Promise<ArtifactInfo>;
+    generateFromTemplate: (templateId: string, sourceIds: string[]) => Promise<ArtifactInfo>;
+    extractTasksDecisions: (sourceId: string) => Promise<unknown>;
+    compareSources: (sourceIdA: string, sourceIdB: string) => Promise<ArtifactInfo>;
+    exportEvidencePack: (artifactId: string, outputPath: string) => Promise<string>;
   };
   templates: {
     list: () => Promise<TemplateInfo[]>;
@@ -151,6 +171,14 @@ export interface TesseraApi {
     generate: (request: unknown) => Promise<void>;
     cancelJob: () => Promise<void>;
     onToken: (callback: (chunk: unknown) => void) => () => void;
+  };
+  connectors: {
+    authenticate: (provider: string, clientId: string, clientSecret: string) => Promise<ConnectorStatusInfo>;
+    disconnect: (provider: string) => Promise<ConnectorStatusInfo>;
+    status: (provider: string) => Promise<ConnectorStatusInfo>;
+    listDriveFiles: (folderId?: string, pageToken?: string) => Promise<{ nextPageToken: string | null; files: ConnectorFileInfo[] }>;
+    selectItems: (items: Array<{ id: string; name: string; mimeType: string }>) => Promise<Array<{ id: string; name: string; mimeType: string; selected: boolean }>>;
+    syncDrive: (selectedFileIds?: string[]) => Promise<{ added: number; modified: number; removed: number; status: string }>;
   };
 }
 
@@ -183,6 +211,14 @@ const api: TesseraApi = {
       ipcRenderer.invoke("artifacts:listVersions", id),
     restoreVersion: (id: string, versionNumber: number) =>
       ipcRenderer.invoke("artifacts:restoreVersion", id, versionNumber),
+    generateFromTemplate: (templateId: string, sourceIds: string[]) =>
+      ipcRenderer.invoke("artifacts:generateFromTemplate", templateId, sourceIds),
+    extractTasksDecisions: (sourceId: string) =>
+      ipcRenderer.invoke("artifacts:extractTasksDecisions", sourceId),
+    compareSources: (sourceIdA: string, sourceIdB: string) =>
+      ipcRenderer.invoke("artifacts:compareSources", sourceIdA, sourceIdB),
+    exportEvidencePack: (artifactId: string, outputPath: string) =>
+      ipcRenderer.invoke("artifacts:exportEvidencePack", artifactId, outputPath),
   },
   templates: {
     list: () => ipcRenderer.invoke("templates:list"),
@@ -213,6 +249,20 @@ const api: TesseraApi = {
       ipcRenderer.on("model:token", listener as never);
       return () => { ipcRenderer.removeListener("model:token", listener as never); };
     },
+  },
+  connectors: {
+    authenticate: (provider: string, clientId: string, clientSecret: string) =>
+      ipcRenderer.invoke("connectors:authenticate", provider, clientId, clientSecret),
+    disconnect: (provider: string) =>
+      ipcRenderer.invoke("connectors:disconnect", provider),
+    status: (provider: string) =>
+      ipcRenderer.invoke("connectors:status", provider),
+    listDriveFiles: (folderId?: string, pageToken?: string) =>
+      ipcRenderer.invoke("connectors:gdrive:listFiles", folderId, pageToken),
+    selectItems: (items: Array<{ id: string; name: string; mimeType: string }>) =>
+      ipcRenderer.invoke("connectors:gdrive:selectItems", items),
+    syncDrive: (selectedFileIds?: string[]) =>
+      ipcRenderer.invoke("connectors:gdrive:sync", selectedFileIds),
   },
 };
 
