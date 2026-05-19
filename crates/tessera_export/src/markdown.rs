@@ -68,6 +68,7 @@ mod tests {
             "Brief.pdf".to_string(),
             "file:///brief.pdf".to_string(),
             "hash1".to_string(),
+            "file_hash1".to_string(),
             "Problem Statement".to_string(),
             0.92,
         )

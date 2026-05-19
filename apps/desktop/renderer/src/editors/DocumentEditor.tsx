@@ -16,7 +16,8 @@ export default function DocumentEditor({
   autoSaveMs = 2000,
 }: DocumentEditorProps) {
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSavedRef = useRef(content);
+  // Initialize to empty string; updated to editor's parsed HTML in onCreate
+  const lastSavedRef = useRef("");
 
   const editor = useEditor({
     extensions: [
@@ -32,6 +33,11 @@ export default function DocumentEditor({
       }),
     ],
     content: parseContent(content),
+    onCreate: ({ editor }) => {
+      // Sync lastSavedRef to the editor's parsed HTML so the first real
+      // user edit doesn't trigger a spurious save.
+      lastSavedRef.current = editor.getHTML();
+    },
     onUpdate: ({ editor }) => {
       const html = editor.getHTML();
       if (html === lastSavedRef.current) return;
@@ -55,9 +61,13 @@ export default function DocumentEditor({
   }, []);
 
   useEffect(() => {
-    if (editor && content !== lastSavedRef.current) {
-      editor.commands.setContent(parseContent(content));
-      lastSavedRef.current = content;
+    if (editor) {
+      const currentHtml = editor.getHTML();
+      const parsed = parseContent(content);
+      if (currentHtml !== parsed) {
+        editor.commands.setContent(parsed);
+        lastSavedRef.current = editor.getHTML();
+      }
     }
   }, [content, editor]);
 

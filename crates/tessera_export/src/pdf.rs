@@ -251,6 +251,7 @@ mod tests {
             source_title: "reference.pdf".to_string(),
             source_uri: "/path/to/reference.pdf".to_string(),
             chunk_hash: "abc123".to_string(),
+            source_file_hash: "file_hash_abc".to_string(),
             page: Some(5),
             confidence: 0.95,
             used_for: "introduction".to_string(),

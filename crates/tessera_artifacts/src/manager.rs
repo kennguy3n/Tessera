@@ -1,22 +1,37 @@
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::Instant;
+
 use tessera_core::error::Result;
 use tessera_core::{ArtifactId, ArtifactType, CitationId, TemplateId};
 
 use crate::artifact::Artifact;
 use crate::store::{ArtifactStore, ArtifactVersion};
 
+/// Minimum interval between automatic version snapshots for the same artifact.
+const VERSION_RATE_LIMIT_SECS: u64 = 60;
+
 pub struct ArtifactManager {
     store: ArtifactStore,
+    /// Tracks the last time a version was auto-saved per artifact for rate limiting.
+    last_version_at: Mutex<HashMap<ArtifactId, Instant>>,
 }
 
 impl ArtifactManager {
     pub fn new(db_path: &str) -> Result<Self> {
         let store = ArtifactStore::open(db_path)?;
-        Ok(Self { store })
+        Ok(Self {
+            store,
+            last_version_at: Mutex::new(HashMap::new()),
+        })
     }
 
     pub fn new_in_memory() -> Result<Self> {
         let store = ArtifactStore::open_in_memory()?;
-        Ok(Self { store })
+        Ok(Self {
+            store,
+            last_version_at: Mutex::new(HashMap::new()),
+        })
     }
 
     pub fn create(
@@ -32,9 +47,29 @@ impl ArtifactManager {
 
     pub fn update_content(&self, id: &ArtifactId, content: String) -> Result<Artifact> {
         let mut artifact = self.store.get(id)?;
-        // Auto-save a version snapshot of the current content before updating
-        self.store
-            .save_version(id, artifact.version, &artifact.content)?;
+
+        // Rate-limit version snapshots: at most one per VERSION_RATE_LIMIT_SECS
+        let should_save_version = {
+            let map = self
+                .last_version_at
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match map.get(id) {
+                Some(last) => last.elapsed().as_secs() >= VERSION_RATE_LIMIT_SECS,
+                None => true, // first save for this artifact always creates a version
+            }
+        };
+
+        if should_save_version {
+            self.store
+                .save_version(id, artifact.version, &artifact.content)?;
+            let mut map = self
+                .last_version_at
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            map.insert(*id, Instant::now());
+        }
+
         artifact.update_content(content);
         self.store.update(&artifact)?;
         Ok(artifact)
@@ -65,7 +100,14 @@ impl ArtifactManager {
 
     pub fn restore_version(&self, id: &ArtifactId, version_number: u32) -> Result<Artifact> {
         let version = self.store.get_version(id, version_number)?;
-        self.update_content(id, version.content_snapshot)
+        // Force a version save before restoring, bypassing rate limit
+        let artifact = self.store.get(id)?;
+        self.store
+            .save_version(id, artifact.version, &artifact.content)?;
+        let mut artifact = artifact;
+        artifact.update_content(version.content_snapshot);
+        self.store.update(&artifact)?;
+        Ok(artifact)
     }
 }
 
@@ -108,25 +150,44 @@ mod tests {
     }
 
     #[test]
-    fn version_auto_saved_on_update() {
+    fn version_auto_saved_on_first_update() {
         let manager = ArtifactManager::new_in_memory().unwrap();
         let artifact = manager
             .create("Test".to_string(), ArtifactType::Document, None)
             .unwrap();
 
+        // First update always creates a version
         manager
             .update_content(&artifact.id, "First update".to_string())
             .unwrap();
+
+        let versions = manager.list_versions(&artifact.id).unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].content_snapshot, "");
+    }
+
+    #[test]
+    fn version_rate_limited_on_rapid_updates() {
+        let manager = ArtifactManager::new_in_memory().unwrap();
+        let artifact = manager
+            .create("Test".to_string(), ArtifactType::Document, None)
+            .unwrap();
+
+        // First update creates version
         manager
-            .update_content(&artifact.id, "Second update".to_string())
+            .update_content(&artifact.id, "v1".to_string())
+            .unwrap();
+        // Rapid second update — within rate limit, no new version
+        manager
+            .update_content(&artifact.id, "v2".to_string())
+            .unwrap();
+        manager
+            .update_content(&artifact.id, "v3".to_string())
             .unwrap();
 
         let versions = manager.list_versions(&artifact.id).unwrap();
-        assert_eq!(versions.len(), 2);
-        // First version saved is the initial empty content (before "First update")
-        assert_eq!(versions[1].content_snapshot, "");
-        // Second version saved is "First update" (before "Second update")
-        assert_eq!(versions[0].content_snapshot, "First update");
+        // Only one version snapshot (from the first update)
+        assert_eq!(versions.len(), 1);
     }
 
     #[test]

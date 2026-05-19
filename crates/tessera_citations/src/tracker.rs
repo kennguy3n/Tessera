@@ -77,7 +77,8 @@ mod tests {
             SourceType::LocalFile,
             "test.pdf".to_string(),
             "file:///test.pdf".to_string(),
-            "hash123".to_string(),
+            "chunk_hash_123".to_string(),
+            "file_hash_456".to_string(),
             section.to_string(),
             0.85,
         )
@@ -122,7 +123,12 @@ mod tests {
         let aid = ArtifactId::new();
         let cid = tracker.add(aid, make_citation("Test"));
 
-        assert_eq!(tracker.check_source_changed(&cid, "hash123"), Some(false));
+        // Same file hash → not changed
+        assert_eq!(
+            tracker.check_source_changed(&cid, "file_hash_456"),
+            Some(false)
+        );
+        // Different file hash → changed
         assert_eq!(tracker.check_source_changed(&cid, "different"), Some(true));
     }
 }

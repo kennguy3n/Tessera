@@ -65,6 +65,7 @@ pub fn list_citations(
 
 pub fn add_citation(
     tracker: &mut CitationTracker,
+    source_manager: &SourceManager,
     req: AddCitationRequest,
 ) -> BridgeResult<CitationInfo> {
     let artifact_uuid = uuid::Uuid::parse_str(&req.artifact_id)
@@ -74,12 +75,19 @@ pub fn add_citation(
     let source_type: SourceType = serde_json::from_str(&format!("\"{}\"", req.source_type))
         .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
 
+    // Look up the file-level hash at citation creation time for change detection
+    let source_file_hash = source_manager
+        .get_current_file_hash(&req.source_uri)
+        .map_err(BridgeError::Core)?
+        .unwrap_or_default();
+
     let mut citation = Citation::new(
         SourceId(source_uuid),
         source_type,
         req.source_title,
         req.source_uri,
         req.chunk_hash,
+        source_file_hash,
         req.used_for,
         req.confidence,
     );
@@ -132,6 +140,10 @@ mod tests {
 
     #[test]
     fn bridge_add_and_list_citations() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let source_mgr = SourceManager::new(db_path.to_str().unwrap(), &[]).unwrap();
+
         let mut tracker = CitationTracker::new();
         let aid = ArtifactId::new();
 
@@ -147,7 +159,7 @@ mod tests {
             used_for: "Problem Statement".to_string(),
         };
 
-        let info = add_citation(&mut tracker, req).unwrap();
+        let info = add_citation(&mut tracker, &source_mgr, req).unwrap();
         assert_eq!(info.source_title, "test.pdf");
         assert_eq!(info.page, Some(1));
 
@@ -157,6 +169,10 @@ mod tests {
 
     #[test]
     fn bridge_remove_citation() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let source_mgr = SourceManager::new(db_path.to_str().unwrap(), &[]).unwrap();
+
         let mut tracker = CitationTracker::new();
         let aid = ArtifactId::new();
 
@@ -172,7 +188,7 @@ mod tests {
             used_for: "Test".to_string(),
         };
 
-        let info = add_citation(&mut tracker, req).unwrap();
+        let info = add_citation(&mut tracker, &source_mgr, req).unwrap();
         remove_citation(&mut tracker, &aid.to_string(), &info.citation_id).unwrap();
 
         let citations = list_citations(&tracker, &aid.to_string()).unwrap();
@@ -210,8 +226,8 @@ mod tests {
             used_for: "Test".to_string(),
         };
 
-        let info = add_citation(&mut tracker, req).unwrap();
-        // Hash matches indexed file — not changed
+        let info = add_citation(&mut tracker, &source_mgr, req).unwrap();
+        // File hash matches indexed file — not changed
         assert!(!check_source_changed(&tracker, &source_mgr, &info.citation_id).unwrap());
 
         // Change the file and reindex so hash differs
