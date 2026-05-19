@@ -572,7 +572,7 @@ export function registerIpcHandlers(): void {
     if (selectedFileIds && selectedFileIds.length > 0) {
       for (const fileId of selectedFileIds) {
         const metaResp = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,mimeType,size,modifiedTime`,
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,modifiedTime`,
           { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         if (!metaResp.ok) continue;
@@ -596,14 +596,14 @@ export function registerIpcHandlers(): void {
         const exportMime = exportMimeMap[meta.mimeType];
         if (exportMime) {
           const exportResp = await fetch(
-            `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent(exportMime)}`,
+            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`,
             { headers: { Authorization: `Bearer ${accessToken}` } },
           );
           if (!exportResp.ok) continue;
           contentBytes = await exportResp.arrayBuffer();
         } else {
           const dlResp = await fetch(
-            `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
             { headers: { Authorization: `Bearer ${accessToken}` } },
           );
           if (!dlResp.ok) continue;
@@ -675,7 +675,8 @@ export function registerIpcHandlers(): void {
     async (_event, sourceId: string) => {
       const bridge = getBridge();
       if (!bridge) throw new Error("Native bridge not available");
-      return bridge.bridgeExtractTasksDecisions(sourceId);
+      const json = bridge.bridgeExtractTasksDecisions(sourceId);
+      return JSON.parse(json) as unknown[];
     },
   );
 
