@@ -150,12 +150,21 @@ export function registerIpcHandlers(): void {
         case "markdown":
           content = `# ${artifact.title}\n\n${artifact.content}`;
           break;
-        case "html":
-          content = `<html><body><h1>${artifact.title}</h1><div>${artifact.content}</div></body></html>`;
+        case "html": {
+          const esc = (s: string) =>
+            s
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;");
+          content = `<html><body><h1>${esc(artifact.title)}</h1><div>${esc(artifact.content)}</div></body></html>`;
           break;
-        case "csv":
-          content = `title,content\n"${artifact.title}","${artifact.content}"`;
+        }
+        case "csv": {
+          const csvEsc = (s: string) => s.replace(/"/g, '""');
+          content = `title,content\n"${csvEsc(artifact.title)}","${csvEsc(artifact.content)}"`;
           break;
+        }
         default:
           content = artifact.content;
       }

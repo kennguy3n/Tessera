@@ -32,7 +32,7 @@ export function useArtifactList() {
 export function useRecentArtifacts(limit: number = 5) {
   const { artifacts, loading, error, refresh } = useArtifactList();
 
-  const recent = artifacts
+  const recent = [...artifacts]
     .sort(
       (a, b) =>
         new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),

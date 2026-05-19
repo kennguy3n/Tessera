@@ -49,30 +49,56 @@ fn build_fts_query(query: &str) -> String {
     if terms.len() <= 1 {
         return query.to_string();
     }
-    terms.join(" OR ")
+    terms.join(" AND ")
+}
+
+fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
+    idx = idx.min(s.len());
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
+fn ceil_char_boundary(s: &str, mut idx: usize) -> usize {
+    idx = idx.min(s.len());
+    while idx < s.len() && !s.is_char_boundary(idx) {
+        idx += 1;
+    }
+    idx
 }
 
 fn build_excerpt(content: &str, query: &str, max_len: usize) -> String {
-    let lower_content = content.to_lowercase();
     let query_terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
 
     let best_pos = query_terms
         .iter()
-        .filter_map(|term| lower_content.find(term.as_str()))
+        .filter_map(|term| {
+            content
+                .char_indices()
+                .position(|(i, _)| content[i..].to_lowercase().starts_with(term.as_str()))
+                .and_then(|char_pos| {
+                    content
+                        .char_indices()
+                        .nth(char_pos)
+                        .map(|(byte_pos, _)| byte_pos)
+                })
+        })
         .min()
         .unwrap_or(0);
 
-    let start = best_pos.saturating_sub(50);
+    let start = floor_char_boundary(content, best_pos.saturating_sub(50));
 
     let start = if start > 0 {
         content[start..].find(' ').map_or(start, |p| start + p + 1)
     } else {
         0
     };
+    let start = ceil_char_boundary(content, start);
 
-    let end = (start + max_len).min(content.len());
+    let end = floor_char_boundary(content, start + max_len);
     let end = if end < content.len() {
-        content[..end].rfind(' ').unwrap_or(end)
+        content[start..end].rfind(' ').map_or(end, |p| start + p)
     } else {
         end
     };

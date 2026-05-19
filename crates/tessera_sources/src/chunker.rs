@@ -24,6 +24,22 @@ impl Default for ChunkerConfig {
     }
 }
 
+fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
+    idx = idx.min(s.len());
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
+fn ceil_char_boundary(s: &str, mut idx: usize) -> usize {
+    idx = idx.min(s.len());
+    while idx < s.len() && !s.is_char_boundary(idx) {
+        idx += 1;
+    }
+    idx
+}
+
 pub fn chunk_text(source_path: &str, text: &str, config: &ChunkerConfig) -> Vec<Chunk> {
     if text.is_empty() {
         return Vec::new();
@@ -41,27 +57,26 @@ pub fn chunk_text(source_path: &str, text: &str, config: &ChunkerConfig) -> Vec<
     }
 
     let mut chunks = Vec::new();
-    let bytes = text.as_bytes();
     let mut offset = 0;
     let mut index = 0;
 
-    while offset < bytes.len() {
-        let end = (offset + config.chunk_size).min(bytes.len());
+    while offset < text.len() {
+        let end = floor_char_boundary(text, offset + config.chunk_size);
 
-        let actual_end = if end < bytes.len() {
+        let actual_end = if end < text.len() {
             find_break_point(text, offset, end)
         } else {
-            end
+            text.len()
         };
 
-        let chunk_text = &text[offset..actual_end];
-        if !chunk_text.trim().is_empty() {
-            let hash = blake3::hash(chunk_text.as_bytes()).to_hex().to_string();
+        let chunk_str = &text[offset..actual_end];
+        if !chunk_str.trim().is_empty() {
+            let hash = blake3::hash(chunk_str.as_bytes()).to_hex().to_string();
             chunks.push(Chunk {
                 source_path: source_path.to_string(),
                 chunk_index: index,
                 byte_offset: offset,
-                content: chunk_text.to_string(),
+                content: chunk_str.to_string(),
                 hash,
             });
             index += 1;
@@ -72,18 +87,24 @@ pub fn chunk_text(source_path: &str, text: &str, config: &ChunkerConfig) -> Vec<
         } else {
             actual_end - offset
         };
-        offset += step;
-
-        if offset >= bytes.len() {
+        let new_offset = ceil_char_boundary(text, offset + step);
+        if new_offset <= offset {
             break;
         }
+        offset = new_offset;
     }
 
     chunks
 }
 
 fn find_break_point(text: &str, start: usize, target: usize) -> usize {
-    let search_start = if target > 100 { target - 100 } else { start };
+    let raw_start = if target > 100 { target - 100 } else { start };
+    let search_start = ceil_char_boundary(text, raw_start);
+    let target = floor_char_boundary(text, target);
+
+    if search_start >= target {
+        return target;
+    }
 
     if let Some(pos) = text[search_start..target].rfind("\n\n") {
         return search_start + pos + 2;
@@ -164,6 +185,20 @@ mod tests {
         let c1 = chunk_text("a.txt", text, &ChunkerConfig::default());
         let c2 = chunk_text("b.txt", text, &ChunkerConfig::default());
         assert_eq!(c1[0].hash, c2[0].hash);
+    }
+
+    #[test]
+    fn multibyte_utf8_does_not_panic() {
+        let text = "Hello 🌍 world! 你好世界 こんにちは This is a test with émojis and ünïcödé characters spread across the text to ensure chunking works properly with multi-byte sequences.";
+        let config = ChunkerConfig {
+            chunk_size: 30,
+            chunk_overlap: 5,
+        };
+        let chunks = chunk_text("utf8.txt", text, &config);
+        assert!(!chunks.is_empty());
+        for chunk in &chunks {
+            assert!(!chunk.content.is_empty());
+        }
     }
 
     #[test]

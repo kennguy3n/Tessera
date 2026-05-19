@@ -37,7 +37,19 @@ impl AuditStore {
                     details TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_events(event_type);
-                CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_events(timestamp);",
+                CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_events(timestamp);
+
+                CREATE TRIGGER IF NOT EXISTS audit_no_update
+                BEFORE UPDATE ON audit_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'audit_events is append-only: UPDATE not allowed');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS audit_no_delete
+                BEFORE DELETE ON audit_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'audit_events is append-only: DELETE not allowed');
+                END;",
             )
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(())

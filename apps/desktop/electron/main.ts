@@ -24,18 +24,21 @@ function createWindow(): void {
     },
   });
 
+  const isDev = !app.isPackaged;
+
+  const connectSrc = isDev
+    ? "connect-src 'self' ws://localhost:5173 http://localhost:5173"
+    : "connect-src 'self'";
   session.defaultSession.webRequest.onHeadersReceived((_details, callback) => {
     callback({
       responseHeaders: {
         ..._details.responseHeaders,
         "Content-Security-Policy": [
-          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'",
+          `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; ${connectSrc}`,
         ],
       },
     });
   });
-
-  const isDev = !app.isPackaged;
   if (isDev) {
     mainWindow.loadURL("http://localhost:5173");
   } else {

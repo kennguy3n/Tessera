@@ -61,6 +61,8 @@ export class ModelSidecar {
 
     this.process.on("error", () => {
       this._isRunning = false;
+      this.stopHealthCheck();
+      this.stopIdleMonitor();
     });
 
     this._isRunning = true;
