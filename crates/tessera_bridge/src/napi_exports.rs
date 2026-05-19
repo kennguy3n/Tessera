@@ -505,21 +505,8 @@ pub fn bridge_compare_sources(
     let chunks_a = src_mgr.get_chunks_for_source(&sid_a).unwrap_or_default();
     let chunks_b = src_mgr.get_chunks_for_source(&sid_b).unwrap_or_default();
 
-    let text_a = chunks_a.join("\n");
-    let text_b = chunks_b.join("\n");
-
-    let words_a: std::collections::HashSet<&str> = text_a.split_whitespace().collect();
-    let words_b: std::collections::HashSet<&str> = text_b.split_whitespace().collect();
-    let common: Vec<&&str> = words_a.intersection(&words_b).take(50).collect();
-    let only_a: Vec<&&str> = words_a.difference(&words_b).take(20).collect();
-    let only_b: Vec<&&str> = words_b.difference(&words_a).take(20).collect();
-
-    let content = format!(
-        "# Source Comparison\n\n## Common Themes\n{}\n\n## Unique to Source A\n{}\n\n## Unique to Source B\n{}\n",
-        common.iter().map(|w| format!("- {w}")).collect::<Vec<_>>().join("\n"),
-        only_a.iter().map(|w| format!("- {w}")).collect::<Vec<_>>().join("\n"),
-        only_b.iter().map(|w| format!("- {w}")).collect::<Vec<_>>().join("\n"),
-    );
+    let result = tessera_artifacts::comparison::compare_sources(&chunks_a, &chunks_b);
+    let content = result.to_markdown("Source A", "Source B");
 
     let art = art_mgr
         .create(

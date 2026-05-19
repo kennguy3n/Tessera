@@ -34,6 +34,15 @@ export async function startOAuthFlow(
   const state = generateState();
 
   return new Promise((resolve, reject) => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanup = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    };
+
     const server = http.createServer((req, res) => {
       if (!req.url?.startsWith("/callback")) {
         res.writeHead(404);
@@ -52,6 +61,7 @@ export async function startOAuthFlow(
           "<html><body><h2>Authorization Failed</h2><p>You can close this window.</p></body></html>",
         );
         server.close();
+        cleanup();
         reject(new Error(`OAuth error: ${error}`));
         return;
       }
@@ -62,6 +72,7 @@ export async function startOAuthFlow(
           "<html><body><h2>Invalid Response</h2><p>State mismatch or missing code.</p></body></html>",
         );
         server.close();
+        cleanup();
         reject(new Error("Invalid OAuth callback: state mismatch or missing code"));
         return;
       }
@@ -71,6 +82,7 @@ export async function startOAuthFlow(
         "<html><body><h2>Connected to Google Drive</h2><p>You can close this window and return to Tessera.</p></body></html>",
       );
       server.close();
+      cleanup();
       resolve({ code, state });
     });
 
@@ -81,10 +93,11 @@ export async function startOAuthFlow(
     });
 
     server.on("error", (err) => {
+      cleanup();
       reject(new Error(`Failed to start OAuth redirect server: ${err.message}`));
     });
 
-    setTimeout(() => {
+    timeoutId = setTimeout(() => {
       server.close();
       reject(new Error("OAuth flow timed out after 5 minutes"));
     }, 300_000);
