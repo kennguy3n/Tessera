@@ -621,7 +621,10 @@ export function registerIpcHandlers(): void {
           { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         if (!metaResp.ok) {
-          failedFileIds.push(fileId);
+          // Only treat 404/410 as confirmed Drive-side deletion; skip transient errors
+          if (metaResp.status === 404 || metaResp.status === 410) {
+            failedFileIds.push(fileId);
+          }
           continue;
         }
         const meta = (await metaResp.json()) as {
