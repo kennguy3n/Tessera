@@ -2,6 +2,7 @@ import { app, BrowserWindow, session } from "electron";
 import * as path from "path";
 import { registerIpcHandlers } from "./ipc";
 import { loadConfig, saveWindowState } from "./config";
+import { initAppState } from "./appState";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -63,6 +64,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  initAppState();
   registerIpcHandlers();
   createWindow();
 

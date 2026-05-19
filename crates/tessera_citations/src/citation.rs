@@ -10,6 +10,8 @@ pub struct Citation {
     pub source_title: String,
     pub source_uri: String,
     pub chunk_hash: String,
+    /// File-level hash at the time the citation was created, used for change detection.
+    pub source_file_hash: String,
     pub page: Option<u32>,
     pub confidence: f64,
     pub used_for: String,
@@ -17,12 +19,14 @@ pub struct Citation {
 }
 
 impl Citation {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         source_id: SourceId,
         source_type: SourceType,
         source_title: String,
         source_uri: String,
         chunk_hash: String,
+        source_file_hash: String,
         used_for: String,
         confidence: f64,
     ) -> Self {
@@ -33,6 +37,7 @@ impl Citation {
             source_title,
             source_uri,
             chunk_hash,
+            source_file_hash,
             page: None,
             confidence,
             used_for,
@@ -45,8 +50,9 @@ impl Citation {
         self
     }
 
-    pub fn source_changed(&self, current_hash: &str) -> bool {
-        self.chunk_hash != current_hash
+    /// Compares the file-level hash stored at citation creation with the current file hash.
+    pub fn source_changed(&self, current_file_hash: &str) -> bool {
+        self.source_file_hash != current_file_hash
     }
 }
 
@@ -61,6 +67,7 @@ mod tests {
             "Q4 Planning Brief.pdf".to_string(),
             "file:///Users/alice/Documents/Q4-brief.pdf".to_string(),
             blake3::hash(b"sample chunk content").to_hex().to_string(),
+            blake3::hash(b"full file content").to_hex().to_string(),
             "Problem Statement".to_string(),
             0.92,
         )
@@ -76,8 +83,10 @@ mod tests {
     #[test]
     fn source_changed_detects_modification() {
         let citation = sample_citation();
-        assert!(!citation.source_changed(&citation.chunk_hash));
-        assert!(citation.source_changed("different_hash"));
+        // Same file hash → not changed
+        assert!(!citation.source_changed(&citation.source_file_hash));
+        // Different file hash → changed
+        assert!(citation.source_changed("different_file_hash"));
     }
 
     #[test]

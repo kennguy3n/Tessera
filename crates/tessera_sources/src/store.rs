@@ -165,20 +165,43 @@ impl SourceStore {
                 let created_at_str: String = row.get(4)?;
                 let last_indexed_str: Option<String> = row.get(5)?;
 
+                let parsed_id = uuid::Uuid::parse_str(&id_str).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
+                let parsed_type: SourceType =
+                    serde_json::from_str(&source_type_str).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                let parsed_status: SourceStatus =
+                    serde_json::from_str(&status_str).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            3,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+
                 Ok(Source {
-                    id: SourceId(uuid::Uuid::parse_str(&id_str).unwrap_or_default()),
-                    source_type: serde_json::from_str(&source_type_str)
-                        .unwrap_or(SourceType::LocalFolder),
+                    id: SourceId(parsed_id),
+                    source_type: parsed_type,
                     path: row.get(2)?,
-                    status: serde_json::from_str(&status_str).unwrap_or(SourceStatus::Connected),
+                    status: parsed_status,
                     created_at: parse_datetime(&created_at_str),
                     last_indexed: last_indexed_str.as_deref().and_then(parse_datetime_opt),
                     file_count: row.get::<_, i64>(6)? as u64,
                 })
             })
             .map_err(|e| Error::Database(e.to_string()))?
-            .filter_map(std::result::Result::ok)
-            .collect();
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("corrupted row: {e}")))?;
 
         Ok(sources)
     }
@@ -195,11 +218,22 @@ impl SourceStore {
                     let status_str: String = row.get(3)?;
                     let created_at_str: String = row.get(4)?;
                     let last_indexed_str: Option<String> = row.get(5)?;
+
+                    let parsed_id = uuid::Uuid::parse_str(&id_s).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+                    })?;
+                    let parsed_type: SourceType = serde_json::from_str(&source_type_str).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
+                    })?;
+                    let parsed_status: SourceStatus = serde_json::from_str(&status_str).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
+                    })?;
+
                     Ok(Source {
-                        id: SourceId(uuid::Uuid::parse_str(&id_s).unwrap_or_default()),
-                        source_type: serde_json::from_str(&source_type_str).unwrap_or(SourceType::LocalFolder),
+                        id: SourceId(parsed_id),
+                        source_type: parsed_type,
                         path: row.get(2)?,
-                        status: serde_json::from_str(&status_str).unwrap_or(SourceStatus::Connected),
+                        status: parsed_status,
                         created_at: parse_datetime(&created_at_str),
                         last_indexed: last_indexed_str.as_deref().and_then(parse_datetime_opt),
                         file_count: row.get::<_, i64>(6)? as u64,
@@ -350,7 +384,7 @@ impl SourceStore {
             .conn
             .prepare(
                 "SELECT c.content, c.hash, c.chunk_index, c.byte_offset, f.path,
-                        rank
+                        f.source_id, rank
                  FROM chunks_fts fts
                  JOIN chunks c ON c.id = fts.rowid
                  JOIN indexed_files f ON f.id = c.indexed_file_id
@@ -368,7 +402,8 @@ impl SourceStore {
                     chunk_index: row.get::<_, i64>(2)? as usize,
                     byte_offset: row.get::<_, i64>(3)? as usize,
                     source_path: row.get(4)?,
-                    relevance: -row.get::<_, f64>(5)?,
+                    source_id: row.get(5)?,
+                    relevance: -row.get::<_, f64>(6)?,
                 })
             })
             .map_err(|e| Error::Database(e.to_string()))?
@@ -390,6 +425,44 @@ impl SourceStore {
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(count as u64)
     }
+
+    pub fn get_current_file_hash(&self, file_path: &str) -> Result<Option<String>> {
+        let result = self.conn.query_row(
+            "SELECT hash FROM indexed_files WHERE path = ?1 ORDER BY rowid DESC LIMIT 1",
+            params![file_path],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(hash) => Ok(Some(hash)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(Error::Database(e.to_string())),
+        }
+    }
+
+    pub fn list_indexed_files(&self, source_id: &SourceId) -> Result<Vec<IndexedFile>> {
+        let id_str = source_id.to_string();
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT path, hash, last_modified, chunk_count FROM indexed_files WHERE source_id = ?1",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let files = stmt
+            .query_map(params![id_str], |row| {
+                Ok(IndexedFile {
+                    path: row.get(0)?,
+                    hash: row.get(1)?,
+                    last_modified: row.get(2)?,
+                    chunk_count: row.get::<_, i64>(3)? as u64,
+                })
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+
+        Ok(files)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -399,7 +472,16 @@ pub struct SearchHit {
     pub chunk_index: usize,
     pub byte_offset: usize,
     pub source_path: String,
+    pub source_id: String,
     pub relevance: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct IndexedFile {
+    pub path: String,
+    pub hash: String,
+    pub last_modified: String,
+    pub chunk_count: u64,
 }
 
 #[cfg(test)]

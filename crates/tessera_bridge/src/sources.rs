@@ -1,3 +1,4 @@
+use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tessera_core::SourceId;
 use tessera_sources::manager::SourceManager;
@@ -7,6 +8,7 @@ use tessera_sources::source::Source;
 use crate::{BridgeError, BridgeResult};
 
 #[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
 pub struct SourceInfo {
     pub id: String,
     pub source_type: String,
@@ -14,28 +16,47 @@ pub struct SourceInfo {
     pub status: String,
     pub created_at: String,
     pub last_indexed: Option<String>,
-    pub file_count: u64,
+    pub file_count: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
 pub struct SearchHitInfo {
     pub content: String,
     pub excerpt: String,
     pub source_path: String,
-    pub chunk_index: usize,
+    pub source_id: String,
+    pub chunk_hash: String,
+    pub chunk_index: i32,
     pub relevance: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct IndexedFileInfo {
+    pub path: String,
+    pub hash: String,
+    pub last_modified: String,
+    pub chunk_count: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct SourceDetailInfo {
+    pub source: SourceInfo,
+    pub files: Vec<IndexedFileInfo>,
 }
 
 impl From<&Source> for SourceInfo {
     fn from(s: &Source) -> Self {
         Self {
             id: s.id.to_string(),
-            source_type: serde_json::to_string(&s.source_type).unwrap_or_default(),
+            source_type: s.source_type.to_string(),
             path: s.path.clone(),
-            status: serde_json::to_string(&s.status).unwrap_or_default(),
+            status: s.status.to_string(),
             created_at: s.created_at.to_rfc3339(),
             last_indexed: s.last_indexed.map(|t| t.to_rfc3339()),
-            file_count: s.file_count,
+            file_count: s.file_count as i64,
         }
     }
 }
@@ -46,7 +67,9 @@ impl From<&SearchResult> for SearchHitInfo {
             content: r.content.clone(),
             excerpt: r.excerpt.clone(),
             source_path: r.source_path.clone(),
-            chunk_index: r.chunk_index,
+            source_id: r.source_id.clone(),
+            chunk_hash: r.hash.clone(),
+            chunk_index: r.chunk_index as i32,
             relevance: r.relevance,
         }
     }
@@ -84,6 +107,45 @@ pub fn search_sources(
     Ok(results.iter().map(SearchHitInfo::from).collect())
 }
 
+pub fn get_source_detail(
+    manager: &SourceManager,
+    source_id: &str,
+) -> BridgeResult<SourceDetailInfo> {
+    let uuid =
+        uuid::Uuid::parse_str(source_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    let source = manager
+        .get_source(&SourceId(uuid))
+        .map_err(BridgeError::Core)?;
+    let files = manager
+        .list_indexed_files(&SourceId(uuid))
+        .map_err(BridgeError::Core)?;
+    let file_infos: Vec<IndexedFileInfo> = files
+        .iter()
+        .map(|f| IndexedFileInfo {
+            path: f.path.clone(),
+            hash: f.hash.clone(),
+            last_modified: f.last_modified.clone(),
+            chunk_count: f.chunk_count as i32,
+        })
+        .collect();
+    Ok(SourceDetailInfo {
+        source: SourceInfo::from(&source),
+        files: file_infos,
+    })
+}
+
+pub fn reindex_source(manager: &SourceManager, source_id: &str) -> BridgeResult<SourceInfo> {
+    let uuid =
+        uuid::Uuid::parse_str(source_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    manager
+        .reindex_source(&SourceId(uuid))
+        .map_err(BridgeError::Core)?;
+    let source = manager
+        .get_source(&SourceId(uuid))
+        .map_err(BridgeError::Core)?;
+    Ok(SourceInfo::from(&source))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +181,18 @@ mod tests {
         remove_source(&manager, &info.id).unwrap();
         let sources = list_sources(&manager).unwrap();
         assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn bridge_reindex_source() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("test.txt"), "initial content").unwrap();
+
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let info = add_local_folder(&manager, dir.path().to_str().unwrap()).unwrap();
+
+        std::fs::write(dir.path().join("new.txt"), "new content").unwrap();
+        let updated = reindex_source(&manager, &info.id).unwrap();
+        assert!(updated.file_count >= 1);
     }
 }

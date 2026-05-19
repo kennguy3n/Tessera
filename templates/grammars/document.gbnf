@@ -1,0 +1,6 @@
+root ::= "{" ws "\"sections\"" ws ":" ws sections ws "}"
+sections ::= "[" ws section ("," ws section)* ws "]"
+section ::= "{" ws "\"title\"" ws ":" ws string "," ws "\"content\"" ws ":" ws string ("," ws "\"citations\"" ws ":" ws citations)? ws "}"
+citations ::= "[" ws (string ("," ws string)*)? ws "]"
+string ::= "\"" ([^"\\] | "\\" ["\\/bfnrt] | "\\u" [0-9a-fA-F]{4})* "\""
+ws ::= [ \t\n]*

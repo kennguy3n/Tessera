@@ -1,0 +1,6 @@
+root ::= "{" ws "\"slides\"" ws ":" ws slides ws "}"
+slides ::= "[" ws slide ("," ws slide)* ws "]"
+slide ::= "{" ws "\"title\"" ws ":" ws string "," ws "\"bullets\"" ws ":" ws bullets ("," ws "\"notes\"" ws ":" ws string)? ws "}"
+bullets ::= "[" ws (string ("," ws string)*)? ws "]"
+string ::= "\"" ([^"\\] | "\\" ["\\/bfnrt] | "\\u" [0-9a-fA-F]{4})* "\""
+ws ::= [ \t\n]*

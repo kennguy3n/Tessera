@@ -41,7 +41,16 @@ impl ArtifactStore {
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     version INTEGER NOT NULL DEFAULT 1
-                );",
+                );
+                CREATE TABLE IF NOT EXISTS artifact_versions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    artifact_id TEXT NOT NULL,
+                    version_number INTEGER NOT NULL,
+                    content_snapshot TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_versions_artifact ON artifact_versions(artifact_id, version_number);",
             )
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(())
@@ -102,13 +111,47 @@ impl ArtifactStore {
                     let created_str: String = row.get(6)?;
                     let updated_str: String = row.get(7)?;
 
+                    let parsed_id = uuid::Uuid::parse_str(&id_str).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                    let parsed_type: tessera_core::ArtifactType =
+                        serde_json::from_str(&type_str).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                2,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?;
+                    let parsed_citations: Vec<tessera_core::CitationId> =
+                        serde_json::from_str(&citations_str).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                5,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?;
+                    let parsed_template = match template_str {
+                        Some(s) => Some(uuid::Uuid::parse_str(&s).map(tessera_core::TemplateId).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                3,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?),
+                        None => None,
+                    };
+
                     Ok(Artifact {
-                        id: ArtifactId(uuid::Uuid::parse_str(&id_str).unwrap_or_default()),
+                        id: ArtifactId(parsed_id),
                         title: row.get(1)?,
-                        artifact_type: serde_json::from_str(&type_str).unwrap_or(tessera_core::ArtifactType::Document),
-                        template_id: template_str.and_then(|s| uuid::Uuid::parse_str(&s).ok().map(tessera_core::TemplateId)),
+                        artifact_type: parsed_type,
+                        template_id: parsed_template,
                         content: row.get(4)?,
-                        citations: serde_json::from_str(&citations_str).unwrap_or_default(),
+                        citations: parsed_citations,
                         created_at: parse_datetime(&created_str),
                         updated_at: parse_datetime(&updated_str),
                         version: row.get(8)?,
@@ -135,23 +178,59 @@ impl ArtifactStore {
                 let created_str: String = row.get(6)?;
                 let updated_str: String = row.get(7)?;
 
+                let parsed_id = uuid::Uuid::parse_str(&id_str).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
+                let parsed_type: tessera_core::ArtifactType = serde_json::from_str(&type_str)
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            2,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                let parsed_citations: Vec<tessera_core::CitationId> =
+                    serde_json::from_str(&citations_str).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            5,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                let parsed_template = match template_str {
+                    Some(s) => Some(
+                        uuid::Uuid::parse_str(&s)
+                            .map(tessera_core::TemplateId)
+                            .map_err(|e| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    3,
+                                    rusqlite::types::Type::Text,
+                                    Box::new(e),
+                                )
+                            })?,
+                    ),
+                    None => None,
+                };
+
                 Ok(Artifact {
-                    id: ArtifactId(uuid::Uuid::parse_str(&id_str).unwrap_or_default()),
+                    id: ArtifactId(parsed_id),
                     title: row.get(1)?,
-                    artifact_type: serde_json::from_str(&type_str)
-                        .unwrap_or(tessera_core::ArtifactType::Document),
-                    template_id: template_str
-                        .and_then(|s| uuid::Uuid::parse_str(&s).ok().map(tessera_core::TemplateId)),
+                    artifact_type: parsed_type,
+                    template_id: parsed_template,
                     content: row.get(4)?,
-                    citations: serde_json::from_str(&citations_str).unwrap_or_default(),
+                    citations: parsed_citations,
                     created_at: parse_datetime(&created_str),
                     updated_at: parse_datetime(&updated_str),
                     version: row.get(8)?,
                 })
             })
             .map_err(|e| Error::Database(e.to_string()))?
-            .filter_map(std::result::Result::ok)
-            .collect();
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("corrupted row: {e}")))?;
 
         Ok(artifacts)
     }
@@ -165,6 +244,74 @@ impl ArtifactStore {
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(())
     }
+
+    pub fn save_version(
+        &self,
+        artifact_id: &ArtifactId,
+        version_number: u32,
+        content: &str,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT INTO artifact_versions (artifact_id, version_number, content_snapshot, created_at) VALUES (?1, ?2, ?3, ?4)",
+                params![artifact_id.to_string(), version_number, content, now],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn list_versions(&self, artifact_id: &ArtifactId) -> Result<Vec<ArtifactVersion>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT version_number, content_snapshot, created_at FROM artifact_versions WHERE artifact_id = ?1 ORDER BY version_number DESC",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let versions = stmt
+            .query_map(params![artifact_id.to_string()], |row| {
+                let created_str: String = row.get(2)?;
+                Ok(ArtifactVersion {
+                    version_number: row.get(0)?,
+                    content_snapshot: row.get(1)?,
+                    created_at: created_str,
+                })
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("failed to read version row: {e}")))?;
+
+        Ok(versions)
+    }
+
+    pub fn get_version(
+        &self,
+        artifact_id: &ArtifactId,
+        version_number: u32,
+    ) -> Result<ArtifactVersion> {
+        self.conn
+            .query_row(
+                "SELECT version_number, content_snapshot, created_at FROM artifact_versions WHERE artifact_id = ?1 AND version_number = ?2",
+                params![artifact_id.to_string(), version_number],
+                |row| {
+                    let created_str: String = row.get(2)?;
+                    Ok(ArtifactVersion {
+                        version_number: row.get(0)?,
+                        content_snapshot: row.get(1)?,
+                        created_at: created_str,
+                    })
+                },
+            )
+            .map_err(|e| Error::Database(e.to_string()))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ArtifactVersion {
+    pub version_number: u32,
+    pub content_snapshot: String,
+    pub created_at: String,
 }
 
 #[cfg(test)]

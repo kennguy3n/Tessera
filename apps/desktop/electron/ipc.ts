@@ -1,93 +1,82 @@
 import { ipcMain } from "electron";
 import { loadConfig, updateConfig } from "./config";
+import { getBridge } from "./appState";
 import type { SettingsData, ModelStatus } from "./preload";
 
-let sources: Array<{
-  id: string;
-  sourceType: string;
-  path: string;
-  status: string;
-  createdAt: string;
-  lastIndexed: string | null;
-  fileCount: number;
-}> = [];
-
-let artifacts: Array<{
-  id: string;
-  title: string;
-  artifactType: string;
-  templateId: string | null;
-  content: string;
-  citations: string[];
-  createdAt: string;
-  updatedAt: string;
-  version: number;
-}> = [];
-
-function generateId(): string {
-  return (
-    Date.now().toString(36) + Math.random().toString(36).substring(2, 10)
-  );
-}
-
 export function registerIpcHandlers(): void {
+  // --- Sources ---
+
   ipcMain.handle(
     "sources:addLocalFolder",
     async (_event, folderPath: string) => {
-      const source = {
-        id: generateId(),
-        sourceType: "local_folder",
-        path: folderPath,
-        status: "connected",
-        createdAt: new Date().toISOString(),
-        lastIndexed: null,
-        fileCount: 0,
-      };
-      sources.push(source);
-      return source;
+      const bridge = getBridge();
+      if (bridge) {
+        return bridge.bridgeAddLocalFolder(folderPath);
+      }
+      throw new Error("Native bridge not available");
     },
   );
 
   ipcMain.handle("sources:addLocalFile", async (_event, filePath: string) => {
-    const source = {
-      id: generateId(),
-      sourceType: "local_file",
-      path: filePath,
-      status: "connected",
-      createdAt: new Date().toISOString(),
-      lastIndexed: null,
-      fileCount: 1,
-    };
-    sources.push(source);
-    return source;
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeAddLocalFile(filePath);
+    }
+    throw new Error("Native bridge not available");
   });
 
   ipcMain.handle("sources:list", async () => {
-    return sources;
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeListSources();
+    }
+    return [];
   });
 
   ipcMain.handle("sources:remove", async (_event, id: string) => {
-    sources = sources.filter((s) => s.id !== id);
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeRemoveSource(id);
+    }
+    throw new Error("Native bridge not available");
   });
 
   ipcMain.handle(
     "sources:search",
     async (_event, query: string, limit: number) => {
-      return sources
-        .filter(
-          (s) =>
-            s.path.toLowerCase().includes(query.toLowerCase()) ||
-            s.sourceType.toLowerCase().includes(query.toLowerCase()),
-        )
-        .slice(0, limit)
-        .map((s) => ({
-          sourcePath: s.path,
-          chunkContent: "",
-          relevanceScore: 1.0,
-          excerpt: s.path,
+      const bridge = getBridge();
+      if (bridge) {
+        const results = bridge.bridgeSearchSources(query, limit);
+        return results.map((r) => ({
+          sourcePath: r.sourcePath,
+          sourceId: r.sourceId,
+          chunkHash: r.chunkHash,
+          chunkContent: r.content,
+          relevanceScore: r.relevance,
+          excerpt: r.excerpt,
         }));
+      }
+      return [];
     },
   );
+
+  ipcMain.handle("sources:getDetail", async (_event, id: string) => {
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeGetSourceDetail(id);
+    }
+    throw new Error("Native bridge not available");
+  });
+
+  ipcMain.handle("sources:reindex", async (_event, id: string) => {
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeReindexSource(id);
+    }
+    throw new Error("Native bridge not available");
+  });
+
+  // --- Artifacts ---
 
   ipcMain.handle(
     "artifacts:create",
@@ -97,88 +86,144 @@ export function registerIpcHandlers(): void {
       artifactType: string,
       templateId?: string,
     ) => {
-      const now = new Date().toISOString();
-      const artifact = {
-        id: generateId(),
-        title,
-        artifactType,
-        templateId: templateId ?? null,
-        content: "",
-        citations: [],
-        createdAt: now,
-        updatedAt: now,
-        version: 1,
-      };
-      artifacts.push(artifact);
-      return artifact;
+      const bridge = getBridge();
+      if (bridge) {
+        return bridge.bridgeCreateArtifact(title, artifactType, templateId);
+      }
+      throw new Error("Native bridge not available");
     },
   );
 
   ipcMain.handle(
     "artifacts:update",
     async (_event, id: string, content: string) => {
-      const artifact = artifacts.find((a) => a.id === id);
-      if (!artifact) throw new Error(`Artifact ${id} not found`);
-      artifact.content = content;
-      artifact.updatedAt = new Date().toISOString();
-      artifact.version += 1;
-      return artifact;
+      const bridge = getBridge();
+      if (bridge) {
+        return bridge.bridgeUpdateArtifactContent(id, content);
+      }
+      throw new Error("Native bridge not available");
     },
   );
 
   ipcMain.handle("artifacts:list", async () => {
-    return artifacts;
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeListArtifacts();
+    }
+    return [];
   });
 
   ipcMain.handle("artifacts:get", async (_event, id: string) => {
-    const artifact = artifacts.find((a) => a.id === id);
-    if (!artifact) throw new Error(`Artifact ${id} not found`);
-    return artifact;
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeGetArtifact(id);
+    }
+    throw new Error("Native bridge not available");
   });
 
   ipcMain.handle("artifacts:remove", async (_event, id: string) => {
-    artifacts = artifacts.filter((a) => a.id !== id);
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeDeleteArtifact(id);
+    }
+    throw new Error("Native bridge not available");
   });
 
   ipcMain.handle(
     "artifacts:export",
     async (_event, id: string, format: string) => {
-      const artifact = artifacts.find((a) => a.id === id);
-      if (!artifact) throw new Error(`Artifact ${id} not found`);
-      let content: string;
-      switch (format) {
-        case "markdown":
-          content = `# ${artifact.title}\n\n${artifact.content}`;
-          break;
-        case "html": {
-          const esc = (s: string) =>
-            s
-              .replace(/&/g, "&amp;")
-              .replace(/</g, "&lt;")
-              .replace(/>/g, "&gt;")
-              .replace(/"/g, "&quot;");
-          content = `<html><body><h1>${esc(artifact.title)}</h1><div>${esc(artifact.content)}</div></body></html>`;
-          break;
-        }
-        case "csv": {
-          const csvEsc = (s: string) => s.replace(/"/g, '""');
-          content = `title,content\n"${csvEsc(artifact.title)}","${csvEsc(artifact.content)}"`;
-          break;
-        }
-        default:
-          content = artifact.content;
+      const bridge = getBridge();
+      if (bridge) {
+        return bridge.bridgeExportArtifact(id, format);
       }
-      return { content };
+      throw new Error("Native bridge not available");
     },
   );
 
+  ipcMain.handle(
+    "artifacts:exportToFile",
+    async (_event, id: string, format: string, filePath: string) => {
+      const bridge = getBridge();
+      if (bridge) {
+        bridge.bridgeExportArtifactToFile(id, format, filePath);
+        return;
+      }
+      throw new Error("Native bridge not available");
+    },
+  );
+
+  // --- Templates ---
+
   ipcMain.handle("templates:list", async () => {
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeListTemplates();
+    }
     return [];
   });
 
-  ipcMain.handle("templates:get", async (_event, _id: string) => {
+  ipcMain.handle("templates:get", async (_event, id: string) => {
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeGetTemplate(id);
+    }
     return null;
   });
+
+  // --- Citations ---
+
+  ipcMain.handle("citations:list", async (_event, artifactId: string) => {
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeListCitations(artifactId);
+    }
+    return [];
+  });
+
+  ipcMain.handle("citations:add", async (_event, req: unknown) => {
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeAddCitation(
+        req as {
+          artifactId: string;
+          sourceId: string;
+          sourceType: string;
+          sourceTitle: string;
+          sourceUri: string;
+          chunkHash: string;
+          page: number | null;
+          confidence: number;
+          usedFor: string;
+        },
+      );
+    }
+    throw new Error("Native bridge not available");
+  });
+
+  ipcMain.handle(
+    "citations:remove",
+    async (_event, artifactId: string, citationId: string) => {
+      const bridge = getBridge();
+      if (bridge) {
+        bridge.bridgeRemoveCitation(artifactId, citationId);
+        return;
+      }
+      throw new Error("Native bridge not available");
+    },
+  );
+
+  ipcMain.handle(
+    "citations:checkChanged",
+    async (_event, citationId: string) => {
+      const bridge = getBridge();
+      if (bridge) {
+        return bridge.bridgeCheckSourceChanged(citationId);
+      }
+      throw new Error("Native bridge not available");
+    },
+  );
+
+  // --- Settings (remain in electron-store/JSON config) ---
 
   ipcMain.handle("settings:get", async () => {
     const config = loadConfig();
@@ -208,11 +253,52 @@ export function registerIpcHandlers(): void {
     },
   );
 
+  // --- Version History ---
+
+  ipcMain.handle("artifacts:listVersions", async (_event, id: string) => {
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeListVersions(id);
+    }
+    return [];
+  });
+
+  ipcMain.handle(
+    "artifacts:restoreVersion",
+    async (_event, id: string, versionNumber: number) => {
+      const bridge = getBridge();
+      if (bridge) {
+        return bridge.bridgeRestoreVersion(id, versionNumber);
+      }
+      throw new Error("Native bridge not available");
+    },
+  );
+
+  // --- Model Runtime ---
+
   ipcMain.handle("model:status", async () => {
     return {
       available: false,
       modelName: null,
-      status: "not_configured",
+      status: "stopped",
     } as ModelStatus;
+  });
+
+  ipcMain.handle("model:start", async (_event, _modelPath: string) => {
+    // Will be wired to RuntimeManager when sidecar is available
+    throw new Error("Model runtime not yet configured — download a model first");
+  });
+
+  ipcMain.handle("model:stop", async () => {
+    // Will be wired to RuntimeManager
+    throw new Error("Model runtime not yet configured");
+  });
+
+  ipcMain.handle("model:generate", async (_event, _request: unknown) => {
+    throw new Error("Model runtime not yet configured — start a model first");
+  });
+
+  ipcMain.handle("model:cancelJob", async () => {
+    // No-op if no generation running
   });
 }

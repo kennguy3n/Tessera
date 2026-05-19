@@ -175,6 +175,35 @@ npm run dev --workspace=apps/desktop
 
 ---
 
+## Editors
+
+Tessera ships four real editor implementations — no stubs:
+
+| Editor | Description |
+|---|---|
+| **Document** | TipTap (ProseMirror) rich text with headings, lists, code blocks, links, outline navigation |
+| **Slides** | Ordered slide deck with thumbnails, content blocks, speaker notes |
+| **Sheet** | Spreadsheet grid with formulas (SUM, AVERAGE, COUNT, MIN, MAX), CSV import |
+| **Base** | Database table with typed fields (text, number, date, select, checkbox, url), sorting, filtering |
+
+All editors use debounced auto-save (2s) to the Rust backend via IPC.
+
+---
+
+## Local Model Runtime
+
+```bash
+# Download llama-server binary
+./sidecars/scripts/download-llama-server.sh
+
+# The app auto-detects device tier and suggests an appropriate model.
+# Models are downloaded on-demand from the Settings → Model Runtime panel.
+```
+
+The runtime manager (`crates/tessera_runtime/`) handles device detection, model selection, sidecar lifecycle, health checks, streaming generation, and GBNF-constrained structured output.
+
+---
+
 ## Repository layout
 
 ```
@@ -183,21 +212,31 @@ tessera/
 │   └── desktop/
 │       ├── electron/        # Electron main process (main.ts, preload.ts, ipc.ts)
 │       └── renderer/        # React/TypeScript UI (pages, components, hooks)
+│           └── src/
+│               ├── editors/     # Document, Slide, Sheet, Base editors
+│               ├── components/  # CitationPanel, VersionHistory, RuntimeStatus
+│               ├── pages/       # HomePage, SourcesPage, TemplatesPage, etc.
+│               └── hooks/       # React hooks for IPC
 ├── crates/                  # Rust core engine crates
 │   ├── tessera_core/        # Shared types, config, errors
 │   ├── tessera_bridge/      # N-API bridge layer
 │   ├── tessera_sources/     # Source indexing, extraction, search
 │   ├── tessera_templates/   # YAML template parsing and registry
-│   ├── tessera_artifacts/   # Artifact CRUD and storage
+│   ├── tessera_artifacts/   # Artifact CRUD, version history, storage
 │   ├── tessera_citations/   # Citation tracking and provenance
-│   ├── tessera_export/      # Markdown, HTML, CSV, JSON export
+│   ├── tessera_export/      # Markdown, HTML, CSV, JSON, PDF export
+│   ├── tessera_runtime/     # Local model runtime management
 │   └── tessera_audit/       # Append-only audit logging
 ├── templates/               # YAML artifact templates (14 templates)
 │   ├── documents/           # PRD, Proposal, SOP, Report, Memo
 │   ├── slides/              # QBR, Strategy, Review
 │   ├── sheets/              # Budget, Scorecard, Roadmap
-│   └── bases/               # Vendor Register, Risk Register, Decision Log
-├── schemas/                 # Artifact and template schemas
+│   ├── bases/               # Vendor Register, Risk Register, Decision Log
+│   └── grammars/            # GBNF grammar files for structured LLM output
+├── sidecars/                # Model sidecar binaries and manifests
+│   ├── scripts/             # Platform download scripts for llama-server
+│   └── models.json          # Model download manifest (URLs, checksums, sizes)
+├── schemas/                 # JSON Schema for templates and artifacts
 ├── packaging/               # electron-builder configs, platform installers
 ├── docs/                    # Additional documentation
 ├── .github/workflows/       # CI configuration

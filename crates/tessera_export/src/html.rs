@@ -152,6 +152,7 @@ mod tests {
             "quarterly.pdf".to_string(),
             "file:///quarterly.pdf".to_string(),
             "hash1".to_string(),
+            "file_hash1".to_string(),
             "Revenue figures".to_string(),
             0.88,
         )];

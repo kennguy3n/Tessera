@@ -5,7 +5,7 @@ use tessera_core::SourceId;
 use crate::indexer::Indexer;
 use crate::search::{SearchEngine, SearchResult};
 use crate::source::Source;
-use crate::store::SourceStore;
+use crate::store::{IndexedFile, SourceStore};
 
 pub struct SourceManager {
     store: SourceStore,
@@ -75,6 +75,14 @@ impl SourceManager {
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
         let engine = SearchEngine::new(&self.store);
         engine.search(query, limit)
+    }
+
+    pub fn list_indexed_files(&self, source_id: &SourceId) -> Result<Vec<IndexedFile>> {
+        self.store.list_indexed_files(source_id)
+    }
+
+    pub fn get_current_file_hash(&self, file_path: &str) -> Result<Option<String>> {
+        self.store.get_current_file_hash(file_path)
     }
 
     pub fn reindex_source(&self, source_id: &SourceId) -> Result<()> {

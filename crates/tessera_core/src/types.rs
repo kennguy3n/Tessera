@@ -115,6 +115,33 @@ pub enum SourceStatus {
     Disconnected,
 }
 
+impl std::fmt::Display for SourceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LocalFolder => write!(f, "local_folder"),
+            Self::LocalFile => write!(f, "local_file"),
+            Self::GoogleDrive => write!(f, "google_drive"),
+            Self::OneDrive => write!(f, "one_drive"),
+            Self::Notion => write!(f, "notion"),
+            Self::Jira => write!(f, "jira"),
+            Self::Confluence => write!(f, "confluence"),
+            Self::Figma => write!(f, "figma"),
+        }
+    }
+}
+
+impl std::fmt::Display for SourceStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Connected => write!(f, "connected"),
+            Self::Indexing => write!(f, "indexing"),
+            Self::Indexed => write!(f, "indexed"),
+            Self::Error => write!(f, "error"),
+            Self::Disconnected => write!(f, "disconnected"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactType {
@@ -146,6 +173,21 @@ pub enum ExportFormat {
     Pptx,
     Xlsx,
     Json,
+}
+
+impl std::fmt::Display for ExportFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Markdown => write!(f, "markdown"),
+            Self::Html => write!(f, "html"),
+            Self::Csv => write!(f, "csv"),
+            Self::Pdf => write!(f, "pdf"),
+            Self::Docx => write!(f, "docx"),
+            Self::Pptx => write!(f, "pptx"),
+            Self::Xlsx => write!(f, "xlsx"),
+            Self::Json => write!(f, "json"),
+        }
+    }
 }
 
 #[cfg(test)]

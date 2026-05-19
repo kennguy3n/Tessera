@@ -64,6 +64,7 @@ mod tests {
             "data.csv".to_string(),
             "file:///data.csv".to_string(),
             "hash1".to_string(),
+            "file_hash1".to_string(),
             "Data Source".to_string(),
             0.95,
         )];

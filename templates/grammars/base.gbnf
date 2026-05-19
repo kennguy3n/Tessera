@@ -1,0 +1,10 @@
+root ::= "{" ws "\"fields\"" ws ":" ws fields "," ws "\"records\"" ws ":" ws records ws "}"
+fields ::= "[" ws field ("," ws field)* ws "]"
+field ::= "{" ws "\"name\"" ws ":" ws string "," ws "\"type\"" ws ":" ws string ws "}"
+records ::= "[" ws (record ("," ws record)*)? ws "]"
+record ::= "{" ws (kv ("," ws kv)*)? ws "}"
+kv ::= string ws ":" ws value
+value ::= string | number | "true" | "false" | "null"
+number ::= "-"? [0-9]+ ("." [0-9]+)?
+string ::= "\"" ([^"\\] | "\\" ["\\/bfnrt] | "\\u" [0-9a-fA-F]{4})* "\""
+ws ::= [ \t\n]*
