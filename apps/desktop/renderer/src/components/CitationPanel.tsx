@@ -28,7 +28,6 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
         try {
           const isChanged = await api.citations.checkChanged(
             citation.citationId,
-            citation.chunkHash,
           );
           if (isChanged) changed.add(citation.citationId);
         } catch {

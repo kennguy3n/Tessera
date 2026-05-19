@@ -138,7 +138,7 @@ export interface TesseraApi {
     list: (artifactId: string) => Promise<CitationInfo[]>;
     add: (req: AddCitationRequest) => Promise<CitationInfo>;
     remove: (artifactId: string, citationId: string) => Promise<void>;
-    checkChanged: (citationId: string, currentHash: string) => Promise<boolean>;
+    checkChanged: (citationId: string) => Promise<boolean>;
   };
   settings: {
     get: () => Promise<SettingsData>;
@@ -194,8 +194,8 @@ const api: TesseraApi = {
     add: (req: AddCitationRequest) => ipcRenderer.invoke("citations:add", req),
     remove: (artifactId: string, citationId: string) =>
       ipcRenderer.invoke("citations:remove", artifactId, citationId),
-    checkChanged: (citationId: string, currentHash: string) =>
-      ipcRenderer.invoke("citations:checkChanged", citationId, currentHash),
+    checkChanged: (citationId: string) =>
+      ipcRenderer.invoke("citations:checkChanged", citationId),
   },
   settings: {
     get: () => ipcRenderer.invoke("settings:get"),

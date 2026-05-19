@@ -37,7 +37,7 @@ interface NativeBridge {
   bridgeListCitations(artifactId: string): CitationInfo[];
   bridgeAddCitation(req: AddCitationRequest): CitationInfo;
   bridgeRemoveCitation(artifactId: string, citationId: string): void;
-  bridgeCheckSourceChanged(citationId: string, currentHash: string): boolean;
+  bridgeCheckSourceChanged(citationId: string): boolean;
   bridgeListVersions(artifactId: string): ArtifactVersionInfo[];
   bridgeRestoreVersion(artifactId: string, versionNumber: number): ArtifactInfo;
 }

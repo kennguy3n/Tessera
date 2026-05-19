@@ -51,9 +51,9 @@ impl From<&Source> for SourceInfo {
     fn from(s: &Source) -> Self {
         Self {
             id: s.id.to_string(),
-            source_type: serde_json::to_string(&s.source_type).unwrap_or_default(),
+            source_type: s.source_type.to_string(),
             path: s.path.clone(),
-            status: serde_json::to_string(&s.status).unwrap_or_default(),
+            status: s.status.to_string(),
             created_at: s.created_at.to_rfc3339(),
             last_indexed: s.last_indexed.map(|t| t.to_rfc3339()),
             file_count: s.file_count as i64,

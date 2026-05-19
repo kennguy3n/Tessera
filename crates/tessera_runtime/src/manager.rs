@@ -109,10 +109,10 @@ impl RuntimeManager {
             .map_err(|e| RuntimeError::StartFailed(e.to_string()))?;
 
         state.child = Some(child);
-        state.model_name = model_path
-            .split('/')
-            .next_back()
-            .map(|s| s.trim_end_matches(".gguf").to_string());
+        state.model_name = std::path::Path::new(model_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(std::string::ToString::to_string);
         state.last_activity = Some(Instant::now());
         state.status = RuntimeStatus::Loading;
 

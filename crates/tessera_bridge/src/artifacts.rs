@@ -44,7 +44,7 @@ pub fn create_artifact(
     Ok(ArtifactInfo {
         id: artifact.id.to_string(),
         title: artifact.title,
-        artifact_type: serde_json::to_string(&artifact.artifact_type).unwrap_or_default(),
+        artifact_type: artifact.artifact_type.to_string(),
         template_id: artifact.template_id.map(|t| t.to_string()),
         content: artifact.content,
         citation_count: artifact.citations.len() as i32,
@@ -68,7 +68,7 @@ pub fn update_artifact_content(
     Ok(ArtifactInfo {
         id: artifact.id.to_string(),
         title: artifact.title,
-        artifact_type: serde_json::to_string(&artifact.artifact_type).unwrap_or_default(),
+        artifact_type: artifact.artifact_type.to_string(),
         template_id: artifact.template_id.map(|t| t.to_string()),
         content: artifact.content,
         citation_count: artifact.citations.len() as i32,
@@ -86,7 +86,7 @@ pub fn get_artifact(manager: &ArtifactManager, artifact_id: &str) -> BridgeResul
     Ok(ArtifactInfo {
         id: artifact.id.to_string(),
         title: artifact.title,
-        artifact_type: serde_json::to_string(&artifact.artifact_type).unwrap_or_default(),
+        artifact_type: artifact.artifact_type.to_string(),
         template_id: artifact.template_id.map(|t| t.to_string()),
         content: artifact.content,
         citation_count: artifact.citations.len() as i32,
@@ -103,7 +103,7 @@ pub fn list_artifacts(manager: &ArtifactManager) -> BridgeResult<Vec<ArtifactInf
         .map(|a| ArtifactInfo {
             id: a.id.to_string(),
             title: a.title.clone(),
-            artifact_type: serde_json::to_string(&a.artifact_type).unwrap_or_default(),
+            artifact_type: a.artifact_type.to_string(),
             template_id: a.template_id.map(|t| t.to_string()),
             content: a.content.clone(),
             citation_count: a.citations.len() as i32,
@@ -124,7 +124,7 @@ pub fn artifact_to_info(artifact: &tessera_artifacts::Artifact) -> ArtifactInfo 
     ArtifactInfo {
         id: artifact.id.to_string(),
         title: artifact.title.clone(),
-        artifact_type: serde_json::to_string(&artifact.artifact_type).unwrap_or_default(),
+        artifact_type: artifact.artifact_type.to_string(),
         template_id: artifact.template_id.map(|t| t.to_string()),
         content: artifact.content.clone(),
         citation_count: artifact.citations.len() as i32,

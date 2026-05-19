@@ -426,6 +426,19 @@ impl SourceStore {
         Ok(count as u64)
     }
 
+    pub fn get_current_file_hash(&self, file_path: &str) -> Result<Option<String>> {
+        let result = self.conn.query_row(
+            "SELECT hash FROM indexed_files WHERE path = ?1 ORDER BY rowid DESC LIMIT 1",
+            params![file_path],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(hash) => Ok(Some(hash)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(Error::Database(e.to_string())),
+        }
+    }
+
     pub fn list_indexed_files(&self, source_id: &SourceId) -> Result<Vec<IndexedFile>> {
         let id_str = source_id.to_string();
         let mut stmt = self

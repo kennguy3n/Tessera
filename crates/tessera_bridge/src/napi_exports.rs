@@ -15,6 +15,11 @@ use crate::templates;
 
 static APP_STATE: std::sync::OnceLock<AppState> = std::sync::OnceLock::new();
 
+// Lock ordering (acquire in this order to prevent deadlocks):
+// 1. audit_logger
+// 2. source_manager
+// 3. artifact_manager
+// 4. citation_tracker
 struct AppState {
     source_manager: Mutex<SourceManager>,
     artifact_manager: Mutex<ArtifactManager>,
@@ -297,16 +302,17 @@ pub fn bridge_remove_citation(artifact_id: String, citation_id: String) -> napi:
 }
 
 #[napi]
-pub fn bridge_check_source_changed(
-    citation_id: String,
-    current_hash: String,
-) -> napi::Result<bool> {
+pub fn bridge_check_source_changed(citation_id: String) -> napi::Result<bool> {
     let s = state()?;
     let tracker = s
         .citation_tracker
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    citations::check_source_changed(&tracker, &citation_id, &current_hash)
+    let src_mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    citations::check_source_changed(&tracker, &src_mgr, &citation_id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 

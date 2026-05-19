@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use tessera_citations::citation::Citation;
 use tessera_citations::tracker::CitationTracker;
 use tessera_core::{ArtifactId, CitationId, SourceId, SourceType};
+use tessera_sources::manager::SourceManager;
 
 use crate::{BridgeError, BridgeResult};
 
@@ -40,7 +41,7 @@ impl From<&Citation> for CitationInfo {
         Self {
             citation_id: c.citation_id.to_string(),
             source_id: c.source_id.to_string(),
-            source_type: serde_json::to_string(&c.source_type).unwrap_or_default(),
+            source_type: c.source_type.to_string(),
             source_title: c.source_title.clone(),
             source_uri: c.source_uri.clone(),
             chunk_hash: c.chunk_hash.clone(),
@@ -106,14 +107,23 @@ pub fn remove_citation(
 
 pub fn check_source_changed(
     tracker: &CitationTracker,
+    source_manager: &SourceManager,
     citation_id: &str,
-    current_hash: &str,
 ) -> BridgeResult<bool> {
     let citation_uuid =
         uuid::Uuid::parse_str(citation_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
-    tracker
-        .check_source_changed(&CitationId(citation_uuid), current_hash)
-        .ok_or_else(|| BridgeError::InvalidArgs("Citation not found".to_string()))
+    let citation = tracker
+        .get(&CitationId(citation_uuid))
+        .ok_or_else(|| BridgeError::InvalidArgs("Citation not found".to_string()))?;
+
+    let current_hash = source_manager
+        .get_current_file_hash(&citation.source_uri)
+        .map_err(BridgeError::Core)?;
+
+    match current_hash {
+        Some(hash) => Ok(citation.source_changed(&hash)),
+        None => Ok(true), // file no longer indexed = treat as changed
+    }
 }
 
 #[cfg(test)]
@@ -171,23 +181,42 @@ mod tests {
 
     #[test]
     fn bridge_check_source_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let test_file = dir.path().join("test.txt");
+        std::fs::write(&test_file, "test content").unwrap();
+
+        let source_mgr = SourceManager::new(db_path.to_str().unwrap(), &[]).unwrap();
+        let source = source_mgr
+            .add_local_file(test_file.to_str().unwrap())
+            .unwrap();
+
         let mut tracker = CitationTracker::new();
         let aid = ArtifactId::new();
 
+        // The indexed file hash is the hash stored by the source manager
+        let files = source_mgr.list_indexed_files(&source.id).unwrap();
+        let file_hash = &files[0].hash;
+
         let req = AddCitationRequest {
             artifact_id: aid.to_string(),
-            source_id: SourceId::new().to_string(),
+            source_id: source.id.to_string(),
             source_type: "local_file".to_string(),
             source_title: "test.pdf".to_string(),
-            source_uri: "file:///test.pdf".to_string(),
-            chunk_hash: "original_hash".to_string(),
+            source_uri: test_file.to_str().unwrap().to_string(),
+            chunk_hash: file_hash.clone(),
             page: None,
             confidence: 0.85,
             used_for: "Test".to_string(),
         };
 
         let info = add_citation(&mut tracker, req).unwrap();
-        assert!(!check_source_changed(&tracker, &info.citation_id, "original_hash").unwrap());
-        assert!(check_source_changed(&tracker, &info.citation_id, "different_hash").unwrap());
+        // Hash matches indexed file — not changed
+        assert!(!check_source_changed(&tracker, &source_mgr, &info.citation_id).unwrap());
+
+        // Change the file and reindex so hash differs
+        std::fs::write(&test_file, "modified content").unwrap();
+        source_mgr.reindex_source(&source.id).unwrap();
+        assert!(check_source_changed(&tracker, &source_mgr, &info.citation_id).unwrap());
     }
 }

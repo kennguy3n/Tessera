@@ -214,10 +214,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "citations:checkChanged",
-    async (_event, citationId: string, currentHash: string) => {
+    async (_event, citationId: string) => {
       const bridge = getBridge();
       if (bridge) {
-        return bridge.bridgeCheckSourceChanged(citationId, currentHash);
+        return bridge.bridgeCheckSourceChanged(citationId);
       }
       throw new Error("Native bridge not available");
     },

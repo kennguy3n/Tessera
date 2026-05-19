@@ -13,6 +13,7 @@ export default function ArtifactEditorPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
 
   const loadArtifact = useCallback(async () => {
     if (!id) return;
@@ -53,10 +54,18 @@ export default function ArtifactEditorPage() {
     async (format: string) => {
       if (!id) return;
       setExporting(true);
+      setExportStatus(null);
       try {
         const api = window.tessera;
         if (!api) return;
-        await api.artifacts.exportArtifact(id, format);
+        const result = await api.artifacts.exportArtifact(id, format);
+        await navigator.clipboard.writeText(result.content);
+        setExportStatus(`Exported as ${result.format} — copied to clipboard`);
+        setTimeout(() => setExportStatus(null), 3000);
+      } catch (e) {
+        setExportStatus(
+          `Export failed: ${e instanceof Error ? e.message : "unknown error"}`,
+        );
       } finally {
         setExporting(false);
       }
@@ -109,6 +118,20 @@ export default function ArtifactEditorPage() {
           </div>
         }
       />
+      {exportStatus && (
+        <div
+          style={{
+            padding: "var(--spacing-sm) var(--spacing-md)",
+            background: exportStatus.startsWith("Export failed")
+              ? "var(--color-danger-bg, #fee)"
+              : "var(--color-success-bg, #efe)",
+            borderBottom: "1px solid var(--color-border)",
+            fontSize: "var(--font-size-sm)",
+          }}
+        >
+          {exportStatus}
+        </div>
+      )}
       <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         <EditorSwitch artifact={artifact} onSave={handleSave} />
       </div>

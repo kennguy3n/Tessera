@@ -81,6 +81,10 @@ impl SourceManager {
         self.store.list_indexed_files(source_id)
     }
 
+    pub fn get_current_file_hash(&self, file_path: &str) -> Result<Option<String>> {
+        self.store.get_current_file_hash(file_path)
+    }
+
     pub fn reindex_source(&self, source_id: &SourceId) -> Result<()> {
         let source = self.store.get_source(source_id)?;
         let path = Path::new(&source.path);

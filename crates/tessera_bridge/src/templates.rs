@@ -38,13 +38,13 @@ pub fn list_templates(template_dir: &str) -> BridgeResult<Vec<TemplateInfo>> {
         .map(|t| TemplateInfo {
             id: t.id.clone(),
             name: t.name.clone(),
-            artifact_type: serde_json::to_string(&t.artifact_type).unwrap_or_default(),
+            artifact_type: t.artifact_type.to_string(),
             description: t.description.clone(),
             section_count: t.section_count() as i32,
             export_formats: t
                 .export_formats()
                 .iter()
-                .map(|f| serde_json::to_string(f).unwrap_or_default())
+                .map(std::string::ToString::to_string)
                 .collect(),
         })
         .collect();
@@ -63,13 +63,13 @@ pub fn get_template(template_dir: &str, template_id: &str) -> BridgeResult<Optio
     Ok(registry.get_by_id(template_id).map(|t| TemplateInfo {
         id: t.id.clone(),
         name: t.name.clone(),
-        artifact_type: serde_json::to_string(&t.artifact_type).unwrap_or_default(),
+        artifact_type: t.artifact_type.to_string(),
         description: t.description.clone(),
         section_count: t.section_count() as i32,
         export_formats: t
             .export_formats()
             .iter()
-            .map(|f| serde_json::to_string(f).unwrap_or_default())
+            .map(std::string::ToString::to_string)
             .collect(),
     }))
 }

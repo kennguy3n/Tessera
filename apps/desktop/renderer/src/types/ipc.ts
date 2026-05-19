@@ -33,7 +33,7 @@ export interface CitationApi {
   list: (artifactId: string) => Promise<CitationInfo[]>;
   add: (req: AddCitationRequest) => Promise<CitationInfo>;
   remove: (artifactId: string, citationId: string) => Promise<void>;
-  checkChanged: (citationId: string, currentHash: string) => Promise<boolean>;
+  checkChanged: (citationId: string) => Promise<boolean>;
 }
 
 export interface SettingsApi {
