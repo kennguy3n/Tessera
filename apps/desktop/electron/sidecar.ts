@@ -29,6 +29,7 @@ export class ModelSidecar {
   private _isTerminating: boolean = false;
   private restartCount: number = 0;
   private startTime: number = 0;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: Partial<SidecarOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -75,7 +76,10 @@ export class ModelSidecar {
         this.restartCount++;
         if (this.restartCount <= MAX_RESTART_RETRIES) {
           const delay = Math.min(3000 * Math.pow(2, this.restartCount - 1), 60_000);
-          setTimeout(() => this.start().catch(() => {}), delay);
+          this.restartTimer = setTimeout(() => {
+            this.restartTimer = null;
+            this.start().catch(() => {});
+          }, delay);
         }
       }
     });
@@ -95,6 +99,10 @@ export class ModelSidecar {
 
   async stop(): Promise<void> {
     this._isTerminating = true;
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
     this.stopHealthCheck();
     this.stopIdleMonitor();
 

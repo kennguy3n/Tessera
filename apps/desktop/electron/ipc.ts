@@ -371,6 +371,9 @@ export function registerIpcHandlers(): void {
     const controller = new AbortController();
     activeGenerationController = controller;
 
+    const win = BrowserWindow.fromWebContents(event.sender);
+    let sentDone = false;
+
     try {
       const resp = await fetch(`${endpoint}/completion`, {
         method: "POST",
@@ -388,7 +391,6 @@ export function registerIpcHandlers(): void {
       if (!reader) throw new Error("No response body");
 
       const decoder = new TextDecoder();
-      const win = BrowserWindow.fromWebContents(event.sender);
       let lineBuffer = "";
       let streamDone = false;
 
@@ -404,6 +406,7 @@ export function registerIpcHandlers(): void {
           const data = line.slice(6);
           if (data === "[DONE]") {
             win?.webContents.send("model:token", { token: "", done: true });
+            sentDone = true;
             streamDone = true;
             break;
           }
@@ -422,7 +425,9 @@ export function registerIpcHandlers(): void {
       if (activeGenerationController === controller) {
         activeGenerationController = null;
       }
-      win?.webContents.send("model:token", { token: "", done: true });
+      if (!sentDone) {
+        win?.webContents.send("model:token", { token: "", done: true });
+      }
     }
   });
 
@@ -459,11 +464,16 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle("connectors:disconnect", async (_event, provider: string) => {
-    const stored = tokenVault.getTokens(provider);
+    let stored: ReturnType<typeof tokenVault.getTokens> = null;
+    try {
+      stored = tokenVault.getTokens(provider);
+    } catch {
+      // Vault may be corrupted — proceed with cleanup anyway
+    }
     if (stored) {
       await revokeToken(stored.refreshToken ?? stored.accessToken).catch(() => {});
-      tokenVault.deleteTokens(provider);
     }
+    try { tokenVault.deleteTokens(provider); } catch { /* best effort */ }
 
     // Clean up synced files and their source index entries
     if (provider !== "google_drive") return { provider, connected: false, status: "disconnected" };
