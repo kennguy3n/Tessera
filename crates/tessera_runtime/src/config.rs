@@ -576,8 +576,14 @@ mod tests {
     #[test]
     fn registry_contains_three_sizes_per_format() {
         let registry = full_model_registry();
-        let mlx: Vec<_> = registry.iter().filter(|m| m.format == ModelFormat::Mlx).collect();
-        let gguf: Vec<_> = registry.iter().filter(|m| m.format == ModelFormat::Gguf).collect();
+        let mlx: Vec<_> = registry
+            .iter()
+            .filter(|m| m.format == ModelFormat::Mlx)
+            .collect();
+        let gguf: Vec<_> = registry
+            .iter()
+            .filter(|m| m.format == ModelFormat::Gguf)
+            .collect();
         assert_eq!(mlx.len(), 3);
         assert_eq!(gguf.len(), 3);
     }
@@ -690,7 +696,10 @@ mod tests {
 
     #[test]
     fn preferred_format_per_platform() {
-        assert_eq!(Platform::MacosAppleSilicon.preferred_format(), ModelFormat::Mlx);
+        assert_eq!(
+            Platform::MacosAppleSilicon.preferred_format(),
+            ModelFormat::Mlx
+        );
         assert_eq!(Platform::MacosIntel.preferred_format(), ModelFormat::Gguf);
         assert_eq!(Platform::WindowsX64.preferred_format(), ModelFormat::Gguf);
         assert_eq!(Platform::LinuxX64.preferred_format(), ModelFormat::Gguf);

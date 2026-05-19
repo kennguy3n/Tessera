@@ -188,10 +188,7 @@ pub fn load_model_registry(manifest_path: &Path, platform: Platform) -> Vec<Mode
 /// Filter a parsed manifest down to the models applicable to a
 /// concrete platform.
 #[must_use]
-pub fn filter_manifest_for_platform(
-    manifest: &ModelManifest,
-    target: Platform,
-) -> Vec<ModelInfo> {
+pub fn filter_manifest_for_platform(manifest: &ModelManifest, target: Platform) -> Vec<ModelInfo> {
     let preferred = target.preferred_format();
     manifest
         .models
@@ -226,7 +223,12 @@ pub fn pick_llama_server_variant(
         .variants
         .iter()
         .find(|v| v.platform == platform.as_str() && v.compute == preferred.as_str())
-        .or_else(|| server.variants.iter().find(|v| v.platform == platform.as_str()))
+        .or_else(|| {
+            server
+                .variants
+                .iter()
+                .find(|v| v.platform == platform.as_str())
+        })
 }
 
 // --- Single-model download planning -------------------------------------
@@ -280,10 +282,7 @@ pub fn plan_download(current: Option<&InstalledModel>, requested: &ModelInfo) ->
             model_id: requested.id.clone(),
             filename: requested.filename.clone(),
             download_size_mb: install_size,
-            message: format!(
-                "Download {} ({} MB).",
-                requested.name, install_size,
-            ),
+            message: format!("Download {} ({} MB).", requested.name, install_size,),
         },
         Some(inst) if inst.model_id == requested.id => DownloadPlan::AlreadyInstalled {
             model_id: inst.model_id.clone(),
@@ -421,12 +420,16 @@ mod tests {
 
     #[test]
     fn shipped_manifest_parses_and_has_six_variants() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../sidecars/models.json");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecars/models.json");
         let manifest = load_manifest(&path).expect("ship manifest parses");
         assert_eq!(manifest.models.len(), 6);
         let mlx = manifest.models.iter().filter(|m| m.format == "mlx").count();
-        let gguf = manifest.models.iter().filter(|m| m.format == "gguf").count();
+        let gguf = manifest
+            .models
+            .iter()
+            .filter(|m| m.format == "gguf")
+            .count();
         assert_eq!(mlx, 3);
         assert_eq!(gguf, 3);
         for m in &manifest.models {
@@ -436,8 +439,8 @@ mod tests {
 
     #[test]
     fn ship_manifest_no_duplicate_platform_tier_combination() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../sidecars/models.json");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecars/models.json");
         let manifest = load_manifest(&path).expect("ship manifest parses");
         let mut seen: Vec<(String, String, String)> = Vec::new();
         for m in &manifest.models {
@@ -449,8 +452,8 @@ mod tests {
 
     #[test]
     fn ship_manifest_filename_extension_matches_format() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../sidecars/models.json");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecars/models.json");
         let manifest = load_manifest(&path).expect("ship manifest parses");
         for m in &manifest.models {
             if m.format == "mlx" {
