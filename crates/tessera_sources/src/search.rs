@@ -72,7 +72,7 @@ fn build_fts_query(query: &str) -> String {
     if terms.len() == 1 {
         return terms.into_iter().next().unwrap();
     }
-    terms.join(" AND ")
+    terms.join(" OR ")
 }
 
 fn floor_char_boundary(s: &str, mut idx: usize) -> usize {

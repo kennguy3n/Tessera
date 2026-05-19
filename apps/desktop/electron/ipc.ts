@@ -464,7 +464,8 @@ export function registerIpcHandlers(): void {
       tokenVault.deleteTokens(provider);
     }
 
-    // Clean up synced files and their source index entries (async to avoid blocking main thread)
+    // Clean up synced files and their source index entries
+    if (provider !== "google_drive") return { provider, connected: false, status: "disconnected" };
     const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
     const manifestPath = path.join(syncDir, "manifest.json");
     try {
@@ -611,6 +612,10 @@ export function registerIpcHandlers(): void {
         };
 
         if (meta.mimeType === "application/vnd.google-apps.folder") continue;
+
+        const MAX_SYNC_FILE_BYTES = 100 * 1024 * 1024; // 100 MB
+        const fileSize = Number(meta.size ?? "0");
+        if (fileSize > MAX_SYNC_FILE_BYTES) continue;
 
         const exportMimeMap: Record<string, string> = {
           "application/vnd.google-apps.document": "text/plain",
