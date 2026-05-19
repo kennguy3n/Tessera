@@ -30,7 +30,12 @@ impl<'a> SearchEngine<'a> {
         self.search_with_mode(query, limit, true)
     }
 
-    fn search_with_mode(&self, query: &str, limit: usize, use_or: bool) -> Result<Vec<SearchResult>> {
+    fn search_with_mode(
+        &self,
+        query: &str,
+        limit: usize,
+        use_or: bool,
+    ) -> Result<Vec<SearchResult>> {
         let fts_query = build_fts_query(query, use_or);
         if fts_query.is_empty() {
             return Ok(Vec::new());

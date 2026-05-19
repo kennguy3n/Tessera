@@ -410,7 +410,9 @@ pub fn bridge_generate_from_template(
 
     let mut section_contents = Vec::new();
     for section in &template.sections {
-        let hits = src_mgr.search_broad(&section.prompt, 20).unwrap_or_default();
+        let hits = src_mgr
+            .search_broad(&section.prompt, 20)
+            .unwrap_or_default();
         let filtered: Vec<_> = if selected_source_set.is_empty() {
             hits.into_iter().take(5).collect()
         } else {
