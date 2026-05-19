@@ -468,11 +468,14 @@ impl GoogleDriveConnector {
 
     /// Revoke the OAuth tokens and disconnect.
     pub async fn revoke(&mut self) -> ConnectorResult<()> {
-        if let Some(token) = &self.access_token {
+        // Prefer revoking the refresh token: it doesn't expire and Google
+        // cascades revocation to all associated access tokens.
+        let token_to_revoke = self.refresh_token.as_deref().or(self.access_token.as_deref());
+        if let Some(token) = token_to_revoke {
             let _ = self
                 .client
                 .post(&self.revoke_url)
-                .form(&[("token", token.as_str())])
+                .form(&[("token", token)])
                 .send()
                 .await;
         }

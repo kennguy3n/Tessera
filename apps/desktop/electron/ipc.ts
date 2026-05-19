@@ -461,7 +461,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("connectors:disconnect", async (_event, provider: string) => {
     const stored = tokenVault.getTokens(provider);
     if (stored) {
-      await revokeToken(stored.accessToken).catch(() => {});
+      await revokeToken(stored.refreshToken ?? stored.accessToken).catch(() => {});
       tokenVault.deleteTokens(provider);
     }
 
