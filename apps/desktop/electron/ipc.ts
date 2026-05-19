@@ -335,7 +335,7 @@ export function registerIpcHandlers(): void {
     if (!sidecar) throw new Error("Model sidecar not initialized");
     if (sidecar.isRunning) return;
     sidecar.setModelPath(modelPath);
-    await sidecar.start();
+    await sidecar.start(true);
   });
 
   ipcMain.handle("model:stop", async () => {
