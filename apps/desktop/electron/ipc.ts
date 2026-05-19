@@ -18,12 +18,11 @@ async function getValidAccessToken(provider: string): Promise<string> {
     throw new Error(`${provider} token expired and no refresh token available — re-authenticate`);
   }
 
-  const config = loadConfig();
-  const configAny = config as unknown as Record<string, unknown>;
-  const clientId = configAny.googleClientId as string | undefined;
-  const clientSecret = configAny.googleClientSecret as string | undefined;
+  const clientId = stored.clientId;
+  const clientSecret = stored.clientSecret;
   if (!clientId || !clientSecret) {
-    throw new Error("Google OAuth credentials not configured — cannot refresh token");
+    tokenVault.deleteTokens(provider);
+    throw new Error("OAuth credentials missing from token store — re-authenticate");
   }
 
   const refreshed = await refreshAccessToken(clientId, clientSecret, stored.refreshToken);
@@ -32,6 +31,8 @@ async function getValidAccessToken(provider: string): Promise<string> {
     refreshToken: refreshed.refresh_token ?? stored.refreshToken,
     expiresAt: Date.now() + refreshed.expires_in * 1000,
     scopes: stored.scopes,
+    clientId,
+    clientSecret,
   });
   return refreshed.access_token;
 }
@@ -438,6 +439,8 @@ export function registerIpcHandlers(): void {
         refreshToken: tokens.refresh_token,
         expiresAt: Date.now() + tokens.expires_in * 1000,
         scopes: ["https://www.googleapis.com/auth/drive.readonly"],
+        clientId,
+        clientSecret,
       });
       return { provider, connected: true, status: "connected" };
     },
@@ -534,7 +537,7 @@ export function registerIpcHandlers(): void {
     const accessToken = await getValidAccessToken("google_drive");
 
     let added = 0;
-    let modified = 0;
+    const modified = 0;
     const removed = 0;
 
     if (selectedFileIds && selectedFileIds.length > 0) {
@@ -595,7 +598,7 @@ export function registerIpcHandlers(): void {
             bridge.bridgeAddLocalFile(localPath);
             added++;
           } catch {
-            modified++;
+            // Indexing failed — do not count as modified
           }
         }
       }

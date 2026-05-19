@@ -187,15 +187,17 @@ export function initAppState(): boolean {
 }
 
 function resolveSidecarBinary(): string {
+  const ext = process.platform === "win32" ? ".exe" : "";
+  const binaryName = `llama-server${ext}`;
   const possiblePaths = [
-    path.join(app.getAppPath(), "sidecars", "llama-server", "llama-server"),
-    path.join(app.getAppPath(), "..", "sidecars", "llama-server", "llama-server"),
-    path.join(__dirname, "..", "sidecars", "llama-server", "llama-server"),
+    path.join(app.getAppPath(), "sidecars", "llama-server", binaryName),
+    path.join(app.getAppPath(), "..", "sidecars", "llama-server", binaryName),
+    path.join(__dirname, "..", "sidecars", "llama-server", binaryName),
   ];
   for (const p of possiblePaths) {
     if (fs.existsSync(p)) return p;
   }
-  return "llama-server";
+  return binaryName;
 }
 
 export function getBridge(): NativeBridge | null {

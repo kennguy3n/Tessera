@@ -89,7 +89,11 @@ export async function startOAuthFlow(
     server.listen(REDIRECT_PORT, "127.0.0.1", () => {
       const authUrl = buildAuthorizationUrl(config, state);
       const fullUrl = `${authUrl}&access_type=offline&prompt=consent`;
-      shell.openExternal(fullUrl).catch(reject);
+      shell.openExternal(fullUrl).catch((err) => {
+        server.close();
+        cleanup();
+        reject(err);
+      });
     });
 
     server.on("error", (err) => {

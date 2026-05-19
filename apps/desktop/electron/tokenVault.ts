@@ -8,6 +8,8 @@ export interface StoredTokens {
   refreshToken: string | null;
   expiresAt: number;
   scopes: string[];
+  clientId?: string;
+  clientSecret?: string;
 }
 
 const VAULT_DIR = (): string => path.join(app.getPath("userData"), "token-vault");

@@ -446,9 +446,13 @@ impl GoogleDriveConnector {
         }
 
         self.last_sync = Some(Utc::now());
-        self.file_count = self
-            .file_count
-            .wrapping_add(result.added.len().saturating_sub(result.removed.len()) as u64);
+        self.file_count = if result.added.len() >= result.removed.len() {
+            self.file_count
+                .saturating_add((result.added.len() - result.removed.len()) as u64)
+        } else {
+            self.file_count
+                .saturating_sub((result.removed.len() - result.added.len()) as u64)
+        };
         self.status = ConnectorStatus::Connected;
 
         Ok(result)
