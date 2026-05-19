@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use tessera_artifacts::Artifact;
 use tessera_citations::citation::Citation;
 
@@ -74,10 +76,10 @@ impl PdfBuilder {
         });
     }
 
-    fn add_spacing(&mut self, _points: f32) {
+    fn add_spacing(&mut self, points: f32) {
         self.lines.push(PdfLine {
             text: String::new(),
-            font_size: _points,
+            font_size: points,
             bold: false,
         });
     }
@@ -86,7 +88,6 @@ impl PdfBuilder {
         let page_width = 612.0_f32; // Letter
         let page_height = 792.0_f32;
         let margin = 72.0_f32;
-        let _usable_width = page_width - 2.0 * margin;
 
         // Build text stream
         let mut stream_content = String::new();
@@ -112,10 +113,11 @@ impl PdfBuilder {
                 y = page_height - margin - line_height;
             }
 
-            stream_content.push_str(&format!(
-                "{} {} Tf\n{} {} Td\n({}) Tj\n",
+            let _ = write!(
+                stream_content,
+                "{} {} Tf\n1 0 0 1 {} {} Tm\n({}) Tj\n",
                 font, line.font_size, margin, y, line.text
-            ));
+            );
         }
 
         stream_content.push_str("ET\n");

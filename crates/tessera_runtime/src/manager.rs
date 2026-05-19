@@ -111,7 +111,7 @@ impl RuntimeManager {
         state.child = Some(child);
         state.model_name = model_path
             .split('/')
-            .last()
+            .next_back()
             .map(|s| s.trim_end_matches(".gguf").to_string());
         state.last_activity = Some(Instant::now());
         state.status = RuntimeStatus::Loading;

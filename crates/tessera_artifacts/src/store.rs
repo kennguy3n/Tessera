@@ -279,8 +279,8 @@ impl ArtifactStore {
                 })
             })
             .map_err(|e| Error::Database(e.to_string()))?
-            .filter_map(std::result::Result::ok)
-            .collect();
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Database(format!("failed to read version row: {e}")))?;
 
         Ok(versions)
     }

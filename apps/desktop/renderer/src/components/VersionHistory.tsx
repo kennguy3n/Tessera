@@ -1,11 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import Button from "./Button";
-
-interface ArtifactVersionInfo {
-  versionNumber: number;
-  contentSnapshot: string;
-  createdAt: string;
-}
+import type { ArtifactVersionInfo } from "../types/ipc";
 
 interface VersionHistoryProps {
   artifactId: string;
@@ -31,8 +26,7 @@ export default function VersionHistory({
     try {
       const api = window.tessera;
       if (!api) return;
-      // Use IPC to get versions - this will be wired through the bridge
-      const response = await (window as unknown as { tessera: { artifacts: { listVersions: (id: string) => Promise<ArtifactVersionInfo[]> } } }).tessera.artifacts.listVersions(artifactId);
+      const response = await api.artifacts.listVersions(artifactId);
       setVersions(response);
     } catch {
       setVersions([]);
@@ -46,8 +40,8 @@ export default function VersionHistory({
   }, [isOpen, loadVersions]);
 
   const handlePreview = (version: ArtifactVersionInfo) => {
-    setPreviewVersion(version.versionNumber);
-    setPreviewContent(version.contentSnapshot);
+    setPreviewVersion(version.version);
+    setPreviewContent(version.content);
   };
 
   const handleRestore = async () => {
@@ -56,7 +50,7 @@ export default function VersionHistory({
     try {
       const api = window.tessera;
       if (!api) return;
-      await (window as unknown as { tessera: { artifacts: { restoreVersion: (id: string, version: number) => Promise<void> } } }).tessera.artifacts.restoreVersion(artifactId, previewVersion);
+      await api.artifacts.restoreVersion(artifactId, previewVersion);
       setPreviewVersion(null);
       onRestore();
     } finally {
@@ -83,15 +77,15 @@ export default function VersionHistory({
         <div className="version-list">
           {versions.map((version) => (
             <div
-              key={version.versionNumber}
-              className={`version-item ${previewVersion === version.versionNumber ? "active" : ""}`}
+              key={version.version}
+              className={`version-item ${previewVersion === version.version ? "active" : ""}`}
             >
               <button
                 type="button"
                 className="version-item-btn"
                 onClick={() => handlePreview(version)}
               >
-                <span className="version-number">v{version.versionNumber}</span>
+                <span className="version-number">v{version.version}</span>
                 <span className="version-date">
                   {new Date(version.createdAt).toLocaleString()}
                 </span>

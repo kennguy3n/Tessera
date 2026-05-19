@@ -120,7 +120,7 @@ pub fn parse_sse_chunk(line: &str) -> Option<GenerateChunk> {
     let content = parsed.get("content")?.as_str()?.to_string();
     let stop = parsed
         .get("stop")
-        .and_then(|v| v.as_bool())
+        .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     Some(GenerateChunk { content, stop })
 }

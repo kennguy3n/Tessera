@@ -34,15 +34,12 @@ pub fn export_to_file(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    match format {
-        ExportFormat::Pdf => {
-            let bytes = export_pdf(artifact, citations);
-            std::fs::write(path, bytes)?;
-        }
-        _ => {
-            let content = export(artifact, citations, format)?;
-            std::fs::write(path, content)?;
-        }
+    if format == ExportFormat::Pdf {
+        let bytes = export_pdf(artifact, citations);
+        std::fs::write(path, bytes)?;
+    } else {
+        let content = export(artifact, citations, format)?;
+        std::fs::write(path, content)?;
     }
     Ok(())
 }

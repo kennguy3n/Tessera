@@ -384,7 +384,7 @@ impl SourceStore {
             .conn
             .prepare(
                 "SELECT c.content, c.hash, c.chunk_index, c.byte_offset, f.path,
-                        rank
+                        f.source_id, rank
                  FROM chunks_fts fts
                  JOIN chunks c ON c.id = fts.rowid
                  JOIN indexed_files f ON f.id = c.indexed_file_id
@@ -402,7 +402,8 @@ impl SourceStore {
                     chunk_index: row.get::<_, i64>(2)? as usize,
                     byte_offset: row.get::<_, i64>(3)? as usize,
                     source_path: row.get(4)?,
-                    relevance: -row.get::<_, f64>(5)?,
+                    source_id: row.get(5)?,
+                    relevance: -row.get::<_, f64>(6)?,
                 })
             })
             .map_err(|e| Error::Database(e.to_string()))?
@@ -458,6 +459,7 @@ pub struct SearchHit {
     pub chunk_index: usize,
     pub byte_offset: usize,
     pub source_path: String,
+    pub source_id: String,
     pub relevance: f64,
 }
 

@@ -83,6 +83,8 @@ export interface SourceDetailInfo {
 
 export interface SearchHit {
   sourcePath: string;
+  sourceId: string;
+  chunkHash: string;
   chunkContent: string;
   relevanceScore: number;
   excerpt: string;
@@ -153,8 +155,8 @@ export interface ExportResult {
 }
 
 export interface ArtifactVersionInfo {
-  versionNumber: number;
-  contentSnapshot: string;
+  version: number;
+  content: string;
   createdAt: string;
 }
 

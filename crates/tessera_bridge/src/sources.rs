@@ -25,6 +25,8 @@ pub struct SearchHitInfo {
     pub content: String,
     pub excerpt: String,
     pub source_path: String,
+    pub source_id: String,
+    pub chunk_hash: String,
     pub chunk_index: i32,
     pub relevance: f64,
 }
@@ -65,6 +67,8 @@ impl From<&SearchResult> for SearchHitInfo {
             content: r.content.clone(),
             excerpt: r.excerpt.clone(),
             source_path: r.source_path.clone(),
+            source_id: r.source_id.clone(),
+            chunk_hash: r.hash.clone(),
             chunk_index: r.chunk_index as i32,
             relevance: r.relevance,
         }

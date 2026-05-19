@@ -62,6 +62,8 @@ export interface SearchHitInfo {
   content: string;
   excerpt: string;
   sourcePath: string;
+  sourceId: string;
+  chunkHash: string;
   chunkIndex: number;
   relevance: number;
 }

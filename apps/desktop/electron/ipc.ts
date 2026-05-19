@@ -49,6 +49,8 @@ export function registerIpcHandlers(): void {
         const results = bridge.bridgeSearchSources(query, limit);
         return results.map((r) => ({
           sourcePath: r.sourcePath,
+          sourceId: r.sourceId,
+          chunkHash: r.chunkHash,
           chunkContent: r.content,
           relevanceScore: r.relevance,
           excerpt: r.excerpt,

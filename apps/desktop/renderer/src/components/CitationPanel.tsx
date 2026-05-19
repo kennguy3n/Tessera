@@ -161,11 +161,11 @@ function AddCitationDialog({
   const selectHit = (hit: SearchHit) => {
     const req: AddCitationRequest = {
       artifactId,
-      sourceId: "",
+      sourceId: hit.sourceId,
       sourceType: "local_file",
       sourceTitle: hit.sourcePath.split("/").pop() || hit.sourcePath,
       sourceUri: hit.sourcePath,
-      chunkHash: "",
+      chunkHash: hit.chunkHash,
       page: null,
       confidence: hit.relevanceScore,
       usedFor: "",
