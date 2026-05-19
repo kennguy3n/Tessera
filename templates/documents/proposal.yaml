@@ -1,0 +1,31 @@
+id: proposal-v1
+name: Proposal
+type: document
+description: Business or project proposal with executive summary, approach, timeline, and budget
+sections:
+  - title: Executive Summary
+    prompt: >
+      Provide a concise overview of the proposal, including the opportunity,
+      recommended approach, and expected outcomes.
+  - title: Background
+    prompt: >
+      Describe the context and background that led to this proposal.
+      Reference relevant source material.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Proposed Approach
+    prompt: >
+      Detail the recommended approach, methodology, and key activities.
+  - title: Timeline
+    prompt: >
+      Outline the project timeline with major milestones and deliverables.
+  - title: Budget
+    prompt: >
+      Present the estimated budget with line items and justifications.
+  - title: Expected Outcomes
+    prompt: >
+      Describe the expected outcomes and how success will be measured.
+export:
+  - markdown
+  - html

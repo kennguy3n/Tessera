@@ -1,0 +1,28 @@
+id: roadmap-v1
+name: Roadmap
+type: sheet
+description: Product or project roadmap with phases, features, timelines, and dependencies
+sections:
+  - title: Roadmap Overview
+    prompt: >
+      Provide a high-level overview of the roadmap, including
+      the planning horizon and key themes.
+  - title: Phases
+    prompt: >
+      Define each phase with start/end dates, description,
+      and key deliverables.
+  - title: Features and Work Items
+    prompt: >
+      List features or work items grouped by phase.
+      Include priority, effort estimate, and owner.
+  - title: Dependencies
+    prompt: >
+      Map dependencies between work items, phases,
+      and external dependencies.
+  - title: Milestones
+    prompt: >
+      Define key milestones with target dates and
+      success criteria.
+export:
+  - markdown
+  - csv

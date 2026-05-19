@@ -1,0 +1,27 @@
+[package]
+name = "tessera_bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "N-API bridge between Electron and the Tessera Rust core."
+
+[dependencies]
+tessera_core = { path = "../tessera_core" }
+tessera_sources = { path = "../tessera_sources" }
+tessera_templates = { path = "../tessera_templates" }
+tessera_artifacts = { path = "../tessera_artifacts" }
+tessera_citations = { path = "../tessera_citations" }
+tessera_export = { path = "../tessera_export" }
+tessera_audit = { path = "../tessera_audit" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

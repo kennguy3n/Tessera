@@ -1,0 +1,33 @@
+id: report-v1
+name: Report
+type: document
+description: Analytical report with findings, analysis, and recommendations
+sections:
+  - title: Executive Summary
+    prompt: >
+      Summarize the key findings and recommendations from this report.
+  - title: Methodology
+    prompt: >
+      Describe the methodology used for data collection and analysis.
+  - title: Findings
+    prompt: >
+      Present the key findings, supported by data from sources.
+      Include relevant statistics and evidence.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Analysis
+    prompt: >
+      Provide detailed analysis of the findings. Identify patterns,
+      trends, and implications.
+  - title: Recommendations
+    prompt: >
+      List actionable recommendations based on the analysis.
+      Prioritize by impact and feasibility.
+  - title: Appendix
+    prompt: >
+      Include supporting data, references, and supplementary material.
+export:
+  - markdown
+  - html
+  - csv

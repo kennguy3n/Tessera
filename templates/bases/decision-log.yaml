@@ -1,0 +1,31 @@
+id: decision-log-v1
+name: Decision Log
+type: base
+description: Decision tracking log with context, options considered, decision rationale, and outcomes
+sections:
+  - title: Decision Record
+    prompt: >
+      For each decision, record: title, date, decision maker,
+      and a clear statement of the decision made.
+  - title: Context
+    prompt: >
+      Describe the context and constraints that influenced
+      the decision. Reference relevant source material.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Options Considered
+    prompt: >
+      List the options that were evaluated. For each option,
+      note pros, cons, and estimated impact.
+  - title: Rationale
+    prompt: >
+      Explain why the chosen option was selected.
+      Reference data and stakeholder input.
+  - title: Outcomes and Follow-up
+    prompt: >
+      Track the outcome of the decision and any follow-up
+      actions needed. Note the review date.
+export:
+  - markdown
+  - csv

@@ -1,0 +1,24 @@
+id: vendor-register-v1
+name: Vendor Register
+type: base
+description: Vendor management register with contact details, contracts, risk ratings, and review dates
+sections:
+  - title: Vendor Information
+    prompt: >
+      For each vendor, capture: company name, primary contact,
+      email, phone, and category of service.
+  - title: Contract Details
+    prompt: >
+      Record contract start date, end date, renewal terms,
+      annual value, and payment terms.
+  - title: Risk Assessment
+    prompt: >
+      Assess each vendor's risk level (low, medium, high)
+      based on criticality, financial stability, and compliance.
+  - title: Performance Review
+    prompt: >
+      Track vendor performance ratings, SLA compliance,
+      and last review date.
+export:
+  - markdown
+  - csv

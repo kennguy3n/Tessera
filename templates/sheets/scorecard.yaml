@@ -1,0 +1,27 @@
+id: scorecard-v1
+name: Scorecard
+type: sheet
+description: Performance scorecard with KPIs, targets, actuals, and trend indicators
+sections:
+  - title: KPI Overview
+    prompt: >
+      List all KPIs being tracked with their current status
+      (on-track, at-risk, off-track).
+  - title: Detailed Metrics
+    prompt: >
+      For each KPI, provide the target value, current actual,
+      percentage achievement, and trend direction.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Commentary
+    prompt: >
+      Provide commentary on metrics that are significantly above
+      or below target. Explain drivers and planned actions.
+  - title: Action Items
+    prompt: >
+      List improvement actions for off-track metrics
+      with owners and deadlines.
+export:
+  - markdown
+  - csv

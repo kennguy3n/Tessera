@@ -1,0 +1,24 @@
+id: risk-register-v1
+name: Risk Register
+type: base
+description: Risk management register with risk descriptions, likelihood, impact, mitigations, and owners
+sections:
+  - title: Risk Identification
+    prompt: >
+      Identify and describe each risk. Include the category
+      (technical, financial, operational, compliance) and source.
+  - title: Assessment
+    prompt: >
+      For each risk, assess likelihood (1-5) and impact (1-5).
+      Calculate the risk score (likelihood x impact).
+  - title: Mitigation Plans
+    prompt: >
+      Define mitigation strategies for each risk.
+      Include preventive and contingency actions.
+  - title: Ownership and Tracking
+    prompt: >
+      Assign an owner to each risk. Track status
+      (open, mitigating, accepted, closed) and last review date.
+export:
+  - markdown
+  - csv

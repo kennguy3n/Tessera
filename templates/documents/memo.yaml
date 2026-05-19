@@ -1,0 +1,25 @@
+id: memo-v1
+name: Memo
+type: document
+description: Internal communication memo with context, decision, and action items
+sections:
+  - title: Subject
+    prompt: >
+      State the subject of this memo clearly and concisely.
+  - title: Context
+    prompt: >
+      Provide the background context that recipients need to understand
+      the decision or information being communicated.
+  - title: Decision or Information
+    prompt: >
+      State the decision, policy change, or information being communicated.
+      Be specific about what is changing and why.
+  - title: Impact
+    prompt: >
+      Describe who is affected and how. Include timeline for changes.
+  - title: Action Items
+    prompt: >
+      List specific action items with owners and deadlines.
+export:
+  - markdown
+  - html

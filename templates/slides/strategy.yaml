@@ -1,0 +1,35 @@
+id: strategy-v1
+name: Strategy Deck
+type: slides
+description: Strategic planning deck with vision, market analysis, strategic pillars, and roadmap
+sections:
+  - title: Vision and Mission
+    prompt: >
+      State the vision and mission. Connect to the company's
+      broader strategic direction.
+  - title: Market Analysis
+    prompt: >
+      Analyze the current market landscape, competitive positioning,
+      and key trends. Cite source material.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Strategic Pillars
+    prompt: >
+      Define 3-5 strategic pillars that will drive the strategy.
+      Each pillar should have clear objectives and key results.
+  - title: Roadmap
+    prompt: >
+      Present the execution roadmap with phases, milestones,
+      and dependencies.
+  - title: Resource Requirements
+    prompt: >
+      Outline the resources needed — headcount, budget, technology,
+      and partnerships.
+  - title: Success Metrics
+    prompt: >
+      Define how success will be measured for each strategic pillar.
+      Include leading and lagging indicators.
+export:
+  - markdown
+  - html

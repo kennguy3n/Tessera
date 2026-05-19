@@ -1,0 +1,199 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SourceId(pub Uuid);
+
+impl SourceId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for SourceId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for SourceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ArtifactId(pub Uuid);
+
+impl ArtifactId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for ArtifactId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for ArtifactId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TemplateId(pub Uuid);
+
+impl TemplateId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    pub fn from_string(s: &str) -> Self {
+        Self(Uuid::new_v5(&Uuid::NAMESPACE_OID, s.as_bytes()))
+    }
+}
+
+impl Default for TemplateId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for TemplateId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CitationId(pub Uuid);
+
+impl CitationId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for CitationId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for CitationId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+pub type Timestamp = DateTime<Utc>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceType {
+    LocalFolder,
+    LocalFile,
+    GoogleDrive,
+    OneDrive,
+    Notion,
+    Jira,
+    Confluence,
+    Figma,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceStatus {
+    Connected,
+    Indexing,
+    Indexed,
+    Error,
+    Disconnected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactType {
+    Document,
+    Slides,
+    Sheet,
+    Base,
+}
+
+impl std::fmt::Display for ArtifactType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Document => write!(f, "document"),
+            Self::Slides => write!(f, "slides"),
+            Self::Sheet => write!(f, "sheet"),
+            Self::Base => write!(f, "base"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportFormat {
+    Markdown,
+    Html,
+    Csv,
+    Pdf,
+    Docx,
+    Pptx,
+    Xlsx,
+    Json,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_id_is_unique() {
+        let a = SourceId::new();
+        let b = SourceId::new();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn template_id_from_string_is_deterministic() {
+        let a = TemplateId::from_string("prd-v1");
+        let b = TemplateId::from_string("prd-v1");
+        assert_eq!(a, b);
+
+        let c = TemplateId::from_string("proposal-v1");
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn source_type_serializes_to_snake_case() {
+        let json = serde_json::to_string(&SourceType::LocalFolder).unwrap();
+        assert_eq!(json, r#""local_folder""#);
+    }
+
+    #[test]
+    fn artifact_type_round_trips() {
+        let original = ArtifactType::Document;
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: ArtifactType = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn export_format_round_trips() {
+        for fmt in [
+            ExportFormat::Markdown,
+            ExportFormat::Html,
+            ExportFormat::Csv,
+            ExportFormat::Json,
+        ] {
+            let json = serde_json::to_string(&fmt).unwrap();
+            let restored: ExportFormat = serde_json::from_str(&json).unwrap();
+            assert_eq!(fmt, restored);
+        }
+    }
+}
