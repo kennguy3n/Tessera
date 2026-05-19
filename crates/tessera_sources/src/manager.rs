@@ -77,6 +77,11 @@ impl SourceManager {
         engine.search(query, limit)
     }
 
+    pub fn search_broad(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+        let engine = SearchEngine::new(&self.store);
+        engine.search_broad(query, limit)
+    }
+
     pub fn list_indexed_files(&self, source_id: &SourceId) -> Result<Vec<IndexedFile>> {
         self.store.list_indexed_files(source_id)
     }

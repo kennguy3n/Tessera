@@ -422,6 +422,7 @@ export function registerIpcHandlers(): void {
       if (activeGenerationController === controller) {
         activeGenerationController = null;
       }
+      win?.webContents.send("model:token", { token: "", done: true });
     }
   });
 

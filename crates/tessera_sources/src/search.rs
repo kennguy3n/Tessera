@@ -23,7 +23,15 @@ impl<'a> SearchEngine<'a> {
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-        let fts_query = build_fts_query(query);
+        self.search_with_mode(query, limit, false)
+    }
+
+    pub fn search_broad(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+        self.search_with_mode(query, limit, true)
+    }
+
+    fn search_with_mode(&self, query: &str, limit: usize, use_or: bool) -> Result<Vec<SearchResult>> {
+        let fts_query = build_fts_query(query, use_or);
         if fts_query.is_empty() {
             return Ok(Vec::new());
         }
@@ -60,7 +68,7 @@ fn sanitize_fts_term(term: &str) -> String {
     format!("\"{cleaned}\"")
 }
 
-fn build_fts_query(query: &str) -> String {
+fn build_fts_query(query: &str, use_or: bool) -> String {
     let terms: Vec<String> = query
         .split_whitespace()
         .map(sanitize_fts_term)
@@ -72,7 +80,7 @@ fn build_fts_query(query: &str) -> String {
     if terms.len() == 1 {
         return terms.into_iter().next().unwrap();
     }
-    terms.join(" OR ")
+    terms.join(if use_or { " OR " } else { " AND " })
 }
 
 fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
