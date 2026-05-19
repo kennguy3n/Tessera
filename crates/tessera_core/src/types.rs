@@ -124,6 +124,17 @@ pub enum ArtifactType {
     Base,
 }
 
+impl std::fmt::Display for ArtifactType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Document => write!(f, "document"),
+            Self::Slides => write!(f, "slides"),
+            Self::Sheet => write!(f, "sheet"),
+            Self::Base => write!(f, "base"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportFormat {

@@ -44,10 +44,28 @@ impl<'a> SearchEngine<'a> {
     }
 }
 
+fn sanitize_fts_term(term: &str) -> String {
+    let cleaned: String = term
+        .chars()
+        .filter(|c| !matches!(c, '"' | '*' | '(' | ')' | '^' | '{' | '}'))
+        .collect();
+    if cleaned.is_empty() {
+        return String::new();
+    }
+    format!("\"{cleaned}\"")
+}
+
 fn build_fts_query(query: &str) -> String {
-    let terms: Vec<&str> = query.split_whitespace().collect();
-    if terms.len() <= 1 {
-        return query.to_string();
+    let terms: Vec<String> = query
+        .split_whitespace()
+        .map(sanitize_fts_term)
+        .filter(|t| !t.is_empty())
+        .collect();
+    if terms.is_empty() {
+        return String::new();
+    }
+    if terms.len() == 1 {
+        return terms.into_iter().next().unwrap();
     }
     terms.join(" AND ")
 }

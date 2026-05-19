@@ -8,7 +8,7 @@ pub fn export_csv(artifact: &Artifact, citations: &[Citation]) -> String {
     output.push_str("title,type,version,created_at,updated_at\n");
     let _ = writeln!(
         output,
-        "\"{}\",\"{:?}\",{},\"{}\",\"{}\"",
+        "\"{}\",\"{}\",{},\"{}\",\"{}\"",
         escape_csv(&artifact.title),
         artifact.artifact_type,
         artifact.version,

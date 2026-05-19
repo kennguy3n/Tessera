@@ -54,6 +54,8 @@ export class ModelSidecar {
 
     this.process.on("exit", (code) => {
       this._isRunning = false;
+      this.stopHealthCheck();
+      this.stopIdleMonitor();
       if (code !== 0 && code !== null) {
         setTimeout(() => this.start(), 3000);
       }
