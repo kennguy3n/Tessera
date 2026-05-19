@@ -59,8 +59,10 @@ pub fn list_citations(
 ) -> BridgeResult<Vec<CitationInfo>> {
     let uuid =
         uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
-    let citations = tracker.list_for_artifact(&ArtifactId(uuid));
-    Ok(citations.iter().map(|c| CitationInfo::from(*c)).collect())
+    let citations = tracker
+        .list_for_artifact(&ArtifactId(uuid))
+        .map_err(BridgeError::Core)?;
+    Ok(citations.iter().map(CitationInfo::from).collect())
 }
 
 pub fn add_citation(
@@ -95,9 +97,14 @@ pub fn add_citation(
         citation = citation.with_page(page);
     }
 
-    let cid = tracker.add(ArtifactId(artifact_uuid), citation.clone());
-    let stored = tracker.get(&cid).unwrap();
-    Ok(CitationInfo::from(stored))
+    let cid = tracker
+        .add(ArtifactId(artifact_uuid), citation.clone())
+        .map_err(BridgeError::Core)?;
+    let stored = tracker
+        .get(&cid)
+        .map_err(BridgeError::Core)?
+        .ok_or_else(|| BridgeError::InvalidArgs("Failed to retrieve saved citation".to_string()))?;
+    Ok(CitationInfo::from(&stored))
 }
 
 pub fn remove_citation(
@@ -109,7 +116,9 @@ pub fn remove_citation(
         uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
     let citation_uuid =
         uuid::Uuid::parse_str(citation_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
-    tracker.remove(&ArtifactId(artifact_uuid), &CitationId(citation_uuid));
+    tracker
+        .remove(&ArtifactId(artifact_uuid), &CitationId(citation_uuid))
+        .map_err(BridgeError::Core)?;
     Ok(())
 }
 
@@ -122,6 +131,7 @@ pub fn check_source_changed(
         uuid::Uuid::parse_str(citation_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
     let citation = tracker
         .get(&CitationId(citation_uuid))
+        .map_err(BridgeError::Core)?
         .ok_or_else(|| BridgeError::InvalidArgs("Citation not found".to_string()))?;
 
     let current_hash = source_manager
@@ -144,7 +154,7 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let source_mgr = SourceManager::new(db_path.to_str().unwrap(), &[]).unwrap();
 
-        let mut tracker = CitationTracker::new();
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
         let aid = ArtifactId::new();
 
         let req = AddCitationRequest {
@@ -173,7 +183,7 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let source_mgr = SourceManager::new(db_path.to_str().unwrap(), &[]).unwrap();
 
-        let mut tracker = CitationTracker::new();
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
         let aid = ArtifactId::new();
 
         let req = AddCitationRequest {
@@ -207,7 +217,7 @@ mod tests {
             .add_local_file(test_file.to_str().unwrap())
             .unwrap();
 
-        let mut tracker = CitationTracker::new();
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
         let aid = ArtifactId::new();
 
         // The indexed file hash is the hash stored by the source manager

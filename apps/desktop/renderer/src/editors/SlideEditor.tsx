@@ -30,13 +30,16 @@ export default function SlideEditor({
   const [activeIndex, setActiveIndex] = useState(0);
   const [showNotes, setShowNotes] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedRef = useRef(content);
 
   const debouncedSave = useCallback(
     (updatedSlides: Slide[]) => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
         const data: SlideContent = { slides: updatedSlides };
-        onSave(JSON.stringify(data));
+        const json = JSON.stringify(data);
+        lastSavedRef.current = json;
+        onSave(json);
       }, autoSaveMs);
     },
     [onSave, autoSaveMs],
@@ -47,6 +50,14 @@ export default function SlideEditor({
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
   }, []);
+
+  // Sync external content prop changes (e.g., version restore)
+  useEffect(() => {
+    if (content !== lastSavedRef.current) {
+      setSlides(parseSlideContent(content));
+      lastSavedRef.current = content;
+    }
+  }, [content]);
 
   const updateSlide = useCallback(
     (index: number, patch: Partial<Slide>) => {

@@ -21,12 +21,15 @@ export default function SheetEditor({
   const [editValue, setEditValue] = useState("");
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const lastSavedRef = useRef(content);
 
   const debouncedSave = useCallback(
     (data: SheetContent) => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        onSave(JSON.stringify(data));
+        const json = JSON.stringify(data);
+        lastSavedRef.current = json;
+        onSave(json);
       }, autoSaveMs);
     },
     [onSave, autoSaveMs],
@@ -37,6 +40,14 @@ export default function SheetEditor({
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
   }, []);
+
+  // Sync external content prop changes (e.g., version restore)
+  useEffect(() => {
+    if (content !== lastSavedRef.current) {
+      setSheet(parseSheetContent(content));
+      lastSavedRef.current = content;
+    }
+  }, [content]);
 
   useEffect(() => {
     if (editingCell && inputRef.current) {

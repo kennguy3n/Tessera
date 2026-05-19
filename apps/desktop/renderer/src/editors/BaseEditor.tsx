@@ -30,12 +30,15 @@ export default function BaseEditor({
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showAddField, setShowAddField] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedRef = useRef(content);
 
   const debouncedSave = useCallback(
     (updated: BaseContent) => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        onSave(JSON.stringify(updated));
+        const json = JSON.stringify(updated);
+        lastSavedRef.current = json;
+        onSave(json);
       }, autoSaveMs);
     },
     [onSave, autoSaveMs],
@@ -46,6 +49,14 @@ export default function BaseEditor({
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
   }, []);
+
+  // Sync external content prop changes (e.g., version restore)
+  useEffect(() => {
+    if (content !== lastSavedRef.current) {
+      setData(parseBaseContent(content));
+      lastSavedRef.current = content;
+    }
+  }, [content]);
 
   const updateData = useCallback(
     (updated: BaseContent) => {

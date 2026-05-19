@@ -32,9 +32,7 @@ pub fn export_artifact(
 
     let citations: Vec<Citation> = citation_tracker
         .list_for_artifact(&ArtifactId(uuid))
-        .into_iter()
-        .cloned()
-        .collect();
+        .map_err(BridgeError::Core)?;
 
     let content =
         exporter::export(&artifact, &citations, export_format).map_err(BridgeError::Core)?;
@@ -63,9 +61,7 @@ pub fn export_artifact_to_file(
 
     let citations: Vec<Citation> = citation_tracker
         .list_for_artifact(&ArtifactId(uuid))
-        .into_iter()
-        .cloned()
-        .collect();
+        .map_err(BridgeError::Core)?;
 
     exporter::export_to_file(
         &artifact,
@@ -84,7 +80,7 @@ mod tests {
     #[test]
     fn bridge_export_markdown() {
         let manager = ArtifactManager::new_in_memory().unwrap();
-        let tracker = CitationTracker::new();
+        let tracker = CitationTracker::new_in_memory().unwrap();
         let artifact = manager
             .create("Test Document".to_string(), ArtifactType::Document, None)
             .unwrap();
@@ -98,7 +94,7 @@ mod tests {
     #[test]
     fn bridge_export_html() {
         let manager = ArtifactManager::new_in_memory().unwrap();
-        let tracker = CitationTracker::new();
+        let tracker = CitationTracker::new_in_memory().unwrap();
         let artifact = manager
             .create("Test".to_string(), ArtifactType::Document, None)
             .unwrap();
@@ -111,7 +107,7 @@ mod tests {
     fn bridge_export_to_file() {
         let dir = tempfile::tempdir().unwrap();
         let manager = ArtifactManager::new_in_memory().unwrap();
-        let tracker = CitationTracker::new();
+        let tracker = CitationTracker::new_in_memory().unwrap();
         let artifact = manager
             .create("Test".to_string(), ArtifactType::Document, None)
             .unwrap();

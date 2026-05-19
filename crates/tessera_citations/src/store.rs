@@ -1,0 +1,269 @@
+use rusqlite::{params, Connection};
+use tessera_core::error::{Error, Result};
+use tessera_core::{ArtifactId, CitationId, SourceId, SourceType};
+
+use crate::citation::Citation;
+
+fn parse_datetime(s: &str) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc))
+}
+
+pub struct CitationStore {
+    conn: Connection,
+}
+
+impl CitationStore {
+    pub fn open(path: &str) -> Result<Self> {
+        let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
+        let store = Self { conn };
+        store.init_schema()?;
+        Ok(store)
+    }
+
+    pub fn open_in_memory() -> Result<Self> {
+        let conn = Connection::open_in_memory().map_err(|e| Error::Database(e.to_string()))?;
+        let store = Self { conn };
+        store.init_schema()?;
+        Ok(store)
+    }
+
+    fn init_schema(&self) -> Result<()> {
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS citations (
+                    citation_id TEXT PRIMARY KEY,
+                    artifact_id TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    source_title TEXT NOT NULL,
+                    source_uri TEXT NOT NULL,
+                    chunk_hash TEXT NOT NULL,
+                    source_file_hash TEXT NOT NULL DEFAULT '',
+                    page INTEGER,
+                    confidence REAL NOT NULL,
+                    used_for TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_citations_artifact
+                    ON citations(artifact_id);",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn insert(&self, artifact_id: &ArtifactId, citation: &Citation) -> Result<()> {
+        let source_type_str = serde_json::to_value(citation.source_type)
+            .map_err(|e| Error::Database(e.to_string()))?
+            .as_str()
+            .unwrap_or("LocalFile")
+            .to_string();
+
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO citations
+                    (citation_id, artifact_id, source_id, source_type, source_title,
+                     source_uri, chunk_hash, source_file_hash, page, confidence, used_for, created_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    citation.citation_id.0.to_string(),
+                    artifact_id.0.to_string(),
+                    citation.source_id.0.to_string(),
+                    source_type_str,
+                    citation.source_title,
+                    citation.source_uri,
+                    citation.chunk_hash,
+                    citation.source_file_hash,
+                    citation.page.map(|p| p as i64),
+                    citation.confidence,
+                    citation.used_for,
+                    citation.created_at.to_rfc3339(),
+                ],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn remove(&self, citation_id: &CitationId) -> Result<()> {
+        self.conn
+            .execute(
+                "DELETE FROM citations WHERE citation_id = ?1",
+                params![citation_id.0.to_string()],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn get(&self, citation_id: &CitationId) -> Result<Option<Citation>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT citation_id, source_id, source_type, source_title, source_uri,
+                        chunk_hash, source_file_hash, page, confidence, used_for, created_at
+                 FROM citations WHERE citation_id = ?1",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let result = stmt
+            .query_row(params![citation_id.0.to_string()], |row| {
+                Ok(Self::row_to_citation(row))
+            })
+            .optional()
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        match result {
+            Some(c) => Ok(Some(c?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_for_artifact(&self, artifact_id: &ArtifactId) -> Result<Vec<Citation>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT citation_id, source_id, source_type, source_title, source_uri,
+                        chunk_hash, source_file_hash, page, confidence, used_for, created_at
+                 FROM citations WHERE artifact_id = ?1
+                 ORDER BY created_at ASC",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![artifact_id.0.to_string()], |row| {
+                Ok(Self::row_to_citation(row))
+            })
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let mut citations = Vec::new();
+        for row in rows {
+            let citation = row
+                .map_err(|e| Error::Database(e.to_string()))?
+                .map_err(|e| Error::Database(e.to_string()))?;
+            citations.push(citation);
+        }
+        Ok(citations)
+    }
+
+    pub fn count(&self) -> Result<usize> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM citations", [], |row| row.get(0))
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(count as usize)
+    }
+
+    fn row_to_citation(row: &rusqlite::Row) -> Result<Citation> {
+        let cid_str: String = row.get(0).map_err(|e| Error::Database(e.to_string()))?;
+        let sid_str: String = row.get(1).map_err(|e| Error::Database(e.to_string()))?;
+        let stype_str: String = row.get(2).map_err(|e| Error::Database(e.to_string()))?;
+        let source_title: String = row.get(3).map_err(|e| Error::Database(e.to_string()))?;
+        let source_uri: String = row.get(4).map_err(|e| Error::Database(e.to_string()))?;
+        let chunk_hash: String = row.get(5).map_err(|e| Error::Database(e.to_string()))?;
+        let source_file_hash: String = row.get(6).map_err(|e| Error::Database(e.to_string()))?;
+        let page: Option<i64> = row.get(7).map_err(|e| Error::Database(e.to_string()))?;
+        let confidence: f64 = row.get(8).map_err(|e| Error::Database(e.to_string()))?;
+        let used_for: String = row.get(9).map_err(|e| Error::Database(e.to_string()))?;
+        let created_at_str: String = row.get(10).map_err(|e| Error::Database(e.to_string()))?;
+
+        let citation_id = uuid::Uuid::parse_str(&cid_str)
+            .map_err(|e| Error::Database(format!("Invalid citation UUID: {e}")))?;
+        let source_id = uuid::Uuid::parse_str(&sid_str)
+            .map_err(|e| Error::Database(format!("Invalid source UUID: {e}")))?;
+        let source_type: SourceType = serde_json::from_str(&format!("\"{stype_str}\""))
+            .map_err(|e| Error::Database(format!("Invalid source type: {e}")))?;
+
+        Ok(Citation {
+            citation_id: CitationId(citation_id),
+            source_id: SourceId(source_id),
+            source_type,
+            source_title,
+            source_uri,
+            chunk_hash,
+            source_file_hash,
+            page: page.map(|p| p as u32),
+            confidence,
+            used_for,
+            created_at: parse_datetime(&created_at_str),
+        })
+    }
+}
+
+trait OptionalRow {
+    fn optional(self) -> std::result::Result<Option<Result<Citation>>, rusqlite::Error>;
+}
+
+impl OptionalRow for std::result::Result<Result<Citation>, rusqlite::Error> {
+    fn optional(self) -> std::result::Result<Option<Result<Citation>>, rusqlite::Error> {
+        match self {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::citation::Citation;
+
+    fn make_citation() -> Citation {
+        Citation::new(
+            SourceId::new(),
+            SourceType::LocalFile,
+            "test.pdf".to_string(),
+            "file:///test.pdf".to_string(),
+            "chunk_abc".to_string(),
+            "file_hash_xyz".to_string(),
+            "Introduction".to_string(),
+            0.9,
+        )
+    }
+
+    #[test]
+    fn store_insert_and_get() {
+        let store = CitationStore::open_in_memory().unwrap();
+        let aid = ArtifactId::new();
+        let citation = make_citation();
+        let cid = citation.citation_id;
+
+        store.insert(&aid, &citation).unwrap();
+        let loaded = store.get(&cid).unwrap().unwrap();
+        assert_eq!(loaded.citation_id, cid);
+        assert_eq!(loaded.source_title, "test.pdf");
+        assert_eq!(loaded.source_file_hash, "file_hash_xyz");
+    }
+
+    #[test]
+    fn store_list_for_artifact() {
+        let store = CitationStore::open_in_memory().unwrap();
+        let aid = ArtifactId::new();
+
+        store.insert(&aid, &make_citation()).unwrap();
+        store.insert(&aid, &make_citation()).unwrap();
+
+        let list = store.list_for_artifact(&aid).unwrap();
+        assert_eq!(list.len(), 2);
+    }
+
+    #[test]
+    fn store_remove() {
+        let store = CitationStore::open_in_memory().unwrap();
+        let aid = ArtifactId::new();
+        let citation = make_citation();
+        let cid = citation.citation_id;
+
+        store.insert(&aid, &citation).unwrap();
+        store.remove(&cid).unwrap();
+        assert!(store.get(&cid).unwrap().is_none());
+    }
+
+    #[test]
+    fn store_count() {
+        let store = CitationStore::open_in_memory().unwrap();
+        let aid = ArtifactId::new();
+        store.insert(&aid, &make_citation()).unwrap();
+        store.insert(&aid, &make_citation()).unwrap();
+        assert_eq!(store.count().unwrap(), 2);
+    }
+}

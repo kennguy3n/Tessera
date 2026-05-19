@@ -62,9 +62,9 @@ export default function DocumentEditor({
 
   useEffect(() => {
     if (editor) {
-      const currentHtml = editor.getHTML();
       const parsed = parseContent(content);
-      if (currentHtml !== parsed) {
+      // Only update editor if content came from an external source (not our own save)
+      if (parsed !== lastSavedRef.current) {
         editor.commands.setContent(parsed);
         lastSavedRef.current = editor.getHTML();
       }

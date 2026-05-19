@@ -1,67 +1,55 @@
-use std::collections::HashMap;
+use tessera_core::error::Result;
 use tessera_core::{ArtifactId, CitationId};
 
 use crate::citation::Citation;
+use crate::store::CitationStore;
 
 pub struct CitationTracker {
-    citations: HashMap<CitationId, Citation>,
-    artifact_citations: HashMap<ArtifactId, Vec<CitationId>>,
+    store: CitationStore,
 }
 
 impl CitationTracker {
-    pub fn new() -> Self {
-        Self {
-            citations: HashMap::new(),
-            artifact_citations: HashMap::new(),
-        }
+    pub fn new(db_path: &str) -> Result<Self> {
+        let store = CitationStore::open(db_path)?;
+        Ok(Self { store })
     }
 
-    pub fn add(&mut self, artifact_id: ArtifactId, citation: Citation) -> CitationId {
+    pub fn new_in_memory() -> Result<Self> {
+        let store = CitationStore::open_in_memory()?;
+        Ok(Self { store })
+    }
+
+    pub fn add(&mut self, artifact_id: ArtifactId, citation: Citation) -> Result<CitationId> {
         let id = citation.citation_id;
-        self.citations.insert(id, citation);
-        self.artifact_citations
-            .entry(artifact_id)
-            .or_default()
-            .push(id);
-        id
+        self.store.insert(&artifact_id, &citation)?;
+        Ok(id)
     }
 
-    pub fn remove(&mut self, artifact_id: &ArtifactId, citation_id: &CitationId) {
-        self.citations.remove(citation_id);
-        if let Some(ids) = self.artifact_citations.get_mut(artifact_id) {
-            ids.retain(|id| id != citation_id);
-        }
+    pub fn remove(&mut self, _artifact_id: &ArtifactId, citation_id: &CitationId) -> Result<()> {
+        self.store.remove(citation_id)
     }
 
-    pub fn get(&self, citation_id: &CitationId) -> Option<&Citation> {
-        self.citations.get(citation_id)
+    pub fn get(&self, citation_id: &CitationId) -> Result<Option<Citation>> {
+        self.store.get(citation_id)
     }
 
-    pub fn list_for_artifact(&self, artifact_id: &ArtifactId) -> Vec<&Citation> {
-        self.artifact_citations
-            .get(artifact_id)
-            .map(|ids| ids.iter().filter_map(|id| self.citations.get(id)).collect())
-            .unwrap_or_default()
+    pub fn list_for_artifact(&self, artifact_id: &ArtifactId) -> Result<Vec<Citation>> {
+        self.store.list_for_artifact(artifact_id)
     }
 
     pub fn check_source_changed(
         &self,
         citation_id: &CitationId,
         current_hash: &str,
-    ) -> Option<bool> {
-        self.citations
-            .get(citation_id)
-            .map(|c| c.source_changed(current_hash))
+    ) -> Result<Option<bool>> {
+        Ok(self
+            .store
+            .get(citation_id)?
+            .map(|c| c.source_changed(current_hash)))
     }
 
-    pub fn count(&self) -> usize {
-        self.citations.len()
-    }
-}
-
-impl Default for CitationTracker {
-    fn default() -> Self {
-        Self::new()
+    pub fn count(&self) -> Result<usize> {
+        self.store.count()
     }
 }
 
@@ -86,49 +74,74 @@ mod tests {
 
     #[test]
     fn add_and_get_citation() {
-        let mut tracker = CitationTracker::new();
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
         let aid = ArtifactId::new();
         let citation = make_citation("Problem Statement");
-        let cid = tracker.add(aid, citation);
+        let cid = tracker.add(aid, citation).unwrap();
 
-        assert!(tracker.get(&cid).is_some());
-        assert_eq!(tracker.count(), 1);
+        assert!(tracker.get(&cid).unwrap().is_some());
+        assert_eq!(tracker.count().unwrap(), 1);
     }
 
     #[test]
     fn list_for_artifact() {
-        let mut tracker = CitationTracker::new();
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
         let aid = ArtifactId::new();
-        tracker.add(aid, make_citation("Section A"));
-        tracker.add(aid, make_citation("Section B"));
+        tracker.add(aid, make_citation("Section A")).unwrap();
+        tracker.add(aid, make_citation("Section B")).unwrap();
 
-        let citations = tracker.list_for_artifact(&aid);
+        let citations = tracker.list_for_artifact(&aid).unwrap();
         assert_eq!(citations.len(), 2);
     }
 
     #[test]
     fn remove_citation() {
-        let mut tracker = CitationTracker::new();
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
         let aid = ArtifactId::new();
-        let cid = tracker.add(aid, make_citation("Test"));
+        let cid = tracker.add(aid, make_citation("Test")).unwrap();
 
-        tracker.remove(&aid, &cid);
-        assert!(tracker.get(&cid).is_none());
-        assert_eq!(tracker.list_for_artifact(&aid).len(), 0);
+        tracker.remove(&aid, &cid).unwrap();
+        assert!(tracker.get(&cid).unwrap().is_none());
+        assert_eq!(tracker.list_for_artifact(&aid).unwrap().len(), 0);
     }
 
     #[test]
     fn check_source_changed() {
-        let mut tracker = CitationTracker::new();
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
         let aid = ArtifactId::new();
-        let cid = tracker.add(aid, make_citation("Test"));
+        let cid = tracker.add(aid, make_citation("Test")).unwrap();
 
         // Same file hash → not changed
         assert_eq!(
-            tracker.check_source_changed(&cid, "file_hash_456"),
+            tracker.check_source_changed(&cid, "file_hash_456").unwrap(),
             Some(false)
         );
         // Different file hash → changed
-        assert_eq!(tracker.check_source_changed(&cid, "different"), Some(true));
+        assert_eq!(
+            tracker.check_source_changed(&cid, "different").unwrap(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn persists_across_instances() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("citations.db");
+        let db_str = db_path.to_str().unwrap();
+
+        let aid = ArtifactId::new();
+        let cid;
+        {
+            let mut tracker = CitationTracker::new(db_str).unwrap();
+            cid = tracker.add(aid, make_citation("Persisted")).unwrap();
+            assert_eq!(tracker.count().unwrap(), 1);
+        }
+        // Open a new tracker pointing at same DB
+        {
+            let tracker = CitationTracker::new(db_str).unwrap();
+            let loaded = tracker.get(&cid).unwrap().unwrap();
+            assert_eq!(loaded.used_for, "Persisted");
+            assert_eq!(tracker.count().unwrap(), 1);
+        }
     }
 }

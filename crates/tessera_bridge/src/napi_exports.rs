@@ -35,7 +35,9 @@ pub fn init_bridge(db_path: String, template_dir: String) -> napi::Result<()> {
         ArtifactManager::new(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
     let audit_logger =
         AuditLogger::new(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let citation_tracker = Mutex::new(CitationTracker::new());
+    let citation_tracker =
+        CitationTracker::new(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let citation_tracker = Mutex::new(citation_tracker);
 
     APP_STATE
         .set(AppState {
@@ -282,16 +284,33 @@ pub fn bridge_add_citation(
     req: citations::AddCitationRequest,
 ) -> napi::Result<citations::CitationInfo> {
     let s = state()?;
+    // Parse artifact_id before locking to validate early
+    let artifact_uuid = uuid::Uuid::parse_str(&req.artifact_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     let src_mgr = s
         .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let art_mgr = s
+        .artifact_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     let mut tracker = s
         .citation_tracker
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    citations::add_citation(&mut tracker, &src_mgr, req)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let info = citations::add_citation(&mut tracker, &src_mgr, req)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Persist citation ID to the artifact's record so citationCount is accurate
+    let cid = uuid::Uuid::parse_str(&info.citation_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    art_mgr
+        .add_citation(
+            &tessera_core::ArtifactId(artifact_uuid),
+            tessera_core::CitationId(cid),
+        )
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(info)
 }
 
 #[napi]
@@ -308,12 +327,13 @@ pub fn bridge_remove_citation(artifact_id: String, citation_id: String) -> napi:
 #[napi]
 pub fn bridge_check_source_changed(citation_id: String) -> napi::Result<bool> {
     let s = state()?;
-    let tracker = s
-        .citation_tracker
-        .lock()
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Acquire source_manager (lock 2) before citation_tracker (lock 4) per documented ordering
     let src_mgr = s
         .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let tracker = s
+        .citation_tracker
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     citations::check_source_changed(&tracker, &src_mgr, &citation_id)
