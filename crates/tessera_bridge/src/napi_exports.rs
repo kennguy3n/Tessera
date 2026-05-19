@@ -385,3 +385,171 @@ pub fn bridge_restore_version(
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     Ok(artifacts::artifact_to_info(&restored))
 }
+
+// --- Artifact Generation ---
+
+#[napi]
+pub fn bridge_generate_from_template(
+    template_id: String,
+    source_ids: Vec<String>,
+) -> napi::Result<artifacts::ArtifactInfo> {
+    let s = state()?;
+    let src_mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let art_mgr = s
+        .artifact_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+    let template = tessera_templates::parser::load_template_by_id(&s.template_dir, &template_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+    let selected_source_set: std::collections::HashSet<String> = source_ids.into_iter().collect();
+
+    let mut section_contents = Vec::new();
+    for section in &template.sections {
+        let hits = src_mgr
+            .search_broad(&section.prompt, 20)
+            .unwrap_or_default();
+        let filtered: Vec<_> = if selected_source_set.is_empty() {
+            hits.into_iter().take(5).collect()
+        } else {
+            hits.into_iter()
+                .filter(|h| selected_source_set.contains(&h.source_id))
+                .take(5)
+                .collect()
+        };
+        let context: String = filtered
+            .iter()
+            .map(|h| h.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n---\n\n");
+        let content = if context.is_empty() {
+            format!(
+                "## {}\n\n*No source material found for this section.*\n",
+                section.title
+            )
+        } else {
+            format!("## {}\n\n{}\n", section.title, context)
+        };
+        section_contents.push(content);
+    }
+
+    let template_name = template.name.clone();
+    let full_content = section_contents.join("\n");
+    let atype = template.artifact_type;
+    let tid = tessera_core::TemplateId::from_string(&template_id);
+    let art = art_mgr
+        .create(template_name.clone(), atype, Some(tid))
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    art_mgr
+        .update_content(&art.id, full_content)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let updated = art_mgr
+        .get(&art.id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+    drop(src_mgr);
+    drop(art_mgr);
+    let audit = s
+        .audit_logger
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let _ = audit.log_artifact_created(&template_name);
+    drop(audit);
+
+    Ok(artifacts::artifact_to_info(&updated))
+}
+
+#[napi]
+pub fn bridge_extract_tasks_decisions(source_id: String) -> napi::Result<String> {
+    let s = state()?;
+    let src_mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+    let source_uuid =
+        uuid::Uuid::parse_str(&source_id).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let sid = tessera_core::SourceId(source_uuid);
+
+    let chunks = src_mgr.get_chunks_for_source(&sid).unwrap_or_default();
+
+    let items = tessera_artifacts::extraction::extract_tasks_decisions(&chunks, &source_id);
+
+    serde_json::to_string(&items).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+#[napi]
+pub fn bridge_compare_sources(
+    source_id_a: String,
+    source_id_b: String,
+) -> napi::Result<artifacts::ArtifactInfo> {
+    let s = state()?;
+    let src_mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let art_mgr = s
+        .artifact_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+    let uuid_a =
+        uuid::Uuid::parse_str(&source_id_a).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let uuid_b =
+        uuid::Uuid::parse_str(&source_id_b).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let sid_a = tessera_core::SourceId(uuid_a);
+    let sid_b = tessera_core::SourceId(uuid_b);
+
+    let chunks_a = src_mgr.get_chunks_for_source(&sid_a).unwrap_or_default();
+    let chunks_b = src_mgr.get_chunks_for_source(&sid_b).unwrap_or_default();
+
+    let result = tessera_artifacts::comparison::compare_sources(&chunks_a, &chunks_b);
+    let content = result.to_markdown("Source A", "Source B");
+
+    let art = art_mgr
+        .create(
+            "Source Comparison".to_string(),
+            tessera_core::ArtifactType::Document,
+            None,
+        )
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    art_mgr
+        .update_content(&art.id, content)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let updated = art_mgr
+        .get(&art.id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(artifacts::artifact_to_info(&updated))
+}
+
+#[napi]
+pub fn bridge_export_evidence_pack(
+    artifact_id: String,
+    output_path: String,
+) -> napi::Result<String> {
+    let s = state()?;
+    let art_mgr = s
+        .artifact_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let tracker = s
+        .citation_tracker
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+    let uuid =
+        uuid::Uuid::parse_str(&artifact_id).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let aid = tessera_core::ArtifactId(uuid);
+    let artifact = art_mgr
+        .get(&aid)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+    let citation_list = tracker.list_for_artifact(&aid).unwrap_or_default();
+
+    tessera_export::evidence_pack::build_evidence_pack(&artifact, &citation_list, &output_path)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}

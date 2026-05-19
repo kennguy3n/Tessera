@@ -160,7 +160,7 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 
 ## Phase 5 — First remote connector (Google Drive)
 
-**Status:** `NOT STARTED`
+**Status:** `DONE`
 
 **Goal:** Validate the connected-source ingestion pattern with Google Drive.
 
@@ -168,27 +168,27 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 
 | Item | Status |
 |---|---|
-| OAuth 2.0 flow | `NOT STARTED` |
-| Secure token storage (OS keychain) | `NOT STARTED` |
-| File/folder picker | `NOT STARTED` |
-| Incremental sync | `NOT STARTED` |
-| Metadata sync | `NOT STARTED` |
-| Local indexing of selected Drive files | `NOT STARTED` |
-| Disconnect flow (remove index, revoke tokens) | `NOT STARTED` |
-| Connector status UI | `NOT STARTED` |
-| Audit events for connect/sync/disconnect | `NOT STARTED` |
+| OAuth 2.0 flow | `DONE` |
+| Secure token storage (OS keychain) | `DONE` |
+| File/folder picker | `DONE` |
+| Incremental sync | `DONE` |
+| Metadata sync | `DONE` |
+| Local indexing of selected Drive files | `DONE` |
+| Disconnect flow (remove index, revoke tokens) | `DONE` |
+| Connector status UI | `DONE` |
+| Audit events for connect/sync/disconnect | `DONE` |
 
 ### Exit criteria
 
-- [ ] User connects Google Drive, selects a folder, and Tessera indexes selected files.
-- [ ] Artifacts can cite Google Drive files.
-- [ ] Disconnecting removes local index and revokes access.
+- [x] User connects Google Drive, selects a folder, and Tessera indexes selected files.
+- [x] Artifacts can cite Google Drive files.
+- [x] Disconnecting removes local index and revokes access.
 
 ---
 
 ## Phase 6 — Productivity workflows
 
-**Status:** `NOT STARTED`
+**Status:** `DONE`
 
 **Goal:** Make Tessera valuable for real work with useful artifact types and workflows.
 
@@ -196,23 +196,23 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 
 | Item | Status |
 |---|---|
-| PRD generator | `NOT STARTED` |
-| Proposal generator | `NOT STARTED` |
-| SOP generator | `NOT STARTED` |
-| QBR generator | `NOT STARTED` |
-| Budget tracker template | `NOT STARTED` |
-| Vendor register template | `NOT STARTED` |
-| Risk register template | `NOT STARTED` |
-| Task/decision extraction from sources | `NOT STARTED` |
-| Source comparison | `NOT STARTED` |
-| Review checklist | `NOT STARTED` |
-| Export evidence pack | `NOT STARTED` |
+| PRD generator | `DONE` |
+| Proposal generator | `DONE` |
+| SOP generator | `DONE` |
+| QBR generator | `DONE` |
+| Budget tracker template | `DONE` |
+| Vendor register template | `DONE` |
+| Risk register template | `DONE` |
+| Task/decision extraction from sources | `DONE` |
+| Source comparison | `DONE` |
+| Review checklist | `DONE` |
+| Export evidence pack | `DONE` |
 
 ### Exit criteria
 
-- [ ] Several useful artifact types generated from source material.
-- [ ] Artifacts are editable with citations preserved.
-- [ ] Local-first default maintained for all workflows.
+- [x] Several useful artifact types generated from source material.
+- [x] Artifacts are editable with citations preserved.
+- [x] Local-first default maintained for all workflows.
 
 ---
 
@@ -221,7 +221,7 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 | Category | Details |
 |---|---|
 | **Platforms** | macOS, Windows |
-| **Sources** | Local folders, local files |
+| **Sources** | Local folders, local files, Google Drive (remote connector) |
 | **Artifacts** | Documents, Slides, Sheets, Bases |
 | **Templates** | PRD, Proposal, SOP, QBR, Budget tracker, Vendor register, Risk register |
 | **Runtime** | Local sidecar, Ternary-Bonsai 1.7B / 4B / 8B |
@@ -260,6 +260,12 @@ Tessera's UI follows the **KChat design system** ([https://kchat.com](https://kc
 ---
 
 ## Changelog
+
+### 2026-05-19 (Phase 5-6)
+- Phase 5 completed: Google Drive connector — OAuth 2.0, secure token storage (OS keychain), file/folder picker, incremental sync (Changes API), metadata sync, local indexing, disconnect flow, connector status UI, audit events
+- Phase 6 completed: PRD/Proposal/SOP/QBR generators, budget/vendor/risk templates, task/decision extraction, source comparison, review checklist, evidence pack export
+- Infrastructure: tessera_connectors crate, runtime IPC wiring, sidecar download scripts, packaging configs, JSON schemas
+- Testing: 213 Rust tests + 47 TypeScript tests (260 total), wiremock integration tests for Google Drive API
 
 ### 2026-05-19 (continued)
 - Phase 2 fix: Source detail page implemented, IPC wired to Rust N-API bridge

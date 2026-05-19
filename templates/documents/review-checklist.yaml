@@ -1,0 +1,32 @@
+id: review-checklist-v1
+name: Review Checklist
+type: document
+description: Generate a structured review checklist from source material with checkable items
+sections:
+  - title: Prerequisites
+    prompt: >
+      Extract any prerequisites or setup requirements mentioned in the source material.
+      Format each as a checkable item.
+    output_format: bullets
+  - title: Content Review
+    prompt: >
+      Identify the main claims, arguments, or deliverables in the source material
+      that need to be verified or reviewed. Format as checkable review items.
+    output_format: bullets
+  - title: Quality Criteria
+    prompt: >
+      Extract or infer quality criteria and acceptance standards from the source material.
+      Format each as a pass/fail check item.
+    output_format: bullets
+  - title: Risk Items
+    prompt: >
+      Identify risks, concerns, or open questions raised in the source material
+      that need resolution before approval.
+    output_format: bullets
+  - title: Sign-off
+    prompt: >
+      List the approvals or sign-offs required based on the source material.
+    output_format: bullets
+export:
+  - markdown
+  - html

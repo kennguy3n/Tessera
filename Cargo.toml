@@ -10,6 +10,7 @@ members = [
     "crates/tessera_export",
     "crates/tessera_audit",
     "crates/tessera_runtime",
+    "crates/tessera_connectors",
 ]
 
 [workspace.package]
@@ -33,6 +34,12 @@ walkdir = "2"
 notify = "6"
 pulldown-cmark = "0.12"
 calamine = "0.26"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+tokio = { version = "1", features = ["sync", "time", "rt"] }
+url = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+regex = "1"
+wiremock = "0.6"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

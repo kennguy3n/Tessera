@@ -17,6 +17,7 @@ const DEFAULT_OPTIONS: SidecarOptions = {
 };
 
 const MAX_RESTART_RETRIES = 5;
+const STARTUP_GRACE_MS = 60_000;
 
 export class ModelSidecar {
   private process: ChildProcess | null = null;
@@ -25,7 +26,11 @@ export class ModelSidecar {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRequestTime: number = 0;
   private _isRunning: boolean = false;
+  private _isTerminating: boolean = false;
   private restartCount: number = 0;
+  private startTime: number = 0;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
+  private _generationActiveCount: number = 0;
 
   constructor(options: Partial<SidecarOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -39,8 +44,16 @@ export class ModelSidecar {
     return `http://127.0.0.1:${this.options.port}`;
   }
 
-  async start(): Promise<void> {
+  setModelPath(modelPath: string): void {
+    if (this._isRunning) {
+      throw new Error("Cannot change model path while sidecar is running");
+    }
+    this.options.modelPath = modelPath;
+  }
+
+  async start(resetRetries = false): Promise<void> {
     if (this._isRunning) return;
+    if (resetRetries) this.restartCount = 0;
 
     if (!this.options.modelPath) {
       throw new Error("Model path is required to start the sidecar");
@@ -59,11 +72,15 @@ export class ModelSidecar {
       this._isRunning = false;
       this.stopHealthCheck();
       this.stopIdleMonitor();
+      if (this._isTerminating) return;
       if (code !== 0 && code !== null) {
         this.restartCount++;
         if (this.restartCount <= MAX_RESTART_RETRIES) {
           const delay = Math.min(3000 * Math.pow(2, this.restartCount - 1), 60_000);
-          setTimeout(() => this.start().catch(() => {}), delay);
+          this.restartTimer = setTimeout(() => {
+            this.restartTimer = null;
+            this.start().catch(() => {});
+          }, delay);
         }
       }
     });
@@ -76,11 +93,17 @@ export class ModelSidecar {
 
     this._isRunning = true;
     this.lastRequestTime = Date.now();
+    this.startTime = Date.now();
     this.startHealthCheck();
     this.startIdleMonitor();
   }
 
   async stop(): Promise<void> {
+    this._isTerminating = true;
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
     this.stopHealthCheck();
     this.stopIdleMonitor();
 
@@ -104,6 +127,7 @@ export class ModelSidecar {
       this.process = null;
     }
     this._isRunning = false;
+    this._isTerminating = false;
   }
 
   async healthCheck(): Promise<boolean> {
@@ -124,6 +148,16 @@ export class ModelSidecar {
     this.lastRequestTime = Date.now();
   }
 
+  markGenerationActive(): void {
+    this._generationActiveCount++;
+    this.lastRequestTime = Date.now();
+  }
+
+  markGenerationIdle(): void {
+    this._generationActiveCount = Math.max(0, this._generationActiveCount - 1);
+    this.lastRequestTime = Date.now();
+  }
+
   private startHealthCheck(): void {
     this.healthCheckTimer = setInterval(async () => {
       if (this._isRunning) {
@@ -131,7 +165,13 @@ export class ModelSidecar {
         if (healthy) {
           this.restartCount = 0;
         } else if (this._isRunning) {
-          this.restartCount = 0;
+          // Skip restart during startup grace period — model loading can take 10-30s+
+          if (Date.now() - this.startTime < STARTUP_GRACE_MS) return;
+          this.restartCount++;
+          if (this.restartCount > MAX_RESTART_RETRIES) {
+            await this.stop();
+            return;
+          }
           await this.stop();
           await this.start();
         }
@@ -149,7 +189,7 @@ export class ModelSidecar {
   private startIdleMonitor(): void {
     this.idleTimer = setInterval(async () => {
       const idleTime = Date.now() - this.lastRequestTime;
-      if (idleTime > this.options.idleUnloadMs && this._isRunning) {
+      if (idleTime > this.options.idleUnloadMs && this._isRunning && this._generationActiveCount === 0) {
         await this.stop();
       }
     }, 10_000);

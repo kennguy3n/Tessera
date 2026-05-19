@@ -51,20 +51,31 @@ Local optimization:
 
 ---
 
-## Planned source connectors
+## Source connectors
 
-| Connector | Type |
-|---|---|
-| Local folders | Local |
-| Local files | Local |
-| Google Drive | Remote |
-| OneDrive / SharePoint | Remote |
-| Notion | Remote |
-| Jira | Remote |
-| Confluence | Remote |
-| Figma | Remote |
+| Connector | Type | Status |
+|---|---|---|
+| Local folders | Local | Available |
+| Local files | Local | Available |
+| Google Drive | Remote | Available |
+| OneDrive / SharePoint | Remote | Planned |
+| Notion | Remote | Planned |
+| Jira | Remote | Planned |
+| Confluence | Remote | Planned |
+| Figma | Remote | Planned |
 
-## Planned artifact types
+### Google Drive connector
+
+- **OAuth 2.0** — standard consent flow via system browser, localhost redirect, token refresh
+- **Secure token storage** — OS keychain via Electron safeStorage (macOS Keychain, Windows Credential Manager)
+- **File/folder picker** — browse and multi-select files from Drive within Tessera
+- **Incremental sync** — Google Drive Changes API for efficient delta updates
+- **Metadata sync** — name, mimeType, modifiedTime, size, permissions, parents
+- **Local indexing** — downloaded files pipe through the existing extraction/chunking/FTS5 pipeline
+- **Disconnect** — revokes OAuth tokens and removes all locally indexed Drive content
+- **Audit events** — all connector lifecycle events (connect, sync, disconnect) logged
+
+## Artifact types
 
 | Artifact | Description |
 |---|---|
@@ -72,9 +83,16 @@ Local optimization:
 | Slides | QBRs, strategy decks, review presentations |
 | Sheets | Budgets, scorecards, roadmaps, trackers |
 | Bases | Vendor registers, risk registers, roadmap tables |
-| Forms | Intake forms, surveys, checklists |
-| Plans | Project plans, task lists, launch checklists |
-| Reports | Generated reports from source analysis |
+
+## Productivity workflows
+
+| Feature | Description |
+|---|---|
+| **Generators** | PRD, Proposal, SOP, QBR — select sources, generate structured draft with citations |
+| **Task/Decision Extraction** | Keyword-proximity heuristics to extract actionable items from source material |
+| **Source Comparison** | N-gram analysis comparing two source sets — common themes, differences, similarity score |
+| **Review Checklist** | Generate checklists from source material for structured review |
+| **Evidence Pack** | Export artifact + cited source excerpts + citation metadata as a single ZIP |
 
 ---
 
@@ -139,6 +157,7 @@ The substrate is a modular 20-crate Rust architecture (`evidence_store`, `observ
 - **Rust** 1.75+ (`rustup` recommended)
 - **Node.js** 20+ and npm 10+
 - **C toolchain** for SQLCipher compilation (gcc/clang on Linux/macOS, MSVC on Windows)
+- **Google API credentials** (optional, for Google Drive connector) — create a project in Google Cloud Console, enable the Drive API, and configure OAuth 2.0 credentials
 
 ### Setup
 
@@ -225,6 +244,7 @@ tessera/
 │   ├── tessera_artifacts/   # Artifact CRUD, version history, storage
 │   ├── tessera_citations/   # Citation tracking and provenance
 │   ├── tessera_export/      # Markdown, HTML, CSV, JSON, PDF export
+│   ├── tessera_connectors/  # Remote source connectors (Google Drive)
 │   ├── tessera_runtime/     # Local model runtime management
 │   └── tessera_audit/       # Append-only audit logging
 ├── templates/               # YAML artifact templates (14 templates)

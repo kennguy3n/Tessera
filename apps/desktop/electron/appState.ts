@@ -1,6 +1,7 @@
 import { app } from "electron";
 import * as path from "path";
 import * as fs from "fs";
+import { ModelSidecar } from "./sidecar";
 
 interface NativeBridge {
   initBridge(dbPath: string, templateDir: string): void;
@@ -40,6 +41,10 @@ interface NativeBridge {
   bridgeCheckSourceChanged(citationId: string): boolean;
   bridgeListVersions(artifactId: string): ArtifactVersionInfo[];
   bridgeRestoreVersion(artifactId: string, versionNumber: number): ArtifactInfo;
+  bridgeGenerateFromTemplate(templateId: string, sourceIds: string[]): ArtifactInfo;
+  bridgeExtractTasksDecisions(sourceId: string): string;
+  bridgeCompareSources(sourceIdA: string, sourceIdB: string): ArtifactInfo;
+  bridgeExportEvidencePack(artifactId: string, outputPath: string): string;
 }
 
 export interface ArtifactVersionInfo {
@@ -127,6 +132,7 @@ export interface AddCitationRequest {
 }
 
 let bridge: NativeBridge | null = null;
+let modelSidecar: ModelSidecar | null = null;
 
 function resolveNativeAddon(): NativeBridge | null {
   const possiblePaths = [
@@ -165,12 +171,33 @@ export function initAppState(): boolean {
   try {
     bridge.initBridge(dbPath, templateDir);
     console.log("[Tessera] Native bridge initialized:", dbPath);
-    return true;
   } catch (err) {
     console.error("[Tessera] Failed to initialize native bridge:", err);
     bridge = null;
     return false;
   }
+
+  modelSidecar = new ModelSidecar({
+    binaryPath: resolveSidecarBinary(),
+    port: 8384,
+  });
+  console.log("[Tessera] Model sidecar configured");
+
+  return true;
+}
+
+function resolveSidecarBinary(): string {
+  const ext = process.platform === "win32" ? ".exe" : "";
+  const binaryName = `llama-server${ext}`;
+  const possiblePaths = [
+    path.join(app.getAppPath(), "sidecars", "llama-server", binaryName),
+    path.join(app.getAppPath(), "..", "sidecars", "llama-server", binaryName),
+    path.join(__dirname, "..", "sidecars", "llama-server", binaryName),
+  ];
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return binaryName;
 }
 
 export function getBridge(): NativeBridge | null {
@@ -179,4 +206,8 @@ export function getBridge(): NativeBridge | null {
 
 export function isBridgeAvailable(): boolean {
   return bridge !== null;
+}
+
+export function getModelSidecar(): ModelSidecar | null {
+  return modelSidecar;
 }

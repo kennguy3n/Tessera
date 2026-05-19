@@ -55,6 +55,35 @@ impl AuditLogger {
         )
     }
 
+    pub fn log_connector_connected(&self, provider: &str) -> Result<()> {
+        self.log(
+            AuditEventType::ConnectorConnected,
+            format!("Connector connected: {provider}"),
+        )
+    }
+
+    pub fn log_connector_synced(
+        &self,
+        provider: &str,
+        added: usize,
+        updated: usize,
+        removed: usize,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::ConnectorSynced,
+            format!(
+                "Connector synced: {provider} (added={added}, updated={updated}, removed={removed})"
+            ),
+        )
+    }
+
+    pub fn log_connector_disconnected(&self, provider: &str, files_removed: usize) -> Result<()> {
+        self.log(
+            AuditEventType::ConnectorDisconnected,
+            format!("Connector disconnected: {provider} (files_removed={files_removed})"),
+        )
+    }
+
     pub fn query_by_type(&self, event_type: &AuditEventType) -> Result<Vec<AuditEvent>> {
         self.store.query_by_type(event_type)
     }

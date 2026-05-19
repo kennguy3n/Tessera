@@ -22,6 +22,10 @@ export interface ArtifactApi {
   exportToFile: (id: string, format: string, filePath: string) => Promise<void>;
   listVersions: (id: string) => Promise<ArtifactVersionInfo[]>;
   restoreVersion: (id: string, versionNumber: number) => Promise<ArtifactInfo>;
+  generateFromTemplate: (templateId: string, sourceIds: string[]) => Promise<ArtifactInfo>;
+  extractTasksDecisions: (sourceId: string) => Promise<ExtractedItem[]>;
+  compareSources: (sourceIdA: string, sourceIdB: string) => Promise<ArtifactInfo>;
+  exportEvidencePack: (artifactId: string, outputPath: string) => Promise<string>;
 }
 
 export interface TemplateApi {
@@ -50,6 +54,27 @@ export interface ModelApi {
   onToken: (callback: (chunk: GenerateChunk) => void) => () => void;
 }
 
+export interface DriveFileListResult {
+  nextPageToken: string | null;
+  files: ConnectorFileInfo[];
+}
+
+export interface DriveSyncResult {
+  added: number;
+  modified: number;
+  removed: number;
+  status: string;
+}
+
+export interface ConnectorApi {
+  authenticate: (provider: string, clientId: string, clientSecret: string) => Promise<ConnectorStatusInfo>;
+  disconnect: (provider: string) => Promise<ConnectorStatusInfo>;
+  status: (provider: string) => Promise<ConnectorStatusInfo>;
+  listDriveFiles: (folderId?: string, pageToken?: string) => Promise<DriveFileListResult>;
+  selectItems: (items: Array<{ id: string; name: string; mimeType: string }>) => Promise<Array<{ id: string; name: string; mimeType: string; selected: boolean }>>;
+  syncDrive: (selectedFileIds?: string[]) => Promise<DriveSyncResult>;
+}
+
 export interface TesseraApi {
   sources: SourceApi;
   artifacts: ArtifactApi;
@@ -57,6 +82,7 @@ export interface TesseraApi {
   citations: CitationApi;
   settings: SettingsApi;
   model: ModelApi;
+  connectors: ConnectorApi;
 }
 
 export interface SourceInfo {
@@ -173,6 +199,29 @@ export interface GenerateChunk {
   token: string;
   done: boolean;
   error?: string;
+}
+
+export interface ExtractedItem {
+  itemType: "task" | "decision";
+  text: string;
+  sourceCitation: string;
+  confidence: number;
+}
+
+export interface ConnectorStatusInfo {
+  provider: string;
+  connected: boolean;
+  status: string;
+}
+
+export interface ConnectorFileInfo {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  modifiedTime: string | null;
+  isFolder: boolean;
+  parentId: string | null;
 }
 
 declare global {
