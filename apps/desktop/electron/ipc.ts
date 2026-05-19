@@ -452,6 +452,34 @@ export function registerIpcHandlers(): void {
       await revokeToken(stored.accessToken).catch(() => {});
       tokenVault.deleteTokens(provider);
     }
+
+    // Clean up synced files and their source index entries
+    const fs = await import("fs");
+    const pathMod = await import("path");
+    const { app } = await import("electron");
+    const syncDir = pathMod.join(app.getPath("userData"), "gdrive-sync");
+    const manifestPath = pathMod.join(syncDir, "manifest.json");
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as string[];
+      const bridge = getBridge();
+      if (bridge) {
+        const sources = bridge.bridgeListSources() as Array<{ id: string; path: string }>;
+        const syncedSet = new Set(manifest);
+        for (const src of sources) {
+          if (syncedSet.has(src.path)) {
+            try { bridge.bridgeRemoveSource(src.id); } catch { /* best effort */ }
+          }
+        }
+      }
+      for (const filePath of manifest) {
+        try { fs.unlinkSync(filePath); } catch { /* file may already be gone */ }
+      }
+      try { fs.unlinkSync(manifestPath); } catch { /* ignore */ }
+      try { fs.rmdirSync(syncDir); } catch { /* dir may not be empty or already gone */ }
+    } catch {
+      // No manifest — nothing to clean up
+    }
+
     return { provider, connected: false, status: "disconnected" };
   });
 
@@ -539,6 +567,7 @@ export function registerIpcHandlers(): void {
     let added = 0;
     const modified = 0;
     const removed = 0;
+    const syncedPaths: string[] = [];
 
     if (selectedFileIds && selectedFileIds.length > 0) {
       for (const fileId of selectedFileIds) {
@@ -597,11 +626,30 @@ export function registerIpcHandlers(): void {
           try {
             bridge.bridgeAddLocalFile(localPath);
             added++;
+            syncedPaths.push(localPath);
           } catch {
             // Indexing failed — do not count as modified
           }
         }
       }
+    }
+
+    // Persist manifest of synced file paths for disconnect cleanup
+    if (syncedPaths.length > 0) {
+      const { readFileSync, writeFileSync, mkdirSync } = await import("fs");
+      const { join } = await import("path");
+      const { app } = await import("electron");
+      const syncDir = join(app.getPath("userData"), "gdrive-sync");
+      mkdirSync(syncDir, { recursive: true });
+      const manifestPath = join(syncDir, "manifest.json");
+      let existing: string[] = [];
+      try {
+        existing = JSON.parse(readFileSync(manifestPath, "utf-8")) as string[];
+      } catch {
+        // No existing manifest
+      }
+      const merged = [...new Set([...existing, ...syncedPaths])];
+      writeFileSync(manifestPath, JSON.stringify(merged));
     }
 
     return { added, modified, removed, status: "synced" };
