@@ -483,7 +483,7 @@ export function registerIpcHandlers(): void {
       }
       await Promise.all(manifest.map((filePath) => fsp.unlink(filePath).catch(() => {})));
       await fsp.unlink(manifestPath).catch(() => {});
-      await fsp.rmdir(syncDir).catch(() => {});
+      await fsp.rm(syncDir, { recursive: true, force: true }).catch(() => {});
     } catch {
       // No manifest — nothing to clean up
     }
@@ -570,8 +570,6 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle("connectors:gdrive:sync", async (_event, selectedFileIds?: string[]) => {
-    const accessToken = await getValidAccessToken("google_drive");
-
     let added = 0;
     let modified = 0;
     const removed = 0;
@@ -599,6 +597,7 @@ export function registerIpcHandlers(): void {
 
     if (resolvedFileIds && resolvedFileIds.length > 0) {
       for (const fileId of resolvedFileIds) {
+        const accessToken = await getValidAccessToken("google_drive");
         const metaResp = await fetch(
           `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,modifiedTime`,
           { headers: { Authorization: `Bearer ${accessToken}` } },

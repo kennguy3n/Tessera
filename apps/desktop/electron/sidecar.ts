@@ -49,6 +49,7 @@ export class ModelSidecar {
 
   async start(): Promise<void> {
     if (this._isRunning) return;
+    this.restartCount = 0;
 
     if (!this.options.modelPath) {
       throw new Error("Model path is required to start the sidecar");
