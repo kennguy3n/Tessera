@@ -24,7 +24,7 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 napi = { version = "2", features = ["napi6", "serde-json"] }
 napi-derive = "2"
-zip = { workspace = true }
+
 
 [build-dependencies]
 napi-build = "2"

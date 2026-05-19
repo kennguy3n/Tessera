@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
-import type { ConnectorFileInfo } from "../types/ipc";
+import { useState, useEffect, useCallback, useRef } from "react";
+import type { ConnectorFileInfo, DriveFileListResult } from "../types/ipc";
 
 interface DriveFilePickerProps {
   onSelect: (files: ConnectorFileInfo[]) => void;
@@ -14,32 +14,53 @@ interface BreadcrumbEntry {
 export default function DriveFilePicker({ onSelect, onCancel }: DriveFilePickerProps) {
   const [files, setFiles] = useState<ConnectorFileInfo[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbEntry[]>([
     { id: "root", name: "My Drive" },
   ]);
+  const nextPageTokenRef = useRef<string | null>(null);
 
   const currentFolderId = breadcrumbs[breadcrumbs.length - 1].id;
 
-  const loadFiles = useCallback(async (folderId: string) => {
+  const loadFiles = useCallback(async (folderId: string, pageToken?: string) => {
     const api = window.tessera;
     if (!api) return;
-    setLoading(true);
-    setError(null);
+    if (pageToken) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+      setError(null);
+    }
     try {
-      const result = await api.connectors.listDriveFiles(folderId === "root" ? undefined : folderId);
-      setFiles(result.files ?? result);
+      const fid = folderId === "root" ? undefined : folderId;
+      const result: DriveFileListResult = await api.connectors.listDriveFiles(fid, pageToken);
+      const items = result.files ?? [];
+      if (pageToken) {
+        setFiles((prev) => [...prev, ...items]);
+      } else {
+        setFiles(items);
+      }
+      nextPageTokenRef.current = result.nextPageToken ?? null;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to list files");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }, []);
 
   useEffect(() => {
+    nextPageTokenRef.current = null;
     loadFiles(currentFolderId);
   }, [currentFolderId, loadFiles]);
+
+  const handleLoadMore = () => {
+    if (nextPageTokenRef.current && !loadingMore) {
+      loadFiles(currentFolderId, nextPageTokenRef.current);
+    }
+  };
 
   const handleFolderClick = (folder: ConnectorFileInfo) => {
     setBreadcrumbs((prev) => [...prev, { id: folder.id, name: folder.name }]);
@@ -134,6 +155,16 @@ export default function DriveFilePicker({ onSelect, onCancel }: DriveFilePickerP
               )}
             </div>
           ))
+        )}
+        {nextPageTokenRef.current && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm drive-picker-load-more"
+            onClick={handleLoadMore}
+            disabled={loadingMore}
+          >
+            {loadingMore ? "Loading..." : "Load more files"}
+          </button>
         )}
       </div>
 

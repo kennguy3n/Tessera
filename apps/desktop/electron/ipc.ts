@@ -362,6 +362,10 @@ export function registerIpcHandlers(): void {
       stream: true,
     };
 
+    // Abort any in-flight generation before starting a new one
+    if (activeGenerationController) {
+      activeGenerationController.abort();
+    }
     const controller = new AbortController();
     activeGenerationController = controller;
 
@@ -384,10 +388,11 @@ export function registerIpcHandlers(): void {
       const decoder = new TextDecoder();
       const win = BrowserWindow.fromWebContents(event.sender);
       let lineBuffer = "";
+      let streamDone = false;
 
       for (;;) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done || streamDone) break;
         lineBuffer += decoder.decode(value, { stream: true });
         const lines = lineBuffer.split("\n");
         lineBuffer = lines.pop() ?? "";
@@ -396,6 +401,7 @@ export function registerIpcHandlers(): void {
           const data = line.slice(6);
           if (data === "[DONE]") {
             win?.webContents.send("model:token", { token: "", done: true });
+            streamDone = true;
             break;
           }
           try {
@@ -453,14 +459,15 @@ export function registerIpcHandlers(): void {
       tokenVault.deleteTokens(provider);
     }
 
-    // Clean up synced files and their source index entries
-    const fs = await import("fs");
+    // Clean up synced files and their source index entries (async to avoid blocking main thread)
+    const fsp = await import("fs/promises");
     const pathMod = await import("path");
     const { app } = await import("electron");
     const syncDir = pathMod.join(app.getPath("userData"), "gdrive-sync");
     const manifestPath = pathMod.join(syncDir, "manifest.json");
     try {
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as string[];
+      const manifestData = await fsp.readFile(manifestPath, "utf-8");
+      const manifest = JSON.parse(manifestData) as string[];
       const bridge = getBridge();
       if (bridge) {
         const sources = bridge.bridgeListSources() as Array<{ id: string; path: string }>;
@@ -471,11 +478,9 @@ export function registerIpcHandlers(): void {
           }
         }
       }
-      for (const filePath of manifest) {
-        try { fs.unlinkSync(filePath); } catch { /* file may already be gone */ }
-      }
-      try { fs.unlinkSync(manifestPath); } catch { /* ignore */ }
-      try { fs.rmdirSync(syncDir); } catch { /* dir may not be empty or already gone */ }
+      await Promise.all(manifest.map((filePath) => fsp.unlink(filePath).catch(() => {})));
+      await fsp.unlink(manifestPath).catch(() => {});
+      await fsp.rmdir(syncDir).catch(() => {});
     } catch {
       // No manifest — nothing to clean up
     }
@@ -497,7 +502,7 @@ export function registerIpcHandlers(): void {
     async (_event, folderId?: string, pageToken?: string) => {
       const accessToken = await getValidAccessToken("google_drive");
 
-      const sanitizedFolderId = (folderId ?? "root").replace(/'/g, "\\'");
+      const sanitizedFolderId = (folderId ?? "root").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
       const query = `'${sanitizedFolderId}' in parents and trashed = false`;
       const params = new URLSearchParams({
         q: query,

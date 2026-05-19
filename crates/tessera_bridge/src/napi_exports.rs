@@ -548,26 +548,6 @@ pub fn bridge_export_evidence_pack(
 
     let citation_list = tracker.list_for_artifact(&aid).unwrap_or_default();
 
-    let file =
-        std::fs::File::create(&output_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let mut zip = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-
-    zip.start_file("artifact.md", options)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    std::io::Write::write_all(&mut zip, artifact.content.as_bytes())
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-
-    let citations_json = serde_json::to_string_pretty(&citation_list)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    zip.start_file("citations.json", options)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    std::io::Write::write_all(&mut zip, citations_json.as_bytes())
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-
-    zip.finish()
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-
-    Ok(output_path)
+    tessera_export::evidence_pack::build_evidence_pack(&artifact, &citation_list, &output_path)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
 }

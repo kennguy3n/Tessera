@@ -384,9 +384,14 @@ impl GoogleDriveConnector {
     }
 
     /// Perform an incremental sync using the Google Drive Changes API.
+    ///
+    /// Pass `known_file_ids` to distinguish new files from modifications.
+    /// Files whose ID is already in `known_file_ids` go into `result.modified`;
+    /// truly new files go into `result.added`.
     pub async fn sync_changes(
         &mut self,
         change_token: Option<&str>,
+        known_file_ids: &std::collections::HashSet<String>,
     ) -> ConnectorResult<SyncResult> {
         let page_token = match change_token {
             Some(t) => t.to_string(),
@@ -439,13 +444,16 @@ impl GoogleDriveConnector {
                 result.removed.push(change.file_id);
             } else if let Some(file) = change.file {
                 let remote = google_file_to_remote(&file);
-                // Treat all non-removed changes as additions/modifications.
-                // The caller decides based on whether they already have the file.
-                result.added.push(remote);
+                if known_file_ids.contains(&remote.id) {
+                    result.modified.push(remote);
+                } else {
+                    result.added.push(remote);
+                }
             }
         }
 
         self.last_sync = Some(Utc::now());
+        // Only count truly new files (added), not modifications
         self.file_count = if result.added.len() >= result.removed.len() {
             self.file_count
                 .saturating_add((result.added.len() - result.removed.len()) as u64)
