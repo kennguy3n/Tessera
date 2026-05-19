@@ -220,11 +220,12 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 
 | Category | Details |
 |---|---|
-| **Platforms** | macOS, Windows |
+| **Platforms** | macOS (Intel & Apple Silicon), Windows (x64), Linux (x64, arm64) |
 | **Sources** | Local folders, local files, Google Drive (remote connector) |
 | **Artifacts** | Documents, Slides, Sheets, Bases |
 | **Templates** | PRD, Proposal, SOP, QBR, Budget tracker, Vendor register, Risk register |
-| **Runtime** | Local sidecar, Ternary-Bonsai 1.7B / 4B / 8B |
+| **Runtime** | Local sidecar, Ternary-Bonsai 1.58-bit (1.7B / 4B / 8B), MLX 2-bit on Apple Silicon, GGUF Q1_0_g128 (PrismML llama.cpp fork) everywhere else |
+| **Packaging** | AppImage + `.deb` (Linux), DMG + `.zip` (macOS), NSIS + portable `.zip` (Windows) |
 | **Core** | Knowledge substrate, encrypted local store, hybrid retrieval, citations, audit trail, export |
 
 ---
@@ -260,6 +261,17 @@ Tessera's UI follows the **KChat design system** ([https://kchat.com](https://kc
 ---
 
 ## Changelog
+
+### 2026-05-19 (Platform-aware models + UI wiring)
+- Model registry rewritten around 1.58-bit ternary weights — `Q1_0_g128` (GGUF) on Windows / Linux / macOS Intel, `2-bit` (MLX) on macOS Apple Silicon. Removed the incorrect `Q4_K_M` labelling and the inflated ~1.1 GB size for the 1.7B model; actual sizes (1.7B ≈ 248 MB MLX / 450 MB GGUF, 4B ≈ 600 MB / 1.0 GB, 8B ≈ 1.2 GB / 2.0 GB) are now in `crates/tessera_runtime/src/config.rs` and `sidecars/models.json`.
+- Platform detection (`detect_platform`, `detect_compute_backends`) and platform-aware `select_model(tier, platform)` added; manager wired to use them.
+- Linux added as a first-class target — AppImage + `.deb` (x64, arm64), Vulkan / CUDA / ROCm compute backends, ARM NEON / dotprod on arm64.
+- Real Windows RAM detection via PowerShell `Get-CimInstance` with `wmic` fallback; cross-platform RAM parse tests (Linux `/proc/meminfo`, macOS `sysctl`, both Windows paths).
+- Single-model enforcement: only one model weight ever lives on disk. Swap deletes the old file before downloading the new one; SHA-256 verified after download.
+- Sidecar install scripts (`download-llama-server.{sh,ps1}`) take `--compute=cpu|cuda|vulkan|rocm`, look up the variant in `sidecars/models.json`, track the installed variant, and refuse incompatible combinations (ROCm only on `linux-x64`, etc.).
+- UI: SettingsPage Model Runtime card, RuntimeStatus model info, CreatePage generation flow (sources → Generate → ArtifactEditorPage with token streaming), SourcesPage connector status + Drive picker + multi-source compare, SourceDetailPage Extract Tasks & Decisions, ArtifactEditorPage Export Evidence Pack with native save dialog.
+- Per-platform `electron-builder` configs under `packaging/{linux,macos,windows}/`.
+- Tests: +25 (21 manifest-loading + single-model + 4 CreatePage flow), bringing the renderer suite to 72 passing.
 
 ### 2026-05-19 (Phase 5-6)
 - Phase 5 completed: Google Drive connector — OAuth 2.0, secure token storage (OS keychain), file/folder picker, incremental sync (Changes API), metadata sync, local indexing, disconnect flow, connector status UI, audit events

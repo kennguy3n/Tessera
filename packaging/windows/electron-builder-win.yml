@@ -1,0 +1,67 @@
+# Windows electron-builder config. Produces signed NSIS installer.
+#
+# CPU build is the default sidecar; CUDA / Vulkan builds can be substituted by
+# running `sidecars/scripts/download-llama-server.ps1 -Compute cuda` (or
+# `vulkan`) before packaging — whatever variant is sitting in
+# `sidecars/llama-server/` is what we bundle.
+#
+# Invocation:
+#   electron-builder --win --config packaging/windows/electron-builder-win.yml
+appId: com.tessera.desktop
+productName: Tessera
+copyright: Copyright (c) 2024 Tessera contributors
+directories:
+  buildResources: build
+  output: dist/windows
+
+files:
+  - "apps/desktop/dist/**/*"
+  - "apps/desktop/electron/**/*.js"
+  - "native/**/*.node"
+  - "templates/**/*"
+  - "schemas/**/*"
+  - "sidecars/models.json"
+  - "package.json"
+
+extraResources:
+  - from: "sidecars/llama-server/"
+    to: "sidecars/llama-server/"
+    filter:
+      - "**/*"
+  - from: "sidecars/models.json"
+    to: "sidecars/models.json"
+  - from: "templates/"
+    to: "templates/"
+    filter:
+      - "**/*.yaml"
+      - "**/*.yml"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+  icon: build/icon.ico
+  # Code signing - env vars expected in CI:
+  #   CSC_LINK: path or base64 of .pfx certificate
+  #   CSC_KEY_PASSWORD: certificate password
+  signingHashAlgorithms:
+    - sha256
+  publisherName: Tessera
+  rfc3161TimeStampServer: http://timestamp.digicert.com
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  deleteAppDataOnUninstall: false
+  artifactName: ${productName}-Setup-${version}-${arch}.exe
+  shortcutName: Tessera
+
+publish: null

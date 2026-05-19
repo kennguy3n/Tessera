@@ -90,6 +90,87 @@ export interface ModelStatus {
   status: string;
 }
 
+export type ModelPlatform =
+  | "macos-apple-silicon"
+  | "macos-intel"
+  | "windows-x64"
+  | "linux-x64"
+  | "linux-arm64";
+
+export type ModelFormat = "gguf" | "mlx";
+export type ComputeBackend = "cpu" | "cuda" | "vulkan" | "metal" | "rocm";
+export type DeviceTier = "low" | "medium" | "high";
+
+export interface PlatformInfo {
+  platform: ModelPlatform;
+  platformLabel: string;
+  totalRamGb: number;
+  tier: DeviceTier;
+  tierLabel: string;
+  computeBackends: ComputeBackend[];
+  preferredFormat: ModelFormat;
+}
+
+export interface ResolvedModel {
+  id: string;
+  name: string;
+  parameters: string;
+  format: ModelFormat;
+  formatLabel: string;
+  quantization: string;
+  platform: ModelPlatform;
+  tier: DeviceTier;
+  computeBackends: ComputeBackend[];
+  downloadSizeMb: number;
+  diskSizeMb: number;
+  requiredRamGb: number;
+  contextLength: number;
+  filename: string;
+  url: string;
+  sha256: string | null;
+}
+
+export interface InstalledModelRecord {
+  modelId: string;
+  format: ModelFormat;
+  filename: string;
+  path: string;
+  downloadSizeMb: number;
+  diskSizeMb: number;
+  sha256: string | null;
+  downloadedAt: string;
+}
+
+export type DownloadPlan =
+  | { kind: "already-installed"; modelId: string }
+  | {
+      kind: "direct-download";
+      modelId: string;
+      filename: string;
+      downloadSizeMb: number;
+      message: string;
+    }
+  | {
+      kind: "swap";
+      evictModelId: string;
+      evictFilename: string;
+      evictSizeMb: number;
+      installModelId: string;
+      installFilename: string;
+      installSizeMb: number;
+      netDiskDeltaMb: number;
+      message: string;
+    };
+
+export interface ModelDownloadProgress {
+  modelId: string;
+  format: ModelFormat;
+  filename: string;
+  downloadedMb: number;
+  totalMb: number;
+  percent: number;
+}
+
 export interface ExportResult {
   content: string;
   format: string;
@@ -172,6 +253,17 @@ export interface TesseraApi {
     cancelJob: () => Promise<void>;
     onToken: (callback: (chunk: unknown) => void) => () => void;
   };
+  runtime: {
+    detectPlatform: () => Promise<PlatformInfo>;
+    recommendModel: () => Promise<ResolvedModel | null>;
+    listModels: () => Promise<ResolvedModel[]>;
+    getCurrentModel: () => Promise<InstalledModelRecord | null>;
+    planDownload: (modelId: string) => Promise<DownloadPlan>;
+    downloadModel: (modelId: string) => Promise<InstalledModelRecord>;
+    swapModel: (modelId: string) => Promise<InstalledModelRecord>;
+    deleteModel: () => Promise<void>;
+    onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) => () => void;
+  };
   connectors: {
     authenticate: (provider: string, clientId: string, clientSecret: string) => Promise<ConnectorStatusInfo>;
     disconnect: (provider: string) => Promise<ConnectorStatusInfo>;
@@ -180,6 +272,21 @@ export interface TesseraApi {
     selectItems: (items: Array<{ id: string; name: string; mimeType: string }>) => Promise<Array<{ id: string; name: string; mimeType: string; selected: boolean }>>;
     syncDrive: (selectedFileIds?: string[]) => Promise<{ added: number; modified: number; removed: number; status: string }>;
   };
+  dialog: {
+    showSaveDialog: (options: SaveDialogOptions) => Promise<SaveDialogResult>;
+  };
+}
+
+export interface SaveDialogOptions {
+  title?: string;
+  defaultPath?: string;
+  buttonLabel?: string;
+  filters?: Array<{ name: string; extensions: string[] }>;
+}
+
+export interface SaveDialogResult {
+  canceled: boolean;
+  filePath?: string;
 }
 
 const api: TesseraApi = {
@@ -250,6 +357,26 @@ const api: TesseraApi = {
       return () => { ipcRenderer.removeListener("model:token", listener as never); };
     },
   },
+  runtime: {
+    detectPlatform: () => ipcRenderer.invoke("runtime:detectPlatform"),
+    recommendModel: () => ipcRenderer.invoke("runtime:recommendModel"),
+    listModels: () => ipcRenderer.invoke("runtime:listModels"),
+    getCurrentModel: () => ipcRenderer.invoke("runtime:getCurrentModel"),
+    planDownload: (modelId: string) =>
+      ipcRenderer.invoke("runtime:planDownload", modelId),
+    downloadModel: (modelId: string) =>
+      ipcRenderer.invoke("runtime:downloadModel", modelId),
+    swapModel: (modelId: string) =>
+      ipcRenderer.invoke("runtime:swapModel", modelId),
+    deleteModel: () => ipcRenderer.invoke("runtime:deleteModel"),
+    onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) => {
+      const listener = (_event: unknown, p: ModelDownloadProgress) => callback(p);
+      ipcRenderer.on("runtime:downloadProgress", listener as never);
+      return () => {
+        ipcRenderer.removeListener("runtime:downloadProgress", listener as never);
+      };
+    },
+  },
   connectors: {
     authenticate: (provider: string, clientId: string, clientSecret: string) =>
       ipcRenderer.invoke("connectors:authenticate", provider, clientId, clientSecret),
@@ -263,6 +390,10 @@ const api: TesseraApi = {
       ipcRenderer.invoke("connectors:gdrive:selectItems", items),
     syncDrive: (selectedFileIds?: string[]) =>
       ipcRenderer.invoke("connectors:gdrive:sync", selectedFileIds),
+  },
+  dialog: {
+    showSaveDialog: (options: SaveDialogOptions) =>
+      ipcRenderer.invoke("dialog:showSaveDialog", options),
   },
 };
 

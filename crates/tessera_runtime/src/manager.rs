@@ -5,8 +5,8 @@ use tokio::sync::Mutex;
 use tokio::time::{Duration, Instant};
 
 use crate::config::{
-    available_models, select_model_for_tier, DeviceTier, ModelInfo, RuntimeConfig, RuntimeState,
-    RuntimeStatus,
+    available_models_for_platform, detect_platform, select_model as select_model_fn, DeviceTier,
+    ModelInfo, Platform, RuntimeConfig, RuntimeState, RuntimeStatus,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -62,11 +62,19 @@ impl RuntimeManager {
     }
 
     pub fn select_model(tier: DeviceTier) -> ModelInfo {
-        select_model_for_tier(tier)
+        select_model_fn(tier, detect_platform())
+    }
+
+    pub fn select_model_for_platform(tier: DeviceTier, platform: Platform) -> ModelInfo {
+        select_model_fn(tier, platform)
     }
 
     pub fn list_available_models() -> Vec<ModelInfo> {
-        available_models()
+        available_models_for_platform(detect_platform())
+    }
+
+    pub fn list_available_models_for_platform(platform: Platform) -> Vec<ModelInfo> {
+        available_models_for_platform(platform)
     }
 
     pub async fn start(&self, model_path: &str) -> Result<()> {
@@ -178,19 +186,12 @@ impl RuntimeManager {
     }
 }
 
-fn sys_total_ram_gb() -> f64 {
+pub fn sys_total_ram_gb() -> f64 {
     #[cfg(target_os = "linux")]
     {
         if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
-            for line in content.lines() {
-                if line.starts_with("MemTotal:") {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 2 {
-                        if let Ok(kb) = parts[1].parse::<f64>() {
-                            return kb / 1_048_576.0;
-                        }
-                    }
-                }
+            if let Some(gb) = parse_linux_meminfo(&content) {
+                return gb;
             }
         }
         4.0
@@ -200,8 +201,8 @@ fn sys_total_ram_gb() -> f64 {
         use std::process::Command as StdCmd;
         if let Ok(output) = StdCmd::new("sysctl").arg("-n").arg("hw.memsize").output() {
             if let Ok(s) = String::from_utf8(output.stdout) {
-                if let Ok(bytes) = s.trim().parse::<f64>() {
-                    return bytes / (1024.0 * 1024.0 * 1024.0);
+                if let Some(gb) = parse_macos_sysctl(&s) {
+                    return gb;
                 }
             }
         }
@@ -209,12 +210,89 @@ fn sys_total_ram_gb() -> f64 {
     }
     #[cfg(target_os = "windows")]
     {
+        use std::process::Command as StdCmd;
+        // PowerShell / Get-CimInstance is the modern path. wmic was deprecated
+        // in Windows 10 21H1 but is still present on many systems, so we keep
+        // it as a fallback.
+        if let Ok(output) = StdCmd::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory",
+            ])
+            .output()
+        {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                if let Some(gb) = parse_windows_powershell(&s) {
+                    return gb;
+                }
+            }
+        }
+        if let Ok(output) = StdCmd::new("wmic")
+            .args(["ComputerSystem", "get", "TotalPhysicalMemory", "/value"])
+            .output()
+        {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                if let Some(gb) = parse_windows_wmic(&s) {
+                    return gb;
+                }
+            }
+        }
         4.0
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         4.0
     }
+}
+
+/// Parse the contents of `/proc/meminfo` and return total RAM in GB.
+#[must_use]
+pub fn parse_linux_meminfo(content: &str) -> Option<f64> {
+    for line in content.lines() {
+        if let Some(rest) = line.strip_prefix("MemTotal:") {
+            let mut parts = rest.split_whitespace();
+            let kb_str = parts.next()?;
+            let kb: f64 = kb_str.parse().ok()?;
+            return Some(kb / 1_048_576.0);
+        }
+    }
+    None
+}
+
+/// Parse the stdout of `sysctl -n hw.memsize` and return total RAM in GB.
+#[must_use]
+pub fn parse_macos_sysctl(stdout: &str) -> Option<f64> {
+    let bytes: f64 = stdout.trim().parse().ok()?;
+    Some(bytes / (1024.0 * 1024.0 * 1024.0))
+}
+
+/// Parse the stdout of PowerShell's `(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory`
+/// and return total RAM in GB.
+#[must_use]
+pub fn parse_windows_powershell(stdout: &str) -> Option<f64> {
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let bytes: f64 = trimmed.parse().ok()?;
+    Some(bytes / (1024.0 * 1024.0 * 1024.0))
+}
+
+/// Parse `wmic ComputerSystem get TotalPhysicalMemory /value` output.
+///
+/// `wmic /value` emits `Key=Value` lines plus blank padding; we walk
+/// lines looking for the `TotalPhysicalMemory=` prefix.
+#[must_use]
+pub fn parse_windows_wmic(stdout: &str) -> Option<f64> {
+    for line in stdout.lines() {
+        let line = line.trim();
+        if let Some(val) = line.strip_prefix("TotalPhysicalMemory=") {
+            let bytes: f64 = val.trim().parse().ok()?;
+            return Some(bytes / (1024.0 * 1024.0 * 1024.0));
+        }
+    }
+    None
 }
 
 fn which_binary(name: &str) -> Option<PathBuf> {
@@ -326,5 +404,77 @@ mod tests {
             assert!(!model.name.is_empty());
             assert!(model.required_ram_gb > 0.0);
         }
+    }
+
+    #[test]
+    fn parse_linux_meminfo_typical_16gb() {
+        let sample = "\
+MemTotal:       16384000 kB
+MemFree:         1234567 kB
+Buffers:          123456 kB
+";
+        let gb = parse_linux_meminfo(sample).expect("parse");
+        // 16384000 kB / 1_048_576 = 15.625 GB
+        assert!((gb - 15.625).abs() < 0.01, "got {gb}");
+    }
+
+    #[test]
+    fn parse_linux_meminfo_4gb() {
+        let sample = "MemTotal:        4194304 kB\n";
+        let gb = parse_linux_meminfo(sample).expect("parse");
+        // 4194304 kB / 1_048_576 = 4.0 GB exactly
+        assert!((gb - 4.0).abs() < 0.001, "got {gb}");
+    }
+
+    #[test]
+    fn parse_linux_meminfo_returns_none_when_missing() {
+        assert!(parse_linux_meminfo("SomethingElse: 10\n").is_none());
+    }
+
+    #[test]
+    fn parse_macos_sysctl_16gb() {
+        // 16 GiB in bytes
+        let s = "17179869184\n";
+        let gb = parse_macos_sysctl(s).expect("parse");
+        assert!((gb - 16.0).abs() < 0.001, "got {gb}");
+    }
+
+    #[test]
+    fn parse_macos_sysctl_invalid() {
+        assert!(parse_macos_sysctl("not-a-number").is_none());
+    }
+
+    #[test]
+    fn parse_windows_powershell_16gb() {
+        // PowerShell prints with trailing \r\n on Windows
+        let s = "17179869184\r\n";
+        let gb = parse_windows_powershell(s).expect("parse");
+        assert!((gb - 16.0).abs() < 0.001, "got {gb}");
+    }
+
+    #[test]
+    fn parse_windows_powershell_8gb() {
+        let s = "8589934592\r\n";
+        let gb = parse_windows_powershell(s).expect("parse");
+        assert!((gb - 8.0).abs() < 0.001, "got {gb}");
+    }
+
+    #[test]
+    fn parse_windows_powershell_empty_returns_none() {
+        assert!(parse_windows_powershell("").is_none());
+        assert!(parse_windows_powershell("   \r\n").is_none());
+    }
+
+    #[test]
+    fn parse_windows_wmic_value_format() {
+        // `wmic /value` emits blank-padded Key=Value lines.
+        let s = "\r\n\r\nTotalPhysicalMemory=17179869184\r\n\r\n\r\n";
+        let gb = parse_windows_wmic(s).expect("parse");
+        assert!((gb - 16.0).abs() < 0.001, "got {gb}");
+    }
+
+    #[test]
+    fn parse_windows_wmic_missing_key_returns_none() {
+        assert!(parse_windows_wmic("OtherKey=1234\r\n").is_none());
     }
 }

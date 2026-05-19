@@ -73,6 +73,42 @@ export default function ArtifactEditorPage() {
     [id],
   );
 
+  const handleExportEvidencePack = useCallback(async () => {
+    if (!id) return;
+    const api = window.tessera;
+    if (!api) {
+      setExportStatus("Export failed: Tessera bridge not available");
+      return;
+    }
+    setExporting(true);
+    setExportStatus(null);
+    try {
+      const safeTitle = (artifact?.title ?? "evidence-pack")
+        .replace(/[^a-zA-Z0-9._-]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "") || "evidence-pack";
+      const dialogResult = await api.dialog.showSaveDialog({
+        title: "Export Evidence Pack",
+        defaultPath: `${safeTitle}.zip`,
+        buttonLabel: "Export",
+        filters: [{ name: "Evidence Pack", extensions: ["zip"] }],
+      });
+      if (dialogResult.canceled || !dialogResult.filePath) {
+        setExporting(false);
+        return;
+      }
+      const outPath = await api.artifacts.exportEvidencePack(id, dialogResult.filePath);
+      setExportStatus(`Evidence pack exported to ${outPath}`);
+      setTimeout(() => setExportStatus(null), 6000);
+    } catch (e) {
+      setExportStatus(
+        `Export failed: ${e instanceof Error ? e.message : "unknown error"}`,
+      );
+    } finally {
+      setExporting(false);
+    }
+  }, [id, artifact?.title]);
+
   if (loading) {
     return (
       <div>
@@ -111,6 +147,14 @@ export default function ArtifactEditorPage() {
               disabled={exporting}
             >
               Export
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={handleExportEvidencePack}
+              disabled={exporting}
+              data-testid="export-evidence-pack"
+            >
+              Export Evidence Pack
             </Button>
             <Button variant="secondary" onClick={() => navigate("/")}>
               Back

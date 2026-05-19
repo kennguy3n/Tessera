@@ -282,6 +282,29 @@ GBNF (GGML BNF) grammars constrain model output to valid structured formats (JSO
 | CPU+GPU | Vulkan / CUDA backend |
 | Embeddings | DirectML EP |
 | Fallback | ONNX Runtime CPU EP |
+| Packaging | NSIS installer (`.exe`), portable `.zip` |
+
+### Linux
+
+| Component | Detail |
+|---|---|
+| Shell | Electron 31 + React |
+| Native addon | C++ N-API addon |
+| Runtime | LlamaCppAdapter |
+| CPU | AVX2 minimum, AVX-VNNI / AVX-512 VNNI, ARM NEON / dotprod |
+| GPU | Vulkan, CUDA (NVIDIA), ROCm (AMD) |
+| Embeddings | ONNX Runtime CPU EP |
+| Packaging | AppImage, `.deb` (x64 + arm64) |
+
+### Model selection architecture
+
+Selection happens in three independent dimensions that are resolved in this order:
+
+1. **Platform → format.** `detect_platform()` (in `crates/tessera_runtime/src/config.rs`) maps the running target triple to one of `macos-apple-silicon`, `macos-intel`, `windows-x64`, `linux-x64`, `linux-arm64`. macOS Apple Silicon prefers MLX 2-bit; every other platform uses GGUF Q1_0_g128 from the PrismML llama.cpp fork. Q4_K_M is intentionally NOT used — the Q1_0_g128 ternary repack is what makes Bonsai 1.58-bit small (≈248 MB for the 1.7B MLX, ≈450 MB for the 1.7B GGUF).
+2. **Device tier → model size.** `sys_total_ram_gb()` reads physical RAM (sysctl on macOS, `/proc/meminfo` on Linux, PowerShell `Get-CimInstance` then `wmic` fallback on Windows) and buckets it into `low` (1.7B), `medium` (4B), or `high` (8B).
+3. **GPU detection → compute backend.** `detect_compute_backends()` returns the set of acceleration paths actually available on the box (`cpu` is always present; `cuda` when `nvidia-smi` runs; `vulkan` when the runtime library is present; `rocm` on Linux when `/opt/rocm` exists; `metal` on Apple Silicon). The PrismML ggml dispatcher selects the per-kernel implementation at run time, but the substrate still needs the right *binary variant* of `llama-server` — the install scripts (`sidecars/scripts/download-llama-server.{sh,ps1}`) take `--compute=<backend>` and pin one variant per machine.
+
+The full registry lives in `sidecars/models.json`. `available_models_for_platform()` filters that registry down to the three sizes valid for the current platform, and `select_model(tier, platform)` picks exactly one. Single-model enforcement (`apps/desktop/electron/modelManagement.ts`) guarantees that swapping tier or size deletes the prior file *before* the new download starts, so only one model weight ever lives on disk.
 
 ### Device tiering
 
@@ -289,7 +312,7 @@ GBNF (GGML BNF) grammars constrain model output to valid structured formats (JSO
 |---|---|---|
 | **Low** | 2–3 GB | Lexicon classifiers + XLM-R INT4 embeddings only, no SLM |
 | **Medium** | 4–6 GB | XLM-R INT8 + Bonsai-1.7B gated to active scope |
-| **High** | 8+ GB | Always-on Bonsai-1.7B (MLX 2-bit on Apple Silicon, GGUF Q4_K_M elsewhere) |
+| **High** | 8+ GB | Always-on Bonsai-1.7B / 4B / 8B (MLX 2-bit on Apple Silicon, GGUF Q1_0_g128 elsewhere) |
 
 ---
 
@@ -354,8 +377,10 @@ tessera/
 │   └── grammars/                # GBNF grammar files for structured LLM output
 ├── schemas/                     # JSON Schema (template.schema.json, artifact.schema.json)
 ├── packaging/                   # electron-builder configs
-│   ├── macos/
-│   └── windows/
+│   ├── linux/                   # AppImage + .deb (x64, arm64)
+│   ├── macos/                   # DMG + .zip (universal)
+│   ├── windows/                 # NSIS installer + portable .zip
+│   └── electron-builder.yml     # Unified config used by `npm run package`
 ├── docs/                        # Additional documentation
 ├── LICENSE                      # MIT
 ├── README.md

@@ -1,16 +1,57 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Download the correct llama-server binary for the current platform.
-# Places binary at sidecars/llama-server/llama-server (or .exe on Windows).
-# Reads model manifest from sidecars/models.json for checksums.
-# Skips download if valid binary already exists.
+# Download the correct llama-server binary for the current platform and compute
+# backend. The PrismML llama.cpp fork ships separate archives per (platform,
+# backend) combination — pick the one that matches the local hardware so the
+# runtime ggml dispatcher has the kernel it needs.
+#
+# Usage:
+#   ./download-llama-server.sh [--compute cpu|cuda|vulkan|rocm] [--version <tag>]
+#
+# Notes:
+#   - macOS Apple Silicon: the MLX adapter is the primary path; llama-server is
+#     the CPU fallback. We never download a CUDA or Vulkan build for macOS arm64.
+#   - On all other platforms we default to `cpu`. The CPU build is compiled
+#     against AVX2 minimum and the dispatcher auto-promotes to AVX-VNNI / AVX-512
+#     VNNI at runtime when supported, so the CPU archive is correct for every
+#     CPU-only machine without further selection.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SIDECAR_ROOT="$SCRIPT_DIR/.."
 SIDECAR_DIR="$SIDECAR_ROOT/llama-server"
 MODELS_JSON="$SIDECAR_ROOT/models.json"
 VERSION="${LLAMA_CPP_VERSION:-b4546}"
+COMPUTE="${LLAMA_CPP_COMPUTE:-cpu}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --compute)
+            COMPUTE="$2"
+            shift 2
+            ;;
+        --version)
+            VERSION="$2"
+            shift 2
+            ;;
+        --help|-h)
+            cat <<USAGE
+Usage: $0 [--compute cpu|cuda|vulkan|rocm] [--version <release-tag>]
+
+  --compute   Compute backend variant. Defaults to "cpu" (or "metal" on macOS
+              arm64, which uses the same CPU archive as a fallback for the MLX
+              adapter). NVIDIA -> cuda, AMD on Linux -> rocm, cross-platform GPU
+              -> vulkan.
+  --version   PrismML llama.cpp release tag. Defaults to "${VERSION}".
+USAGE
+            exit 0
+            ;;
+        *)
+            echo "ERROR: Unknown argument: $1" >&2
+            exit 2
+            ;;
+    esac
+done
 
 mkdir -p "$SIDECAR_DIR"
 
@@ -30,85 +71,129 @@ case "$OS" in
     Darwin)
         case "$ARCH" in
             x86_64)  PLATFORM="macos-x64" ;;
-            arm64)   PLATFORM="macos-arm64" ;;
+            arm64)
+                PLATFORM="macos-arm64"
+                # On Apple Silicon, Tessera uses MLX as the primary path. The
+                # llama-server binary is the CPU fallback; the upstream archive
+                # ships a single arm64 build (no separate CUDA/Vulkan variants
+                # on macOS), so we always select the CPU variant here.
+                if [[ "$COMPUTE" != "cpu" ]]; then
+                    echo "INFO: macOS arm64 only ships a CPU llama-server variant; forcing --compute=cpu (MLX is the primary GPU path)."
+                    COMPUTE="cpu"
+                fi
+                ;;
             *)       echo "ERROR: Unsupported architecture: $ARCH"; exit 1 ;;
         esac
         BINARY_NAME="llama-server"
         CHECKSUM_CMD="shasum -a 256"
         ;;
     *)
-        echo "ERROR: Unsupported OS: $OS — use download-llama-server.ps1 on Windows"
+        echo "ERROR: Unsupported OS: $OS - use download-llama-server.ps1 on Windows"
         exit 1
         ;;
 esac
 
-TARGET_BINARY="$SIDECAR_DIR/$BINARY_NAME"
+case "$COMPUTE" in
+    cpu|cuda|vulkan|rocm) ;;
+    *)
+        echo "ERROR: Invalid --compute value: $COMPUTE (expected: cpu, cuda, vulkan, rocm)" >&2
+        exit 2
+        ;;
+esac
 
-# Check if binary already exists and is executable
-if [ -x "$TARGET_BINARY" ]; then
-    echo "llama-server already installed at $TARGET_BINARY"
-    "$TARGET_BINARY" --version 2>/dev/null || true
-    echo "To force re-download, remove $TARGET_BINARY and re-run."
-    exit 0
+# ROCm is only supported on Linux x86_64; reject the combination elsewhere.
+if [[ "$COMPUTE" == "rocm" && "$PLATFORM" != "linux-x64" ]]; then
+    echo "ERROR: --compute=rocm is only supported on linux-x64 (saw platform=$PLATFORM)" >&2
+    exit 2
 fi
 
-BASE_URL="https://github.com/ggerganov/llama.cpp/releases/download/${VERSION}"
-ARCHIVE_NAME="llama-${VERSION}-bin-${PLATFORM}.zip"
-DOWNLOAD_URL="${BASE_URL}/${ARCHIVE_NAME}"
+VARIANT_KEY="${PLATFORM}-${COMPUTE}"
+TARGET_BINARY="$SIDECAR_DIR/$BINARY_NAME"
+INSTALL_TAG="$SIDECAR_DIR/.installed-variant"
 
-echo "Downloading llama.cpp ${VERSION} for ${PLATFORM}..."
-echo "  URL: ${DOWNLOAD_URL}"
+# Reuse cached binary only if it matches the requested variant.
+if [[ -x "$TARGET_BINARY" ]]; then
+    if [[ -f "$INSTALL_TAG" && "$(cat "$INSTALL_TAG")" == "$VARIANT_KEY" ]]; then
+        echo "llama-server (${VARIANT_KEY}) already installed at $TARGET_BINARY"
+        "$TARGET_BINARY" --version 2>/dev/null || true
+        echo "To force re-download, remove $TARGET_BINARY and re-run."
+        exit 0
+    fi
+    echo "Replacing existing llama-server binary (was: $(cat "$INSTALL_TAG" 2>/dev/null || echo unknown), now: $VARIANT_KEY)"
+fi
+
+# Resolve URL + checksum from the manifest when available. The manifest lists
+# llama_server.variants[] with {platform, compute, url, sha256}.
+RESOLVED_URL=""
+EXPECTED_HASH=""
+if [[ -f "$MODELS_JSON" ]] && command -v python3 &>/dev/null; then
+    read -r RESOLVED_URL EXPECTED_HASH <<EOF
+$(python3 - <<PY
+import json, sys
+with open("$MODELS_JSON") as f:
+    data = json.load(f)
+url = ""
+sha = ""
+for v in data.get("llama_server", {}).get("variants", []):
+    if v.get("platform") == "$PLATFORM" and v.get("compute") == "$COMPUTE":
+        url = v.get("url", "")
+        sha = v.get("sha256", "")
+        break
+print(url)
+print(sha)
+PY
+)
+EOF
+fi
+
+if [[ -z "$RESOLVED_URL" || "$RESOLVED_URL" == "placeholder" ]]; then
+    # Fallback: assume an upstream release artifact naming scheme. This keeps
+    # development unblocked when the manifest is still using placeholders.
+    BASE_URL="https://github.com/ggerganov/llama.cpp/releases/download/${VERSION}"
+    SUFFIX=""
+    if [[ "$COMPUTE" != "cpu" ]]; then
+        SUFFIX="-${COMPUTE}"
+    fi
+    RESOLVED_URL="${BASE_URL}/llama-${VERSION}-bin-${PLATFORM}${SUFFIX}.zip"
+fi
+
+echo "Downloading llama.cpp ${VERSION} for ${VARIANT_KEY}..."
+echo "  URL: ${RESOLVED_URL}"
 
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
-curl -fSL --retry 3 --retry-delay 5 --progress-bar "$DOWNLOAD_URL" -o "$TEMP_DIR/$ARCHIVE_NAME"
+ARCHIVE_PATH="$TEMP_DIR/$(basename "$RESOLVED_URL")"
+curl -fSL --retry 3 --retry-delay 5 --progress-bar "$RESOLVED_URL" -o "$ARCHIVE_PATH"
 
-# Verify checksum if available in models.json
-if [ -f "$MODELS_JSON" ]; then
-    # Extract expected checksum from models.json (format: "sha256:<hash>")
-    EXPECTED_HASH=""
-    if command -v python3 &>/dev/null; then
-        EXPECTED_HASH=$(python3 -c "
-import json, sys
-with open('$MODELS_JSON') as f:
-    data = json.load(f)
-server_checksum = data.get('server_checksums', {}).get('$PLATFORM', '')
-if server_checksum.startswith('sha256:'):
-    print(server_checksum.split(':')[1])
-" 2>/dev/null || true)
+if [[ -n "$EXPECTED_HASH" && "$EXPECTED_HASH" != "placeholder" ]]; then
+    echo "Verifying checksum..."
+    ACTUAL_HASH=$($CHECKSUM_CMD "$ARCHIVE_PATH" | awk '{print $1}')
+    if [[ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]]; then
+        echo "ERROR: Checksum mismatch!" >&2
+        echo "  Expected: $EXPECTED_HASH" >&2
+        echo "  Actual:   $ACTUAL_HASH" >&2
+        exit 1
     fi
-
-    if [ -n "$EXPECTED_HASH" ] && [ "$EXPECTED_HASH" != "placeholder-update-with-real-hash-after-model-publish" ]; then
-        echo "Verifying checksum..."
-        ACTUAL_HASH=$($CHECKSUM_CMD "$TEMP_DIR/$ARCHIVE_NAME" | awk '{print $1}')
-        if [ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]; then
-            echo "ERROR: Checksum mismatch!"
-            echo "  Expected: $EXPECTED_HASH"
-            echo "  Actual:   $ACTUAL_HASH"
-            exit 1
-        fi
-        echo "Checksum verified."
-    else
-        echo "No server checksum in manifest — skipping verification."
-    fi
+    echo "Checksum verified."
+else
+    echo "No checksum in manifest for $VARIANT_KEY - skipping verification."
 fi
 
-unzip -q "$TEMP_DIR/$ARCHIVE_NAME" -d "$TEMP_DIR/extracted"
+unzip -q "$ARCHIVE_PATH" -d "$TEMP_DIR/extracted"
 
-# Find the llama-server binary in the extracted archive
 FOUND_BINARY="$(find "$TEMP_DIR/extracted" -name "$BINARY_NAME" -type f | head -1)"
-
-if [ -z "$FOUND_BINARY" ]; then
-    echo "ERROR: Could not find $BINARY_NAME in archive"
-    echo "Archive contents:"
-    find "$TEMP_DIR/extracted" -type f
+if [[ -z "$FOUND_BINARY" ]]; then
+    echo "ERROR: Could not find $BINARY_NAME in archive" >&2
+    echo "Archive contents:" >&2
+    find "$TEMP_DIR/extracted" -type f >&2
     exit 1
 fi
 
 cp "$FOUND_BINARY" "$TARGET_BINARY"
 chmod +x "$TARGET_BINARY"
+echo "$VARIANT_KEY" >"$INSTALL_TAG"
 
-echo "Installed: $TARGET_BINARY"
+echo "Installed: $TARGET_BINARY (variant: $VARIANT_KEY)"
 "$TARGET_BINARY" --version 2>/dev/null || true
 echo "Done."

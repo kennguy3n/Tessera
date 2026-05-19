@@ -1,40 +1,174 @@
 {
+  "format_version": 1,
+  "note": "Ternary-Bonsai 1.58-bit models. Only ONE model is installed per device at any time. On macOS Apple Silicon Tessera uses the MLX 2-bit weight; on every other platform it uses the GGUF Q1_0_g128 ternary repack from the PrismML llama.cpp fork.",
   "models": [
     {
-      "id": "ternary-bonsai-1.7b",
+      "id": "ternary-bonsai-1.7b-mlx",
       "name": "Ternary-Bonsai 1.7B",
       "parameters": "1.7B",
-      "quantization": "Q4_K_M",
-      "required_ram_gb": 2,
-      "download_size_mb": 1100,
-      "context_length": 2048,
+      "format": "mlx",
+      "quantization": "2-bit",
+      "platform": "macos-apple-silicon",
+      "compute": ["metal"],
       "tier": "low",
-      "url": "https://huggingface.co/tessera-ai/ternary-bonsai-1.7B-GGUF/resolve/main/ternary-bonsai-1.7b.Q4_K_M.gguf",
-      "checksum": "sha256:placeholder-update-with-real-hash-after-model-publish"
+      "downloadSizeMb": 248,
+      "diskSizeMb": 248,
+      "requiredRamGb": 2.0,
+      "contextLength": 2048,
+      "filename": "ternary-bonsai-1.7b-2bit.mlx.tar.gz",
+      "url": "https://huggingface.co/kennguy3n/Ternary-Bonsai-1.7B-MLX/resolve/main/ternary-bonsai-1.7b-2bit.mlx.tar.gz",
+      "sha256": null
     },
     {
-      "id": "ternary-bonsai-4b",
+      "id": "ternary-bonsai-1.7b-gguf",
+      "name": "Ternary-Bonsai 1.7B",
+      "parameters": "1.7B",
+      "format": "gguf",
+      "quantization": "Q1_0_g128",
+      "platform": "any-non-apple-silicon",
+      "compute": ["cpu", "cuda", "vulkan", "rocm"],
+      "tier": "low",
+      "downloadSizeMb": 450,
+      "diskSizeMb": 450,
+      "requiredRamGb": 2.0,
+      "contextLength": 2048,
+      "filename": "ternary-bonsai-1.7b-q1_0_g128.gguf",
+      "url": "https://huggingface.co/kennguy3n/Ternary-Bonsai-1.7B-GGUF/resolve/main/ternary-bonsai-1.7b-q1_0_g128.gguf",
+      "sha256": null
+    },
+    {
+      "id": "ternary-bonsai-4b-mlx",
       "name": "Ternary-Bonsai 4B",
       "parameters": "4B",
-      "quantization": "Q4_K_M",
-      "required_ram_gb": 4,
-      "download_size_mb": 2600,
-      "context_length": 4096,
+      "format": "mlx",
+      "quantization": "2-bit",
+      "platform": "macos-apple-silicon",
+      "compute": ["metal"],
       "tier": "medium",
-      "url": "https://huggingface.co/tessera-ai/ternary-bonsai-4B-GGUF/resolve/main/ternary-bonsai-4b.Q4_K_M.gguf",
-      "checksum": "sha256:placeholder-update-with-real-hash-after-model-publish"
+      "downloadSizeMb": 600,
+      "diskSizeMb": 600,
+      "requiredRamGb": 4.0,
+      "contextLength": 4096,
+      "filename": "ternary-bonsai-4b-2bit.mlx.tar.gz",
+      "url": "https://huggingface.co/kennguy3n/Ternary-Bonsai-4B-MLX/resolve/main/ternary-bonsai-4b-2bit.mlx.tar.gz",
+      "sha256": null
     },
     {
-      "id": "ternary-bonsai-8b",
+      "id": "ternary-bonsai-4b-gguf",
+      "name": "Ternary-Bonsai 4B",
+      "parameters": "4B",
+      "format": "gguf",
+      "quantization": "Q1_0_g128",
+      "platform": "any-non-apple-silicon",
+      "compute": ["cpu", "cuda", "vulkan", "rocm"],
+      "tier": "medium",
+      "downloadSizeMb": 1000,
+      "diskSizeMb": 1000,
+      "requiredRamGb": 4.0,
+      "contextLength": 4096,
+      "filename": "ternary-bonsai-4b-q1_0_g128.gguf",
+      "url": "https://huggingface.co/kennguy3n/Ternary-Bonsai-4B-GGUF/resolve/main/ternary-bonsai-4b-q1_0_g128.gguf",
+      "sha256": null
+    },
+    {
+      "id": "ternary-bonsai-8b-mlx",
       "name": "Ternary-Bonsai 8B",
       "parameters": "8B",
-      "quantization": "Q4_K_M",
-      "required_ram_gb": 8,
-      "download_size_mb": 4900,
-      "context_length": 8192,
+      "format": "mlx",
+      "quantization": "2-bit",
+      "platform": "macos-apple-silicon",
+      "compute": ["metal"],
       "tier": "high",
-      "url": "https://huggingface.co/tessera-ai/ternary-bonsai-8B-GGUF/resolve/main/ternary-bonsai-8b.Q4_K_M.gguf",
-      "checksum": "sha256:placeholder-update-with-real-hash-after-model-publish"
+      "downloadSizeMb": 1200,
+      "diskSizeMb": 1200,
+      "requiredRamGb": 8.0,
+      "contextLength": 8192,
+      "filename": "ternary-bonsai-8b-2bit.mlx.tar.gz",
+      "url": "https://huggingface.co/kennguy3n/Ternary-Bonsai-8B-MLX/resolve/main/ternary-bonsai-8b-2bit.mlx.tar.gz",
+      "sha256": null
+    },
+    {
+      "id": "ternary-bonsai-8b-gguf",
+      "name": "Ternary-Bonsai 8B",
+      "parameters": "8B",
+      "format": "gguf",
+      "quantization": "Q1_0_g128",
+      "platform": "any-non-apple-silicon",
+      "compute": ["cpu", "cuda", "vulkan", "rocm"],
+      "tier": "high",
+      "downloadSizeMb": 2000,
+      "diskSizeMb": 2000,
+      "requiredRamGb": 8.0,
+      "contextLength": 8192,
+      "filename": "ternary-bonsai-8b-q1_0_g128.gguf",
+      "url": "https://huggingface.co/kennguy3n/Ternary-Bonsai-8B-GGUF/resolve/main/ternary-bonsai-8b-q1_0_g128.gguf",
+      "sha256": null
     }
-  ]
+  ],
+  "llama_server": {
+    "version": "prismml-b4546",
+    "note": "Pre-built llama-server binaries from the PrismML fork. The ggml dispatcher auto-selects the best CPU kernel (AVX2 / AVX-VNNI / AVX-512 VNNI / ARM NEON) at runtime; we still pick the cpu vs cuda vs vulkan archive based on detected GPU.",
+    "variants": [
+      {
+        "platform": "linux-x64",
+        "compute": "cpu",
+        "url": "https://github.com/PrismML/llama.cpp/releases/download/b4546/llama-server-linux-x64-cpu.tar.gz",
+        "sha256": null
+      },
+      {
+        "platform": "linux-x64",
+        "compute": "cuda",
+        "url": "https://github.com/PrismML/llama.cpp/releases/download/b4546/llama-server-linux-x64-cuda.tar.gz",
+        "sha256": null
+      },
+      {
+        "platform": "linux-x64",
+        "compute": "vulkan",
+        "url": "https://github.com/PrismML/llama.cpp/releases/download/b4546/llama-server-linux-x64-vulkan.tar.gz",
+        "sha256": null
+      },
+      {
+        "platform": "linux-x64",
+        "compute": "rocm",
+        "url": "https://github.com/PrismML/llama.cpp/releases/download/b4546/llama-server-linux-x64-rocm.tar.gz",
+        "sha256": null
+      },
+      {
+        "platform": "linux-arm64",
+        "compute": "cpu",
+        "url": "https://github.com/PrismML/llama.cpp/releases/download/b4546/llama-server-linux-arm64-cpu.tar.gz",
+        "sha256": null
+      },
+      {
+        "platform": "macos-intel",
+        "compute": "cpu",
+        "url": "https://github.com/PrismML/llama.cpp/releases/download/b4546/llama-server-macos-x64-cpu.tar.gz",
+        "sha256": null
+      },
+      {
+        "platform": "macos-apple-silicon",
+        "compute": "cpu",
+        "url": "https://github.com/PrismML/llama.cpp/releases/download/b4546/llama-server-macos-arm64-cpu.tar.gz",
+        "sha256": null
+      },
+      {
+        "platform": "windows-x64",
+        "compute": "cpu",
+        "url": "https://github.com/PrismML/llama.cpp/releases/download/b4546/llama-server-windows-x64-cpu.zip",
+        "sha256": null
+      },
+      {
+        "platform": "windows-x64",
+        "compute": "cuda",
+        "url": "https://github.com/PrismML/llama.cpp/releases/download/b4546/llama-server-windows-x64-cuda.zip",
+        "sha256": null
+      },
+      {
+        "platform": "windows-x64",
+        "compute": "vulkan",
+        "url": "https://github.com/PrismML/llama.cpp/releases/download/b4546/llama-server-windows-x64-vulkan.zip",
+        "sha256": null
+      }
+    ]
+  }
 }

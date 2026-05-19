@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, app } from "electron";
+import { ipcMain, BrowserWindow, app, dialog } from "electron";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { loadConfig, updateConfig } from "./config";
@@ -6,6 +6,19 @@ import { getBridge, getModelSidecar } from "./appState";
 import type { SettingsData, ModelStatus } from "./preload";
 import { startOAuthFlow, exchangeCodeForTokens, refreshAccessToken, revokeToken } from "./oauthServer";
 import * as tokenVault from "./tokenVault";
+import {
+  deleteCurrentModel,
+  detectPlatformInfo,
+  downloadModel,
+  getCurrentModel,
+  listModelsForPlatform,
+  loadManifest,
+  planDownload,
+  recommendModel,
+  resetManifestCache,
+  type DownloadProgress,
+  type ResolvedModel,
+} from "./modelManagement";
 
 async function getValidAccessToken(provider: string): Promise<string> {
   const stored = tokenVault.getTokens(provider);
@@ -443,6 +456,79 @@ export function registerIpcHandlers(): void {
     }
   });
 
+  // --- Runtime: platform / model registry / single-model enforcement ---
+
+  function userDataDir(): string {
+    return app.getPath("userData");
+  }
+
+  function loadResolvedManifest() {
+    // Tests can swap the manifest path via TESSERA_MODELS_MANIFEST; ensure
+    // we re-read on each call so hot reloads pick up edits.
+    resetManifestCache();
+    return loadManifest();
+  }
+
+  function findModelOrThrow(modelId: string): ResolvedModel {
+    const info = detectPlatformInfo();
+    const manifest = loadResolvedManifest();
+    const model = listModelsForPlatform(manifest, info.platform).find(
+      (m) => m.id === modelId,
+    );
+    if (!model) {
+      throw new Error(
+        `Model ${modelId} is not available on ${info.platformLabel}`,
+      );
+    }
+    return model;
+  }
+
+  ipcMain.handle("runtime:detectPlatform", async () => detectPlatformInfo());
+
+  ipcMain.handle("runtime:recommendModel", async () => {
+    const info = detectPlatformInfo();
+    const manifest = loadResolvedManifest();
+    return recommendModel(manifest, info.platform, info.tier);
+  });
+
+  ipcMain.handle("runtime:listModels", async () => {
+    const info = detectPlatformInfo();
+    const manifest = loadResolvedManifest();
+    return listModelsForPlatform(manifest, info.platform);
+  });
+
+  ipcMain.handle("runtime:getCurrentModel", async () =>
+    getCurrentModel(userDataDir()),
+  );
+
+  ipcMain.handle("runtime:planDownload", async (_event, modelId: string) => {
+    const requested = findModelOrThrow(modelId);
+    const current = await getCurrentModel(userDataDir());
+    return planDownload(current, requested);
+  });
+
+  function progressEmitter(event: Electron.IpcMainInvokeEvent) {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return (p: DownloadProgress) => {
+      win?.webContents.send("runtime:downloadProgress", p);
+    };
+  }
+
+  ipcMain.handle("runtime:downloadModel", async (event, modelId: string) => {
+    const requested = findModelOrThrow(modelId);
+    return downloadModel(userDataDir(), requested, progressEmitter(event));
+  });
+
+  ipcMain.handle("runtime:swapModel", async (event, modelId: string) => {
+    const requested = findModelOrThrow(modelId);
+    // swap = delete-then-download; downloadModel handles the eviction.
+    return downloadModel(userDataDir(), requested, progressEmitter(event));
+  });
+
+  ipcMain.handle("runtime:deleteModel", async () => {
+    await deleteCurrentModel(userDataDir());
+  });
+
   // --- Connectors ---
 
   ipcMain.handle(
@@ -792,6 +878,17 @@ export function registerIpcHandlers(): void {
       const bridge = getBridge();
       if (!bridge) throw new Error("Native bridge not available");
       return bridge.bridgeExportEvidencePack(artifactId, outputPath);
+    },
+  );
+
+  ipcMain.handle(
+    "dialog:showSaveDialog",
+    async (event, options: Electron.SaveDialogOptions) => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      const result = win
+        ? await dialog.showSaveDialog(win, options)
+        : await dialog.showSaveDialog(options);
+      return result;
     },
   );
 }

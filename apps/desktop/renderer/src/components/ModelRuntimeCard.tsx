@@ -1,0 +1,352 @@
+import { useCallback, useEffect, useState } from "react";
+import Card from "./Card";
+import Button from "./Button";
+import type {
+  InstalledModelRecord,
+  ModelDownloadProgress,
+  ModelStatus,
+  PlatformInfo,
+  ResolvedModel,
+} from "../types/ipc";
+
+interface ModelRuntimeCardProps {
+  /** Optional override used by tests; falls back to `window.tessera`. */
+  api?: Window["tessera"];
+}
+
+interface State {
+  loading: boolean;
+  error: string | null;
+  platform: PlatformInfo | null;
+  models: ResolvedModel[];
+  recommended: ResolvedModel | null;
+  current: InstalledModelRecord | null;
+  status: ModelStatus | null;
+  progress: ModelDownloadProgress | null;
+  busyModelId: string | null;
+  showAll: boolean;
+}
+
+const initialState: State = {
+  loading: true,
+  error: null,
+  platform: null,
+  models: [],
+  recommended: null,
+  current: null,
+  status: null,
+  progress: null,
+  busyModelId: null,
+  showAll: false,
+};
+
+function backendsToLabel(backends: string[]): string {
+  if (backends.length === 0) return "—";
+  if (backends.length === 1 && backends[0] === "cpu") return "CPU (AVX2)";
+  return backends
+    .map((b) => {
+      switch (b) {
+        case "metal":
+          return "Metal";
+        case "cuda":
+          return "CUDA";
+        case "vulkan":
+          return "Vulkan";
+        case "rocm":
+          return "ROCm";
+        case "cpu":
+          return "CPU";
+        default:
+          return b;
+      }
+    })
+    .join(" / ");
+}
+
+function gpuLabel(backends: string[]): string {
+  const gpus = backends.filter((b) => b !== "cpu");
+  if (gpus.length === 0) return "CPU-only";
+  return backendsToLabel(gpus);
+}
+
+export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
+  const tessera = api ?? (typeof window !== "undefined" ? window.tessera : undefined);
+  const [state, setState] = useState<State>(initialState);
+
+  const refresh = useCallback(async () => {
+    if (!tessera) return;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    try {
+      const [platform, models, recommended, current, status] = await Promise.all([
+        tessera.runtime.detectPlatform(),
+        tessera.runtime.listModels(),
+        tessera.runtime.recommendModel(),
+        tessera.runtime.getCurrentModel(),
+        tessera.model.status(),
+      ]);
+      setState((s) => ({
+        ...s,
+        loading: false,
+        platform,
+        models,
+        recommended,
+        current,
+        status,
+      }));
+    } catch (err) {
+      setState((s) => ({
+        ...s,
+        loading: false,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    }
+  }, [tessera]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!tessera) return;
+    return tessera.runtime.onDownloadProgress((p: ModelDownloadProgress) => {
+      setState((s) => ({ ...s, progress: p }));
+    });
+  }, [tessera]);
+
+  const performDownload = useCallback(
+    async (modelId: string, isSwap: boolean) => {
+      if (!tessera) return;
+      setState((s) => ({ ...s, busyModelId: modelId, error: null, progress: null }));
+      try {
+        const record = await (isSwap
+          ? tessera.runtime.swapModel(modelId)
+          : tessera.runtime.downloadModel(modelId));
+        setState((s) => ({
+          ...s,
+          busyModelId: null,
+          current: record,
+          progress: null,
+        }));
+      } catch (err) {
+        setState((s) => ({
+          ...s,
+          busyModelId: null,
+          error: err instanceof Error ? err.message : String(err),
+        }));
+      }
+    },
+    [tessera],
+  );
+
+  const handleStart = useCallback(async () => {
+    if (!tessera || !state.current) return;
+    setState((s) => ({ ...s, error: null }));
+    try {
+      await tessera.model.start(state.current.path);
+      const status = await tessera.model.status();
+      setState((s) => ({ ...s, status }));
+    } catch (err) {
+      setState((s) => ({
+        ...s,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    }
+  }, [tessera, state.current]);
+
+  const handleStop = useCallback(async () => {
+    if (!tessera) return;
+    try {
+      await tessera.model.stop();
+      const status = await tessera.model.status();
+      setState((s) => ({ ...s, status }));
+    } catch (err) {
+      setState((s) => ({
+        ...s,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    }
+  }, [tessera]);
+
+  const handleDelete = useCallback(async () => {
+    if (!tessera || !state.current) return;
+    try {
+      await tessera.runtime.deleteModel();
+      setState((s) => ({ ...s, current: null }));
+    } catch (err) {
+      setState((s) => ({
+        ...s,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    }
+  }, [tessera, state.current]);
+
+  if (!tessera) {
+    return (
+      <Card>
+        <h3 style={{ marginBottom: "var(--spacing-md)" }}>Model Runtime</h3>
+        <p style={{ color: "var(--color-text-secondary)" }}>
+          Tessera bridge not available in this context.
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <h3 style={{ marginBottom: "var(--spacing-md)" }}>Model Runtime</h3>
+
+      {state.loading && <p>Detecting hardware…</p>}
+      {state.error && (
+        <p style={{ color: "var(--color-danger, #ef4444)" }}>{state.error}</p>
+      )}
+
+      {!state.loading && state.platform && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "max-content 1fr",
+            columnGap: "var(--spacing-md)",
+            rowGap: "var(--spacing-xs)",
+            fontSize: "var(--font-size-sm)",
+            marginBottom: "var(--spacing-md)",
+          }}
+          data-testid="model-runtime-platform"
+        >
+          <span>Platform:</span>
+          <strong>{state.platform.platformLabel}</strong>
+          <span>RAM:</span>
+          <strong>
+            {state.platform.totalRamGb.toFixed(1)} GB ({state.platform.tierLabel})
+          </strong>
+          <span>GPU:</span>
+          <strong>{gpuLabel(state.platform.computeBackends)}</strong>
+          <span>Model format:</span>
+          <strong>
+            {state.platform.preferredFormat === "mlx"
+              ? "MLX 2-bit"
+              : "GGUF Q1_0_g128"}
+          </strong>
+        </div>
+      )}
+
+      {state.recommended && (
+        <p
+          style={{ marginBottom: "var(--spacing-md)" }}
+          data-testid="model-runtime-recommended"
+        >
+          Recommended: <strong>{state.recommended.name}</strong> (
+          {state.recommended.formatLabel}, ~{state.recommended.downloadSizeMb} MB)
+        </p>
+      )}
+
+      {state.current ? (
+        <div
+          style={{ marginBottom: "var(--spacing-md)" }}
+          data-testid="model-runtime-current"
+        >
+          <p>
+            Installed: <strong>{state.current.modelId}</strong> (
+            {state.current.downloadSizeMb} MB)
+          </p>
+          <p style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-secondary)" }}>
+            {state.current.path}
+          </p>
+          <div style={{ display: "flex", gap: "var(--spacing-sm)", marginTop: "var(--spacing-sm)" }}>
+            {state.status?.status === "running" ? (
+              <Button onClick={handleStop}>Stop</Button>
+            ) : (
+              <Button onClick={handleStart}>Start</Button>
+            )}
+            <Button variant="secondary" onClick={handleDelete}>
+              Delete model
+            </Button>
+          </div>
+        </div>
+      ) : (
+        state.recommended && (
+          <div style={{ marginBottom: "var(--spacing-md)" }}>
+            <Button
+              onClick={() => performDownload(state.recommended!.id, false)}
+              disabled={state.busyModelId !== null}
+            >
+              {state.busyModelId === state.recommended.id
+                ? "Downloading…"
+                : "Download"}
+            </Button>
+          </div>
+        )
+      )}
+
+      {state.progress && (
+        <div
+          style={{ marginBottom: "var(--spacing-md)" }}
+          data-testid="model-runtime-progress"
+        >
+          <p style={{ fontSize: "var(--font-size-sm)" }}>
+            {state.progress.filename} — {state.progress.downloadedMb.toFixed(1)} /{" "}
+            {state.progress.totalMb.toFixed(1)} MB ({state.progress.percent.toFixed(0)}%)
+          </p>
+          <progress value={state.progress.percent} max={100} style={{ width: "100%" }} />
+        </div>
+      )}
+
+      <div>
+        <button
+          type="button"
+          onClick={() => setState((s) => ({ ...s, showAll: !s.showAll }))}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "var(--color-primary, #7C3AED)",
+            cursor: "pointer",
+            padding: 0,
+            fontSize: "var(--font-size-sm)",
+          }}
+          aria-expanded={state.showAll}
+        >
+          {state.showAll ? "Hide" : "Show"} all available models
+        </button>
+        {state.showAll && (
+          <ul style={{ listStyle: "none", padding: 0, marginTop: "var(--spacing-sm)" }}>
+            {state.models.map((m) => {
+              const isCurrent = state.current?.modelId === m.id;
+              const isBusy = state.busyModelId === m.id;
+              return (
+                <li
+                  key={m.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "var(--spacing-xs) 0",
+                    borderBottom: "1px solid var(--color-border, #e5e7eb)",
+                  }}
+                >
+                  <span>
+                    <strong>{m.name}</strong> · {m.parameters} · {m.formatLabel} ·{" "}
+                    {m.downloadSizeMb} MB
+                  </span>
+                  {isCurrent ? (
+                    <em style={{ fontSize: "var(--font-size-xs)" }}>installed</em>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      onClick={() => performDownload(m.id, state.current !== null)}
+                      disabled={state.busyModelId !== null}
+                    >
+                      {isBusy
+                        ? "Working…"
+                        : state.current
+                          ? "Swap"
+                          : "Download"}
+                    </Button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </Card>
+  );
+}

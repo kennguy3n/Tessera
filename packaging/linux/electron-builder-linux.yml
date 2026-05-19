@@ -1,0 +1,82 @@
+# Linux electron-builder config. Produces AppImage + .deb that ship the local
+# sidecars (llama-server CPU/Vulkan/CUDA/ROCm variants are downloaded to
+# `sidecars/llama-server/` before packaging; whichever is present is bundled).
+#
+# Invocation:
+#   electron-builder --linux --config packaging/linux/electron-builder-linux.yml
+appId: com.tessera.desktop
+productName: Tessera
+copyright: Copyright (c) 2024 Tessera contributors
+directories:
+  buildResources: build
+  output: dist/linux
+
+files:
+  - "apps/desktop/dist/**/*"
+  - "apps/desktop/electron/**/*.js"
+  - "native/**/*.node"
+  - "templates/**/*"
+  - "schemas/**/*"
+  - "sidecars/models.json"
+  - "package.json"
+
+extraResources:
+  - from: "sidecars/llama-server/"
+    to: "sidecars/llama-server/"
+    filter:
+      - "**/*"
+      - "!*.exe"
+  - from: "sidecars/models.json"
+    to: "sidecars/models.json"
+  - from: "templates/"
+    to: "templates/"
+    filter:
+      - "**/*.yaml"
+      - "**/*.yml"
+
+linux:
+  category: Office
+  description: Local-first artifact studio backed by Ternary-Bonsai 1.58-bit on-device LLMs.
+  synopsis: Local-first artifact studio with on-device 1.58-bit LLMs
+  vendor: Tessera
+  maintainer: tessera@example.com
+  icon: build/icons
+  desktop:
+    Name: Tessera
+    Comment: Local-first artifact studio
+    Categories: Office;Utility;
+    Keywords: knowledge;artifacts;LLM;local-first;
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+        - arm64
+
+appImage:
+  license: LICENSE
+  artifactName: ${productName}-${version}-${arch}.AppImage
+
+deb:
+  priority: optional
+  fpm:
+    - "--deb-no-default-config-files"
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libsecret-1-0
+    - libuuid1
+    - libappindicator3-1
+  recommends:
+    - libvulkan1
+  artifactName: ${productName}_${version}_${arch}.deb
+
+publish: null
