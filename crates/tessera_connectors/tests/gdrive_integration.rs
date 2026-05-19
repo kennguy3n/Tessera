@@ -227,7 +227,10 @@ async fn sync_changes_processes_additions_and_removals() {
     connector.set_access_token("test-token", 3600);
 
     let known_ids = std::collections::HashSet::new();
-    let result = connector.sync_changes(Some("old-token-123"), &known_ids).await.unwrap();
+    let result = connector
+        .sync_changes(Some("old-token-123"), &known_ids)
+        .await
+        .unwrap();
     assert_eq!(result.added.len(), 1);
     assert_eq!(result.removed.len(), 1);
     assert_eq!(result.added[0].name, "new-report.docx");
