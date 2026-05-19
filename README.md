@@ -4,27 +4,6 @@
 
 ---
 
-## Design system
-
-Tessera's UI follows the **KChat design system**
-
-| Token | Value |
-|---|---|
-| **Primary accent** | `#7C3AED` (Purple/Violet) — headlines, CTA buttons, active states, links, icons |
-| **Primary hover** | `#6D28D9` (darker violet) |
-| **Background – page** | `#FFFFFF` (white) |
-| **Background – card/surface** | `#F5F3FF` (light lavender) or `#F9FAFB` (light gray) |
-| **Text – headline** | `#111827` (near-black) |
-| **Text – body** | `#4B5563` (dark gray) |
-| **Text – secondary** | `#6B7280` (medium gray) |
-| **Font family** | `Inter` (primary), system sans-serif fallback stack: `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif` |
-| **Primary button** | Solid `#7C3AED` background, white text, pill/rounded shape (`border-radius: 9999px`) |
-| **Secondary button** | Outlined with `#111827` border, dark text, uppercase tracking |
-| **Cards** | White `#FFFFFF` background, `border-radius: 12px`, subtle shadow `0 1px 3px rgba(0,0,0,0.1)` |
-| **Overall feel** | Clean, modern, minimal — purple dominant against white/light surfaces |
-
----
-
 ## What Tessera does
 
 - **Index local folders and files** — point Tessera at any folder and it indexes the content locally.
@@ -173,6 +152,27 @@ tessera/
 ├── ARCHITECTURE.md
 └── PROGRESS.md
 ```
+
+---
+
+## Design system
+
+Tessera's UI follows the **KChat design system**
+
+| Token | Value |
+|---|---|
+| **Primary accent** | `#7C3AED` (Purple/Violet) — headlines, CTA buttons, active states, links, icons |
+| **Primary hover** | `#6D28D9` (darker violet) |
+| **Background – page** | `#FFFFFF` (white) |
+| **Background – card/surface** | `#F5F3FF` (light lavender) or `#F9FAFB` (light gray) |
+| **Text – headline** | `#111827` (near-black) |
+| **Text – body** | `#4B5563` (dark gray) |
+| **Text – secondary** | `#6B7280` (medium gray) |
+| **Font family** | `Inter` (primary), system sans-serif fallback stack: `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif` |
+| **Primary button** | Solid `#7C3AED` background, white text, pill/rounded shape (`border-radius: 9999px`) |
+| **Secondary button** | Outlined with `#111827` border, dark text, uppercase tracking |
+| **Cards** | White `#FFFFFF` background, `border-radius: 12px`, subtle shadow `0 1px 3px rgba(0,0,0,0.1)` |
+| **Overall feel** | Clean, modern, minimal — purple dominant against white/light surfaces |
 
 ---
 
