@@ -1,0 +1,28 @@
+id: sop-v1
+name: Standard Operating Procedure
+type: document
+description: Step-by-step operational procedure with roles, prerequisites, and verification steps
+sections:
+  - title: Purpose
+    prompt: >
+      State the purpose of this procedure and when it should be followed.
+  - title: Scope
+    prompt: >
+      Define who this procedure applies to and under what circumstances.
+  - title: Prerequisites
+    prompt: >
+      List all prerequisites, tools, access, and permissions needed
+      before starting this procedure.
+  - title: Procedure Steps
+    prompt: >
+      Provide detailed step-by-step instructions. Number each step.
+      Include expected outcomes for each step.
+  - title: Verification
+    prompt: >
+      Describe how to verify the procedure was completed successfully.
+  - title: Troubleshooting
+    prompt: >
+      List common issues and their resolutions.
+export:
+  - markdown
+  - html

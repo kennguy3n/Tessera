@@ -1,0 +1,26 @@
+id: review-v1
+name: Review Deck
+type: slides
+description: Project or performance review deck with status, progress, blockers, and next steps
+sections:
+  - title: Status Overview
+    prompt: >
+      Provide a high-level status summary. Use a clear
+      red/yellow/green indicator for overall health.
+  - title: Progress Against Goals
+    prompt: >
+      Review progress against the goals set in the previous period.
+      Include completion percentages and evidence.
+  - title: Key Accomplishments
+    prompt: >
+      Highlight the most important accomplishments since the last review.
+  - title: Blockers and Risks
+    prompt: >
+      Identify current blockers and emerging risks.
+      Include severity and proposed mitigations.
+  - title: Next Steps
+    prompt: >
+      Define clear next steps with owners and timelines.
+export:
+  - markdown
+  - html

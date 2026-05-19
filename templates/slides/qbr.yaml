@@ -1,0 +1,31 @@
+id: qbr-v1
+name: Quarterly Business Review
+type: slides
+description: QBR deck with executive summary, metrics, wins, challenges, and next quarter plan
+sections:
+  - title: Executive Summary
+    prompt: >
+      Summarize the quarter's performance in 3-5 key points.
+      Lead with the most impactful metric.
+  - title: Key Metrics
+    prompt: >
+      Present the quarter's key metrics with comparisons to targets
+      and previous quarter. Include revenue, growth, and operational metrics.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Wins
+    prompt: >
+      Highlight the quarter's major wins and achievements.
+      Quantify impact where possible.
+  - title: Challenges
+    prompt: >
+      Describe challenges encountered and how they were addressed.
+      Be specific about impact and resolution.
+  - title: Next Quarter Plan
+    prompt: >
+      Outline priorities, targets, and key initiatives for the
+      upcoming quarter. Include resource requirements.
+export:
+  - markdown
+  - html

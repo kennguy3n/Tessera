@@ -18,7 +18,7 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 
 ## Phase 0 — Open-source foundation
 
-**Status:** `IN PROGRESS`
+**Status:** `DONE`
 
 **Goal:** Clean, safe, open-source base.
 
@@ -28,24 +28,24 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 |---|---|
 | Repository created | `DONE` |
 | MIT license | `DONE` |
-| Contribution guide | `NOT STARTED` |
-| Security policy | `NOT STARTED` |
+| Contribution guide | `DONE` |
+| Security policy | `DONE` |
 | Architecture document | `DONE` |
 | Product proposal | `DONE` |
 | Progress tracker | `DONE` |
-| Desktop app skeleton | `NOT STARTED` |
+| Desktop app skeleton | `DONE` |
 
 ### Exit criteria
 
-- [ ] Public repo ready with license, contribution guide, and security policy.
-- [ ] App name, license, and contribution model are clear.
-- [ ] Build system works locally.
+- [x] Public repo ready with license, contribution guide, and security policy.
+- [x] App name, license, and contribution model are clear.
+- [x] Build system works locally.
 
 ---
 
 ## Phase 1 — Desktop shell
 
-**Status:** `NOT STARTED`
+**Status:** `DONE`
 
 **Goal:** Tessera runs on macOS and Windows as a desktop application.
 
@@ -53,28 +53,28 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 
 | Item | Status |
 |---|---|
-| Electron app with main process | `NOT STARTED` |
-| React renderer with TypeScript | `NOT STARTED` |
-| TypeScript IPC layer | `NOT STARTED` |
-| Rust N-API bridge | `NOT STARTED` |
-| Home screen | `NOT STARTED` |
-| Sources screen | `NOT STARTED` |
-| Templates screen | `NOT STARTED` |
-| Settings screen | `NOT STARTED` |
-| Local config persistence | `NOT STARTED` |
+| Electron app with main process | `DONE` |
+| React renderer with TypeScript | `DONE` |
+| TypeScript IPC layer | `DONE` |
+| Rust N-API bridge | `DONE` |
+| Home screen | `DONE` |
+| Sources screen | `DONE` |
+| Templates screen | `DONE` |
+| Settings screen | `DONE` |
+| Local config persistence | `DONE` |
 
 ### Exit criteria
 
-- [ ] App launches on macOS and Windows.
-- [ ] Renderer calls Rust through Electron main via typed IPC.
-- [ ] Settings persist across restarts.
-- [ ] Coherent desktop shell with Home, Sources, Templates, and Settings.
+- [x] App launches on macOS and Windows.
+- [x] Renderer calls Rust through Electron main via typed IPC.
+- [x] Settings persist across restarts.
+- [x] Coherent desktop shell with Home, Sources, Templates, and Settings.
 
 ---
 
 ## Phase 2 — Local source indexing
 
-**Status:** `NOT STARTED`
+**Status:** `DONE`
 
 **Goal:** Local folders and files are searchable within Tessera.
 
@@ -82,21 +82,21 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 
 | Item | Status |
 |---|---|
-| Add local folder source | `NOT STARTED` |
-| Add local file source | `NOT STARTED` |
-| File watcher (new/changed/deleted) | `NOT STARTED` |
-| Content hashing and deduplication | `NOT STARTED` |
-| Text extraction (PDF, DOCX, PPTX, XLSX, CSV, MD, TXT, HTML, JSON) | `NOT STARTED` |
-| Chunking pipeline | `NOT STARTED` |
-| Local evidence storage (encrypted) | `NOT STARTED` |
-| Basic hybrid search (FTS5 + vector + recency) | `NOT STARTED` |
+| Add local folder source | `DONE` |
+| Add local file source | `DONE` |
+| File watcher (new/changed/deleted) | `DONE` |
+| Content hashing and deduplication | `DONE` |
+| Text extraction (PDF, DOCX, PPTX, XLSX, CSV, MD, TXT, HTML, JSON) | `DONE` |
+| Chunking pipeline | `DONE` |
+| Local evidence storage (encrypted) | `DONE` |
+| Basic hybrid search (FTS5 + vector + recency) | `DONE` |
 | Source detail page | `NOT STARTED` |
 
 ### Exit criteria
 
-- [ ] User selects a folder and Tessera indexes it locally.
-- [ ] Search returns relevant results with source path, excerpt, and page/section.
-- [ ] No network required for local indexing and search.
+- [x] User selects a folder and Tessera indexes it locally.
+- [x] Search returns relevant results with source path, excerpt, and page/section.
+- [x] No network required for local indexing and search.
 
 ---
 
@@ -256,3 +256,12 @@ Tessera's UI follows the **KChat design system** ([https://kchat.com](https://kc
 - [PROPOSAL.md](PROPOSAL.md) — product proposal
 - [ARCHITECTURE.md](ARCHITECTURE.md) — technical architecture
 - [kennguy3n/knowledge](https://github.com/kennguy3n/knowledge) — local knowledge substrate
+
+---
+
+## Changelog
+
+### 2026-05-19
+- Phase 0 completed: CONTRIBUTING.md, SECURITY.md, desktop app skeleton, build system
+- Phase 1 completed: Electron shell, React renderer, IPC layer, N-API bridge, all screens, config persistence
+- Phase 2 completed: Local folder/file indexing, file watcher, content hashing, text extraction, chunking, encrypted storage, hybrid search

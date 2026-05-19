@@ -1,0 +1,30 @@
+id: prd-v1
+name: Product Requirements Document
+type: document
+description: Standard PRD with problem, solution, scope, and success criteria
+sections:
+  - title: Problem Statement
+    prompt: >
+      Summarize the core problem this product addresses,
+      citing relevant source material.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Proposed Solution
+    prompt: >
+      Describe the proposed solution, referencing technical
+      constraints and prior art from sources.
+  - title: Scope
+    prompt: >
+      Define what is in scope and out of scope for the
+      initial release.
+  - title: Success Criteria
+    prompt: >
+      List measurable success criteria with targets.
+  - title: Risks and Mitigations
+    prompt: >
+      Identify risks and proposed mitigations, citing
+      source material where applicable.
+export:
+  - markdown
+  - html

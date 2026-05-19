@@ -1,0 +1,28 @@
+id: budget-v1
+name: Budget
+type: sheet
+description: Budget spreadsheet with categories, line items, actuals vs. planned, and variance
+sections:
+  - title: Budget Summary
+    prompt: >
+      Provide an overview of the total budget, including planned spend,
+      actual spend to date, and projected variance.
+  - title: Categories
+    prompt: >
+      Break down the budget by category (personnel, infrastructure,
+      software, marketing, etc.) with planned and actual amounts.
+  - title: Line Items
+    prompt: >
+      Detail individual line items within each category.
+      Include vendor, amount, frequency, and status.
+  - title: Variance Analysis
+    prompt: >
+      Analyze variances between planned and actual spend.
+      Explain significant deviations and corrective actions.
+  - title: Forecast
+    prompt: >
+      Project remaining spend for the period and flag any
+      budget risks.
+export:
+  - markdown
+  - csv

@@ -1,0 +1,22 @@
+[package]
+name = "tessera_export"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Export engine for Tessera artifacts — Markdown, HTML, and CSV."
+
+[dependencies]
+tessera_core = { path = "../tessera_core" }
+tessera_artifacts = { path = "../tessera_artifacts" }
+tessera_citations = { path = "../tessera_citations" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

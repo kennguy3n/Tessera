@@ -132,22 +132,79 @@ The substrate is a modular 20-crate Rust architecture (`evidence_store`, `observ
 
 ---
 
+## Quick start
+
+### Prerequisites
+
+- **Rust** 1.75+ (`rustup` recommended)
+- **Node.js** 20+ and npm 10+
+- **C toolchain** for SQLCipher compilation (gcc/clang on Linux/macOS, MSVC on Windows)
+
+### Setup
+
+```bash
+git clone https://github.com/kennguy3n/Tessera.git
+cd Tessera
+npm install
+cargo build --all-targets
+```
+
+### Run tests
+
+```bash
+# Rust tests
+cargo test --all
+
+# TypeScript/React tests
+npm test
+
+# Lint
+cargo clippy --all-targets --all-features
+npm run lint --workspace=apps/desktop
+
+# Type-check
+npm run type-check --workspace=apps/desktop
+```
+
+### Development
+
+```bash
+# Start Vite dev server (renderer only — Electron shell requires packaging)
+npm run dev --workspace=apps/desktop
+```
+
+---
+
 ## Repository layout
 
 ```
 tessera/
 ├── apps/
 │   └── desktop/
-│       ├── electron/        # Electron main process
-│       └── renderer/        # React/TypeScript UI
+│       ├── electron/        # Electron main process (main.ts, preload.ts, ipc.ts)
+│       └── renderer/        # React/TypeScript UI (pages, components, hooks)
 ├── crates/                  # Rust core engine crates
-├── sidecars/                # Model runtime sidecar binaries
-├── templates/               # YAML artifact templates
+│   ├── tessera_core/        # Shared types, config, errors
+│   ├── tessera_bridge/      # N-API bridge layer
+│   ├── tessera_sources/     # Source indexing, extraction, search
+│   ├── tessera_templates/   # YAML template parsing and registry
+│   ├── tessera_artifacts/   # Artifact CRUD and storage
+│   ├── tessera_citations/   # Citation tracking and provenance
+│   ├── tessera_export/      # Markdown, HTML, CSV, JSON export
+│   └── tessera_audit/       # Append-only audit logging
+├── templates/               # YAML artifact templates (14 templates)
+│   ├── documents/           # PRD, Proposal, SOP, Report, Memo
+│   ├── slides/              # QBR, Strategy, Review
+│   ├── sheets/              # Budget, Scorecard, Roadmap
+│   └── bases/               # Vendor Register, Risk Register, Decision Log
 ├── schemas/                 # Artifact and template schemas
 ├── packaging/               # electron-builder configs, platform installers
 ├── docs/                    # Additional documentation
+├── .github/workflows/       # CI configuration
 ├── LICENSE                  # MIT
 ├── README.md
+├── CONTRIBUTING.md
+├── SECURITY.md
 ├── PROPOSAL.md
 ├── ARCHITECTURE.md
 └── PROGRESS.md
@@ -187,4 +244,6 @@ MIT — see [LICENSE](LICENSE).
 - [PROPOSAL.md](PROPOSAL.md) — full product proposal
 - [ARCHITECTURE.md](ARCHITECTURE.md) — technical architecture
 - [PROGRESS.md](PROGRESS.md) — phased delivery tracker
+- [CONTRIBUTING.md](CONTRIBUTING.md) — contribution guide
+- [SECURITY.md](SECURITY.md) — security policy
 - [kennguy3n/knowledge](https://github.com/kennguy3n/knowledge) — local knowledge substrate
