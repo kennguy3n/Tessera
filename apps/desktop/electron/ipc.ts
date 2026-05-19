@@ -589,8 +589,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("connectors:gdrive:sync", async (_event, selectedFileIds?: string[]) => {
     let added = 0;
     let modified = 0;
-    const removed = 0;
+    let removed = 0;
     const syncedPaths: string[] = [];
+    const failedFileIds: string[] = [];
 
     // When no file IDs provided ("Sync Now" button), re-sync previously synced files from manifest
     let resolvedFileIds = selectedFileIds;
@@ -619,7 +620,10 @@ export function registerIpcHandlers(): void {
           `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,modifiedTime`,
           { headers: { Authorization: `Bearer ${accessToken}` } },
         );
-        if (!metaResp.ok) continue;
+        if (!metaResp.ok) {
+          failedFileIds.push(fileId);
+          continue;
+        }
         const meta = (await metaResp.json()) as {
           id: string;
           name: string;
@@ -687,19 +691,59 @@ export function registerIpcHandlers(): void {
       }
     }
 
-    // Persist manifest of synced file paths for disconnect cleanup
-    if (syncedPaths.length > 0) {
+    // Remove local files + source index entries for Drive-side deletions
+    if (failedFileIds.length > 0) {
       const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
-      await fsp.mkdir(syncDir, { recursive: true });
-      const manifestPath = path.join(syncDir, "manifest.json");
-      let existing: string[] = [];
-      try {
-        existing = JSON.parse(await fsp.readFile(manifestPath, "utf-8")) as string[];
-      } catch {
-        // No existing manifest
+      const bridge = getBridge();
+      for (const failedId of failedFileIds) {
+        // Find and remove matching local files (any extension)
+        try {
+          const entries = await fsp.readdir(syncDir);
+          for (const entry of entries) {
+            const dotIdx = entry.indexOf(".");
+            const entryId = dotIdx > 0 ? entry.substring(0, dotIdx) : entry;
+            if (entryId === failedId) {
+              const localPath = path.join(syncDir, entry);
+              if (bridge) {
+                const sources = bridge.bridgeListSources() as Array<{ id: string; path: string }>;
+                const src = sources.find((s) => s.path === localPath);
+                if (src) {
+                  try { bridge.bridgeRemoveSource(src.id); } catch { /* best effort */ }
+                }
+              }
+              await fsp.unlink(localPath).catch(() => {});
+              removed++;
+            }
+          }
+        } catch {
+          // syncDir may not exist
+        }
       }
-      const merged = [...new Set([...existing, ...syncedPaths])];
+    }
+
+    // Persist manifest with only currently-valid synced paths
+    const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
+    const manifestPath = path.join(syncDir, "manifest.json");
+    let existingManifest: string[] = [];
+    try {
+      existingManifest = JSON.parse(await fsp.readFile(manifestPath, "utf-8")) as string[];
+    } catch {
+      // No existing manifest
+    }
+    // Remove stale paths for failed file IDs and add new synced paths
+    const failedIdSet = new Set(failedFileIds);
+    const surviving = existingManifest.filter((p) => {
+      const bn = path.basename(p);
+      const dotIdx = bn.indexOf(".");
+      const fileId = dotIdx > 0 ? bn.substring(0, dotIdx) : bn;
+      return !failedIdSet.has(fileId);
+    });
+    const merged = [...new Set([...surviving, ...syncedPaths])];
+    if (merged.length > 0) {
+      await fsp.mkdir(syncDir, { recursive: true });
       await fsp.writeFile(manifestPath, JSON.stringify(merged));
+    } else {
+      await fsp.unlink(manifestPath).catch(() => {});
     }
 
     return { added, modified, removed, status: "synced" };
