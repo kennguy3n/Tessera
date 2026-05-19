@@ -396,6 +396,7 @@ export function registerIpcHandlers(): void {
       for (;;) {
         const { done, value } = await reader.read();
         if (done || streamDone) break;
+        sidecar.recordActivity();
         lineBuffer += decoder.decode(value, { stream: true });
         const lines = lineBuffer.split("\n");
         lineBuffer = lines.pop() ?? "";
@@ -648,11 +649,18 @@ export function registerIpcHandlers(): void {
           fs.writeFileSync(localPath, Buffer.from(contentBytes));
 
           try {
-            bridge.bridgeAddLocalFile(localPath);
-            added++;
+            // Upsert: reindex existing source instead of creating duplicate
+            const sources = bridge.bridgeListSources();
+            const existing = sources.find((s) => s.path === localPath);
+            if (existing) {
+              bridge.bridgeReindexSource(existing.id);
+            } else {
+              bridge.bridgeAddLocalFile(localPath);
+              added++;
+            }
             syncedPaths.push(localPath);
           } catch {
-            // Indexing failed — do not count as modified
+            // Indexing failed — do not count
           }
         }
       }
