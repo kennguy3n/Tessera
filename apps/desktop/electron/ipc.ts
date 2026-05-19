@@ -1,4 +1,7 @@
-import { ipcMain, BrowserWindow } from "electron";
+import { ipcMain, BrowserWindow, app } from "electron";
+import * as fs from "fs";
+import * as fsp from "fs/promises";
+import * as path from "path";
 import { loadConfig, updateConfig } from "./config";
 import { getBridge, getModelSidecar } from "./appState";
 import type { SettingsData, ModelStatus } from "./preload";
@@ -416,7 +419,9 @@ export function registerIpcHandlers(): void {
         }
       }
     } finally {
-      activeGenerationController = null;
+      if (activeGenerationController === controller) {
+        activeGenerationController = null;
+      }
     }
   });
 
@@ -460,11 +465,8 @@ export function registerIpcHandlers(): void {
     }
 
     // Clean up synced files and their source index entries (async to avoid blocking main thread)
-    const fsp = await import("fs/promises");
-    const pathMod = await import("path");
-    const { app } = await import("electron");
-    const syncDir = pathMod.join(app.getPath("userData"), "gdrive-sync");
-    const manifestPath = pathMod.join(syncDir, "manifest.json");
+    const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
+    const manifestPath = path.join(syncDir, "manifest.json");
     try {
       const manifestData = await fsp.readFile(manifestPath, "utf-8");
       const manifest = JSON.parse(manifestData) as string[];
@@ -574,8 +576,28 @@ export function registerIpcHandlers(): void {
     const removed = 0;
     const syncedPaths: string[] = [];
 
-    if (selectedFileIds && selectedFileIds.length > 0) {
-      for (const fileId of selectedFileIds) {
+    // When no file IDs provided ("Sync Now" button), re-sync previously synced files from manifest
+    let resolvedFileIds = selectedFileIds;
+    if (!resolvedFileIds || resolvedFileIds.length === 0) {
+      const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
+      const manifestPath = path.join(syncDir, "manifest.json");
+      try {
+        const manifestData = await fsp.readFile(manifestPath, "utf-8");
+        const manifestPaths = JSON.parse(manifestData) as string[];
+        // Extract file IDs from paths: <syncDir>/<fileId><ext> → fileId
+        resolvedFileIds = manifestPaths.map((p) => {
+          const basename = path.basename(p);
+          const dotIdx = basename.indexOf(".");
+          return dotIdx > 0 ? basename.substring(0, dotIdx) : basename;
+        });
+      } catch {
+        // No manifest — nothing to re-sync
+        return { added: 0, modified: 0, removed: 0, status: "synced" };
+      }
+    }
+
+    if (resolvedFileIds && resolvedFileIds.length > 0) {
+      for (const fileId of resolvedFileIds) {
         const metaResp = await fetch(
           `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,modifiedTime`,
           { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -617,16 +639,13 @@ export function registerIpcHandlers(): void {
 
         const bridge = getBridge();
         if (bridge && contentBytes.byteLength > 0) {
-          const { writeFileSync, mkdirSync } = await import("fs");
-          const { join } = await import("path");
-          const { app } = await import("electron");
-          const syncDir = join(app.getPath("userData"), "gdrive-sync");
-          mkdirSync(syncDir, { recursive: true });
+          const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
+          fs.mkdirSync(syncDir, { recursive: true });
           const ext = exportMime
             ? (exportMime === "text/csv" ? ".csv" : ".txt")
             : (meta.name.includes(".") ? meta.name.substring(meta.name.lastIndexOf(".")) : "");
-          const localPath = join(syncDir, `${fileId}${ext}`);
-          writeFileSync(localPath, Buffer.from(contentBytes));
+          const localPath = path.join(syncDir, `${fileId}${ext}`);
+          fs.writeFileSync(localPath, Buffer.from(contentBytes));
 
           try {
             bridge.bridgeAddLocalFile(localPath);
@@ -641,20 +660,17 @@ export function registerIpcHandlers(): void {
 
     // Persist manifest of synced file paths for disconnect cleanup
     if (syncedPaths.length > 0) {
-      const { readFileSync, writeFileSync, mkdirSync } = await import("fs");
-      const { join } = await import("path");
-      const { app } = await import("electron");
-      const syncDir = join(app.getPath("userData"), "gdrive-sync");
-      mkdirSync(syncDir, { recursive: true });
-      const manifestPath = join(syncDir, "manifest.json");
+      const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
+      fs.mkdirSync(syncDir, { recursive: true });
+      const manifestPath = path.join(syncDir, "manifest.json");
       let existing: string[] = [];
       try {
-        existing = JSON.parse(readFileSync(manifestPath, "utf-8")) as string[];
+        existing = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as string[];
       } catch {
         // No existing manifest
       }
       const merged = [...new Set([...existing, ...syncedPaths])];
-      writeFileSync(manifestPath, JSON.stringify(merged));
+      fs.writeFileSync(manifestPath, JSON.stringify(merged));
     }
 
     return { added, modified, removed, status: "synced" };

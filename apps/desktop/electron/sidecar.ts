@@ -138,7 +138,11 @@ export class ModelSidecar {
         if (healthy) {
           this.restartCount = 0;
         } else if (this._isRunning) {
-          this.restartCount = 0;
+          this.restartCount++;
+          if (this.restartCount > MAX_RESTART_RETRIES) {
+            await this.stop();
+            return;
+          }
           await this.stop();
           await this.start();
         }
