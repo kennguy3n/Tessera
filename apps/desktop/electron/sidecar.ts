@@ -17,6 +17,7 @@ const DEFAULT_OPTIONS: SidecarOptions = {
 };
 
 const MAX_RESTART_RETRIES = 5;
+const STARTUP_GRACE_MS = 60_000;
 
 export class ModelSidecar {
   private process: ChildProcess | null = null;
@@ -27,6 +28,7 @@ export class ModelSidecar {
   private _isRunning: boolean = false;
   private _isTerminating: boolean = false;
   private restartCount: number = 0;
+  private startTime: number = 0;
 
   constructor(options: Partial<SidecarOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -86,6 +88,7 @@ export class ModelSidecar {
 
     this._isRunning = true;
     this.lastRequestTime = Date.now();
+    this.startTime = Date.now();
     this.startHealthCheck();
     this.startIdleMonitor();
   }
@@ -143,6 +146,8 @@ export class ModelSidecar {
         if (healthy) {
           this.restartCount = 0;
         } else if (this._isRunning) {
+          // Skip restart during startup grace period — model loading can take 10-30s+
+          if (Date.now() - this.startTime < STARTUP_GRACE_MS) return;
           this.restartCount++;
           if (this.restartCount > MAX_RESTART_RETRIES) {
             await this.stop();
