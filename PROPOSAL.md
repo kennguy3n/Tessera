@@ -336,7 +336,7 @@ The renderer does **NOT** manage model binaries, tokens, filesystem, or storage.
 
 ## Design system
 
-Tessera's UI follows the **KChat design system** ([https://kchat.com](https://kchat.com)).
+Tessera's UI follows the **KChat design system**.
 
 | Token | Value |
 |---|---|
