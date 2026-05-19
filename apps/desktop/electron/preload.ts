@@ -93,6 +93,12 @@ export interface ExportResult {
   format: string;
 }
 
+export interface ArtifactVersionInfo {
+  version: number;
+  content: string;
+  createdAt: string;
+}
+
 export interface TesseraApi {
   sources: {
     addLocalFolder: (path: string) => Promise<SourceInfo>;
@@ -119,6 +125,8 @@ export interface TesseraApi {
       format: string,
       filePath: string,
     ) => Promise<void>;
+    listVersions: (id: string) => Promise<ArtifactVersionInfo[]>;
+    restoreVersion: (id: string, versionNumber: number) => Promise<ArtifactInfo>;
   };
   templates: {
     list: () => Promise<TemplateInfo[]>;
@@ -136,6 +144,11 @@ export interface TesseraApi {
   };
   model: {
     status: () => Promise<ModelStatus>;
+    start: (modelPath: string) => Promise<void>;
+    stop: () => Promise<void>;
+    generate: (request: unknown) => Promise<void>;
+    cancelJob: () => Promise<void>;
+    onToken: (callback: (chunk: unknown) => void) => () => void;
   };
 }
 

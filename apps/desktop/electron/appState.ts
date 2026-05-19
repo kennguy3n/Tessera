@@ -38,6 +38,14 @@ interface NativeBridge {
   bridgeAddCitation(req: AddCitationRequest): CitationInfo;
   bridgeRemoveCitation(artifactId: string, citationId: string): void;
   bridgeCheckSourceChanged(citationId: string, currentHash: string): boolean;
+  bridgeListVersions(artifactId: string): ArtifactVersionInfo[];
+  bridgeRestoreVersion(artifactId: string, versionNumber: number): ArtifactInfo;
+}
+
+export interface ArtifactVersionInfo {
+  version: number;
+  content: string;
+  createdAt: string;
 }
 
 export interface SourceInfo {
