@@ -1,3 +1,4 @@
+use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tessera_templates::TemplateRegistry;
@@ -5,13 +6,22 @@ use tessera_templates::TemplateRegistry;
 use crate::{BridgeError, BridgeResult};
 
 #[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
 pub struct TemplateInfo {
     pub id: String,
     pub name: String,
     pub artifact_type: String,
     pub description: String,
-    pub section_count: usize,
+    pub section_count: i32,
     pub export_formats: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct TemplateSectionInfo {
+    pub title: String,
+    pub prompt: String,
+    pub required_sources: bool,
 }
 
 pub fn list_templates(template_dir: &str) -> BridgeResult<Vec<TemplateInfo>> {
@@ -30,7 +40,7 @@ pub fn list_templates(template_dir: &str) -> BridgeResult<Vec<TemplateInfo>> {
             name: t.name.clone(),
             artifact_type: serde_json::to_string(&t.artifact_type).unwrap_or_default(),
             description: t.description.clone(),
-            section_count: t.section_count(),
+            section_count: t.section_count() as i32,
             export_formats: t
                 .export_formats()
                 .iter()
@@ -55,7 +65,7 @@ pub fn get_template(template_dir: &str, template_id: &str) -> BridgeResult<Optio
         name: t.name.clone(),
         artifact_type: serde_json::to_string(&t.artifact_type).unwrap_or_default(),
         description: t.description.clone(),
-        section_count: t.section_count(),
+        section_count: t.section_count() as i32,
         export_formats: t
             .export_formats()
             .iter()

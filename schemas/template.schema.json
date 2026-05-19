@@ -1,0 +1,117 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tessera.app/schemas/template.schema.json",
+  "title": "Tessera Template",
+  "description": "Schema for validating Tessera YAML template definitions",
+  "type": "object",
+  "required": ["id", "name", "type", "description", "sections", "export"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "Unique template identifier (lowercase, hyphens allowed)"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "Human-readable template name"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["document", "slides", "sheet", "base"],
+      "description": "Artifact type this template produces"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Brief description of what this template creates"
+    },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/TemplateSection"
+      },
+      "description": "Ordered list of sections that compose the template"
+    },
+    "export": {
+      "type": "object",
+      "required": ["formats"],
+      "properties": {
+        "formats": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": ["markdown", "html", "csv", "json", "pdf", "docx", "pptx", "xlsx"]
+          },
+          "description": "Supported export formats for artifacts created from this template"
+        },
+        "default_format": {
+          "type": "string",
+          "enum": ["markdown", "html", "csv", "json", "pdf", "docx", "pptx", "xlsx"],
+          "description": "Default export format"
+        }
+      },
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+(\\.\\d+)?$"
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "TemplateSection": {
+      "type": "object",
+      "required": ["title", "prompt"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Section heading"
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Generation prompt for this section — sent to the LLM to produce content"
+        },
+        "required_sources": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["local_folder", "local_file", "google_drive", "one_drive", "notion", "jira", "confluence", "figma"]
+          },
+          "description": "Source types that must be attached for this section to generate"
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 16384,
+          "description": "Maximum tokens for LLM generation of this section"
+        },
+        "output_format": {
+          "type": "string",
+          "enum": ["prose", "bullets", "numbered_list", "table", "json"],
+          "description": "Expected output structure for this section"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -90,7 +90,7 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 | Chunking pipeline | `DONE` |
 | Local evidence storage (encrypted) | `DONE` |
 | Basic hybrid search (FTS5 + vector + recency) | `DONE` |
-| Source detail page | `NOT STARTED` |
+| Source detail page | `DONE` |
 
 ### Exit criteria
 
@@ -102,7 +102,7 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 
 ## Phase 3 — Templates and artifacts
 
-**Status:** `NOT STARTED`
+**Status:** `DONE`
 
 **Goal:** Users can create work artifacts from templates backed by indexed sources.
 
@@ -110,28 +110,28 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 
 | Item | Status |
 |---|---|
-| Template schema (YAML) | `NOT STARTED` |
-| Artifact schema | `NOT STARTED` |
-| Template gallery UI | `NOT STARTED` |
-| Document editor (ProseMirror/TipTap) | `NOT STARTED` |
-| Slide editor | `NOT STARTED` |
-| Sheet editor (grid) | `NOT STARTED` |
-| Base editor (grid view) | `NOT STARTED` |
-| Citation panel | `NOT STARTED` |
-| Version history | `NOT STARTED` |
-| Export: Markdown, HTML, CSV, PDF | `NOT STARTED` |
+| Template schema (YAML) | `DONE` |
+| Artifact schema | `DONE` |
+| Template gallery UI | `DONE` |
+| Document editor (ProseMirror/TipTap) | `DONE` |
+| Slide editor | `DONE` |
+| Sheet editor (grid) | `DONE` |
+| Base editor (grid view) | `DONE` |
+| Citation panel | `DONE` |
+| Version history | `DONE` |
+| Export: Markdown, HTML, CSV, PDF | `DONE` |
 
 ### Exit criteria
 
-- [ ] User selects a template and sources, Tessera creates an editable artifact with citations.
-- [ ] Citations link back to source material with provenance.
-- [ ] User can export artifacts to Markdown, HTML, CSV, and PDF.
+- [x] User selects a template and sources, Tessera creates an editable artifact with citations.
+- [x] Citations link back to source material with provenance.
+- [x] User can export artifacts to Markdown, HTML, CSV, and PDF.
 
 ---
 
 ## Phase 4 — Local model runtime
 
-**Status:** `NOT STARTED`
+**Status:** `DONE`
 
 **Goal:** Local generation from indexed knowledge using on-device models.
 
@@ -139,22 +139,22 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 
 | Item | Status |
 |---|---|
-| Local runtime manager | `NOT STARTED` |
-| Sidecar start/stop lifecycle | `NOT STARTED` |
-| Health checks and status reporting | `NOT STARTED` |
-| Ternary-Bonsai 1.7B support | `NOT STARTED` |
-| Ternary-Bonsai 4B support | `NOT STARTED` |
-| Ternary-Bonsai 8B support | `NOT STARTED` |
-| Streaming generation | `NOT STARTED` |
-| Structured output parsing (GBNF) | `NOT STARTED` |
-| Runtime status UI | `NOT STARTED` |
+| Local runtime manager | `DONE` |
+| Sidecar start/stop lifecycle | `DONE` |
+| Health checks and status reporting | `DONE` |
+| Ternary-Bonsai 1.7B support | `DONE` |
+| Ternary-Bonsai 4B support | `DONE` |
+| Ternary-Bonsai 8B support | `DONE` |
+| Streaming generation | `DONE` |
+| Structured output parsing (GBNF) | `DONE` |
+| Runtime status UI | `DONE` |
 
 ### Exit criteria
 
-- [ ] User generates a document draft from local sources with local model inference.
-- [ ] Generation runs entirely locally.
-- [ ] User can see the active model and runtime status.
-- [ ] Failed states are handled gracefully.
+- [x] User generates a document draft from local sources with local model inference.
+- [x] Generation runs entirely locally.
+- [x] User can see the active model and runtime status.
+- [x] Failed states are handled gracefully.
 
 ---
 
@@ -260,6 +260,12 @@ Tessera's UI follows the **KChat design system** ([https://kchat.com](https://kc
 ---
 
 ## Changelog
+
+### 2026-05-19 (continued)
+- Phase 2 fix: Source detail page implemented, IPC wired to Rust N-API bridge
+- Phase 3 completed: Template/artifact JSON schemas, TipTap document editor, slide editor, sheet editor, base editor, citation panel, version history, PDF export, template gallery IPC integration
+- Phase 4 completed: Runtime manager, sidecar lifecycle, health checks, Ternary-Bonsai 1.7B/4B/8B support, streaming generation, GBNF structured output, runtime status UI
+- Bug fixes: TemplatesPage inverted UX, artifact store silent parse-error fallback
 
 ### 2026-05-19
 - Phase 0 completed: CONTRIBUTING.md, SECURITY.md, desktop app skeleton, build system

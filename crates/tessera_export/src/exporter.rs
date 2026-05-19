@@ -6,6 +6,7 @@ use tessera_core::ExportFormat;
 use crate::csv::export_csv;
 use crate::html::export_html;
 use crate::markdown::export_markdown;
+use crate::pdf::export_pdf;
 
 pub fn export(artifact: &Artifact, citations: &[Citation], format: ExportFormat) -> Result<String> {
     match format {
@@ -15,6 +16,9 @@ pub fn export(artifact: &Artifact, citations: &[Citation], format: ExportFormat)
         ExportFormat::Json => {
             serde_json::to_string_pretty(artifact).map_err(|e| Error::Export(e.to_string()))
         }
+        ExportFormat::Pdf => Err(Error::Export(
+            "PDF export produces binary output; use export_to_file() instead".to_string(),
+        )),
         other => Err(Error::Export(format!(
             "export format {other:?} not yet implemented"
         ))),
@@ -27,11 +31,19 @@ pub fn export_to_file(
     format: ExportFormat,
     path: &std::path::Path,
 ) -> Result<()> {
-    let content = export(artifact, citations, format)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, content)?;
+    match format {
+        ExportFormat::Pdf => {
+            let bytes = export_pdf(artifact, citations);
+            std::fs::write(path, bytes)?;
+        }
+        _ => {
+            let content = export(artifact, citations, format)?;
+            std::fs::write(path, content)?;
+        }
+    }
     Ok(())
 }
 
@@ -81,9 +93,21 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_format_returns_error() {
+    fn pdf_string_export_returns_error_directing_to_file() {
         let artifact = Artifact::new("Test".to_string(), ArtifactType::Document, None);
         let result = export(&artifact, &[], ExportFormat::Pdf);
         assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("export_to_file"));
+    }
+
+    #[test]
+    fn pdf_export_to_file_works() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = Artifact::new("PDF Test".to_string(), ArtifactType::Document, None);
+        let path = dir.path().join("output.pdf");
+        export_to_file(&artifact, &[], ExportFormat::Pdf, &path).unwrap();
+        let content = std::fs::read(&path).unwrap();
+        assert!(content.starts_with(b"%PDF-1.4"));
     }
 }

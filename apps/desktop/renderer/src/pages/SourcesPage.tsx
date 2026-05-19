@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Card from "../components/Card";
@@ -8,6 +9,7 @@ import EmptyState from "../components/EmptyState";
 import { useSourceList, useAddSource, useRemoveSource } from "../hooks/useSources";
 
 export default function SourcesPage() {
+  const navigate = useNavigate();
   const { sources, loading, refresh } = useSourceList();
   const { addFolder, addFile } = useAddSource();
   const { remove } = useRemoveSource();
@@ -87,7 +89,11 @@ export default function SourcesPage() {
                       marginBottom: "var(--spacing-xs)",
                     }}
                   >
-                    <span className="card-title" style={{ margin: 0 }}>
+                    <span
+                      className="card-title"
+                      style={{ margin: 0, cursor: "pointer" }}
+                      onClick={() => navigate(`/sources/${source.id}`)}
+                    >
                       {source.path}
                     </span>
                     <StatusBadge status={source.status} />

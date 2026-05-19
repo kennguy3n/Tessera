@@ -318,35 +318,40 @@ tessera/
 │       ├── electron/            # Electron main process
 │       │   ├── main.ts          # App entry, window management
 │       │   ├── ipc.ts           # IPC handler registration
+│       │   ├── appState.ts      # Bridge initialization and AppState
+│       │   ├── preload.ts       # Typed preload API exposed to renderer
 │       │   ├── sidecar.ts       # Model sidecar supervision
-│       │   └── oauth.ts         # OAuth flow handling
+│       │   └── config.ts        # Local JSON settings persistence
 │       └── renderer/            # React / TypeScript UI
 │           ├── src/
-│           │   ├── pages/       # Home, Sources, Create, Settings, etc.
-│           │   ├── components/  # Shared UI components
-│           │   ├── editors/     # Document, Slide, Sheet, Base editors
+│           │   ├── pages/       # Home, Sources, SourceDetail, Templates, Settings, ArtifactEditor
+│           │   ├── components/  # CitationPanel, VersionHistory, RuntimeStatus
+│           │   ├── editors/     # DocumentEditor (TipTap), SlideEditor, SheetEditor, BaseEditor
 │           │   ├── hooks/       # React hooks for IPC calls
+│           │   ├── types/       # TypeScript type definitions (ipc.ts)
 │           │   └── styles/      # Design tokens, theme
 │           └── index.html
 ├── crates/                      # Rust core engine
 │   ├── tessera_core/            # Core types, config, lifecycle
 │   ├── tessera_bridge/          # N-API bindings for Electron
 │   ├── tessera_sources/         # Source management, file indexing
-│   ├── tessera_connectors/      # Remote connector framework
 │   ├── tessera_templates/       # Template parsing and validation
-│   ├── tessera_artifacts/       # Artifact creation and management
-│   ├── tessera_export/          # Export engine (MD, HTML, PDF, CSV)
+│   ├── tessera_artifacts/       # Artifact creation, version history, storage
+│   ├── tessera_export/          # Export engine (MD, HTML, CSV, JSON, PDF)
 │   ├── tessera_citations/       # Citation tracking and provenance
+│   ├── tessera_runtime/         # Local model runtime management
 │   └── tessera_audit/           # Audit trail logging
 ├── sidecars/                    # Model runtime binaries
 │   ├── llama-server/            # PrismML llama.cpp sidecar
-│   └── scripts/                 # Sidecar download and setup scripts
+│   ├── scripts/                 # Platform download scripts (sh + ps1)
+│   └── models.json              # Model download manifest
 ├── templates/                   # YAML artifact templates
 │   ├── documents/
 │   ├── slides/
 │   ├── sheets/
-│   └── bases/
-├── schemas/                     # JSON schemas for artifacts and templates
+│   ├── bases/
+│   └── grammars/                # GBNF grammar files for structured LLM output
+├── schemas/                     # JSON Schema (template.schema.json, artifact.schema.json)
 ├── packaging/                   # electron-builder configs
 │   ├── macos/
 │   └── windows/

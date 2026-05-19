@@ -1,0 +1,115 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tessera.app/schemas/artifact.schema.json",
+  "title": "Tessera Artifact",
+  "description": "Schema for validating Tessera artifact structure (export/API contract)",
+  "type": "object",
+  "required": ["id", "title", "type", "content", "version", "createdAt", "updatedAt"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique artifact identifier (UUID v4)"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Artifact title"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["document", "slides", "sheet", "base"],
+      "description": "Artifact type determines the editor and export behavior"
+    },
+    "templateId": {
+      "type": ["string", "null"],
+      "description": "ID of the template used to create this artifact, if any"
+    },
+    "content": {
+      "type": "string",
+      "description": "Artifact content — format depends on type (HTML for document, JSON for slides/sheet/base)"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonically increasing version number, incremented on each content update"
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Citation"
+      },
+      "description": "Citations linking this artifact to source material"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 creation timestamp"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 last-updated timestamp"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "Citation": {
+      "type": "object",
+      "required": ["citationId", "sourceId", "sourceType", "sourceTitle", "sourceUri", "chunkHash", "confidence", "usedFor", "createdAt"],
+      "properties": {
+        "citationId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique citation identifier"
+        },
+        "sourceId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "ID of the source this citation references"
+        },
+        "sourceType": {
+          "type": "string",
+          "enum": ["local_folder", "local_file", "google_drive", "one_drive", "notion", "jira", "confluence", "figma"],
+          "description": "Type of the cited source"
+        },
+        "sourceTitle": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable source title"
+        },
+        "sourceUri": {
+          "type": "string",
+          "minLength": 1,
+          "description": "URI or path to the source material"
+        },
+        "chunkHash": {
+          "type": "string",
+          "description": "Hash of the cited content chunk for change detection"
+        },
+        "page": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "Page number in the source document, if applicable"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Confidence score (0.0 to 1.0) of the citation relevance"
+        },
+        "usedFor": {
+          "type": "string",
+          "description": "Description of what this citation was used for in the artifact"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of when this citation was added"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

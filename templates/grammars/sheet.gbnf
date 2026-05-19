@@ -1,0 +1,6 @@
+root ::= "{" ws "\"columns\"" ws ":" ws columns "," ws "\"rows\"" ws ":" ws rows ws "}"
+columns ::= "[" ws string ("," ws string)* ws "]"
+rows ::= "[" ws (row ("," ws row)*)? ws "]"
+row ::= "[" ws (string ("," ws string)*)? ws "]"
+string ::= "\"" ([^"\\] | "\\" ["\\/bfnrt] | "\\u" [0-9a-fA-F]{4})* "\""
+ws ::= [ \t\n]*

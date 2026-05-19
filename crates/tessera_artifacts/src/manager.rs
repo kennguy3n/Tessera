@@ -2,7 +2,7 @@ use tessera_core::error::Result;
 use tessera_core::{ArtifactId, ArtifactType, CitationId, TemplateId};
 
 use crate::artifact::Artifact;
-use crate::store::ArtifactStore;
+use crate::store::{ArtifactStore, ArtifactVersion};
 
 pub struct ArtifactManager {
     store: ArtifactStore,
@@ -32,6 +32,8 @@ impl ArtifactManager {
 
     pub fn update_content(&self, id: &ArtifactId, content: String) -> Result<Artifact> {
         let mut artifact = self.store.get(id)?;
+        // Auto-save a version snapshot of the current content before updating
+        self.store.save_version(id, artifact.version, &artifact.content)?;
         artifact.update_content(content);
         self.store.update(&artifact)?;
         Ok(artifact)
@@ -54,6 +56,15 @@ impl ArtifactManager {
 
     pub fn delete(&self, id: &ArtifactId) -> Result<()> {
         self.store.delete(id)
+    }
+
+    pub fn list_versions(&self, id: &ArtifactId) -> Result<Vec<ArtifactVersion>> {
+        self.store.list_versions(id)
+    }
+
+    pub fn restore_version(&self, id: &ArtifactId, version_number: u32) -> Result<Artifact> {
+        let version = self.store.get_version(id, version_number)?;
+        self.update_content(id, version.content_snapshot)
     }
 }
 
@@ -93,5 +104,46 @@ mod tests {
         let cid = CitationId::new();
         let updated = manager.add_citation(&artifact.id, cid).unwrap();
         assert_eq!(updated.citations.len(), 1);
+    }
+
+    #[test]
+    fn version_auto_saved_on_update() {
+        let manager = ArtifactManager::new_in_memory().unwrap();
+        let artifact = manager
+            .create("Test".to_string(), ArtifactType::Document, None)
+            .unwrap();
+
+        manager
+            .update_content(&artifact.id, "First update".to_string())
+            .unwrap();
+        manager
+            .update_content(&artifact.id, "Second update".to_string())
+            .unwrap();
+
+        let versions = manager.list_versions(&artifact.id).unwrap();
+        assert_eq!(versions.len(), 2);
+        // First version saved is the initial empty content (before "First update")
+        assert_eq!(versions[1].content_snapshot, "");
+        // Second version saved is "First update" (before "Second update")
+        assert_eq!(versions[0].content_snapshot, "First update");
+    }
+
+    #[test]
+    fn restore_version() {
+        let manager = ArtifactManager::new_in_memory().unwrap();
+        let artifact = manager
+            .create("Test".to_string(), ArtifactType::Document, None)
+            .unwrap();
+
+        manager
+            .update_content(&artifact.id, "v2 content".to_string())
+            .unwrap();
+        manager
+            .update_content(&artifact.id, "v3 content".to_string())
+            .unwrap();
+
+        // Restore to version 1 (the original empty content)
+        let restored = manager.restore_version(&artifact.id, 1).unwrap();
+        assert_eq!(restored.content, "");
     }
 }

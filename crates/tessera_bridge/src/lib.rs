@@ -1,4 +1,7 @@
 pub mod artifacts;
+pub mod citations;
+pub mod exporter;
+pub mod napi_exports;
 pub mod settings;
 pub mod sources;
 pub mod templates;
@@ -16,6 +19,9 @@ pub enum BridgeError {
 
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    #[error("Not initialized")]
+    NotInitialized,
 }
 
 pub type BridgeResult<T> = std::result::Result<T, BridgeError>;

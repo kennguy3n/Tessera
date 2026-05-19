@@ -1,0 +1,40 @@
+{
+  "models": [
+    {
+      "id": "ternary-bonsai-1.7b",
+      "name": "Ternary-Bonsai 1.7B",
+      "parameters": "1.7B",
+      "quantization": "Q4_K_M",
+      "required_ram_gb": 2,
+      "download_size_mb": 1100,
+      "context_length": 2048,
+      "tier": "low",
+      "url": "https://huggingface.co/tessera-ai/ternary-bonsai-1.7B-GGUF/resolve/main/ternary-bonsai-1.7b.Q4_K_M.gguf",
+      "checksum": "sha256:placeholder-update-with-real-hash-after-model-publish"
+    },
+    {
+      "id": "ternary-bonsai-4b",
+      "name": "Ternary-Bonsai 4B",
+      "parameters": "4B",
+      "quantization": "Q4_K_M",
+      "required_ram_gb": 4,
+      "download_size_mb": 2600,
+      "context_length": 4096,
+      "tier": "medium",
+      "url": "https://huggingface.co/tessera-ai/ternary-bonsai-4B-GGUF/resolve/main/ternary-bonsai-4b.Q4_K_M.gguf",
+      "checksum": "sha256:placeholder-update-with-real-hash-after-model-publish"
+    },
+    {
+      "id": "ternary-bonsai-8b",
+      "name": "Ternary-Bonsai 8B",
+      "parameters": "8B",
+      "quantization": "Q4_K_M",
+      "required_ram_gb": 8,
+      "download_size_mb": 4900,
+      "context_length": 8192,
+      "tier": "high",
+      "url": "https://huggingface.co/tessera-ai/ternary-bonsai-8B-GGUF/resolve/main/ternary-bonsai-8b.Q4_K_M.gguf",
+      "checksum": "sha256:placeholder-update-with-real-hash-after-model-publish"
+    }
+  ]
+}

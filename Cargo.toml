@@ -9,12 +9,13 @@ members = [
     "crates/tessera_citations",
     "crates/tessera_export",
     "crates/tessera_audit",
+    "crates/tessera_runtime",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.77"
 license = "MIT"
 repository = "https://github.com/kennguy3n/Tessera"
 
