@@ -25,6 +25,7 @@ export class ModelSidecar {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRequestTime: number = 0;
   private _isRunning: boolean = false;
+  private _isTerminating: boolean = false;
   private restartCount: number = 0;
 
   constructor(options: Partial<SidecarOptions> = {}) {
@@ -66,6 +67,7 @@ export class ModelSidecar {
       this._isRunning = false;
       this.stopHealthCheck();
       this.stopIdleMonitor();
+      if (this._isTerminating) return;
       if (code !== 0 && code !== null) {
         this.restartCount++;
         if (this.restartCount <= MAX_RESTART_RETRIES) {
@@ -88,6 +90,7 @@ export class ModelSidecar {
   }
 
   async stop(): Promise<void> {
+    this._isTerminating = true;
     this.stopHealthCheck();
     this.stopIdleMonitor();
 
@@ -111,6 +114,7 @@ export class ModelSidecar {
       this.process = null;
     }
     this._isRunning = false;
+    this._isTerminating = false;
   }
 
   async healthCheck(): Promise<boolean> {

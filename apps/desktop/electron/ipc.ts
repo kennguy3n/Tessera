@@ -573,7 +573,7 @@ export function registerIpcHandlers(): void {
     const accessToken = await getValidAccessToken("google_drive");
 
     let added = 0;
-    const modified = 0;
+    let modified = 0;
     const removed = 0;
     const syncedPaths: string[] = [];
 
@@ -654,6 +654,7 @@ export function registerIpcHandlers(): void {
             const existing = sources.find((s) => s.path === localPath);
             if (existing) {
               bridge.bridgeReindexSource(existing.id);
+              modified++;
             } else {
               bridge.bridgeAddLocalFile(localPath);
               added++;
