@@ -23,6 +23,9 @@ impl<'a> SearchEngine<'a> {
 
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
         let fts_query = build_fts_query(query);
+        if fts_query.is_empty() {
+            return Ok(Vec::new());
+        }
         let hits = self.store.search_fts(&fts_query, limit)?;
 
         let results = hits

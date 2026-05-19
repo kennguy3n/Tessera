@@ -16,6 +16,8 @@ const DEFAULT_OPTIONS: SidecarOptions = {
   idleUnloadMs: 60_000,
 };
 
+const MAX_RESTART_RETRIES = 5;
+
 export class ModelSidecar {
   private process: ChildProcess | null = null;
   private options: SidecarOptions;
@@ -23,6 +25,7 @@ export class ModelSidecar {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRequestTime: number = 0;
   private _isRunning: boolean = false;
+  private restartCount: number = 0;
 
   constructor(options: Partial<SidecarOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -57,7 +60,11 @@ export class ModelSidecar {
       this.stopHealthCheck();
       this.stopIdleMonitor();
       if (code !== 0 && code !== null) {
-        setTimeout(() => this.start(), 3000);
+        this.restartCount++;
+        if (this.restartCount <= MAX_RESTART_RETRIES) {
+          const delay = Math.min(3000 * Math.pow(2, this.restartCount - 1), 60_000);
+          setTimeout(() => this.start().catch(() => {}), delay);
+        }
       }
     });
 
@@ -121,7 +128,10 @@ export class ModelSidecar {
     this.healthCheckTimer = setInterval(async () => {
       if (this._isRunning) {
         const healthy = await this.healthCheck();
-        if (!healthy && this._isRunning) {
+        if (healthy) {
+          this.restartCount = 0;
+        } else if (this._isRunning) {
+          this.restartCount = 0;
           await this.stop();
           await this.start();
         }

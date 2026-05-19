@@ -3,7 +3,7 @@ import type { ArtifactInfo } from "../types/ipc";
 
 export function useArtifactList() {
   const [artifacts, setArtifacts] = useState<ArtifactInfo[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
