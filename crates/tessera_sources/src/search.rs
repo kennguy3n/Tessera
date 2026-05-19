@@ -73,9 +73,32 @@ fn sanitize_fts_term(term: &str) -> String {
     format!("\"{cleaned}\"")
 }
 
+const STOPWORDS: &[&str] = &[
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+    "has", "he", "in", "is", "it", "its", "of", "on", "or", "she",
+    "that", "the", "their", "them", "then", "there", "these", "they",
+    "this", "to", "was", "were", "will", "with", "you", "your",
+    "all", "also", "any", "been", "but", "can", "do", "each",
+    "how", "if", "into", "may", "more", "most", "no", "not",
+    "only", "other", "our", "out", "own", "so", "some", "such",
+    "than", "too", "very", "what", "when", "which", "who", "whom",
+    "why", "would", "about", "after", "before", "between", "both",
+    "could", "did", "does", "done", "during", "get", "got", "had",
+    "have", "her", "here", "him", "his", "just", "let", "like",
+    "make", "my", "new", "now", "old", "over", "should", "still",
+    "take", "through", "under", "up", "upon", "us", "use", "using",
+    "we", "well", "where", "while",
+    "citing", "relevant", "summarize", "describe", "explain", "outline",
+];
+
+fn is_stopword(word: &str) -> bool {
+    STOPWORDS.contains(&word.to_ascii_lowercase().as_str())
+}
+
 fn build_fts_query(query: &str, use_or: bool) -> String {
     let terms: Vec<String> = query
         .split_whitespace()
+        .filter(|w| !use_or || !is_stopword(w))
         .map(sanitize_fts_term)
         .filter(|t| !t.is_empty())
         .collect();

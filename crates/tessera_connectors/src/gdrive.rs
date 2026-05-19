@@ -404,9 +404,15 @@ impl GoogleDriveConnector {
         };
 
         self.status = ConnectorStatus::Syncing;
-        let token = self.ensure_valid_token().await?;
+        let token = match self.ensure_valid_token().await {
+            Ok(t) => t,
+            Err(e) => {
+                self.status = ConnectorStatus::Error;
+                return Err(e);
+            }
+        };
 
-        let resp = self
+        let resp = match self
             .client
             .get(&self.changes_url)
             .bearer_auth(&token)
@@ -422,7 +428,14 @@ impl GoogleDriveConnector {
                 ("includeRemoved", "true"),
             ])
             .send()
-            .await?;
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                self.status = ConnectorStatus::Error;
+                return Err(e.into());
+            }
+        };
 
         if !resp.status().is_success() {
             self.status = ConnectorStatus::Error;
