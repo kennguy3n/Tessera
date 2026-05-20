@@ -62,14 +62,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-13, windows-2022]
+        # PRs run ubuntu + windows (fast, reliable runners).
+        # Pushes to `main` also run macos-13 so we still catch any
+        # macOS-specific regressions on the release branch — but never
+        # block a PR on the perpetually-contended GHA macos-13 queue.
+        os: ${{ github.event_name == 'pull_request'
+          && fromJSON('["ubuntu-22.04", "windows-2022"]')
+          || fromJSON('["ubuntu-22.04", "macos-13", "windows-2022"]') }}
     runs-on: ${{ matrix.os }}
     # Ubuntu is the required gate (it mirrors the production AppImage
-    # build and is the runner with the most consistent availability).
-    # macOS and Windows are advisory — a failure or runner-queue stall
-    # on those matrix entries is absorbed as "soft failure" and does
-    # NOT fail the job. This keeps CI from going red whenever GitHub's
-    # hosted macos-13 runner queue is contended (which it routinely is).
+    # build). macOS and Windows are advisory: failures are absorbed as
+    # "soft failure" so a flaky non-Linux runner doesn't block merge.
     continue-on-error: ${{ matrix.os != 'ubuntu-22.04' }}
     steps:
       - uses: actions/checkout@v4
@@ -117,10 +120,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-13, windows-2022]
+        # See the Rust job above for the rationale on the conditional
+        # matrix and `continue-on-error`.
+        os: ${{ github.event_name == 'pull_request'
+          && fromJSON('["ubuntu-22.04", "windows-2022"]')
+          || fromJSON('["ubuntu-22.04", "macos-13", "windows-2022"]') }}
     runs-on: ${{ matrix.os }}
-    # See the Rust job above — ubuntu is the required gate, others are
-    # advisory so GHA macOS runner queue contention doesn't block PRs.
     continue-on-error: ${{ matrix.os != 'ubuntu-22.04' }}
     steps:
       - uses: actions/checkout@v4
