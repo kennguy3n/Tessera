@@ -157,5 +157,34 @@ describe("marpExport", () => {
       expect(newFiles.length).toBe(1);
       expect(newFiles[0]).toMatch(/\.pptx$/);
     });
+
+    it("uses crypto.randomBytes for temp-file uniqueness (regression for ANALYSIS_4813dc99_0005)", async () => {
+      // Two concurrent exports issued in the same millisecond must not
+      // collide on the temp input filename. Math.random() with 6 base-36
+      // chars only has ~2.2e9 namespace and `Date.now()` collapses to the
+      // same value under quick succession — collisions were rare but
+      // possible. crypto.randomBytes(8) gives ~1.8e19 namespace and
+      // hex-encodes to a deterministic 16 chars.
+      const observed = new Set<string>();
+      __setMarpRunner(async (argv) => {
+        const inputPath = argv[0];
+        observed.add(path.basename(inputPath));
+        const out = argv[argv.indexOf("-o") + 1];
+        fs.writeFileSync(out, "x");
+        return 0;
+      });
+      // Fire 50 exports back-to-back so Date.now() is much more likely to
+      // repeat than under any normal workload.
+      const runs = Array.from({ length: 50 }, () =>
+        runMarpExport({ markdown: "# x", format: "pptx", tmpDir }),
+      );
+      await Promise.all(runs);
+      // Every temp-input basename must be unique.
+      expect(observed.size).toBe(50);
+      // Each basename has the form `tessera-marp-<digits>-<16-hex>.md`.
+      for (const name of observed) {
+        expect(name).toMatch(/^tessera-marp-\d+-[0-9a-f]{16}\.md$/);
+      }
+    });
   });
 });
