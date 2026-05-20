@@ -247,6 +247,16 @@ export function hasVulkan(): boolean {
     cachedHasVulkan = true;
     return cachedHasVulkan;
   }
+  // Keep this candidate set in lock-step with `has_vulkan` in
+  // `crates/tessera_runtime/src/config.rs`. The TS detection (used by the
+  // Electron renderer's PlatformInfo card) and the Rust detection (used by
+  // the inference router) must reach the same verdict on the same host —
+  // otherwise the UI shows "Vulkan available" while the runtime refuses
+  // to dispatch to it (or vice-versa). On Linux the canonical set is
+  // every multiarch path that ships the loader from a packaged distro:
+  // both `/usr/lib/...` (Debian/Ubuntu standard) AND `/lib/...` (some
+  // older / minimal distros and merged-/usr systems where /lib is the
+  // primary). (Devin Review finding from round 17.)
   const candidates =
     process.platform === "linux"
       ? [
@@ -258,6 +268,11 @@ export function hasVulkan(): boolean {
           "/usr/lib/aarch64-linux-gnu/libvulkan.so.1",
           "/usr/lib64/libvulkan.so.1",
           "/usr/lib/libvulkan.so.1",
+          // Merged-/usr / minimal-distro multiarch paths. Mirror the Rust
+          // side's `/lib/x86_64-linux-gnu` and `/lib/aarch64-linux-gnu`
+          // candidates so the TS and Rust detectors can't disagree.
+          "/lib/x86_64-linux-gnu/libvulkan.so.1",
+          "/lib/aarch64-linux-gnu/libvulkan.so.1",
         ]
       : process.platform === "win32"
         ? ["C:\\Windows\\System32\\vulkan-1.dll"]

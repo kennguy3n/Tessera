@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import Button from "../components/Button";
@@ -9,6 +9,7 @@ import StatusBadge from "../components/StatusBadge";
 import EmptyState from "../components/EmptyState";
 import SearchInput from "../components/SearchInput";
 import Modal from "../components/Modal";
+import ModelRuntimeCard from "../components/ModelRuntimeCard";
 
 describe("Sidebar", () => {
   it("renders all navigation links", () => {
@@ -207,5 +208,108 @@ describe("Modal", () => {
     );
     fireEvent.click(screen.getByRole("dialog"));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+describe("ModelRuntimeCard delete-from-non-running flow", () => {
+  // Regression for Devin Review finding 3271137928: handleDelete used to
+  // only refresh `model.status()` on the branch where the runtime was
+  // running before delete. If the user clicked Delete while the runtime
+  // was in any other state ("stopped", "error", a stale "running" whose
+  // process crashed externally) we would clear `state.current` but leave
+  // a stale status badge next to the now-empty "no model" panel. The fix
+  // is to unconditionally re-pull `model.status()` after a successful
+  // `runtime.deleteModel()` so the UI matches main-process truth.
+  function buildApi(initial: {
+    status: { available: boolean; modelName: string | null; status: string };
+  }) {
+    const statusMock = vi
+      .fn()
+      .mockResolvedValueOnce(initial.status)
+      .mockResolvedValue({
+        available: false,
+        modelName: null,
+        status: "stopped",
+      });
+    const deleteMock = vi.fn().mockResolvedValue(undefined);
+    const stopMock = vi.fn().mockResolvedValue(undefined);
+    const api = {
+      ...window.tessera,
+      model: { ...window.tessera.model, status: statusMock, stop: stopMock },
+      runtime: {
+        ...window.tessera.runtime,
+        detectPlatform: vi.fn().mockResolvedValue({
+          platform: "linux-x64",
+          platformLabel: "Linux x64",
+          totalRamGb: 16,
+          tier: "high",
+          tierLabel: "High (8+ GB RAM)",
+          computeBackends: ["cpu"],
+          preferredFormat: "gguf",
+        }),
+        recommendModel: vi.fn().mockResolvedValue(null),
+        listModels: vi.fn().mockResolvedValue([]),
+        getCurrentModel: vi.fn().mockResolvedValue({
+          modelId: "ternary-bonsai-1.7b-gguf",
+          format: "gguf",
+          filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+          path: "/var/tmp/m.gguf",
+          downloadSizeMb: 450,
+          diskSizeMb: 450,
+          sha256: null,
+          downloadedAt: new Date().toISOString(),
+        }),
+        deleteModel: deleteMock,
+        onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
+      },
+    } as unknown as Window["tessera"];
+    return { api, statusMock, deleteMock, stopMock };
+  }
+
+  it("refreshes status even when the runtime was not running before delete", async () => {
+    const { api, statusMock, deleteMock, stopMock } = buildApi({
+      status: { available: false, modelName: null, status: "stopped" },
+    });
+
+    render(<ModelRuntimeCard api={api} />);
+
+    const deleteBtn = await screen.findByRole("button", { name: /Delete model/i });
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(deleteMock).toHaveBeenCalledTimes(1);
+    });
+    // stop() must NOT be called when the runtime was not running.
+    expect(stopMock).not.toHaveBeenCalled();
+    // status() is called at least twice: once on mount + once after
+    // delete. The second call is the bug fix \u2014 before the fix it was
+    // skipped on the non-running branch.
+    await waitFor(() => {
+      expect(statusMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it("still refreshes status when the runtime WAS running before delete (regression guard for the running branch)", async () => {
+    const { api, statusMock, deleteMock, stopMock } = buildApi({
+      status: { available: true, modelName: "Bonsai 1.7B", status: "running" },
+    });
+
+    render(<ModelRuntimeCard api={api} />);
+
+    // Wait for the "Stop" button to render so we know the running-status
+    // mount path completed.
+    await screen.findByRole("button", { name: /Stop/i });
+    const deleteBtn = screen.getByRole("button", { name: /Delete model/i });
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(stopMock).toHaveBeenCalledTimes(1);
+      expect(deleteMock).toHaveBeenCalledTimes(1);
+    });
+    // Mount status() + post-stop status() + post-delete status() = at
+    // least 3 calls.
+    await waitFor(() => {
+      expect(statusMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+    });
   });
 });

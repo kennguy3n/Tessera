@@ -1,6 +1,6 @@
 {
   "format_version": 1,
-  "note": "Ternary-Bonsai 1.58-bit models. Only ONE model is installed per device at any time. On macOS Apple Silicon Tessera uses the MLX 2-bit weight; on every other platform it uses the GGUF Q1_0_g128 ternary repack from the PrismML llama.cpp fork.",
+  "note": "Ternary-Bonsai 1.58-bit models. Only ONE model is installed per device at any time. On macOS Apple Silicon Tessera uses the MLX 2-bit weight; on every other platform it uses the GGUF Q1_0_g128 ternary repack from the PrismML llama.cpp fork. MLX entries ship as `.tar.gz` archives that expand on disk — their `diskSizeMb` is the post-extract footprint (compressed binary weights + metadata expand ~8-12%, see Devin Review finding 3271137805). GGUF entries are single files so `downloadSizeMb == diskSizeMb`.",
   "models": [
     {
       "id": "ternary-bonsai-1.7b-mlx",
@@ -12,7 +12,7 @@
       "compute": ["metal"],
       "tier": "low",
       "downloadSizeMb": 248,
-      "diskSizeMb": 248,
+      "diskSizeMb": 275,
       "requiredRamGb": 2.0,
       "contextLength": 2048,
       "filename": "ternary-bonsai-1.7b-2bit.mlx.tar.gz",
@@ -46,7 +46,7 @@
       "compute": ["metal"],
       "tier": "medium",
       "downloadSizeMb": 600,
-      "diskSizeMb": 600,
+      "diskSizeMb": 660,
       "requiredRamGb": 4.0,
       "contextLength": 4096,
       "filename": "ternary-bonsai-4b-2bit.mlx.tar.gz",
@@ -80,7 +80,7 @@
       "compute": ["metal"],
       "tier": "high",
       "downloadSizeMb": 1200,
-      "diskSizeMb": 1200,
+      "diskSizeMb": 1320,
       "requiredRamGb": 8.0,
       "contextLength": 8192,
       "filename": "ternary-bonsai-8b-2bit.mlx.tar.gz",

@@ -395,7 +395,21 @@ export function registerIpcHandlers(): void {
     const controller = new AbortController();
     activeGenerationController = controller;
 
-    const win = BrowserWindow.fromWebContents(event.sender);
+    // Bind a destroyed-window-safe sender for the token channel. This is
+    // the same defense pattern used by `progressEmitter` for the download
+    // progress channel: if the user closes the window mid-generation,
+    // `webContents.send` would otherwise throw "Object has been
+    // destroyed", which propagates through the SSE read loop and out of
+    // the IPC handler. The renderer is already gone so the rejection is
+    // dropped, but the throw also short-circuits the `finally` cleanup
+    // (idle marking + controller reset) on the way out. Routing every
+    // `model:token` send through `safeRendererSender` makes the channel
+    // best-effort and keeps cleanup deterministic regardless of renderer
+    // state. (Devin Review BUG finding 3271137685.)
+    const sendToken = safeRendererSender<{ token: string; done: boolean }>(
+      event,
+      "model:token",
+    );
     let sentDone = false;
 
     try {
@@ -429,14 +443,14 @@ export function registerIpcHandlers(): void {
           if (!line.startsWith("data: ")) continue;
           const data = line.slice(6);
           if (data === "[DONE]") {
-            win?.webContents.send("model:token", { token: "", done: true });
+            sendToken({ token: "", done: true });
             sentDone = true;
             streamDone = true;
             break;
           }
           try {
             const parsed = JSON.parse(data) as { content?: string; stop?: boolean };
-            win?.webContents.send("model:token", {
+            sendToken({
               token: parsed.content ?? "",
               done: parsed.stop ?? false,
             });
@@ -456,7 +470,7 @@ export function registerIpcHandlers(): void {
         activeGenerationController = null;
       }
       if (!sentDone) {
-        win?.webContents.send("model:token", { token: "", done: true });
+        sendToken({ token: "", done: true });
       }
     }
   });
@@ -577,40 +591,52 @@ export function registerIpcHandlers(): void {
     return planDownload(current, requested);
   });
 
-  function progressEmitter(event: Electron.IpcMainInvokeEvent) {
+  /**
+   * Bind a destroyed-window-safe sender for an IPC channel.
+   *
+   * Captures the `BrowserWindow` for `event.sender` at IPC entry and
+   * returns a closure that pushes payloads on `channel` to that window.
+   * The returned function:
+   *
+   *   - Skips the send if the window has been destroyed (user closed it,
+   *     renderer crashed, etc.). `BrowserWindow.fromWebContents` returned
+   *     a truthy JS handle whose native backing Electron has since freed,
+   *     so optional-chaining `win?.webContents` does NOT short-circuit
+   *     — we need an explicit `isDestroyed()` check.
+   *   - try/catches the `.send()` call so a transient IPC failure (queue
+   *     overflow, renderer crash mid-stream) cannot propagate up and
+   *     short-circuit the caller's outer `try { ... } finally { ... }`
+   *     cleanup.
+   *
+   * This is the long-term-correct shape — every IPC handler that streams
+   * results back to the renderer should route its sends through this
+   * helper instead of reimplementing the guard pattern. Channels that
+   * use it today:
+   *
+   *   - `runtime:downloadProgress` (the download-progress emitter)
+   *   - `model:token` (the `model:generate` SSE stream)
+   *
+   * (Devin Review BUG findings 3270950107 + 3271137685.)
+   */
+  function safeRendererSender<T>(
+    event: Electron.IpcMainInvokeEvent,
+    channel: string,
+  ): (payload: T) => void {
     const win = BrowserWindow.fromWebContents(event.sender);
-    return (p: DownloadProgress) => {
-      // Progress reporting is a UX nicety; it must NEVER abort the
-      // underlying download. Two failure modes we explicitly handle:
-      //
-      //   1. User closes the window while a multi-GB download is still
-      //      streaming. `BrowserWindow.fromWebContents` captured a live
-      //      object at IPC entry, but Electron freed the native backing
-      //      on close. The JS object is still truthy, so optional
-      //      chaining (`win?.webContents`) does NOT skip the call — it
-      //      reaches `.webContents.send(...)` which throws "Object has
-      //      been destroyed". Without the `isDestroyed()` guard that
-      //      exception would propagate through `defaultFetcher`'s read
-      //      loop and trigger the catch in `downloadModelLocked`, which
-      //      removes the `.partial` file. The user would lose hundreds
-      //      of megabytes of in-flight download just for closing the
-      //      window. (Devin Review BUG finding 3270950107.)
-      //
-      //   2. Any other transient IPC send failure (renderer process
-      //      crash mid-download, queue overflow, etc.). Same logic
-      //      applies — swallow the error so the download itself stays
-      //      decoupled from the progress channel.
+    return (payload: T) => {
       if (!win || win.isDestroyed()) return;
       try {
-        win.webContents.send("runtime:downloadProgress", p);
+        win.webContents.send(channel, payload);
       } catch (err) {
-        // Log once at debug level so this isn't a silent black hole if
-        // something genuinely wrong is happening, but never rethrow.
         console.warn(
-          `[tessera] runtime:downloadProgress emit failed (download continues): ${(err as Error).message}`,
+          `[tessera] ${channel} emit failed (continuing): ${(err as Error).message}`,
         );
       }
     };
+  }
+
+  function progressEmitter(event: Electron.IpcMainInvokeEvent) {
+    return safeRendererSender<DownloadProgress>(event, "runtime:downloadProgress");
   }
 
   ipcMain.handle("runtime:downloadModel", async (event, modelId: string) => {

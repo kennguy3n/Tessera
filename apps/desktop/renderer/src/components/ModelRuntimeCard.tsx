@@ -190,7 +190,21 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
         setState((s) => ({ ...s, status }));
       }
       await tessera.runtime.deleteModel();
-      setState((s) => ({ ...s, current: null }));
+      // Always re-fetch status after a successful delete — not just on
+      // the running-before-delete branch above. If the runtime was in
+      // any non-running state when delete fired ("stopped", "error",
+      // "starting", or a stale "running" that crashed externally), the
+      // truth on the main-process side after `deleteModel` is
+      // unambiguously "no model installed, nothing to run". Re-pulling
+      // `model.status()` keeps the UI honest instead of leaving a stale
+      // indicator next to the empty "no model" panel. (Devin Review
+      // finding 3271137928.)
+      const status = await tessera.model.status().catch(() => null);
+      setState((s) => ({
+        ...s,
+        current: null,
+        status: status ?? s.status,
+      }));
     } catch (err) {
       setState((s) => ({
         ...s,

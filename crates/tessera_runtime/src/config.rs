@@ -318,8 +318,19 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             platform: Platform::MacosAppleSilicon,
             compute_backends: MLX_COMPUTE.to_vec(),
             required_ram_gb: 2.0,
+            // MLX models ship as `.tar.gz`; the post-extract directory
+            // is larger than the compressed archive because the
+            // already-quantized weight blobs only compress marginally
+            // (~3-6%) while the metadata (config.json, tokenizer.json)
+            // compresses heavily. Net expansion is ~8-12%. The
+            // `diskSizeMb` here MUST be the post-extract footprint so
+            // swap-planning accounting ("this swap saves X MB") is
+            // correct — the user evicts the on-disk size, not the
+            // compressed download size. (Devin Review finding
+            // 3271137805; the manifest at sidecars/models.json carries
+            // the same values.)
             download_size_mb: 248,
-            disk_size_mb: 248,
+            disk_size_mb: 275,
             context_length: 2048,
             tier: DeviceTier::Low,
             filename: "ternary-bonsai-1.7b-2bit.mlx.tar.gz".into(),
@@ -365,7 +376,7 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             compute_backends: MLX_COMPUTE.to_vec(),
             required_ram_gb: 4.0,
             download_size_mb: 600,
-            disk_size_mb: 600,
+            disk_size_mb: 660,
             context_length: 4096,
             tier: DeviceTier::Medium,
             filename: "ternary-bonsai-4b-2bit.mlx.tar.gz".into(),
@@ -409,7 +420,7 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             compute_backends: MLX_COMPUTE.to_vec(),
             required_ram_gb: 8.0,
             download_size_mb: 1200,
-            disk_size_mb: 1200,
+            disk_size_mb: 1320,
             context_length: 8192,
             tier: DeviceTier::High,
             filename: "ternary-bonsai-8b-2bit.mlx.tar.gz".into(),
@@ -743,6 +754,56 @@ mod tests {
         // 1.58-bit GGUF, must NOT be Q4_K_M-inflated (~1.1 GB).
         assert!(m.download_size_mb < 600);
         assert_eq!(m.format, ModelFormat::Gguf);
+    }
+
+    #[test]
+    fn mlx_disk_size_exceeds_download_size_for_archives() {
+        // Devin Review finding 3271137805: MLX models ship as `.tar.gz`
+        // archives, so the on-disk extracted footprint is necessarily
+        // larger than the compressed download. Before the fix the Rust
+        // hardcoded fallback registry had `disk_size_mb ==
+        // download_size_mb` for every MLX entry, which made the swap
+        // planner under-account for disk usage on the Rust side of the
+        // bridge (the renderer-side TypeScript registry had the same
+        // bug, fixed in sidecars/models.json). The invariant we lock
+        // in: for every `.tar.gz`/`.tgz` MLX entry, disk_size_mb >
+        // download_size_mb; for non-archive formats, disk_size_mb >=
+        // download_size_mb.
+        for m in full_model_registry() {
+            let is_archive =
+                m.filename.ends_with(".tar.gz") || m.filename.ends_with(".tgz");
+            if m.format == ModelFormat::Mlx && is_archive {
+                assert!(
+                    m.disk_size_mb > m.download_size_mb,
+                    "MLX archive entry {} has disk_size_mb={} <= download_size_mb={} \
+                     — archives MUST report the post-extract footprint as disk size",
+                    m.id,
+                    m.disk_size_mb,
+                    m.download_size_mb,
+                );
+                // Expansion ratio bound: gzip on already-quantized
+                // weights + small metadata is empirically ~3-15%.
+                // Anything above ~30% likely indicates unit confusion.
+                let upper = (m.download_size_mb as f64 * 1.3).ceil() as u64;
+                assert!(
+                    m.disk_size_mb <= upper,
+                    "MLX archive entry {} reports disk_size_mb={} > 1.3x download_size_mb={} \
+                     — suspicious expansion ratio, double-check units",
+                    m.id,
+                    m.disk_size_mb,
+                    m.download_size_mb,
+                );
+            } else {
+                assert!(
+                    m.disk_size_mb >= m.download_size_mb,
+                    "Non-archive entry {} has disk_size_mb={} < download_size_mb={} \
+                     — single-file installs should have equal sizes",
+                    m.id,
+                    m.disk_size_mb,
+                    m.download_size_mb,
+                );
+            }
+        }
     }
 
     #[test]

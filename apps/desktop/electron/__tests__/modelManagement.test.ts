@@ -112,6 +112,33 @@ describe("manifest loading", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it("MLX entries report a post-extract diskSizeMb larger than the compressed downloadSizeMb", () => {
+    // Devin Review finding 3271137805: MLX models ship as `.tar.gz`
+    // archives, so the on-disk extracted directory is bigger than the
+    // compressed download. Before this fix the manifest had
+    // `diskSizeMb == downloadSizeMb` for every MLX entry, which made the
+    // swap planner under-account for disk usage (the user "saves N MB"
+    // calculation used the compressed size rather than the actual
+    // post-extract footprint). The invariant is: for every `.tar.gz`
+    // /`.tgz` MLX entry, diskSizeMb > downloadSizeMb; for non-archive
+    // formats (GGUF single-file, or a future raw `.mlx` directory),
+    // diskSizeMb >= downloadSizeMb.
+    const manifest = loadManifest(true);
+    for (const m of manifest.models) {
+      if (m.format === "mlx" && /\.(tar\.gz|tgz)$/.test(m.filename)) {
+        expect(m.diskSizeMb).toBeGreaterThan(m.downloadSizeMb);
+        // Sanity: expansion ratio of gzip on mostly-quantized binary
+        // payloads is bounded ~3-15%. Anything beyond ~30% is almost
+        // certainly a unit confusion, not a real measurement.
+        expect(m.diskSizeMb).toBeLessThanOrEqual(
+          Math.ceil(m.downloadSizeMb * 1.3),
+        );
+      } else {
+        expect(m.diskSizeMb).toBeGreaterThanOrEqual(m.downloadSizeMb);
+      }
+    }
+  });
+
   it("MLX models are exclusively for macOS Apple Silicon", () => {
     const manifest = loadManifest(true);
     const mlx = manifest.models.filter((m) => m.format === "mlx");
