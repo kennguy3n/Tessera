@@ -458,6 +458,33 @@ export function activeModelPath(userDataDir: string): string {
  * because they need explicit operator attention and silently masking
  * them would hide real disk faults.
  */
+/**
+ * Single source of truth for "is `modelId` actually installed and usable
+ * right now?". Used by both the IPC fast-path (skip sidecar restart when
+ * no download is needed) and by `downloadModelLocked` itself (skip
+ * download when the requested model is already on disk).
+ *
+ * Returning the record (or null) lets callers reuse the deserialised
+ * record without an extra `getCurrentModel` round-trip, and concentrates
+ * the "installed and present on disk" definition here so the two
+ * historically-duplicated checks can no longer drift. (Devin Review
+ * ANALYSIS finding 3270826130.)
+ */
+export async function isModelInstalled(
+  userDataDir: string,
+  modelId: string,
+): Promise<InstalledModelRecord | null> {
+  const current = await getCurrentModel(userDataDir);
+  if (!current) return null;
+  if (current.modelId !== modelId) return null;
+  // The active-model record can drift from reality if a user manually
+  // deleted the file out from under Tessera or a disk error removed it,
+  // so an existence check is part of the "installed" definition — not a
+  // separate concern at each call site.
+  if (!fs.existsSync(current.path)) return null;
+  return current;
+}
+
 export async function getCurrentModel(
   userDataDir: string,
 ): Promise<InstalledModelRecord | null> {
@@ -741,32 +768,34 @@ async function downloadModelLocked(
   const hasher = deps.hasher ?? defaultHasher;
   const nowFn = deps.now ?? (() => new Date());
 
+  // Fast path: requested model is already installed AND its file is
+  // still on disk. `isModelInstalled` is the single source of truth for
+  // that definition — the IPC fast-path in apps/desktop/electron/ipc.ts
+  // calls the same helper, so the two checks can no longer drift.
+  // (Devin Review findings 3270586440, 3270826130.)
+  const alreadyInstalled = await isModelInstalled(userDataDir, requested.id);
+  if (alreadyInstalled) {
+    return alreadyInstalled;
+  }
+  // Not the fast path. We must download. If a *stale* record exists
+  // (right model id but file missing, OR a different model entirely),
+  // clean it up first so the post-download `writeCurrentModel` writes a
+  // clean state instead of merging with the stale one.
   const current = await getCurrentModel(userDataDir);
-  if (current && current.modelId === requested.id) {
-    // Fast path: requested model is already installed AND the file is
-    // still on disk. We re-check existence here because the active-model
-    // record can drift from reality if a user manually deleted the file
-    // out from under Tessera or a disk error removed it. In that case the
-    // "already installed" claim is wrong and we must re-download.
-    // (Devin Review finding 3270586440.)
-    //
-    // We use `fs.existsSync` instead of the async equivalent for two
-    // reasons: (1) we're already inside the per-userDataDir download lock
-    // so blocking the event loop briefly is harmless; (2) it makes the
-    // check trivially atomic with the decision branch immediately below.
-    if (fs.existsSync(current.path)) {
-      return current;
+  if (current) {
+    if (current.modelId === requested.id) {
+      // File missing under us — clear only the record; there is no
+      // file to delete.
+      await writeCurrentModel(userDataDir, null);
+    } else {
+      // Different model installed — evict it. We're already inside
+      // `withDownloadLock` for this `userDataDir`, so call the
+      // unlocked variant — going through the public locked
+      // `deleteCurrentModel` would deadlock the per-userDataDir
+      // promise chain (it would queue behind the very call that's
+      // awaiting it).
+      await deleteCurrentModelUnlocked(userDataDir);
     }
-    // File missing — fall through to the re-download path. We still
-    // clear the stale record so the post-download `writeCurrentModel`
-    // writes a clean state instead of merging with the stale one.
-    await writeCurrentModel(userDataDir, null);
-  } else if (current) {
-    // We're already inside `withDownloadLock` for this `userDataDir`, so
-    // call the unlocked variant — going through the public locked
-    // `deleteCurrentModel` would deadlock the per-userDataDir promise
-    // chain (it would queue behind the very call that's awaiting it).
-    await deleteCurrentModelUnlocked(userDataDir);
   }
 
   const dir = modelsDir(userDataDir);

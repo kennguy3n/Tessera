@@ -1,5 +1,4 @@
 import { ipcMain, BrowserWindow, app, dialog } from "electron";
-import { existsSync } from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { loadConfig, updateConfig } from "./config";
@@ -12,6 +11,7 @@ import {
   detectPlatformInfo,
   downloadModel,
   getCurrentModel,
+  isModelInstalled,
   listModelsForPlatform,
   loadManifest,
   planDownload,
@@ -586,13 +586,19 @@ export function registerIpcHandlers(): void {
     // `downloadModel` already handles both fresh-install and swap, so a
     // second handler that called the same function only invited drift
     // (see Devin Review finding 3270524691).
-    const current = await getCurrentModel(userDataDir());
-    if (
-      current &&
-      current.modelId === requested.id &&
-      existsSync(current.path)
-    ) {
-      return current;
+    //
+    // The "already installed AND file on disk" check is delegated to
+    // `isModelInstalled` so this IPC fast-path and the
+    // `downloadModelLocked` fast-path can't drift in what counts as
+    // "installed" (Devin Review finding 3270826130). There is still a
+    // window between this check and the actual download in which a
+    // concurrent caller could move the file out from under us, but
+    // (a) `downloadModelLocked` re-checks under the per-userDataDir
+    // lock anyway, and (b) the worst case is an unnecessary sidecar
+    // restart, not corruption.
+    const installed = await isModelInstalled(userDataDir(), requested.id);
+    if (installed) {
+      return installed;
     }
     await stopSidecarIfRunning();
     return downloadModel(userDataDir(), requested, progressEmitter(event));

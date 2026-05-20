@@ -201,7 +201,27 @@ else
     echo "No checksum in manifest for $VARIANT_KEY - skipping verification."
 fi
 
-unzip -q "$ARCHIVE_PATH" -d "$TEMP_DIR/extracted"
+# Extract based on archive format. The manifest currently ships PrismML
+# llama.cpp release assets as `.tar.gz` for Linux/macOS and `.zip` for
+# Windows; rather than hard-coding one format, dispatch on the actual
+# filename so the script keeps working if the upstream packaging
+# convention changes for a future variant. (Devin Review BUG finding
+# 3270826050: the previous unconditional `unzip` failed on every
+# `.tar.gz` variant.)
+mkdir -p "$TEMP_DIR/extracted"
+case "$ARCHIVE_PATH" in
+    *.tar.gz|*.tgz)
+        tar -xzf "$ARCHIVE_PATH" -C "$TEMP_DIR/extracted"
+        ;;
+    *.zip)
+        unzip -q "$ARCHIVE_PATH" -d "$TEMP_DIR/extracted"
+        ;;
+    *)
+        echo "ERROR: Unknown archive format for $ARCHIVE_PATH" >&2
+        echo "       Expected .tar.gz / .tgz / .zip" >&2
+        exit 1
+        ;;
+esac
 
 FOUND_BINARY="$(find "$TEMP_DIR/extracted" -name "$BINARY_NAME" -type f | head -1)"
 if [[ -z "$FOUND_BINARY" ]]; then
