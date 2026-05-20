@@ -213,6 +213,25 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
+    "artifacts:exportTypst",
+    async (
+      _event,
+      req: {
+        markup: string;
+        format: "pdf" | "svg";
+        outputPath?: string;
+      },
+    ) => {
+      const { runTypstExport } = await import("./typstExport");
+      return runTypstExport({
+        markup: req.markup,
+        format: req.format,
+        outputPath: req.outputPath,
+      });
+    },
+  );
+
+  ipcMain.handle(
     "artifacts:exportMarp",
     async (
       _event,

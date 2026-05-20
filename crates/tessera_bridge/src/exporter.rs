@@ -125,4 +125,48 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("# Test"));
     }
+
+    #[test]
+    fn bridge_export_docx_to_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = ArtifactManager::new_in_memory().unwrap();
+        let tracker = CitationTracker::new_in_memory().unwrap();
+        let artifact = manager
+            .create("Docx Test".to_string(), ArtifactType::Document, None)
+            .unwrap();
+
+        let path = dir.path().join("output.docx");
+        export_artifact_to_file(
+            &manager,
+            &tracker,
+            &artifact.id.to_string(),
+            "docx",
+            path.to_str().unwrap(),
+        )
+        .unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..4], b"PK\x03\x04", "DOCX missing PK header");
+    }
+
+    #[test]
+    fn bridge_export_xlsx_to_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = ArtifactManager::new_in_memory().unwrap();
+        let tracker = CitationTracker::new_in_memory().unwrap();
+        let artifact = manager
+            .create("Xlsx Test".to_string(), ArtifactType::Sheet, None)
+            .unwrap();
+
+        let path = dir.path().join("output.xlsx");
+        export_artifact_to_file(
+            &manager,
+            &tracker,
+            &artifact.id.to_string(),
+            "xlsx",
+            path.to_str().unwrap(),
+        )
+        .unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..4], b"PK\x03\x04", "XLSX missing PK header");
+    }
 }

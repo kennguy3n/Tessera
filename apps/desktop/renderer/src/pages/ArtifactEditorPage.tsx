@@ -50,6 +50,13 @@ export default function ArtifactEditorPage() {
     [id],
   );
 
+  const BINARY_FORMATS = new Set([
+    "pdf",
+    "docx",
+    "xlsx",
+    "pptx",
+  ]);
+
   const handleExport = useCallback(
     async (format: string) => {
       if (!id) return;
@@ -58,10 +65,28 @@ export default function ArtifactEditorPage() {
       try {
         const api = window.tessera;
         if (!api) return;
-        const result = await api.artifacts.exportArtifact(id, format);
-        await navigator.clipboard.writeText(result.content);
-        setExportStatus(`Exported as ${result.format} — copied to clipboard`);
-        setTimeout(() => setExportStatus(null), 3000);
+        if (BINARY_FORMATS.has(format)) {
+          // Binary formats can't be copied to the clipboard as text; write
+          // them to a temp path next to the artifact and let the user
+          // re-export to a chosen location later. Path resolution happens
+          // on the main process for sandboxing.
+          const ext = format;
+          const name = `${artifact?.title ?? "artifact"}.${ext}`.replace(
+            /[^A-Za-z0-9._-]/g,
+            "_",
+          );
+          const filePath = `${name}`;
+          await api.artifacts.exportToFile(id, format, filePath);
+          setExportStatus(`Exported as ${format} → ${filePath}`);
+          setTimeout(() => setExportStatus(null), 4000);
+        } else {
+          const result = await api.artifacts.exportArtifact(id, format);
+          await navigator.clipboard.writeText(result.content);
+          setExportStatus(
+            `Exported as ${result.format} — copied to clipboard`,
+          );
+          setTimeout(() => setExportStatus(null), 3000);
+        }
       } catch (e) {
         setExportStatus(
           `Export failed: ${e instanceof Error ? e.message : "unknown error"}`,
@@ -70,7 +95,7 @@ export default function ArtifactEditorPage() {
         setExporting(false);
       }
     },
-    [id],
+    [id, artifact?.title],
   );
 
   const handleExportEvidencePack = useCallback(async () => {
@@ -141,13 +166,37 @@ export default function ArtifactEditorPage() {
         description={`${artifact.artifactType} — v${artifact.version}`}
         actions={
           <div style={{ display: "flex", gap: "var(--spacing-sm)" }}>
-            <Button
-              variant="secondary"
-              onClick={() => handleExport("markdown")}
+            <select
+              aria-label="Export artifact"
               disabled={exporting}
+              value=""
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v) {
+                  handleExport(v);
+                  e.target.value = "";
+                }
+              }}
+              style={{
+                padding: "var(--spacing-xs) var(--spacing-sm)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-sm)",
+                background: "var(--color-bg-elevated, #fff)",
+                fontSize: "var(--font-size-sm)",
+              }}
             >
-              Export
-            </Button>
+              <option value="" disabled>
+                Export…
+              </option>
+              <option value="markdown">Markdown (.md)</option>
+              <option value="html">HTML (.html)</option>
+              <option value="json">JSON (.json)</option>
+              <option value="csv">CSV (.csv)</option>
+              <option value="pdf">PDF (.pdf)</option>
+              <option value="docx">Word (.docx)</option>
+              <option value="xlsx">Excel (.xlsx)</option>
+              <option value="pptx">PowerPoint (.pptx, Marp)</option>
+            </select>
             <Button
               variant="secondary"
               onClick={handleExportEvidencePack}

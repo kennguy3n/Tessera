@@ -257,6 +257,11 @@ export interface TesseraApi {
       includeNotes?: boolean;
       allowHtml?: boolean;
     }) => Promise<{ outputPath: string; bytes: number }>;
+    exportTypst: (req: {
+      markup: string;
+      format: "pdf" | "svg";
+      outputPath?: string;
+    }) => Promise<{ outputPath: string; bytes: number }>;
   };
   templates: {
     list: () => Promise<TemplateInfo[]>;
@@ -353,6 +358,7 @@ const api: TesseraApi = {
     exportEvidencePack: (artifactId: string, outputPath: string) =>
       ipcRenderer.invoke("artifacts:exportEvidencePack", artifactId, outputPath),
     exportMarp: (req) => ipcRenderer.invoke("artifacts:exportMarp", req),
+    exportTypst: (req) => ipcRenderer.invoke("artifacts:exportTypst", req),
   },
   templates: {
     list: () => ipcRenderer.invoke("templates:list"),
