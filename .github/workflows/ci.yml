@@ -6,15 +6,29 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
 jobs:
   rust:
-    name: Rust
-    runs-on: ubuntu-latest
+    name: Rust — ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-13, windows-2022]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Linux build deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config
+
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.77
         with:
           components: rustfmt, clippy
 
@@ -31,6 +45,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Check formatting
+        if: matrix.os == 'ubuntu-22.04'
         run: cargo fmt --all -- --check
 
       - name: Clippy
@@ -43,10 +58,20 @@ jobs:
         run: cargo test --all
 
   typescript:
-    name: TypeScript
-    runs-on: ubuntu-latest
+    name: TypeScript — ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-13, windows-2022]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux native deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

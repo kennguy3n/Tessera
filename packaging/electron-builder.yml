@@ -80,7 +80,49 @@ linux:
     - target: deb
       arch:
         - x64
+    - target: rpm
+      arch:
+        - x64
   category: Office
   icon: build/icons
+  desktop:
+    entry:
+      Name: Tessera
+      Comment: Local-first productivity workspace for documents, slides, sheets, and bases
+      GenericName: Productivity Workspace
+      Categories: Office;Utility;
+      MimeType: application/x-tessera-artifact;
+      Keywords: productivity;documents;slides;sheets;notes;
+      StartupWMClass: Tessera
+  synopsis: Local-first productivity workspace
+  description: |
+    Tessera is a local-first open-source productivity workspace for creating
+    documents, slides, sheets, and bases from your own files and connected
+    sources. Indexes content on-device and generates source-backed drafts
+    using local model inference.
+
+appImage:
+  artifactName: ${productName}-${version}-${arch}.AppImage
+
+deb:
+  artifactName: ${productName}_${version}_${arch}.deb
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libsecret-1-0
+    - libdrm2
+    - libgbm1
+
+rpm:
+  artifactName: ${productName}-${version}.${arch}.rpm
+  depends:
+    - libnotify
+    - libXScrnSaver
+    - libsecret
 
 publish: null

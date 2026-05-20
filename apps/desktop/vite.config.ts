@@ -1,18 +1,18 @@
+/// <reference types="vitest" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { resolve } from "path";
+import path from "node:path";
 
 export default defineConfig({
   plugins: [react()],
-  root: "renderer",
-  base: "./",
+  root: path.resolve(__dirname, "renderer"),
   build: {
-    outDir: "../dist",
+    outDir: path.resolve(__dirname, "renderer-dist"),
     emptyOutDir: true,
   },
   resolve: {
     alias: {
-      "@": resolve(__dirname, "renderer/src"),
+      "@": path.resolve(__dirname, "renderer/src"),
     },
   },
   test: {

@@ -70,6 +70,12 @@ ARCH="$(uname -m)"
 
 case "$OS" in
     Linux)
+        # Delegate Linux to the dedicated script so we can keep its lifecycle and
+        # shared-library handling separate from macOS.
+        LINUX_SCRIPT="$SCRIPT_DIR/download-llama-server-linux.sh"
+        if [ -x "$LINUX_SCRIPT" ]; then
+            exec "$LINUX_SCRIPT" "$@"
+        fi
         case "$ARCH" in
             x86_64)  PLATFORM="linux-x64" ;;
             aarch64) PLATFORM="linux-arm64" ;;

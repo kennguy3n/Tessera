@@ -1,4 +1,5 @@
-import { ChildProcess, spawn } from "child_process";
+import { ChildProcess, spawn, SpawnOptions } from "child_process";
+import * as path from "path";
 
 export interface SidecarOptions {
   binaryPath: string;
@@ -18,6 +19,24 @@ const DEFAULT_OPTIONS: SidecarOptions = {
 
 const MAX_RESTART_RETRIES = 5;
 const STARTUP_GRACE_MS = 60_000;
+
+/**
+ * Build platform-specific spawn options. On Linux the llama-server binary may
+ * sit next to required shared libraries (libllama.so) — we prepend the binary
+ * directory to LD_LIBRARY_PATH so the dynamic linker finds them. macOS uses
+ * @loader_path-relative install names and Windows uses the binary directory as
+ * a DLL search path automatically, so no extra env is needed there.
+ */
+export function buildSpawnEnv(
+  binaryPath: string,
+  baseEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  if (process.platform !== "linux") return { ...baseEnv };
+  const binaryDir = path.dirname(binaryPath);
+  const existing = baseEnv.LD_LIBRARY_PATH ?? "";
+  const ldLibraryPath = existing ? `${binaryDir}:${existing}` : binaryDir;
+  return { ...baseEnv, LD_LIBRARY_PATH: ldLibraryPath };
+}
 
 export class ModelSidecar {
   private process: ChildProcess | null = null;
@@ -59,14 +78,25 @@ export class ModelSidecar {
       throw new Error("Model path is required to start the sidecar");
     }
 
-    this.process = spawn(this.options.binaryPath, [
-      "--model",
-      this.options.modelPath,
-      "--port",
-      this.options.port.toString(),
-      "--host",
-      "127.0.0.1",
-    ]);
+    const spawnOpts: SpawnOptions = {
+      env: buildSpawnEnv(this.options.binaryPath),
+      // Detach on POSIX so we can deliver SIGTERM/SIGKILL to the whole process
+      // group; on Windows leave the default tied to the parent.
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    };
+    this.process = spawn(
+      this.options.binaryPath,
+      [
+        "--model",
+        this.options.modelPath,
+        "--port",
+        this.options.port.toString(),
+        "--host",
+        "127.0.0.1",
+      ],
+      spawnOpts,
+    );
 
     this.process.on("exit", (code) => {
       this._isRunning = false;
@@ -108,10 +138,10 @@ export class ModelSidecar {
     this.stopIdleMonitor();
 
     if (this.process) {
-      this.process.kill("SIGTERM");
+      sendSignal(this.process, process.platform === "win32" ? "SIGKILL" : "SIGTERM");
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
-          if (this.process) this.process.kill("SIGKILL");
+          if (this.process) sendSignal(this.process, "SIGKILL");
           resolve();
         }, 5000);
         if (this.process) {
@@ -200,5 +230,33 @@ export class ModelSidecar {
       clearInterval(this.idleTimer);
       this.idleTimer = null;
     }
+  }
+}
+
+/**
+ * Send a signal to a child process. On POSIX we deliver to the negative pid
+ * to reach the whole process group (since we spawned with detached:true);
+ * on Windows the signal name is ignored and the process is terminated.
+ */
+function sendSignal(
+  child: ChildProcess,
+  signal: NodeJS.Signals,
+): void {
+  if (process.platform === "win32") {
+    try {
+      child.kill();
+    } catch {
+      // Process already gone; nothing to do.
+    }
+    return;
+  }
+  try {
+    if (typeof child.pid === "number") {
+      process.kill(-child.pid, signal);
+    } else {
+      child.kill(signal);
+    }
+  } catch {
+    // ESRCH on Linux/macOS means the process already exited; safe to ignore.
   }
 }

@@ -21,6 +21,36 @@ function ensureVaultDir(): void {
   }
 }
 
+/**
+ * Build a human-readable error explaining why the OS keyring is unavailable.
+ *
+ * On Linux this commonly means the user is on a minimal or headless desktop
+ * with no Secret Service-compatible daemon running (e.g. `gnome-keyring` /
+ * `kwallet5-daemon`) — Electron's safeStorage falls back to `basic_text` only
+ * when one of those is detected, and refuses to fall back to plaintext.
+ *
+ * On macOS this would mean Keychain is locked or sandboxed away (very rare);
+ * on Windows it would mean DPAPI is unavailable (also very rare).
+ */
+export function encryptionUnavailableReason(): string {
+  switch (process.platform) {
+    case "linux":
+      return (
+        "Encryption not available — no OS keyring daemon detected. " +
+        "Install and start one of: gnome-keyring-daemon (GNOME / Ubuntu), " +
+        "kwallet5-daemon (KDE), or pass an X session manager that exposes the " +
+        "Secret Service D-Bus API. The Debian/Ubuntu packages are " +
+        "`gnome-keyring` and `libsecret-1-0`."
+      );
+    case "darwin":
+      return "Encryption not available — Keychain is locked or inaccessible.";
+    case "win32":
+      return "Encryption not available — Windows DPAPI is unavailable.";
+    default:
+      return "Encryption not available — unsupported platform.";
+  }
+}
+
 const VALID_PROVIDER_RE = /^[a-zA-Z0-9_-]+$/;
 
 function validateProvider(provider: string): void {
@@ -37,7 +67,7 @@ function vaultPath(provider: string): string {
 export function storeTokens(provider: string, tokens: StoredTokens): void {
   ensureVaultDir();
   if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error("Encryption not available — cannot store tokens securely");
+    throw new Error(encryptionUnavailableReason());
   }
   const json = JSON.stringify(tokens);
   const encrypted = safeStorage.encryptString(json);
@@ -48,7 +78,7 @@ export function getTokens(provider: string): StoredTokens | null {
   const fp = vaultPath(provider);
   if (!fs.existsSync(fp)) return null;
   if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error("Encryption not available — cannot read tokens");
+    throw new Error(encryptionUnavailableReason());
   }
   const encrypted = fs.readFileSync(fp);
   const json = safeStorage.decryptString(encrypted);
