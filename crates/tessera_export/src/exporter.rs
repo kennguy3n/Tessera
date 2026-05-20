@@ -8,6 +8,11 @@ use crate::html::export_html;
 use crate::markdown::export_markdown;
 use crate::pdf::export_pdf;
 
+#[cfg(feature = "docx")]
+use crate::docx::export_docx;
+#[cfg(feature = "xlsx")]
+use crate::xlsx::export_xlsx;
+
 pub fn export(artifact: &Artifact, citations: &[Citation], format: ExportFormat) -> Result<String> {
     match format {
         ExportFormat::Markdown => Ok(export_markdown(artifact, citations)),
@@ -16,12 +21,11 @@ pub fn export(artifact: &Artifact, citations: &[Citation], format: ExportFormat)
         ExportFormat::Json => {
             serde_json::to_string_pretty(artifact).map_err(|e| Error::Export(e.to_string()))
         }
-        ExportFormat::Pdf => Err(Error::Export(
-            "PDF export produces binary output; use export_to_file() instead".to_string(),
-        )),
-        other => Err(Error::Export(format!(
-            "export format {other:?} not yet implemented"
-        ))),
+        ExportFormat::Pdf | ExportFormat::Docx | ExportFormat::Xlsx | ExportFormat::Pptx => {
+            Err(Error::Export(format!(
+                "{format:?} export produces binary output; use export_to_file() instead"
+            )))
+        }
     }
 }
 
@@ -34,12 +38,40 @@ pub fn export_to_file(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    if format == ExportFormat::Pdf {
-        let bytes = export_pdf(artifact, citations);
-        std::fs::write(path, bytes)?;
-    } else {
-        let content = export(artifact, citations, format)?;
-        std::fs::write(path, content)?;
+    match format {
+        ExportFormat::Pdf => {
+            std::fs::write(path, export_pdf(artifact, citations))?;
+        }
+        #[cfg(feature = "docx")]
+        ExportFormat::Docx => {
+            std::fs::write(path, export_docx(artifact, citations))?;
+        }
+        #[cfg(not(feature = "docx"))]
+        ExportFormat::Docx => {
+            return Err(Error::Export(
+                "DOCX export requires the `docx` feature".to_string(),
+            ));
+        }
+        #[cfg(feature = "xlsx")]
+        ExportFormat::Xlsx => {
+            std::fs::write(path, export_xlsx(artifact))?;
+        }
+        #[cfg(not(feature = "xlsx"))]
+        ExportFormat::Xlsx => {
+            return Err(Error::Export(
+                "XLSX export requires the `xlsx` feature".to_string(),
+            ));
+        }
+        ExportFormat::Pptx => {
+            return Err(Error::Export(
+                "PPTX export is handled by the Marp CLI in the desktop app (electron/marpExport.ts), not the Rust core"
+                    .to_string(),
+            ));
+        }
+        other => {
+            let content = export(artifact, citations, other)?;
+            std::fs::write(path, content)?;
+        }
     }
     Ok(())
 }
@@ -106,5 +138,37 @@ mod tests {
         export_to_file(&artifact, &[], ExportFormat::Pdf, &path).unwrap();
         let content = std::fs::read(&path).unwrap();
         assert!(content.starts_with(b"%PDF-1.4"));
+    }
+
+    #[cfg(feature = "docx")]
+    #[test]
+    fn docx_export_to_file_works() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = Artifact::new("DOCX Test".to_string(), ArtifactType::Document, None);
+        let path = dir.path().join("output.docx");
+        export_to_file(&artifact, &[], ExportFormat::Docx, &path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..4], b"PK\x03\x04");
+    }
+
+    #[cfg(feature = "xlsx")]
+    #[test]
+    fn xlsx_export_to_file_works() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = Artifact::new("XLSX Test".to_string(), ArtifactType::Sheet, None);
+        let path = dir.path().join("output.xlsx");
+        export_to_file(&artifact, &[], ExportFormat::Xlsx, &path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..4], b"PK\x03\x04");
+    }
+
+    #[test]
+    fn pptx_export_to_file_returns_helpful_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = Artifact::new("PPTX".to_string(), ArtifactType::Slides, None);
+        let path = dir.path().join("output.pptx");
+        let err = export_to_file(&artifact, &[], ExportFormat::Pptx, &path).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Marp"));
     }
 }

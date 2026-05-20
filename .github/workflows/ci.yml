@@ -6,15 +6,85 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel in-flight runs on the same ref when a new commit lands so we
+# don't waste minutes (and the scarce macOS-13 runner slot) on stale
+# commits.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
 jobs:
-  rust:
-    name: Rust
-    runs-on: ubuntu-latest
+  # First pass: figure out which subsystems the PR/commit actually
+  # touches. The Rust matrix only runs if Rust sources, manifests, or
+  # the workflow itself changed; the TypeScript matrix only runs if
+  # renderer/electron/template/schema files changed. Docs- and
+  # packaging-config-only PRs skip both, so a typo fix in README.md
+  # no longer pays for 6 platform jobs.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-22.04
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      typescript: ${{ steps.filter.outputs.typescript }}
     steps:
       - uses: actions/checkout@v4
 
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # `pull_request` mode: filter against the PR base branch.
+          # `push` mode (main): always run everything via the `**` fallback
+          # so a force-push or merge to main doesn't quietly skip CI.
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'apps/desktop/native/**'
+              - '.github/workflows/ci.yml'
+            typescript:
+              - 'apps/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'templates/**'
+              - 'schemas/**'
+              - '.github/workflows/ci.yml'
+
+  rust:
+    name: Rust — ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # PRs run ubuntu + windows (fast, reliable runners).
+        # Pushes to `main` also run macos-13 so we still catch any
+        # macOS-specific regressions on the release branch — but never
+        # block a PR on the perpetually-contended GHA macos-13 queue.
+        os: ${{ github.event_name == 'pull_request'
+          && fromJSON('["ubuntu-22.04", "windows-2022"]')
+          || fromJSON('["ubuntu-22.04", "macos-13", "windows-2022"]') }}
+    runs-on: ${{ matrix.os }}
+    # Ubuntu is the required gate (it mirrors the production AppImage
+    # build). macOS and Windows are advisory: failures are absorbed as
+    # "soft failure" so a flaky non-Linux runner doesn't block merge.
+    continue-on-error: ${{ matrix.os != 'ubuntu-22.04' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config
+
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.88
         with:
           components: rustfmt, clippy
 
@@ -31,6 +101,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Check formatting
+        if: matrix.os == 'ubuntu-22.04'
         run: cargo fmt --all -- --check
 
       - name: Clippy
@@ -43,10 +114,27 @@ jobs:
         run: cargo test --all
 
   typescript:
-    name: TypeScript
-    runs-on: ubuntu-latest
+    name: TypeScript — ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # See the Rust job above for the rationale on the conditional
+        # matrix and `continue-on-error`.
+        os: ${{ github.event_name == 'pull_request'
+          && fromJSON('["ubuntu-22.04", "windows-2022"]')
+          || fromJSON('["ubuntu-22.04", "macos-13", "windows-2022"]') }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os != 'ubuntu-22.04' }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux native deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -57,6 +145,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Workaround for npm/cli#4828: optional native deps in package-lock.json
+      # are not always installed on platforms other than the one the lockfile
+      # was generated on. Rollup ships per-platform native binaries as
+      # optionalDependencies, so we explicitly install the host-matching one.
+      - name: Install platform-specific Rollup binary (Windows)
+        if: matrix.os == 'windows-2022'
+        run: npm install --no-save --no-package-lock @rollup/rollup-win32-x64-msvc
+      - name: Install platform-specific Rollup binary (macOS)
+        if: matrix.os == 'macos-13'
+        run: npm install --no-save --no-package-lock @rollup/rollup-darwin-x64
+
       - name: Lint
         run: npm run lint --workspace=apps/desktop
 
@@ -65,3 +164,54 @@ jobs:
 
       - name: Test
         run: npm run test --workspace=apps/desktop
+
+  # Single aggregator check. This is the one to require in branch
+  # protection on `main`; everything else is conditional or advisory.
+  #
+  # Outcomes:
+  #   * Both job results in {success, skipped}  → CI success
+  #   * Either result is `failure` or `cancelled` on a REQUIRED entry
+  #     (ubuntu-22.04, which is the only matrix entry that can mark a
+  #     job as `failure` thanks to continue-on-error) → CI failure
+  #
+  # `skipped` is treated as success because path filters intentionally
+  # skip the job when there's nothing to test for that subsystem.
+  ci-success:
+    name: CI
+    runs-on: ubuntu-22.04
+    needs: [changes, rust, typescript]
+    if: always()
+    steps:
+      - name: Verify required job outcomes
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          TS_RESULT: ${{ needs.typescript.result }}
+        run: |
+          echo "changes:    $CHANGES_RESULT"
+          echo "rust:       $RUST_RESULT"
+          echo "typescript: $TS_RESULT"
+
+          fail=0
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "::error::Path-filter job failed to run (result: $CHANGES_RESULT)."
+            fail=1
+          fi
+          # `skipped` means the path filter excluded this subsystem on
+          # purpose, which is a pass. Anything else that isn't success
+          # is a failure on the required (ubuntu) matrix entry — macOS
+          # and Windows failures are absorbed by continue-on-error and
+          # never bubble up here.
+          case "$RUST_RESULT" in
+            success|skipped) ;;
+            *) echo "::error::Required Rust gate did not succeed (result: $RUST_RESULT)."; fail=1 ;;
+          esac
+          case "$TS_RESULT" in
+            success|skipped) ;;
+            *) echo "::error::Required TypeScript gate did not succeed (result: $TS_RESULT)."; fail=1 ;;
+          esac
+
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
+          echo "All required CI gates passed."

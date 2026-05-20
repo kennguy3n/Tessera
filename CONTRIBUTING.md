@@ -8,7 +8,7 @@ Thank you for your interest in contributing to Tessera! This guide covers everyt
 
 | Tool | Version | Purpose |
 |---|---|---|
-| **Rust** | 1.75+ (stable) | Core engine, N-API bridge |
+| **Rust** | 1.88+ (stable) | Core engine, N-API bridge |
 | **Node.js** | 20+ | Electron shell, React renderer |
 | **npm** | 10+ | Package management |
 | **C toolchain** | GCC / Clang | Build bundled SQLCipher + OpenSSL |
@@ -134,7 +134,7 @@ npm run type-check
 
 - **Formatter:** `rustfmt` — run `cargo fmt --all` before committing.
 - **Linter:** `clippy` with `-D warnings` — all warnings are errors in CI.
-- **Edition:** 2021, minimum Rust version 1.75.
+- **Edition:** 2021, minimum Rust version 1.88 (transitive deps require `edition2024` (≥1.85), `icu_collections >=2.2.0` (1.86), and `image`/`time`/`plist`/`napi-build` recent versions (1.88)). Bumps will track upstream MSRV moves; CI pins the floor.
 - Follow the formatting rules in `rustfmt.toml` (matches the [knowledge](https://github.com/kennguy3n/knowledge) substrate).
 
 ### TypeScript / React

@@ -1,8 +1,10 @@
 import { ipcMain, BrowserWindow, app, dialog } from "electron";
 import * as fsp from "fs/promises";
+import * as os from "os";
 import * as path from "path";
 import { loadConfig, updateConfig } from "./config";
 import { getBridge, getModelSidecar } from "./appState";
+import { isSafeExportPath } from "./exportPathSafety";
 import type { SettingsData, ModelStatus } from "./preload";
 import { startOAuthFlow, exchangeCodeForTokens, refreshAccessToken, revokeToken } from "./oauthServer";
 import * as tokenVault from "./tokenVault";
@@ -61,6 +63,44 @@ async function getValidAccessToken(provider: string): Promise<string> {
     clientSecret,
   });
   return refreshed.access_token;
+}
+
+/**
+ * Build the allowlist of safe export roots that the IPC handlers will
+ * accept absolute paths inside. Computed lazily (per call) rather than
+ * captured in a module-level constant because Electron's `app.getPath()`
+ * APIs are only safe to call after the `ready` event has fired — and the
+ * IPC handlers register against `ipcMain` synchronously at startup but
+ * the handlers themselves only execute later, well after `ready`.
+ *
+ * Roots include `downloads`, `documents`, `desktop`, the user's home
+ * directory, the Electron app's `userData` directory, and the OS temp
+ * directory. Each of these is a location the user is reasonably expected
+ * to be able to write to; everything else (system paths, other users'
+ * home directories, etc.) is excluded.
+ */
+function getSafeExportRoots(): string[] {
+  const roots: string[] = [];
+  // `app.getPath` throws `Error: ENOENT` for unknown path keys on some
+  // platforms (e.g. `desktop` on a headless Linux); swallow per-key so a
+  // missing standard folder doesn't disable the whole allowlist.
+  for (const key of ["downloads", "documents", "desktop", "home", "userData"]) {
+    try {
+      const p = app.getPath(key as Parameters<typeof app.getPath>[0]);
+      if (p) roots.push(p);
+    } catch {
+      // skip
+    }
+  }
+  // `os.tmpdir()` is the conventional location for integration tests
+  // (and the Electron test harness) to drop ephemeral export artefacts.
+  // Without this entry, `os.tmpdir()`-rooted writes would be rejected.
+  try {
+    roots.push(os.tmpdir());
+  } catch {
+    // skip
+  }
+  return roots;
 }
 
 export function registerIpcHandlers(): void {
@@ -191,10 +231,15 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "artifacts:export",
-    async (_event, id: string, format: string) => {
+    async (
+      _event,
+      id: string,
+      format: string,
+      contentOverride?: string | null,
+    ) => {
       const bridge = getBridge();
       if (bridge) {
-        return bridge.bridgeExportArtifact(id, format);
+        return bridge.bridgeExportArtifact(id, format, contentOverride ?? null);
       }
       throw new Error("Native bridge not available");
     },
@@ -202,13 +247,168 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "artifacts:exportToFile",
-    async (_event, id: string, format: string, filePath: string) => {
+    async (
+      event,
+      id: string,
+      format: string,
+      filePath: string,
+      contentOverride?: string | null,
+    ) => {
       const bridge = getBridge();
-      if (bridge) {
-        bridge.bridgeExportArtifactToFile(id, format, filePath);
-        return;
+      if (!bridge) {
+        throw new Error("Native bridge not available");
       }
-      throw new Error("Native bridge not available");
+
+      // Resolve the final on-disk path. Three modes (in order of preference):
+      //   1) An absolute path supplied by the renderer is honoured only if it
+      //      resolves inside the allowlist of safe export roots (Downloads,
+      //      Documents, Desktop, the user's home directory, the app's
+      //      `userData` directory and the system temp dir). A compromised
+      //      renderer cannot request a write to e.g. `/etc/passwd` because
+      //      `/etc` is not under any of those roots — `isSafeExportPath`
+      //      throws an explicit error in that case. Tests + scripted exports
+      //      that use `os.tmpdir()` keep working without change.
+      //   2) Otherwise (or if the absolute path was rejected as unsafe),
+      //      prompt the user via the native save dialog seeded with the
+      //      renderer's suggested filename under ~/Downloads.
+      //   3) If the user dismisses the dialog, we return `null` so the
+      //      renderer can surface an "Export cancelled" status without
+      //      writing any file — matching standard desktop save-dialog UX.
+      let resolvedPath: string;
+      if (path.isAbsolute(filePath)) {
+        if (!isSafeExportPath(filePath, getSafeExportRoots())) {
+          // Refuse the request outright instead of silently rewriting the
+          // path or showing the user a dialog with a dangerous suggestion.
+          // This is the security boundary; making it visible as an error
+          // is the point — see BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0003.
+          throw new Error(
+            `Export path is outside the allowed locations (Downloads, Documents, Desktop, Home, App data, system temp): ${filePath}`,
+          );
+        }
+        resolvedPath = filePath;
+      } else {
+        const downloads = app.getPath("downloads");
+        const suggested = path.join(downloads, filePath || `artifact.${format}`);
+        const win = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+        const result = await (win
+          ? dialog.showSaveDialog(win, {
+              defaultPath: suggested,
+              title: "Export artifact",
+            })
+          : dialog.showSaveDialog({
+              defaultPath: suggested,
+              title: "Export artifact",
+            }));
+        if (result.canceled || !result.filePath) {
+          return null;
+        }
+        resolvedPath = result.filePath;
+      }
+
+      // Make sure the parent directory exists before the Rust bridge writes.
+      await fsp.mkdir(path.dirname(resolvedPath), { recursive: true });
+      bridge.bridgeExportArtifactToFile(
+        id,
+        format,
+        resolvedPath,
+        contentOverride ?? null,
+      );
+      return resolvedPath;
+    },
+  );
+
+  ipcMain.handle(
+    "artifacts:exportTypst",
+    async (
+      _event,
+      req: {
+        markup: string;
+        format: "pdf" | "svg";
+        outputPath?: string;
+      },
+    ) => {
+      // Path safety: same allowlist gate as `artifacts:exportToFile` and
+      // `artifacts:exportMarp` — a compromised renderer must not be able to
+      // turn the Typst export IPC into a write-anywhere primitive by
+      // supplying e.g. `/etc/cron.d/malicious` as the output path. Relative
+      // / undefined paths fall through to `runTypstExport`'s temp-file
+      // default (which uses `os.tmpdir()`, itself in the allowlist).
+      if (req.outputPath && path.isAbsolute(req.outputPath)) {
+        if (!isSafeExportPath(req.outputPath, getSafeExportRoots())) {
+          throw new Error(
+            `Export path is outside the allowed locations (Downloads, Documents, Desktop, Home, App data, system temp): ${req.outputPath}`,
+          );
+        }
+      }
+      const { runTypstExport } = await import("./typstExport");
+      return runTypstExport({
+        markup: req.markup,
+        format: req.format,
+        outputPath: req.outputPath,
+      });
+    },
+  );
+
+  ipcMain.handle(
+    "artifacts:exportMarp",
+    async (
+      event,
+      req: {
+        markdown: string;
+        format: "pdf" | "pptx" | "html";
+        // Either an absolute path (used as-is) OR a suggested filename — in
+        // which case we prompt with the native save dialog (matching the
+        // `exportToFile` flow) so users always pick where the file lands.
+        outputPath: string;
+        theme?: string;
+        includeNotes?: boolean;
+        allowHtml?: boolean;
+      },
+    ) => {
+      let resolvedPath: string;
+      if (path.isAbsolute(req.outputPath)) {
+        if (!isSafeExportPath(req.outputPath, getSafeExportRoots())) {
+          throw new Error(
+            `Export path is outside the allowed locations (Downloads, Documents, Desktop, Home, App data, system temp): ${req.outputPath}`,
+          );
+        }
+        resolvedPath = req.outputPath;
+      } else {
+        const downloads = app.getPath("downloads");
+        const fallbackName =
+          req.outputPath && req.outputPath.length > 0
+            ? req.outputPath
+            : `artifact.${req.format}`;
+        const suggested = path.join(downloads, fallbackName);
+        const win = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+        const result = await (win
+          ? dialog.showSaveDialog(win, {
+              defaultPath: suggested,
+              title: "Export slides",
+            })
+          : dialog.showSaveDialog({
+              defaultPath: suggested,
+              title: "Export slides",
+            }));
+        // Standard desktop UX: a cancelled save dialog means no file is
+        // written. The renderer translates the `null` return into an
+        // "Export cancelled" status indicator.
+        if (result.canceled || !result.filePath) {
+          return null;
+        }
+        resolvedPath = result.filePath;
+      }
+      await fsp.mkdir(path.dirname(resolvedPath), { recursive: true });
+      const { runMarpExport } = await import("./marpExport");
+      await runMarpExport({
+        markdown: req.markdown,
+        format: req.format,
+        outputPath: resolvedPath,
+        theme: req.theme,
+        includeNotes: req.includeNotes,
+        allowHtml: req.allowHtml,
+      });
+      return resolvedPath;
     },
   );
 

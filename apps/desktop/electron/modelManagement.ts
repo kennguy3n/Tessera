@@ -707,7 +707,35 @@ export async function getCurrentModel(
   try {
     raw = await fsp.readFile(p, "utf8");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      // POSIX returns ENOTDIR directly when a path component is a regular
+      // file ("/path/to/file/active-model.json"). Windows collapses both
+      // "the file truly doesn't exist" and "the parent is not a directory"
+      // into ENOENT, which would silently mask an operator error. Stat the
+      // parent explicitly so we surface a real disk-shape fault on every
+      // platform.
+      try {
+        const stat = await fsp.stat(userDataDir);
+        if (!stat.isDirectory()) {
+          const cross: NodeJS.ErrnoException = new Error(
+            `ENOTDIR: not a directory, open '${p}'`,
+          );
+          cross.code = "ENOTDIR";
+          cross.path = p;
+          throw cross;
+        }
+      } catch (statErr) {
+        const statCode = (statErr as NodeJS.ErrnoException).code;
+        if (statCode === "ENOTDIR") throw statErr;
+        // Parent doesn't exist either — the caller hasn't initialized the
+        // user-data dir yet. Match the historical contract and report "no
+        // active model" rather than failing.
+        if (statCode === "ENOENT") return null;
+        throw statErr;
+      }
+      return null;
+    }
     throw err;
   }
   try {

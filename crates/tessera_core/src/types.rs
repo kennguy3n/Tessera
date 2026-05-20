@@ -149,6 +149,8 @@ pub enum ArtifactType {
     Slides,
     Sheet,
     Base,
+    Infographic,
+    LandingPage,
 }
 
 impl std::fmt::Display for ArtifactType {
@@ -158,6 +160,8 @@ impl std::fmt::Display for ArtifactType {
             Self::Slides => write!(f, "slides"),
             Self::Sheet => write!(f, "sheet"),
             Self::Base => write!(f, "base"),
+            Self::Infographic => write!(f, "infographic"),
+            Self::LandingPage => write!(f, "landing_page"),
         }
     }
 }

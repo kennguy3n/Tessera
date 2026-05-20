@@ -16,12 +16,15 @@ export interface BaseContent {
 interface BaseEditorProps {
   content: string;
   onSave: (content: string) => void;
+  /** See SheetEditor.onDraftChange — published synchronously on every edit. */
+  onDraftChange?: (content: string) => void;
   autoSaveMs?: number;
 }
 
 export default function BaseEditor({
   content,
   onSave,
+  onDraftChange,
   autoSaveMs = 2000,
 }: BaseEditorProps) {
   const [data, setData] = useState<BaseContent>(() => parseBaseContent(content));
@@ -34,14 +37,15 @@ export default function BaseEditor({
 
   const debouncedSave = useCallback(
     (updated: BaseContent) => {
+      const json = JSON.stringify(updated);
+      onDraftChange?.(json);
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        const json = JSON.stringify(updated);
         lastSavedRef.current = json;
         onSave(json);
       }, autoSaveMs);
     },
-    [onSave, autoSaveMs],
+    [onSave, onDraftChange, autoSaveMs],
   );
 
   useEffect(() => {

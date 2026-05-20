@@ -18,14 +18,36 @@ export interface ArtifactApi {
   list: () => Promise<ArtifactInfo[]>;
   get: (id: string) => Promise<ArtifactInfo>;
   remove: (id: string) => Promise<void>;
-  exportArtifact: (id: string, format: string) => Promise<ExportResult>;
-  exportToFile: (id: string, format: string, filePath: string) => Promise<void>;
+  exportArtifact: (
+    id: string,
+    format: string,
+    contentOverride?: string | null,
+  ) => Promise<ExportResult>;
+  exportToFile: (
+    id: string,
+    format: string,
+    filePath: string,
+    contentOverride?: string | null,
+  ) => Promise<string | null>;
   listVersions: (id: string) => Promise<ArtifactVersionInfo[]>;
   restoreVersion: (id: string, versionNumber: number) => Promise<ArtifactInfo>;
   generateFromTemplate: (templateId: string, sourceIds: string[]) => Promise<ArtifactInfo>;
   extractTasksDecisions: (sourceId: string) => Promise<ExtractedItem[]>;
   compareSources: (sourceIdA: string, sourceIdB: string) => Promise<ArtifactInfo>;
   exportEvidencePack: (artifactId: string, outputPath: string) => Promise<string>;
+  exportMarp: (req: {
+    markdown: string;
+    format: "pdf" | "pptx" | "html";
+    outputPath: string;
+    theme?: string;
+    includeNotes?: boolean;
+    allowHtml?: boolean;
+  }) => Promise<string | null>;
+  exportTypst: (req: {
+    markup: string;
+    format: "pdf" | "svg";
+    outputPath?: string;
+  }) => Promise<{ outputPath: string; bytes: number }>;
 }
 
 export interface TemplateApi {

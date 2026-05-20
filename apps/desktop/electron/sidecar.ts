@@ -1,4 +1,5 @@
-import { ChildProcess, spawn } from "child_process";
+import { ChildProcess, spawn, SpawnOptions } from "child_process";
+import * as path from "path";
 
 export interface SidecarOptions {
   binaryPath: string;
@@ -19,6 +20,24 @@ const DEFAULT_OPTIONS: SidecarOptions = {
 const MAX_RESTART_RETRIES = 5;
 const STARTUP_GRACE_MS = 60_000;
 
+/**
+ * Build platform-specific spawn options. On Linux the llama-server binary may
+ * sit next to required shared libraries (libllama.so) — we prepend the binary
+ * directory to LD_LIBRARY_PATH so the dynamic linker finds them. macOS uses
+ * @loader_path-relative install names and Windows uses the binary directory as
+ * a DLL search path automatically, so no extra env is needed there.
+ */
+export function buildSpawnEnv(
+  binaryPath: string,
+  baseEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  if (process.platform !== "linux") return { ...baseEnv };
+  const binaryDir = path.dirname(binaryPath);
+  const existing = baseEnv.LD_LIBRARY_PATH ?? "";
+  const ldLibraryPath = existing ? `${binaryDir}:${existing}` : binaryDir;
+  return { ...baseEnv, LD_LIBRARY_PATH: ldLibraryPath };
+}
+
 export class ModelSidecar {
   private process: ChildProcess | null = null;
   private options: SidecarOptions;
@@ -31,6 +50,7 @@ export class ModelSidecar {
   private startTime: number = 0;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private _generationActiveCount: number = 0;
+  private crashCleanupHandler: (() => void) | null = null;
 
   constructor(options: Partial<SidecarOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -59,19 +79,70 @@ export class ModelSidecar {
       throw new Error("Model path is required to start the sidecar");
     }
 
-    this.process = spawn(this.options.binaryPath, [
-      "--model",
-      this.options.modelPath,
-      "--port",
-      this.options.port.toString(),
-      "--host",
-      "127.0.0.1",
-    ]);
+    const spawnOpts: SpawnOptions = {
+      env: buildSpawnEnv(this.options.binaryPath),
+      // Detach on POSIX so we can deliver SIGTERM/SIGKILL to the whole process
+      // group; on Windows leave the default tied to the parent.
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    };
+    this.process = spawn(
+      this.options.binaryPath,
+      [
+        "--model",
+        this.options.modelPath,
+        "--port",
+        this.options.port.toString(),
+        "--host",
+        "127.0.0.1",
+      ],
+      spawnOpts,
+    );
+
+    // On POSIX the child was spawned with `detached: true` so we can deliver
+    // signals to the whole process group via `process.kill(-pid, ...)`. That
+    // also means the child becomes a process-group leader of its own session
+    // and survives the parent's death by default. Two follow-on fixes are
+    // required to make this safe:
+    //
+    //   1. `unref()` so Node's event loop doesn't keep a reference to the
+    //      child handle — without this, an abnormal main-process shutdown
+    //      (uncaughtException default-exit, explicit `process.exit()` from
+    //      a fatal error path, the renderer crashing the main process)
+    //      would block Node from terminating while waiting on the child
+    //      that we intentionally detached.
+    //   2. A synchronous `exit` handler that delivers SIGKILL to the child's
+    //      process group when the parent dies without going through our
+    //      normal `stop()` path. Node 'exit' listeners must be synchronous
+    //      so we go straight to SIGKILL rather than the SIGTERM/grace
+    //      sequence used in `stop()` — at this point the parent is already
+    //      tearing down and we just need the child reaped, not gracefully
+    //      shut down. The normal `stop()` path runs *before* 'exit' fires
+    //      and clears the handler so we never double-signal.
+    if (process.platform !== "win32" && typeof this.process.pid === "number") {
+      this.process.unref();
+      const pid = this.process.pid;
+      const handler = () => {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          // ESRCH = already exited (the normal post-stop case);
+          // EPERM would mean we lost the right to signal it, which
+          // shouldn't happen for a child we spawned.
+        }
+      };
+      process.on("exit", handler);
+      this.crashCleanupHandler = handler;
+    }
 
     this.process.on("exit", (code) => {
       this._isRunning = false;
       this.stopHealthCheck();
       this.stopIdleMonitor();
+      // The child has reaped itself; the parent-exit fallback is no longer
+      // needed and would attempt to signal a dead PID (harmlessly but
+      // noisily).
+      this.clearCrashCleanup();
       if (this._isTerminating) return;
       if (code !== 0 && code !== null) {
         this.restartCount++;
@@ -108,10 +179,10 @@ export class ModelSidecar {
     this.stopIdleMonitor();
 
     if (this.process) {
-      this.process.kill("SIGTERM");
+      sendSignal(this.process, process.platform === "win32" ? "SIGKILL" : "SIGTERM");
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
-          if (this.process) this.process.kill("SIGKILL");
+          if (this.process) sendSignal(this.process, "SIGKILL");
           resolve();
         }, 5000);
         if (this.process) {
@@ -126,8 +197,16 @@ export class ModelSidecar {
       });
       this.process = null;
     }
+    this.clearCrashCleanup();
     this._isRunning = false;
     this._isTerminating = false;
+  }
+
+  private clearCrashCleanup(): void {
+    if (this.crashCleanupHandler) {
+      process.removeListener("exit", this.crashCleanupHandler);
+      this.crashCleanupHandler = null;
+    }
   }
 
   async healthCheck(): Promise<boolean> {
@@ -200,5 +279,33 @@ export class ModelSidecar {
       clearInterval(this.idleTimer);
       this.idleTimer = null;
     }
+  }
+}
+
+/**
+ * Send a signal to a child process. On POSIX we deliver to the negative pid
+ * to reach the whole process group (since we spawned with detached:true);
+ * on Windows the signal name is ignored and the process is terminated.
+ */
+function sendSignal(
+  child: ChildProcess,
+  signal: NodeJS.Signals,
+): void {
+  if (process.platform === "win32") {
+    try {
+      child.kill();
+    } catch {
+      // Process already gone; nothing to do.
+    }
+    return;
+  }
+  try {
+    if (typeof child.pid === "number") {
+      process.kill(-child.pid, signal);
+    } else {
+      child.kill(signal);
+    }
+  } catch {
+    // ESRCH on Linux/macOS means the process already exited; safe to ignore.
   }
 }

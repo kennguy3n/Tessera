@@ -1,0 +1,117 @@
+id: pitch-v1
+name: Pitch Deck
+type: slides
+description: Founder/sales pitch deck with problem, solution, market, traction, team, and ask
+format: marp
+theme: gaia
+paginate: true
+sections:
+  - title: Hook
+    prompt: >
+      Open with a single high-impact sentence about the opportunity. Lead with
+      the problem or the headline metric.
+  - title: Problem
+    prompt: >
+      Describe the problem in concrete, customer-grounded language. Quantify
+      pain (cost, time, churn) where possible.
+  - title: Solution
+    prompt: >
+      Explain the solution succinctly. Highlight the magical capability that
+      makes it work.
+  - title: Market and Traction
+    prompt: >
+      Size the market (TAM/SAM/SOM) and report current traction (users, ARR,
+      growth rate). Use sources.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Business Model and Competition
+    prompt: >
+      Describe how revenue is earned and how the offering differentiates from
+      alternatives.
+  - title: Team
+    prompt: >
+      Introduce founders/key team members with role, experience, and proof of
+      relevance.
+  - title: The Ask
+    prompt: >
+      State the raise amount, use of funds, and milestones unlocked. End on
+      momentum.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf
+marp_template: |
+  ---
+  marp: true
+  theme: gaia
+  paginate: true
+  class: lead
+  ---
+
+  # {{ company_name }}
+  ## {{ one_liner }}
+
+  <!-- Eye contact; pause; let the hook land -->
+
+  ---
+
+  ## The Problem
+
+  > {{ problem_statement }}
+
+  - **Today:** {{ status_quo }}
+  - **Cost:** {{ pain_metric }}
+
+  ---
+
+  ## Our Solution
+
+  ### {{ solution_headline }}
+
+  {{ solution_description }}
+
+  ```mermaid
+  flowchart LR
+    Today([Status quo]) --> {{ company_name }}([Our solution]) --> Outcome([{{ outcome }}])
+  ```
+
+  ---
+
+  ## Market and Traction
+
+  | Metric | Value |
+  |---|---|
+  | TAM | {{ tam }} |
+  | SAM | {{ sam }} |
+  | SOM | {{ som }} |
+  | MRR / Users | {{ traction }} |
+  | Growth (MoM) | {{ growth }} |
+
+  ---
+
+  ## Business Model
+
+  - **Pricing:** {{ pricing }}
+  - **CAC / LTV:** {{ cac_ltv }}
+  - **Why us:** {{ moat }}
+
+  ---
+
+  ## Team
+
+  - **{{ founder_1_name }}** — {{ founder_1_role }} — {{ founder_1_bio }}
+  - **{{ founder_2_name }}** — {{ founder_2_role }} — {{ founder_2_bio }}
+
+  ---
+
+  ## The Ask
+
+  Raising **{{ raise_amount }}** to:
+
+  1. {{ use_of_funds_1 }}
+  2. {{ use_of_funds_2 }}
+  3. {{ use_of_funds_3 }}
+
+  <!-- End on the next milestone -->

@@ -6,6 +6,8 @@ pub fn load_grammar(artifact_type: ArtifactType) -> String {
         ArtifactType::Slides => SLIDES_GRAMMAR.to_string(),
         ArtifactType::Sheet => SHEET_GRAMMAR.to_string(),
         ArtifactType::Base => BASE_GRAMMAR.to_string(),
+        ArtifactType::Infographic => INFOGRAPHIC_GRAMMAR.to_string(),
+        ArtifactType::LandingPage => LANDING_PAGE_GRAMMAR.to_string(),
     }
 }
 
@@ -50,6 +52,26 @@ string ::= "\"" ([^"\\] | "\\" .)* "\""
 ws ::= [ \t\n\r]*
 "#;
 
+const INFOGRAPHIC_GRAMMAR: &str = r#"
+root ::= "{" ws "\"title\"" ws ":" ws string ws "," ws "\"layout\"" ws ":" ws layout ws "," ws "\"sections\"" ws ":" ws sections ws "}"
+layout ::= "\"vertical\"" | "\"horizontal\"" | "\"grid\""
+sections ::= "[" ws section (ws "," ws section)* ws "]"
+section ::= "{" ws "\"heading\"" ws ":" ws string ws "," ws "\"body\"" ws ":" ws string ws ("," ws "\"icon\"" ws ":" ws string ws)? ("," ws "\"stat\"" ws ":" ws string ws)? "}"
+string ::= "\"" ([^"\\] | "\\" .)* "\""
+ws ::= [ \t\n\r]*
+"#;
+
+const LANDING_PAGE_GRAMMAR: &str = r#"
+root ::= "{" ws "\"title\"" ws ":" ws string ws "," ws "\"hero\"" ws ":" ws hero ws "," ws "\"features\"" ws ":" ws features ws ("," ws "\"stats\"" ws ":" ws stats ws)? "}"
+hero ::= "{" ws "\"headline\"" ws ":" ws string ws "," ws "\"subheadline\"" ws ":" ws string ws ("," ws "\"cta\"" ws ":" ws string ws)? "}"
+features ::= "[" ws feature (ws "," ws feature)* ws "]"
+feature ::= "{" ws "\"title\"" ws ":" ws string ws "," ws "\"description\"" ws ":" ws string ws ("," ws "\"icon\"" ws ":" ws string ws)? "}"
+stats ::= "[" ws stat (ws "," ws stat)* ws "]"
+stat ::= "{" ws "\"value\"" ws ":" ws string ws "," ws "\"label\"" ws ":" ws string ws "}"
+string ::= "\"" ([^"\\] | "\\" .)* "\""
+ws ::= [ \t\n\r]*
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,12 +108,30 @@ mod tests {
     }
 
     #[test]
+    fn infographic_grammar_has_sections_and_layout() {
+        let g = load_grammar(ArtifactType::Infographic);
+        assert!(g.contains("layout"));
+        assert!(g.contains("sections"));
+        assert!(g.contains("heading"));
+    }
+
+    #[test]
+    fn landing_page_grammar_has_hero_and_features() {
+        let g = load_grammar(ArtifactType::LandingPage);
+        assert!(g.contains("hero"));
+        assert!(g.contains("features"));
+        assert!(g.contains("headline"));
+    }
+
+    #[test]
     fn all_grammars_valid_structure() {
         for artifact_type in [
             ArtifactType::Document,
             ArtifactType::Slides,
             ArtifactType::Sheet,
             ArtifactType::Base,
+            ArtifactType::Infographic,
+            ArtifactType::LandingPage,
         ] {
             let g = load_grammar(artifact_type);
             assert!(

@@ -1,7 +1,14 @@
-import { ReactNode } from "react";
+import { ReactNode, isValidElement } from "react";
+import { Inbox } from "lucide-react";
 
 interface EmptyStateProps {
-  icon?: string;
+  /**
+   * Either a string (legacy emoji/text icon, rendered as-is for
+   * backwards compatibility) or a React node (preferred — a Lucide or
+   * Phosphor icon component). When omitted, a default `Inbox` icon is
+   * shown so empty pages always feel intentional rather than blank.
+   */
+  icon?: string | ReactNode;
   title: string;
   message: string;
   action?: ReactNode;
@@ -13,9 +20,19 @@ export default function EmptyState({
   message,
   action,
 }: EmptyStateProps) {
+  let iconNode: ReactNode;
+  if (icon === undefined || icon === null) {
+    iconNode = <Inbox size={48} strokeWidth={1.5} aria-hidden="true" />;
+  } else if (typeof icon === "string") {
+    iconNode = <span aria-hidden="true">{icon}</span>;
+  } else if (isValidElement(icon)) {
+    iconNode = icon;
+  } else {
+    iconNode = null;
+  }
   return (
     <div className="empty-state">
-      {icon && <span className="empty-state-icon">{icon}</span>}
+      {iconNode && <span className="empty-state-icon">{iconNode}</span>}
       <h3 className="empty-state-title">{title}</h3>
       <p className="empty-state-message">{message}</p>
       {action && <div className="empty-state-action">{action}</div>}

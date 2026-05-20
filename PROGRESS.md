@@ -216,16 +216,80 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 
 ---
 
+## Phase 7 — Linux, rendering integrations, new generators, export coverage
+
+**Status:** `IN PROGRESS`
+
+**Goal:** Broaden the platform: add Linux as a first-class target, integrate
+upstream rendering engines (Mermaid, Marp, Typst), adopt Lucide + Phosphor
+icon families, ship two new artifact types (Infographic, Landing Page), close
+the export-format gap (DOCX, PPTX, XLSX), and bring CI + docs current.
+
+### Build
+
+| Block | Item | Status |
+|---|---|---|
+| A | Linux packaging (AppImage / .deb / .rpm via electron-builder) | `DONE` |
+| A | Linux sidecar download scripts and `models.json` entries | `DONE` |
+| A | Linux runtime detection (AVX2 / AVX-512 / Vulkan) | `DONE` |
+| A | Linux sidecar supervision + libsecret keyring | `DONE` |
+| A | Linux CI workflow (matrix: Ubuntu / macOS / Windows) | `DONE` |
+| B | `mermaid` renderer service + theme integration | `DONE` |
+| B | Mermaid TipTap block in DocumentEditor | `DONE` |
+| B | Mermaid diagram block in SlideEditor | `DONE` |
+| B | Mermaid handling in export pipeline (HTML / PDF / Markdown) | `DONE` |
+| C | Marp Core renderer service | `DONE` |
+| C | Marp mode in SlideEditor with Shadow-DOM-isolated live preview | `DONE` |
+| C | Marp CLI–backed PPTX / HTML / PDF export | `DONE` |
+| C | Marp slide templates (QBR, strategy, review, training, pitch) | `DONE` |
+| D | Typst Rust crate dependency + minimal `World` | `DONE` |
+| D | Typst-powered document export (PDF / SVG via IPC) | `DONE` |
+| D | DOCX export module (`tessera_export::docx`) | `DONE` |
+| D | XLSX export module (`tessera_export::xlsx`) | `DONE` |
+| E | Lucide React adoption across components | `DONE` |
+| E | Phosphor icons + `IconPicker` (search, weight, preview) | `DONE` |
+| E | `iconResolver` + inline-SVG embedding in exports | `DONE` |
+| F | Infographic artifact type (core, model, generator) | `DONE` |
+| F | InfographicEditor with drag-drop sections + icon picker | `DONE` |
+| F | Infographic templates (stats-overview, process-flow, comparison) | `DONE` |
+| F | LandingPage artifact type (core, model, generator) | `DONE` |
+| F | LandingPageEditor (hero / features / stats / testimonials / CTA) | `DONE` |
+| G | CI matrix workflow (Rust + TypeScript on Linux/macOS/Windows) | `DONE` |
+| G | Integration tests for mermaidRenderer / marpRenderer / iconResolver | `DONE` |
+| G | Rust tests for Typst, DOCX, XLSX export modules | `DONE` |
+| G | PROGRESS.md / README.md / ARCHITECTURE.md sweep | `DONE` |
+| G | PHASES.md alias | `DONE` |
+
+### Exit criteria
+
+- [x] Linux build works end-to-end (packaging, sidecar, keyring, CI).
+- [x] Mermaid, Marp, Typst, Lucide, Phosphor are real working integrations,
+      not facades — every renderer/icon ships with its own unit + integration
+      tests, and is wired into the editors and the export pipeline.
+- [x] Infographic and LandingPage are full artifact types: type enum entry,
+      grammar, generator, editor UI, templates, and tests.
+- [x] DOCX, PPTX, and XLSX exports are available from the UI export menu and
+      covered by tests.
+- [x] CI runs `cargo test --all`, `npm test`, `cargo clippy -D warnings`,
+      `npm run lint`, and `npm run type-check` on Linux / macOS / Windows.
+- [x] All top-level docs (PROPOSAL, ARCHITECTURE, README, CONTRIBUTING,
+      SECURITY, PHASES, PROGRESS) reference Linux, the new artifact types,
+      every export format, and the rendering integrations consistently.
+
+---
+
 ## MVP feature set summary
 
 | Category | Details |
 |---|---|
-| **Platforms** | macOS (Intel & Apple Silicon), Windows (x64), Linux (x64, arm64) |
+| **Platforms** | macOS (Intel & Apple Silicon), Windows (x64), Linux (x64, arm64 — AppImage / `.deb` / `.rpm`) |
 | **Sources** | Local folders, local files, Google Drive (remote connector) |
-| **Artifacts** | Documents, Slides, Sheets, Bases |
-| **Templates** | PRD, Proposal, SOP, QBR, Budget tracker, Vendor register, Risk register |
-| **Runtime** | Local sidecar, Ternary-Bonsai 1.58-bit (1.7B / 4B / 8B), MLX 2-bit on Apple Silicon, GGUF Q1_0_g128 (PrismML llama.cpp fork) everywhere else |
-| **Packaging** | AppImage + `.deb` (Linux), DMG + `.zip` (macOS), NSIS + portable `.zip` (Windows) |
+| **Artifacts** | Documents, Slides, Sheets, Bases, Infographic, Landing Page |
+| **Templates** | PRD, Proposal, SOP, QBR, Budget tracker, Vendor register, Risk register, Strategy, Review, Training, Pitch, Infographic (stats-overview / process-flow / comparison), Landing Page (SaaS product) |
+| **Runtime** | Local sidecar, Ternary-Bonsai 1.58-bit (1.7B / 4B / 8B), MLX 2-bit on Apple Silicon, GGUF Q1_0_g128 (PrismML llama.cpp fork) everywhere else; Vulkan / CUDA / ROCm acceleration on Linux & Windows, Metal on macOS |
+| **Rendering** | Mermaid (diagrams), Marp Core (slides), Typst (typesetting), Lucide + Phosphor (icons) |
+| **Export** | Markdown, HTML, CSV, JSON, PDF, DOCX, PPTX, XLSX |
+| **Packaging** | AppImage + `.deb` + `.rpm` (Linux), DMG + `.zip` (macOS), NSIS + portable `.zip` (Windows) |
 | **Core** | Knowledge substrate, encrypted local store, hybrid retrieval, citations, audit trail, export |
 
 ---
@@ -261,6 +325,29 @@ Tessera's UI follows the **KChat design system** ([https://kchat.com](https://kc
 ---
 
 ## Changelog
+
+### 2026-05-20 (Phase 7)
+- Linux first-class platform: AppImage/.deb/.rpm packaging, llama-server-linux
+  download script, Vulkan + AVX2/AVX-512 detection, libsecret-backed keyring
+- Mermaid integration: renderer service, TipTap node, slide diagram block,
+  export pipeline support (HTML / PDF / Markdown)
+- Marp Core integration: renderer service, Shadow-DOM isolated live preview
+  in SlideEditor, Marp CLI–backed PPTX export, training/pitch templates
+- Typst integration: Rust crate dependency, minimal `World`, document PDF/SVG
+  export via IPC
+- Export coverage: `tessera_export::docx` and `tessera_export::xlsx` modules
+- Icon system: Lucide adopted across components, Phosphor icon picker, shared
+  `iconResolver` with inline-SVG export embedding
+- New artifact types: Infographic (with stats-overview / process-flow /
+  comparison templates) and Landing Page (with SaaS product template),
+  including grammars in `tessera_runtime`
+- CI: matrix workflow for Ubuntu 22.04 / macOS 13 / Windows 2022 running
+  `cargo test --all`, `npm test`, `cargo clippy -D warnings`, `npm run lint`,
+  and `npm run type-check`
+- Documentation: README, ARCHITECTURE, PROPOSAL, CONTRIBUTING, SECURITY all
+  updated for Linux, new artifact types, new export formats, and rendering
+  integrations; PHASES.md added as a top-level phase index
+
 
 ### 2026-05-19 (Platform-aware models + UI wiring)
 - Model registry rewritten around 1.58-bit ternary weights — `Q1_0_g128` (GGUF) on Windows / Linux / macOS Intel, `2-bit` (MLX) on macOS Apple Silicon. Removed the incorrect `Q4_K_M` labelling and the inflated ~1.1 GB size for the 1.7B model; actual sizes (1.7B ≈ 248 MB MLX / 450 MB GGUF, 4B ≈ 600 MB / 1.0 GB, 8B ≈ 1.2 GB / 2.0 GB) are now in `crates/tessera_runtime/src/config.rs` and `sidecars/models.json`.

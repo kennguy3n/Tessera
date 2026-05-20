@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Tessera
+Comment=Local-first productivity workspace for documents, slides, sheets, and bases
+GenericName=Productivity Workspace
+Exec=tessera %U
+Icon=tessera
+Type=Application
+Categories=Office;Utility;
+Terminal=false
+StartupNotify=true
+StartupWMClass=Tessera
+MimeType=application/x-tessera-artifact;
+Keywords=productivity;documents;slides;sheets;notes;

@@ -3,6 +3,8 @@ use std::fmt::Write;
 use tessera_artifacts::Artifact;
 use tessera_citations::citation::Citation;
 
+use crate::mermaid;
+
 /// Generate a minimal but valid PDF document from an artifact.
 /// Uses the PDF 1.4 specification with built-in Helvetica font (no external font files needed).
 pub fn export_pdf(artifact: &Artifact, citations: &[Citation]) -> Vec<u8> {
@@ -22,9 +24,14 @@ pub fn export_pdf(artifact: &Artifact, citations: &[Citation]) -> Vec<u8> {
     builder.add_line(&meta, 10.0, false);
     builder.add_spacing(20.0);
 
-    // Content
+    // Content — mermaid fenced blocks get reduced to a one-line placeholder
+    // because the minimal PDF builder cannot rasterize SVG. The Typst PDF
+    // pipeline (`crate::typst`, Phase 7 Task 14) handles real diagram
+    // embedding for documents that opt into high-quality export.
     if !artifact.content.is_empty() {
-        for line in artifact.content.lines() {
+        let content_for_pdf =
+            mermaid::replace_blocks(&artifact.content, mermaid::to_pdf_placeholder);
+        for line in content_for_pdf.lines() {
             if line.is_empty() {
                 builder.add_spacing(8.0);
             } else {
@@ -304,6 +311,24 @@ mod tests {
         let pdf_str = String::from_utf8_lossy(&pdf);
         assert!(pdf_str.contains("Citations"));
         assert!(pdf_str.contains("reference.pdf"));
+    }
+
+    #[test]
+    fn pdf_replaces_mermaid_blocks_with_placeholder() {
+        let mut artifact = Artifact::new("Arch".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "Intro line\n\n```mermaid\nflowchart TD\nA-->B\n```\n\nOutro".to_string(),
+        );
+        let pdf = export_pdf(&artifact, &[]);
+        let pdf_str = String::from_utf8_lossy(&pdf);
+        // Original DSL must not leak through.
+        assert!(!pdf_str.contains("flowchart TD"));
+        // The placeholder must mention the diagram type.
+        assert!(pdf_str.contains("Diagram"));
+        assert!(pdf_str.contains("flowchart"));
+        // Surrounding content stays.
+        assert!(pdf_str.contains("Intro line"));
+        assert!(pdf_str.contains("Outro"));
     }
 
     #[test]

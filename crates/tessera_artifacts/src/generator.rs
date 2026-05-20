@@ -25,17 +25,68 @@ pub struct GeneratedContent {
     pub sections: Vec<GeneratedSection>,
 }
 
+/// How a `GeneratedSection` should be rendered when assembled into Markdown
+/// via `GeneratedContent::to_markdown`.
+///
+/// Most sections are `Normal` and get a `## <heading>` prefix followed by the
+/// body. The `Frontmatter` variant is used by the infographic and landing-page
+/// generators to inject a YAML front-matter block (`---\n...\n---`) verbatim
+/// before the document title — the body is emitted as-is with no heading.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum SectionKind {
+    #[default]
+    Normal,
+    /// Verbatim front-matter content emitted before the title with no heading.
+    Frontmatter,
+}
+
 #[derive(Debug, Clone)]
 pub struct GeneratedSection {
     pub heading: String,
     pub body: String,
     pub citation_refs: Vec<String>,
+    /// Rendering kind. Defaults to `SectionKind::Normal`; use
+    /// `GeneratedSection::frontmatter(body)` to construct a verbatim
+    /// front-matter section.
+    pub kind: SectionKind,
+}
+
+impl GeneratedSection {
+    /// Build a normal `## <heading>`–style section.
+    pub fn new(heading: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            heading: heading.into(),
+            body: body.into(),
+            citation_refs: Vec::new(),
+            kind: SectionKind::Normal,
+        }
+    }
+
+    /// Build a verbatim front-matter section. The heading is unused at render
+    /// time but kept non-empty for debugging / diagnostic purposes.
+    pub fn frontmatter(body: impl Into<String>) -> Self {
+        Self {
+            heading: "frontmatter".to_string(),
+            body: body.into(),
+            citation_refs: Vec::new(),
+            kind: SectionKind::Frontmatter,
+        }
+    }
 }
 
 impl GeneratedContent {
     pub fn to_markdown(&self) -> String {
-        let mut md = format!("# {}\n\n", self.title);
+        let mut md = String::new();
+        let mut title_emitted = false;
         for section in &self.sections {
+            if section.kind == SectionKind::Frontmatter {
+                md.push_str(&section.body);
+                continue;
+            }
+            if !title_emitted {
+                let _ = write!(md, "# {}\n\n", self.title);
+                title_emitted = true;
+            }
             let _ = write!(md, "## {}\n\n", section.heading);
             md.push_str(&section.body);
             md.push('\n');
@@ -44,6 +95,10 @@ impl GeneratedContent {
                 md.push_str(&section.citation_refs.join(", "));
                 md.push_str("\n\n");
             }
+        }
+        if !title_emitted {
+            // No sections at all — still surface the title.
+            let _ = write!(md, "# {}\n\n", self.title);
         }
         md
     }
@@ -76,6 +131,7 @@ pub fn generate_draft_from_sources(
             heading: pack.section_title.clone(),
             body,
             citation_refs: refs,
+            kind: SectionKind::Normal,
         });
     }
 
@@ -155,12 +211,48 @@ mod tests {
                 heading: "Overview".to_string(),
                 body: "Some content here.\n".to_string(),
                 citation_refs: vec!["[1] report.pdf".to_string()],
+                kind: SectionKind::Normal,
             }],
         };
         let md = content.to_markdown();
         assert!(md.contains("# Test Doc"));
         assert!(md.contains("## Overview"));
         assert!(md.contains("**Sources:**"));
+    }
+
+    #[test]
+    fn to_markdown_emits_frontmatter_verbatim_with_no_heading() {
+        let content = GeneratedContent {
+            title: "Doc".to_string(),
+            artifact_type: ArtifactType::Document,
+            sections: vec![
+                GeneratedSection::frontmatter("---\nkey: value\n---\n\n"),
+                GeneratedSection::new("Body", "Hello world\n"),
+            ],
+        };
+        let md = content.to_markdown();
+        assert!(md.starts_with("---\nkey: value\n---\n\n# Doc\n\n## Body\n\n"));
+        // Front-matter must NOT be wrapped in `## ...`, even if a future user
+        // happens to title a normal section "frontmatter" or "__frontmatter__".
+        assert!(!md.contains("## frontmatter"));
+        assert!(!md.contains("## __frontmatter__"));
+    }
+
+    #[test]
+    fn normal_section_titled_underscore_frontmatter_renders_as_heading() {
+        // Regression test for the previous magic-string sentinel: a normal
+        // section whose heading happens to be `__frontmatter__` must NOT be
+        // treated as front-matter. The kind field, not the heading text,
+        // controls rendering.
+        let content = GeneratedContent {
+            title: "Doc".to_string(),
+            artifact_type: ArtifactType::Document,
+            sections: vec![GeneratedSection::new("__frontmatter__", "user content\n")],
+        };
+        let md = content.to_markdown();
+        assert!(md.contains("# Doc"));
+        assert!(md.contains("## __frontmatter__"));
+        assert!(md.contains("user content"));
     }
 
     #[test]

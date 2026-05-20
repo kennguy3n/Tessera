@@ -8,12 +8,21 @@ export interface SheetContent {
 interface SheetEditorProps {
   content: string;
   onSave: (content: string) => void;
+  /**
+   * Fired synchronously on every edit (no debounce), with the serialized
+   * draft content. Used by `ArtifactEditorPage` to track the latest
+   * in-progress edits so that exporting an artifact while a debounced
+   * save is still pending captures the live editor state instead of the
+   * stale last-persisted content.
+   */
+  onDraftChange?: (content: string) => void;
   autoSaveMs?: number;
 }
 
 export default function SheetEditor({
   content,
   onSave,
+  onDraftChange,
   autoSaveMs = 2000,
 }: SheetEditorProps) {
   const [sheet, setSheet] = useState<SheetContent>(() => parseSheetContent(content));
@@ -25,14 +34,17 @@ export default function SheetEditor({
 
   const debouncedSave = useCallback(
     (data: SheetContent) => {
+      const json = JSON.stringify(data);
+      // Publish the draft immediately so the parent (ArtifactEditorPage)
+      // can capture it for export even before the debounced save fires.
+      onDraftChange?.(json);
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        const json = JSON.stringify(data);
         lastSavedRef.current = json;
         onSave(json);
       }, autoSaveMs);
     },
-    [onSave, autoSaveMs],
+    [onSave, onDraftChange, autoSaveMs],
   );
 
   useEffect(() => {

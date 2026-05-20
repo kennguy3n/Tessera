@@ -15,10 +15,21 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 zip = { workspace = true }
+docx-rs = "0.4"
+rust_xlsxwriter = "0.95"
+typst = { version = "0.12", optional = true }
+typst-pdf = { version = "0.12", optional = true }
+typst-svg = { version = "0.12", optional = true }
+typst-assets = { version = "0.12", features = ["fonts"], optional = true }
+comemo = { version = "0.4", optional = true }
+ecow = { version = "0.2", optional = true }
 
 [features]
-default = ["pdf"]
+default = ["pdf", "docx", "xlsx"]
 pdf = []
+docx = []
+xlsx = []
+typst = ["dep:typst", "dep:typst-pdf", "dep:typst-svg", "dep:typst-assets", "dep:comemo", "dep:ecow"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

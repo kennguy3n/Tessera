@@ -27,11 +27,13 @@ interface NativeBridge {
   bridgeExportArtifact(
     artifactId: string,
     format: string,
+    contentOverride?: string | null,
   ): { content: string; format: string };
   bridgeExportArtifactToFile(
     artifactId: string,
     format: string,
     path: string,
+    contentOverride?: string | null,
   ): void;
   bridgeListTemplates(): TemplateInfo[];
   bridgeGetTemplate(templateId: string): TemplateInfo | null;
@@ -189,11 +191,17 @@ export function initAppState(): boolean {
 function resolveSidecarBinary(): string {
   const ext = process.platform === "win32" ? ".exe" : "";
   const binaryName = `llama-server${ext}`;
+  // electron-builder copies sidecars/llama-server/ into process.resourcesPath/sidecars/llama-server
+  // for packaged builds. In dev we look relative to the repo root.
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
+    .resourcesPath;
   const possiblePaths = [
+    resourcesPath && path.join(resourcesPath, "sidecars", "llama-server", binaryName),
     path.join(app.getAppPath(), "sidecars", "llama-server", binaryName),
     path.join(app.getAppPath(), "..", "sidecars", "llama-server", binaryName),
     path.join(__dirname, "..", "sidecars", "llama-server", binaryName),
-  ];
+    path.join(__dirname, "..", "..", "sidecars", "llama-server", binaryName),
+  ].filter((p): p is string => typeof p === "string");
   for (const p of possiblePaths) {
     if (fs.existsSync(p)) return p;
   }

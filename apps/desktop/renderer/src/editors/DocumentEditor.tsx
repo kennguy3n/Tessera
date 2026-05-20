@@ -3,21 +3,41 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import Link from "@tiptap/extension-link";
+import { MermaidNode } from "./extensions/MermaidExtension";
 
 interface DocumentEditorProps {
   content: string;
   onSave: (content: string) => void;
+  /** See SheetEditor.onDraftChange — published synchronously on every edit. */
+  onDraftChange?: (content: string) => void;
   autoSaveMs?: number;
 }
 
 export default function DocumentEditor({
   content,
   onSave,
+  onDraftChange,
   autoSaveMs = 2000,
 }: DocumentEditorProps) {
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Initialize to empty string; updated to editor's parsed HTML in onCreate
   const lastSavedRef = useRef("");
+  // Ref-wrap onDraftChange AND onSave so the TipTap `onUpdate` closure
+  // (created once at mount) always calls the latest callback without
+  // recreating the editor. Both props can change identity when the parent
+  // re-renders (e.g. when the artifact `id` route param changes and
+  // `ArtifactEditorPage` rebuilds its `handleSave` via `useCallback`).
+  // Without the ref the closure here would keep calling whatever
+  // `onSave` was at mount time — fine today because we tear the whole
+  // editor down on `id` change, but a foot-gun for future maintainers.
+  const onDraftChangeRef = useRef(onDraftChange);
+  const onSaveRef = useRef(onSave);
+  useEffect(() => {
+    onDraftChangeRef.current = onDraftChange;
+  }, [onDraftChange]);
+  useEffect(() => {
+    onSaveRef.current = onSave;
+  }, [onSave]);
 
   const editor = useEditor({
     extensions: [
@@ -31,6 +51,7 @@ export default function DocumentEditor({
         openOnClick: false,
         autolink: true,
       }),
+      MermaidNode,
     ],
     content: parseContent(content),
     onCreate: ({ editor }) => {
@@ -42,12 +63,16 @@ export default function DocumentEditor({
       const html = editor.getHTML();
       if (html === lastSavedRef.current) return;
 
+      // Publish the draft immediately (no debounce) so exporting before the
+      // 2s auto-save fires still captures the live editor state.
+      onDraftChangeRef.current?.(html);
+
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
       saveTimeoutRef.current = setTimeout(() => {
         lastSavedRef.current = html;
-        onSave(html);
+        onSaveRef.current(html);
       }, autoSaveMs);
     },
   });
@@ -186,6 +211,15 @@ function Toolbar({
         title="Link"
       >
         LK
+      </button>
+      <span className="toolbar-separator" />
+      <button
+        type="button"
+        className="toolbar-btn"
+        onClick={() => editor.chain().focus().insertMermaid().run()}
+        title="Insert Mermaid diagram"
+      >
+        Diagram
       </button>
     </div>
   );

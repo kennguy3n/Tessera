@@ -1,10 +1,94 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Card from "../components/Card";
-import { DocumentEditor, SlideEditor, SheetEditor, BaseEditor } from "../editors";
+import {
+  DocumentEditor,
+  SlideEditor,
+  SheetEditor,
+  BaseEditor,
+  InfographicEditor,
+  LandingPageEditor,
+} from "../editors";
+import { embedIcons } from "../services/iconResolver";
+import {
+  parseSlideContent,
+  slidesToMarpMarkdown,
+} from "../editors/SlideEditor";
+import {
+  parseInfographicContent,
+  buildPreviewHtml as buildInfographicPreviewHtml,
+  buildInfographicPrintableText,
+} from "../editors/InfographicEditor";
+import {
+  parseLandingPageContent,
+  buildLandingPreviewHtml,
+  buildLandingPagePrintableText,
+} from "../editors/LandingPageEditor";
 import type { ArtifactInfo } from "../types/ipc";
+
+const ICON_AWARE_FORMATS = new Set(["html", "pdf", "docx"]);
+// Artifact types whose content is raw text/markdown and may therefore
+// contain `{{icon:lucide:home}}`-style tokens that `embedIcons` should
+// resolve. JSON-structured artifact types (sheet, base, infographic,
+// landing_page) embed icons through their schema fields
+// (e.g. `"icon":"lucide:trending-up"`), and running the token regex
+// replacer over stringified JSON would corrupt the structure when a user
+// manually typed `{{icon:...}}` into a cell or field — the inline `<svg>`
+// output contains unescaped `"` characters that break JSON.
+const ICON_TOKEN_ARTIFACT_TYPES = new Set(["document"]);
+// PPTX is intentionally NOT in BINARY_FORMATS — it does not flow through the
+// Rust exporter (which rejects pptx); it has a dedicated Marp-CLI path.
+const BINARY_FORMATS = new Set(["pdf", "docx", "xlsx"]);
+
+/**
+ * Display label for each supported export format. Centralised so the
+ * dropdown UI and any future menu / palette stay in sync.
+ */
+const EXPORT_FORMAT_LABELS: Record<string, string> = {
+  markdown: "Markdown (.md)",
+  html: "HTML (.html)",
+  json: "JSON (.json)",
+  csv: "CSV (.csv)",
+  pdf: "PDF (.pdf)",
+  docx: "Word (.docx)",
+  xlsx: "Excel (.xlsx)",
+  pptx: "PowerPoint (.pptx, Marp)",
+};
+
+/**
+ * Returns the list of export formats that make sense for a given artifact
+ * type. Prevents nonsensical combinations like "Sheet → DOCX" (which would
+ * render the sheet's `{columns, rows}` JSON as markdown) or "Document →
+ * XLSX" (which would CSV-split the markdown content into a sheet).
+ *
+ * The mapping is intentionally explicit per type rather than a "deny-list"
+ * because the deny-list approach silently broadens whenever a new format is
+ * added. Keeping the list per type forces a deliberate decision each time.
+ */
+export function availableExportFormats(artifactType: string): string[] {
+  switch (artifactType) {
+    case "document":
+      return ["markdown", "html", "json", "pdf", "docx"];
+    case "slides":
+      return ["markdown", "html", "json", "pdf", "pptx"];
+    case "sheet":
+      return ["csv", "json", "html", "pdf", "xlsx"];
+    case "base":
+      return ["csv", "json", "html", "pdf", "xlsx"];
+    case "infographic":
+      // Visual artifact — HTML preview, PDF print, JSON data export.
+      return ["html", "json", "pdf"];
+    case "landing_page":
+      // Standalone web page — HTML primary, PDF for print, JSON data.
+      return ["html", "json", "pdf"];
+    default:
+      // Unknown / future types: expose the safe-universal set rather than
+      // nothing, so the user is never stranded with no export option.
+      return ["json", "html", "pdf"];
+  }
+}
 
 export default function ArtifactEditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -14,6 +98,22 @@ export default function ArtifactEditorPage() {
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+
+  // Tracks the latest *uncommitted* editor content. Editors publish into
+  // this ref via their `onDraftChange` prop synchronously on every edit
+  // (independent of the debounced auto-save), so an export triggered before
+  // the 2 s auto-save fires still operates on the live editor state instead
+  // of `artifact.content` (which only reflects the last persisted save).
+  const draftContentRef = useRef<string | null>(null);
+  const handleDraftChange = useCallback((next: string) => {
+    draftContentRef.current = next;
+  }, []);
+
+  // Reset the draft when the user navigates to a different artifact so
+  // we don't leak a previous artifact's draft into the new export.
+  useEffect(() => {
+    draftContentRef.current = null;
+  }, [id]);
 
   const loadArtifact = useCallback(async () => {
     if (!id) return;
@@ -58,10 +158,219 @@ export default function ArtifactEditorPage() {
       try {
         const api = window.tessera;
         if (!api) return;
-        const result = await api.artifacts.exportArtifact(id, format);
-        await navigator.clipboard.writeText(result.content);
-        setExportStatus(`Exported as ${result.format} — copied to clipboard`);
-        setTimeout(() => setExportStatus(null), 3000);
+
+        // Prefer the live editor draft (captured synchronously via
+        // onDraftChange) over the last-persisted server snapshot. Falls
+        // back to the persisted content if the editor hasn't published a
+        // draft yet (e.g. nothing edited since load, or the artifact type
+        // doesn't emit drafts at all). This means clicking Export while
+        // the 2 s auto-save is still pending still operates on the
+        // current editor state instead of stale content.
+        const liveContent = draftContentRef.current ?? artifact?.content ?? "";
+
+        // For icon-aware formats, resolve {{icon:...}} tokens to inline SVG
+        // for the export only — never persist back to the artifact store.
+        // The IPC layer forwards `contentOverride` to the Rust bridge, which
+        // applies it to an in-memory clone of the artifact before exporting,
+        // leaving the editable `{{icon:lucide:home}}`-style tokens untouched
+        // in the database.
+        // Compute the override in two independent stages so the draft-vs-persisted
+        // check is *always* performed, even when icon embedding is a no-op
+        // (e.g. all `{{icon:...}}` tokens are unresolvable, so `embedIcons`
+        // returns the input unchanged). Without this split the icon branch
+        // could exit with `contentOverride === null` and the persisted (stale)
+        // content would be exported instead of the live draft.
+        let contentOverride: string | null = null;
+        const artifactType = artifact?.artifactType ?? "";
+
+        // Visual artifact types (infographic / landing_page) store their
+        // model as structured JSON. Exporting that JSON straight through
+        // the Rust exporters would render `{"title":"...","sections":
+        // [...]}` as paragraphs, not as the rich layout the user sees in
+        // the live preview pane.
+        //
+        // - HTML  → pre-render through the same preview builder that
+        //   powers the editor's preview pane (already exported from each
+        //   editor module and unit-tested there), and pass the resulting
+        //   HTML fragment through `contentOverride`. The Rust HTML
+        //   exporter (`crates/tessera_export/src/html.rs`) detects these
+        //   artifact types and inlines the override as raw HTML instead
+        //   of running it through the markdown-like line parser.
+        // - PDF / DOCX → the Rust PDF builder is line-based and the DOCX
+        //   writer chunks paragraphs the same way; raw HTML tag-soup is
+        //   only marginally better than raw JSON there. Pre-render via
+        //   the dedicated *PrintableText helpers (`# Title`, `## Heading`,
+        //   blank-line-separated paragraphs) so the printed export
+        //   matches the visible page top-to-bottom. Regression for
+        //   BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0001.
+        //
+        // If the parser throws (e.g. corrupted JSON), we deliberately
+        // leave `contentOverride` null and let the Rust side fall back to
+        // its `<pre>` (HTML) / line-by-line JSON dump (PDF) wrapper:
+        // a legible default beats a broken page.
+        if (format === "html" && artifactType === "infographic") {
+          try {
+            contentOverride = buildInfographicPreviewHtml(
+              parseInfographicContent(liveContent),
+            );
+          } catch {
+            // fall through — Rust exporter wraps raw JSON in <pre>
+          }
+        } else if (format === "html" && artifactType === "landing_page") {
+          try {
+            contentOverride = buildLandingPreviewHtml(
+              parseLandingPageContent(liveContent),
+            );
+          } catch {
+            // see above
+          }
+        } else if (
+          (format === "pdf" || format === "docx") &&
+          artifactType === "infographic"
+        ) {
+          try {
+            contentOverride = buildInfographicPrintableText(
+              parseInfographicContent(liveContent),
+            );
+          } catch {
+            // fall through — line-based PDF builder will read the raw
+            // JSON, which is still legible (just not pretty).
+          }
+        } else if (
+          (format === "pdf" || format === "docx") &&
+          artifactType === "landing_page"
+        ) {
+          try {
+            contentOverride = buildLandingPagePrintableText(
+              parseLandingPageContent(liveContent),
+            );
+          } catch {
+            // see above
+          }
+        }
+
+        // Token-based icon embedding only applies to artifact types whose
+        // content is raw text/markdown. For JSON-structured artifacts the
+        // icon is stored as a structured field, not a `{{icon:...}}` token;
+        // running the regex replacer on stringified JSON would inject
+        // unescaped `"` from the SVG output and corrupt the document.
+        const isIconTokenArtifact = ICON_TOKEN_ARTIFACT_TYPES.has(artifactType);
+        if (
+          contentOverride === null &&
+          isIconTokenArtifact &&
+          ICON_AWARE_FORMATS.has(format) &&
+          /\{\{icon:/.test(liveContent)
+        ) {
+          const embedded = embedIcons(liveContent);
+          if (embedded !== liveContent) {
+            contentOverride = embedded;
+          }
+        }
+        // Independent of icon embedding: if the live editor draft has
+        // diverged from the persisted snapshot, the export must see the
+        // draft. `embedIcons` is content-preserving when nothing resolves,
+        // so the icon branch (above) and the draft branch (here) don't
+        // conflict — whichever produced a meaningful override wins.
+        if (contentOverride === null && liveContent !== (artifact?.content ?? "")) {
+          contentOverride = liveContent;
+        }
+
+        // PPTX has its own dedicated pipeline: the Marp CLI consumes the
+        // raw Marp markdown directly. The generic Rust exporter rejects it,
+        // so we route the slide artifact's marp source through the
+        // `artifacts:exportMarp` IPC (which prompts the user via the native
+        // save dialog) rather than going through `exportArtifact`.
+        if (format === "pptx") {
+          if (artifact?.artifactType !== "slides") {
+            throw new Error(
+              "PPTX export is only available for slide artifacts",
+            );
+          }
+          const parsed = parseSlideContent(liveContent);
+          // Resolve a single effective theme value up-front and reuse it
+          // for both `slidesToMarpMarkdown(...)` AND `exportMarp({ theme })`
+          // so the synthesised front-matter and the Marp CLI `--theme`
+          // flag can never disagree. `parsed.marpTheme` is `undefined`
+          // when the slide artifact has no `marp` block (e.g. structured
+          // slides authored before Marp Mode shipped); the user-visible
+          // default in that case is "default", matching what
+          // `slidesToMarpMarkdown` would have fallen back to internally.
+          // Defaulting here (instead of inside each call site) is what
+          // keeps the two pipelines in sync — if a future caller forgets
+          // to default, they still get the consistent value.
+          const effectiveTheme = parsed.marpTheme ?? "default";
+          // When NOT in Marp Mode, we synthesise Marp Markdown from the
+          // structured slides. Pass the resolved theme through so the
+          // generated front-matter matches the `--theme` flag we send to
+          // the Marp CLI below.
+          const marpMarkdown = parsed.marpMode
+            ? parsed.marpSource
+            : slidesToMarpMarkdown(parsed.slides, {
+                theme: effectiveTheme,
+              });
+          if (!marpMarkdown.trim()) {
+            throw new Error(
+              "Slide artifact has no Marp content to export — add slides or enable Marp mode first",
+            );
+          }
+          const safeName = `${artifact?.title ?? "artifact"}.pptx`.replace(
+            /[^A-Za-z0-9._-]/g,
+            "_",
+          );
+          const written = await api.artifacts.exportMarp({
+            markdown: marpMarkdown,
+            format: "pptx",
+            outputPath: safeName,
+            theme: effectiveTheme,
+          });
+          if (written === null) {
+            // User dismissed the save dialog — surface a neutral status
+            // rather than an error so the cancel feels like a no-op.
+            setExportStatus("Export cancelled");
+            setTimeout(() => setExportStatus(null), 3000);
+            return;
+          }
+          setExportStatus(`Exported as pptx → ${written}`);
+          setTimeout(() => setExportStatus(null), 4000);
+          return;
+        }
+
+        if (BINARY_FORMATS.has(format)) {
+          // Binary formats can't be copied to the clipboard as text; we send
+          // a suggested filename to the main process, which prompts the user
+          // via the native save dialog and returns the resolved absolute
+          // path — or `null` if the user cancels, which we surface as a
+          // neutral "Export cancelled" status (no file is written).
+          const ext = format;
+          const suggestedName = `${artifact?.title ?? "artifact"}.${ext}`.replace(
+            /[^A-Za-z0-9._-]/g,
+            "_",
+          );
+          const written = await api.artifacts.exportToFile(
+            id,
+            format,
+            suggestedName,
+            contentOverride,
+          );
+          if (written === null) {
+            setExportStatus("Export cancelled");
+            setTimeout(() => setExportStatus(null), 3000);
+          } else {
+            setExportStatus(`Exported as ${format} → ${written}`);
+            setTimeout(() => setExportStatus(null), 4000);
+          }
+        } else {
+          const result = await api.artifacts.exportArtifact(
+            id,
+            format,
+            contentOverride,
+          );
+          await navigator.clipboard.writeText(result.content);
+          setExportStatus(
+            `Exported as ${result.format} — copied to clipboard`,
+          );
+          setTimeout(() => setExportStatus(null), 3000);
+        }
       } catch (e) {
         setExportStatus(
           `Export failed: ${e instanceof Error ? e.message : "unknown error"}`,
@@ -70,7 +379,7 @@ export default function ArtifactEditorPage() {
         setExporting(false);
       }
     },
-    [id],
+    [id, artifact?.title, artifact?.content, artifact?.artifactType],
   );
 
   const handleExportEvidencePack = useCallback(async () => {
@@ -141,13 +450,34 @@ export default function ArtifactEditorPage() {
         description={`${artifact.artifactType} — v${artifact.version}`}
         actions={
           <div style={{ display: "flex", gap: "var(--spacing-sm)" }}>
-            <Button
-              variant="secondary"
-              onClick={() => handleExport("markdown")}
+            <select
+              aria-label="Export artifact"
               disabled={exporting}
+              value=""
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v) {
+                  handleExport(v);
+                  e.target.value = "";
+                }
+              }}
+              style={{
+                padding: "var(--spacing-xs) var(--spacing-sm)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-sm)",
+                background: "var(--color-bg-elevated, #fff)",
+                fontSize: "var(--font-size-sm)",
+              }}
             >
-              Export
-            </Button>
+              <option value="" disabled>
+                Export…
+              </option>
+              {availableExportFormats(artifact.artifactType).map((fmt) => (
+                <option key={fmt} value={fmt}>
+                  {EXPORT_FORMAT_LABELS[fmt] ?? fmt}
+                </option>
+              ))}
+            </select>
             <Button
               variant="secondary"
               onClick={handleExportEvidencePack}
@@ -177,7 +507,11 @@ export default function ArtifactEditorPage() {
         </div>
       )}
       <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-        <EditorSwitch artifact={artifact} onSave={handleSave} />
+        <EditorSwitch
+          artifact={artifact}
+          onSave={handleSave}
+          onDraftChange={handleDraftChange}
+        />
       </div>
     </div>
   );
@@ -186,19 +520,61 @@ export default function ArtifactEditorPage() {
 function EditorSwitch({
   artifact,
   onSave,
+  onDraftChange,
 }: {
   artifact: ArtifactInfo;
   onSave: (content: string) => void;
+  onDraftChange: (content: string) => void;
 }) {
   switch (artifact.artifactType) {
     case "document":
-      return <DocumentEditor content={artifact.content} onSave={onSave} />;
+      return (
+        <DocumentEditor
+          content={artifact.content}
+          onSave={onSave}
+          onDraftChange={onDraftChange}
+        />
+      );
     case "slides":
-      return <SlideEditor content={artifact.content} onSave={onSave} />;
+      return (
+        <SlideEditor
+          content={artifact.content}
+          onSave={onSave}
+          onDraftChange={onDraftChange}
+        />
+      );
     case "sheet":
-      return <SheetEditor content={artifact.content} onSave={onSave} />;
+      return (
+        <SheetEditor
+          content={artifact.content}
+          onSave={onSave}
+          onDraftChange={onDraftChange}
+        />
+      );
     case "base":
-      return <BaseEditor content={artifact.content} onSave={onSave} />;
+      return (
+        <BaseEditor
+          content={artifact.content}
+          onSave={onSave}
+          onDraftChange={onDraftChange}
+        />
+      );
+    case "infographic":
+      return (
+        <InfographicEditor
+          content={artifact.content}
+          onSave={onSave}
+          onDraftChange={onDraftChange}
+        />
+      );
+    case "landing_page":
+      return (
+        <LandingPageEditor
+          content={artifact.content}
+          onSave={onSave}
+          onDraftChange={onDraftChange}
+        />
+      );
     default:
       return (
         <Card>

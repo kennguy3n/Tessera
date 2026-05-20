@@ -2,6 +2,9 @@ id: qbr-v1
 name: Quarterly Business Review
 type: slides
 description: QBR deck with executive summary, metrics, wins, challenges, and next quarter plan
+format: marp
+theme: default
+paginate: true
 sections:
   - title: Executive Summary
     prompt: >
@@ -29,3 +32,63 @@ sections:
 export:
   - markdown
   - html
+  - pptx
+  - pdf
+marp_template: |
+  ---
+  marp: true
+  theme: default
+  paginate: true
+  header: 'Quarterly Business Review'
+  footer: '{{ company_name }} — {{ quarter }} {{ year }}'
+  ---
+
+  # {{ quarter }} {{ year }} Business Review
+  ## {{ company_name }}
+
+  <!-- Open with the quarter's headline number and theme -->
+
+  ---
+
+  ## Executive Summary
+
+  - {{ summary_point_1 }}
+  - {{ summary_point_2 }}
+  - {{ summary_point_3 }}
+
+  <!-- Anchor on the most impactful metric and tee up details -->
+
+  ---
+
+  ## Key Metrics
+
+  | Metric | Target | Actual | Δ |
+  |---|---|---|---|
+  | {{ metric_1_name }} | {{ metric_1_target }} | {{ metric_1_actual }} | {{ metric_1_delta }} |
+  | {{ metric_2_name }} | {{ metric_2_target }} | {{ metric_2_actual }} | {{ metric_2_delta }} |
+
+  ---
+
+  ## Wins
+
+  - {{ win_1 }}
+  - {{ win_2 }}
+  - {{ win_3 }}
+
+  ---
+
+  ## Challenges
+
+  - {{ challenge_1 }} → {{ resolution_1 }}
+  - {{ challenge_2 }} → {{ resolution_2 }}
+
+  ---
+
+  ## Next Quarter Plan
+
+  1. {{ priority_1 }}
+  2. {{ priority_2 }}
+  3. {{ priority_3 }}
+
+  <!-- Call out resource asks and decision points -->
+

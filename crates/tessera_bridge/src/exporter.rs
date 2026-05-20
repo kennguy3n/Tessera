@@ -20,12 +20,20 @@ pub fn export_artifact(
     citation_tracker: &CitationTracker,
     artifact_id: &str,
     format: &str,
+    content_override: Option<&str>,
 ) -> BridgeResult<ExportResult> {
     let uuid =
         uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
-    let artifact = artifact_manager
+    let mut artifact = artifact_manager
         .get(&ArtifactId(uuid))
         .map_err(BridgeError::Core)?;
+
+    // Apply an in-memory content override (used by the renderer to feed
+    // pre-processed content — e.g. icons resolved into inline SVG — into the
+    // export pipeline without ever persisting the rewrite into the store).
+    if let Some(override_content) = content_override {
+        artifact.content = override_content.to_string();
+    }
 
     let export_format: ExportFormat = serde_json::from_str(&format!("\"{format}\""))
         .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
@@ -49,12 +57,17 @@ pub fn export_artifact_to_file(
     artifact_id: &str,
     format: &str,
     path: &str,
+    content_override: Option<&str>,
 ) -> BridgeResult<()> {
     let uuid =
         uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
-    let artifact = artifact_manager
+    let mut artifact = artifact_manager
         .get(&ArtifactId(uuid))
         .map_err(BridgeError::Core)?;
+
+    if let Some(override_content) = content_override {
+        artifact.content = override_content.to_string();
+    }
 
     let export_format: ExportFormat = serde_json::from_str(&format!("\"{format}\""))
         .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
@@ -85,10 +98,47 @@ mod tests {
             .create("Test Document".to_string(), ArtifactType::Document, None)
             .unwrap();
 
-        let result =
-            export_artifact(&manager, &tracker, &artifact.id.to_string(), "markdown").unwrap();
+        let result = export_artifact(
+            &manager,
+            &tracker,
+            &artifact.id.to_string(),
+            "markdown",
+            None,
+        )
+        .unwrap();
         assert!(result.content.contains("# Test Document"));
         assert_eq!(result.format, "markdown");
+    }
+
+    #[test]
+    fn bridge_export_with_content_override_does_not_mutate_store() {
+        let manager = ArtifactManager::new_in_memory().unwrap();
+        let tracker = CitationTracker::new_in_memory().unwrap();
+        let artifact = manager
+            .create("Original".to_string(), ArtifactType::Document, None)
+            .unwrap();
+        manager
+            .update_content(
+                &artifact.id,
+                "Original body with {{icon:lucide:home}} token.".to_string(),
+            )
+            .unwrap();
+
+        let override_body = "Pre-rendered body with <svg>...</svg>.";
+        let exported = export_artifact(
+            &manager,
+            &tracker,
+            &artifact.id.to_string(),
+            "markdown",
+            Some(override_body),
+        )
+        .unwrap();
+        assert!(exported.content.contains("<svg>"));
+
+        // Stored content must be untouched after the override-driven export.
+        let still = manager.get(&artifact.id).unwrap();
+        assert!(still.content.contains("{{icon:lucide:home}}"));
+        assert!(!still.content.contains("<svg>"));
     }
 
     #[test]
@@ -99,7 +149,8 @@ mod tests {
             .create("Test".to_string(), ArtifactType::Document, None)
             .unwrap();
 
-        let result = export_artifact(&manager, &tracker, &artifact.id.to_string(), "html").unwrap();
+        let result =
+            export_artifact(&manager, &tracker, &artifact.id.to_string(), "html", None).unwrap();
         assert!(result.content.contains("<html"));
     }
 
@@ -119,10 +170,57 @@ mod tests {
             &artifact.id.to_string(),
             "markdown",
             path.to_str().unwrap(),
+            None,
         )
         .unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("# Test"));
+    }
+
+    #[test]
+    fn bridge_export_docx_to_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = ArtifactManager::new_in_memory().unwrap();
+        let tracker = CitationTracker::new_in_memory().unwrap();
+        let artifact = manager
+            .create("Docx Test".to_string(), ArtifactType::Document, None)
+            .unwrap();
+
+        let path = dir.path().join("output.docx");
+        export_artifact_to_file(
+            &manager,
+            &tracker,
+            &artifact.id.to_string(),
+            "docx",
+            path.to_str().unwrap(),
+            None,
+        )
+        .unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..4], b"PK\x03\x04", "DOCX missing PK header");
+    }
+
+    #[test]
+    fn bridge_export_xlsx_to_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = ArtifactManager::new_in_memory().unwrap();
+        let tracker = CitationTracker::new_in_memory().unwrap();
+        let artifact = manager
+            .create("Xlsx Test".to_string(), ArtifactType::Sheet, None)
+            .unwrap();
+
+        let path = dir.path().join("output.xlsx");
+        export_artifact_to_file(
+            &manager,
+            &tracker,
+            &artifact.id.to_string(),
+            "xlsx",
+            path.to_str().unwrap(),
+            None,
+        )
+        .unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..4], b"PK\x03\x04", "XLSX missing PK header");
     }
 }

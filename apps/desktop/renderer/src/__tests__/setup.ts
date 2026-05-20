@@ -1,5 +1,29 @@
 import "@testing-library/jest-dom/vitest";
 
+// jsdom does not implement SVG layout APIs; mermaid and other diagram
+// libraries call getBBox/getComputedTextLength/getCTM during render. Stub
+// just enough to let the layout pass complete.
+if (typeof SVGElement !== "undefined") {
+  const proto = SVGElement.prototype as unknown as {
+    getBBox?: () => { x: number; y: number; width: number; height: number };
+    getComputedTextLength?: () => number;
+    getCTM?: () => { a: number; b: number; c: number; d: number; e: number; f: number };
+    getScreenCTM?: () => { a: number; b: number; c: number; d: number; e: number; f: number };
+  };
+  if (!proto.getBBox) {
+    proto.getBBox = () => ({ x: 0, y: 0, width: 100, height: 20 });
+  }
+  if (!proto.getComputedTextLength) {
+    proto.getComputedTextLength = () => 100;
+  }
+  if (!proto.getCTM) {
+    proto.getCTM = () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
+  }
+  if (!proto.getScreenCTM) {
+    proto.getScreenCTM = () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
+  }
+}
+
 const mockApi = {
   sources: {
     addLocalFolder: vi.fn().mockResolvedValue({
@@ -63,6 +87,8 @@ const mockApi = {
     remove: vi.fn(),
     exportArtifact: vi.fn(),
     exportToFile: vi.fn().mockResolvedValue(undefined),
+    exportMarp: vi.fn().mockResolvedValue(undefined),
+    exportTypst: vi.fn().mockResolvedValue(undefined),
     listVersions: vi.fn().mockResolvedValue([]),
     restoreVersion: vi.fn().mockResolvedValue({
       id: "art-1",
