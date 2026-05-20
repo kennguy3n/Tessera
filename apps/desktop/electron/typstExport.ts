@@ -9,6 +9,7 @@
 //! preview Typst markup via WebAssembly in a future iteration.
 
 import { spawn } from "node:child_process";
+import * as crypto from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -113,11 +114,18 @@ export async function runTypstExport(
   const fn = runner ?? defaultRunner;
   const bytes = await fn(opts.markup, opts.format);
   const tmpDir = opts.tmpDir ?? os.tmpdir();
+  // Use crypto.randomBytes for the temp-file unique suffix instead of
+  // Math.random(): two concurrent exports issued in the same millisecond
+  // can still occur (debounced auto-export + manual click) and Math.random
+  // is not collision-safe for filesystem paths. 8 random bytes ≈ 2^64
+  // namespace, effectively eliminates collisions. Mirrors the equivalent
+  // fix in `marpExport.ts` so both export pipelines share the same
+  // collision-safety guarantee.
   const outputPath =
     opts.outputPath ??
     path.join(
       tmpDir,
-      `tessera-typst-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${opts.format}`,
+      `tessera-typst-${Date.now()}-${crypto.randomBytes(8).toString("hex")}.${opts.format}`,
     );
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, bytes);

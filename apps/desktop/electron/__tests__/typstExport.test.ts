@@ -94,4 +94,25 @@ describe("typstExport", () => {
       }),
     ).rejects.toThrow(/typst-compile-failed/);
   });
+
+  it("uses crypto.randomBytes for temp-file uniqueness (regression for BUG_681f8bfb_0001)", async () => {
+    // Same class of bug as marpExport's earlier fix: two concurrent
+    // exports issued in the same millisecond would collide on the
+    // Math.random()-derived suffix (only ~2.2e9 namespace). 8 random
+    // bytes (16 hex chars) gives ~1.8e19 namespace, effectively
+    // eliminating collisions. We fire 50 exports back-to-back so
+    // Date.now() is much more likely to repeat than under any normal
+    // workload, then assert every observed temp basename is unique and
+    // matches the new shape.
+    __setTypstRunner(async () => Buffer.from("OK"));
+    const runs = Array.from({ length: 50 }, () =>
+      runTypstExport({ markup: "= x", format: "pdf", tmpDir: tmpRoot }),
+    );
+    const results = await Promise.all(runs);
+    const basenames = new Set(results.map((r) => path.basename(r.outputPath)));
+    expect(basenames.size).toBe(50);
+    for (const name of basenames) {
+      expect(name).toMatch(/^tessera-typst-\d+-[0-9a-f]{16}\.pdf$/);
+    }
+  });
 });
