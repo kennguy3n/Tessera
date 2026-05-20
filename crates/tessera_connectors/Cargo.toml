@@ -17,6 +17,9 @@ thiserror = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true }
 url = { workspace = true }
+# Pin transitive idna_adapter to the last version that compiles on Rust 1.77.
+# idna_adapter >= 1.2.2 requires edition2024 (stable only on Rust 1.85+).
+idna_adapter = "=1.2.1"
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -106,10 +106,7 @@ pub fn generate_infographic(spec: &InfographicSpec<'_>) -> Result<GeneratedConte
     for pack in spec.source_packs {
         let icon_name = suggest_icon_for(&pack.section_title);
         let mut body = String::new();
-        let _ = writeln!(
-            body,
-            "{{{{icon:{default_set}:{icon_name} size=32}}}}\n"
-        );
+        let _ = writeln!(body, "{{{{icon:{default_set}:{icon_name} size=32}}}}\n");
 
         if let Some(stat) = extract_stat(&pack.chunks) {
             let _ = writeln!(body, "**{}** {}", stat.0, stat.1);

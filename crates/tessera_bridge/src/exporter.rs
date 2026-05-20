@@ -98,9 +98,14 @@ mod tests {
             .create("Test Document".to_string(), ArtifactType::Document, None)
             .unwrap();
 
-        let result =
-            export_artifact(&manager, &tracker, &artifact.id.to_string(), "markdown", None)
-                .unwrap();
+        let result = export_artifact(
+            &manager,
+            &tracker,
+            &artifact.id.to_string(),
+            "markdown",
+            None,
+        )
+        .unwrap();
         assert!(result.content.contains("# Test Document"));
         assert_eq!(result.format, "markdown");
     }
@@ -113,7 +118,10 @@ mod tests {
             .create("Original".to_string(), ArtifactType::Document, None)
             .unwrap();
         manager
-            .update_content(&artifact.id, "Original body with {{icon:lucide:home}} token.".to_string())
+            .update_content(
+                &artifact.id,
+                "Original body with {{icon:lucide:home}} token.".to_string(),
+            )
             .unwrap();
 
         let override_body = "Pre-rendered body with <svg>...</svg>.";

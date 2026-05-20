@@ -108,7 +108,10 @@ fn content_to_html(content: &str) -> String {
     let blocks = mermaid::extract_blocks(content);
     let mut token_to_div: Vec<(String, String)> = Vec::new();
     let stripped = mermaid::replace_blocks(content, |block| {
-        let token = format!("\u{1F4CC}TESSERA_MERMAID_TOKEN_{}\u{1F4CC}", token_to_div.len());
+        let token = format!(
+            "\u{1F4CC}TESSERA_MERMAID_TOKEN_{}\u{1F4CC}",
+            token_to_div.len()
+        );
         token_to_div.push((token.clone(), mermaid::to_html_div(block)));
         format!("\n{token}\n")
     });
@@ -120,9 +123,10 @@ fn content_to_html(content: &str) -> String {
 
     for line in stripped.lines() {
         let trimmed = line.trim();
-        if let Some(token_div) = token_to_div
-            .iter()
-            .find_map(|(tok, div)| if trimmed == tok { Some(div) } else { None })
+        if let Some(token_div) =
+            token_to_div
+                .iter()
+                .find_map(|(tok, div)| if trimmed == tok { Some(div) } else { None })
         {
             if in_paragraph {
                 html.push_str("    </p>\n");
@@ -220,7 +224,8 @@ mod tests {
     fn export_html_with_mermaid_block() {
         let mut artifact = Artifact::new("Arch".to_string(), ArtifactType::Document, None);
         artifact.update_content(
-            "## Overview\n\n```mermaid\nflowchart LR\nClient-->Server\n```\n\nText after.".to_string(),
+            "## Overview\n\n```mermaid\nflowchart LR\nClient-->Server\n```\n\nText after."
+                .to_string(),
         );
         let html = export_html(&artifact, &[]);
         assert!(html.contains(r#"<div class="mermaid""#));

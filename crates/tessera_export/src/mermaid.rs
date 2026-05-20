@@ -82,7 +82,9 @@ pub fn extract_blocks(content: &str) -> Vec<MermaidBlock> {
             .position(|&b| b == b'\n')
             .map_or(bytes.len(), |p| closing_line_start + p);
 
-        let dsl = content[dsl_start..closing_line_start].trim_end_matches('\n').to_string();
+        let dsl = content[dsl_start..closing_line_start]
+            .trim_end_matches('\n')
+            .to_string();
         let diagram_type = detect_diagram_type(&dsl);
         // Clamp the end of the range to the content length so the caller can
         // safely slice `content[range.1..]` even when the closing fence is the
@@ -191,7 +193,10 @@ pub fn to_markdown_block(block: &MermaidBlock) -> String {
 /// since the basic PDF builder cannot rasterize SVG. Use the Typst PDF
 /// pipeline for real embedding.
 pub fn to_pdf_placeholder(block: &MermaidBlock) -> String {
-    format!("[Diagram: {} — see HTML export for live rendering]", block.diagram_type)
+    format!(
+        "[Diagram: {} — see HTML export for live rendering]",
+        block.diagram_type
+    )
 }
 
 fn escape_attr(s: &str) -> String {

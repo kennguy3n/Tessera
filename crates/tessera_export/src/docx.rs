@@ -43,9 +43,11 @@ pub fn export_docx(artifact: &Artifact, citations: &[Citation]) -> Vec<u8> {
             }
             if in_code_block {
                 docx = docx.add_paragraph(
-                    Paragraph::new()
-                        .style("Normal")
-                        .add_run(Run::new().fonts(docx_rs::RunFonts::new().east_asia("Consolas")).add_text(line)),
+                    Paragraph::new().style("Normal").add_run(
+                        Run::new()
+                            .fonts(docx_rs::RunFonts::new().east_asia("Consolas"))
+                            .add_text(line),
+                    ),
                 );
                 continue;
             }
@@ -132,14 +134,9 @@ pub fn export_docx(artifact: &Artifact, citations: &[Citation]) -> Vec<u8> {
                         .add_run(Run::new().add_text(format!("   Page: {page}"))),
                 );
             }
-            docx = docx.add_paragraph(
-                Paragraph::new()
-                    .style("Normal")
-                    .add_run(Run::new().add_text(format!(
-                        "   Confidence: {:.0}%",
-                        c.confidence * 100.0
-                    ))),
-            );
+            docx = docx.add_paragraph(Paragraph::new().style("Normal").add_run(
+                Run::new().add_text(format!("   Confidence: {:.0}%", c.confidence * 100.0)),
+            ));
             docx = docx.add_paragraph(
                 Paragraph::new()
                     .style("Normal")
@@ -180,8 +177,7 @@ mod tests {
 
     #[test]
     fn export_basic_docx_returns_zip_bytes() {
-        let mut artifact =
-            Artifact::new("Test Doc".to_string(), ArtifactType::Document, None);
+        let mut artifact = Artifact::new("Test Doc".to_string(), ArtifactType::Document, None);
         artifact.update_content(
             "## Problem\n\nThe problem is X.\n\n## Solution\n\nThe solution is Y.".into(),
         );

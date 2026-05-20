@@ -35,7 +35,10 @@ fn parse_sheet(content: &str) -> Option<SheetContent> {
     // Fallback: CSV-ish lines.
     let mut lines = content.lines();
     let header_line = lines.next()?;
-    let headers = header_line.split(',').map(|s| s.trim().to_string()).collect();
+    let headers = header_line
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .collect();
     let rows = lines
         .map(|line| line.split(',').map(|s| s.trim().to_string()).collect())
         .collect();
@@ -90,7 +93,9 @@ fn write_cell(worksheet: &mut rust_xlsxwriter::Worksheet, row: u32, col: u16, va
         worksheet.write_number(row, col, n).expect("write number");
         return;
     }
-    worksheet.write_string(row, col, value).expect("write string");
+    worksheet
+        .write_string(row, col, value)
+        .expect("write string");
 }
 
 /// Excel sheet names must be ≤ 31 chars and cannot contain `: \\ / ? * [ ]`.
@@ -145,9 +150,8 @@ mod tests {
     #[test]
     fn export_xlsx_writes_formulas() {
         let mut artifact = Artifact::new("Math".to_string(), ArtifactType::Sheet, None);
-        artifact.update_content(
-            r#"{"headers":["A","B","Sum"],"rows":[["1","2","=A2+B2"]]}"#.into(),
-        );
+        artifact
+            .update_content(r#"{"headers":["A","B","Sum"],"rows":[["1","2","=A2+B2"]]}"#.into());
         let bytes = export_xlsx(&artifact);
         assert_is_zip(&bytes);
         // Formula appears as a string `<f>A2+B2</f>` inside sheet1.xml when

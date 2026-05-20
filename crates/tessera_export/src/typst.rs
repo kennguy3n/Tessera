@@ -177,7 +177,10 @@ pub fn compile_to_svg(markup: &str) -> Result<String, TypstError> {
     let world = TesseraWorld::new(markup);
     let warned = typst::compile(&world);
     let document = warned.output.map_err(TypstError::Compile)?;
-    Ok(typst_svg::svg_merged(&document, typst::layout::Abs::pt(0.0)))
+    Ok(typst_svg::svg_merged(
+        &document,
+        typst::layout::Abs::pt(0.0),
+    ))
 }
 
 #[cfg(test)]
