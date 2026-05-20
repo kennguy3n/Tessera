@@ -24,6 +24,8 @@ import {
   planDownload,
   effectiveDiskSizeMb,
   getCurrentModel,
+  getInstalledModel,
+  isModelInstalled,
   deleteCurrentModel,
   downloadModel,
   activeModelPath,
@@ -209,6 +211,77 @@ describe("single-model enforcement", () => {
       expect(plan.modelId).toBe("ternary-bonsai-1.7b-gguf");
       expect(plan.downloadSizeMb).toBe(450);
     }
+  });
+
+  it("getInstalledModel returns null when active-model.json is missing", async () => {
+    expect(await getInstalledModel(workdir)).toBeNull();
+  });
+
+  it("getInstalledModel returns null when the referenced file is missing on disk", async () => {
+    // Regression for Devin Review BUG finding 3270859596: planDownload was
+    // using getCurrentModel directly, so a stale active-model.json record
+    // pointing at a manually-deleted file caused the planner to return
+    // already-installed, hiding the Download button in Settings.
+    const ghost: InstalledModelRecord = {
+      modelId: "ternary-bonsai-1.7b-gguf",
+      format: "gguf",
+      filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+      // Deliberately point at a path that does not exist on disk.
+      path: path.join(workdir, "models", "ternary-bonsai-1.7b-q1_0_g128.gguf"),
+      downloadSizeMb: 450,
+      diskSizeMb: 450,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+    await fsp.writeFile(activeModelPath(workdir), JSON.stringify(ghost));
+    // Sanity check: the raw record IS still readable — this is the bug.
+    const raw = await getCurrentModel(workdir);
+    expect(raw?.modelId).toBe("ternary-bonsai-1.7b-gguf");
+    // But getInstalledModel correctly treats the ghost record as "not installed".
+    expect(await getInstalledModel(workdir)).toBeNull();
+    // And isModelInstalled, which composes on top, agrees.
+    expect(await isModelInstalled(workdir, "ternary-bonsai-1.7b-gguf")).toBeNull();
+  });
+
+  it("getInstalledModel returns the live record when the referenced file exists", async () => {
+    const dir = modelsDir(workdir);
+    await fsp.mkdir(dir, { recursive: true });
+    const filePath = path.join(dir, "ternary-bonsai-1.7b-q1_0_g128.gguf");
+    await fsp.writeFile(filePath, "real bytes");
+    const live: InstalledModelRecord = {
+      modelId: "ternary-bonsai-1.7b-gguf",
+      format: "gguf",
+      filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+      path: filePath,
+      downloadSizeMb: 450,
+      diskSizeMb: 450,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+    await fsp.writeFile(activeModelPath(workdir), JSON.stringify(live));
+    const result = await getInstalledModel(workdir);
+    expect(result).not.toBeNull();
+    expect(result?.modelId).toBe("ternary-bonsai-1.7b-gguf");
+    // isModelInstalled filters by id — same model returns the record,
+    // different model returns null.
+    expect(
+      await isModelInstalled(workdir, "ternary-bonsai-1.7b-gguf"),
+    ).not.toBeNull();
+    expect(
+      await isModelInstalled(workdir, "ternary-bonsai-4b-gguf"),
+    ).toBeNull();
+  });
+
+  it("planDownload uses live state (missing file => direct-download, not already-installed)", () => {
+    // The IPC handler wires planDownload through getInstalledModel, so a
+    // stale-record-with-missing-file case reaches planDownload as `null`
+    // — verify planDownload then returns direct-download. This is the
+    // end-to-end behaviour the Settings page relies on.
+    const plan = planDownload(
+      null, // what getInstalledModel returns when file is missing
+      makeResolved({ id: "ternary-bonsai-1.7b-gguf", downloadSizeMb: 450 }),
+    );
+    expect(plan.kind).toBe("direct-download");
   });
 
   it("planDownload returns already-installed when ids match", () => {

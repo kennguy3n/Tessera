@@ -11,6 +11,7 @@ import {
   detectPlatformInfo,
   downloadModel,
   getCurrentModel,
+  getInstalledModel,
   isModelInstalled,
   listModelsForPlatform,
   loadManifest,
@@ -551,7 +552,13 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("runtime:planDownload", async (_event, modelId: string) => {
     const requested = findModelOrThrow(modelId);
-    const current = await getCurrentModel(userDataDir());
+    // Use `getInstalledModel`, not `getCurrentModel`, so that a stale
+    // `active-model.json` record pointing at a manually-deleted file is
+    // treated as "no model installed". Otherwise the planner returns
+    // `already-installed` and the UI hides the Download button, forcing
+    // the user to click "Delete model" to clear the ghost record.
+    // (Devin Review BUG finding 3270859596.)
+    const current = await getInstalledModel(userDataDir());
     return planDownload(current, requested);
   });
 

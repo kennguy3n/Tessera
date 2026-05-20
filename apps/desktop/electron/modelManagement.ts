@@ -459,30 +459,56 @@ export function activeModelPath(userDataDir: string): string {
  * them would hide real disk faults.
  */
 /**
- * Single source of truth for "is `modelId` actually installed and usable
- * right now?". Used by both the IPC fast-path (skip sidecar restart when
- * no download is needed) and by `downloadModelLocked` itself (skip
- * download when the requested model is already on disk).
+ * Single source of truth for "what model is actually installed and
+ * usable right now?" — model-id-agnostic. Returns the live record only
+ * if the on-disk file referenced by `active-model.json` still exists;
+ * otherwise returns `null`.
  *
- * Returning the record (or null) lets callers reuse the deserialised
- * record without an extra `getCurrentModel` round-trip, and concentrates
- * the "installed and present on disk" definition here so the two
- * historically-duplicated checks can no longer drift. (Devin Review
- * ANALYSIS finding 3270826130.)
+ * Used by:
+ *   - `runtime:planDownload` IPC, so a stale `active-model.json`
+ *     pointing at a manually-deleted file no longer makes the planner
+ *     return `already-installed` (Devin Review BUG finding
+ *     3270859596 — the Settings card was showing "Installed" for a
+ *     model whose file had been removed out from under Tessera).
+ *   - `isModelInstalled(modelId)` below, which is a thin model-id
+ *     filter over this.
+ *
+ * The active-model record can drift from reality if a user manually
+ * deleted the file or a disk error removed it, so an existence check is
+ * part of the "installed" definition — concentrating it here means
+ * every caller picks up new criteria (e.g. checksum-on-disk, or "file
+ * is a directory but its expected contents are missing" for MLX)
+ * uniformly.
+ */
+export async function getInstalledModel(
+  userDataDir: string,
+): Promise<InstalledModelRecord | null> {
+  const current = await getCurrentModel(userDataDir);
+  if (!current) return null;
+  if (!fs.existsSync(current.path)) return null;
+  return current;
+}
+
+/**
+ * Single source of truth for "is `modelId` specifically the model that's
+ * actually installed and usable right now?". Composes on top of
+ * `getInstalledModel` so the file-exists definition can only live in
+ * one place. (Devin Review ANALYSIS finding 3270826130, BUG finding
+ * 3270859596.)
+ *
+ * Used by both the IPC fast-path (`runtime:downloadModel` — skip
+ * sidecar restart when no download is needed) and by
+ * `downloadModelLocked` itself (skip download when the requested model
+ * is already on disk).
  */
 export async function isModelInstalled(
   userDataDir: string,
   modelId: string,
 ): Promise<InstalledModelRecord | null> {
-  const current = await getCurrentModel(userDataDir);
-  if (!current) return null;
-  if (current.modelId !== modelId) return null;
-  // The active-model record can drift from reality if a user manually
-  // deleted the file out from under Tessera or a disk error removed it,
-  // so an existence check is part of the "installed" definition — not a
-  // separate concern at each call site.
-  if (!fs.existsSync(current.path)) return null;
-  return current;
+  const live = await getInstalledModel(userDataDir);
+  if (!live) return null;
+  if (live.modelId !== modelId) return null;
+  return live;
 }
 
 export async function getCurrentModel(
