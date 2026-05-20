@@ -189,16 +189,26 @@ export default function ArtifactEditorPage() {
             );
           }
           const parsed = parseSlideContent(liveContent);
+          // Resolve a single effective theme value up-front and reuse it
+          // for both `slidesToMarpMarkdown(...)` AND `exportMarp({ theme })`
+          // so the synthesised front-matter and the Marp CLI `--theme`
+          // flag can never disagree. `parsed.marpTheme` is `undefined`
+          // when the slide artifact has no `marp` block (e.g. structured
+          // slides authored before Marp Mode shipped); the user-visible
+          // default in that case is "default", matching what
+          // `slidesToMarpMarkdown` would have fallen back to internally.
+          // Defaulting here (instead of inside each call site) is what
+          // keeps the two pipelines in sync — if a future caller forgets
+          // to default, they still get the consistent value.
+          const effectiveTheme = parsed.marpTheme ?? "default";
           // When NOT in Marp Mode, we synthesise Marp Markdown from the
-          // structured slides. Pass the user's saved Marp theme through so
-          // the generated front-matter matches the `--theme` flag we send
-          // to the Marp CLI below — otherwise the front-matter would always
-          // read `theme: default` and (if the CLI doesn't override) the
-          // exported deck would silently lose the chosen theme.
+          // structured slides. Pass the resolved theme through so the
+          // generated front-matter matches the `--theme` flag we send to
+          // the Marp CLI below.
           const marpMarkdown = parsed.marpMode
             ? parsed.marpSource
             : slidesToMarpMarkdown(parsed.slides, {
-                theme: parsed.marpTheme,
+                theme: effectiveTheme,
               });
           if (!marpMarkdown.trim()) {
             throw new Error(
@@ -213,7 +223,7 @@ export default function ArtifactEditorPage() {
             markdown: marpMarkdown,
             format: "pptx",
             outputPath: safeName,
-            theme: parsed.marpTheme,
+            theme: effectiveTheme,
           });
           if (written === null) {
             // User dismissed the save dialog — surface a neutral status

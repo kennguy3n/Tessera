@@ -35,10 +35,21 @@ pub fn export_html(artifact: &Artifact, citations: &[Citation]) -> String {
     }
 
     if has_mermaid {
-        // Load mermaid from a CDN as a one-shot client-side initializer. The
-        // desktop app's renderer normally pre-renders SVG and inlines it via
-        // IPC; this fallback is for "Save as HTML" of standalone files opened
-        // in a browser.
+        // Load mermaid from a CDN as a one-shot client-side initializer.
+        //
+        // Intended audience: a user who runs "Save as HTML" and opens the
+        // resulting `.html` file in a normal browser. Browsers have no CSP
+        // by default, so the module import resolves and the diagrams render.
+        //
+        // Inside the desktop app's webview, the strict CSP from
+        // `apps/desktop/electron/main.ts` (`script-src 'self'`) blocks this
+        // CDN import — by design. The Electron renderer pre-renders the
+        // mermaid SVG via the in-process `mermaidRenderer.ts` service and
+        // inlines it directly through IPC, so when a Tessera HTML export is
+        // viewed from inside the app the placeholder `<div class="mermaid">`
+        // is replaced with inline `<svg>` content before paint. The CDN
+        // script in this branch is therefore a redundant secondary path
+        // that only activates outside the Electron shell.
         output.push_str("  <script type=\"module\">\n");
         output.push_str(
             "    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';\n",

@@ -163,6 +163,60 @@ describe("ArtifactEditorPage live-draft export", () => {
     expect(arg.markdown).not.toContain("theme: 'default'");
   });
 
+  it("falls back to 'default' for BOTH the front-matter and the CLI flag when the artifact has no saved Marp theme (regression for ANALYSIS_pr-review-job-b7cedd18ee6c4395b90418917f949569_0004)", async () => {
+    // Slide artifact whose persisted content has no `marp` block at all
+    // (e.g. authored before Marp support was added) — `parsed.marpTheme`
+    // resolves to `undefined`. Previously the IPC argument and the
+    // synthesised front-matter defaulted independently in two different
+    // places; this test pins them to a single shared default so the two
+    // sides cannot drift again.
+    const slideArtifact = {
+      ...baseArtifact,
+      id: "art-slide-no-theme",
+      artifactType: "slides" as const,
+      content: JSON.stringify({
+        slides: [
+          {
+            title: "Cover",
+            blocks: [{ type: "text", content: "hello" }],
+            notes: "",
+          },
+        ],
+        // intentionally omit `marp` to model a pre-Marp artifact
+      }),
+    };
+    window.tessera.artifacts.get = vi.fn().mockResolvedValue(slideArtifact);
+    window.tessera.artifacts.exportMarp = vi
+      .fn()
+      .mockResolvedValue("/tmp/Cover.pptx");
+
+    render(
+      <MemoryRouter initialEntries={["/artifact/art-slide-no-theme"]}>
+        <Routes>
+          <Route path="/artifact/:id" element={<ArtifactEditorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const exportSelect = await waitFor(() => {
+      const el = screen.queryByLabelText("Export artifact");
+      if (!el) throw new Error("export select not mounted yet");
+      return el as HTMLSelectElement;
+    });
+    await act(async () => {
+      fireEvent.change(exportSelect, { target: { value: "pptx" } });
+    });
+
+    await waitFor(() => {
+      expect(window.tessera.artifacts.exportMarp).toHaveBeenCalled();
+    });
+    const mockFn = window.tessera.artifacts.exportMarp as unknown as {
+      mock: { calls: Array<[{ markdown: string; theme?: string }]> };
+    };
+    const arg = mockFn.mock.calls[0][0];
+    expect(arg.theme).toBe("default");
+    expect(arg.markdown).toContain("theme: 'default'");
+  });
+
   it("exports the live draft when icon-aware format has only unresolvable icon tokens (regression for BUG_pr-review-job-f080f66818c644baa7573bf023ef2675_0001)", async () => {
     // Override the default mocks for this test to use the icon-laden fixture.
     window.tessera.artifacts.get = vi
