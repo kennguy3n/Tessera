@@ -267,6 +267,18 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
 
   const handleDelete = useCallback(async () => {
     if (!tessera || !state.current) return;
+    // Activate the 5-second poll's `busyModelId` gate for the duration
+    // of the delete. Without this the gate at the poll tick is
+    // ineffective during delete: a poll tick whose `getCurrentModel()`
+    // IPC resolves between the main-process unlink and the renderer's
+    // final `setState({ current: null })` re-fetches the
+    // still-on-disk record and "resurrects" the deleted model in the
+    // UI for up to 5s. The same gate already guards `performDownload`;
+    // the comment at the poll-tick gate (~line 152) explicitly names
+    // delete as a case that must be covered. (Devin Review BUG finding
+    // 3271435390.)
+    const deletingId = state.current.modelId;
+    setState((s) => ({ ...s, busyModelId: deletingId, error: null }));
     try {
       // The sidecar holds an OS file handle on the active model. On
       // Windows that handle blocks the unlink with EPERM/EBUSY; on macOS
@@ -293,12 +305,34 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
       const status = await tessera.model.status().catch(() => null);
       setState((s) => ({
         ...s,
+        busyModelId: null,
         current: null,
         status: status ?? s.status,
       }));
     } catch (err) {
+      // Mirror `performDownload`'s error path: re-fetch live current +
+      // status so `state.current` matches on-disk truth on every
+      // settled boundary. A partial-failure scenario (e.g.
+      // `deleteCurrentModel` unlinked the file but threw before
+      // clearing `active-model.json`, or vice-versa) would otherwise
+      // leave the renderer holding a stale `state.current` record
+      // pointing at a non-existent file, and the user would see
+      // Start/Delete buttons that target a phantom model. The main
+      // process's lock + `beforeMutation` hook makes partial failure
+      // unlikely, but the asymmetry between the download and delete
+      // error paths is the kind of latent footgun that bites during
+      // future refactors. The success path already re-fetches; this
+      // mirrors that for symmetry. (Devin Review ANALYSIS finding
+      // 3271435467.)
+      const [liveCurrent, liveStatus] = await Promise.all([
+        tessera.runtime.getCurrentModel().catch(() => null),
+        tessera.model.status().catch(() => null),
+      ]);
       setState((s) => ({
         ...s,
+        busyModelId: null,
+        current: liveCurrent,
+        status: liveStatus ?? s.status,
         error: err instanceof Error ? err.message : String(err),
       }));
     }

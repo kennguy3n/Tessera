@@ -742,4 +742,216 @@ describe("ModelRuntimeCard 5s poll respects busyModelId gate", () => {
     resolveDownload();
     vi.useRealTimers();
   });
+
+  // Regression for Devin Review BUG finding 3271435390:
+  // `handleDelete` previously never set `busyModelId`, so the 5s poll's
+  // `busyModelId !== null` gate had no effect during delete. A poll
+  // tick landing between the main-process unlink and the renderer's
+  // final `setState({ current: null })` would re-fetch the
+  // still-on-disk record and "resurrect" the deleted model in the UI
+  // for up to 5s. The fix sets `busyModelId` to the model id at the
+  // top of `handleDelete` and clears it in both the success and error
+  // setState calls. This test pumps a poll tick while delete is in
+  // flight and asserts the ghost record never appears.
+  it("delete: poll does not overwrite state while delete is in flight", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const pollGetCurrent = vi.fn().mockResolvedValue({
+      modelId: "ghost-delete-record",
+      format: "gguf" as const,
+      filename: "ghost-delete.gguf",
+      path: "/var/tmp/ghost-delete.gguf",
+      downloadSizeMb: 1,
+      diskSizeMb: 1,
+      sha256: null,
+      downloadedAt: new Date(0).toISOString(),
+    });
+    const pollStatus = vi.fn().mockResolvedValue({
+      available: true,
+      modelName: "ghost-delete-status",
+      status: "running",
+    });
+
+    // `deleteModel` returns a never-resolving promise so the card
+    // stays in the busy-delete state for the duration of the test.
+    let resolveDelete: () => void = () => undefined;
+    const deleteMock = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((res) => {
+          resolveDelete = () => res();
+        }),
+    );
+
+    const initialCurrent = {
+      modelId: "ternary-bonsai-1.7b-gguf",
+      format: "gguf" as const,
+      filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+      path: "/var/tmp/m.gguf",
+      downloadSizeMb: 450,
+      diskSizeMb: 450,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+
+    const api = {
+      ...window.tessera,
+      model: {
+        ...window.tessera.model,
+        status: pollStatus,
+        stop: vi.fn().mockResolvedValue(undefined),
+      },
+      runtime: {
+        ...window.tessera.runtime,
+        detectPlatform: vi.fn().mockResolvedValue({
+          platform: "linux-x64",
+          platformLabel: "Linux x64",
+          totalRamGb: 16,
+          tier: "high",
+          tierLabel: "High (8+ GB RAM)",
+          computeBackends: ["cpu"],
+          preferredFormat: "gguf",
+        }),
+        recommendModel: vi.fn().mockResolvedValue(null),
+        listModels: vi.fn().mockResolvedValue([]),
+        getCurrentModel: vi
+          .fn()
+          // initial mount: real installed model so the Delete button
+          // renders
+          .mockResolvedValueOnce(initialCurrent)
+          // every subsequent (poll) call returns the ghost value
+          .mockImplementation(() => pollGetCurrent()),
+        deleteModel: deleteMock,
+        onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
+      },
+    } as unknown as Window["tessera"];
+
+    render(<ModelRuntimeCard api={api} />);
+
+    const deleteBtn = await screen.findByRole("button", { name: /Delete model/i });
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(deleteMock).toHaveBeenCalled();
+    });
+
+    // Pump fake-timer poll ticks. If the gate fails the poll would
+    // call setState({ current: pollGetCurrent }) and the ghost record
+    // would replace the installed model in the UI.
+    await vi.advanceTimersByTimeAsync(5500);
+    await vi.advanceTimersByTimeAsync(5500);
+
+    expect(
+      screen.queryByText(/ghost-delete-record/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/ghost-delete-status/i),
+    ).not.toBeInTheDocument();
+
+    // Clean up: release the never-resolving delete.
+    resolveDelete();
+    vi.useRealTimers();
+  });
+});
+
+describe("ModelRuntimeCard handleDelete error path re-fetches state", () => {
+  // Regression for Devin Review ANALYSIS finding 3271435467:
+  // `handleDelete`'s catch block used to only set `state.error` without
+  // re-fetching `current` or `status`. In an asymmetric failure (e.g.
+  // `deleteCurrentModel` unlinks the file but throws before clearing
+  // `active-model.json`) the renderer would hold a stale `state.current`
+  // pointing at a non-existent file, and Start/Delete buttons would
+  // target a phantom model. The fix mirrors `performDownload`'s
+  // recovery: re-fetch live `getCurrentModel()` + `model.status()` and
+  // write them into state alongside the error.
+  it("re-fetches getCurrentModel + model.status when deleteModel throws", async () => {
+    const installedRecord = {
+      modelId: "ternary-bonsai-1.7b-gguf",
+      format: "gguf" as const,
+      filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+      path: "/var/tmp/m.gguf",
+      downloadSizeMb: 450,
+      diskSizeMb: 450,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+
+    // After deleteModel throws, getCurrentModel returns null
+    // (representing the partial-failure state where the file was
+    // unlinked but `active-model.json` had a stale entry that the
+    // main process has since cleared). The renderer must adopt this
+    // truth, NOT keep the pre-delete `installedRecord` in state.
+    const getCurrentModelMock = vi
+      .fn()
+      .mockResolvedValueOnce(installedRecord) // initial mount
+      .mockResolvedValue(null); // post-failure re-fetch
+    const statusMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        available: false,
+        modelName: null,
+        status: "stopped",
+      }) // initial mount
+      .mockResolvedValue({
+        available: false,
+        modelName: null,
+        status: "stopped",
+      });
+    const deleteMock = vi.fn().mockRejectedValue(new Error("EBUSY"));
+
+    const api = {
+      ...window.tessera,
+      model: {
+        ...window.tessera.model,
+        status: statusMock,
+        stop: vi.fn().mockResolvedValue(undefined),
+      },
+      runtime: {
+        ...window.tessera.runtime,
+        detectPlatform: vi.fn().mockResolvedValue({
+          platform: "linux-x64",
+          platformLabel: "Linux x64",
+          totalRamGb: 16,
+          tier: "high",
+          tierLabel: "High (8+ GB RAM)",
+          computeBackends: ["cpu"],
+          preferredFormat: "gguf",
+        }),
+        recommendModel: vi.fn().mockResolvedValue(null),
+        listModels: vi.fn().mockResolvedValue([]),
+        getCurrentModel: getCurrentModelMock,
+        deleteModel: deleteMock,
+        onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
+      },
+    } as unknown as Window["tessera"];
+
+    render(<ModelRuntimeCard api={api} />);
+
+    // Wait for the installed record to render.
+    await screen.findByText(/ternary-bonsai-1.7b-gguf/i);
+
+    const deleteBtn = screen.getByRole("button", { name: /Delete model/i });
+    fireEvent.click(deleteBtn);
+
+    // Wait for the error banner to appear (confirms catch ran).
+    await screen.findByText(/EBUSY/);
+
+    // getCurrentModel must have been re-called on the error path
+    // (mount + post-failure re-fetch + possibly poll ticks).
+    await waitFor(() => {
+      expect(getCurrentModelMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+    // status must also have been re-called on the error path.
+    await waitFor(() => {
+      expect(statusMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    // After the re-fetch landed null, the installed-record text must
+    // be gone — the UI now matches on-disk truth. If the fix were
+    // missing, this assertion would fail because `state.current`
+    // would still hold the pre-delete record.
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/ternary-bonsai-1.7b-gguf/i),
+      ).not.toBeInTheDocument();
+    });
+  });
 });
