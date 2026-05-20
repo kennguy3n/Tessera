@@ -142,8 +142,18 @@ export function resolveIconSvg(
  * Enumerate available icons. Useful for the icon picker.
  *
  * Returns sorted names with the `Icon` alias suffixes deduplicated.
+ *
+ * The Lucide and Phosphor modules export thousands of components each, and
+ * `IconPicker` invokes `searchIcons` (which calls into here) on every
+ * keystroke. We memoise the per-set result at module scope so the picker
+ * re-uses the same sorted array instead of re-walking `Object.keys` every
+ * render — the underlying module is immutable for the process lifetime.
  */
+const LIST_ICONS_CACHE: Partial<Record<IconSet, string[]>> = {};
+
 export function listIcons(set: IconSet): string[] {
+  const cached = LIST_ICONS_CACHE[set];
+  if (cached) return cached;
   const mod = (set === "lucide" ? LucideAll : PhosphorAll) as IconModule;
   const seen = new Set<string>();
   for (const key of Object.keys(mod)) {
@@ -155,7 +165,9 @@ export function listIcons(set: IconSet): string[] {
       continue;
     seen.add(base);
   }
-  return Array.from(seen).sort();
+  const sorted = Array.from(seen).sort();
+  LIST_ICONS_CACHE[set] = sorted;
+  return sorted;
 }
 
 /**

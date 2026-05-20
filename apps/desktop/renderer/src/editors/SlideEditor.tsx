@@ -65,24 +65,39 @@ export default function SlideEditor({
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef(content);
 
+  // Track the current Marp state in a ref so the save path can read the
+  // latest value at *flush* time rather than capturing it at callback
+  // creation time. This eliminates a closure-capture hazard where mutators
+  // like `updateSlide` would otherwise serialise stale marp state when
+  // Marp Mode / theme / source had been changed between callback creation
+  // and the debounce timer firing.
+  const marpStateRef = useRef<MarpModeState>({
+    enabled: marpMode,
+    source: marpSource,
+    theme: marpTheme,
+  });
+  useEffect(() => {
+    marpStateRef.current = {
+      enabled: marpMode,
+      source: marpSource,
+      theme: marpTheme,
+    };
+  }, [marpMode, marpSource, marpTheme]);
+
   const debouncedSave = useCallback(
-    (
-      updatedSlides: Slide[],
-      marpState: MarpModeState = {
-        enabled: marpMode,
-        source: marpSource,
-        theme: marpTheme,
-      },
-    ) => {
+    (updatedSlides: Slide[], marpState?: MarpModeState) => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        const data: SlideContent = { slides: updatedSlides, marp: marpState };
+        const data: SlideContent = {
+          slides: updatedSlides,
+          marp: marpState ?? marpStateRef.current,
+        };
         const json = JSON.stringify(data);
         lastSavedRef.current = json;
         onSave(json);
       }, autoSaveMs);
     },
-    [onSave, autoSaveMs, marpMode, marpSource, marpTheme],
+    [onSave, autoSaveMs],
   );
 
   useEffect(() => {
@@ -244,7 +259,15 @@ export default function SlideEditor({
                 Theme
                 <select
                   value={marpTheme ?? "default"}
-                  onChange={(e) => setMarpTheme(e.target.value)}
+                  onChange={(e) => {
+                    const newTheme = e.target.value;
+                    setMarpTheme(newTheme);
+                    debouncedSave(slides, {
+                      enabled: marpMode,
+                      source: marpSource,
+                      theme: newTheme,
+                    });
+                  }}
                 >
                   <option value="default">default</option>
                   <option value="gaia">gaia</option>
@@ -514,7 +537,10 @@ export function slidesToMarpMarkdown(
   const theme = options?.theme ?? "default";
   const header = ["---", "marp: true", `theme: ${theme}`, "paginate: true", "---"];
   const body = slides.map((slide) => renderSlideAsMarp(slide));
-  return [header.join("\n"), ...body].join("\n\n");
+  // Marp requires `---` horizontal rules between slides to delimit them.
+  // The opening front-matter `---...---` block separates config from the
+  // first slide; subsequent slides each need their own leading `---`.
+  return [header.join("\n"), body.join("\n\n---\n\n")].join("\n\n");
 }
 
 function renderSlideAsMarp(slide: Slide): string {

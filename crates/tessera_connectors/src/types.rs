@@ -39,8 +39,7 @@ impl AuthConfig {
     }
 
     pub fn is_token_expired(&self) -> bool {
-        self.token_expiry
-            .map_or(true, |expiry| Utc::now() >= expiry)
+        self.token_expiry.is_none_or(|expiry| Utc::now() >= expiry)
     }
 }
 

@@ -106,4 +106,50 @@ describe("slidesToMarpMarkdown", () => {
     // No empty headings left over from the first slide.
     expect(out).not.toMatch(/#\s*\n/);
   });
+
+  it("emits `---` separators between slides so multi-slide PPTX exports keep their slide boundaries", () => {
+    // Regression test for BUG_pr-review-job-32bf2b2f08cc44939a2d7cd9b9a9d396_0001:
+    // without `---` separators Marp collapses every following slide into the
+    // first one, producing a 1-slide PPTX no matter how many slides were
+    // authored in the WYSIWYG editor.
+    const out = slidesToMarpMarkdown([
+      {
+        title: "First",
+        blocks: [{ type: "text", content: "alpha" }],
+        notes: "",
+      },
+      {
+        title: "Second",
+        blocks: [{ type: "text", content: "beta" }],
+        notes: "",
+      },
+      {
+        title: "Third",
+        blocks: [{ type: "text", content: "gamma" }],
+        notes: "",
+      },
+    ]);
+
+    // The `\n---\n` pattern appears in: (a) the closing line of the
+    // front-matter `---` block (newline before, newline after the first
+    // separator), and (b) once between each pair of slides. With 3 slides
+    // that's 1 (front-matter close) + 2 (between slides) = 3. We assert the
+    // exact count so the test catches regressions in either direction
+    // (missing separator AND accidental duplicate separator).
+    const separatorCount = out.split(/\n---\n/).length - 1;
+    expect(separatorCount).toBe(3);
+
+    // Each slide's heading must follow a separator (or the opening header).
+    expect(out).toMatch(/\n---\n\n# First\n/);
+    expect(out).toMatch(/\n---\n\n# Second\n/);
+    expect(out).toMatch(/\n---\n\n# Third\n/);
+
+    // Sanity: slide bodies preserved in order.
+    const firstIdx = out.indexOf("alpha");
+    const secondIdx = out.indexOf("beta");
+    const thirdIdx = out.indexOf("gamma");
+    expect(firstIdx).toBeGreaterThan(-1);
+    expect(secondIdx).toBeGreaterThan(firstIdx);
+    expect(thirdIdx).toBeGreaterThan(secondIdx);
+  });
 });

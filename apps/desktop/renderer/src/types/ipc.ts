@@ -28,7 +28,7 @@ export interface ArtifactApi {
     format: string,
     filePath: string,
     contentOverride?: string | null,
-  ) => Promise<string>;
+  ) => Promise<string | null>;
   listVersions: (id: string) => Promise<ArtifactVersionInfo[]>;
   restoreVersion: (id: string, versionNumber: number) => Promise<ArtifactInfo>;
   generateFromTemplate: (templateId: string, sourceIds: string[]) => Promise<ArtifactInfo>;
@@ -42,7 +42,7 @@ export interface ArtifactApi {
     theme?: string;
     includeNotes?: boolean;
     allowHtml?: boolean;
-  }) => Promise<string>;
+  }) => Promise<string | null>;
   exportTypst: (req: {
     markup: string;
     format: "pdf" | "svg";

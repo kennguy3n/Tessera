@@ -1,7 +1,9 @@
 # Rust
 /target/
 **/*.rs.bk
-Cargo.lock
+# Cargo.lock is committed (Tessera is an application/binary, not a library)
+# so CI gets reproducible builds and is shielded from surprise transitive
+# dependency upgrades requiring newer Rust editions.
 
 # Node.js
 node_modules/

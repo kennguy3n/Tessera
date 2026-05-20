@@ -124,6 +124,13 @@ export default function ArtifactEditorPage() {
             outputPath: safeName,
             theme: parsed.marpTheme,
           });
+          if (written === null) {
+            // User dismissed the save dialog — surface a neutral status
+            // rather than an error so the cancel feels like a no-op.
+            setExportStatus("Export cancelled");
+            setTimeout(() => setExportStatus(null), 3000);
+            return;
+          }
           setExportStatus(`Exported as pptx → ${written}`);
           setTimeout(() => setExportStatus(null), 4000);
           return;
@@ -133,7 +140,8 @@ export default function ArtifactEditorPage() {
           // Binary formats can't be copied to the clipboard as text; we send
           // a suggested filename to the main process, which prompts the user
           // via the native save dialog and returns the resolved absolute
-          // path (or falls back to ~/Downloads if the dialog is dismissed).
+          // path — or `null` if the user cancels, which we surface as a
+          // neutral "Export cancelled" status (no file is written).
           const ext = format;
           const suggestedName = `${artifact?.title ?? "artifact"}.${ext}`.replace(
             /[^A-Za-z0-9._-]/g,
@@ -145,8 +153,13 @@ export default function ArtifactEditorPage() {
             suggestedName,
             contentOverride,
           );
-          setExportStatus(`Exported as ${format} → ${written}`);
-          setTimeout(() => setExportStatus(null), 4000);
+          if (written === null) {
+            setExportStatus("Export cancelled");
+            setTimeout(() => setExportStatus(null), 3000);
+          } else {
+            setExportStatus(`Exported as ${format} → ${written}`);
+            setTimeout(() => setExportStatus(null), 4000);
+          }
         } else {
           const result = await api.artifacts.exportArtifact(
             id,

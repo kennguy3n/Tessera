@@ -28,7 +28,7 @@ jobs:
           sudo apt-get install -y libsecret-1-dev pkg-config
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.77
+        uses: dtolnay/rust-toolchain@1.85
         with:
           components: rustfmt, clippy
 

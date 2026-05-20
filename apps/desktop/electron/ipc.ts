@@ -224,9 +224,9 @@ export function registerIpcHandlers(): void {
       //      callers (tests, scripted exports) keep full control.
       //   2) Otherwise, prompt the user via the native save dialog seeded
       //      with the renderer's suggested filename under ~/Downloads.
-      //   3) If the user cancels the dialog, fall back to writing into the
-      //      Electron Downloads folder so we never silently dump files into
-      //      the process CWD (which varies wildly across launch methods).
+      //   3) If the user dismisses the dialog, we return `null` so the
+      //      renderer can surface an "Export cancelled" status without
+      //      writing any file — matching standard desktop save-dialog UX.
       let resolvedPath: string;
       if (path.isAbsolute(filePath)) {
         resolvedPath = filePath;
@@ -244,10 +244,9 @@ export function registerIpcHandlers(): void {
               title: "Export artifact",
             }));
         if (result.canceled || !result.filePath) {
-          resolvedPath = suggested;
-        } else {
-          resolvedPath = result.filePath;
+          return null;
         }
+        resolvedPath = result.filePath;
       }
 
       // Make sure the parent directory exists before the Rust bridge writes.
@@ -317,8 +316,13 @@ export function registerIpcHandlers(): void {
               defaultPath: suggested,
               title: "Export slides",
             }));
-        resolvedPath =
-          result.canceled || !result.filePath ? suggested : result.filePath;
+        // Standard desktop UX: a cancelled save dialog means no file is
+        // written. The renderer translates the `null` return into an
+        // "Export cancelled" status indicator.
+        if (result.canceled || !result.filePath) {
+          return null;
+        }
+        resolvedPath = result.filePath;
       }
       await fsp.mkdir(path.dirname(resolvedPath), { recursive: true });
       const { runMarpExport } = await import("./marpExport");
