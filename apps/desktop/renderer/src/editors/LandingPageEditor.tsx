@@ -16,6 +16,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import IconPicker, { type IconPickerValue } from "../components/IconPicker";
 import { embedIcons } from "../services/iconResolver";
+import { sanitizeCssColor } from "../utils/cssColor";
 import { Plus, Trash2, X } from "lucide-react";
 
 export interface LandingPageHero {
@@ -465,9 +466,19 @@ function parsePickedIcon(spec: string | undefined): IconPickerValue | null {
  * iconResolver, so a downstream HTML export can serialize it directly.
  */
 export function buildLandingPreviewHtml(data: LandingPageContent): string {
-  const primary = escapeHtml(data.colorScheme.primary ?? DEFAULT_PRIMARY);
-  const secondary = escapeHtml(data.colorScheme.secondary ?? DEFAULT_SECONDARY);
-  const accent = escapeHtml(data.colorScheme.accent ?? DEFAULT_ACCENT);
+  // See `sanitizeCssColor` — we validate before interpolating into the
+  // inline `style="..."` attribute below so a maliciously crafted color
+  // value cannot escape its CSS-property slot. The native color picker
+  // already constrains its output to `#rrggbb`, but the JSON is editable.
+  const primary = sanitizeCssColor(
+    data.colorScheme.primary,
+    DEFAULT_PRIMARY,
+  );
+  const secondary = sanitizeCssColor(
+    data.colorScheme.secondary,
+    DEFAULT_SECONDARY,
+  );
+  const accent = sanitizeCssColor(data.colorScheme.accent, DEFAULT_ACCENT);
 
   const heroCta = data.hero.cta
     ? `<a class="landing-hero-cta" href="${escapeHtml(data.hero.ctaUrl ?? "#")}">${escapeHtml(data.hero.cta)}</a>`
@@ -476,7 +487,7 @@ export function buildLandingPreviewHtml(data: LandingPageContent): string {
   const featuresHtml = data.features
     .map((f) => {
       const icon = f.icon
-        ? `{{icon:${f.icon} size=24 color=${data.colorScheme.primary ?? DEFAULT_PRIMARY}}}`
+        ? `{{icon:${f.icon} size=24 color=${primary}}}`
         : "";
       return `<article class="landing-feature">
   <div class="landing-feature-icon">${icon}</div>

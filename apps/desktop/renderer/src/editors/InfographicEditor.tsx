@@ -22,6 +22,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import IconPicker, { type IconPickerValue } from "../components/IconPicker";
 import { embedIcons } from "../services/iconResolver";
+import { sanitizeCssColor } from "../utils/cssColor";
 import { Plus, Trash2, ArrowUp, ArrowDown, X } from "lucide-react";
 
 export type InfographicLayout = "vertical" | "horizontal" | "grid";
@@ -401,14 +402,27 @@ function parsePickedIcon(spec: string | undefined): IconPickerValue | null {
  * what an HTML export would produce.
  */
 export function buildPreviewHtml(data: InfographicContent): string {
-  const primary = escapeHtml(data.colorScheme.primary ?? DEFAULT_PRIMARY);
-  const secondary = escapeHtml(data.colorScheme.secondary ?? DEFAULT_SECONDARY);
-  const accent = escapeHtml(data.colorScheme.accent ?? DEFAULT_ACCENT);
+  // Sanitise color values before interpolating them into the inline CSS
+  // custom-property declaration below. The native color picker always emits
+  // `#rrggbb`, but the underlying JSON is user-editable and could carry a
+  // value that escapes the CSS-property slot (e.g. injects `; background:
+  // url(...)`).  HTML-escaping is not enough inside a `style="..."`
+  // attribute — `;` and `:` are HTML-safe but CSS-unsafe — so we run a
+  // CSS-grammar check and fall back to the default on anything suspicious.
+  const primary = sanitizeCssColor(
+    data.colorScheme.primary,
+    DEFAULT_PRIMARY,
+  );
+  const secondary = sanitizeCssColor(
+    data.colorScheme.secondary,
+    DEFAULT_SECONDARY,
+  );
+  const accent = sanitizeCssColor(data.colorScheme.accent, DEFAULT_ACCENT);
   const layoutClass = `infographic-preview-${data.layout}`;
   const sectionsHtml = data.sections
     .map((s) => {
       const iconToken = s.icon
-        ? `{{icon:${s.icon} size=32 color=${data.colorScheme.primary ?? DEFAULT_PRIMARY}}}`
+        ? `{{icon:${s.icon} size=32 color=${primary}}}`
         : "";
       const statBlock = s.stat
         ? `<div class="infographic-stat"><span class="infographic-stat-value">${escapeHtml(s.stat)}</span><span class="infographic-stat-label">${escapeHtml(s.statLabel ?? "")}</span></div>`

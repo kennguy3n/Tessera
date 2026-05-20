@@ -41,7 +41,11 @@ describe("ArtifactEditorPage live-draft export", () => {
   beforeEach(() => {
     window.tessera.artifacts.get = vi.fn().mockResolvedValue(baseArtifact);
     window.tessera.artifacts.exportArtifact = vi.fn().mockResolvedValue({
-      format: "markdown",
+      // CSV is a sheet-appropriate non-icon-aware format. Markdown was
+      // intentionally removed from sheet exports because rendering a
+      // `{columns, rows}` JSON as markdown was nonsensical (see
+      // `availableExportFormats` in ArtifactEditorPage).
+      format: "csv",
       content: "x",
     });
     window.tessera.artifacts.update = vi.fn().mockResolvedValue(baseArtifact);
@@ -73,11 +77,12 @@ describe("ArtifactEditorPage live-draft export", () => {
     fireEvent.change(inputs[0], { target: { value: "edited-live" } });
     fireEvent.blur(inputs[0]);
 
-    // Immediately export as markdown (no debounce wait — this is the bug
-    // scenario the fix targets).
+    // Immediately export as CSV (a sheet-appropriate non-icon-aware
+    // format — no debounce wait, which is the bug scenario the fix
+    // targets).
     const exportSelect = screen.getByLabelText("Export artifact") as HTMLSelectElement;
     await act(async () => {
-      fireEvent.change(exportSelect, { target: { value: "markdown" } });
+      fireEvent.change(exportSelect, { target: { value: "csv" } });
     });
 
     await waitFor(() => {

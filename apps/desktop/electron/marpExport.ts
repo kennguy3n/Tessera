@@ -98,7 +98,12 @@ export function buildMarpArgs(
       break;
   }
   if (opts.theme) args.push("--theme", opts.theme);
-  if (opts.includeNotes && (opts.format === "pdf" || opts.format === "pptx")) {
+  // `--pdf-notes` is a PDF-only Marp CLI flag — it renders speaker-notes as
+  // PDF annotations. PPTX exports already place HTML-comment notes into the
+  // pptx notes pane natively (no CLI flag exists for that), so passing
+  // `--pdf-notes` to a `--pptx` invocation is a no-op at best and a warning
+  // at worst. Keep the flag strictly scoped to PDF.
+  if (opts.includeNotes && opts.format === "pdf") {
     args.push("--pdf-notes");
   }
   if (opts.allowHtml) args.push("--html");

@@ -29,19 +29,25 @@ describe("marpExport", () => {
       expect(argv).toContain("gaia");
     });
 
-    it("appends --pdf-notes when includeNotes && pdf/pptx", () => {
+    it("appends --pdf-notes ONLY for PDF when includeNotes is set", () => {
       expect(
         buildMarpArgs("in.md", "out.pdf", {
           format: "pdf",
           includeNotes: true,
         }),
       ).toContain("--pdf-notes");
-      expect(
-        buildMarpArgs("in.md", "out.pptx", {
-          format: "pptx",
-          includeNotes: true,
-        }),
-      ).toContain("--pdf-notes");
+    });
+
+    it("does NOT append --pdf-notes for PPTX (PPTX uses native notes pane)", () => {
+      // Regression: --pdf-notes is a PDF-only Marp CLI flag. PPTX exports
+      // embed HTML-comment speaker notes into the .pptx notes pane
+      // natively, so passing --pdf-notes was a no-op at best, a CLI warning
+      // at worst.
+      const argv = buildMarpArgs("in.md", "out.pptx", {
+        format: "pptx",
+        includeNotes: true,
+      });
+      expect(argv).not.toContain("--pdf-notes");
     });
 
     it("does NOT append --pdf-notes for html exports", () => {

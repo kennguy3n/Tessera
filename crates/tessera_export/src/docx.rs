@@ -42,10 +42,23 @@ pub fn export_docx(artifact: &Artifact, citations: &[Citation]) -> Vec<u8> {
                 continue;
             }
             if in_code_block {
+                // Word stores font assignments per script-class slot. For
+                // typical code (ASCII / Latin-1 source), the `ascii` and
+                // `h_ansi` (high-ANSI) slots are the ones Word consults —
+                // `east_asia` is only used when the run contains CJK
+                // characters. We set all four slots so the monospace font
+                // is honoured regardless of which characters appear inside
+                // the code block.
                 docx = docx.add_paragraph(
                     Paragraph::new().style("Normal").add_run(
                         Run::new()
-                            .fonts(docx_rs::RunFonts::new().east_asia("Consolas"))
+                            .fonts(
+                                docx_rs::RunFonts::new()
+                                    .ascii("Consolas")
+                                    .hi_ansi("Consolas")
+                                    .cs("Consolas")
+                                    .east_asia("Consolas"),
+                            )
                             .add_text(line),
                     ),
                 );
@@ -231,6 +244,66 @@ mod tests {
 
         let bytes = export_docx(&artifact, &citations);
         assert_is_zip(&bytes);
+    }
+
+    /// Concatenate the text content of every XML entry in the DOCX zip.
+    /// DOCX is a zip of XML parts (word/document.xml etc.); we use this to
+    /// assert that specific font-slot attributes show up in the produced
+    /// document, since the zip bytes are otherwise opaque.
+    fn read_docx_text(bytes: &[u8]) -> String {
+        use std::io::Read;
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor).expect("DOCX should be a valid zip");
+        let mut combined = String::new();
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).expect("entry");
+            let is_xml = std::path::Path::new(entry.name())
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("xml"));
+            if is_xml {
+                let mut buf = String::new();
+                entry.read_to_string(&mut buf).expect("read entry");
+                combined.push_str(&buf);
+                combined.push('\n');
+            }
+        }
+        combined
+    }
+
+    #[test]
+    fn code_blocks_set_ascii_and_hi_ansi_font_slots() {
+        // Regression: previously the code-block font was wired only into
+        // the `east_asia` slot of <w:rFonts>, which Word only consults for
+        // CJK runs. Plain ASCII code therefore rendered in the document
+        // default font instead of Consolas. Verify all four script-class
+        // slots now reference Consolas.
+        let mut artifact = Artifact::new("Snippet".to_string(), ArtifactType::Document, None);
+        artifact.update_content("```rust\nlet x = 1;\n```\n".into());
+        let bytes = export_docx(&artifact, &[]);
+        assert_is_zip(&bytes);
+        let xml = read_docx_text(&bytes);
+        // docx-rs serialises RunFonts as <w:rFonts ... w:ascii="Consolas"
+        // w:hAnsi="Consolas" w:cs="Consolas" w:eastAsia="Consolas" />
+        assert!(
+            xml.contains("w:ascii=\"Consolas\""),
+            "ascii font slot missing in document.xml: {}",
+            xml
+        );
+        assert!(
+            xml.contains("w:hAnsi=\"Consolas\""),
+            "hAnsi (high-ANSI) font slot missing: {}",
+            xml
+        );
+        assert!(
+            xml.contains("w:cs=\"Consolas\""),
+            "cs (complex-script) font slot missing: {}",
+            xml
+        );
+        assert!(
+            xml.contains("w:eastAsia=\"Consolas\""),
+            "eastAsia font slot missing: {}",
+            xml
+        );
     }
 
     #[test]

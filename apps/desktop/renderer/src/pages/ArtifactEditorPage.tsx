@@ -23,6 +23,54 @@ const ICON_AWARE_FORMATS = new Set(["html", "pdf", "docx"]);
 // Rust exporter (which rejects pptx); it has a dedicated Marp-CLI path.
 const BINARY_FORMATS = new Set(["pdf", "docx", "xlsx"]);
 
+/**
+ * Display label for each supported export format. Centralised so the
+ * dropdown UI and any future menu / palette stay in sync.
+ */
+const EXPORT_FORMAT_LABELS: Record<string, string> = {
+  markdown: "Markdown (.md)",
+  html: "HTML (.html)",
+  json: "JSON (.json)",
+  csv: "CSV (.csv)",
+  pdf: "PDF (.pdf)",
+  docx: "Word (.docx)",
+  xlsx: "Excel (.xlsx)",
+  pptx: "PowerPoint (.pptx, Marp)",
+};
+
+/**
+ * Returns the list of export formats that make sense for a given artifact
+ * type. Prevents nonsensical combinations like "Sheet → DOCX" (which would
+ * render the sheet's `{columns, rows}` JSON as markdown) or "Document →
+ * XLSX" (which would CSV-split the markdown content into a sheet).
+ *
+ * The mapping is intentionally explicit per type rather than a "deny-list"
+ * because the deny-list approach silently broadens whenever a new format is
+ * added. Keeping the list per type forces a deliberate decision each time.
+ */
+export function availableExportFormats(artifactType: string): string[] {
+  switch (artifactType) {
+    case "document":
+      return ["markdown", "html", "json", "pdf", "docx"];
+    case "slides":
+      return ["markdown", "html", "json", "pdf", "pptx"];
+    case "sheet":
+      return ["csv", "json", "html", "pdf", "xlsx"];
+    case "base":
+      return ["csv", "json", "html", "pdf", "xlsx"];
+    case "infographic":
+      // Visual artifact — HTML preview, PDF print, JSON data export.
+      return ["html", "json", "pdf"];
+    case "landing_page":
+      // Standalone web page — HTML primary, PDF for print, JSON data.
+      return ["html", "json", "pdf"];
+    default:
+      // Unknown / future types: expose the safe-universal set rather than
+      // nothing, so the user is never stranded with no export option.
+      return ["json", "html", "pdf"];
+  }
+}
+
 export default function ArtifactEditorPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -316,16 +364,11 @@ export default function ArtifactEditorPage() {
               <option value="" disabled>
                 Export…
               </option>
-              <option value="markdown">Markdown (.md)</option>
-              <option value="html">HTML (.html)</option>
-              <option value="json">JSON (.json)</option>
-              <option value="csv">CSV (.csv)</option>
-              <option value="pdf">PDF (.pdf)</option>
-              <option value="docx">Word (.docx)</option>
-              <option value="xlsx">Excel (.xlsx)</option>
-              {artifact.artifactType === "slides" && (
-                <option value="pptx">PowerPoint (.pptx, Marp)</option>
-              )}
+              {availableExportFormats(artifact.artifactType).map((fmt) => (
+                <option key={fmt} value={fmt}>
+                  {EXPORT_FORMAT_LABELS[fmt] ?? fmt}
+                </option>
+              ))}
             </select>
             <Button
               variant="secondary"
