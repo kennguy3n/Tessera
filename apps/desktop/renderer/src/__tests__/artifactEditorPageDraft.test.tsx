@@ -481,4 +481,177 @@ describe("ArtifactEditorPage live-draft export", () => {
     expect(html).toContain("Blazing fast");
     expect(html).not.toContain('"features":');
   });
+
+  it("pre-renders infographic JSON to printable text (NOT raw JSON) when exporting to PDF (regression for BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0001)", async () => {
+    // Visual artifact + PDF used to hit the binary-format branch with no
+    // `contentOverride`, so the persisted `{"title":"…","sections":[…]}`
+    // JSON went straight through the line-based PDF builder which
+    // rendered it character-soup. The fix is to route visual artifacts
+    // through `buildInfographicPrintableText` (markdown-style heading +
+    // paragraph layout) for PDF/DOCX in the same way HTML uses the
+    // preview HTML builder. Pin both ends of the contract: the override
+    // MUST be set, MUST NOT look like JSON, and MUST contain the
+    // section content as plain readable text.
+    const infographicJson = JSON.stringify({
+      title: "Q4 KPIs",
+      subtitle: "All-up snapshot",
+      sections: [
+        {
+          icon: "lucide:trending-up",
+          heading: "Growth",
+          body: "+42% YoY",
+          stat: "42%",
+          statLabel: "growth",
+        },
+      ],
+      colorScheme: { primary: "#7C3AED", secondary: "#5B21B6", accent: "#F59E0B" },
+      layout: "vertical",
+    });
+    const infographicArtifact = {
+      ...baseArtifact,
+      id: "art-infographic-pdf",
+      artifactType: "infographic" as const,
+      content: infographicJson,
+    };
+    window.tessera.artifacts.get = vi
+      .fn()
+      .mockResolvedValue(infographicArtifact);
+    window.tessera.artifacts.exportToFile = vi
+      .fn()
+      .mockResolvedValue("/tmp/Q4 KPIs.pdf");
+
+    render(
+      <MemoryRouter initialEntries={["/artifact/art-infographic-pdf"]}>
+        <Routes>
+          <Route path="/artifact/:id" element={<ArtifactEditorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByDisplayValue("Q4 KPIs").length).toBeGreaterThan(0);
+    });
+
+    const exportSelect = screen.getByLabelText(
+      "Export artifact",
+    ) as HTMLSelectElement;
+    await act(async () => {
+      fireEvent.change(exportSelect, { target: { value: "pdf" } });
+    });
+
+    await waitFor(() => {
+      expect(window.tessera.artifacts.exportToFile).toHaveBeenCalled();
+    });
+    const mockFn = window.tessera.artifacts.exportToFile as unknown as {
+      mock: { calls: unknown[][] };
+    };
+    // exportToFile(id, format, suggestedName, contentOverride)
+    const call = mockFn.mock.calls[0];
+    const contentOverride = call[3] as string | null;
+    expect(contentOverride).not.toBeNull();
+    const text = contentOverride as string;
+    // It must NOT look like JSON — the bug was that PDF received raw JSON.
+    expect(text.trimStart().startsWith("{")).toBe(false);
+    expect(text).not.toContain('"sections":');
+    expect(text).not.toContain('"colorScheme":');
+    // It MUST contain the actual visible content as plain text, in
+    // markdown-style ordering (title heading → section heading →
+    // stat → body).
+    expect(text).toContain("# Q4 KPIs");
+    expect(text).toContain("All-up snapshot");
+    expect(text).toContain("## Growth");
+    expect(text).toContain("42% growth");
+    expect(text).toContain("+42% YoY");
+  });
+
+  it("pre-renders landing_page JSON to printable text (NOT raw JSON) when exporting to PDF (regression for BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0001)", async () => {
+    // Landing page parallel of the above — exports to PDF must produce
+    // a structured markdown-like rendering (hero → features → stats →
+    // testimonials → cta), never raw JSON.
+    const landingJson = JSON.stringify({
+      title: "Tessera",
+      hero: {
+        headline: "Ship Faster",
+        subheadline: "The fastest static-site generator.",
+        cta: "Get started",
+        ctaUrl: "https://example.com/signup",
+      },
+      features: [
+        {
+          icon: "lucide:zap",
+          title: "Blazing fast",
+          description: "Render in under a second.",
+        },
+      ],
+      stats: [{ value: "10x", label: "faster" }],
+      testimonials: [
+        { quote: "Game changer.", name: "Jane Doe", company: "Acme" },
+      ],
+      cta: {
+        headline: "Ready?",
+        buttonText: "Start free",
+        buttonUrl: "https://example.com/start",
+      },
+      colorScheme: {
+        primary: "#7C3AED",
+        secondary: "#0EA5E9",
+        accent: "#F59E0B",
+      },
+    });
+    const landingArtifact = {
+      ...baseArtifact,
+      id: "art-landing-pdf",
+      artifactType: "landing_page" as const,
+      content: landingJson,
+    };
+    window.tessera.artifacts.get = vi.fn().mockResolvedValue(landingArtifact);
+    window.tessera.artifacts.exportToFile = vi
+      .fn()
+      .mockResolvedValue("/tmp/Tessera.pdf");
+
+    render(
+      <MemoryRouter initialEntries={["/artifact/art-landing-pdf"]}>
+        <Routes>
+          <Route path="/artifact/:id" element={<ArtifactEditorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByDisplayValue("Ship Faster").length,
+      ).toBeGreaterThan(0);
+    });
+
+    const exportSelect = screen.getByLabelText(
+      "Export artifact",
+    ) as HTMLSelectElement;
+    await act(async () => {
+      fireEvent.change(exportSelect, { target: { value: "pdf" } });
+    });
+
+    await waitFor(() => {
+      expect(window.tessera.artifacts.exportToFile).toHaveBeenCalled();
+    });
+    const mockFn = window.tessera.artifacts.exportToFile as unknown as {
+      mock: { calls: unknown[][] };
+    };
+    const call = mockFn.mock.calls[0];
+    const contentOverride = call[3] as string | null;
+    expect(contentOverride).not.toBeNull();
+    const text = contentOverride as string;
+    expect(text.trimStart().startsWith("{")).toBe(false);
+    expect(text).not.toContain('"features":');
+    expect(text).not.toContain('"stats":');
+    expect(text).toContain("# Tessera");
+    expect(text).toContain("## Ship Faster");
+    expect(text).toContain("The fastest static-site generator.");
+    expect(text).toContain("## Features");
+    expect(text).toContain("### Blazing fast");
+    expect(text).toContain("## Stats");
+    expect(text).toContain("10x");
+    expect(text).toContain("## Testimonials");
+    expect(text).toContain("Jane Doe");
+    expect(text).toContain("## Ready?");
+  });
 });

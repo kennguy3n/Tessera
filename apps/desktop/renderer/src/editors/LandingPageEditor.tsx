@@ -557,3 +557,82 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+
+/**
+ * Build a readable plain-text / markdown rendering of the landing page for
+ * line-based export formats (PDF, DOCX). Equivalent of the
+ * `buildInfographicPrintableText` companion in `InfographicEditor.tsx` —
+ * see that file for the design rationale. Same regression target:
+ * BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0001 (PDF export of
+ * a visual artifact must not dump raw JSON through the line-based PDF
+ * builder).
+ *
+ * The output structure mirrors the visible page sections — hero, features,
+ * stats, testimonials, CTA — so the printed PDF reads top-to-bottom like
+ * the page itself.
+ */
+export function buildLandingPagePrintableText(
+  data: LandingPageContent,
+): string {
+  const lines: string[] = [];
+  lines.push(`# ${data.title}`);
+
+  // Hero block: headline (H2) + subheadline + optional CTA call.
+  lines.push("");
+  lines.push(`## ${data.hero.headline}`);
+  if (data.hero.subheadline) {
+    lines.push(data.hero.subheadline);
+  }
+  if (data.hero.cta) {
+    // Emit the CTA as a labelled line so a reader without styling still
+    // sees that this is the page's call to action. Including the URL
+    // keeps the export self-contained when printed and read offline.
+    const url = data.hero.ctaUrl ? ` — ${data.hero.ctaUrl}` : "";
+    lines.push(`Call to action: ${data.hero.cta}${url}`);
+  }
+
+  if (data.features.length > 0) {
+    lines.push("");
+    lines.push("## Features");
+    for (const f of data.features) {
+      lines.push("");
+      lines.push(`### ${f.title}`);
+      if (f.description) {
+        lines.push(f.description);
+      }
+      if (f.icon) {
+        lines.push(`Icon: ${f.icon}`);
+      }
+    }
+  }
+
+  if (data.stats.length > 0) {
+    lines.push("");
+    lines.push("## Stats");
+    for (const s of data.stats) {
+      lines.push(`${s.value} — ${s.label}`);
+    }
+  }
+
+  if (data.testimonials.length > 0) {
+    lines.push("");
+    lines.push("## Testimonials");
+    for (const t of data.testimonials) {
+      lines.push("");
+      // Quote on its own line for readability; attribution underneath
+      // (matches how block quotes typically render in print).
+      lines.push(`"${t.quote}"`);
+      const attribution = t.company ? `${t.name}, ${t.company}` : t.name;
+      lines.push(`— ${attribution}`);
+    }
+  }
+
+  if (data.cta) {
+    lines.push("");
+    lines.push(`## ${data.cta.headline}`);
+    const url = data.cta.buttonUrl ? ` — ${data.cta.buttonUrl}` : "";
+    lines.push(`Call to action: ${data.cta.buttonText}${url}`);
+  }
+
+  return lines.join("\n");
+}

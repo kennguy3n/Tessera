@@ -482,3 +482,62 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+
+/**
+ * Build a readable plain-text / markdown rendering of the infographic for
+ * line-based export formats (PDF, DOCX). The Rust PDF exporter walks the
+ * content line-by-line and renders each non-empty line as a paragraph; an
+ * HTML or JSON dump produces tag-soup output that does not resemble the
+ * visual infographic at all. This serialiser produces the equivalent of
+ * the screen-reader view: title, subtitle, and per-section heading + stat
+ * + body separated by blank lines so the PDF builder lays them out as
+ * stacked paragraphs.
+ *
+ * The output deliberately omits CSS, colour scheme and icon glyphs since
+ * the PDF builder is text-only and cannot rasterise inline SVG (the
+ * Typst PDF pipeline in `crates/tessera_export/src/typst.rs` is where
+ * high-fidelity diagram embedding belongs). The icon name is included as
+ * a textual hint so the reader still knows what symbol the section was
+ * meant to carry.
+ *
+ * Regression for BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0001 —
+ * before this fix, exporting an infographic to PDF would dump the raw
+ * JSON model line-by-line through the PDF builder, producing pages of
+ * `{"title": "..."}` syntax instead of the visual layout.
+ */
+export function buildInfographicPrintableText(
+  data: InfographicContent,
+): string {
+  const lines: string[] = [];
+  // Title as a top-level heading. The PDF builder renders the first line
+  // at a larger font size irrespective of markdown syntax, but emitting
+  // `# Title` keeps the same content readable when the same string is
+  // routed through the markdown export path too.
+  lines.push(`# ${data.title}`);
+  if (data.subtitle) {
+    lines.push("");
+    lines.push(data.subtitle);
+  }
+  for (const s of data.sections) {
+    lines.push("");
+    // Heading on its own line so the line-based PDF reader picks it up
+    // as a distinct paragraph.
+    lines.push(`## ${s.heading}`);
+    if (s.stat) {
+      // Stat blocks are short emphatic numbers (e.g. "10x", "$1.2M") with
+      // an optional descriptive label — flatten to a single line.
+      const label = s.statLabel ? ` ${s.statLabel}` : "";
+      lines.push(`${s.stat}${label}`);
+    }
+    if (s.body) {
+      lines.push(s.body);
+    }
+    if (s.icon) {
+      // Surface the icon hint at the end of the section. We keep it
+      // verbose ("Icon:") rather than relying on punctuation so an export
+      // viewed without styling is still self-describing.
+      lines.push(`Icon: ${s.icon}`);
+    }
+  }
+  return lines.join("\n");
+}
