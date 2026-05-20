@@ -1,9 +1,21 @@
+pub mod confluence;
 pub mod error;
+pub mod figma;
 pub mod gdrive;
+pub mod jira;
+pub mod notion;
+pub mod onedrive;
 pub mod registry;
 pub mod token;
 pub mod types;
+pub mod url_encode;
 
+pub use confluence::ConfluenceConnector;
 pub use error::{ConnectorError, ConnectorResult};
+pub use figma::FigmaConnector;
+pub use gdrive::GoogleDriveConnector;
+pub use jira::JiraConnector;
+pub use notion::NotionConnector;
+pub use onedrive::OneDriveConnector;
 pub use registry::ConnectorRegistry;
 pub use types::{AuthConfig, ConnectorStatus, RemoteFile, SyncResult};
