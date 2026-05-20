@@ -269,12 +269,12 @@ const GGUF_COMPUTE: [ComputeBackend; 4] = [
 
 const HF_BASE: &str = "https://huggingface.co";
 
-fn mlx_url(slug: &str, archive: &str) -> Option<String> {
-    Some(format!("{HF_BASE}/{slug}/resolve/main/{archive}"))
+fn mlx_url(slug: &str, archive: &str) -> String {
+    format!("{HF_BASE}/{slug}/resolve/main/{archive}")
 }
 
-fn gguf_url(slug: &str, filename: &str) -> Option<String> {
-    Some(format!("{HF_BASE}/{slug}/resolve/main/{filename}"))
+fn gguf_url(slug: &str, filename: &str) -> String {
+    format!("{HF_BASE}/{slug}/resolve/main/{filename}")
 }
 
 /// Every Ternary-Bonsai variant Tessera knows about.
@@ -300,10 +300,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             context_length: 2048,
             tier: DeviceTier::Low,
             filename: "ternary-bonsai-1.7b-2bit.mlx.tar.gz".into(),
-            url: mlx_url(
+            url: Some(mlx_url(
                 "kennguy3n/Ternary-Bonsai-1.7B-MLX",
                 "ternary-bonsai-1.7b-2bit.mlx.tar.gz",
-            ),
+            )),
             checksum: None,
             local_path: None,
         },
@@ -321,10 +321,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             context_length: 2048,
             tier: DeviceTier::Low,
             filename: "ternary-bonsai-1.7b-q1_0_g128.gguf".into(),
-            url: gguf_url(
+            url: Some(gguf_url(
                 "kennguy3n/Ternary-Bonsai-1.7B-GGUF",
                 "ternary-bonsai-1.7b-q1_0_g128.gguf",
-            ),
+            )),
             checksum: None,
             local_path: None,
         },
@@ -343,10 +343,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             context_length: 4096,
             tier: DeviceTier::Medium,
             filename: "ternary-bonsai-4b-2bit.mlx.tar.gz".into(),
-            url: mlx_url(
+            url: Some(mlx_url(
                 "kennguy3n/Ternary-Bonsai-4B-MLX",
                 "ternary-bonsai-4b-2bit.mlx.tar.gz",
-            ),
+            )),
             checksum: None,
             local_path: None,
         },
@@ -364,10 +364,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             context_length: 4096,
             tier: DeviceTier::Medium,
             filename: "ternary-bonsai-4b-q1_0_g128.gguf".into(),
-            url: gguf_url(
+            url: Some(gguf_url(
                 "kennguy3n/Ternary-Bonsai-4B-GGUF",
                 "ternary-bonsai-4b-q1_0_g128.gguf",
-            ),
+            )),
             checksum: None,
             local_path: None,
         },
@@ -386,10 +386,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             context_length: 8192,
             tier: DeviceTier::High,
             filename: "ternary-bonsai-8b-2bit.mlx.tar.gz".into(),
-            url: mlx_url(
+            url: Some(mlx_url(
                 "kennguy3n/Ternary-Bonsai-8B-MLX",
                 "ternary-bonsai-8b-2bit.mlx.tar.gz",
-            ),
+            )),
             checksum: None,
             local_path: None,
         },
@@ -407,10 +407,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             context_length: 8192,
             tier: DeviceTier::High,
             filename: "ternary-bonsai-8b-q1_0_g128.gguf".into(),
-            url: gguf_url(
+            url: Some(gguf_url(
                 "kennguy3n/Ternary-Bonsai-8B-GGUF",
                 "ternary-bonsai-8b-q1_0_g128.gguf",
-            ),
+            )),
             checksum: None,
             local_path: None,
         },
@@ -506,8 +506,7 @@ pub fn has_nvidia_gpu() -> bool {
     std::process::Command::new(cmd)
         .arg("-L")
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|o| o.status.success())
 }
 
 /// Is the Vulkan loader present?
@@ -520,8 +519,7 @@ pub fn has_vulkan() -> bool {
     if std::process::Command::new("vulkaninfo")
         .arg("--summary")
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|o| o.status.success())
     {
         return true;
     }
@@ -562,6 +560,7 @@ pub fn has_rocm() -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::case_sensitive_file_extension_comparisons)]
 mod tests {
     use super::*;
 

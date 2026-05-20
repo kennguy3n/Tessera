@@ -282,7 +282,7 @@ pub fn plan_download(current: Option<&InstalledModel>, requested: &ModelInfo) ->
             model_id: requested.id.clone(),
             filename: requested.filename.clone(),
             download_size_mb: install_size,
-            message: format!("Download {} ({} MB).", requested.name, install_size,),
+            message: format!("Download {} ({} MB).", requested.name, install_size),
         },
         Some(inst) if inst.model_id == requested.id => DownloadPlan::AlreadyInstalled {
             model_id: inst.model_id.clone(),
@@ -329,6 +329,7 @@ pub fn registry_for_host(manifest_path: Option<&Path>, platform: Platform) -> Ve
 }
 
 #[cfg(test)]
+#[allow(clippy::case_sensitive_file_extension_comparisons)]
 mod tests {
     use super::*;
     use std::io::Write;
