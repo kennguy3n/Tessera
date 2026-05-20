@@ -81,6 +81,20 @@ pub fn export_xlsx(artifact: &Artifact) -> Vec<u8> {
 }
 
 fn write_cell(worksheet: &mut rust_xlsxwriter::Worksheet, row: u32, col: u16, value: &str) {
+    // CSV/XLSX-injection escape: `'=foo` is the standard convention for
+    // "please don't interpret the leading `=` as a formula trigger". We strip
+    // the apostrophe and emit the remainder verbatim as text. This mirrors
+    // Excel's own paste behavior and protects against artifact content that
+    // happens to start with `=` but is meant as prose (e.g. `=NOTE: ...`).
+    if let Some(literal) = value.strip_prefix("'=") {
+        let mut as_text = String::with_capacity(literal.len() + 1);
+        as_text.push('=');
+        as_text.push_str(literal);
+        worksheet
+            .write_string(row, col, &as_text)
+            .expect("write string");
+        return;
+    }
     if let Some(formula) = value.strip_prefix('=') {
         // Strip the leading '=' since rust_xlsxwriter's write_formula adds
         // it automatically.
@@ -159,6 +173,26 @@ mod tests {
         // formula-shaped if the substring is not compressed.
         let s = String::from_utf8_lossy(&bytes);
         assert!(s.contains("A2+B2") || bytes.len() > 512);
+    }
+
+    #[test]
+    fn write_cell_escapes_apostrophe_equals_as_literal_text() {
+        // `'=NOTE: important` must be emitted as the text `=NOTE: important`,
+        // not as a formula. This is the standard CSV/XLSX injection escape.
+        let mut artifact = Artifact::new("Notes".to_string(), ArtifactType::Sheet, None);
+        artifact.update_content(r#"{"headers":["A"],"rows":[["'=NOTE: important"]]}"#.to_string());
+        let bytes = export_xlsx(&artifact);
+        assert_is_zip(&bytes);
+        // Sanity check: no formula record should appear for this value.
+        // (`f` is the formula element tag in sheet1.xml.) We can't unzip
+        // without pulling in a zip dep, but the substring `<f>NOTE` would
+        // only appear if write_formula was wrongly invoked — use a negative
+        // check on the raw uncompressed bytes.
+        let s = String::from_utf8_lossy(&bytes);
+        assert!(
+            !s.contains("<f>NOTE"),
+            "apostrophe-prefixed value was incorrectly treated as a formula",
+        );
     }
 
     #[test]

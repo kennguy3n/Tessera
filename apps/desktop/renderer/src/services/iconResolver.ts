@@ -21,6 +21,23 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import * as React from "react";
+// Wildcard imports pull both icon catalogs into the renderer bundle
+// (~500KB–1MB combined). This is an intentional tradeoff:
+//   * `listIcons(set)` and `searchIcons(set)` need to enumerate every
+//     component for the IconPicker UI — they call `Object.keys(mod)` on
+//     the namespace object, which only works if all exports are reachable
+//     at runtime. Tree-shaking would defeat the picker by removing the
+//     keys we need to enumerate.
+//   * Once the picker has resolved a name to a component, we render to
+//     SVG once via `renderToStaticMarkup` and inline that string into the
+//     artifact. So the per-icon weight does NOT leak into exports.
+//   * Future optimization: split into a "static names list" (cheap JSON
+//     of available icon names) + per-icon dynamic imports a la
+//     `lucide-react/dynamic`. That would let the picker enumerate names
+//     without instantiating every component, at the cost of an async
+//     resolver API. Track as a follow-up; for now, the build cost lives
+//     in the renderer-only bundle (not the main process), and the
+//     overall app cost is dominated by Electron itself.
 import * as LucideAll from "lucide-react";
 import * as PhosphorAll from "@phosphor-icons/react";
 

@@ -4,9 +4,13 @@ directories:
   buildResources: build
   output: dist
 
+# Vite emits the renderer bundle to `apps/desktop/renderer-dist/`, and
+# `tsc -p tsconfig.electron.json` emits the Electron main + preload bundles to
+# `apps/desktop/dist-electron/`. Both directories must be packaged; the source
+# `apps/desktop/electron/**/*.ts` is intentionally NOT shipped.
 files:
-  - "apps/desktop/dist/**/*"
-  - "apps/desktop/electron/**/*.js"
+  - "apps/desktop/renderer-dist/**/*"
+  - "apps/desktop/dist-electron/**/*"
   - "native/**/*.node"
   - "templates/**/*"
   - "schemas/**/*"

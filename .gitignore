@@ -20,6 +20,8 @@ build/
 
 # Electron
 apps/desktop/dist/
+apps/desktop/renderer-dist/
+apps/desktop/dist-electron/
 apps/desktop/out/
 apps/desktop/release/
 

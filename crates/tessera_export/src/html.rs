@@ -102,82 +102,79 @@ fn escape_html(text: &str) -> String {
 }
 
 fn content_to_html(content: &str) -> String {
-    // Substitute mermaid blocks with placeholder tokens so the line-oriented
-    // converter doesn't mangle them, then swap the tokens back for real
-    // `<div class="mermaid">…</div>` containers afterwards.
+    // Process content as a sequence of (text_segment, optional_mermaid_block)
+    // pairs. The line-oriented converter only sees real prose; mermaid blocks
+    // are emitted as raw `<div class="mermaid">…</div>` between segments. This
+    // is structurally safe — earlier versions used a sentinel-token round-trip
+    // (`\u{1F4CC}TESSERA_MERMAID_TOKEN_N\u{1F4CC}`), but any artifact that
+    // happened to contain the sentinel literally would be silently rewritten.
     let blocks = mermaid::extract_blocks(content);
-    let mut token_to_div: Vec<(String, String)> = Vec::new();
-    let stripped = mermaid::replace_blocks(content, |block| {
-        let token = format!(
-            "\u{1F4CC}TESSERA_MERMAID_TOKEN_{}\u{1F4CC}",
-            token_to_div.len()
-        );
-        token_to_div.push((token.clone(), mermaid::to_html_div(block)));
-        format!("\n{token}\n")
-    });
-    // Suppress unused warning when there are no blocks.
-    let _ = &blocks;
 
     let mut html = String::new();
     let mut in_paragraph = false;
-
-    for line in stripped.lines() {
-        let trimmed = line.trim();
-        if let Some(token_div) =
-            token_to_div
-                .iter()
-                .find_map(|(tok, div)| if trimmed == tok { Some(div) } else { None })
-        {
-            if in_paragraph {
-                html.push_str("    </p>\n");
-                in_paragraph = false;
-            }
-            html.push_str("    ");
-            html.push_str(token_div);
-            html.push('\n');
-            continue;
+    let mut cursor = 0usize;
+    for block in &blocks {
+        let (start, end) = block.range;
+        emit_text_segment(&content[cursor..start], &mut html, &mut in_paragraph);
+        if in_paragraph {
+            html.push_str("    </p>\n");
+            in_paragraph = false;
         }
-        if trimmed.is_empty() {
-            if in_paragraph {
-                html.push_str("    </p>\n");
-                in_paragraph = false;
-            }
-            continue;
-        }
-
-        if let Some(heading) = trimmed.strip_prefix("## ") {
-            if in_paragraph {
-                html.push_str("    </p>\n");
-                in_paragraph = false;
-            }
-            let _ = writeln!(html, "    <h2>{}</h2>", escape_html(heading));
-        } else if let Some(heading) = trimmed.strip_prefix("### ") {
-            if in_paragraph {
-                html.push_str("    </p>\n");
-                in_paragraph = false;
-            }
-            let _ = writeln!(html, "    <h3>{}</h3>", escape_html(heading));
-        } else if let Some(item) = trimmed.strip_prefix("- ") {
-            if in_paragraph {
-                html.push_str("    </p>\n");
-                in_paragraph = false;
-            }
-            let _ = writeln!(html, "    <li>{}</li>", escape_html(item));
-        } else if in_paragraph {
-            html.push(' ');
-            html.push_str(&escape_html(trimmed));
-        } else {
-            html.push_str("    <p>");
-            in_paragraph = true;
-            html.push_str(&escape_html(trimmed));
-        }
+        html.push_str("    ");
+        html.push_str(&mermaid::to_html_div(block));
+        html.push('\n');
+        cursor = end;
     }
+    emit_text_segment(&content[cursor..], &mut html, &mut in_paragraph);
 
     if in_paragraph {
         html.push_str("</p>\n");
     }
 
     html
+}
+
+/// Process a contiguous run of text (no mermaid blocks) into the in-progress
+/// HTML buffer. Tracks `in_paragraph` across calls so a paragraph split by a
+/// mermaid block still closes its `<p>` correctly.
+fn emit_text_segment(segment: &str, html: &mut String, in_paragraph: &mut bool) {
+    for line in segment.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if *in_paragraph {
+                html.push_str("    </p>\n");
+                *in_paragraph = false;
+            }
+            continue;
+        }
+
+        if let Some(heading) = trimmed.strip_prefix("## ") {
+            if *in_paragraph {
+                html.push_str("    </p>\n");
+                *in_paragraph = false;
+            }
+            let _ = writeln!(html, "    <h2>{}</h2>", escape_html(heading));
+        } else if let Some(heading) = trimmed.strip_prefix("### ") {
+            if *in_paragraph {
+                html.push_str("    </p>\n");
+                *in_paragraph = false;
+            }
+            let _ = writeln!(html, "    <h3>{}</h3>", escape_html(heading));
+        } else if let Some(item) = trimmed.strip_prefix("- ") {
+            if *in_paragraph {
+                html.push_str("    </p>\n");
+                *in_paragraph = false;
+            }
+            let _ = writeln!(html, "    <li>{}</li>", escape_html(item));
+        } else if *in_paragraph {
+            html.push(' ');
+            html.push_str(&escape_html(trimmed));
+        } else {
+            html.push_str("    <p>");
+            *in_paragraph = true;
+            html.push_str(&escape_html(trimmed));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -236,6 +233,25 @@ mod tests {
         // Text around the block should still be rendered as paragraphs.
         assert!(html.contains("<h2>Overview</h2>"));
         assert!(html.contains("Text after."));
+    }
+
+    #[test]
+    fn export_html_does_not_treat_legacy_sentinel_token_specially() {
+        // Earlier versions of `content_to_html` substituted mermaid blocks for
+        // a sentinel token of the form `\u{1F4CC}TESSERA_MERMAID_TOKEN_N\u{1F4CC}`.
+        // If a user happened to type the sentinel literally into prose, it
+        // would have been silently rewritten. The refactored converter no
+        // longer uses tokens, so the literal string round-trips unchanged
+        // (modulo HTML escaping).
+        let sentinel = "\u{1F4CC}TESSERA_MERMAID_TOKEN_0\u{1F4CC}";
+        let mut artifact = Artifact::new("Notes".to_string(), ArtifactType::Document, None);
+        artifact.update_content(format!("## Heading\n\n{sentinel} should appear as text."));
+        let html = export_html(&artifact, &[]);
+        assert!(
+            html.contains(sentinel),
+            "sentinel token must survive HTML conversion, got:\n{html}",
+        );
+        assert!(!html.contains(r#"class="mermaid""#));
     }
 
     #[test]
