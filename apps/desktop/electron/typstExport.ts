@@ -54,19 +54,18 @@ async function defaultRunner(
 ): Promise<Buffer> {
   const { getBridge } = await import("./appState");
   const bridge = getBridge();
-  if (
-    bridge &&
-    typeof (bridge as { bridgeExportTypst?: unknown }).bridgeExportTypst ===
-      "function"
-  ) {
-    const out = await (
-      bridge as {
-        bridgeExportTypst: (req: {
-          markup: string;
-          format: TypstExportFormat;
-        }) => Promise<Buffer | Uint8Array | string>;
-      }
-    ).bridgeExportTypst({ markup, format });
+  // The Typst bridge entry-point is added in a separate native build step
+  // (gated behind the `typst` Cargo feature). At type-check time the
+  // NativeBridge interface doesn't include it, so we test for it
+  // dynamically via `unknown` -> structural check.
+  const bridgeUnknown = bridge as unknown as {
+    bridgeExportTypst?: (req: {
+      markup: string;
+      format: TypstExportFormat;
+    }) => Promise<Buffer | Uint8Array | string>;
+  };
+  if (bridgeUnknown && typeof bridgeUnknown.bridgeExportTypst === "function") {
+    const out = await bridgeUnknown.bridgeExportTypst({ markup, format });
     if (Buffer.isBuffer(out)) return out;
     if (typeof out === "string") return Buffer.from(out, "utf8");
     return Buffer.from(out);

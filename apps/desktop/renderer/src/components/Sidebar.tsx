@@ -1,17 +1,25 @@
 import { NavLink } from "react-router-dom";
+import {
+  Home,
+  FolderOpen,
+  Plus,
+  ClipboardList,
+  Settings,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 interface NavItem {
   to: string;
   label: string;
-  icon: string;
+  Icon: LucideIcon;
 }
 
 const navItems: NavItem[] = [
-  { to: "/", label: "Home", icon: "\u2302" },
-  { to: "/sources", label: "Sources", icon: "\uD83D\uDCC1" },
-  { to: "/create", label: "Create", icon: "\u2795" },
-  { to: "/templates", label: "Templates", icon: "\uD83D\uDCCB" },
-  { to: "/settings", label: "Settings", icon: "\u2699\uFE0F" },
+  { to: "/", label: "Home", Icon: Home },
+  { to: "/sources", label: "Sources", Icon: FolderOpen },
+  { to: "/create", label: "Create", Icon: Plus },
+  { to: "/templates", label: "Templates", Icon: ClipboardList },
+  { to: "/settings", label: "Settings", Icon: Settings },
 ];
 
 export default function Sidebar() {
@@ -31,7 +39,9 @@ export default function Sidebar() {
                 `sidebar-link ${isActive ? "sidebar-link-active" : ""}`
               }
             >
-              <span className="sidebar-icon">{item.icon}</span>
+              <span className="sidebar-icon" aria-hidden="true">
+                <item.Icon size={20} strokeWidth={1.75} />
+              </span>
               <span className="sidebar-label">{item.label}</span>
             </NavLink>
           </li>

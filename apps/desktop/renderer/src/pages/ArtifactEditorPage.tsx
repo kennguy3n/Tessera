@@ -4,7 +4,11 @@ import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import { DocumentEditor, SlideEditor, SheetEditor, BaseEditor } from "../editors";
+import { embedIcons } from "../services/iconResolver";
 import type { ArtifactInfo } from "../types/ipc";
+
+const ICON_AWARE_FORMATS = new Set(["html", "pdf", "docx"]);
+const BINARY_FORMATS = new Set(["pdf", "docx", "xlsx", "pptx"]);
 
 export default function ArtifactEditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -50,13 +54,6 @@ export default function ArtifactEditorPage() {
     [id],
   );
 
-  const BINARY_FORMATS = new Set([
-    "pdf",
-    "docx",
-    "xlsx",
-    "pptx",
-  ]);
-
   const handleExport = useCallback(
     async (format: string) => {
       if (!id) return;
@@ -65,6 +62,21 @@ export default function ArtifactEditorPage() {
       try {
         const api = window.tessera;
         if (!api) return;
+
+        // For icon-aware text formats, resolve {{icon:...}} tokens into
+        // inline SVG before handing the content to the Rust exporter.
+        // The exporter sees pre-baked SVG and treats it as opaque HTML.
+        if (
+          ICON_AWARE_FORMATS.has(format) &&
+          artifact?.content &&
+          /\{\{icon:/.test(artifact.content)
+        ) {
+          const embedded = embedIcons(artifact.content);
+          if (embedded !== artifact.content) {
+            await api.artifacts.update(id, embedded);
+          }
+        }
+
         if (BINARY_FORMATS.has(format)) {
           // Binary formats can't be copied to the clipboard as text; write
           // them to a temp path next to the artifact and let the user
@@ -95,7 +107,7 @@ export default function ArtifactEditorPage() {
         setExporting(false);
       }
     },
-    [id, artifact?.title],
+    [id, artifact?.title, artifact?.content],
   );
 
   const handleExportEvidencePack = useCallback(async () => {
