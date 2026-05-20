@@ -623,10 +623,14 @@ const defaultHasher: NonNullable<DownloadDeps["hasher"]> = async (filePath) => {
 };
 
 /**
- * Delete the currently installed model file (if any) and clear the active
- * model record.
+ * Internal: delete the currently installed model file (if any) and clear
+ * the active model record. Must only be called from within
+ * `withDownloadLock` because it mutates the same shared on-disk state
+ * (`active-model.json` + the model file) that `downloadModelLocked`
+ * mutates. Recursive locking would deadlock the per-userDataDir promise
+ * chain, so the lock is acquired at the public-API boundary only.
  */
-export async function deleteCurrentModel(userDataDir: string): Promise<void> {
+async function deleteCurrentModelUnlocked(userDataDir: string): Promise<void> {
   const current = await getCurrentModel(userDataDir);
   if (!current) return;
   try {
@@ -640,6 +644,26 @@ export async function deleteCurrentModel(userDataDir: string): Promise<void> {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
   await writeCurrentModel(userDataDir, null);
+}
+
+/**
+ * Delete the currently installed model file (if any) and clear the active
+ * model record.
+ *
+ * Serialized through the same per-`userDataDir` download lock as
+ * `downloadModel` so the on-disk contract is "all model-file mutations
+ * are mutually exclusive". Without the lock, the previous version
+ * relied on Node's cooperative scheduling to keep a concurrent
+ * `downloadModel` from clobbering or being clobbered by an in-flight
+ * `delete` — that's correct today but fragile and breaks the moment
+ * model management moves to a worker thread, an Electron utility
+ * process, or any other parallel-execution context. The lock makes the
+ * invariant explicit instead of implicit.
+ */
+export async function deleteCurrentModel(userDataDir: string): Promise<void> {
+  return withDownloadLock(userDataDir, () =>
+    deleteCurrentModelUnlocked(userDataDir),
+  );
 }
 
 // --- Concurrency guard ---------------------------------------------------
@@ -738,7 +762,11 @@ async function downloadModelLocked(
     // writes a clean state instead of merging with the stale one.
     await writeCurrentModel(userDataDir, null);
   } else if (current) {
-    await deleteCurrentModel(userDataDir);
+    // We're already inside `withDownloadLock` for this `userDataDir`, so
+    // call the unlocked variant — going through the public locked
+    // `deleteCurrentModel` would deadlock the per-userDataDir promise
+    // chain (it would queue behind the very call that's awaiting it).
+    await deleteCurrentModelUnlocked(userDataDir);
   }
 
   const dir = modelsDir(userDataDir);

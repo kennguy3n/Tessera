@@ -716,6 +716,56 @@ describe("single-model enforcement", () => {
     expect(await getCurrentModel(workdir)).toBeNull();
   });
 
+  it("deleteCurrentModel waits for an in-flight downloadModel instead of racing it", async () => {
+    // Regression for Devin Review finding 3270789432. Previously
+    // `deleteCurrentModel` ran outside the per-userDataDir download lock
+    // and relied on Node's cooperative scheduling to avoid clobbering or
+    // being clobbered by a concurrent `downloadModel`. Now both go
+    // through the same lock; this test asserts the resulting ordering.
+    //
+    // We start a slow download, immediately fire a `deleteCurrentModel`,
+    // and capture the wall-clock order of (a) when the download's
+    // fetcher resolves and (b) when the delete's record-clear settles.
+    // If the lock is honoured, the delete cannot finish before the
+    // download finishes its work. If the lock were skipped, the delete
+    // would race ahead (synchronous-fast unlink with no `active-model.json`
+    // to read) and finish first.
+    resetDownloadLocks();
+    const r = makeResolved();
+    const events: string[] = [];
+    const slowDownload = downloadModel(workdir, r, () => {}, {
+      fetcher: async (_u, onP, d) => {
+        // Give the test scheduler a chance to enqueue the delete before
+        // we write & resolve.
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await fsp.writeFile(d, Buffer.from("payload"));
+        onP(7, 7);
+        events.push("download-fetcher-resolved");
+        return { totalBytes: 7 };
+      },
+    });
+    // Don't await the download yet — fire the delete while it's still
+    // in-flight. The delete should queue behind the download.
+    const deletePromise = (async () => {
+      // Yield once so the download has acquired the lock first.
+      await Promise.resolve();
+      const p = deleteCurrentModel(workdir);
+      await p;
+      events.push("delete-completed");
+    })();
+
+    await Promise.all([slowDownload, deletePromise]);
+
+    expect(events).toEqual([
+      "download-fetcher-resolved",
+      "delete-completed",
+    ]);
+    // And the final on-disk state is "no model" — the delete really did
+    // delete, it didn't get clobbered by the download writing afterwards.
+    expect(fs.existsSync(activeModelPath(workdir))).toBe(false);
+    expect(await fsp.readdir(modelsDir(workdir))).toEqual([]);
+  });
+
   it("downloadModel verifies sha256 and deletes the file on mismatch", async () => {
     const requested = makeResolved({
       sha256: "deadbeef".padEnd(64, "0"),

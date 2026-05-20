@@ -257,6 +257,20 @@ pub struct InstalledModel {
     /// disk-space deltas independent of network-transfer size.
     #[serde(default)]
     pub disk_size_mb: u64,
+    /// SHA-256 of the downloaded artifact (hex), or `None` if the
+    /// manifest entry had no `sha256` recorded.
+    ///
+    /// Optional + `default` because (a) legacy records written before
+    /// this field existed must still deserialise, and (b) the
+    /// TypeScript `InstalledModelRecord` declares `sha256: string |
+    /// null` — keeping the Rust side `Option<String>` means the wire
+    /// shape round-trips through serde without dropping the field. The
+    /// whole point of `rename_all = "camelCase"` on this struct is so
+    /// the Rust runtime can eventually read/write the same
+    /// `active-model.json` as the TS Electron main process; omitting
+    /// `sha256` here would silently strip the field on round-trip.
+    #[serde(default)]
+    pub sha256: Option<String>,
     pub downloaded_at: String,
 }
 
@@ -537,6 +551,7 @@ mod tests {
             path: "/tmp/x".into(),
             download_size_mb: req.download_size_mb,
             disk_size_mb: req.disk_size_mb,
+            sha256: None,
             downloaded_at: "2026-05-19T00:00:00Z".into(),
         };
         let plan = plan_download(Some(&installed), &req);
@@ -568,6 +583,7 @@ mod tests {
             path: "/tmp/old".into(),
             download_size_mb: installed_info.download_size_mb,
             disk_size_mb: installed_info.disk_size_mb,
+            sha256: None,
             downloaded_at: "2026-05-19T00:00:00Z".into(),
         };
         let plan = plan_download(Some(&installed), &requested);
@@ -597,6 +613,7 @@ mod tests {
             path: "/tmp/installed".into(),
             download_size_mb: 100,
             disk_size_mb: 300,
+            sha256: None,
             downloaded_at: "2026-05-19T00:00:00Z".into(),
         };
         let requested = ModelInfo {
@@ -639,6 +656,7 @@ mod tests {
             path: "/tmp/m".into(),
             download_size_mb: 450,
             disk_size_mb: 450,
+            sha256: Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into()),
             downloaded_at: "2026-05-19T00:00:00Z".into(),
         };
         let json = serde_json::to_value(&m).unwrap();
@@ -653,12 +671,18 @@ mod tests {
             "path",
             "downloadSizeMb",
             "diskSizeMb",
+            "sha256",
             "downloadedAt",
         ] {
             assert!(json.get(key).is_some(), "missing key {key} in {json}");
         }
         // And the snake_case names must NOT leak into the wire format.
-        for key in ["model_id", "download_size_mb", "disk_size_mb", "downloaded_at"] {
+        for key in [
+            "model_id",
+            "download_size_mb",
+            "disk_size_mb",
+            "downloaded_at",
+        ] {
             assert!(json.get(key).is_none(), "unexpected key {key} in {json}");
         }
     }
@@ -675,13 +699,65 @@ mod tests {
             "path": "/var/data/models/ternary-bonsai-1.7b-q1_0_g128.gguf",
             "downloadSizeMb": 450,
             "diskSizeMb": 450,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "downloadedAt": "2026-05-19T00:00:00Z"
         }"#;
         let parsed: InstalledModel = serde_json::from_str(written_by_ts).unwrap();
         assert_eq!(parsed.model_id, "ternary-bonsai-1.7b-gguf");
         assert_eq!(parsed.download_size_mb, 450);
         assert_eq!(parsed.disk_size_mb, 450);
+        assert_eq!(
+            parsed.sha256.as_deref(),
+            Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        );
         assert_eq!(parsed.downloaded_at, "2026-05-19T00:00:00Z");
+    }
+
+    #[test]
+    fn installed_model_round_trips_through_ts_when_sha256_present_and_absent() {
+        // Forward path: TS writes a record with `sha256: "…"`, Rust
+        // deserialises, re-serialises, and the field must survive.
+        let written_by_ts_with_sha = r#"{
+            "modelId": "id",
+            "format": "gguf",
+            "filename": "x.gguf",
+            "path": "/x",
+            "downloadSizeMb": 1,
+            "diskSizeMb": 1,
+            "sha256": "deadbeef",
+            "downloadedAt": "t"
+        }"#;
+        let parsed: InstalledModel = serde_json::from_str(written_by_ts_with_sha).unwrap();
+        let reserialised = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(
+            reserialised.get("sha256").and_then(|v| v.as_str()),
+            Some("deadbeef"),
+            "Rust must preserve sha256 across deserialise->serialise round-trip"
+        );
+
+        // Reverse path: TS writes `sha256: null` (manifest entry had no
+        // checksum). Rust must deserialise that as None and re-emit null
+        // — not omit the key, because the TS type declares `string |
+        // null`, not `string | undefined`.
+        let written_by_ts_with_null_sha = r#"{
+            "modelId": "id",
+            "format": "gguf",
+            "filename": "x.gguf",
+            "path": "/x",
+            "downloadSizeMb": 1,
+            "diskSizeMb": 1,
+            "sha256": null,
+            "downloadedAt": "t"
+        }"#;
+        let parsed_null: InstalledModel =
+            serde_json::from_str(written_by_ts_with_null_sha).unwrap();
+        assert_eq!(parsed_null.sha256, None);
+        let reserialised_null = serde_json::to_value(&parsed_null).unwrap();
+        assert!(
+            reserialised_null.get("sha256").is_some()
+                && reserialised_null.get("sha256").unwrap().is_null(),
+            "None sha256 must serialise as JSON null, not be omitted"
+        );
     }
 
     #[test]
@@ -693,6 +769,7 @@ mod tests {
             path: "/tmp/legacy".into(),
             download_size_mb: 450,
             disk_size_mb: 0,
+            sha256: None,
             downloaded_at: "2026-05-19T00:00:00Z".into(),
         };
         assert_eq!(m.effective_disk_size_mb(), 450);
