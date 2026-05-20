@@ -163,6 +163,7 @@ Tessera ships **one** Ternary-Bonsai 1.58-bit weight on disk at a time. The file
 - **Rust** 1.75+ (`rustup` recommended)
 - **Node.js** 20+ and npm 10+
 - **C toolchain** for SQLCipher compilation (gcc/clang on Linux/macOS, MSVC on Windows)
+- **Python 3** on `PATH` — used by `sidecars/scripts/download-llama-server.sh` to resolve the correct `{url, sha256}` entry for your platform + compute backend from `sidecars/models.json`. Pre-installed on macOS and most Linux distros; on Windows install from [python.org](https://www.python.org/downloads/) or use `winget install Python.Python.3` (the equivalent PowerShell script does not need python3, but the bash script does and is what runs on macOS/Linux).
 - **Linux only** — install Electron's native build prerequisites: `libsecret-1-dev`, `libgtk-3-dev`, `libnss3-dev`, `libasound2-dev`, `libxss1`, `libxtst6`, `xdg-utils` (Debian/Ubuntu — adjust for your distro)
 - **Google API credentials** (optional, for Google Drive connector) — create a project in Google Cloud Console, enable the Drive API, and configure OAuth 2.0 credentials
 

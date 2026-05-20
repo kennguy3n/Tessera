@@ -135,9 +135,17 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
           status: status ?? s.status,
         }));
       } catch (err) {
+        // Clear `progress` on failure too. The main process simply stops
+        // emitting `runtime:downloadProgress` events when a download
+        // fails — there is no terminal "failed" event — so without this
+        // the last in-flight snapshot (e.g. "42 / 1000 MB (4%)") would
+        // remain in state and the renderer would show both the error
+        // banner AND a frozen progress bar. (Devin Review BUG finding
+        // 8f14f796.)
         setState((s) => ({
           ...s,
           busyModelId: null,
+          progress: null,
           error: err instanceof Error ? err.message : String(err),
         }));
       }
@@ -310,7 +318,15 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
         )
       )}
 
-      {state.progress && (
+      {/* Defense-in-depth against stale-progress-bar bugs: the bar is only
+          shown while a download is in flight (`busyModelId !== null`). Even
+          if a future code path forgets to null `state.progress` after a
+          terminal state (success / failure / cancel), the UI cannot show a
+          frozen bar next to an idle card. The catch blocks above still
+          null `progress` explicitly so a subsequent `busyModelId` flip
+          doesn't briefly resurrect a stale snapshot. (Devin Review BUG
+          finding 8f14f796 + structural fix.) */}
+      {state.busyModelId && state.progress && (
         <div
           style={{ marginBottom: "var(--spacing-md)" }}
           data-testid="model-runtime-progress"

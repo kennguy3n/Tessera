@@ -313,3 +313,160 @@ describe("ModelRuntimeCard delete-from-non-running flow", () => {
     });
   });
 });
+
+describe("ModelRuntimeCard download-progress lifecycle", () => {
+  // Regression for Devin Review BUG finding 8f14f796:
+  // `performDownload` used to leave `state.progress` populated after a
+  // failed download because the catch block only cleared `busyModelId`
+  // and `error`. The subscriber `onDownloadProgress` keeps writing
+  // snapshots until the moment the main process throws, so without
+  // explicit cleanup the renderer showed BOTH the error banner AND a
+  // frozen "42 / 1000 MB (4%)" progress bar. The fix has two parts:
+  // (a) catch-path now sets `progress: null`; (b) the progress bar
+  // render is gated on `state.busyModelId && state.progress` so even a
+  // future code path that forgets the explicit null cannot leak a
+  // stale snapshot. Both invariants are guarded here.
+
+  function buildDownloadApi(opts: {
+    downloadOutcome: "ok" | "fail";
+    progressBeforeOutcome: { downloadedMb: number; totalMb: number; percent: number };
+  }) {
+    type Listener = (p: {
+      modelId: string;
+      format: string;
+      filename: string;
+      downloadedMb: number;
+      totalMb: number;
+      percent: number;
+    }) => void;
+    let listener: Listener | null = null;
+    const downloadMock = vi.fn().mockImplementation(async (modelId: string) => {
+      // Simulate the main process emitting progress before terminating.
+      listener?.({
+        modelId,
+        format: "gguf",
+        filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+        ...opts.progressBeforeOutcome,
+      });
+      // Let React flush the listener-driven state update before we
+      // terminate. `Promise.resolve()` is sufficient because the
+      // listener path is synchronous setState.
+      await Promise.resolve();
+      if (opts.downloadOutcome === "fail") {
+        throw new Error("simulated download failure");
+      }
+      return {
+        modelId,
+        format: "gguf",
+        filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+        path: "/var/tmp/m.gguf",
+        downloadSizeMb: 450,
+        diskSizeMb: 450,
+        sha256: null,
+        downloadedAt: new Date().toISOString(),
+      };
+    });
+    const api = {
+      ...window.tessera,
+      model: {
+        ...window.tessera.model,
+        status: vi.fn().mockResolvedValue({
+          available: false,
+          modelName: null,
+          status: "stopped",
+        }),
+      },
+      runtime: {
+        ...window.tessera.runtime,
+        detectPlatform: vi.fn().mockResolvedValue({
+          platform: "linux-x64",
+          platformLabel: "Linux x64",
+          totalRamGb: 16,
+          tier: "high",
+          tierLabel: "High (8+ GB RAM)",
+          computeBackends: ["cpu"],
+          preferredFormat: "gguf",
+        }),
+        recommendModel: vi.fn().mockResolvedValue({
+          id: "ternary-bonsai-1.7b-gguf",
+          name: "Ternary-Bonsai 1.7B",
+          parameters: "1.7B",
+          format: "gguf",
+          formatLabel: "GGUF Q1_0_g128",
+          quantization: "Q1_0_g128",
+          platform: "linux-x64",
+          tier: "low",
+          computeBackends: ["cpu"],
+          downloadSizeMb: 450,
+          diskSizeMb: 450,
+          requiredRamGb: 2,
+          contextLength: 2048,
+          filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+          url: "https://example.com/m.gguf",
+          sha256: null,
+        }),
+        listModels: vi.fn().mockResolvedValue([]),
+        getCurrentModel: vi.fn().mockResolvedValue(null),
+        deleteModel: vi.fn().mockResolvedValue(undefined),
+        downloadModel: downloadMock,
+        onDownloadProgress: vi.fn().mockImplementation((cb: Listener) => {
+          listener = cb;
+          return () => {
+            listener = null;
+          };
+        }),
+      },
+    } as unknown as Window["tessera"];
+    return { api, downloadMock };
+  }
+
+  it("clears the progress bar after a failed download (no frozen snapshot beside the error)", async () => {
+    const { api, downloadMock } = buildDownloadApi({
+      downloadOutcome: "fail",
+      progressBeforeOutcome: { downloadedMb: 200, totalMb: 450, percent: 44 },
+    });
+
+    render(<ModelRuntimeCard api={api} />);
+
+    const downloadBtn = await screen.findByRole("button", {
+      name: /^Download$/i,
+    });
+    fireEvent.click(downloadBtn);
+
+    await waitFor(() => {
+      expect(downloadMock).toHaveBeenCalledTimes(1);
+    });
+    // Error banner is shown\u2026
+    await screen.findByText(/simulated download failure/i);
+    // \u2026and the progress region is NOT rendered. The gate is
+    // `busyModelId && progress`; both must be falsy for the bar to be
+    // hidden after the catch block runs.
+    expect(
+      screen.queryByTestId("model-runtime-progress"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("clears the progress bar after a successful download (positive control)", async () => {
+    const { api, downloadMock } = buildDownloadApi({
+      downloadOutcome: "ok",
+      progressBeforeOutcome: { downloadedMb: 450, totalMb: 450, percent: 100 },
+    });
+
+    render(<ModelRuntimeCard api={api} />);
+
+    const downloadBtn = await screen.findByRole("button", {
+      name: /^Download$/i,
+    });
+    fireEvent.click(downloadBtn);
+
+    await waitFor(() => {
+      expect(downloadMock).toHaveBeenCalledTimes(1);
+    });
+    // Progress region must not linger once the download settled.
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("model-runtime-progress"),
+      ).not.toBeInTheDocument();
+    });
+  });
+});

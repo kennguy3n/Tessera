@@ -9,6 +9,12 @@ set -euo pipefail
 # Usage:
 #   ./download-llama-server.sh [--compute cpu|cuda|vulkan|rocm] [--version <tag>]
 #
+# Prerequisites:
+#   - bash, curl, mkdir, tar, mktemp (standard POSIX userland)
+#   - python3 on PATH (used to resolve {url, sha256} for the requested
+#     (platform, compute) variant from sidecars/models.json)
+#   - sha256sum (Linux) / shasum (macOS) for checksum verification
+#
 # Notes:
 #   - macOS Apple Silicon: the MLX adapter is the primary path; llama-server is
 #     the CPU fallback. We never download a CUDA or Vulkan build for macOS arm64.
@@ -43,6 +49,10 @@ Usage: $0 [--compute cpu|cuda|vulkan|rocm] [--version <release-tag>]
               adapter). NVIDIA -> cuda, AMD on Linux -> rocm, cross-platform GPU
               -> vulkan.
   --version   PrismML llama.cpp release tag. Defaults to "${VERSION}".
+
+Requires: python3 on PATH (used to resolve the download URL + SHA256 from
+sidecars/models.json). Install via your distro's package manager (e.g.
+"apt install python3", "brew install python3") before running this script.
 USAGE
             exit 0
             ;;
@@ -124,9 +134,34 @@ fi
 
 # Resolve URL + checksum from the manifest when available. The manifest lists
 # llama_server.variants[] with {platform, compute, url, sha256}.
+# Fail fast with an actionable error when python3 is missing, rather than
+# falling through to the manifest-resolution skip and emitting the confusing
+# "No URL configured for variant" error far below. This is the same
+# diagnostic the user has to reach either way — surfacing it next to the
+# actual cause makes the fix obvious. (Devin Review INFO finding 28f86d56.)
+if [[ ! -f "$MODELS_JSON" ]]; then
+    echo "ERROR: Missing manifest at $MODELS_JSON" >&2
+    echo "       Run from the repo root, or set MODELS_JSON to an alternate path." >&2
+    exit 1
+fi
+if ! command -v python3 &>/dev/null; then
+    cat >&2 <<EOF
+ERROR: python3 not found on PATH.
+       This script uses python3 to resolve the download URL and SHA256 for
+       the requested (platform=$PLATFORM, compute=$COMPUTE) variant from
+       $MODELS_JSON. Install python3 via your distro's package manager:
+           Debian/Ubuntu:  apt install python3
+           Fedora/RHEL:    dnf install python3
+           macOS (brew):   brew install python3
+           Arch:           pacman -S python
+       Then re-run this script.
+EOF
+    exit 1
+fi
+
 RESOLVED_URL=""
 EXPECTED_HASH=""
-if [[ -f "$MODELS_JSON" ]] && command -v python3 &>/dev/null; then
+if true; then
     # IMPORTANT: emit URL + SHA on a single space-separated line so that
     # `read -r RESOLVED_URL EXPECTED_HASH` can split them into both variables.
     # `read` only consumes one line from stdin, so multi-line output would
