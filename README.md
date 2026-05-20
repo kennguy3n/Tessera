@@ -145,7 +145,7 @@ Tessera ships **one** Ternary-Bonsai 1.58-bit weight on disk at a time. The file
 
 | Tier | Model | MLX (Apple Silicon) | GGUF (Windows / Linux / macOS Intel) | Use case |
 |---|---|---|---|---|
-| Low (≤ 4 GB RAM) | Ternary-Bonsai 1.7B | ~248 MB · 2-bit | ~450 MB · Q1_0_g128 | Quick drafts, extraction, tagging |
+| Low (< 4 GB RAM) | Ternary-Bonsai 1.7B | ~248 MB · 2-bit | ~450 MB · Q1_0_g128 | Quick drafts, extraction, tagging |
 | Medium (4–8 GB) | Ternary-Bonsai 4B | ~600 MB · 2-bit | ~1.0 GB · Q1_0_g128 | Normal generation |
 | High (8+ GB) | Ternary-Bonsai 8B | ~1.2 GB · 2-bit | ~2.0 GB · Q1_0_g128 | Longer reports, complex artifacts |
 

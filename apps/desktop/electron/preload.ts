@@ -260,7 +260,6 @@ export interface TesseraApi {
     getCurrentModel: () => Promise<InstalledModelRecord | null>;
     planDownload: (modelId: string) => Promise<DownloadPlan>;
     downloadModel: (modelId: string) => Promise<InstalledModelRecord>;
-    swapModel: (modelId: string) => Promise<InstalledModelRecord>;
     deleteModel: () => Promise<void>;
     onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) => () => void;
   };
@@ -364,10 +363,11 @@ const api: TesseraApi = {
     getCurrentModel: () => ipcRenderer.invoke("runtime:getCurrentModel"),
     planDownload: (modelId: string) =>
       ipcRenderer.invoke("runtime:planDownload", modelId),
+    // `downloadModel` handles both fresh-install and swap (delete-then-
+    // fetch). There is intentionally no separate `swapModel` channel —
+    // see Devin Review finding 3270524691.
     downloadModel: (modelId: string) =>
       ipcRenderer.invoke("runtime:downloadModel", modelId),
-    swapModel: (modelId: string) =>
-      ipcRenderer.invoke("runtime:swapModel", modelId),
     deleteModel: () => ipcRenderer.invoke("runtime:deleteModel"),
     onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) => {
       const listener = (_event: unknown, p: ModelDownloadProgress) => callback(p);

@@ -133,7 +133,6 @@ const mockApi = {
       message: "Download Ternary-Bonsai 1.7B (450 MB).",
     }),
     downloadModel: vi.fn(),
-    swapModel: vi.fn(),
     deleteModel: vi.fn().mockResolvedValue(undefined),
     onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
   },

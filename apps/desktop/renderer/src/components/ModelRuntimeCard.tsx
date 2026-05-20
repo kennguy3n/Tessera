@@ -114,13 +114,14 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
   }, [tessera]);
 
   const performDownload = useCallback(
-    async (modelId: string, isSwap: boolean) => {
+    async (modelId: string) => {
       if (!tessera) return;
       setState((s) => ({ ...s, busyModelId: modelId, error: null, progress: null }));
       try {
-        const record = await (isSwap
-          ? tessera.runtime.swapModel(modelId)
-          : tessera.runtime.downloadModel(modelId));
+        // `runtime:downloadModel` handles both fresh-install and swap. The
+        // main process stops the sidecar before evicting any old model,
+        // so we don't need to special-case the swap path from the UI.
+        const record = await tessera.runtime.downloadModel(modelId);
         setState((s) => ({
           ...s,
           busyModelId: null,
@@ -170,6 +171,18 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
   const handleDelete = useCallback(async () => {
     if (!tessera || !state.current) return;
     try {
+      // The sidecar holds an OS file handle on the active model. On
+      // Windows that handle blocks the unlink with EPERM/EBUSY; on macOS
+      // and Linux it leaves an orphaned process listening on port 8384.
+      // Stop it before deletion. The main-process IPC handler also stops
+      // it as a defense-in-depth safety net (direct IPC callers, other
+      // windows), but doing it here keeps the local UI state
+      // (`state.status`) in sync without an extra round-trip.
+      if (state.status?.status === "running") {
+        await tessera.model.stop();
+        const status = await tessera.model.status();
+        setState((s) => ({ ...s, status }));
+      }
       await tessera.runtime.deleteModel();
       setState((s) => ({ ...s, current: null }));
     } catch (err) {
@@ -178,7 +191,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
         error: err instanceof Error ? err.message : String(err),
       }));
     }
-  }, [tessera, state.current]);
+  }, [tessera, state.current, state.status]);
 
   if (!tessera) {
     return (
@@ -266,7 +279,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
         state.recommended && (
           <div style={{ marginBottom: "var(--spacing-md)" }}>
             <Button
-              onClick={() => performDownload(state.recommended!.id, false)}
+              onClick={() => performDownload(state.recommended!.id)}
               disabled={state.busyModelId !== null}
             >
               {state.busyModelId === state.recommended.id
@@ -331,7 +344,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
                   ) : (
                     <Button
                       variant="secondary"
-                      onClick={() => performDownload(m.id, state.current !== null)}
+                      onClick={() => performDownload(m.id)}
                       disabled={state.busyModelId !== null}
                     >
                       {isBusy

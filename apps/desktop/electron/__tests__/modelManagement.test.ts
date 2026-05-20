@@ -15,6 +15,7 @@ import * as os from "os";
 import {
   loadManifest,
   resetManifestCache,
+  resetDownloadLocks,
   manifestPath,
   listModelsForPlatform,
   resolveManifestPlatform,
@@ -24,7 +25,6 @@ import {
   getCurrentModel,
   deleteCurrentModel,
   downloadModel,
-  swapModel,
   activeModelPath,
   modelsDir,
   type InstalledModelRecord,
@@ -192,6 +192,9 @@ describe("single-model enforcement", () => {
 
   beforeEach(async () => {
     workdir = await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-model-test-"));
+    // Each test gets a fresh in-flight chain so that one test's lock can't
+    // serialize the next test's downloads.
+    resetDownloadLocks();
   });
 
   afterEach(async () => {
@@ -308,7 +311,7 @@ describe("single-model enforcement", () => {
     expect(first.modelId).toBe(requested.id);
   });
 
-  it("swapModel deletes the old model file BEFORE downloading the new one", async () => {
+  it("downloadModel deletes the old model file BEFORE downloading the new one (swap path)", async () => {
     const oldRequested = makeResolved({
       id: "ternary-bonsai-1.7b-gguf",
       filename: "old.gguf",
@@ -335,7 +338,9 @@ describe("single-model enforcement", () => {
 
     // The new fetcher asserts the old file is gone at the moment we start
     // writing the new one. This is the contract the proposal calls out.
-    await swapModel(
+    // (There is no separate `swapModel` API — `downloadModel` handles the
+    // eviction internally.)
+    await downloadModel(
       workdir,
       newRequested,
       () => {},
@@ -356,6 +361,65 @@ describe("single-model enforcement", () => {
     // Disk should hold exactly ONE model file post-swap.
     const onDisk = await fsp.readdir(modelsDir(workdir));
     expect(onDisk).toEqual(["new.gguf"]);
+  });
+
+  it("downloadModel serializes concurrent calls so a swap does not race", async () => {
+    // Two concurrent downloadModel calls for different model ids must NOT
+    // race on the on-disk state. Before the lock, both could pass the
+    // "already installed?" check simultaneously, both call
+    // deleteCurrentModel, and both fight over the destination filename.
+    // Now they must complete one-after-the-other and leave a single
+    // consistent record (the second one wins).
+    resetDownloadLocks();
+    const reqA = makeResolved({
+      id: "ternary-bonsai-1.7b-gguf",
+      filename: "a.gguf",
+    });
+    const reqB = makeResolved({
+      id: "ternary-bonsai-4b-gguf",
+      filename: "b.gguf",
+      downloadSizeMb: 1000,
+    });
+
+    let activeFetchers = 0;
+    let maxConcurrent = 0;
+    const makeFetcher =
+      (body: string) =>
+      async (
+        _u: string,
+        onP: (d: number, t: number) => void,
+        d: string,
+      ) => {
+        activeFetchers += 1;
+        maxConcurrent = Math.max(maxConcurrent, activeFetchers);
+        try {
+          // Yield so the other call has a chance to interleave if the
+          // lock is missing.
+          await new Promise((r) => setImmediate(r));
+          await fsp.writeFile(d, Buffer.from(body));
+          onP(body.length, body.length);
+          return { totalBytes: body.length };
+        } finally {
+          activeFetchers -= 1;
+        }
+      };
+
+    const [a, b] = await Promise.all([
+      downloadModel(workdir, reqA, () => {}, { fetcher: makeFetcher("AAA") }),
+      downloadModel(workdir, reqB, () => {}, { fetcher: makeFetcher("BBB") }),
+    ]);
+
+    // At any moment only ONE fetcher should have been mid-flight.
+    expect(maxConcurrent).toBe(1);
+    expect(a.modelId).toBe("ternary-bonsai-1.7b-gguf");
+    expect(b.modelId).toBe("ternary-bonsai-4b-gguf");
+
+    const current = await getCurrentModel(workdir);
+    // The serialized chain commits A first then B, so the on-disk record
+    // ends up as B — and crucially there is no A artifact left behind.
+    expect(current?.modelId).toBe("ternary-bonsai-4b-gguf");
+    const onDisk = await fsp.readdir(modelsDir(workdir));
+    expect(onDisk).toEqual(["b.gguf"]);
   });
 
   it("deleteCurrentModel removes file and clears active-model.json", async () => {

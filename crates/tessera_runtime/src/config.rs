@@ -282,6 +282,21 @@ fn gguf_url(slug: &str, filename: &str) -> String {
 /// This is the canonical in-code registry. The packaged
 /// `sidecars/models.json` manifest mirrors it; `load_model_registry`
 /// prefers the manifest at runtime and falls back to this list.
+///
+/// ### About the `platform` field on GGUF entries
+///
+/// The GGUF entries in this registry hardcode
+/// [`Platform::LinuxX64`] as their `platform` value. **This is a
+/// placeholder, not a claim that the GGUF variant only runs on Linux.**
+/// GGUF is the universal "non-Apple-Silicon" format and runs identically
+/// on Linux x64, Linux arm64, Windows x64, and macOS Intel. Every
+/// non-test consumer goes through [`available_models_for_platform`],
+/// which **rewrites** `platform` to the caller's actual platform before
+/// returning the entry. The registry simply needs *some* concrete
+/// `Platform` value to satisfy the type system; `Platform::LinuxX64`
+/// was chosen as the most common non-Apple target. Do not read the
+/// raw registry directly outside of [`available_models_for_platform`]
+/// or you will see misleading platform labels.
 #[must_use]
 pub fn full_model_registry() -> Vec<ModelInfo> {
     vec![
@@ -313,6 +328,9 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             parameters: "1.7B".into(),
             quantization: "Q1_0_g128".into(),
             format: ModelFormat::Gguf,
+            // Placeholder; rewritten by available_models_for_platform.
+            // GGUF runs on every non-Apple-Silicon platform. See the
+            // doc-comment on full_model_registry.
             platform: Platform::LinuxX64,
             compute_backends: GGUF_COMPUTE.to_vec(),
             required_ram_gb: 2.0,
@@ -356,6 +374,7 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             parameters: "4B".into(),
             quantization: "Q1_0_g128".into(),
             format: ModelFormat::Gguf,
+            // Placeholder; rewritten by available_models_for_platform.
             platform: Platform::LinuxX64,
             compute_backends: GGUF_COMPUTE.to_vec(),
             required_ram_gb: 4.0,
@@ -399,6 +418,7 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             parameters: "8B".into(),
             quantization: "Q1_0_g128".into(),
             format: ModelFormat::Gguf,
+            // Placeholder; rewritten by available_models_for_platform.
             platform: Platform::LinuxX64,
             compute_backends: GGUF_COMPUTE.to_vec(),
             required_ram_gb: 8.0,

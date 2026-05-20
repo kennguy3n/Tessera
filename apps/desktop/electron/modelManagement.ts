@@ -560,16 +560,76 @@ export async function deleteCurrentModel(userDataDir: string): Promise<void> {
   await writeCurrentModel(userDataDir, null);
 }
 
+// --- Concurrency guard ---------------------------------------------------
+//
+// `downloadModel` mutates shared on-disk state: it reads `active-model.json`,
+// optionally deletes the existing model file, downloads to a `.partial`
+// sibling, verifies the checksum, and atomically renames it into place.
+// Without serialization, two concurrent calls (rapid double-click, two
+// renderer windows, two IPC channels racing) could BOTH pass the
+// `current.modelId === requested.id` check, both call `deleteCurrentModel`,
+// and both fight over the same destination filename — leaving the on-disk
+// state inconsistent with `active-model.json`.
+//
+// We serialize per Electron main process. Hardware downloads are slow
+// (hundreds of MB), so a single in-flight Promise chain is the simplest
+// correct primitive — every new caller awaits the tail of the chain and
+// then runs. The lock is keyed by `userDataDir` so unit tests using
+// different temp dirs don't accidentally block each other.
+const downloadLocks = new Map<string, Promise<unknown>>();
+
+function withDownloadLock<T>(
+  userDataDir: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const prev = downloadLocks.get(userDataDir) ?? Promise.resolve();
+  // Swallow upstream errors in the chained `then` so a single failed
+  // download does not poison subsequent callers — they should still get to
+  // run with a clean slate.
+  const next = prev.catch(() => undefined).then(fn);
+  // The *stored* lock-tail is a swallowed copy so Node doesn't report it
+  // as an unhandled rejection (the original `next` is returned to the
+  // caller, who is responsible for handling its rejection via await /
+  // .catch). Subsequent callers chain off this swallowed tail and so
+  // can't be poisoned by an earlier failure either.
+  const swallowed = next.catch(() => undefined);
+  downloadLocks.set(userDataDir, swallowed);
+  // Clean up the slot once this call settles AND it's still the tail of
+  // the chain. We can't unconditionally delete because another caller may
+  // have already chained onto `swallowed`.
+  swallowed.finally(() => {
+    if (downloadLocks.get(userDataDir) === swallowed) {
+      downloadLocks.delete(userDataDir);
+    }
+  });
+  return next;
+}
+
 /**
  * Download the requested model, enforcing single-model storage. If a
  * different model is currently installed it is deleted FIRST. After
  * download we verify SHA256 (when the manifest provides one).
+ *
+ * Concurrent calls (same or different `userDataDir`) are serialized by an
+ * in-process lock, so rapid double-clicks and parallel IPC invocations no
+ * longer race on the on-disk model file.
  */
 export async function downloadModel(
   userDataDir: string,
   requested: ResolvedModel,
   onProgress: (p: DownloadProgress) => void,
   deps: DownloadDeps = {},
+): Promise<InstalledModelRecord> {
+  return withDownloadLock(userDataDir, () =>
+    downloadModelLocked(userDataDir, requested, onProgress, deps),
+  );
+}
+
+async function downloadModelLocked(
+  userDataDir: string,
+  requested: ResolvedModel,
+  onProgress: (p: DownloadProgress) => void,
+  deps: DownloadDeps,
 ): Promise<InstalledModelRecord> {
   const fetcher = deps.fetcher ?? defaultFetcher;
   const hasher = deps.hasher ?? defaultHasher;
@@ -646,19 +706,6 @@ export async function downloadModel(
   return record;
 }
 
-/**
- * Swap to a different model. Equivalent to `downloadModel` but explicitly
- * named — the underlying enforcement is identical.
- */
-export async function swapModel(
-  userDataDir: string,
-  requested: ResolvedModel,
-  onProgress: (p: DownloadProgress) => void,
-  deps: DownloadDeps = {},
-): Promise<InstalledModelRecord> {
-  return downloadModel(userDataDir, requested, onProgress, deps);
-}
-
 // --- Testing hooks ------------------------------------------------------
 
 /**
@@ -666,4 +713,13 @@ export async function swapModel(
  */
 export function resetManifestCache(): void {
   cachedManifest = null;
+}
+
+/**
+ * Drop any in-flight download-lock chains. Production callers should never
+ * touch this; tests call it in `beforeEach` to make sure no stale Promise
+ * from a previous test serializes the next one.
+ */
+export function resetDownloadLocks(): void {
+  downloadLocks.clear();
 }

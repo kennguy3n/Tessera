@@ -42,16 +42,23 @@ export default function RuntimeStatus({ compact = true }: RuntimeStatusProps) {
   const [snap, setSnap] = useState<Snapshot>(INITIAL_SNAPSHOT);
   const [expanded, setExpanded] = useState(false);
 
-  const poll = useCallback(async () => {
+  // Platform info (RAM, CPU/GPU backends, preferred format) is derived
+  // from hardware and does not change at runtime. The first
+  // `detectPlatform()` call blocks the main process for ~3-9 seconds while
+  // it inspects `nvidia-smi` / `vulkaninfo` / `/opt/rocm`, so we MUST NOT
+  // include it in the 5-second poll — doing so used to pin a worker
+  // thread for the lifetime of the page. We fetch it exactly once on
+  // mount and then poll only the cheap `status` + `getCurrentModel`
+  // values.
+  const pollStatus = useCallback(async () => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
     if (!api) return;
     try {
-      const [status, current, platform] = await Promise.all([
+      const [status, current] = await Promise.all([
         api.model.status(),
         api.runtime ? api.runtime.getCurrentModel() : Promise.resolve(null),
-        api.runtime ? api.runtime.detectPlatform() : Promise.resolve(null),
       ]);
-      setSnap({ status, current, platform });
+      setSnap((prev) => ({ ...prev, status, current }));
     } catch {
       setSnap((prev) => ({
         ...prev,
@@ -61,10 +68,27 @@ export default function RuntimeStatus({ compact = true }: RuntimeStatusProps) {
   }, []);
 
   useEffect(() => {
-    poll();
-    const interval = setInterval(poll, 5000);
-    return () => clearInterval(interval);
-  }, [poll]);
+    let cancelled = false;
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (api?.runtime) {
+      api.runtime
+        .detectPlatform()
+        .then((platform) => {
+          if (!cancelled) setSnap((prev) => ({ ...prev, platform }));
+        })
+        .catch(() => {
+          // Platform detection is informational — a failure shouldn't
+          // break the status pill, so leave `platform` null and let the
+          // status poll surface any runtime error.
+        });
+    }
+    pollStatus();
+    const interval = setInterval(pollStatus, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [pollStatus]);
 
   const { status, current, platform } = snap;
   const statusColor = getStatusColor(status.status);

@@ -20,6 +20,17 @@ import {
   type ResolvedModel,
 } from "./modelManagement";
 
+// Mirrors `ExtractedItem` in apps/desktop/renderer/src/types/ipc.ts. We
+// duplicate the type here instead of crossing the renderer/main module
+// boundary so that ipc.ts stays free of UI imports. Any change to the
+// schema must be made in both places.
+interface ExtractedItem {
+  itemType: "task" | "decision";
+  text: string;
+  sourceCitation: string;
+  confidence: number;
+}
+
 async function getValidAccessToken(provider: string): Promise<string> {
   const stored = tokenVault.getTokens(provider);
   if (!stored) throw new Error(`${provider} not connected`);
@@ -462,6 +473,32 @@ export function registerIpcHandlers(): void {
     return app.getPath("userData");
   }
 
+  /**
+   * Stop the llama-server child process if it is currently running.
+   *
+   * The sidecar holds an OS-level file handle on the active model file
+   * (mapped/read by `llama-server`). On Windows that handle blocks
+   * `fsp.unlink`/`rename` with EPERM/EBUSY, so a swap or delete that does
+   * not stop the sidecar first will fail. On macOS / Linux the unlink
+   * succeeds (the open fd keeps the inode alive) but the orphaned sidecar
+   * still holds port 8384 and continues serving the now-deleted model,
+   * which collides with the next `model:start` and confuses
+   * `model:status`.
+   *
+   * Every IPC entry-point that mutates the on-disk model file
+   * (`runtime:downloadModel`, `runtime:deleteModel`) calls this BEFORE the
+   * mutation. The renderer is expected to do the same as a UX nicety, but
+   * we treat the server-side as the authoritative enforcement point so
+   * that direct IPC callers (tests, other windows, future automation) get
+   * the same correctness.
+   */
+  async function stopSidecarIfRunning(): Promise<void> {
+    const sidecar = getModelSidecar();
+    if (sidecar && sidecar.isRunning) {
+      await sidecar.stop();
+    }
+  }
+
   function loadResolvedManifest() {
     // In production the manifest is bundled into <resources>/sidecars and
     // does not change at runtime, so the path-keyed cache in modelManagement
@@ -526,16 +563,22 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("runtime:downloadModel", async (event, modelId: string) => {
     const requested = findModelOrThrow(modelId);
-    return downloadModel(userDataDir(), requested, progressEmitter(event));
-  });
-
-  ipcMain.handle("runtime:swapModel", async (event, modelId: string) => {
-    const requested = findModelOrThrow(modelId);
-    // swap = delete-then-download; downloadModel handles the eviction.
+    // If a different model is already installed, `downloadModel` will
+    // evict it before fetching the new one. The eviction unlinks the
+    // file, so we MUST stop the sidecar first — it has the file open.
+    // There is intentionally no separate `runtime:swapModel` channel:
+    // `downloadModel` already handles both fresh-install and swap, so a
+    // second handler that called the same function only invited drift
+    // (see Devin Review finding 3270524691).
+    await stopSidecarIfRunning();
     return downloadModel(userDataDir(), requested, progressEmitter(event));
   });
 
   ipcMain.handle("runtime:deleteModel", async () => {
+    // Stop the sidecar before unlinking. See `stopSidecarIfRunning` doc
+    // for the OS-level rationale (EPERM/EBUSY on Windows, orphaned
+    // process on macOS / Linux).
+    await stopSidecarIfRunning();
     await deleteCurrentModel(userDataDir());
   });
 
@@ -869,7 +912,42 @@ export function registerIpcHandlers(): void {
       const bridge = getBridge();
       if (!bridge) throw new Error("Native bridge not available");
       const json = bridge.bridgeExtractTasksDecisions(sourceId);
-      return JSON.parse(json) as unknown[];
+      // Validate at the IPC boundary so a misbehaving Rust bridge never
+      // ships shape-violating data to the renderer (which would silently
+      // render `undefined` confidence / itemType strings). Drop anything
+      // that doesn't match the contract instead of casting blindly.
+      const parsed: unknown = JSON.parse(json);
+      if (!Array.isArray(parsed)) {
+        throw new Error(
+          "extractTasksDecisions: bridge returned non-array payload",
+        );
+      }
+      const items: ExtractedItem[] = [];
+      for (const raw of parsed) {
+        if (!raw || typeof raw !== "object") continue;
+        const rec = raw as Record<string, unknown>;
+        const itemType =
+          rec.itemType === "task" || rec.itemType === "decision"
+            ? rec.itemType
+            : null;
+        const text = typeof rec.text === "string" ? rec.text : null;
+        const sourceCitation =
+          typeof rec.sourceCitation === "string" ? rec.sourceCitation : null;
+        const confidence =
+          typeof rec.confidence === "number" && Number.isFinite(rec.confidence)
+            ? rec.confidence
+            : null;
+        if (
+          itemType === null ||
+          text === null ||
+          sourceCitation === null ||
+          confidence === null
+        ) {
+          continue;
+        }
+        items.push({ itemType, text, sourceCitation, confidence });
+      }
+      return items;
     },
   );
 

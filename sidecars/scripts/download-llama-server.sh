@@ -131,15 +131,26 @@ if [[ -f "$MODELS_JSON" ]] && command -v python3 &>/dev/null; then
     # `read -r RESOLVED_URL EXPECTED_HASH` can split them into both variables.
     # `read` only consumes one line from stdin, so multi-line output would
     # leave EXPECTED_HASH empty and silently skip checksum verification.
+    #
+    # The manifest path, platform key, and compute key are passed to Python
+    # via argv (sys.argv[1..3]) instead of being interpolated into the
+    # heredoc body. Direct shell interpolation inside `python3 - <<PY` is
+    # fragile: a path containing `"`, `\`, or even a stray newline would
+    # produce syntactically-invalid Python and silently break manifest
+    # resolution. Passing via argv keeps the Python source static and
+    # treats every input as data, not code.
     read -r RESOLVED_URL EXPECTED_HASH <<EOF
-$(python3 - <<PY
+$(python3 - "$MODELS_JSON" "$PLATFORM" "$COMPUTE" <<'PY'
 import json
-with open("$MODELS_JSON") as f:
+import sys
+
+manifest_path, platform, compute = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(manifest_path) as f:
     data = json.load(f)
 url = ""
 sha = ""
 for v in data.get("llama_server", {}).get("variants", []):
-    if v.get("platform") == "$PLATFORM" and v.get("compute") == "$COMPUTE":
+    if v.get("platform") == platform and v.get("compute") == compute:
         url = v.get("url") or ""
         sha = v.get("sha256") or ""
         break

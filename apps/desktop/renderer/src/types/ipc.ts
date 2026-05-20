@@ -141,8 +141,9 @@ export interface RuntimeApi {
   listModels: () => Promise<ResolvedModel[]>;
   getCurrentModel: () => Promise<InstalledModelRecord | null>;
   planDownload: (modelId: string) => Promise<DownloadPlan>;
+  // `downloadModel` handles both fresh-install and swap (delete-then-fetch).
+  // There is intentionally no separate `swapModel` channel.
   downloadModel: (modelId: string) => Promise<InstalledModelRecord>;
-  swapModel: (modelId: string) => Promise<InstalledModelRecord>;
   deleteModel: () => Promise<void>;
   onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) => () => void;
 }
