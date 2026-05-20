@@ -107,16 +107,25 @@ export default function ArtifactEditorPage() {
         // applies it to an in-memory clone of the artifact before exporting,
         // leaving the editable `{{icon:lucide:home}}`-style tokens untouched
         // in the database.
+        // Compute the override in two independent stages so the draft-vs-persisted
+        // check is *always* performed, even when icon embedding is a no-op
+        // (e.g. all `{{icon:...}}` tokens are unresolvable, so `embedIcons`
+        // returns the input unchanged). Without this split the icon branch
+        // could exit with `contentOverride === null` and the persisted (stale)
+        // content would be exported instead of the live draft.
         let contentOverride: string | null = null;
         if (ICON_AWARE_FORMATS.has(format) && /\{\{icon:/.test(liveContent)) {
           const embedded = embedIcons(liveContent);
           if (embedded !== liveContent) {
             contentOverride = embedded;
           }
-        } else if (liveContent !== (artifact?.content ?? "")) {
-          // The Rust exporter needs to see the live draft, not the
-          // persisted snapshot, even when icon-token embedding is a
-          // no-op. Pass the raw live content as the override.
+        }
+        // Independent of icon embedding: if the live editor draft has
+        // diverged from the persisted snapshot, the export must see the
+        // draft. `embedIcons` is content-preserving when nothing resolves,
+        // so the icon branch (above) and the draft branch (here) don't
+        // conflict — whichever produced a meaningful override wins.
+        if (contentOverride === null && liveContent !== (artifact?.content ?? "")) {
           contentOverride = liveContent;
         }
 

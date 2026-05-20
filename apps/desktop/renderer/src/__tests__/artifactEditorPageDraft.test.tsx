@@ -20,6 +20,23 @@ const baseArtifact = {
   version: 1,
 };
 
+// Sheet content that includes an UNRESOLVABLE icon token. The `lucide:does-not-exist`
+// is intentionally not a real icon name — `embedIcons` will pass the content
+// through unchanged, so the icon branch of `handleExport` produces no override.
+// This is the exact precondition for the BUG_pr-review-job-f080f66818c644baa7573bf023ef2675_0001
+// regression: with the previous if/else-if, the draft-vs-persisted fallback
+// would never run for icon-aware formats whose tokens all fail to resolve.
+const SHEET_WITH_UNRESOLVABLE_ICON = JSON.stringify({
+  columns: ["Col"],
+  rows: [["original {{icon:lucide:does-not-exist}}"]],
+});
+
+const artifactWithUnresolvableIcon = {
+  ...baseArtifact,
+  id: "art-icon-draft",
+  content: SHEET_WITH_UNRESOLVABLE_ICON,
+};
+
 describe("ArtifactEditorPage live-draft export", () => {
   beforeEach(() => {
     window.tessera.artifacts.get = vi.fn().mockResolvedValue(baseArtifact);
@@ -75,5 +92,65 @@ describe("ArtifactEditorPage live-draft export", () => {
     expect(contentOverride).not.toBeNull();
     expect(contentOverride).toContain("edited-live");
     expect(contentOverride).not.toContain("original");
+  });
+
+  it("exports the live draft when icon-aware format has only unresolvable icon tokens (regression for BUG_pr-review-job-f080f66818c644baa7573bf023ef2675_0001)", async () => {
+    // Override the default mocks for this test to use the icon-laden fixture.
+    window.tessera.artifacts.get = vi
+      .fn()
+      .mockResolvedValue(artifactWithUnresolvableIcon);
+
+    render(
+      <MemoryRouter initialEntries={["/artifact/art-icon-draft"]}>
+        <Routes>
+          <Route path="/artifact/:id" element={<ArtifactEditorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // Wait for the sheet editor — the cell text contains the unresolvable token.
+    await waitFor(() => {
+      expect(
+        screen.getByText(/original \{\{icon:lucide:does-not-exist\}\}/),
+      ).toBeInTheDocument();
+    });
+
+    // Edit the cell.
+    fireEvent.doubleClick(
+      screen.getByText(/original \{\{icon:lucide:does-not-exist\}\}/),
+    );
+    const inputs = await screen.findAllByDisplayValue(
+      "original {{icon:lucide:does-not-exist}}",
+    );
+    fireEvent.change(inputs[0], {
+      target: { value: "edited-live {{icon:lucide:does-not-exist}}" },
+    });
+    fireEvent.blur(inputs[0]);
+
+    // Export as HTML — icon-aware, but the icon token is unresolvable. Before
+    // the fix, `embedded === liveContent` would leave `contentOverride === null`
+    // and the persisted snapshot would be exported instead of the draft.
+    const exportSelect = screen.getByLabelText(
+      "Export artifact",
+    ) as HTMLSelectElement;
+    await act(async () => {
+      fireEvent.change(exportSelect, { target: { value: "html" } });
+    });
+
+    await waitFor(() => {
+      expect(window.tessera.artifacts.exportArtifact).toHaveBeenCalled();
+    });
+    const mockFn = window.tessera.artifacts.exportArtifact as unknown as {
+      mock: { calls: unknown[][] };
+    };
+    const call = mockFn.mock.calls[0];
+    const contentOverride = call[2] as string | null;
+    expect(contentOverride).not.toBeNull();
+    expect(contentOverride).toContain("edited-live");
+    // The unresolvable token must pass through unchanged (embedIcons is a
+    // no-op for tokens it can't resolve); the contract here is that the
+    // *live* version of the content reaches the exporter, not that the
+    // tokens get rewritten.
+    expect(contentOverride).toContain("{{icon:lucide:does-not-exist}}");
   });
 });
