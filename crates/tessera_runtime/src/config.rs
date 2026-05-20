@@ -464,12 +464,39 @@ pub fn available_models() -> Vec<ModelInfo> {
 
 /// Pick the model that matches the device tier on the given platform.
 ///
-/// Returns the lowest-tier variant if the requested tier is not in
-/// the registry (this never happens for the shipped registry but
-/// keeps the call infallible for callers).
+/// Returns the first variant in the platform's list if the requested
+/// tier is not present (this never happens for the shipped registry
+/// but keeps the call infallible for callers).
+///
+/// If the per-platform list is empty (would only happen if a new
+/// [`Platform`] variant were added without a matching format entry in
+/// [`full_model_registry`]), this falls back to the full registry with
+/// the `platform` field rewritten, so the call remains infallible from
+/// the caller's perspective. The final assertion only fires if a
+/// developer empties [`full_model_registry`] entirely — that's a build
+/// bug, not a runtime condition.
 #[must_use]
 pub fn select_model(tier: DeviceTier, platform: Platform) -> ModelInfo {
-    let mut models = available_models_for_platform(platform);
+    let models = available_models_for_platform(platform);
+    if !models.is_empty() {
+        return pick_or_first(models, tier);
+    }
+    let mut all = full_model_registry();
+    assert!(
+        !all.is_empty(),
+        "full_model_registry() is empty — this is a build bug; the registry must always include at least one ModelInfo variant",
+    );
+    for m in &mut all {
+        m.platform = platform;
+    }
+    pick_or_first(all, tier)
+}
+
+/// Pick the entry whose tier matches; otherwise return the first entry.
+///
+/// `models` must be non-empty; callers in this module guarantee that
+/// before invoking. The panic is unreachable in practice.
+fn pick_or_first(mut models: Vec<ModelInfo>, tier: DeviceTier) -> ModelInfo {
     if let Some(idx) = models.iter().position(|m| m.tier == tier) {
         models.swap_remove(idx)
     } else {
@@ -775,6 +802,54 @@ mod tests {
         let m = select_model_for_tier(DeviceTier::High);
         assert_eq!(m.context_length, 8192);
         assert_no_q4km(&m);
+    }
+
+    #[test]
+    fn pick_or_first_falls_back_when_tier_missing() {
+        // Two-entry vec missing the requested High tier; should return
+        // the first entry rather than panic.
+        let mut models = full_model_registry();
+        models.retain(|m| m.tier != DeviceTier::High);
+        assert!(!models.is_empty());
+        let m = pick_or_first(models, DeviceTier::High);
+        // Any tier is acceptable; the contract is just "non-panicking".
+        assert!(matches!(
+            m.tier,
+            DeviceTier::Low | DeviceTier::Medium | DeviceTier::High
+        ));
+    }
+
+    #[test]
+    fn pick_or_first_returns_matching_tier() {
+        let models = full_model_registry();
+        let m = pick_or_first(models, DeviceTier::Medium);
+        assert_eq!(m.tier, DeviceTier::Medium);
+    }
+
+    #[test]
+    fn full_model_registry_is_non_empty() {
+        // Invariant select_model relies on for its defensive fallback.
+        assert!(!full_model_registry().is_empty());
+    }
+
+    #[test]
+    fn available_models_non_empty_for_every_platform() {
+        // Invariant select_model relies on to avoid the defensive
+        // fallback. If a Platform variant is added without a matching
+        // format in the registry, this fails and points at the gap.
+        for p in [
+            Platform::MacosAppleSilicon,
+            Platform::MacosIntel,
+            Platform::WindowsX64,
+            Platform::LinuxX64,
+            Platform::LinuxArm64,
+        ] {
+            assert!(
+                !available_models_for_platform(p).is_empty(),
+                "available_models_for_platform({p:?}) returned an empty list; \
+                 add a registry entry whose format matches {p:?}.preferred_format()",
+            );
+        }
     }
 
     #[test]

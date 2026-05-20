@@ -122,11 +122,17 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
         // main process stops the sidecar before evicting any old model,
         // so we don't need to special-case the swap path from the UI.
         const record = await tessera.runtime.downloadModel(modelId);
+        // The main-process swap path stops the sidecar (so the OS file
+        // handle on the old model is released before unlink). Re-fetch
+        // status so the UI doesn't keep showing the pre-swap "running"
+        // indicator when the runtime is actually stopped.
+        const status = await tessera.model.status().catch(() => null);
         setState((s) => ({
           ...s,
           busyModelId: null,
           current: record,
           progress: null,
+          status: status ?? s.status,
         }));
       } catch (err) {
         setState((s) => ({
