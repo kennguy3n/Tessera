@@ -1109,7 +1109,10 @@ describe("single-model enforcement", () => {
     // the current model — this is the proof that the swap's commit
     // (writeCurrentModel(b)) happened strictly before the reinstall
     // acquired the lock.
-    const reinstall = (async () => {
+    const reinstall: Promise<{
+      rec: InstalledModelRecord;
+      currentAtHook: InstalledModelRecord | null;
+    }> = (async () => {
       await Promise.resolve(); // yield so swap acquires the lock first
       let currentAtHook: InstalledModelRecord | null = null;
       const rec = await downloadModel(workdir, a, () => {}, {

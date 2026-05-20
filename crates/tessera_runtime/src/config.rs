@@ -770,8 +770,7 @@ mod tests {
         // download_size_mb; for non-archive formats, disk_size_mb >=
         // download_size_mb.
         for m in full_model_registry() {
-            let is_archive =
-                m.filename.ends_with(".tar.gz") || m.filename.ends_with(".tgz");
+            let is_archive = m.filename.ends_with(".tar.gz") || m.filename.ends_with(".tgz");
             if m.format == ModelFormat::Mlx && is_archive {
                 assert!(
                     m.disk_size_mb > m.download_size_mb,
@@ -988,8 +987,8 @@ mod tests {
     fn load_manifest() -> ManifestRoot {
         // CARGO_MANIFEST_DIR points at crates/tessera_runtime/.
         // Manifest lives at <workspace_root>/sidecars/models.json.
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../sidecars/models.json");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecars/models.json");
         let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
             panic!(
                 "failed to read manifest at {}: {e}. \
@@ -1058,9 +1057,18 @@ mod tests {
             assert_eq!(rm.name, mm.name, "{}: name", mm.id);
             assert_eq!(rm.parameters, mm.parameters, "{}: parameters", mm.id);
             assert_eq!(rm.quantization, mm.quantization, "{}: quantization", mm.id);
-            assert_eq!(rm.format, format_from_str(&mm.format, &mm.id), "{}: format", mm.id);
+            assert_eq!(
+                rm.format,
+                format_from_str(&mm.format, &mm.id),
+                "{}: format",
+                mm.id
+            );
             assert_eq!(rm.tier, tier_from_str(&mm.tier, &mm.id), "{}: tier", mm.id);
-            assert_eq!(rm.context_length, mm.context_length, "{}: context_length", mm.id);
+            assert_eq!(
+                rm.context_length, mm.context_length,
+                "{}: context_length",
+                mm.id
+            );
             assert_eq!(rm.filename, mm.filename, "{}: filename", mm.id);
 
             // f64 ram in manifest, f64 in registry — exact equality is
@@ -1069,7 +1077,9 @@ mod tests {
             assert!(
                 (rm.required_ram_gb - mm.required_ram_gb).abs() < f64::EPSILON,
                 "{}: required_ram_gb registry={} manifest={}",
-                mm.id, rm.required_ram_gb, mm.required_ram_gb,
+                mm.id,
+                rm.required_ram_gb,
+                mm.required_ram_gb,
             );
 
             // The critical pair: swap planner uses these to compute
@@ -1136,7 +1146,8 @@ mod tests {
                         mm.id
                     );
                     assert_eq!(
-                        rm.platform, Platform::MacosAppleSilicon,
+                        rm.platform,
+                        Platform::MacosAppleSilicon,
                         "{}: MLX registry entries must use Platform::MacosAppleSilicon",
                         mm.id
                     );
@@ -1152,7 +1163,8 @@ mod tests {
                     // available_models_for_platform; just assert it's
                     // not MacosAppleSilicon.
                     assert_ne!(
-                        rm.platform, Platform::MacosAppleSilicon,
+                        rm.platform,
+                        Platform::MacosAppleSilicon,
                         "{}: GGUF registry entries must NOT declare \
                          Platform::MacosAppleSilicon",
                         mm.id
