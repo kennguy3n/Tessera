@@ -50,6 +50,18 @@ export default function RuntimeStatus({ compact = true }: RuntimeStatusProps) {
   // thread for the lifetime of the page. We fetch it exactly once on
   // mount and then poll only the cheap `status` + `getCurrentModel`
   // values.
+  //
+  // POLLING DESIGN (Devin Review finding 3270889984): we deliberately
+  // poll `getCurrentModel` (one fsp.readFile of <1 KB JSON, cached in
+  // the OS page cache between polls) rather than wiring an event-driven
+  // `runtime:modelChanged` broadcast. The per-call cost is sub-ms on
+  // SSD, the model-installed state changes at most a handful of times
+  // per session, and the alternative would mean defining a new IPC
+  // event payload, threading emits through `downloadModel` /
+  // `deleteCurrentModel` / `downloadModelLocked`, and replacing the
+  // renderer's polling state machine with a subscribe/cleanup pattern.
+  // If `active-model.json` reads ever become hot (multiple windows,
+  // sub-second polling), revisit by adding the event channel.
   const pollStatus = useCallback(async () => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
     if (!api) return;

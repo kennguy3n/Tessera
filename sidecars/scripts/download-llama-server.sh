@@ -132,6 +132,14 @@ if [[ -f "$MODELS_JSON" ]] && command -v python3 &>/dev/null; then
     # `read` only consumes one line from stdin, so multi-line output would
     # leave EXPECTED_HASH empty and silently skip checksum verification.
     #
+    # ASSUMPTION (Devin Review finding 3270889887): space-as-delimiter is
+    # safe because llama_server.variants[].url is always an HTTP(S) URL
+    # (RFC 3986 forbids literal spaces in the path/query; they'd be
+    # %20-encoded) and the SHA is hex characters. If a future manifest
+    # adds a file:// URL with spaces, switch to a tab delimiter:
+    #   print(f"{url}\t{sha}")  +  IFS=$'\t' read -r RESOLVED_URL EXPECTED_HASH
+    # That's a 2-line change localised to this heredoc.
+    #
     # The manifest path, platform key, and compute key are passed to Python
     # via argv (sys.argv[1..3]) instead of being interpolated into the
     # heredoc body. Direct shell interpolation inside `python3 - <<PY` is
