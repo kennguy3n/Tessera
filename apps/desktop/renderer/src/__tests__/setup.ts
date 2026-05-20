@@ -88,6 +88,7 @@ const mockApi = {
     exportArtifact: vi.fn(),
     exportToFile: vi.fn().mockResolvedValue(undefined),
     exportMarp: vi.fn().mockResolvedValue(undefined),
+    exportTypst: vi.fn().mockResolvedValue(undefined),
     listVersions: vi.fn().mockResolvedValue([]),
     restoreVersion: vi.fn().mockResolvedValue({
       id: "art-1",

@@ -17,7 +17,7 @@
 use std::fmt::Write;
 use tessera_core::error::Result;
 
-use crate::generator::{GeneratedContent, GeneratedSection, SourcePack};
+use crate::generator::{GeneratedContent, GeneratedSection, SectionKind, SourcePack};
 use tessera_core::ArtifactType;
 
 #[derive(Debug, Clone, Copy)]
@@ -89,18 +89,10 @@ pub fn generate_infographic(spec: &InfographicSpec<'_>) -> Result<GeneratedConte
     front.push_str("---\n\n");
 
     let mut sections = Vec::with_capacity(1 + spec.source_packs.len());
-    sections.push(GeneratedSection {
-        heading: "__frontmatter__".to_string(),
-        body: front,
-        citation_refs: Vec::new(),
-    });
+    sections.push(GeneratedSection::frontmatter(front));
 
     if let Some(subtitle) = spec.subtitle {
-        sections.push(GeneratedSection {
-            heading: "Overview".to_string(),
-            body: format!("> {subtitle}\n"),
-            citation_refs: Vec::new(),
-        });
+        sections.push(GeneratedSection::new("Overview", format!("> {subtitle}\n")));
     }
 
     for pack in spec.source_packs {
@@ -132,6 +124,7 @@ pub fn generate_infographic(spec: &InfographicSpec<'_>) -> Result<GeneratedConte
             heading: pack.section_title.clone(),
             body,
             citation_refs: refs,
+            kind: SectionKind::Normal,
         });
     }
 
@@ -148,11 +141,7 @@ pub fn generate_landing_page(spec: &LandingPageSpec<'_>) -> Result<GeneratedCont
     let mut front = String::from("---\ntessera:\n  kind: landing_page\n---\n\n");
 
     let mut sections = Vec::new();
-    sections.push(GeneratedSection {
-        heading: "__frontmatter__".to_string(),
-        body: front.split_off(0),
-        citation_refs: Vec::new(),
-    });
+    sections.push(GeneratedSection::frontmatter(front.split_off(0)));
 
     // Hero
     let mut hero_body = String::new();
@@ -161,11 +150,7 @@ pub fn generate_landing_page(spec: &LandingPageSpec<'_>) -> Result<GeneratedCont
     if let Some(cta) = spec.hero_cta {
         let _ = writeln!(hero_body, "[{cta}](#cta)\n");
     }
-    sections.push(GeneratedSection {
-        heading: "Hero".to_string(),
-        body: hero_body,
-        citation_refs: Vec::new(),
-    });
+    sections.push(GeneratedSection::new("Hero", hero_body));
 
     // Stats bar
     if !spec.stats.is_empty() {
@@ -173,11 +158,7 @@ pub fn generate_landing_page(spec: &LandingPageSpec<'_>) -> Result<GeneratedCont
         for (num, label) in spec.stats {
             let _ = writeln!(stats_body, "**{num}** {label}");
         }
-        sections.push(GeneratedSection {
-            heading: "Stats".to_string(),
-            body: stats_body,
-            citation_refs: Vec::new(),
-        });
+        sections.push(GeneratedSection::new("Stats", stats_body));
     }
 
     // Features
@@ -191,11 +172,7 @@ pub fn generate_landing_page(spec: &LandingPageSpec<'_>) -> Result<GeneratedCont
         } else {
             body.push_str("Feature description goes here.\n");
         }
-        sections.push(GeneratedSection {
-            heading: pack.section_title.clone(),
-            body,
-            citation_refs: Vec::new(),
-        });
+        sections.push(GeneratedSection::new(pack.section_title.clone(), body));
     }
 
     Ok(GeneratedContent {
