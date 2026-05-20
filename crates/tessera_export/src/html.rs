@@ -76,12 +76,20 @@ pub fn export_html(artifact: &Artifact, citations: &[Citation]) -> String {
         // is replaced with inline `<svg>` content before paint. The CDN
         // script in this branch is therefore a redundant secondary path
         // that only activates outside the Electron shell.
+        // Render every diagram concurrently via `Promise.all` rather than a
+        // serial `for ... of await`. Mermaid's `render()` is asynchronous
+        // (it walks the DSL through its parser and lays the diagram out in
+        // an offscreen DOM), so a sequential loop would block each diagram
+        // on the previous one — meaningfully slow for documents with many
+        // architecture / sequence diagrams. Each iteration carries its own
+        // try/catch so a single broken DSL block produces an inline error
+        // panel without aborting the rest of the batch.
         output.push_str("  <script type=\"module\">\n");
         output.push_str(
             "    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';\n",
         );
         output.push_str("    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', themeVariables: { primaryColor: '#7C3AED', primaryBorderColor: '#5B21B6', lineColor: '#6B7280' } });\n");
-        output.push_str("    for (const el of document.querySelectorAll('div.mermaid')) {\n");
+        output.push_str("    await Promise.all([...document.querySelectorAll('div.mermaid')].map(async (el) => {\n");
         output.push_str("      const dsl = el.textContent.trim();\n");
         output.push_str("      try {\n");
         output.push_str(
@@ -89,7 +97,7 @@ pub fn export_html(artifact: &Artifact, citations: &[Citation]) -> String {
         );
         output.push_str("        el.innerHTML = svg;\n");
         output.push_str("      } catch (err) { el.innerHTML = '<pre>Mermaid render error: ' + (err && err.message) + '</pre>'; }\n");
-        output.push_str("    }\n");
+        output.push_str("    }));\n");
         output.push_str("  </script>\n");
     }
 

@@ -78,6 +78,62 @@ describe("buildLandingPreviewHtml", () => {
     expect(html).toContain("&lt;img");
   });
 
+  it("neutralises javascript: URLs in hero and final-CTA hrefs", () => {
+    // Regression for Devin Review ANALYSIS_pr-review-job-157bbcc3...-0004.
+    // The JSON is editable so a user-authored `javascript:` scheme must not
+    // produce an executable `href` in either the preview or any exported
+    // HTML. `escapeHtml` alone does not strip URL schemes — the editor must
+    // route every href through `sanitizeUrl`, which falls back to `#`.
+    const html = buildLandingPreviewHtml({
+      title: "x",
+      hero: {
+        headline: "h",
+        subheadline: "s",
+        cta: "Click me",
+        ctaUrl: "javascript:alert(document.cookie)",
+      },
+      features: [],
+      stats: [],
+      testimonials: [],
+      cta: {
+        headline: "Final",
+        buttonText: "Go",
+        buttonUrl: " JavaScript:alert(1)",
+      },
+      colorScheme: {},
+    });
+    expect(html).not.toMatch(/href="javascript:/i);
+    expect(html).not.toContain("alert");
+    // Both hrefs should have been neutralised to "#".
+    const heroHrefMatches = html.match(/landing-hero-cta" href="([^"]*)"/);
+    expect(heroHrefMatches?.[1]).toBe("#");
+    const finalHrefMatches = html.match(/landing-final-cta-button" href="([^"]*)"/);
+    expect(finalHrefMatches?.[1]).toBe("#");
+  });
+
+  it("preserves safe URL schemes (http, https, mailto, anchors, paths)", () => {
+    const html = buildLandingPreviewHtml({
+      title: "x",
+      hero: {
+        headline: "h",
+        subheadline: "s",
+        cta: "A",
+        ctaUrl: "https://example.com/signup",
+      },
+      features: [],
+      stats: [],
+      testimonials: [],
+      cta: {
+        headline: "Final",
+        buttonText: "B",
+        buttonUrl: "mailto:hi@example.com",
+      },
+      colorScheme: {},
+    });
+    expect(html).toContain('href="https://example.com/signup"');
+    expect(html).toContain('href="mailto:hi@example.com"');
+  });
+
   it("drops malformed feature icon specs instead of letting them break out of the token", () => {
     // Regression for Devin Review ANALYSIS_pr-review-job-...-0001 — mirror
     // of the InfographicEditor test. A spec containing `}}` would otherwise

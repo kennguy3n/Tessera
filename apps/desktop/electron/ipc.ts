@@ -327,6 +327,19 @@ export function registerIpcHandlers(): void {
         outputPath?: string;
       },
     ) => {
+      // Path safety: same allowlist gate as `artifacts:exportToFile` and
+      // `artifacts:exportMarp` — a compromised renderer must not be able to
+      // turn the Typst export IPC into a write-anywhere primitive by
+      // supplying e.g. `/etc/cron.d/malicious` as the output path. Relative
+      // / undefined paths fall through to `runTypstExport`'s temp-file
+      // default (which uses `os.tmpdir()`, itself in the allowlist).
+      if (req.outputPath && path.isAbsolute(req.outputPath)) {
+        if (!isSafeExportPath(req.outputPath, getSafeExportRoots())) {
+          throw new Error(
+            `Export path is outside the allowed locations (Downloads, Documents, Desktop, Home, App data, system temp): ${req.outputPath}`,
+          );
+        }
+      }
       const { runTypstExport } = await import("./typstExport");
       return runTypstExport({
         markup: req.markup,

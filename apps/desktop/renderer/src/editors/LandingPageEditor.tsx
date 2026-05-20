@@ -18,6 +18,7 @@ import IconPicker, { type IconPickerValue } from "../components/IconPicker";
 import { embedIcons } from "../services/iconResolver";
 import { sanitizeCssColor } from "../utils/cssColor";
 import { sanitizeIconSpec } from "../utils/iconSpec";
+import { sanitizeUrl } from "../utils/safeUrl";
 import { Plus, Trash2, X } from "lucide-react";
 
 export interface LandingPageHero {
@@ -481,8 +482,15 @@ export function buildLandingPreviewHtml(data: LandingPageContent): string {
   );
   const accent = sanitizeCssColor(data.colorScheme.accent, DEFAULT_ACCENT);
 
+  // Defense in depth: even though the JSON should already be trustworthy
+  // (locally authored on this machine), the `href` slot is the highest-risk
+  // attribute in the rendered preview — a `javascript:` scheme would
+  // execute on click in the live `dangerouslySetInnerHTML` preview AND in
+  // any exported HTML the user shares. `escapeHtml` does NOT strip URL
+  // schemes, so we route every href through `sanitizeUrl` first, which
+  // falls back to `#` for unsafe schemes.
   const heroCta = data.hero.cta
-    ? `<a class="landing-hero-cta" href="${escapeHtml(data.hero.ctaUrl ?? "#")}">${escapeHtml(data.hero.cta)}</a>`
+    ? `<a class="landing-hero-cta" href="${escapeHtml(sanitizeUrl(data.hero.ctaUrl, "#"))}">${escapeHtml(data.hero.cta)}</a>`
     : "";
 
   const featuresHtml = data.features
@@ -529,7 +537,7 @@ export function buildLandingPreviewHtml(data: LandingPageContent): string {
   const finalCta = data.cta?.buttonText
     ? `<section class="landing-final-cta">
   <h2>${escapeHtml(data.cta.headline)}</h2>
-  <a class="landing-final-cta-button" href="${escapeHtml(data.cta.buttonUrl ?? "#")}">${escapeHtml(data.cta.buttonText)}</a>
+  <a class="landing-final-cta-button" href="${escapeHtml(sanitizeUrl(data.cta.buttonUrl, "#"))}">${escapeHtml(data.cta.buttonText)}</a>
 </section>`
     : "";
 
