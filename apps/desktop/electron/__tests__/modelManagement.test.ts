@@ -397,6 +397,71 @@ describe("single-model enforcement", () => {
     const onDisk = await fsp.readdir(modelsDir(workdir));
     expect(onDisk).toEqual([]);
   });
+
+  it("downloadModel cleans up the .partial file when the fetch fails mid-stream", async () => {
+    // If the network drops after some bytes are written, we don't want a
+    // ".gguf.partial" relic sitting in modelsDir pretending to be a model.
+    // The download must atomically rename only on full success.
+    const requested = makeResolved();
+    await expect(
+      downloadModel(
+        workdir,
+        requested,
+        () => {},
+        {
+          fetcher: async (_u, onP, d) => {
+            await fsp.writeFile(d, Buffer.from("half"));
+            onP(4, 100);
+            throw new Error("simulated network failure");
+          },
+        },
+      ),
+    ).rejects.toThrow(/simulated network failure/);
+    const onDisk = await fsp.readdir(modelsDir(workdir));
+    expect(onDisk).toEqual([]);
+    expect(fs.existsSync(activeModelPath(workdir))).toBe(false);
+  });
+
+  it("downloadModel writes to a .partial sibling and only renames after sha verification", async () => {
+    // Verifies the atomic rename contract: the final filename must not
+    // appear on disk until the hash check has passed. Otherwise a process
+    // crash between write and verify could leave a bad file at the canonical
+    // path.
+    const validHash = "9f2feb1efb6fd87cd84ffd25b5b220e51eff9c5d2c2ade71daa0c46a39b18cd9";
+    const requested = makeResolved({ sha256: validHash });
+    const payload = Buffer.from("contents-that-hash-to-validHash");
+
+    const observedDestPaths: string[] = [];
+    const hasher = async (filePath: string) => {
+      observedDestPaths.push(filePath);
+      // Confirm hashing happens against the .partial, not the final filename.
+      expect(filePath.endsWith(".partial")).toBe(true);
+      const finalPath = path.join(modelsDir(workdir), requested.filename);
+      expect(fs.existsSync(finalPath)).toBe(false);
+      return validHash;
+    };
+
+    await downloadModel(
+      workdir,
+      requested,
+      () => {},
+      {
+        fetcher: async (_u, onP, d) => {
+          expect(d.endsWith(".partial")).toBe(true);
+          await fsp.writeFile(d, payload);
+          onP(payload.byteLength, payload.byteLength);
+          return { totalBytes: payload.byteLength };
+        },
+        hasher,
+      },
+    );
+    expect(observedDestPaths.length).toBe(1);
+    const finalPath = path.join(modelsDir(workdir), requested.filename);
+    expect(fs.existsSync(finalPath)).toBe(true);
+    expect(fs.existsSync(`${finalPath}.partial`)).toBe(false);
+    const onDisk = await fsp.readdir(modelsDir(workdir));
+    expect(onDisk).toEqual([requested.filename]);
+  });
 });
 
 // --- Manifest <-> production model ---------------------------------------

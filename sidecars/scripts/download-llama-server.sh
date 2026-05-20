@@ -70,9 +70,9 @@ case "$OS" in
         ;;
     Darwin)
         case "$ARCH" in
-            x86_64)  PLATFORM="macos-x64" ;;
+            x86_64)  PLATFORM="macos-intel" ;;
             arm64)
-                PLATFORM="macos-arm64"
+                PLATFORM="macos-apple-silicon"
                 # On Apple Silicon, Tessera uses MLX as the primary path. The
                 # llama-server binary is the CPU fallback; the upstream archive
                 # ships a single arm64 build (no separate CUDA/Vulkan variants
@@ -127,20 +127,23 @@ fi
 RESOLVED_URL=""
 EXPECTED_HASH=""
 if [[ -f "$MODELS_JSON" ]] && command -v python3 &>/dev/null; then
+    # IMPORTANT: emit URL + SHA on a single space-separated line so that
+    # `read -r RESOLVED_URL EXPECTED_HASH` can split them into both variables.
+    # `read` only consumes one line from stdin, so multi-line output would
+    # leave EXPECTED_HASH empty and silently skip checksum verification.
     read -r RESOLVED_URL EXPECTED_HASH <<EOF
 $(python3 - <<PY
-import json, sys
+import json
 with open("$MODELS_JSON") as f:
     data = json.load(f)
 url = ""
 sha = ""
 for v in data.get("llama_server", {}).get("variants", []):
     if v.get("platform") == "$PLATFORM" and v.get("compute") == "$COMPUTE":
-        url = v.get("url", "")
-        sha = v.get("sha256", "")
+        url = v.get("url") or ""
+        sha = v.get("sha256") or ""
         break
-print(url)
-print(sha)
+print(f"{url} {sha}")
 PY
 )
 EOF

@@ -201,13 +201,29 @@ function commandExists(cmd: string, args: string[] = ["-L"]): boolean {
   }
 }
 
+// Cached hardware-detection results. Hardware doesn't change at runtime, so we
+// pay the (up to ~3s) cost of `execFileSync(nvidia-smi)` / `vulkaninfo` /
+// `/opt/rocm` lookups exactly once per Electron main process — subsequent
+// `detectPlatformInfo()` calls (triggered by every model IPC) return instantly
+// instead of blocking the event loop for several seconds.
+let cachedHasNvidiaGpu: boolean | null = null;
+let cachedHasVulkan: boolean | null = null;
+let cachedHasRocm: boolean | null = null;
+let cachedComputeBackends: ComputeBackend[] | null = null;
+
 export function hasNvidiaGpu(): boolean {
+  if (cachedHasNvidiaGpu !== null) return cachedHasNvidiaGpu;
   const cmd = process.platform === "win32" ? "nvidia-smi.exe" : "nvidia-smi";
-  return commandExists(cmd);
+  cachedHasNvidiaGpu = commandExists(cmd);
+  return cachedHasNvidiaGpu;
 }
 
 export function hasVulkan(): boolean {
-  if (commandExists("vulkaninfo", ["--summary"])) return true;
+  if (cachedHasVulkan !== null) return cachedHasVulkan;
+  if (commandExists("vulkaninfo", ["--summary"])) {
+    cachedHasVulkan = true;
+    return cachedHasVulkan;
+  }
   const candidates =
     process.platform === "linux"
       ? [
@@ -220,22 +236,42 @@ export function hasVulkan(): boolean {
         : process.platform === "darwin"
           ? ["/usr/local/lib/libvulkan.dylib", "/opt/homebrew/lib/libvulkan.dylib"]
           : [];
-  return candidates.some((p) => fs.existsSync(p));
+  cachedHasVulkan = candidates.some((p) => fs.existsSync(p));
+  return cachedHasVulkan;
 }
 
 export function hasRocm(): boolean {
-  if (process.platform !== "linux") return false;
-  return fs.existsSync("/opt/rocm") || fs.existsSync("/opt/rocm-dkms");
+  if (cachedHasRocm !== null) return cachedHasRocm;
+  if (process.platform !== "linux") {
+    cachedHasRocm = false;
+    return cachedHasRocm;
+  }
+  cachedHasRocm = fs.existsSync("/opt/rocm") || fs.existsSync("/opt/rocm-dkms");
+  return cachedHasRocm;
 }
 
 export function detectComputeBackends(): ComputeBackend[] {
+  if (cachedComputeBackends !== null) return cachedComputeBackends.slice();
   const backends: ComputeBackend[] = ["cpu"];
   const p = detectPlatform();
   if (p === "macos-apple-silicon") backends.push("metal");
   if (hasNvidiaGpu()) backends.push("cuda");
   if (hasVulkan()) backends.push("vulkan");
   if (hasRocm()) backends.push("rocm");
+  cachedComputeBackends = backends.slice();
   return backends;
+}
+
+/**
+ * Reset cached hardware-detection results. Intended for tests so each test
+ * starts from a clean slate; production callers should never need this since
+ * hardware doesn't change between calls.
+ */
+export function resetHardwareDetectionCache(): void {
+  cachedHasNvidiaGpu = null;
+  cachedHasVulkan = null;
+  cachedHasRocm = null;
+  cachedComputeBackends = null;
 }
 
 export function detectPlatformInfo(): PlatformInfo {
@@ -551,33 +587,49 @@ export async function downloadModel(
   const dir = modelsDir(userDataDir);
   await fsp.mkdir(dir, { recursive: true });
   const dest = path.join(dir, requested.filename);
+  // Stream the download into a `.partial` sibling so the final filename
+  // ONLY ever exists on disk for fully-downloaded, checksum-verified models.
+  // If anything fails (network, checksum), we clean up the partial so a
+  // failed swap doesn't leave a broken or partial file pretending to be a
+  // model. The single-model contract (delete-before-download) is preserved —
+  // a failed download still leaves the user with no model, but with no
+  // orphaned partial either, which matches the on-disk invariant tests rely
+  // on ("at most one file in modelsDir").
+  const partial = `${dest}.partial`;
+  try {
+    await fetcher(
+      requested.url,
+      (downloaded, total) => {
+        const totalMb =
+          total > 0 ? total / (1024 * 1024) : requested.downloadSizeMb;
+        const downloadedMb = downloaded / (1024 * 1024);
+        const percent = total > 0 ? (downloaded / total) * 100 : 0;
+        onProgress({
+          modelId: requested.id,
+          format: requested.format,
+          filename: requested.filename,
+          downloadedMb,
+          totalMb,
+          percent,
+        });
+      },
+      partial,
+    );
 
-  await fetcher(
-    requested.url,
-    (downloaded, total) => {
-      const totalMb = total > 0 ? total / (1024 * 1024) : requested.downloadSizeMb;
-      const downloadedMb = downloaded / (1024 * 1024);
-      const percent = total > 0 ? (downloaded / total) * 100 : 0;
-      onProgress({
-        modelId: requested.id,
-        format: requested.format,
-        filename: requested.filename,
-        downloadedMb,
-        totalMb,
-        percent,
-      });
-    },
-    dest,
-  );
-
-  if (requested.sha256) {
-    const got = await hasher(dest);
-    if (got.toLowerCase() !== requested.sha256.toLowerCase()) {
-      await fsp.unlink(dest).catch(() => {});
-      throw new Error(
-        `Checksum mismatch for ${requested.filename}: expected ${requested.sha256}, got ${got}`,
-      );
+    if (requested.sha256) {
+      const got = await hasher(partial);
+      if (got.toLowerCase() !== requested.sha256.toLowerCase()) {
+        throw new Error(
+          `Checksum mismatch for ${requested.filename}: expected ${requested.sha256}, got ${got}`,
+        );
+      }
     }
+
+    await fsp.rename(partial, dest);
+  } catch (err) {
+    // Make sure no `.partial` artifact survives a failed download/verify.
+    await fsp.unlink(partial).catch(() => {});
+    throw err;
   }
 
   const record: InstalledModelRecord = {

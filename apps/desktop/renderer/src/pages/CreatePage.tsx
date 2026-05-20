@@ -119,9 +119,15 @@ function TemplateRunner({ templateId }: { templateId: string }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [gen, setGen] = useState<GenerateState>({ status: "idle", message: null });
 
-  // Streaming token preview for the generation in flight. We still navigate
-  // to the artifact editor on success; this just gives feedback in-page.
-  const [tokens, setTokens] = useState<string>("");
+  // NOTE: artifacts.generateFromTemplate runs synchronously through the Rust
+  // bridge (bridgeGenerateFromTemplate -> inference_router) and does NOT emit
+  // `model:token` SSE events the way the sidecar `model:generate` IPC does.
+  // We previously subscribed to `model:token` for a streaming preview here,
+  // but that was dead code — the channel is silent for template generation.
+  // A future PR can thread streaming token events through the artifacts
+  // pipeline (inference_router streaming -> N-API event -> renderer); until
+  // then we show an honest indeterminate progress indicator instead of a
+  // token preview that never updates.
 
   useEffect(() => {
     let cancelled = false;
@@ -148,20 +154,6 @@ function TemplateRunner({ templateId }: { templateId: string }) {
     };
   }, [templateId]);
 
-  useEffect(() => {
-    const api = typeof window !== "undefined" ? window.tessera : undefined;
-    if (!api) return;
-    return api.model.onToken((chunk) => {
-      if (chunk.error) {
-        setGen({ status: "error", message: chunk.error });
-        return;
-      }
-      if (chunk.token) {
-        setTokens((prev) => prev + chunk.token);
-      }
-    });
-  }, []);
-
   const toggle = useCallback((id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -185,7 +177,6 @@ function TemplateRunner({ templateId }: { templateId: string }) {
       return;
     }
     setGen({ status: "loading", message: null });
-    setTokens("");
     try {
       const artifact = await api.artifacts.generateFromTemplate(
         templateId,
@@ -315,7 +306,7 @@ function TemplateRunner({ templateId }: { templateId: string }) {
           </Button>
           {gen.status === "loading" && (
             <span data-testid="create-generating" style={{ fontSize: "var(--font-size-sm)" }}>
-              Streaming tokens from the local model…
+              Generating from the local model…
             </span>
           )}
           {gen.status === "error" && (
@@ -327,25 +318,6 @@ function TemplateRunner({ templateId }: { templateId: string }) {
             </span>
           )}
         </div>
-
-        {gen.status === "loading" && tokens.length > 0 && (
-          <div
-            data-testid="create-token-stream"
-            style={{
-              marginTop: "var(--spacing-md)",
-              padding: "var(--spacing-md)",
-              backgroundColor: "var(--color-surface-muted, #f9fafb)",
-              borderRadius: "var(--radius-sm)",
-              fontFamily: "var(--font-family-mono, monospace)",
-              fontSize: "var(--font-size-xs)",
-              maxHeight: 200,
-              overflowY: "auto",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {tokens}
-          </div>
-        )}
 
         {!templateLoaded && (
           <p style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-secondary)" }}>

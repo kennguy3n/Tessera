@@ -36,6 +36,7 @@ export default function SourcesPage() {
   const [driveAuthBusy, setDriveAuthBusy] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerBusy, setPickerBusy] = useState(false);
+  const [pickerError, setPickerError] = useState<string | null>(null);
 
   const refreshDriveStatus = useCallback(async () => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
@@ -88,12 +89,19 @@ export default function SourcesPage() {
       return;
     }
     setPickerBusy(true);
+    setPickerError(null);
     try {
       await api.connectors.selectItems(
         picked.map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType })),
       );
       await api.connectors.syncDrive(picked.map((f) => f.id));
       refresh();
+    } catch (err) {
+      // selectItems / syncDrive failures (network errors, expired Drive
+      // creds, etc.) used to silently propagate to the nearest error boundary
+      // and the picker just closed — the user had no idea their picks were
+      // dropped. Surface the message as a top-level alert so they can retry.
+      setPickerError(err instanceof Error ? err.message : String(err));
     } finally {
       setPickerBusy(false);
       setPickerOpen(false);
@@ -217,6 +225,20 @@ export default function SourcesPage() {
           data-testid="compare-error"
         >
           {compareError}
+        </div>
+      )}
+
+      {pickerError && (
+        <div
+          style={{
+            marginBottom: "var(--spacing-md)",
+            padding: "var(--spacing-sm)",
+            color: "var(--color-danger, #ef4444)",
+            fontSize: "var(--font-size-sm)",
+          }}
+          data-testid="picker-error"
+        >
+          Drive sync failed: {pickerError}
         </div>
       )}
 

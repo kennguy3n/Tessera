@@ -463,9 +463,19 @@ export function registerIpcHandlers(): void {
   }
 
   function loadResolvedManifest() {
-    // Tests can swap the manifest path via TESSERA_MODELS_MANIFEST; ensure
-    // we re-read on each call so hot reloads pick up edits.
-    resetManifestCache();
+    // In production the manifest is bundled into <resources>/sidecars and
+    // does not change at runtime, so the path-keyed cache in modelManagement
+    // is correct as-is and we get a fast in-memory hit on every model IPC.
+    //
+    // In development / tests we invalidate so:
+    //   - `npm run dev` hot-reload picks up edits to sidecars/models.json;
+    //   - tests that switch fixtures via TESSERA_MODELS_MANIFEST always see
+    //     the freshly-pointed file (the path-keyed cache also handles this
+    //     naturally when the path differs; the explicit reset covers the
+    //     edge case where the same path is re-used between fixtures).
+    if (process.env.NODE_ENV !== "production") {
+      resetManifestCache();
+    }
     return loadManifest();
   }
 
