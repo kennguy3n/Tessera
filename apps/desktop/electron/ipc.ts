@@ -21,17 +21,16 @@ import {
   type DownloadProgress,
   type ResolvedModel,
 } from "./modelManagement";
+import {
+  validateExtractedItems,
+  type ExtractedItem,
+} from "./extractedItemValidation";
 
-// Mirrors `ExtractedItem` in apps/desktop/renderer/src/types/ipc.ts. We
-// duplicate the type here instead of crossing the renderer/main module
-// boundary so that ipc.ts stays free of UI imports. Any change to the
-// schema must be made in both places.
-interface ExtractedItem {
-  itemType: "task" | "decision";
-  text: string;
-  sourceCitation: string;
-  confidence: number;
-}
+// `ExtractedItem` (re-exported for callers that still imported it from
+// this module) mirrors the renderer's `src/types/ipc.ts`. The
+// validation logic lives in `./extractedItemValidation` so it can be
+// unit-tested without Electron.
+export type { ExtractedItem };
 
 async function getValidAccessToken(provider: string): Promise<string> {
   const stored = tokenVault.getTokens(provider);
@@ -547,7 +546,24 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("runtime:getCurrentModel", async () =>
-    getCurrentModel(userDataDir()),
+    // Same "live record only" semantics as runtime:planDownload and the
+    // runtime:downloadModel fast-path: if active-model.json points at a
+    // file that's no longer on disk, treat it as no model installed.
+    //
+    // Round 10 left this IPC on `getCurrentModel` (raw record) on the
+    // theory that a future "ghost record → Re-download" UI would want to
+    // see the stale record. That UI doesn't exist today: both
+    // ModelRuntimeCard (line 261) and RuntimeStatus key off the truthiness
+    // of the result to switch between the "Installed" branch (Start /
+    // Delete buttons, Download hidden) and the "no model" branch
+    // (Download visible). Exposing the ghost record makes the Download
+    // button unreachable without first clicking Delete, which is the
+    // exact UX gap finding 3270889829 flags. Stale records get cleaned
+    // up on the next downloadModelLocked pass (it clears active-model.json
+    // when isModelInstalled returns null but a record still exists), so
+    // there's no orphan to manage at this layer. (Devin Review BUG
+    // finding 3270889829.)
+    getInstalledModel(userDataDir()),
   );
 
   ipcMain.handle("runtime:planDownload", async (_event, modelId: string) => {
@@ -950,62 +966,16 @@ export function registerIpcHandlers(): void {
       if (!bridge) throw new Error("Native bridge not available");
       const json = bridge.bridgeExtractTasksDecisions(sourceId);
       // Validate at the IPC boundary so a misbehaving Rust bridge never
-      // ships shape-violating data to the renderer (which would silently
-      // render `undefined` confidence / itemType strings). Drop anything
-      // that doesn't match the contract instead of casting blindly.
-      const parsed: unknown = JSON.parse(json);
-      if (!Array.isArray(parsed)) {
-        throw new Error(
-          "extractTasksDecisions: bridge returned non-array payload",
-        );
-      }
-      const items: ExtractedItem[] = [];
-      const dropReasons: string[] = [];
-      for (const raw of parsed) {
-        if (!raw || typeof raw !== "object") {
-          dropReasons.push("non-object payload");
-          continue;
-        }
-        const rec = raw as Record<string, unknown>;
-        const itemType =
-          rec.itemType === "task" || rec.itemType === "decision"
-            ? rec.itemType
-            : null;
-        const text = typeof rec.text === "string" ? rec.text : null;
-        const sourceCitation =
-          typeof rec.sourceCitation === "string" ? rec.sourceCitation : null;
-        const confidence =
-          typeof rec.confidence === "number" && Number.isFinite(rec.confidence)
-            ? rec.confidence
-            : null;
-        if (itemType === null) {
-          dropReasons.push(`itemType=${JSON.stringify(rec.itemType)}`);
-          continue;
-        }
-        if (text === null) {
-          dropReasons.push("missing-text");
-          continue;
-        }
-        if (sourceCitation === null) {
-          dropReasons.push("missing-sourceCitation");
-          continue;
-        }
-        if (confidence === null) {
-          dropReasons.push(`bad-confidence=${JSON.stringify(rec.confidence)}`);
-          continue;
-        }
-        items.push({ itemType, text, sourceCitation, confidence });
-      }
-      if (dropReasons.length > 0) {
-        // Surface bridge schema mismatches loudly during development so a
-        // Rust-side rename (e.g. itemType → item_type) doesn't disappear
-        // into an empty result with no diagnostic. We log a single summary
-        // per call to avoid log-spam when the entire batch is malformed.
-        console.warn(
-          `[tessera] extractTasksDecisions(${sourceId}): dropped ${dropReasons.length}/${parsed.length} item(s) failing schema validation: ${dropReasons.slice(0, 5).join(", ")}${dropReasons.length > 5 ? ", ..." : ""}`,
-        );
-      }
-      return items;
+      // ships shape-violating data to the renderer. The validator
+      // throws on non-array input and on 100%-drop input (unambiguous
+      // schema regressions); partial drops return valid items + log a
+      // single summary. Logic lives in ./extractedItemValidation so it
+      // can be exercised without Electron. (Devin Review BUG finding
+      // 3270889925.)
+      return validateExtractedItems(JSON.parse(json) as unknown, {
+        context: sourceId,
+        warn: (message) => console.warn(message),
+      });
     },
   );
 
