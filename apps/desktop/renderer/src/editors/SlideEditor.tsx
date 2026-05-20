@@ -1,7 +1,14 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import {
+  renderMermaid,
+  MermaidEnvironmentError,
+  MermaidRenderError,
+} from "../services/mermaidRenderer";
+
+export type SlideBlockType = "text" | "bullets" | "diagram";
 
 export interface SlideBlock {
-  type: "text" | "bullets";
+  type: SlideBlockType;
   content: string;
 }
 
@@ -190,12 +197,21 @@ export default function SlideEditor({
                     value={block.type}
                     onChange={(e) => {
                       const newBlocks = [...activeSlide.blocks];
-                      newBlocks[bi] = { ...newBlocks[bi], type: e.target.value as "text" | "bullets" };
+                      const nextType = e.target.value as SlideBlockType;
+                      newBlocks[bi] = {
+                        ...newBlocks[bi],
+                        type: nextType,
+                        content:
+                          nextType === "diagram" && !newBlocks[bi].content
+                            ? DEFAULT_DIAGRAM_DSL
+                            : newBlocks[bi].content,
+                      };
                       updateSlide(activeIndex, { blocks: newBlocks });
                     }}
                   >
                     <option value="text">Text</option>
                     <option value="bullets">Bullets</option>
+                    <option value="diagram">Diagram</option>
                   </select>
                   <textarea
                     className="slide-block-content"
@@ -208,10 +224,16 @@ export default function SlideEditor({
                     placeholder={
                       block.type === "bullets"
                         ? "One bullet point per line..."
-                        : "Enter text content..."
+                        : block.type === "diagram"
+                          ? "Mermaid diagram DSL..."
+                          : "Enter text content..."
                     }
-                    rows={4}
+                    rows={block.type === "diagram" ? 8 : 4}
+                    spellCheck={block.type !== "diagram"}
                   />
+                  {block.type === "diagram" && (
+                    <MermaidPreview dsl={block.content} />
+                  )}
                 </div>
               ))}
               <button
@@ -245,6 +267,52 @@ export default function SlideEditor({
         )}
       </div>
     </div>
+  );
+}
+
+const DEFAULT_DIAGRAM_DSL = `flowchart LR
+  Source --> Process --> Output`;
+
+function MermaidPreview({ dsl }: { dsl: string }) {
+  const [svg, setSvg] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const tokenRef = useRef(0);
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      const token = ++tokenRef.current;
+      renderMermaid(dsl)
+        .then((result) => {
+          if (token !== tokenRef.current) return;
+          setSvg(result.svg);
+          setError(null);
+        })
+        .catch((err) => {
+          if (token !== tokenRef.current) return;
+          if (err instanceof MermaidEnvironmentError) {
+            setError("Preview unavailable in this context");
+          } else if (err instanceof MermaidRenderError) {
+            setError(err.message);
+          } else {
+            setError(String(err));
+          }
+          setSvg("");
+        });
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [dsl]);
+  if (error) {
+    return (
+      <div className="slide-diagram-error" role="alert">
+        {error}
+      </div>
+    );
+  }
+  if (!svg) return <div className="slide-diagram-placeholder">Rendering…</div>;
+  return (
+    <div
+      className="slide-diagram-preview"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
   );
 }
 

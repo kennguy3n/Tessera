@@ -2,8 +2,12 @@ use std::fmt::Write;
 use tessera_artifacts::Artifact;
 use tessera_citations::citation::Citation;
 
+use crate::mermaid;
+
 pub fn export_html(artifact: &Artifact, citations: &[Citation]) -> String {
     let mut output = String::new();
+
+    let has_mermaid = !mermaid::extract_blocks(&artifact.content).is_empty();
 
     output.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
     output.push_str("  <meta charset=\"UTF-8\">\n");
@@ -17,6 +21,7 @@ pub fn export_html(artifact: &Artifact, citations: &[Citation]) -> String {
     output.push_str("    .citation-title { font-weight: 600; color: #7C3AED; }\n");
     output.push_str("    .citation-meta { font-size: 0.875rem; color: #6B7280; }\n");
     output.push_str("    .footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #E5E7EB; font-size: 0.875rem; color: #9CA3AF; }\n");
+    output.push_str("    .mermaid { background: #FAFAFA; border-radius: 8px; padding: 1rem; margin: 1rem 0; }\n");
     output.push_str("  </style>\n</head>\n<body>\n");
 
     let _ = writeln!(output, "  <h1>{}</h1>", escape_html(&artifact.title));
@@ -27,6 +32,28 @@ pub fn export_html(artifact: &Artifact, citations: &[Citation]) -> String {
             output,
             "  <div class=\"content\">\n{html_content}  </div>\n"
         );
+    }
+
+    if has_mermaid {
+        // Load mermaid from a CDN as a one-shot client-side initializer. The
+        // desktop app's renderer normally pre-renders SVG and inlines it via
+        // IPC; this fallback is for "Save as HTML" of standalone files opened
+        // in a browser.
+        output.push_str("  <script type=\"module\">\n");
+        output.push_str(
+            "    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';\n",
+        );
+        output.push_str("    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', themeVariables: { primaryColor: '#7C3AED', primaryBorderColor: '#5B21B6', lineColor: '#6B7280' } });\n");
+        output.push_str("    for (const el of document.querySelectorAll('div.mermaid')) {\n");
+        output.push_str("      const dsl = el.textContent.trim();\n");
+        output.push_str("      try {\n");
+        output.push_str(
+            "        const { svg } = await mermaid.render('tessera-mermaid-' + Math.random().toString(36).slice(2), dsl);\n",
+        );
+        output.push_str("        el.innerHTML = svg;\n");
+        output.push_str("      } catch (err) { el.innerHTML = '<pre>Mermaid render error: ' + (err && err.message) + '</pre>'; }\n");
+        output.push_str("    }\n");
+        output.push_str("  </script>\n");
     }
 
     if !citations.is_empty() {
@@ -75,11 +102,37 @@ fn escape_html(text: &str) -> String {
 }
 
 fn content_to_html(content: &str) -> String {
+    // Substitute mermaid blocks with placeholder tokens so the line-oriented
+    // converter doesn't mangle them, then swap the tokens back for real
+    // `<div class="mermaid">…</div>` containers afterwards.
+    let blocks = mermaid::extract_blocks(content);
+    let mut token_to_div: Vec<(String, String)> = Vec::new();
+    let stripped = mermaid::replace_blocks(content, |block| {
+        let token = format!("\u{1F4CC}TESSERA_MERMAID_TOKEN_{}\u{1F4CC}", token_to_div.len());
+        token_to_div.push((token.clone(), mermaid::to_html_div(block)));
+        format!("\n{token}\n")
+    });
+    // Suppress unused warning when there are no blocks.
+    let _ = &blocks;
+
     let mut html = String::new();
     let mut in_paragraph = false;
 
-    for line in content.lines() {
+    for line in stripped.lines() {
         let trimmed = line.trim();
+        if let Some(token_div) = token_to_div
+            .iter()
+            .find_map(|(tok, div)| if trimmed == tok { Some(div) } else { None })
+        {
+            if in_paragraph {
+                html.push_str("    </p>\n");
+                in_paragraph = false;
+            }
+            html.push_str("    ");
+            html.push_str(token_div);
+            html.push('\n');
+            continue;
+        }
         if trimmed.is_empty() {
             if in_paragraph {
                 html.push_str("    </p>\n");
@@ -161,6 +214,31 @@ mod tests {
         assert!(html.contains("quarterly.pdf"));
         assert!(html.contains("Revenue figures"));
         assert!(html.contains("88%"));
+    }
+
+    #[test]
+    fn export_html_with_mermaid_block() {
+        let mut artifact = Artifact::new("Arch".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "## Overview\n\n```mermaid\nflowchart LR\nClient-->Server\n```\n\nText after.".to_string(),
+        );
+        let html = export_html(&artifact, &[]);
+        assert!(html.contains(r#"<div class="mermaid""#));
+        assert!(html.contains(r#"data-diagram-type="flowchart""#));
+        assert!(html.contains("Client--&gt;Server"));
+        // The runtime initializer should be present when content has a diagram.
+        assert!(html.contains("mermaid.initialize"));
+        // Text around the block should still be rendered as paragraphs.
+        assert!(html.contains("<h2>Overview</h2>"));
+        assert!(html.contains("Text after."));
+    }
+
+    #[test]
+    fn export_html_omits_mermaid_runtime_when_no_diagrams() {
+        let mut artifact = Artifact::new("Plain".to_string(), ArtifactType::Document, None);
+        artifact.update_content("## Section\n\nJust prose.".to_string());
+        let html = export_html(&artifact, &[]);
+        assert!(!html.contains("mermaid.initialize"));
     }
 
     #[test]

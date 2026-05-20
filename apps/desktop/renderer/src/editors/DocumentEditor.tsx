@@ -3,6 +3,7 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import Link from "@tiptap/extension-link";
+import { MermaidNode } from "./extensions/MermaidExtension";
 
 interface DocumentEditorProps {
   content: string;
@@ -31,6 +32,7 @@ export default function DocumentEditor({
         openOnClick: false,
         autolink: true,
       }),
+      MermaidNode,
     ],
     content: parseContent(content),
     onCreate: ({ editor }) => {
@@ -186,6 +188,15 @@ function Toolbar({
         title="Link"
       >
         LK
+      </button>
+      <span className="toolbar-separator" />
+      <button
+        type="button"
+        className="toolbar-btn"
+        onClick={() => editor.chain().focus().insertMermaid().run()}
+        title="Insert Mermaid diagram"
+      >
+        Diagram
       </button>
     </div>
   );
