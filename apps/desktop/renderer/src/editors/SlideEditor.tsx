@@ -9,6 +9,7 @@ import {
   MarpRenderError,
   type MarpRenderOptions,
 } from "../services/marpRenderer";
+import { yamlSingleQuote } from "../utils/yaml";
 
 export type SlideBlockType = "text" | "bullets" | "diagram";
 
@@ -475,8 +476,18 @@ export function applyMarpToShadow(
     }
     shadow.querySelector(":scope > style[data-marp-fallback]")?.remove();
   } else {
-    // Sanitise `</style` so the HTML parser cannot close the stylesheet early.
-    const safeCss = css.replace(/<\/style/gi, "<\\/style");
+    // Sanitise `</style` so the HTML parser cannot close the stylesheet
+    // early when the fallback path injects raw CSS via a `<style>` element.
+    //
+    // We use the canonical CSS hex escape `\3c ` (= `<`) defined in CSS
+    // Syntax §4.3.7, instead of the JS-style `\<` backslash escape that we
+    // previously emitted. `\<` is silently dropped by the CSS parser so the
+    // rule containing the payload becomes malformed; `\3c ` is a valid CSS
+    // character escape that preserves the rule meaning while still
+    // preventing the HTML tokenizer from recognising `</style`. The trailing
+    // space after `\3c` is significant — it terminates the hex-digit run
+    // per the CSS Syntax production for IDENT escapes.
+    const safeCss = css.replace(/<\/style/gi, "\\3c /style");
     let styleEl = shadow.querySelector<HTMLStyleElement>(
       ":scope > style[data-marp-fallback]",
     );
@@ -605,7 +616,17 @@ export function slidesToMarpMarkdown(
   options?: { theme?: string },
 ): string {
   const theme = options?.theme ?? "default";
-  const header = ["---", "marp: true", `theme: ${theme}`, "paginate: true", "---"];
+  // `theme` originates from user-editable JSON (parsed.marp?.theme). Wrap it
+  // in a YAML single-quoted scalar so a value containing a newline cannot
+  // inject a second directive into the front-matter block. See
+  // `utils/yaml.ts` for the full rationale.
+  const header = [
+    "---",
+    "marp: true",
+    `theme: ${yamlSingleQuote(theme)}`,
+    "paginate: true",
+    "---",
+  ];
   const body = slides.map((slide) => renderSlideAsMarp(slide));
   // Marp requires `---` horizontal rules between slides to delimit them.
   // The opening front-matter `---...---` block separates config from the

@@ -77,17 +77,30 @@ describe("marpRenderer", () => {
         backgroundColor: "#FFFFFF",
         klass: "lead",
       });
-      expect(fm).toContain("theme: gaia");
+      // All user-editable scalars are wrapped in YAML single-quoted form so
+      // a newline in any of them cannot inject a second directive.
+      expect(fm).toContain("theme: 'gaia'");
       expect(fm).toContain("paginate: true");
       expect(fm).toContain("header: 'Tessera'");
       expect(fm).toContain("footer: '© 2026'");
-      expect(fm).toContain("backgroundColor: #FFFFFF");
-      expect(fm).toContain("class: lead");
+      expect(fm).toContain("backgroundColor: '#FFFFFF'");
+      expect(fm).toContain("class: 'lead'");
     });
 
     it("escapes single quotes inside header/footer", () => {
       const fm = buildMarpFrontmatter({ header: "Ken's deck" });
       expect(fm).toContain("Ken''s deck");
+    });
+
+    it("flattens newlines in user-supplied scalars to neutralise directive injection", () => {
+      // Regression for Devin Review ANALYSIS_pr-review-job-...-0002. A user
+      // who edits the JSON could otherwise set theme to "gaia\nclass: lead"
+      // and gain an unintended directive.
+      const fm = buildMarpFrontmatter({ theme: "gaia\nclass: lead-injected" });
+      expect(fm).toContain("theme: 'gaia class: lead-injected'");
+      // And the literal newline + injected class line must NOT appear as
+      // its own directive.
+      expect(fm.split(/\n/).filter((l) => l === "class: lead-injected")).toEqual([]);
     });
   });
 

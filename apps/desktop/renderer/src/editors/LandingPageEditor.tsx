@@ -17,6 +17,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import IconPicker, { type IconPickerValue } from "../components/IconPicker";
 import { embedIcons } from "../services/iconResolver";
 import { sanitizeCssColor } from "../utils/cssColor";
+import { sanitizeIconSpec } from "../utils/iconSpec";
 import { Plus, Trash2, X } from "lucide-react";
 
 export interface LandingPageHero {
@@ -486,8 +487,14 @@ export function buildLandingPreviewHtml(data: LandingPageContent): string {
 
   const featuresHtml = data.features
     .map((f) => {
-      const icon = f.icon
-        ? `{{icon:${f.icon} size=24 color=${primary}}}`
+      // See InfographicEditor for rationale: the icon spec is interpolated
+      // into a `{{icon:...}}` token that `embedIcons` later resolves to inline
+      // SVG. A spec containing `}}` would close the token prematurely and let
+      // arbitrary trailing text reach the DOM via `dangerouslySetInnerHTML`.
+      // Validate against the strict `lucide|phosphor` + alnum/`_-` grammar.
+      const safeIcon = sanitizeIconSpec(f.icon);
+      const icon = safeIcon
+        ? `{{icon:${safeIcon} size=24 color=${primary}}}`
         : "";
       return `<article class="landing-feature">
   <div class="landing-feature-icon">${icon}</div>

@@ -10,6 +10,7 @@
  *      apps/desktop/electron/marpExport.ts).
  */
 import { Marp, MarpOptions } from "@marp-team/marp-core";
+import { yamlSingleQuote } from "../utils/yaml";
 
 export interface MarpRenderResult {
   /** Full <section>...</section> markup for every slide, joined. */
@@ -104,13 +105,19 @@ export function buildMarpFrontmatter(opts: {
   backgroundColor?: string;
   klass?: string;
 }): string {
+  // All user-editable string scalars are wrapped in YAML single quotes so a
+  // value containing a newline (`"gaia\nclass: lead"`) cannot inject a
+  // second directive into the front-matter block. `yamlSingleQuote` flattens
+  // newlines to spaces and doubles embedded apostrophes per the YAML 1.2
+  // single-quoted-scalar grammar.
   const lines = ["---", "marp: true"];
-  if (opts.theme) lines.push(`theme: ${opts.theme}`);
+  if (opts.theme) lines.push(`theme: ${yamlSingleQuote(opts.theme)}`);
   if (opts.paginate) lines.push(`paginate: true`);
-  if (opts.header) lines.push(`header: '${opts.header.replace(/'/g, "''")}'`);
-  if (opts.footer) lines.push(`footer: '${opts.footer.replace(/'/g, "''")}'`);
-  if (opts.backgroundColor) lines.push(`backgroundColor: ${opts.backgroundColor}`);
-  if (opts.klass) lines.push(`class: ${opts.klass}`);
+  if (opts.header) lines.push(`header: ${yamlSingleQuote(opts.header)}`);
+  if (opts.footer) lines.push(`footer: ${yamlSingleQuote(opts.footer)}`);
+  if (opts.backgroundColor)
+    lines.push(`backgroundColor: ${yamlSingleQuote(opts.backgroundColor)}`);
+  if (opts.klass) lines.push(`class: ${yamlSingleQuote(opts.klass)}`);
   lines.push("---");
   return lines.join("\n");
 }

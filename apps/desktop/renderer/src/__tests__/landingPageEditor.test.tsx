@@ -77,6 +77,29 @@ describe("buildLandingPreviewHtml", () => {
     expect(html).not.toContain("<img src=x>");
     expect(html).toContain("&lt;img");
   });
+
+  it("drops malformed feature icon specs instead of letting them break out of the token", () => {
+    // Regression for Devin Review ANALYSIS_pr-review-job-...-0001 — mirror
+    // of the InfographicEditor test. A spec containing `}}` would otherwise
+    // let arbitrary trailing text (including `<script>`) reach the DOM.
+    const html = buildLandingPreviewHtml({
+      title: "x",
+      hero: { headline: "h", subheadline: "s" },
+      features: [
+        {
+          icon: "lucide:zap}}<script>alert(1)</script>{{icon:x",
+          title: "Bad",
+          description: "Bad",
+        },
+      ],
+      stats: [],
+      testimonials: [],
+      colorScheme: {},
+    });
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain("alert(1)");
+    expect(html).not.toContain("{{icon:");
+  });
 });
 
 describe("LandingPageEditor", () => {

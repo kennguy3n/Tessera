@@ -155,10 +155,12 @@ describe("ArtifactEditorPage live-draft export", () => {
     // The Marp CLI receives `--theme gaia` via the IPC argument …
     expect(arg.theme).toBe("gaia");
     // … AND the synthesised Marp Markdown front-matter must also carry
-    // `theme: gaia` so it stays consistent if the CLI ever stops overriding
+    // `theme: 'gaia'` so it stays consistent if the CLI ever stops overriding
     // the front-matter (defence in depth, not just an aesthetic alignment).
-    expect(arg.markdown).toContain("theme: gaia");
-    expect(arg.markdown).not.toContain("theme: default");
+    // The scalar is YAML single-quoted by `slidesToMarpMarkdown` to neutralise
+    // newline-based directive injection — see utils/yaml.ts.
+    expect(arg.markdown).toContain("theme: 'gaia'");
+    expect(arg.markdown).not.toContain("theme: 'default'");
   });
 
   it("exports the live draft when icon-aware format has only unresolvable icon tokens (regression for BUG_pr-review-job-f080f66818c644baa7573bf023ef2675_0001)", async () => {

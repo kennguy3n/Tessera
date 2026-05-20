@@ -61,7 +61,7 @@ describe("slidesToMarpMarkdown", () => {
       { title: "T", blocks: [{ type: "text", content: "x" }], notes: "" },
     ]);
     expect(out.startsWith("---\nmarp: true\n")).toBe(true);
-    expect(out).toMatch(/^---\nmarp: true\ntheme: default\npaginate: true\n---/);
+    expect(out).toMatch(/^---\nmarp: true\ntheme: 'default'\npaginate: true\n---/);
   });
 
   it("respects a non-default theme override", () => {
@@ -69,7 +69,7 @@ describe("slidesToMarpMarkdown", () => {
       [{ title: "T", blocks: [{ type: "text", content: "x" }], notes: "" }],
       { theme: "uncover" },
     );
-    expect(out).toContain("theme: uncover");
+    expect(out).toContain("theme: 'uncover'");
   });
 
   it("converts bullets, diagrams, and notes into Marp-friendly syntax", () => {

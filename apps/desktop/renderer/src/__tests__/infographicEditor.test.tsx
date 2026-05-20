@@ -83,6 +83,76 @@ describe("buildPreviewHtml", () => {
     expect(html).not.toContain("{{icon:");
     expect(html).toMatch(/<svg/);
   });
+
+  it("drops malformed icon specs instead of letting them break out of the token", () => {
+    // Regression for Devin Review ANALYSIS_pr-review-job-...-0001. A spec
+    // containing `}}` would close the `{{icon:...}}` token prematurely and
+    // let arbitrary trailing text (including `<script>`) reach the DOM.
+    const html = buildPreviewHtml({
+      title: "T",
+      layout: "vertical",
+      colorScheme: { primary: "#7C3AED" },
+      sections: [
+        {
+          icon: "lucide:check}}<script>alert(1)</script>{{icon:x",
+          heading: "Bad",
+          body: "",
+        },
+      ],
+    });
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain("alert(1)");
+    expect(html).not.toContain("{{icon:");
+  });
+
+  it("falls back to a safe layout class when `layout` is not allowlisted", () => {
+    // Regression for Devin Review BUG_pr-review-job-...-0002. The layout
+    // value is interpolated into a class attribute; a value like
+    // `vertical" onclick="alert(1)` would break out of the attribute.
+    // The fix is to (a) constrain `layout` to the allowlist on parse, and
+    // (b) defence-in-depth re-check inside `buildPreviewHtml`. This test
+    // bypasses parse and supplies a hostile layout directly to the HTML
+    // builder to assert the second layer holds.
+    const html = buildPreviewHtml({
+      title: "T",
+      // Cast through unknown so TS doesn't reject the hostile literal —
+      // we're simulating data that bypassed the parse-time allowlist.
+      layout: 'vertical" onclick="alert(1)' as unknown as "vertical",
+      colorScheme: { primary: "#7C3AED" },
+      sections: [{ heading: "X", body: "X" }],
+    });
+    // The breakout fragment must NOT survive — the layout falls back to the
+    // safe `vertical` class.
+    expect(html).not.toContain("onclick");
+    expect(html).not.toContain("alert(1)");
+    expect(html).toContain('class="infographic infographic-preview-vertical"');
+  });
+});
+
+describe("parseInfographicContent layout allowlist", () => {
+  it("rejects unknown layout values and falls back to vertical", () => {
+    // Regression for Devin Review BUG_pr-review-job-...-0002.
+    const json = JSON.stringify({
+      title: "X",
+      layout: 'vertical" onclick="alert(1)',
+      colorScheme: { primary: "#7C3AED" },
+      sections: [{ heading: "A", body: "B" }],
+    });
+    const parsed = parseInfographicContent(json);
+    expect(parsed.layout).toBe("vertical");
+  });
+
+  it("accepts each allowlisted layout value verbatim", () => {
+    for (const layout of ["vertical", "horizontal", "grid"] as const) {
+      const json = JSON.stringify({
+        title: "X",
+        layout,
+        colorScheme: { primary: "#7C3AED" },
+        sections: [{ heading: "A", body: "B" }],
+      });
+      expect(parseInfographicContent(json).layout).toBe(layout);
+    }
+  });
 });
 
 describe("InfographicEditor", () => {

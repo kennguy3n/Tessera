@@ -47,6 +47,44 @@ describe("applyMarpToShadow", () => {
     },
   );
 
+  it("escapes `</style` in the fallback path using a valid CSS hex escape", () => {
+    // Regression for Devin Review ANALYSIS_pr-review-job-...-0006. We
+    // previously emitted `<\/style` (JS-style backslash escape) which is
+    // silently dropped by the CSS parser. The fix is to use the canonical
+    // CSS hex escape `\3c ` so the surrounding rule remains well-formed
+    // while still preventing the HTML tokenizer from recognising `</style`.
+    //
+    // Force the fallback code path by hiding `adoptedStyleSheets` on the
+    // shadow root and removing `replaceSync` from the prototype lookup
+    // chain via a Proxy.
+    const realShadow = makeShadow();
+    const proxiedShadow = new Proxy(realShadow, {
+      get(target, prop) {
+        if (prop === "adoptedStyleSheets") return undefined;
+        // Strip `adoptedStyleSheets` from the `in` operator's view too.
+        const value = (target as unknown as Record<string | symbol, unknown>)[
+          prop as string
+        ];
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+      has(target, prop) {
+        if (prop === "adoptedStyleSheets") return false;
+        return prop in target;
+      },
+    }) as ShadowRoot;
+
+    const css = ".x { content: '</style><img>'; }";
+    applyMarpToShadow(proxiedShadow, "<section>Body</section>", css);
+    const styleEl = realShadow.querySelector("style[data-marp-fallback]");
+    expect(styleEl).not.toBeNull();
+    // The sanitised CSS must use the CSS hex escape, NOT a JS-style backslash.
+    expect(styleEl!.textContent).toContain("\\3c /style");
+    expect(styleEl!.textContent).not.toContain("<\\/style");
+    expect(styleEl!.textContent).not.toMatch(/<\/style/i);
+    // And the breakout payload must not have created live nodes.
+    expect(realShadow.querySelector("img")).toBeNull();
+  });
+
   it("is idempotent across repeated calls (re-uses the same deck element)", () => {
     const shadow = makeShadow();
     applyMarpToShadow(shadow, "<section>First</section>", "body{color:red}");

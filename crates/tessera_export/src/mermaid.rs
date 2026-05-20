@@ -52,7 +52,11 @@ pub fn extract_blocks(content: &str) -> Vec<MermaidBlock> {
             continue;
         };
         let after_fence = trimmed.trim_start_matches(fence).trim_start();
-        if !after_fence.starts_with("mermaid") {
+        // The info string must be exactly `mermaid` (optionally followed by
+        // whitespace + further info-string tokens). Substring-matching alone
+        // would incorrectly classify ```mermaidx, ```mermaid-v2, ```mermaid_old
+        // etc. as mermaid blocks and silently corrupt them on export.
+        if !is_mermaid_info_string(after_fence) {
             i = line_end + 1;
             continue;
         }
@@ -66,7 +70,12 @@ pub fn extract_blocks(content: &str) -> Vec<MermaidBlock> {
                 .position(|&b| b == b'\n')
                 .map_or(bytes.len(), |p| search + p);
             let inner_line = &content[search..nl];
-            if inner_line.trim_start().starts_with(fence) {
+            // Per CommonMark §4.5, a closing fence line must consist of at
+            // least as many fence characters as the opener, followed only by
+            // optional trailing whitespace — it may NOT carry an info string.
+            // Without this check, ```python on its own line inside a mermaid
+            // block would be mistakenly treated as the close.
+            if is_closing_fence(inner_line, fence) {
                 closing_line_start = Some(search);
                 break;
             }
@@ -98,6 +107,38 @@ pub fn extract_blocks(content: &str) -> Vec<MermaidBlock> {
         i = range_end;
     }
     blocks
+}
+
+/// Return true if `after_fence` is the info string of a mermaid fenced block.
+/// The exact info string is `mermaid` optionally followed by ASCII whitespace
+/// and additional info-string tokens (e.g. `mermaid title="Foo"`). Anything
+/// else (`mermaidx`, `mermaid-v2`, `mermaid_old`, `mermaid2`) is rejected.
+fn is_mermaid_info_string(after_fence: &str) -> bool {
+    const KEYWORD: &str = "mermaid";
+    if let Some(rest) = after_fence.strip_prefix(KEYWORD) {
+        rest.is_empty() || rest.as_bytes()[0].is_ascii_whitespace()
+    } else {
+        false
+    }
+}
+
+/// Return true if `line` is a valid CommonMark closing fence for the given
+/// opening `fence` sequence. The line must contain only the fence character
+/// (at least as many as the opener) followed by optional whitespace — it
+/// must NOT carry an info string.
+fn is_closing_fence(line: &str, fence: &str) -> bool {
+    let trimmed = line.trim_start();
+    let fence_ch = fence.as_bytes()[0];
+    let run_len = trimmed
+        .as_bytes()
+        .iter()
+        .take_while(|&&b| b == fence_ch)
+        .count();
+    if run_len < fence.len() {
+        return false;
+    }
+    // Everything after the fence run must be ASCII whitespace.
+    trimmed[run_len..].bytes().all(|b| b.is_ascii_whitespace())
 }
 
 /// Replace every mermaid block in `content` with the output of `replace_with`,
@@ -350,6 +391,57 @@ mod tests {
         let p = to_pdf_placeholder(&block);
         assert!(p.contains("pie"));
         assert!(p.contains("Diagram"));
+    }
+
+    #[test]
+    fn rejects_info_strings_that_only_start_with_mermaid() {
+        // Regression for Devin Review BUG_pr-review-job-...-0001 (info-string
+        // boundary). ```mermaidx, ```mermaid-v2, ```mermaid_old etc. are NOT
+        // mermaid blocks and must be passed through unchanged.
+        for not_mermaid in [
+            "```mermaidx\nfoo\n```",
+            "```mermaid-v2\nflowchart\n```",
+            "```mermaid_old\npie\n```",
+            "```mermaid2\nfoo\n```",
+        ] {
+            let blocks = extract_blocks(not_mermaid);
+            assert!(
+                blocks.is_empty(),
+                "expected no mermaid match for {not_mermaid:?}, got {blocks:?}",
+            );
+        }
+        // And the canonical info string (optionally followed by whitespace +
+        // further info-string tokens) must still be accepted.
+        for ok in [
+            "```mermaid\nflowchart TD\n```",
+            "```mermaid \nflowchart TD\n```",
+            "```mermaid title=\"Demo\"\nflowchart TD\n```",
+        ] {
+            let blocks = extract_blocks(ok);
+            assert_eq!(blocks.len(), 1, "expected match for {ok:?}");
+        }
+    }
+
+    #[test]
+    fn closing_fence_must_not_have_info_string() {
+        // Regression for Devin Review ANALYSIS_pr-review-job-...-0003. Per
+        // CommonMark, the closing fence may only contain fence characters
+        // (≥ opener) followed by optional whitespace. Lines like ```python on
+        // their own inside a mermaid block must NOT terminate the block.
+        let content = "```mermaid\nflowchart TD\n```python\nA-->B\n```\n";
+        let blocks = extract_blocks(content);
+        assert_eq!(blocks.len(), 1, "closing-fence info string was honored");
+        // The DSL must include the embedded ```python line, proving we walked
+        // past it to the real closing fence.
+        assert!(
+            blocks[0].dsl.contains("```python"),
+            "expected DSL to include the embedded fence line, got {:?}",
+            blocks[0].dsl,
+        );
+        // And the real closer (` ``` ` with optional trailing spaces) must work.
+        let trailing_ws = "```mermaid\nflowchart TD\nA-->B\n```   \n";
+        let blocks = extract_blocks(trailing_ws);
+        assert_eq!(blocks.len(), 1);
     }
 
     #[test]

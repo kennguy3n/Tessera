@@ -23,9 +23,23 @@ import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import IconPicker, { type IconPickerValue } from "../components/IconPicker";
 import { embedIcons } from "../services/iconResolver";
 import { sanitizeCssColor } from "../utils/cssColor";
+import { sanitizeIconSpec } from "../utils/iconSpec";
 import { Plus, Trash2, ArrowUp, ArrowDown, X } from "lucide-react";
 
 export type InfographicLayout = "vertical" | "horizontal" | "grid";
+
+const LAYOUT_ALLOWLIST: readonly InfographicLayout[] = [
+  "vertical",
+  "horizontal",
+  "grid",
+];
+
+function sanitizeLayout(value: unknown): InfographicLayout {
+  return typeof value === "string" &&
+    (LAYOUT_ALLOWLIST as readonly string[]).includes(value)
+    ? (value as InfographicLayout)
+    : "vertical";
+}
 
 export interface InfographicSection {
   icon?: string; // e.g. "lucide:trending-up"
@@ -84,7 +98,7 @@ export function parseInfographicContent(content: string): InfographicContent {
       return {
         title: parsed.title ?? fallback.title,
         subtitle: parsed.subtitle ?? "",
-        layout: (parsed.layout as InfographicLayout) ?? fallback.layout,
+        layout: sanitizeLayout(parsed.layout),
         colorScheme: {
           primary: parsed.colorScheme?.primary ?? DEFAULT_PRIMARY,
           secondary: parsed.colorScheme?.secondary ?? DEFAULT_SECONDARY,
@@ -418,11 +432,23 @@ export function buildPreviewHtml(data: InfographicContent): string {
     DEFAULT_SECONDARY,
   );
   const accent = sanitizeCssColor(data.colorScheme.accent, DEFAULT_ACCENT);
-  const layoutClass = `infographic-preview-${data.layout}`;
+  // `data.layout` is allowlisted by `sanitizeLayout` in `parseInfographicContent`,
+  // but interpolating into a class attribute deserves defence-in-depth: a future
+  // refactor that drops the upstream validation must not silently re-open the
+  // XSS surface. We re-validate here and fall back to the safe `vertical`
+  // class on any anomaly.
+  const layoutClass = `infographic-preview-${sanitizeLayout(data.layout)}`;
   const sectionsHtml = data.sections
     .map((s) => {
-      const iconToken = s.icon
-        ? `{{icon:${s.icon} size=32 color=${primary}}}`
+      // The icon spec comes from user-editable JSON. The `embedIcons()`
+      // token regex would refuse a malformed spec, but a value containing
+      // `}}` would close the token prematurely and let arbitrary trailing
+      // text reach the DOM via `dangerouslySetInnerHTML`. Validate against
+      // an `lucide|phosphor` + alnum/`_-` grammar and drop the icon when
+      // the spec is malformed.
+      const safeIcon = sanitizeIconSpec(s.icon);
+      const iconToken = safeIcon
+        ? `{{icon:${safeIcon} size=32 color=${primary}}}`
         : "";
       const statBlock = s.stat
         ? `<div class="infographic-stat"><span class="infographic-stat-value">${escapeHtml(s.stat)}</span><span class="infographic-stat-label">${escapeHtml(s.statLabel ?? "")}</span></div>`
