@@ -113,6 +113,51 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
     });
   }, [tessera]);
 
+  // Lightweight 5-second poll for the two CHEAP values — sidecar
+  // `status()` and on-disk `getCurrentModel()` — so the Settings card
+  // stays in sync with the sidebar's `RuntimeStatus` (which polls the
+  // same pair at the same cadence). Without this, a sidecar crash or an
+  // out-of-band model deletion shows up in the sidebar within ~5s but
+  // requires the user to navigate away and back to refresh the Settings
+  // card — a confusing asymmetry. (Devin Review INFO finding 3271328917.)
+  //
+  // We deliberately do NOT re-poll the EXPENSIVE values
+  // (`detectPlatform`, `listModels`, `recommendModel`): hardware
+  // detection can take up to ~3s on a cold Electron process because of
+  // `nvidia-smi` / `vulkaninfo` shells, and the model registry is a
+  // function of the shipped manifest which doesn't change at runtime.
+  // The initial `refresh()` covers them once on mount; the poll covers
+  // only what can change.
+  useEffect(() => {
+    if (!tessera) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const [status, current] = await Promise.all([
+          tessera.model.status(),
+          tessera.runtime.getCurrentModel(),
+        ]);
+        if (cancelled) return;
+        setState((s) => ({ ...s, status, current }));
+      } catch {
+        if (cancelled) return;
+        // Match RuntimeStatus's failure-mode: surface as a stopped
+        // sidecar in `status`, but leave `current` untouched so a
+        // transient IPC blip doesn't blank out the model record the
+        // user just downloaded.
+        setState((s) => ({
+          ...s,
+          status: { available: false, modelName: null, status: "error" },
+        }));
+      }
+    };
+    const id = setInterval(tick, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [tessera]);
+
   const performDownload = useCallback(
     async (modelId: string) => {
       if (!tessera) return;
@@ -142,10 +187,30 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
         // remain in state and the renderer would show both the error
         // banner AND a frozen progress bar. (Devin Review BUG finding
         // 8f14f796.)
+        //
+        // Re-fetch the live current-model record AND sidecar status
+        // here. A failed SWAP is the dangerous case: the main process's
+        // `downloadModelLocked` evicts the previously-installed model
+        // and clears `active-model.json` BEFORE issuing the network
+        // fetch, so a network/checksum failure leaves the on-disk truth
+        // as "no model installed" while the renderer's `state.current`
+        // still holds the pre-swap record. Without this re-fetch the
+        // user would see the old model card with Start/Delete buttons
+        // that point at a file that no longer exists. The success path
+        // already overwrites `state.current` with the download result;
+        // mirroring that on failure restores the invariant
+        // `state.current` == on-disk-truth on every settled boundary.
+        // (Devin Review BUG finding 3271328763.)
+        const [liveCurrent, liveStatus] = await Promise.all([
+          tessera.runtime.getCurrentModel().catch(() => null),
+          tessera.model.status().catch(() => null),
+        ]);
         setState((s) => ({
           ...s,
           busyModelId: null,
           progress: null,
+          current: liveCurrent,
+          status: liveStatus ?? s.status,
           error: err instanceof Error ? err.message : String(err),
         }));
       }

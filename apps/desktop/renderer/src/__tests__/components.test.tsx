@@ -470,3 +470,149 @@ describe("ModelRuntimeCard download-progress lifecycle", () => {
     });
   });
 });
+
+describe("ModelRuntimeCard failed-swap re-fetches current model", () => {
+  // Regression for Devin Review BUG finding 3271328763:
+  // `performDownload` on the swap path used to leave `state.current`
+  // holding the pre-swap record after a failed download. The main
+  // process's `downloadModelLocked` evicts the previously-installed
+  // model and clears `active-model.json` BEFORE issuing the network
+  // fetch, so a download failure leaves the on-disk truth as
+  // "no model installed" while the renderer continued to show the old
+  // model card with Start/Delete buttons pointing at a file that no
+  // longer exists. The fix re-fetches `getCurrentModel()` in the catch
+  // block; this test enforces that.
+
+  it("clears state.current when the swap deletes the old model and the new download then fails", async () => {
+    const initialRecord = {
+      modelId: "ternary-bonsai-1.7b-gguf",
+      format: "gguf" as const,
+      filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+      path: "/var/tmp/m1.gguf",
+      downloadSizeMb: 450,
+      diskSizeMb: 450,
+      sha256: null,
+      downloadedAt: new Date(0).toISOString(),
+    };
+
+    // Mirror the main-process swap path: on initial mount, the old
+    // record is reported. On the post-failure re-fetch (after the
+    // catch block runs), the on-disk truth is now `null` because
+    // `downloadModelLocked` already evicted the old model.
+    const getCurrentModelMock = vi
+      .fn()
+      .mockResolvedValueOnce(initialRecord) // initial refresh()
+      .mockResolvedValue(null); // post-failure re-fetch + polls
+
+    const downloadMock = vi
+      .fn()
+      .mockImplementation(async () => {
+        await Promise.resolve();
+        throw new Error("simulated swap failure");
+      });
+
+    const api = {
+      ...window.tessera,
+      model: {
+        ...window.tessera.model,
+        status: vi.fn().mockResolvedValue({
+          available: false,
+          modelName: null,
+          status: "stopped",
+        }),
+      },
+      runtime: {
+        ...window.tessera.runtime,
+        detectPlatform: vi.fn().mockResolvedValue({
+          platform: "linux-x64",
+          platformLabel: "Linux x64",
+          totalRamGb: 16,
+          tier: "high",
+          tierLabel: "High (8+ GB RAM)",
+          computeBackends: ["cpu"],
+          preferredFormat: "gguf",
+        }),
+        recommendModel: vi.fn().mockResolvedValue({
+          id: "ternary-bonsai-8b-gguf",
+          name: "Ternary-Bonsai 8B",
+          parameters: "8B",
+          format: "gguf",
+          formatLabel: "GGUF Q1_0_g128",
+          quantization: "Q1_0_g128",
+          platform: "linux-x64",
+          tier: "high",
+          computeBackends: ["cpu"],
+          downloadSizeMb: 2000,
+          diskSizeMb: 2000,
+          requiredRamGb: 8,
+          contextLength: 8192,
+          filename: "ternary-bonsai-8b-q1_0_g128.gguf",
+          url: "https://example.com/8b.gguf",
+          sha256: null,
+        }),
+        listModels: vi.fn().mockResolvedValue([
+          {
+            id: "ternary-bonsai-8b-gguf",
+            name: "Ternary-Bonsai 8B",
+            parameters: "8B",
+            format: "gguf",
+            formatLabel: "GGUF Q1_0_g128",
+            quantization: "Q1_0_g128",
+            platform: "linux-x64",
+            tier: "high",
+            computeBackends: ["cpu"],
+            downloadSizeMb: 2000,
+            diskSizeMb: 2000,
+            requiredRamGb: 8,
+            contextLength: 8192,
+            filename: "ternary-bonsai-8b-q1_0_g128.gguf",
+            url: "https://example.com/8b.gguf",
+            sha256: null,
+          },
+        ]),
+        getCurrentModel: getCurrentModelMock,
+        deleteModel: vi.fn().mockResolvedValue(undefined),
+        downloadModel: downloadMock,
+        onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
+      },
+    } as unknown as Window["tessera"];
+
+    render(<ModelRuntimeCard api={api} />);
+
+    // Wait for initial paint: the old model record (1.7B-gguf) should
+    // be shown as installed. The card renders `state.current.modelId`
+    // inside the `model-runtime-current` region.
+    const installed = await screen.findByTestId("model-runtime-current");
+    expect(installed.textContent ?? "").toMatch(/ternary-bonsai-1\.7b-gguf/i);
+
+    // The Swap button only renders inside the "Show all available
+    // models" expansion (rows other than the currently-installed one).
+    // Expand the panel, then click Swap on the 8B row.
+    const showAll = await screen.findByRole("button", {
+      name: /Show all available models/i,
+    });
+    fireEvent.click(showAll);
+    const swapBtn = await screen.findByRole("button", { name: /^Swap$/ });
+    fireEvent.click(swapBtn);
+
+    await waitFor(() => {
+      expect(downloadMock).toHaveBeenCalledTimes(1);
+    });
+
+    // After the catch path runs, the renderer must re-fetch the live
+    // current model and reflect that nothing is installed. Without the
+    // fix, the old `ternary-bonsai-1.7b-gguf` copy would still appear
+    // and the Start/Delete buttons would point at the now-deleted file.
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("model-runtime-current"),
+      ).not.toBeInTheDocument();
+    });
+    await screen.findByText(/simulated swap failure/i);
+
+    // The re-fetch happened: getCurrentModel was called more times
+    // than just the initial render (initial refresh + post-failure
+    // re-fetch is the floor; the lightweight 5s poll may add more).
+    expect(getCurrentModelMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+});

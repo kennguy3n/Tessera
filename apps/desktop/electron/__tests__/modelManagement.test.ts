@@ -1514,3 +1514,139 @@ describe("defaultFetcher reader lifetime (Devin Review 3270976469)", () => {
     }
   });
 });
+
+describe("manifest validation guard (parsePlatform + validateManifest)", () => {
+  // Regression for Devin Review INFO finding 3271329037:
+  // `ManifestLlamaServerVariant.platform` is typed as `Platform` but
+  // the JSON it comes from is untrusted at runtime. A manifest
+  // containing e.g. `"linux-riscv64"` would parse successfully and
+  // only fail at lookup time with a confusing "no variant for this
+  // platform" error indistinguishable from a missing-entry bug.
+  // `loadManifest` now calls `validateManifest`, which fails fast at
+  // load time with a precise diagnostic.
+
+  let workdir: string;
+  let originalEnv: string | undefined;
+
+  beforeEach(async () => {
+    originalEnv = process.env.TESSERA_MODELS_MANIFEST;
+    workdir = await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-manifest-"));
+  });
+
+  afterEach(async () => {
+    if (originalEnv === undefined) {
+      delete process.env.TESSERA_MODELS_MANIFEST;
+    } else {
+      process.env.TESSERA_MODELS_MANIFEST = originalEnv;
+    }
+    resetManifestCache();
+    await fsp.rm(workdir, { recursive: true, force: true });
+  });
+
+  it("loads the real manifest without rejecting any variant", () => {
+    process.env.TESSERA_MODELS_MANIFEST = MANIFEST;
+    resetManifestCache();
+    // If the validator is overzealous, it would reject the real
+    // shipped manifest. This is a positive-control: every shipped
+    // variant must pass.
+    const manifest = loadManifest(true);
+    expect(manifest.llama_server?.variants.length).toBeGreaterThan(0);
+  });
+
+  it("rejects a manifest with an unknown llama_server.variants[].platform with a precise error", async () => {
+    const badManifest: ModelManifest = {
+      format_version: 1,
+      models: [],
+      llama_server: {
+        version: "b4546",
+        variants: [
+          {
+            // intentionally not in the Platform union
+            platform: "linux-riscv64" as unknown as never,
+            compute: "cpu",
+            url: "https://example.invalid/llama-server",
+            sha256: null,
+          },
+        ],
+      },
+    };
+    const badPath = path.join(workdir, "bad-platform.json");
+    await fsp.writeFile(badPath, JSON.stringify(badManifest), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = badPath;
+    resetManifestCache();
+
+    expect(() => loadManifest(true)).toThrowError(/linux-riscv64/);
+    expect(() => loadManifest(true)).toThrowError(/not one of/);
+  });
+
+  it("rejects a manifest with an unknown llama_server.variants[].compute with a precise error", async () => {
+    const badManifest: ModelManifest = {
+      format_version: 1,
+      models: [],
+      llama_server: {
+        version: "b4546",
+        variants: [
+          {
+            platform: "linux-x64",
+            // intentionally not in the ComputeBackend union
+            compute: "xpu" as unknown as never,
+            url: "https://example.invalid/llama-server",
+            sha256: null,
+          },
+        ],
+      },
+    };
+    const badPath = path.join(workdir, "bad-compute.json");
+    await fsp.writeFile(badPath, JSON.stringify(badManifest), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = badPath;
+    resetManifestCache();
+
+    expect(() => loadManifest(true)).toThrowError(/xpu/);
+    expect(() => loadManifest(true)).toThrowError(/not one of/);
+  });
+
+  it("does not cache a manifest that failed validation", async () => {
+    const badManifest: ModelManifest = {
+      format_version: 1,
+      models: [],
+      llama_server: {
+        version: "b4546",
+        variants: [
+          {
+            platform: "freebsd-x64" as unknown as never,
+            compute: "cpu",
+            url: "https://example.invalid/llama-server",
+            sha256: null,
+          },
+        ],
+      },
+    };
+    const badPath = path.join(workdir, "uncached-bad.json");
+    await fsp.writeFile(badPath, JSON.stringify(badManifest), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = badPath;
+    resetManifestCache();
+
+    // First load throws.
+    expect(() => loadManifest(true)).toThrow();
+    // After fixing the file, a subsequent forced reload must succeed —
+    // proving the failed manifest was not cached.
+    const goodManifest: ModelManifest = {
+      format_version: 1,
+      models: [],
+      llama_server: {
+        version: "b4546",
+        variants: [
+          {
+            platform: "linux-x64",
+            compute: "cpu",
+            url: "https://example.invalid/llama-server",
+            sha256: null,
+          },
+        ],
+      },
+    };
+    await fsp.writeFile(badPath, JSON.stringify(goodManifest), "utf8");
+    const reloaded = loadManifest(true);
+    expect(reloaded.llama_server?.variants[0].platform).toBe("linux-x64");
+  });
+});

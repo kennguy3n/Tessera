@@ -364,13 +364,102 @@ export function manifestPath(): string {
   return path.join(process.cwd(), "sidecars", "models.json");
 }
 
+const KNOWN_PLATFORMS: ReadonlySet<Platform> = new Set([
+  "macos-apple-silicon",
+  "macos-intel",
+  "windows-x64",
+  "linux-x64",
+  "linux-arm64",
+]);
+
+const KNOWN_COMPUTE_BACKENDS: ReadonlySet<ComputeBackend> = new Set([
+  "cpu",
+  "cuda",
+  "vulkan",
+  "metal",
+  "rocm",
+]);
+
+/**
+ * Type guard: returns the input typed as `Platform` iff it is one of
+ * the five known platform literals, otherwise `null`. Used by
+ * `loadManifest` to fail fast on unrecognised platform strings instead
+ * of silently letting them flow through to `pickLlamaServerVariant`'s
+ * `===` check where they would always miss with a confusing
+ * "no variant for this platform" error that's indistinguishable from a
+ * missing-entry bug.
+ *
+ * (Devin Review INFO finding 3271329037 — the
+ * `ManifestLlamaServerVariant.platform` field is typed as `Platform`
+ * but the JSON it comes from is untrusted at runtime.)
+ */
+export function parsePlatform(s: string): Platform | null {
+  return (KNOWN_PLATFORMS as ReadonlySet<string>).has(s)
+    ? (s as Platform)
+    : null;
+}
+
+export function parseComputeBackend(s: string): ComputeBackend | null {
+  return (KNOWN_COMPUTE_BACKENDS as ReadonlySet<string>).has(s)
+    ? (s as ComputeBackend)
+    : null;
+}
+
+export class ManifestValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ManifestValidationError";
+  }
+}
+
+/**
+ * Validate the runtime shape of a parsed manifest. We focus on the
+ * enum-typed fields on the `llama_server` variants — those go through
+ * a `===` lookup against `Platform` / `ComputeBackend` literals and
+ * would silently return `null` on an unknown value, which is the
+ * type-safety gap finding 3271329037 calls out. Returns the manifest
+ * unchanged on success; throws `ManifestValidationError` on failure so
+ * the caller's `loadManifest` propagates a clear error instead of
+ * caching a half-valid object.
+ */
+function validateManifest(manifest: ModelManifest): ModelManifest {
+  const errors: string[] = [];
+  const server = manifest.llama_server;
+  if (server) {
+    for (let i = 0; i < server.variants.length; i += 1) {
+      const v = server.variants[i];
+      if (!parsePlatform(v.platform as unknown as string)) {
+        errors.push(
+          `llama_server.variants[${i}].platform="${String(
+            v.platform,
+          )}" is not one of: ${Array.from(KNOWN_PLATFORMS).join(", ")}`,
+        );
+      }
+      if (!parseComputeBackend(v.compute as unknown as string)) {
+        errors.push(
+          `llama_server.variants[${i}].compute="${String(
+            v.compute,
+          )}" is not one of: ${Array.from(KNOWN_COMPUTE_BACKENDS).join(", ")}`,
+        );
+      }
+    }
+  }
+  if (errors.length > 0) {
+    throw new ManifestValidationError(
+      `models.json failed validation:\n  - ${errors.join("\n  - ")}`,
+    );
+  }
+  return manifest;
+}
+
 export function loadManifest(forceReload = false): ModelManifest {
   const p = manifestPath();
   if (!forceReload && cachedManifest && cachedManifest.path === p) {
     return cachedManifest.manifest;
   }
   const raw = fs.readFileSync(p, "utf8");
-  const manifest = JSON.parse(raw) as ModelManifest;
+  const parsed = JSON.parse(raw) as ModelManifest;
+  const manifest = validateManifest(parsed);
   cachedManifest = { path: p, manifest };
   return manifest;
 }

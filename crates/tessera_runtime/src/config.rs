@@ -1109,8 +1109,8 @@ mod tests {
                 .collect();
             let mut want: Vec<ComputeBackend> = expected;
             let mut got: Vec<ComputeBackend> = rm.compute_backends.clone();
-            want.sort_by_key(|b| b.as_str());
-            got.sort_by_key(|b| b.as_str());
+            want.sort_by_key(ComputeBackend::as_str);
+            got.sort_by_key(ComputeBackend::as_str);
             assert_eq!(got, want, "{}: compute_backends", mm.id);
 
             // URL must be present in both and match. The manifest is
