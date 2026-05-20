@@ -91,6 +91,64 @@ export:
     }
 
     #[test]
+    fn parse_marp_slide_template_round_trips() {
+        let yaml = r#"
+id: deck-v1
+name: Marp Deck
+type: slides
+description: A Marp-rendered deck template
+format: marp
+theme: gaia
+paginate: true
+sections:
+  - title: Intro
+    prompt: Lay out the headline.
+export:
+  - markdown
+  - pptx
+  - pdf
+marp_template: |
+  ---
+  marp: true
+  theme: gaia
+  paginate: true
+  ---
+
+  # Hello world
+"#;
+        let template = parse_template(yaml).unwrap();
+        assert_eq!(template.format.as_deref(), Some("marp"));
+        assert_eq!(template.theme.as_deref(), Some("gaia"));
+        assert_eq!(template.paginate, Some(true));
+        let marp = template
+            .marp_template
+            .as_deref()
+            .expect("marp_template should be present");
+        assert!(marp.contains("marp: true"));
+        assert!(marp.contains("# Hello world"));
+    }
+
+    #[test]
+    fn parse_template_without_marp_fields_is_still_valid() {
+        let yaml = r#"
+id: plain-v1
+name: Plain
+type: document
+description: A plain template
+sections:
+  - title: Body
+    prompt: Body
+export:
+  - markdown
+"#;
+        let template = parse_template(yaml).unwrap();
+        assert!(template.format.is_none());
+        assert!(template.marp_template.is_none());
+        assert!(template.theme.is_none());
+        assert!(template.paginate.is_none());
+    }
+
+    #[test]
     fn parse_template_file_works() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.yaml");

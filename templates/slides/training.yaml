@@ -1,0 +1,106 @@
+id: training-v1
+name: Training Deck
+type: slides
+description: Training session deck with learning objectives, content modules, exercises, and assessments
+format: marp
+theme: default
+paginate: true
+sections:
+  - title: Learning Objectives
+    prompt: >
+      State 3-5 concrete learning objectives for this training. Each should be
+      observable and measurable (use Bloom's verbs).
+  - title: Agenda
+    prompt: >
+      Outline the session agenda including breaks. Include estimated duration
+      for each module.
+  - title: Module Content
+    prompt: >
+      Deliver each training module. Use mix of conceptual explanation,
+      examples, and visuals. Reference source material.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Hands-on Exercise
+    prompt: >
+      Provide a hands-on exercise that exercises the module learning. Include
+      problem statement, sample solution, and discussion prompts.
+  - title: Assessment and Q&A
+    prompt: >
+      Wrap with a knowledge check (3-5 questions), open Q&A, and pointers to
+      further reading.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf
+marp_template: |
+  ---
+  marp: true
+  theme: default
+  paginate: true
+  header: 'Training — {{ training_title }}'
+  ---
+
+  # {{ training_title }}
+  ## {{ duration }} session — {{ audience }}
+
+  ---
+
+  ## Learning Objectives
+
+  By the end of this session you will be able to:
+
+  1. {{ objective_1 }}
+  2. {{ objective_2 }}
+  3. {{ objective_3 }}
+
+  ---
+
+  ## Agenda
+
+  | Time | Module | Activity |
+  |---|---|---|
+  | {{ time_1 }} | {{ module_1 }} | Lecture |
+  | {{ time_2 }} | {{ module_2 }} | Demo |
+  | {{ time_3 }} | Hands-on | Exercise |
+  | {{ time_4 }} | Wrap | Q&A |
+
+  ---
+
+  ## Module: {{ module_1 }}
+
+  - {{ module_1_point_1 }}
+  - {{ module_1_point_2 }}
+  - {{ module_1_point_3 }}
+
+  ```mermaid
+  flowchart LR
+    Concept --> Example --> Practice --> Mastery
+  ```
+
+  ---
+
+  ## Hands-on Exercise
+
+  **Task.** {{ exercise_prompt }}
+
+  **Hint.** {{ exercise_hint }}
+
+  <!-- Allow ~{{ exercise_minutes }} minutes; circulate -->
+
+  ---
+
+  ## Assessment
+
+  1. {{ question_1 }}
+  2. {{ question_2 }}
+  3. {{ question_3 }}
+
+  ---
+
+  ## Q&A and Resources
+
+  - {{ resource_1 }}
+  - {{ resource_2 }}
+  - {{ resource_3 }}

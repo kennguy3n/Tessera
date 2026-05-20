@@ -2,6 +2,9 @@ id: review-v1
 name: Review Deck
 type: slides
 description: Project or performance review deck with status, progress, blockers, and next steps
+format: marp
+theme: uncover
+paginate: true
 sections:
   - title: Status Overview
     prompt: >
@@ -24,3 +27,58 @@ sections:
 export:
   - markdown
   - html
+  - pptx
+  - pdf
+marp_template: |
+  ---
+  marp: true
+  theme: uncover
+  paginate: true
+  ---
+
+  # {{ project_name }}
+  ## Period Review — {{ period }}
+
+  ---
+
+  ## Status Overview
+
+  **Overall:** {{ status_indicator }}
+
+  | Workstream | Status | Owner |
+  |---|---|---|
+  | {{ workstream_1 }} | {{ status_1 }} | {{ owner_1 }} |
+  | {{ workstream_2 }} | {{ status_2 }} | {{ owner_2 }} |
+
+  ---
+
+  ## Progress Against Goals
+
+  - {{ goal_1 }} — {{ goal_1_progress }}%
+  - {{ goal_2 }} — {{ goal_2_progress }}%
+  - {{ goal_3 }} — {{ goal_3_progress }}%
+
+  ---
+
+  ## Key Accomplishments
+
+  - {{ accomplishment_1 }}
+  - {{ accomplishment_2 }}
+  - {{ accomplishment_3 }}
+
+  ---
+
+  ## Blockers and Risks
+
+  - **Blocker:** {{ blocker_1 }} — mitigation: {{ mitigation_1 }}
+  - **Risk:** {{ risk_1 }} (severity: {{ severity_1 }})
+
+  ---
+
+  ## Next Steps
+
+  | Step | Owner | Due |
+  |---|---|---|
+  | {{ step_1 }} | {{ owner_step_1 }} | {{ due_1 }} |
+  | {{ step_2 }} | {{ owner_step_2 }} | {{ due_2 }} |
+

@@ -12,6 +12,23 @@ pub struct Template {
     pub description: String,
     pub sections: Vec<TemplateSection>,
     pub export: Vec<ExportFormat>,
+    /// Optional output format for the template (e.g. "marp" for slide decks
+    /// that should be rendered with Marp Core / Marp CLI). Mirrors the
+    /// `format:` field in the YAML.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Optional preferred theme passed to the rendering engine when `format`
+    /// implies one (e.g. Marp themes: default / gaia / uncover).
+    #[serde(default)]
+    pub theme: Option<String>,
+    /// Whether the rendering engine should paginate the output. Marp uses
+    /// this directly; other engines may ignore it.
+    #[serde(default)]
+    pub paginate: Option<bool>,
+    /// Raw Marp Markdown template body. When present the template engine
+    /// can emit Marp output directly without re-rendering from sections.
+    #[serde(default)]
+    pub marp_template: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

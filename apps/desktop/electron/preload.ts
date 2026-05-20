@@ -249,6 +249,14 @@ export interface TesseraApi {
     extractTasksDecisions: (sourceId: string) => Promise<ExtractedItem[]>;
     compareSources: (sourceIdA: string, sourceIdB: string) => Promise<ArtifactInfo>;
     exportEvidencePack: (artifactId: string, outputPath: string) => Promise<string>;
+    exportMarp: (req: {
+      markdown: string;
+      format: "pdf" | "pptx" | "html";
+      outputPath: string;
+      theme?: string;
+      includeNotes?: boolean;
+      allowHtml?: boolean;
+    }) => Promise<{ outputPath: string; bytes: number }>;
   };
   templates: {
     list: () => Promise<TemplateInfo[]>;
@@ -344,6 +352,7 @@ const api: TesseraApi = {
       ipcRenderer.invoke("artifacts:compareSources", sourceIdA, sourceIdB),
     exportEvidencePack: (artifactId: string, outputPath: string) =>
       ipcRenderer.invoke("artifacts:exportEvidencePack", artifactId, outputPath),
+    exportMarp: (req) => ipcRenderer.invoke("artifacts:exportMarp", req),
   },
   templates: {
     list: () => ipcRenderer.invoke("templates:list"),

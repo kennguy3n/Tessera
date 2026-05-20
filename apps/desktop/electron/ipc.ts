@@ -212,6 +212,31 @@ export function registerIpcHandlers(): void {
     },
   );
 
+  ipcMain.handle(
+    "artifacts:exportMarp",
+    async (
+      _event,
+      req: {
+        markdown: string;
+        format: "pdf" | "pptx" | "html";
+        outputPath: string;
+        theme?: string;
+        includeNotes?: boolean;
+        allowHtml?: boolean;
+      },
+    ) => {
+      const { runMarpExport } = await import("./marpExport");
+      return runMarpExport({
+        markdown: req.markdown,
+        format: req.format,
+        outputPath: req.outputPath,
+        theme: req.theme,
+        includeNotes: req.includeNotes,
+        allowHtml: req.allowHtml,
+      });
+    },
+  );
+
   // --- Templates ---
 
   ipcMain.handle("templates:list", async () => {

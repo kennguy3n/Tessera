@@ -1,9 +1,14 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
   renderMermaid,
   MermaidEnvironmentError,
   MermaidRenderError,
 } from "../services/mermaidRenderer";
+import {
+  renderMarp,
+  MarpRenderError,
+  type MarpRenderOptions,
+} from "../services/marpRenderer";
 
 export type SlideBlockType = "text" | "bullets" | "diagram";
 
@@ -18,8 +23,15 @@ export interface Slide {
   notes: string;
 }
 
+export interface MarpModeState {
+  enabled: boolean;
+  source: string;
+  theme?: string;
+}
+
 export interface SlideContent {
   slides: Slide[];
+  marp?: MarpModeState;
 }
 
 interface SlideEditorProps {
@@ -33,23 +45,34 @@ export default function SlideEditor({
   onSave,
   autoSaveMs = 2000,
 }: SlideEditorProps) {
-  const [slides, setSlides] = useState<Slide[]>(() => parseSlideContent(content));
+  const initial = useMemo(() => parseSlideContent(content), [content]);
+  const [slides, setSlides] = useState<Slide[]>(() => initial.slides);
   const [activeIndex, setActiveIndex] = useState(0);
   const [showNotes, setShowNotes] = useState(false);
+  const [marpMode, setMarpMode] = useState<boolean>(() => initial.marpMode);
+  const [marpSource, setMarpSource] = useState<string>(() => initial.marpSource);
+  const [marpTheme, setMarpTheme] = useState<MarpRenderOptions["theme"]>("default");
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef(content);
 
   const debouncedSave = useCallback(
-    (updatedSlides: Slide[]) => {
+    (
+      updatedSlides: Slide[],
+      marpState: MarpModeState = {
+        enabled: marpMode,
+        source: marpSource,
+        theme: marpTheme,
+      },
+    ) => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        const data: SlideContent = { slides: updatedSlides };
+        const data: SlideContent = { slides: updatedSlides, marp: marpState };
         const json = JSON.stringify(data);
         lastSavedRef.current = json;
         onSave(json);
       }, autoSaveMs);
     },
-    [onSave, autoSaveMs],
+    [onSave, autoSaveMs, marpMode, marpSource, marpTheme],
   );
 
   useEffect(() => {
@@ -61,7 +84,10 @@ export default function SlideEditor({
   // Sync external content prop changes (e.g., version restore)
   useEffect(() => {
     if (content !== lastSavedRef.current) {
-      setSlides(parseSlideContent(content));
+      const parsed = parseSlideContent(content);
+      setSlides(parsed.slides);
+      setMarpMode(parsed.marpMode);
+      setMarpSource(parsed.marpSource);
       lastSavedRef.current = content;
     }
   }, [content]);
@@ -180,9 +206,66 @@ export default function SlideEditor({
           >
             Notes
           </button>
+          <button
+            type="button"
+            className={`btn-sm ${marpMode ? "active" : ""}`}
+            onClick={() => {
+              setMarpMode((prev) => {
+                const next = !prev;
+                debouncedSave(slides, {
+                  enabled: next,
+                  source: marpSource,
+                  theme: marpTheme,
+                });
+                return next;
+              });
+            }}
+            title="Toggle Marp Mode (raw Marp Markdown with live HTML preview)"
+          >
+            Marp Mode
+          </button>
         </div>
 
-        {activeSlide && (
+        {marpMode && (
+          <div className="marp-mode">
+            <div className="marp-mode-toolbar">
+              <label className="marp-mode-label">
+                Theme
+                <select
+                  value={marpTheme ?? "default"}
+                  onChange={(e) => setMarpTheme(e.target.value)}
+                >
+                  <option value="default">default</option>
+                  <option value="gaia">gaia</option>
+                  <option value="uncover">uncover</option>
+                </select>
+              </label>
+              <span className="marp-mode-hint">
+                Use <code>---</code> to separate slides; <code>&lt;!-- notes --&gt;</code> for speaker notes.
+              </span>
+            </div>
+            <div className="marp-mode-split">
+              <textarea
+                className="marp-mode-source"
+                value={marpSource}
+                onChange={(e) => {
+                  setMarpSource(e.target.value);
+                  debouncedSave(slides, {
+                    enabled: marpMode,
+                    source: e.target.value,
+                    theme: marpTheme,
+                  });
+                }}
+                placeholder="---&#10;marp: true&#10;theme: default&#10;---&#10;&#10;# Slide 1"
+                rows={20}
+                spellCheck={false}
+              />
+              <MarpPreview markdown={marpSource} theme={marpTheme ?? "default"} />
+            </div>
+          </div>
+        )}
+
+        {!marpMode && activeSlide && (
           <div className="slide-canvas">
             <input
               className="slide-title-input"
@@ -316,17 +399,69 @@ function MermaidPreview({ dsl }: { dsl: string }) {
   );
 }
 
-function parseSlideContent(content: string): Slide[] {
-  if (!content) {
-    return [{ title: "Title Slide", blocks: [{ type: "text", content: "" }], notes: "" }];
+function MarpPreview({ markdown, theme }: { markdown: string; theme: string }) {
+  const [html, setHtml] = useState("");
+  const [css, setCss] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const result = renderMarp(markdown, { theme });
+      setHtml(result.html);
+      setCss(result.css);
+      setError(null);
+    } catch (err) {
+      if (err instanceof MarpRenderError) {
+        setError(err.message);
+      } else {
+        setError(String(err));
+      }
+      setHtml("");
+      setCss("");
+    }
+  }, [markdown, theme]);
+  if (error) {
+    return (
+      <div className="marp-preview-error" role="alert">
+        {error}
+      </div>
+    );
   }
+  return (
+    <div className="marp-preview">
+      <style>{css}</style>
+      <div className="marp-preview-deck" dangerouslySetInnerHTML={{ __html: html }} />
+    </div>
+  );
+}
+
+interface ParsedSlideContent {
+  slides: Slide[];
+  marpMode: boolean;
+  marpSource: string;
+}
+
+export function parseSlideContent(content: string): ParsedSlideContent {
+  const emptyDefault: ParsedSlideContent = {
+    slides: [{ title: "Title Slide", blocks: [{ type: "text", content: "" }], notes: "" }],
+    marpMode: false,
+    marpSource: "",
+  };
+  if (!content) return emptyDefault;
   try {
     const parsed = JSON.parse(content) as SlideContent;
     if (parsed.slides && Array.isArray(parsed.slides) && parsed.slides.length > 0) {
-      return parsed.slides;
+      return {
+        slides: parsed.slides,
+        marpMode: parsed.marp?.enabled ?? false,
+        marpSource: parsed.marp?.source ?? "",
+      };
     }
   } catch {
     // Not JSON — treat as single text slide
   }
-  return [{ title: "Slide 1", blocks: [{ type: "text", content }], notes: "" }];
+  return {
+    slides: [{ title: "Slide 1", blocks: [{ type: "text", content }], notes: "" }],
+    marpMode: false,
+    marpSource: "",
+  };
 }

@@ -2,6 +2,9 @@ id: strategy-v1
 name: Strategy Deck
 type: slides
 description: Strategic planning deck with vision, market analysis, strategic pillars, and roadmap
+format: marp
+theme: gaia
+paginate: true
 sections:
   - title: Vision and Mission
     prompt: >
@@ -33,3 +36,71 @@ sections:
 export:
   - markdown
   - html
+  - pptx
+  - pdf
+marp_template: |
+  ---
+  marp: true
+  theme: gaia
+  paginate: true
+  class: lead
+  ---
+
+  # {{ strategy_title }}
+  ## A {{ horizon }} plan
+
+  ---
+
+  ## Vision and Mission
+
+  > {{ vision }}
+
+  **Mission.** {{ mission }}
+
+  ---
+
+  ## Market Analysis
+
+  - **Landscape:** {{ landscape }}
+  - **Competition:** {{ competitive_positioning }}
+  - **Trends:** {{ key_trends }}
+
+  ---
+
+  ## Strategic Pillars
+
+  1. **{{ pillar_1 }}** — {{ pillar_1_objective }}
+  2. **{{ pillar_2 }}** — {{ pillar_2_objective }}
+  3. **{{ pillar_3 }}** — {{ pillar_3_objective }}
+
+  ---
+
+  ## Roadmap
+
+  ```mermaid
+  gantt
+      title Execution Roadmap
+      dateFormat  YYYY-MM-DD
+      section Phase 1
+      {{ milestone_1 }} :a1, {{ phase1_start }}, {{ phase1_duration }}
+      section Phase 2
+      {{ milestone_2 }} :a2, after a1, {{ phase2_duration }}
+      section Phase 3
+      {{ milestone_3 }} :a3, after a2, {{ phase3_duration }}
+  ```
+
+  ---
+
+  ## Resource Requirements
+
+  - **Headcount:** {{ headcount }}
+  - **Budget:** {{ budget }}
+  - **Tech / partners:** {{ partnerships }}
+
+  ---
+
+  ## Success Metrics
+
+  - **Leading:** {{ leading_indicators }}
+  - **Lagging:** {{ lagging_indicators }}
+
