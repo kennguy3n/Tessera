@@ -204,9 +204,7 @@ mod tests {
         // (`columns`) would have broken any in-flight test fixtures or older
         // builds.
         let mut artifact = Artifact::new("Legacy".to_string(), ArtifactType::Sheet, None);
-        artifact.update_content(
-            r#"{"headers":["OldCol"],"rows":[["v"]]}"#.to_string(),
-        );
+        artifact.update_content(r#"{"headers":["OldCol"],"rows":[["v"]]}"#.to_string());
         let bytes = export_xlsx(&artifact);
         assert_is_zip(&bytes);
         let xml = read_xlsx_text(&bytes);
