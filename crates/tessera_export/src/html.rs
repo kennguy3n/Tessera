@@ -396,11 +396,7 @@ mod tests {
         // JSON model is corrupted and `parseInfographicContent` threw), the
         // Rust exporter still produces a legible page by wrapping the raw
         // JSON in <pre>, rather than mis-parsing it into broken paragraphs.
-        let mut artifact = Artifact::new(
-            "Stats".to_string(),
-            ArtifactType::Infographic,
-            None,
-        );
+        let mut artifact = Artifact::new("Stats".to_string(), ArtifactType::Infographic, None);
         let raw_json = "{\"title\":\"Q4\",\"sections\":[]}";
         artifact.update_content(raw_json.to_string());
 
@@ -437,14 +433,8 @@ mod tests {
 
     #[test]
     fn export_html_wraps_raw_json_landing_page_in_pre_as_fallback() {
-        let mut artifact = Artifact::new(
-            "Landing".to_string(),
-            ArtifactType::LandingPage,
-            None,
-        );
-        artifact.update_content(
-            "{\"hero\":{\"headline\":\"x\"},\"features\":[]}".to_string(),
-        );
+        let mut artifact = Artifact::new("Landing".to_string(), ArtifactType::LandingPage, None);
+        artifact.update_content("{\"hero\":{\"headline\":\"x\"},\"features\":[]}".to_string());
         let html = export_html(&artifact, &[]);
         assert!(html.contains("<pre>"));
         assert!(html.contains("&quot;headline&quot;"));
