@@ -84,6 +84,20 @@ export interface SettingsData {
   watchPatterns: string[];
 }
 
+// Mirrors `ExtractedItem` in apps/desktop/renderer/src/types/ipc.ts and
+// the local copy in apps/desktop/electron/ipc.ts. We duplicate the shape
+// here so the preload's `extractTasksDecisions` signature is sound across
+// the contextBridge without forcing preload (main-side, Electron) to
+// import from the renderer module (which would pull React-aware build
+// settings into the main process). Any change to the schema must be made
+// in all three locations.
+export interface ExtractedItem {
+  itemType: "task" | "decision";
+  text: string;
+  sourceCitation: string;
+  confidence: number;
+}
+
 export interface ModelStatus {
   available: boolean;
   modelName: string | null;
@@ -227,7 +241,7 @@ export interface TesseraApi {
     listVersions: (id: string) => Promise<ArtifactVersionInfo[]>;
     restoreVersion: (id: string, versionNumber: number) => Promise<ArtifactInfo>;
     generateFromTemplate: (templateId: string, sourceIds: string[]) => Promise<ArtifactInfo>;
-    extractTasksDecisions: (sourceId: string) => Promise<unknown>;
+    extractTasksDecisions: (sourceId: string) => Promise<ExtractedItem[]>;
     compareSources: (sourceIdA: string, sourceIdB: string) => Promise<ArtifactInfo>;
     exportEvidencePack: (artifactId: string, outputPath: string) => Promise<string>;
   };

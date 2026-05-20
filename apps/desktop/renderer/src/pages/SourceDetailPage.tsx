@@ -33,7 +33,16 @@ export default function SourceDetailPage() {
       setExtractError("Tessera bridge not available");
       return;
     }
+    // Clear BOTH previous error and previous results when starting a new
+    // extraction. Without clearing `extracted`, a successful first
+    // extraction followed by a failed second extraction would render the
+    // new error alongside the stale results from the first run (the
+    // section's guard is `extractError || extracted`). Showing stale
+    // task/decision items next to an error is misleading because the
+    // user can't tell that those items are NOT the result of the call
+    // they just made. See Devin Review finding 3270586359.
     setExtractError(null);
+    setExtracted(null);
     setExtracting(true);
     try {
       const result = await api.artifacts.extractTasksDecisions(id);

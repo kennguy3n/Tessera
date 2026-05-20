@@ -1,4 +1,5 @@
 import { ipcMain, BrowserWindow, app, dialog } from "electron";
+import { existsSync } from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { loadConfig, updateConfig } from "./config";
@@ -563,13 +564,36 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("runtime:downloadModel", async (event, modelId: string) => {
     const requested = findModelOrThrow(modelId);
-    // If a different model is already installed, `downloadModel` will
-    // evict it before fetching the new one. The eviction unlinks the
-    // file, so we MUST stop the sidecar first — it has the file open.
+    // Only stop the sidecar if we will actually mutate the model file.
+    //
+    // Three cases:
+    //   (a) Requested model is already installed AND file is still on disk
+    //       -> no-op, do NOT touch the sidecar (avoid killing a running
+    //       inference server when no download is needed, per Devin Review
+    //       finding 3270586297).
+    //   (b) Requested model is already installed but file is missing
+    //       -> we must re-download. Stop the sidecar in case it's still
+    //       pointing at the now-missing path (defensive; in practice if
+    //       the file was deleted out from under the sidecar it likely
+    //       died already, but we don't rely on that).
+    //   (c) A different model is installed (the swap case)
+    //       -> `downloadModel` will evict the existing file. The eviction
+    //       unlinks it, so we MUST stop the sidecar first — it holds the
+    //       OS file handle and on Windows that blocks the unlink with
+    //       EPERM/EBUSY.
+    //
     // There is intentionally no separate `runtime:swapModel` channel:
     // `downloadModel` already handles both fresh-install and swap, so a
     // second handler that called the same function only invited drift
     // (see Devin Review finding 3270524691).
+    const current = await getCurrentModel(userDataDir());
+    if (
+      current &&
+      current.modelId === requested.id &&
+      existsSync(current.path)
+    ) {
+      return current;
+    }
     await stopSidecarIfRunning();
     return downloadModel(userDataDir(), requested, progressEmitter(event));
   });

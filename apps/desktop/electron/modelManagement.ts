@@ -144,7 +144,10 @@ export function detectPlatform(): Platform {
     case "win32":
       return "windows-x64";
     case "linux":
-      return arch === "arm64" || arch === "aarch64" ? "linux-arm64" : "linux-x64";
+      // Node's `os.arch()` returns `"arm64"` (not the kernel string
+      // `"aarch64"`) on aarch64 systems, so only the `"arm64"` branch is
+      // reachable here. See https://nodejs.org/api/os.html#osarch.
+      return arch === "arm64" ? "linux-arm64" : "linux-x64";
     default:
       return "linux-x64";
   }
@@ -637,10 +640,25 @@ async function downloadModelLocked(
 
   const current = await getCurrentModel(userDataDir);
   if (current && current.modelId === requested.id) {
-    // Already installed — return existing record without re-downloading.
-    return current;
-  }
-  if (current) {
+    // Fast path: requested model is already installed AND the file is
+    // still on disk. We re-check existence here because the active-model
+    // record can drift from reality if a user manually deleted the file
+    // out from under Tessera or a disk error removed it. In that case the
+    // "already installed" claim is wrong and we must re-download.
+    // (Devin Review finding 3270586440.)
+    //
+    // We use `fs.existsSync` instead of the async equivalent for two
+    // reasons: (1) we're already inside the per-userDataDir download lock
+    // so blocking the event loop briefly is harmless; (2) it makes the
+    // check trivially atomic with the decision branch immediately below.
+    if (fs.existsSync(current.path)) {
+      return current;
+    }
+    // File missing — fall through to the re-download path. We still
+    // clear the stale record so the post-download `writeCurrentModel`
+    // writes a clean state instead of merging with the stale one.
+    await writeCurrentModel(userDataDir, null);
+  } else if (current) {
     await deleteCurrentModel(userDataDir);
   }
 

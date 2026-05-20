@@ -311,6 +311,45 @@ describe("single-model enforcement", () => {
     expect(first.modelId).toBe(requested.id);
   });
 
+  it("downloadModel re-downloads when active-model.json claims installed but file is missing on disk", async () => {
+    // Regression for Devin Review finding 3270586440: if the user (or a
+    // disk error) removed the model file out from under Tessera, the fast
+    // path used to incorrectly return the stale record without
+    // re-downloading. The sidecar would then fail to start because its
+    // model path no longer existed. Now we verify file existence before
+    // taking the fast path.
+    const requested = makeResolved();
+    const fetcher = async (
+      _url: string,
+      onProgress: (d: number, t: number) => void,
+      dest: string,
+    ) => {
+      await fsp.writeFile(dest, Buffer.from("x"));
+      onProgress(1, 1);
+      return { totalBytes: 1 };
+    };
+    const first = await downloadModel(workdir, requested, () => {}, { fetcher });
+    // Simulate the user deleting the model file outside of Tessera.
+    await fsp.unlink(first.path);
+    let secondCall = 0;
+    const second = await downloadModel(
+      workdir,
+      requested,
+      () => {},
+      {
+        fetcher: async (...args) => {
+          secondCall += 1;
+          return fetcher(...args);
+        },
+      },
+    );
+    expect(secondCall).toBe(1);
+    expect(second.modelId).toBe(requested.id);
+    // The file must exist again on disk after the re-download.
+    const restored = await fsp.stat(second.path);
+    expect(restored.isFile()).toBe(true);
+  });
+
   it("downloadModel deletes the old model file BEFORE downloading the new one (swap path)", async () => {
     const oldRequested = makeResolved({
       id: "ternary-bonsai-1.7b-gguf",
