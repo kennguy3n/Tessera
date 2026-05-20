@@ -616,3 +616,130 @@ describe("ModelRuntimeCard failed-swap re-fetches current model", () => {
     expect(getCurrentModelMock.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe("ModelRuntimeCard 5s poll respects busyModelId gate", () => {
+  // Regression for Devin Review INFO finding 3271382737:
+  // The 5-second status/getCurrentModel poll could overwrite optimistic
+  // state set by `performDownload`/`handleDelete` if a poll tick landed
+  // in the window where the renderer had already nulled `current` but
+  // the main process hadn't yet evicted the file from disk. The fix
+  // makes the poll's setState a functional update that skips when
+  // `s.busyModelId !== null`. This test pumps a poll tick while a
+  // download is in flight and asserts the poll's setState DID NOT
+  // clobber the busy state.
+
+  it("does not overwrite state when a download is in flight (busyModelId !== null)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // Resolve the poll's `getCurrentModel` to a sentinel value that
+    // would visibly differ from the busy in-flight state, so that if
+    // the gate failed we'd see the sentinel appear.
+    const pollGetCurrent = vi.fn().mockResolvedValue({
+      modelId: "ghost-record-from-poll",
+      format: "gguf" as const,
+      filename: "ghost.gguf",
+      path: "/var/tmp/ghost.gguf",
+      downloadSizeMb: 1,
+      diskSizeMb: 1,
+      sha256: null,
+      downloadedAt: new Date(0).toISOString(),
+    });
+    const pollStatus = vi.fn().mockResolvedValue({
+      available: true,
+      modelName: "ghost-status-from-poll",
+      status: "running",
+    });
+
+    // The download mock returns a promise that never resolves while
+    // the test is running — so the card stays "busy" indefinitely
+    // and we can pump as many poll ticks as we want against it.
+    let resolveDownload: () => void = () => undefined;
+    const downloadMock = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((res) => {
+          resolveDownload = () => res();
+        }),
+    );
+
+    const api = {
+      ...window.tessera,
+      model: {
+        ...window.tessera.model,
+        status: pollStatus,
+      },
+      runtime: {
+        ...window.tessera.runtime,
+        detectPlatform: vi.fn().mockResolvedValue({
+          platform: "linux-x64",
+          platformLabel: "Linux x64",
+          totalRamGb: 16,
+          tier: "high",
+          tierLabel: "High (8+ GB RAM)",
+          computeBackends: ["cpu"],
+          preferredFormat: "gguf",
+        }),
+        recommendModel: vi.fn().mockResolvedValue({
+          id: "ternary-bonsai-8b-gguf",
+          name: "Ternary-Bonsai 8B",
+          parameters: "8B",
+          format: "gguf",
+          formatLabel: "GGUF Q1_0_g128",
+          quantization: "Q1_0_g128",
+          platform: "linux-x64",
+          tier: "high",
+          computeBackends: ["cpu"],
+          downloadSizeMb: 2000,
+          diskSizeMb: 2000,
+          requiredRamGb: 8,
+          contextLength: 8192,
+          filename: "ternary-bonsai-8b-q1_0_g128.gguf",
+          url: "https://example.com/8b.gguf",
+          sha256: null,
+        }),
+        listModels: vi.fn().mockResolvedValue([]),
+        getCurrentModel: vi
+          .fn()
+          // initial mount: nothing installed yet
+          .mockResolvedValueOnce(null)
+          // every subsequent poll call returns the ghost value
+          .mockImplementation(() => pollGetCurrent()),
+        deleteModel: vi.fn().mockResolvedValue(undefined),
+        downloadModel: downloadMock,
+        onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
+      },
+    } as unknown as Window["tessera"];
+
+    render(<ModelRuntimeCard api={api} />);
+
+    // Wait for the initial mount paint.
+    const dlBtn = await screen.findByRole("button", { name: /Download/i });
+    fireEvent.click(dlBtn);
+
+    // Now we are mid-download. busyModelId is non-null; the download
+    // promise never resolves, so the card stays in "busy" state.
+    await waitFor(() => {
+      expect(downloadMock).toHaveBeenCalled();
+    });
+
+    // Pump fake-timer poll ticks. If the gate fails, the poll would
+    // call setState({ status: pollStatus, current: pollGetCurrent })
+    // and the "ghost-record-from-poll" text would appear.
+    await vi.advanceTimersByTimeAsync(5500);
+    await vi.advanceTimersByTimeAsync(5500);
+    await vi.advanceTimersByTimeAsync(5500);
+
+    // Both poll-side mocks may have been called (the fetch fires),
+    // but their setState callback must have skipped writing the ghost
+    // state because busyModelId is non-null.
+    expect(
+      screen.queryByText(/ghost-record-from-poll/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/ghost-status-from-poll/i),
+    ).not.toBeInTheDocument();
+
+    // Clean up: release the never-resolving download so the catch
+    // block in performDownload doesn't leak across tests.
+    resolveDownload();
+    vi.useRealTimers();
+  });
+});

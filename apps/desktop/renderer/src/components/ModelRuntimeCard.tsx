@@ -138,17 +138,35 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
           tessera.runtime.getCurrentModel(),
         ]);
         if (cancelled) return;
-        setState((s) => ({ ...s, status, current }));
+        setState((s) => {
+          // Skip poll updates while a user-initiated operation is in
+          // flight (download / swap / delete). Otherwise the poll could
+          // overwrite optimistic state — e.g. `handleDelete` nulls
+          // `current` before the main process finishes evicting the
+          // file, and a poll tick landing in that window would re-fetch
+          // the still-on-disk model and "resurrect" it in the UI for
+          // up to 5s. The functional setState reads `s.busyModelId` at
+          // commit time, so the gate is race-free against `setState`
+          // calls from the user-action handlers. (Devin Review INFO
+          // finding 3271382737.)
+          if (s.busyModelId !== null) return s;
+          return { ...s, status, current };
+        });
       } catch {
         if (cancelled) return;
         // Match RuntimeStatus's failure-mode: surface as a stopped
         // sidecar in `status`, but leave `current` untouched so a
         // transient IPC blip doesn't blank out the model record the
-        // user just downloaded.
-        setState((s) => ({
-          ...s,
-          status: { available: false, modelName: null, status: "error" },
-        }));
+        // user just downloaded. Also gated on `busyModelId` so we
+        // don't flip `status` to "error" while a download is mid-flight
+        // (the download path manages its own status reporting).
+        setState((s) => {
+          if (s.busyModelId !== null) return s;
+          return {
+            ...s,
+            status: { available: false, modelName: null, status: "error" },
+          };
+        });
       }
     };
     const id = setInterval(tick, 5000);

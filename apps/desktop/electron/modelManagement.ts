@@ -422,6 +422,32 @@ export class ManifestValidationError extends Error {
  * the caller's `loadManifest` propagates a clear error instead of
  * caching a half-valid object.
  */
+const KNOWN_MODEL_FORMATS: ReadonlySet<ModelFormat> = new Set([
+  "gguf",
+  "mlx",
+]);
+
+const KNOWN_DEVICE_TIERS: ReadonlySet<DeviceTier> = new Set([
+  "low",
+  "medium",
+  "high",
+]);
+
+// Manifest `models[].platform` accepts either a concrete Platform literal
+// OR the special wildcard `"any-non-apple-silicon"` which `resolveManifestPlatform`
+// expands to every non-MLX platform. The wildcard is checked in addition to
+// the KNOWN_PLATFORMS set so a typo like `"any-non-applesilicon"` still trips
+// validation.
+const MANIFEST_PLATFORM_WILDCARDS: ReadonlySet<string> = new Set([
+  "any-non-apple-silicon",
+]);
+
+function isValidManifestPlatform(s: string): boolean {
+  return (
+    parsePlatform(s) !== null || MANIFEST_PLATFORM_WILDCARDS.has(s)
+  );
+}
+
 function validateManifest(manifest: ModelManifest): ModelManifest {
   const errors: string[] = [];
   const server = manifest.llama_server;
@@ -441,6 +467,55 @@ function validateManifest(manifest: ModelManifest): ModelManifest {
             v.compute,
           )}" is not one of: ${Array.from(KNOWN_COMPUTE_BACKENDS).join(", ")}`,
         );
+      }
+    }
+  }
+  // Validate `models[]` entries (Devin Review INFO finding 3271382651):
+  // an unknown `format` is mitigated downstream by `listModelsForPlatform`'s
+  // `m.format !== preferred` filter, but an unknown `tier` would silently
+  // drop the model from `recommendModel` results and an unknown `platform`
+  // would silently produce zero matches in `resolveManifestPlatform`.
+  // Fail fast at load time so typos like `"tier": "hig"` surface as a
+  // precise diagnostic at app startup instead of as a confusing
+  // "no recommended model" later.
+  for (let i = 0; i < manifest.models.length; i += 1) {
+    const m = manifest.models[i];
+    if (!(KNOWN_MODEL_FORMATS as ReadonlySet<string>).has(m.format)) {
+      errors.push(
+        `models[${i}].format="${String(m.format)}" is not one of: ${Array.from(
+          KNOWN_MODEL_FORMATS,
+        ).join(", ")}`,
+      );
+    }
+    if (!(KNOWN_DEVICE_TIERS as ReadonlySet<string>).has(m.tier)) {
+      errors.push(
+        `models[${i}].tier="${String(m.tier)}" is not one of: ${Array.from(
+          KNOWN_DEVICE_TIERS,
+        ).join(", ")}`,
+      );
+    }
+    if (typeof m.platform !== "string" || !isValidManifestPlatform(m.platform)) {
+      errors.push(
+        `models[${i}].platform="${String(
+          m.platform,
+        )}" is not one of: ${Array.from(KNOWN_PLATFORMS).join(", ")}, ${Array.from(
+          MANIFEST_PLATFORM_WILDCARDS,
+        ).join(", ")}`,
+      );
+    }
+    if (!Array.isArray(m.compute)) {
+      errors.push(
+        `models[${i}].compute must be an array of compute backends, got ${typeof m.compute}`,
+      );
+    } else {
+      for (let j = 0; j < m.compute.length; j += 1) {
+        if (!parseComputeBackend(m.compute[j] as unknown as string)) {
+          errors.push(
+            `models[${i}].compute[${j}]="${String(
+              m.compute[j],
+            )}" is not one of: ${Array.from(KNOWN_COMPUTE_BACKENDS).join(", ")}`,
+          );
+        }
       }
     }
   }
@@ -844,6 +919,16 @@ const defaultFetcher: NonNullable<DownloadDeps["fetcher"]> = async (
 ) => {
   const resp = await fetch(url);
   if (!resp.ok) {
+    // Cancel the response body so undici releases the underlying TCP
+    // socket immediately instead of waiting for the `Response` to be
+    // garbage-collected. Without this, a CDN returning repeated
+    // 4xx/5xx errors during a retry loop would accumulate unclosed
+    // sockets until the next GC cycle. We `.catch(() => {})` because
+    // cancel() can throw if the body has already been consumed or the
+    // connection is already closed, and we don't want a secondary
+    // failure to mask the original HTTP-status error. (Devin Review
+    // INFO finding 3271382571.)
+    await resp.body?.cancel().catch(() => undefined);
     throw new Error(`Download failed: HTTP ${resp.status}`);
   }
   const totalHeader = resp.headers.get("content-length");

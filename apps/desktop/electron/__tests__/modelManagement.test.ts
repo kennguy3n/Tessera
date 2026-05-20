@@ -35,6 +35,7 @@ import {
   type InstalledModelRecord,
   type ResolvedModel,
   type ModelManifest,
+  type ManifestModel,
 } from "../modelManagement";
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..", "..");
@@ -1648,5 +1649,220 @@ describe("manifest validation guard (parsePlatform + validateManifest)", () => {
     await fsp.writeFile(badPath, JSON.stringify(goodManifest), "utf8");
     const reloaded = loadManifest(true);
     expect(reloaded.llama_server?.variants[0].platform).toBe("linux-x64");
+  });
+});
+
+describe("manifest validation guard — models[] entries", () => {
+  // Regression for Devin Review INFO finding 3271382651:
+  // `validateManifest` originally only validated `llama_server.variants[]`,
+  // leaving `models[]` entries untouched. A typo like `"tier": "hig"`
+  // would parse successfully and silently drop the model from
+  // `recommendModel` results because no tier would match. The validator
+  // now fails fast on unknown format / tier / platform / compute strings
+  // in `models[]` too.
+
+  let workdir: string;
+  let originalEnv: string | undefined;
+
+  beforeEach(async () => {
+    originalEnv = process.env.TESSERA_MODELS_MANIFEST;
+    workdir = await fsp.mkdtemp(
+      path.join(os.tmpdir(), "tessera-manifest-models-"),
+    );
+  });
+
+  afterEach(async () => {
+    if (originalEnv === undefined) {
+      delete process.env.TESSERA_MODELS_MANIFEST;
+    } else {
+      process.env.TESSERA_MODELS_MANIFEST = originalEnv;
+    }
+    resetManifestCache();
+    await fsp.rm(workdir, { recursive: true, force: true });
+  });
+
+  function makeBadManifest(
+    badEntry: Partial<ModelManifest["models"][number]>,
+  ): ModelManifest {
+    return {
+      format_version: 1,
+      models: [
+        {
+          id: "ternary-bonsai-1.7b-gguf",
+          name: "Ternary-Bonsai 1.7B",
+          parameters: "1.7B",
+          format: "gguf",
+          quantization: "Q1_0_g128",
+          platform: "linux-x64",
+          compute: ["cpu"],
+          tier: "low",
+          downloadSizeMb: 450,
+          diskSizeMb: 450,
+          requiredRamGb: 2,
+          contextLength: 2048,
+          filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+          url: "https://example.invalid/m.gguf",
+          sha256: null,
+          ...badEntry,
+        },
+      ],
+      llama_server: {
+        version: "b4546",
+        variants: [
+          {
+            platform: "linux-x64",
+            compute: "cpu",
+            url: "https://example.invalid/llama-server",
+            sha256: null,
+          },
+        ],
+      },
+    };
+  }
+
+  it("rejects an unknown models[].format with a precise error", async () => {
+    const bad = makeBadManifest({
+      format: "tensorflow" as unknown as "gguf",
+    });
+    const p = path.join(workdir, "bad-format.json");
+    await fsp.writeFile(p, JSON.stringify(bad), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = p;
+    resetManifestCache();
+    expect(() => loadManifest(true)).toThrowError(/tensorflow/);
+    expect(() => loadManifest(true)).toThrowError(/models\[0\]\.format/);
+  });
+
+  it("rejects an unknown models[].tier (the classic typo example) with a precise error", async () => {
+    const bad = makeBadManifest({ tier: "hig" as unknown as "high" });
+    const p = path.join(workdir, "bad-tier.json");
+    await fsp.writeFile(p, JSON.stringify(bad), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = p;
+    resetManifestCache();
+    expect(() => loadManifest(true)).toThrowError(/models\[0\]\.tier="hig"/);
+    expect(() => loadManifest(true)).toThrowError(
+      /not one of:.*low.*medium.*high/,
+    );
+  });
+
+  it("rejects an unknown models[].platform with a precise error", async () => {
+    const bad = makeBadManifest({ platform: "any-non-applesilicon" });
+    const p = path.join(workdir, "bad-platform.json");
+    await fsp.writeFile(p, JSON.stringify(bad), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = p;
+    resetManifestCache();
+    expect(() => loadManifest(true)).toThrowError(/any-non-applesilicon/);
+    expect(() => loadManifest(true)).toThrowError(/models\[0\]\.platform/);
+  });
+
+  it("accepts the 'any-non-apple-silicon' wildcard as a valid models[].platform", async () => {
+    const good = makeBadManifest({ platform: "any-non-apple-silicon" });
+    const p = path.join(workdir, "wildcard.json");
+    await fsp.writeFile(p, JSON.stringify(good), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = p;
+    resetManifestCache();
+    // Wildcard is a valid manifest platform; the loader must NOT
+    // reject it (otherwise the shipped manifest would fail validation).
+    const m = loadManifest(true);
+    expect(m.models[0].platform).toBe("any-non-apple-silicon");
+  });
+
+  it("rejects an unknown models[].compute[] entry with a precise error", async () => {
+    const bad = makeBadManifest({
+      compute: ["cpu", "xpu" as unknown as "cuda"],
+    });
+    const p = path.join(workdir, "bad-compute.json");
+    await fsp.writeFile(p, JSON.stringify(bad), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = p;
+    resetManifestCache();
+    expect(() => loadManifest(true)).toThrowError(/models\[0\]\.compute\[1\]/);
+    expect(() => loadManifest(true)).toThrowError(/xpu/);
+  });
+
+  it("rejects a non-array models[].compute field", async () => {
+    const bad = makeBadManifest({
+      compute: "cpu" as unknown as ManifestModel["compute"],
+    });
+    const p = path.join(workdir, "compute-not-array.json");
+    await fsp.writeFile(p, JSON.stringify(bad), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = p;
+    resetManifestCache();
+    expect(() => loadManifest(true)).toThrowError(
+      /models\[0\]\.compute must be an array/,
+    );
+  });
+});
+
+describe("ModelRuntimeCard fetcher / defaultFetcher socket-leak guard", () => {
+  // Regression for Devin Review INFO finding 3271382571:
+  // `defaultFetcher` used to throw on `!resp.ok` without consuming or
+  // cancelling `resp.body`. Under undici (Node's built-in fetch) that
+  // keeps the underlying TCP socket open until the `Response` is
+  // garbage-collected — an accumulation risk under retry storms. The
+  // fix calls `resp.body?.cancel()` before throwing; this test mocks
+  // global fetch with a tracking body and asserts cancel was called.
+
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("cancels the response body before throwing on a non-ok status", async () => {
+    const cancelMock = vi.fn().mockResolvedValue(undefined);
+    const fakeBody = { cancel: cancelMock } as unknown as ReadableStream;
+    const errorResp = {
+      ok: false,
+      status: 503,
+      body: fakeBody,
+      headers: { get: () => null },
+    } as unknown as Response;
+    globalThis.fetch = vi.fn().mockResolvedValue(errorResp) as typeof fetch;
+
+    const requested = makeResolved({
+      url: "https://example.invalid/will-503",
+    });
+    const work = await fsp.mkdtemp(
+      path.join(os.tmpdir(), "tessera-503-leak-"),
+    );
+    await expect(
+      downloadModel(work, requested, () => {}),
+    ).rejects.toThrow(/HTTP 503/);
+    // The fix: cancel must have been called before the throw bubbled.
+    expect(cancelMock).toHaveBeenCalledTimes(1);
+    await fsp.rm(work, { recursive: true, force: true });
+  });
+
+  it("swallows a cancel() rejection and still surfaces the original HTTP error", async () => {
+    // Defense-in-depth: cancel() can throw if the body has already
+    // been consumed or the connection is already closed. The catch in
+    // `defaultFetcher` swallows it so the secondary failure can't
+    // mask the original HTTP status.
+    const cancelMock = vi
+      .fn()
+      .mockRejectedValue(new Error("body already locked"));
+    const fakeBody = { cancel: cancelMock } as unknown as ReadableStream;
+    const errorResp = {
+      ok: false,
+      status: 429,
+      body: fakeBody,
+      headers: { get: () => null },
+    } as unknown as Response;
+    globalThis.fetch = vi.fn().mockResolvedValue(errorResp) as typeof fetch;
+
+    const requested = makeResolved({
+      url: "https://example.invalid/will-429",
+    });
+    const work = await fsp.mkdtemp(
+      path.join(os.tmpdir(), "tessera-429-leak-"),
+    );
+    await expect(
+      downloadModel(work, requested, () => {}),
+    ).rejects.toThrow(/HTTP 429/);
+    expect(cancelMock).toHaveBeenCalledTimes(1);
+    await fsp.rm(work, { recursive: true, force: true });
   });
 });
