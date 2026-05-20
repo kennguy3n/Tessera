@@ -1,8 +1,10 @@
 import { ipcMain, BrowserWindow, app, dialog } from "electron";
 import * as fsp from "fs/promises";
+import * as os from "os";
 import * as path from "path";
 import { loadConfig, updateConfig } from "./config";
 import { getBridge, getModelSidecar } from "./appState";
+import { isSafeExportPath } from "./exportPathSafety";
 import type { SettingsData, ModelStatus } from "./preload";
 import { startOAuthFlow, exchangeCodeForTokens, refreshAccessToken, revokeToken } from "./oauthServer";
 import * as tokenVault from "./tokenVault";
@@ -61,6 +63,44 @@ async function getValidAccessToken(provider: string): Promise<string> {
     clientSecret,
   });
   return refreshed.access_token;
+}
+
+/**
+ * Build the allowlist of safe export roots that the IPC handlers will
+ * accept absolute paths inside. Computed lazily (per call) rather than
+ * captured in a module-level constant because Electron's `app.getPath()`
+ * APIs are only safe to call after the `ready` event has fired — and the
+ * IPC handlers register against `ipcMain` synchronously at startup but
+ * the handlers themselves only execute later, well after `ready`.
+ *
+ * Roots include `downloads`, `documents`, `desktop`, the user's home
+ * directory, the Electron app's `userData` directory, and the OS temp
+ * directory. Each of these is a location the user is reasonably expected
+ * to be able to write to; everything else (system paths, other users'
+ * home directories, etc.) is excluded.
+ */
+function getSafeExportRoots(): string[] {
+  const roots: string[] = [];
+  // `app.getPath` throws `Error: ENOENT` for unknown path keys on some
+  // platforms (e.g. `desktop` on a headless Linux); swallow per-key so a
+  // missing standard folder doesn't disable the whole allowlist.
+  for (const key of ["downloads", "documents", "desktop", "home", "userData"]) {
+    try {
+      const p = app.getPath(key as Parameters<typeof app.getPath>[0]);
+      if (p) roots.push(p);
+    } catch {
+      // skip
+    }
+  }
+  // `os.tmpdir()` is the conventional location for integration tests
+  // (and the Electron test harness) to drop ephemeral export artefacts.
+  // Without this entry, `os.tmpdir()`-rooted writes would be rejected.
+  try {
+    roots.push(os.tmpdir());
+  } catch {
+    // skip
+  }
+  return roots;
 }
 
 export function registerIpcHandlers(): void {
@@ -220,15 +260,31 @@ export function registerIpcHandlers(): void {
       }
 
       // Resolve the final on-disk path. Three modes (in order of preference):
-      //   1) An absolute path supplied by the renderer is honoured as-is so
-      //      callers (tests, scripted exports) keep full control.
-      //   2) Otherwise, prompt the user via the native save dialog seeded
-      //      with the renderer's suggested filename under ~/Downloads.
+      //   1) An absolute path supplied by the renderer is honoured only if it
+      //      resolves inside the allowlist of safe export roots (Downloads,
+      //      Documents, Desktop, the user's home directory, the app's
+      //      `userData` directory and the system temp dir). A compromised
+      //      renderer cannot request a write to e.g. `/etc/passwd` because
+      //      `/etc` is not under any of those roots — `isSafeExportPath`
+      //      throws an explicit error in that case. Tests + scripted exports
+      //      that use `os.tmpdir()` keep working without change.
+      //   2) Otherwise (or if the absolute path was rejected as unsafe),
+      //      prompt the user via the native save dialog seeded with the
+      //      renderer's suggested filename under ~/Downloads.
       //   3) If the user dismisses the dialog, we return `null` so the
       //      renderer can surface an "Export cancelled" status without
       //      writing any file — matching standard desktop save-dialog UX.
       let resolvedPath: string;
       if (path.isAbsolute(filePath)) {
+        if (!isSafeExportPath(filePath, getSafeExportRoots())) {
+          // Refuse the request outright instead of silently rewriting the
+          // path or showing the user a dialog with a dangerous suggestion.
+          // This is the security boundary; making it visible as an error
+          // is the point — see BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0003.
+          throw new Error(
+            `Export path is outside the allowed locations (Downloads, Documents, Desktop, Home, App data, system temp): ${filePath}`,
+          );
+        }
         resolvedPath = filePath;
       } else {
         const downloads = app.getPath("downloads");
@@ -298,6 +354,11 @@ export function registerIpcHandlers(): void {
     ) => {
       let resolvedPath: string;
       if (path.isAbsolute(req.outputPath)) {
+        if (!isSafeExportPath(req.outputPath, getSafeExportRoots())) {
+          throw new Error(
+            `Export path is outside the allowed locations (Downloads, Documents, Desktop, Home, App data, system temp): ${req.outputPath}`,
+          );
+        }
         resolvedPath = req.outputPath;
       } else {
         const downloads = app.getPath("downloads");
