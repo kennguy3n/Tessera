@@ -30,6 +30,8 @@ import {
   downloadModel,
   activeModelPath,
   modelsDir,
+  detectComputeBackends,
+  resetHardwareDetectionCache,
   type InstalledModelRecord,
   type ResolvedModel,
   type ModelManifest,
@@ -949,5 +951,51 @@ describe("recommendModel format-per-platform", () => {
       expect(r?.format).toBe("gguf");
       expect(r?.quantization).toBe("Q1_0_g128");
     }
+  });
+});
+
+describe("detectComputeBackends immutability", () => {
+  beforeEach(() => {
+    resetHardwareDetectionCache();
+  });
+  afterEach(() => {
+    resetHardwareDetectionCache();
+  });
+
+  it("never returns a mutable reference to the cached array", () => {
+    // First (cold) call MUST hand back a copy, not the underlying cache,
+    // so a future caller that does e.g. `result.push("custom")` cannot
+    // poison subsequent calls. Devin Review finding 3270926992 flagged
+    // an asymmetry where the cold-cache path returned the original array
+    // while warm-cache calls returned `.slice()`. The test must be
+    // hardware-agnostic — on a CI host with Vulkan/CUDA installed, those
+    // backends naturally appear in the detected list — so we mutate
+    // using a clearly-synthetic sentinel value and verify it doesn't
+    // leak into the cache. (Devin Review BUG finding 3270926992.)
+    const SENTINEL = "synthetic-test-only" as never;
+    const first = detectComputeBackends();
+    const baseline = first.slice();
+    first.push(SENTINEL);
+    first.push(SENTINEL);
+    const second = detectComputeBackends();
+    // The sentinel mutation must NOT leak into the cache.
+    expect(second).not.toContain(SENTINEL);
+    // Detected backends must be stable across calls (hardware doesn't
+    // change at runtime).
+    expect(second).toEqual(baseline);
+    // CPU is always present regardless of hardware.
+    expect(second[0]).toBe("cpu");
+    // The two returned arrays must be distinct objects (otherwise the
+    // immutability invariant relies on callers never mutating, which is
+    // exactly what the finding warns against).
+    expect(second).not.toBe(first);
+  });
+
+  it("returns a fresh copy on every warm-cache hit too", () => {
+    detectComputeBackends(); // warm the cache
+    const a = detectComputeBackends();
+    const b = detectComputeBackends();
+    expect(a).not.toBe(b);
+    expect(a).toEqual(b);
   });
 });

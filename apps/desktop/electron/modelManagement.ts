@@ -286,8 +286,17 @@ export function detectComputeBackends(): ComputeBackend[] {
   if (hasNvidiaGpu()) backends.push("cuda");
   if (hasVulkan()) backends.push("vulkan");
   if (hasRocm()) backends.push("rocm");
-  cachedComputeBackends = backends.slice();
-  return backends;
+  cachedComputeBackends = backends;
+  // ALWAYS return a copy — both on the cold first call and on every cached
+  // hit. Returning `backends` directly here would have leaked a mutable
+  // reference to the cached array, while subsequent calls returned
+  // independent copies via `cachedComputeBackends.slice()`. No caller
+  // mutates the result today (it flows into `PlatformInfo` which is
+  // structured-cloned to the renderer over IPC), but the asymmetry was
+  // an invariant violation waiting to bite a future maintainer who
+  // adds a `.push("…")` to the returned value. (Devin Review finding
+  // 3270926992.)
+  return cachedComputeBackends.slice();
 }
 
 /**
