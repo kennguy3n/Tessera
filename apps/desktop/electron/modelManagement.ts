@@ -659,6 +659,11 @@ const defaultFetcher: NonNullable<DownloadDeps["fetcher"]> = async (
       if (value && value.byteLength > 0) {
         await tmpHandle.write(value);
         downloaded += value.byteLength;
+        // `onProgress` is wrapped at the `downloadModel` boundary
+        // (see `wrapProgressNoThrow`) so even a destroyed-BrowserWindow
+        // throw or a buggy custom callback cannot abort the byte
+        // pump. We just call it normally here. (Devin Review BUG
+        // finding 3270950107.)
         onProgress(downloaded, total);
       }
     }
@@ -774,6 +779,35 @@ function withDownloadLock<T>(
 }
 
 /**
+ * Wrap a `DownloadProgress` callback so it can never throw. Progress
+ * reporting is a UX nicety; the durable side effect is the file written
+ * to disk. If the renderer-side callback throws (a destroyed
+ * BrowserWindow's `webContents.send`, a queue overflow, a buggy test
+ * mock, a crashed renderer), we must NOT let that exception propagate
+ * back up the fetcher's read loop into `downloadModelLocked`'s catch
+ * block — that catch unlinks the `.partial` file and would discard a
+ * potentially multi-gigabyte in-flight download. The IPC-side
+ * `progressEmitter` already swallows destroyed-window errors at the
+ * source, but enforcing the invariant here too means every future
+ * caller (other IPC handlers, CLI harness, integration tests) gets the
+ * same protection without having to remember to wrap their own
+ * callback. (Devin Review BUG finding 3270950107.)
+ */
+function wrapProgressNoThrow(
+  onProgress: (p: DownloadProgress) => void,
+): (p: DownloadProgress) => void {
+  return (p) => {
+    try {
+      onProgress(p);
+    } catch (err) {
+      console.warn(
+        `[tessera] download progress callback threw (download continues): ${(err as Error).message}`,
+      );
+    }
+  };
+}
+
+/**
  * Download the requested model, enforcing single-model storage. If a
  * different model is currently installed it is deleted FIRST. After
  * download we verify SHA256 (when the manifest provides one).
@@ -788,8 +822,9 @@ export async function downloadModel(
   onProgress: (p: DownloadProgress) => void,
   deps: DownloadDeps = {},
 ): Promise<InstalledModelRecord> {
+  const safeProgress = wrapProgressNoThrow(onProgress);
   return withDownloadLock(userDataDir, () =>
-    downloadModelLocked(userDataDir, requested, onProgress, deps),
+    downloadModelLocked(userDataDir, requested, safeProgress, deps),
   );
 }
 

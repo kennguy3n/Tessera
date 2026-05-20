@@ -581,7 +581,36 @@ export function registerIpcHandlers(): void {
   function progressEmitter(event: Electron.IpcMainInvokeEvent) {
     const win = BrowserWindow.fromWebContents(event.sender);
     return (p: DownloadProgress) => {
-      win?.webContents.send("runtime:downloadProgress", p);
+      // Progress reporting is a UX nicety; it must NEVER abort the
+      // underlying download. Two failure modes we explicitly handle:
+      //
+      //   1. User closes the window while a multi-GB download is still
+      //      streaming. `BrowserWindow.fromWebContents` captured a live
+      //      object at IPC entry, but Electron freed the native backing
+      //      on close. The JS object is still truthy, so optional
+      //      chaining (`win?.webContents`) does NOT skip the call — it
+      //      reaches `.webContents.send(...)` which throws "Object has
+      //      been destroyed". Without the `isDestroyed()` guard that
+      //      exception would propagate through `defaultFetcher`'s read
+      //      loop and trigger the catch in `downloadModelLocked`, which
+      //      removes the `.partial` file. The user would lose hundreds
+      //      of megabytes of in-flight download just for closing the
+      //      window. (Devin Review BUG finding 3270950107.)
+      //
+      //   2. Any other transient IPC send failure (renderer process
+      //      crash mid-download, queue overflow, etc.). Same logic
+      //      applies — swallow the error so the download itself stays
+      //      decoupled from the progress channel.
+      if (!win || win.isDestroyed()) return;
+      try {
+        win.webContents.send("runtime:downloadProgress", p);
+      } catch (err) {
+        // Log once at debug level so this isn't a silent black hole if
+        // something genuinely wrong is happening, but never rethrow.
+        console.warn(
+          `[tessera] runtime:downloadProgress emit failed (download continues): ${(err as Error).message}`,
+        );
+      }
     };
   }
 

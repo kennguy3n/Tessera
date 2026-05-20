@@ -999,3 +999,69 @@ describe("detectComputeBackends immutability", () => {
     expect(a).toEqual(b);
   });
 });
+
+describe("downloadModel survives throwing onProgress", () => {
+  let workdir: string;
+
+  beforeEach(async () => {
+    workdir = await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-throw-progress-"));
+    resetDownloadLocks();
+  });
+
+  afterEach(async () => {
+    resetDownloadLocks();
+    await fsp.rm(workdir, { recursive: true, force: true });
+  });
+
+  it("never aborts the on-disk write when the progress callback throws", async () => {
+    // This is the headline of Devin Review BUG finding 3270950107: if a
+    // BrowserWindow gets destroyed mid-download, its
+    // `webContents.send` throws "Object has been destroyed", and
+    // without the boundary wrap that exception would bubble back
+    // through the fetcher's read loop into downloadModelLocked's
+    // catch — which unlinks the .partial and discards the entire
+    // multi-gigabyte download. We simulate that by passing an
+    // onProgress that always throws and asserting the model still
+    // lands on disk and the active record is written.
+    const payload = Buffer.from("ternary-bonsai-bytes");
+    const requested = makeResolved({
+      url: "https://example.invalid/throw-progress.gguf",
+      downloadSizeMb: payload.byteLength / (1024 * 1024),
+    });
+    const throwingProgress = () => {
+      throw new Error("Object has been destroyed");
+    };
+    let progressCalls = 0;
+    const fetcher = async (
+      _url: string,
+      onProgress: (d: number, t: number) => void,
+      dest: string,
+    ) => {
+      await fsp.writeFile(dest, payload);
+      // The fetcher invokes onProgress unconditionally — this is the
+      // path the bug took. The wrapper at the downloadModel boundary
+      // must catch the throw so the fetcher can keep going.
+      onProgress(payload.byteLength, payload.byteLength);
+      onProgress(payload.byteLength, payload.byteLength);
+      progressCalls += 2;
+      return { totalBytes: payload.byteLength };
+    };
+
+    const record = await downloadModel(workdir, requested, throwingProgress, {
+      fetcher,
+    });
+
+    // The download completed and was recorded.
+    expect(record.modelId).toBe(requested.id);
+    expect(fs.existsSync(record.path)).toBe(true);
+    expect(await fsp.readFile(record.path)).toEqual(payload);
+    const current = await getCurrentModel(workdir);
+    expect(current?.modelId).toBe(requested.id);
+    // The fetcher's onProgress invocations all ran (they didn't get
+    // short-circuited by the throw because wrapProgressNoThrow caught
+    // each one).
+    expect(progressCalls).toBe(2);
+    // No .partial leftover.
+    expect(fs.existsSync(`${record.path}.partial`)).toBe(false);
+  });
+});
