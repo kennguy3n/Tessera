@@ -103,6 +103,15 @@ pub fn extract_blocks(content: &str) -> Vec<MermaidBlock> {
 /// Replace every mermaid block in `content` with the output of `replace_with`,
 /// passing each parsed block to the closure. Non-mermaid content is preserved
 /// byte-for-byte.
+///
+/// **Newline convention:** `extract_blocks` includes the trailing newline of
+/// the closing fence in `block.range`, so the byte range deliberately consumes
+/// that newline. Replacement strings produced by `replace_with` must emit
+/// their own trailing newline when the surrounding context is whitespace-
+/// sensitive (e.g. Markdown, where a blank line is a paragraph separator —
+/// `to_markdown_block` does this). HTML and PDF replacements
+/// (`to_html_div`, `to_pdf_placeholder`) don't need one because `<div>` blocks
+/// and PDF placeholders self-separate.
 pub fn replace_blocks<F>(content: &str, mut replace_with: F) -> String
 where
     F: FnMut(&MermaidBlock) -> String,
@@ -185,8 +194,13 @@ pub fn to_html_div(block: &MermaidBlock) -> String {
 }
 
 /// Markdown replacement: preserve the original block fenced as ```mermaid.
+///
+/// Emits a trailing newline so that a `\n\n` paragraph separator after the
+/// original fence survives the round-trip — `extract_blocks` consumes the
+/// closing-fence line's newline as part of `block.range`, so this is the only
+/// place it can be reinstated.
 pub fn to_markdown_block(block: &MermaidBlock) -> String {
-    format!("```mermaid\n{}\n```", block.dsl)
+    format!("```mermaid\n{}\n```\n", block.dsl)
 }
 
 /// PDF replacement: emit a one-line text placeholder describing the diagram,
@@ -304,6 +318,26 @@ mod tests {
         let reparsed = extract_blocks(&md);
         assert_eq!(reparsed.len(), 1);
         assert_eq!(reparsed[0].dsl, "flowchart TD\nA-->B");
+    }
+
+    #[test]
+    fn markdown_replace_preserves_paragraph_separator_after_block() {
+        // Regression for Devin Review BUG_pr-review-job-...-0001. Previously
+        // `to_markdown_block` returned `\`\`\`mermaid\n…\n\`\`\`` with no
+        // trailing newline. Combined with `extract_blocks` consuming the
+        // closing-fence line's `\n` as part of `block.range`, the `\n\n`
+        // paragraph break between the fence and the next paragraph was
+        // collapsed to a single `\n` — changing CommonMark semantics.
+        let content = "## Arch\n\n```mermaid\nflowchart LR\nA-->B\n```\n\nSome text.\n";
+        let out = replace_blocks(content, to_markdown_block);
+        // The blank line between the closing fence and "Some text" must
+        // survive the round-trip.
+        assert!(
+            out.contains("```\n\nSome text."),
+            "paragraph separator was collapsed; got:\n{out}",
+        );
+        // And the block itself must still be a fenced mermaid block.
+        assert!(out.contains("```mermaid\nflowchart LR\nA-->B\n```"));
     }
 
     #[test]
