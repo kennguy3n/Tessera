@@ -40,8 +40,7 @@ pub fn extract_blocks(content: &str) -> Vec<MermaidBlock> {
         let line_end = bytes[i..]
             .iter()
             .position(|&b| b == b'\n')
-            .map(|p| i + p)
-            .unwrap_or(bytes.len());
+            .map_or(bytes.len(), |p| i + p);
         let line = &content[line_start..line_end];
         let trimmed = line.trim_start();
         let fence = if trimmed.starts_with("```") {
@@ -65,8 +64,7 @@ pub fn extract_blocks(content: &str) -> Vec<MermaidBlock> {
             let nl = bytes[search..]
                 .iter()
                 .position(|&b| b == b'\n')
-                .map(|p| search + p)
-                .unwrap_or(bytes.len());
+                .map_or(bytes.len(), |p| search + p);
             let inner_line = &content[search..nl];
             if inner_line.trim_start().starts_with(fence) {
                 closing_line_start = Some(search);
@@ -82,17 +80,20 @@ pub fn extract_blocks(content: &str) -> Vec<MermaidBlock> {
         let closing_line_end = bytes[closing_line_start..]
             .iter()
             .position(|&b| b == b'\n')
-            .map(|p| closing_line_start + p)
-            .unwrap_or(bytes.len());
+            .map_or(bytes.len(), |p| closing_line_start + p);
 
         let dsl = content[dsl_start..closing_line_start].trim_end_matches('\n').to_string();
         let diagram_type = detect_diagram_type(&dsl);
+        // Clamp the end of the range to the content length so the caller can
+        // safely slice `content[range.1..]` even when the closing fence is the
+        // last line in the document (no trailing newline).
+        let range_end = (closing_line_end + 1).min(content.len());
         blocks.push(MermaidBlock {
             dsl,
             diagram_type,
-            range: (line_start, closing_line_end + 1),
+            range: (line_start, range_end),
         });
-        i = closing_line_end + 1;
+        i = range_end;
     }
     blocks
 }
@@ -246,6 +247,23 @@ mod tests {
         let content = "## Section\n\nPlain text with `code`";
         let out = replace_blocks(content, |_| String::from("REPLACED"));
         assert_eq!(out, content);
+    }
+
+    #[test]
+    fn extract_and_replace_handle_trailing_block_without_newline() {
+        // Regression: when the closing fence is the last line in the content and
+        // there is no trailing newline, the block range used to be set to
+        // content.len() + 1, which caused replace_blocks to panic when slicing
+        // content[cursor..].
+        let content = "```mermaid\npie\n```";
+        let blocks = extract_blocks(content);
+        assert_eq!(blocks.len(), 1);
+        let (start, end) = blocks[0].range;
+        assert_eq!(start, 0);
+        assert_eq!(end, content.len());
+        // replace_blocks must not panic and must consume the whole input.
+        let out = replace_blocks(content, |b| format!("[{}]", b.diagram_type));
+        assert_eq!(out, "[pie]");
     }
 
     #[test]

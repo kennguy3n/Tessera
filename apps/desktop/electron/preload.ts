@@ -237,12 +237,17 @@ export interface TesseraApi {
     list: () => Promise<ArtifactInfo[]>;
     get: (id: string) => Promise<ArtifactInfo>;
     remove: (id: string) => Promise<void>;
-    exportArtifact: (id: string, format: string) => Promise<ExportResult>;
+    exportArtifact: (
+      id: string,
+      format: string,
+      contentOverride?: string | null,
+    ) => Promise<ExportResult>;
     exportToFile: (
       id: string,
       format: string,
       filePath: string,
-    ) => Promise<void>;
+      contentOverride?: string | null,
+    ) => Promise<string>;
     listVersions: (id: string) => Promise<ArtifactVersionInfo[]>;
     restoreVersion: (id: string, versionNumber: number) => Promise<ArtifactInfo>;
     generateFromTemplate: (templateId: string, sourceIds: string[]) => Promise<ArtifactInfo>;
@@ -256,7 +261,7 @@ export interface TesseraApi {
       theme?: string;
       includeNotes?: boolean;
       allowHtml?: boolean;
-    }) => Promise<{ outputPath: string; bytes: number }>;
+    }) => Promise<string>;
     exportTypst: (req: {
       markup: string;
       format: "pdf" | "svg";
@@ -341,10 +346,30 @@ const api: TesseraApi = {
     list: () => ipcRenderer.invoke("artifacts:list"),
     get: (id: string) => ipcRenderer.invoke("artifacts:get", id),
     remove: (id: string) => ipcRenderer.invoke("artifacts:remove", id),
-    exportArtifact: (id: string, format: string) =>
-      ipcRenderer.invoke("artifacts:export", id, format),
-    exportToFile: (id: string, format: string, filePath: string) =>
-      ipcRenderer.invoke("artifacts:exportToFile", id, format, filePath),
+    exportArtifact: (
+      id: string,
+      format: string,
+      contentOverride?: string | null,
+    ) =>
+      ipcRenderer.invoke(
+        "artifacts:export",
+        id,
+        format,
+        contentOverride ?? null,
+      ),
+    exportToFile: (
+      id: string,
+      format: string,
+      filePath: string,
+      contentOverride?: string | null,
+    ) =>
+      ipcRenderer.invoke(
+        "artifacts:exportToFile",
+        id,
+        format,
+        filePath,
+        contentOverride ?? null,
+      ),
     listVersions: (id: string) =>
       ipcRenderer.invoke("artifacts:listVersions", id),
     restoreVersion: (id: string, versionNumber: number) =>

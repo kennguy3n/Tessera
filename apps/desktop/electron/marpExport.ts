@@ -85,7 +85,10 @@ export function buildMarpArgs(
       args.push("--pptx");
       break;
     case "html":
-      args.push("--html-output");
+      // Marp CLI treats HTML as the default output format and infers it
+      // from the `-o` extension; there is no explicit "--html-output" flag.
+      // (`--html` is a separate switch that enables inline HTML in the
+      // source markdown — see `opts.allowHtml` below.)
       break;
     case "png":
       args.push("--images", "png");
@@ -119,9 +122,9 @@ function defaultExtensionFor(format: MarpExportFormat): string {
 
 /**
  * Run a Marp export. Writes the markdown to a temp file, invokes Marp CLI,
- * and returns the output path and byte count. The Electron main process owns
- * the temp-file lifecycle; this function does NOT delete the input file on
- * success (caller decides).
+ * and returns the output path and byte count. The temp input file is always
+ * removed by this function (success or failure); the output file is left
+ * intact for the caller.
  */
 export async function runMarpExport(
   opts: MarpExportOptions,

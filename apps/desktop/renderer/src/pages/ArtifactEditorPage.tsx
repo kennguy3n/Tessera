@@ -3,12 +3,25 @@ import { useParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Card from "../components/Card";
-import { DocumentEditor, SlideEditor, SheetEditor, BaseEditor } from "../editors";
+import {
+  DocumentEditor,
+  SlideEditor,
+  SheetEditor,
+  BaseEditor,
+  InfographicEditor,
+  LandingPageEditor,
+} from "../editors";
 import { embedIcons } from "../services/iconResolver";
+import {
+  parseSlideContent,
+  slidesToMarpMarkdown,
+} from "../editors/SlideEditor";
 import type { ArtifactInfo } from "../types/ipc";
 
 const ICON_AWARE_FORMATS = new Set(["html", "pdf", "docx"]);
-const BINARY_FORMATS = new Set(["pdf", "docx", "xlsx", "pptx"]);
+// PPTX is intentionally NOT in BINARY_FORMATS — it does not flow through the
+// Rust exporter (which rejects pptx); it has a dedicated Marp-CLI path.
+const BINARY_FORMATS = new Set(["pdf", "docx", "xlsx"]);
 
 export default function ArtifactEditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -63,9 +76,13 @@ export default function ArtifactEditorPage() {
         const api = window.tessera;
         if (!api) return;
 
-        // For icon-aware text formats, resolve {{icon:...}} tokens into
-        // inline SVG before handing the content to the Rust exporter.
-        // The exporter sees pre-baked SVG and treats it as opaque HTML.
+        // For icon-aware formats, resolve {{icon:...}} tokens to inline SVG
+        // for the export only — never persist back to the artifact store.
+        // The IPC layer forwards `contentOverride` to the Rust bridge, which
+        // applies it to an in-memory clone of the artifact before exporting,
+        // leaving the editable `{{icon:lucide:home}}`-style tokens untouched
+        // in the database.
+        let contentOverride: string | null = null;
         if (
           ICON_AWARE_FORMATS.has(format) &&
           artifact?.content &&
@@ -73,26 +90,69 @@ export default function ArtifactEditorPage() {
         ) {
           const embedded = embedIcons(artifact.content);
           if (embedded !== artifact.content) {
-            await api.artifacts.update(id, embedded);
+            contentOverride = embedded;
           }
         }
 
-        if (BINARY_FORMATS.has(format)) {
-          // Binary formats can't be copied to the clipboard as text; write
-          // them to a temp path next to the artifact and let the user
-          // re-export to a chosen location later. Path resolution happens
-          // on the main process for sandboxing.
-          const ext = format;
-          const name = `${artifact?.title ?? "artifact"}.${ext}`.replace(
+        // PPTX has its own dedicated pipeline: the Marp CLI consumes the
+        // raw Marp markdown directly. The generic Rust exporter rejects it,
+        // so we route the slide artifact's marp source through the
+        // `artifacts:exportMarp` IPC (which prompts the user via the native
+        // save dialog) rather than going through `exportArtifact`.
+        if (format === "pptx") {
+          if (artifact?.artifactType !== "slides") {
+            throw new Error(
+              "PPTX export is only available for slide artifacts",
+            );
+          }
+          const parsed = parseSlideContent(artifact?.content ?? "");
+          const marpMarkdown = parsed.marpMode
+            ? parsed.marpSource
+            : slidesToMarpMarkdown(parsed.slides);
+          if (!marpMarkdown.trim()) {
+            throw new Error(
+              "Slide artifact has no Marp content to export — add slides or enable Marp mode first",
+            );
+          }
+          const safeName = `${artifact?.title ?? "artifact"}.pptx`.replace(
             /[^A-Za-z0-9._-]/g,
             "_",
           );
-          const filePath = `${name}`;
-          await api.artifacts.exportToFile(id, format, filePath);
-          setExportStatus(`Exported as ${format} → ${filePath}`);
+          const written = await api.artifacts.exportMarp({
+            markdown: marpMarkdown,
+            format: "pptx",
+            outputPath: safeName,
+            theme: parsed.marpTheme,
+          });
+          setExportStatus(`Exported as pptx → ${written}`);
+          setTimeout(() => setExportStatus(null), 4000);
+          return;
+        }
+
+        if (BINARY_FORMATS.has(format)) {
+          // Binary formats can't be copied to the clipboard as text; we send
+          // a suggested filename to the main process, which prompts the user
+          // via the native save dialog and returns the resolved absolute
+          // path (or falls back to ~/Downloads if the dialog is dismissed).
+          const ext = format;
+          const suggestedName = `${artifact?.title ?? "artifact"}.${ext}`.replace(
+            /[^A-Za-z0-9._-]/g,
+            "_",
+          );
+          const written = await api.artifacts.exportToFile(
+            id,
+            format,
+            suggestedName,
+            contentOverride,
+          );
+          setExportStatus(`Exported as ${format} → ${written}`);
           setTimeout(() => setExportStatus(null), 4000);
         } else {
-          const result = await api.artifacts.exportArtifact(id, format);
+          const result = await api.artifacts.exportArtifact(
+            id,
+            format,
+            contentOverride,
+          );
           await navigator.clipboard.writeText(result.content);
           setExportStatus(
             `Exported as ${result.format} — copied to clipboard`,
@@ -107,7 +167,7 @@ export default function ArtifactEditorPage() {
         setExporting(false);
       }
     },
-    [id, artifact?.title, artifact?.content],
+    [id, artifact?.title, artifact?.content, artifact?.artifactType],
   );
 
   const handleExportEvidencePack = useCallback(async () => {
@@ -207,7 +267,9 @@ export default function ArtifactEditorPage() {
               <option value="pdf">PDF (.pdf)</option>
               <option value="docx">Word (.docx)</option>
               <option value="xlsx">Excel (.xlsx)</option>
-              <option value="pptx">PowerPoint (.pptx, Marp)</option>
+              {artifact.artifactType === "slides" && (
+                <option value="pptx">PowerPoint (.pptx, Marp)</option>
+              )}
             </select>
             <Button
               variant="secondary"
@@ -260,6 +322,10 @@ function EditorSwitch({
       return <SheetEditor content={artifact.content} onSave={onSave} />;
     case "base":
       return <BaseEditor content={artifact.content} onSave={onSave} />;
+    case "infographic":
+      return <InfographicEditor content={artifact.content} onSave={onSave} />;
+    case "landing_page":
+      return <LandingPageEditor content={artifact.content} onSave={onSave} />;
     default:
       return (
         <Card>

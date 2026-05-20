@@ -1,0 +1,55 @@
+id: landing-saas-product-v1
+name: SaaS Product Landing
+type: landing_page
+description: >
+  Standard SaaS product landing page: hero, feature grid, stats bar,
+  testimonials, final CTA.
+default_icon_set: lucide
+color_scheme:
+  primary: "#7C3AED"
+  secondary: "#0EA5E9"
+  accent: "#F59E0B"
+hero:
+  headline_prompt: >
+    Distill the product's value into a 6-10 word headline. Lead with the
+    outcome the customer gets, not the feature.
+  subheadline_prompt: >
+    One sentence (15-25 words) that explains who it's for and what makes
+    it different.
+  cta_text: Get started
+features:
+  - title_prompt: Speed
+    description_prompt: >
+      Describe the speed advantage with concrete numbers from the
+      sources if available.
+    icon_suggestion: zap
+  - title_prompt: Security
+    description_prompt: >
+      Describe the security story. Cite specific guarantees from the
+      sources (encryption, residency, certifications).
+    icon_suggestion: shield-check
+  - title_prompt: Integrations
+    description_prompt: >
+      Summarise the integration story (number of providers, depth of
+      integration).
+    icon_suggestion: plug
+  - title_prompt: Privacy
+    description_prompt: >
+      Describe the privacy / local-first / on-device story.
+    icon_suggestion: lock
+stats:
+  - value_prompt: Largest metric from sources
+    label_prompt: One-word label
+  - value_prompt: Second largest metric
+    label_prompt: One-word label
+testimonials:
+  - quote_prompt: >
+      Pull or paraphrase the strongest customer quote from the sources.
+    name_prompt: Customer name
+    company_prompt: Customer company
+final_cta:
+  headline_prompt: Closing line that reinforces the hero promise.
+  button_text: Try it free
+export:
+  - html
+  - pdf

@@ -34,8 +34,20 @@ pub struct GeneratedSection {
 
 impl GeneratedContent {
     pub fn to_markdown(&self) -> String {
-        let mut md = format!("# {}\n\n", self.title);
+        let mut md = String::new();
+        // Sentinel heading: emit body verbatim (no `## __frontmatter__`).
+        // This is how the infographic & landing-page generators inject
+        // YAML front-matter before the title.
+        let mut title_emitted = false;
         for section in &self.sections {
+            if section.heading == "__frontmatter__" {
+                md.push_str(&section.body);
+                continue;
+            }
+            if !title_emitted {
+                let _ = write!(md, "# {}\n\n", self.title);
+                title_emitted = true;
+            }
             let _ = write!(md, "## {}\n\n", section.heading);
             md.push_str(&section.body);
             md.push('\n');
@@ -44,6 +56,10 @@ impl GeneratedContent {
                 md.push_str(&section.citation_refs.join(", "));
                 md.push_str("\n\n");
             }
+        }
+        if !title_emitted {
+            // No sections at all — still surface the title.
+            let _ = write!(md, "# {}\n\n", self.title);
         }
         md
     }

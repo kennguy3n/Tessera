@@ -131,11 +131,12 @@ function countSlides(html: string): number {
  */
 export function extractSpeakerNotes(markdown: string): string[] {
   const slides = splitSlides(markdown);
-  const notesRe = /<!--\s*([\s\S]*?)\s*-->/g;
+  // Use `matchAll` (with a fresh global regex) so each call returns a new
+  // iterator with its own internal state — avoids the `lastIndex` carry-over
+  // hazard of reusing a single RegExp across map iterations.
   return slides.map((slide) => {
     const found: string[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = notesRe.exec(slide)) !== null) {
+    for (const m of slide.matchAll(/<!--\s*([\s\S]*?)\s*-->/g)) {
       const body = m[1].trim();
       if (body) found.push(body);
     }

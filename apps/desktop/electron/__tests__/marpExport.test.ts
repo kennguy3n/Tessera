@@ -52,6 +52,16 @@ describe("marpExport", () => {
       expect(argv).not.toContain("--pdf-notes");
     });
 
+    it("emits no explicit format flag for html (CLI infers from -o extension)", () => {
+      // Marp CLI has no `--html-output` flag; HTML is the default and is
+      // inferred from the output file extension. The `--html` flag exists
+      // for a different purpose (allowing inline HTML in the source).
+      const argv = buildMarpArgs("in.md", "out.html", { format: "html" });
+      expect(argv).toEqual(["in.md", "-o", "out.html"]);
+      expect(argv).not.toContain("--html-output");
+      expect(argv).not.toContain("--html");
+    });
+
     it("appends --html when allowHtml=true", () => {
       const argv = buildMarpArgs("in.md", "out.pdf", {
         format: "pdf",

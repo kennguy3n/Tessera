@@ -1,0 +1,45 @@
+id: infographic-comparison-v1
+name: Comparison
+type: infographic
+description: >
+  A grid infographic that compares two or more options side-by-side
+  across consistent criteria.
+layout: grid
+default_icon_set: phosphor
+color_scheme:
+  primary: "#7C3AED"
+  secondary: "#0EA5E9"
+  accent: "#F59E0B"
+sections:
+  - heading: Option A
+    prompt: >
+      Summarise the first option being compared. Highlight 2-3 defining
+      characteristics from the source material.
+    icon_suggestion: circles-three
+    required_sources:
+      - type: local
+        min: 1
+  - heading: Option B
+    prompt: >
+      Summarise the second option being compared.
+    icon_suggestion: circles-four
+    required_sources:
+      - type: local
+        min: 1
+  - heading: Strengths
+    prompt: >
+      Side-by-side strengths. List the strongest argument for each option.
+    icon_suggestion: trophy
+  - heading: Weaknesses
+    prompt: >
+      Side-by-side weaknesses. Be specific and source-backed.
+    icon_suggestion: warning
+  - heading: Verdict
+    prompt: >
+      One-line recommendation grounded in the comparison above. Cite the
+      criterion that tipped the decision.
+    icon_suggestion: check-circle
+export:
+  - html
+  - pdf
+  - markdown

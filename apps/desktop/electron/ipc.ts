@@ -191,10 +191,15 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "artifacts:export",
-    async (_event, id: string, format: string) => {
+    async (
+      _event,
+      id: string,
+      format: string,
+      contentOverride?: string | null,
+    ) => {
       const bridge = getBridge();
       if (bridge) {
-        return bridge.bridgeExportArtifact(id, format);
+        return bridge.bridgeExportArtifact(id, format, contentOverride ?? null);
       }
       throw new Error("Native bridge not available");
     },
@@ -202,13 +207,58 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "artifacts:exportToFile",
-    async (_event, id: string, format: string, filePath: string) => {
+    async (
+      event,
+      id: string,
+      format: string,
+      filePath: string,
+      contentOverride?: string | null,
+    ) => {
       const bridge = getBridge();
-      if (bridge) {
-        bridge.bridgeExportArtifactToFile(id, format, filePath);
-        return;
+      if (!bridge) {
+        throw new Error("Native bridge not available");
       }
-      throw new Error("Native bridge not available");
+
+      // Resolve the final on-disk path. Three modes (in order of preference):
+      //   1) An absolute path supplied by the renderer is honoured as-is so
+      //      callers (tests, scripted exports) keep full control.
+      //   2) Otherwise, prompt the user via the native save dialog seeded
+      //      with the renderer's suggested filename under ~/Downloads.
+      //   3) If the user cancels the dialog, fall back to writing into the
+      //      Electron Downloads folder so we never silently dump files into
+      //      the process CWD (which varies wildly across launch methods).
+      let resolvedPath: string;
+      if (path.isAbsolute(filePath)) {
+        resolvedPath = filePath;
+      } else {
+        const downloads = app.getPath("downloads");
+        const suggested = path.join(downloads, filePath || `artifact.${format}`);
+        const win = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+        const result = await (win
+          ? dialog.showSaveDialog(win, {
+              defaultPath: suggested,
+              title: "Export artifact",
+            })
+          : dialog.showSaveDialog({
+              defaultPath: suggested,
+              title: "Export artifact",
+            }));
+        if (result.canceled || !result.filePath) {
+          resolvedPath = suggested;
+        } else {
+          resolvedPath = result.filePath;
+        }
+      }
+
+      // Make sure the parent directory exists before the Rust bridge writes.
+      await fsp.mkdir(path.dirname(resolvedPath), { recursive: true });
+      bridge.bridgeExportArtifactToFile(
+        id,
+        format,
+        resolvedPath,
+        contentOverride ?? null,
+      );
+      return resolvedPath;
     },
   );
 
@@ -234,25 +284,53 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "artifacts:exportMarp",
     async (
-      _event,
+      event,
       req: {
         markdown: string;
         format: "pdf" | "pptx" | "html";
+        // Either an absolute path (used as-is) OR a suggested filename — in
+        // which case we prompt with the native save dialog (matching the
+        // `exportToFile` flow) so users always pick where the file lands.
         outputPath: string;
         theme?: string;
         includeNotes?: boolean;
         allowHtml?: boolean;
       },
     ) => {
+      let resolvedPath: string;
+      if (path.isAbsolute(req.outputPath)) {
+        resolvedPath = req.outputPath;
+      } else {
+        const downloads = app.getPath("downloads");
+        const fallbackName =
+          req.outputPath && req.outputPath.length > 0
+            ? req.outputPath
+            : `artifact.${req.format}`;
+        const suggested = path.join(downloads, fallbackName);
+        const win = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+        const result = await (win
+          ? dialog.showSaveDialog(win, {
+              defaultPath: suggested,
+              title: "Export slides",
+            })
+          : dialog.showSaveDialog({
+              defaultPath: suggested,
+              title: "Export slides",
+            }));
+        resolvedPath =
+          result.canceled || !result.filePath ? suggested : result.filePath;
+      }
+      await fsp.mkdir(path.dirname(resolvedPath), { recursive: true });
       const { runMarpExport } = await import("./marpExport");
-      return runMarpExport({
+      await runMarpExport({
         markdown: req.markdown,
         format: req.format,
-        outputPath: req.outputPath,
+        outputPath: resolvedPath,
         theme: req.theme,
         includeNotes: req.includeNotes,
         allowHtml: req.allowHtml,
       });
+      return resolvedPath;
     },
   );
 

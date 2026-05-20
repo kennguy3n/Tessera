@@ -27,11 +27,13 @@ interface NativeBridge {
   bridgeExportArtifact(
     artifactId: string,
     format: string,
+    contentOverride?: string | null,
   ): { content: string; format: string };
   bridgeExportArtifactToFile(
     artifactId: string,
     format: string,
     path: string,
+    contentOverride?: string | null,
   ): void;
   bridgeListTemplates(): TemplateInfo[];
   bridgeGetTemplate(templateId: string): TemplateInfo | null;

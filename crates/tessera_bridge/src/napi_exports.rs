@@ -215,6 +215,7 @@ pub fn bridge_delete_artifact(artifact_id: String) -> napi::Result<()> {
 pub fn bridge_export_artifact(
     artifact_id: String,
     format: String,
+    content_override: Option<String>,
 ) -> napi::Result<exporter::ExportResult> {
     let s = state()?;
     if let Ok(logger) = s.audit_logger.lock() {
@@ -228,8 +229,14 @@ pub fn bridge_export_artifact(
         .citation_tracker
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    exporter::export_artifact(&art_mgr, &tracker, &artifact_id, &format)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    exporter::export_artifact(
+        &art_mgr,
+        &tracker,
+        &artifact_id,
+        &format,
+        content_override.as_deref(),
+    )
+    .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi]
@@ -237,6 +244,7 @@ pub fn bridge_export_artifact_to_file(
     artifact_id: String,
     format: String,
     path: String,
+    content_override: Option<String>,
 ) -> napi::Result<()> {
     let s = state()?;
     let art_mgr = s
@@ -247,8 +255,15 @@ pub fn bridge_export_artifact_to_file(
         .citation_tracker
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    exporter::export_artifact_to_file(&art_mgr, &tracker, &artifact_id, &format, &path)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    exporter::export_artifact_to_file(
+        &art_mgr,
+        &tracker,
+        &artifact_id,
+        &format,
+        &path,
+        content_override.as_deref(),
+    )
+    .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 // --- Templates ---

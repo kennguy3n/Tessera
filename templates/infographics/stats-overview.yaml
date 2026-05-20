@@ -1,0 +1,47 @@
+id: infographic-stats-overview-v1
+name: Stats Overview
+type: infographic
+description: >
+  A vertical infographic that highlights 4-6 key metrics extracted from
+  source material. Each section shows an icon, a big stat number, and a
+  one-sentence context line.
+layout: vertical
+default_icon_set: lucide
+color_scheme:
+  primary: "#7C3AED"
+  secondary: "#0EA5E9"
+  accent: "#F59E0B"
+sections:
+  - heading: Headline Metric
+    prompt: >
+      Identify the single most important quantitative result from the
+      provided sources. Express it as a number/percentage with a one-line
+      label that names what is being measured.
+    icon_suggestion: trending-up
+    required_sources:
+      - type: local
+        min: 1
+  - heading: Growth or Trend
+    prompt: >
+      Surface a number that captures the change over time (year over
+      year, quarter over quarter, etc.). Include the comparison period.
+    icon_suggestion: trending-up
+  - heading: Reach or Volume
+    prompt: >
+      Surface a number that captures scale — users, customers, events,
+      records processed.
+    icon_suggestion: users
+  - heading: Efficiency
+    prompt: >
+      Surface a number that captures speed, cost reduction, latency, or
+      throughput.
+    icon_suggestion: gauge
+  - heading: Quality or Outcome
+    prompt: >
+      Surface a number that captures a satisfaction, retention, or
+      success-rate metric.
+    icon_suggestion: check-circle
+export:
+  - html
+  - pdf
+  - markdown

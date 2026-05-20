@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   renderMermaid,
   MermaidEnvironmentError,
@@ -45,13 +45,23 @@ export default function SlideEditor({
   onSave,
   autoSaveMs = 2000,
 }: SlideEditorProps) {
-  const initial = useMemo(() => parseSlideContent(content), [content]);
+  // Parse the initial content exactly once. Subsequent prop-driven changes
+  // are handled by the sync effect below; recomputing on every keystroke
+  // (via useMemo on `content`) would re-parse for nothing — the result is
+  // only ever read by the useState initializers, which run on mount.
+  const initialRef = useRef<ParsedSlideContent | null>(null);
+  if (initialRef.current === null) {
+    initialRef.current = parseSlideContent(content);
+  }
+  const initial = initialRef.current;
   const [slides, setSlides] = useState<Slide[]>(() => initial.slides);
   const [activeIndex, setActiveIndex] = useState(0);
   const [showNotes, setShowNotes] = useState(false);
   const [marpMode, setMarpMode] = useState<boolean>(() => initial.marpMode);
   const [marpSource, setMarpSource] = useState<string>(() => initial.marpSource);
-  const [marpTheme, setMarpTheme] = useState<MarpRenderOptions["theme"]>("default");
+  const [marpTheme, setMarpTheme] = useState<MarpRenderOptions["theme"]>(
+    () => initial.marpTheme ?? "default",
+  );
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef(content);
 
@@ -88,6 +98,7 @@ export default function SlideEditor({
       setSlides(parsed.slides);
       setMarpMode(parsed.marpMode);
       setMarpSource(parsed.marpSource);
+      setMarpTheme(parsed.marpTheme ?? "default");
       lastSavedRef.current = content;
     }
   }, [content]);
@@ -403,22 +414,45 @@ function MarpPreview({ markdown, theme }: { markdown: string; theme: string }) {
   const [html, setHtml] = useState("");
   const [css, setCss] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const tokenRef = useRef(0);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+
+  // Debounce Marp rendering. Marp.render() can be expensive for large decks
+  // and the textarea fires on every keystroke; without a debounce, typing
+  // lag becomes noticeable in long presentations.
   useEffect(() => {
-    try {
-      const result = renderMarp(markdown, { theme });
-      setHtml(result.html);
-      setCss(result.css);
-      setError(null);
-    } catch (err) {
-      if (err instanceof MarpRenderError) {
-        setError(err.message);
-      } else {
-        setError(String(err));
+    const handle = setTimeout(() => {
+      const token = ++tokenRef.current;
+      try {
+        const result = renderMarp(markdown, { theme });
+        if (token !== tokenRef.current) return;
+        setHtml(result.html);
+        setCss(result.css);
+        setError(null);
+      } catch (err) {
+        if (token !== tokenRef.current) return;
+        if (err instanceof MarpRenderError) {
+          setError(err.message);
+        } else {
+          setError(String(err));
+        }
+        setHtml("");
+        setCss("");
       }
-      setHtml("");
-      setCss("");
-    }
+    }, 250);
+    return () => clearTimeout(handle);
   }, [markdown, theme]);
+
+  // Render the deck inside a Shadow DOM so the Marp-emitted CSS (which can
+  // include global selectors like `:root` / `body` / `*`) cannot bleed out
+  // into the surrounding Tessera UI.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+    shadow.innerHTML = `<style>${css}</style><div class="marp-preview-deck">${html}</div>`;
+  }, [html, css]);
+
   if (error) {
     return (
       <div className="marp-preview-error" role="alert">
@@ -426,18 +460,14 @@ function MarpPreview({ markdown, theme }: { markdown: string; theme: string }) {
       </div>
     );
   }
-  return (
-    <div className="marp-preview">
-      <style>{css}</style>
-      <div className="marp-preview-deck" dangerouslySetInnerHTML={{ __html: html }} />
-    </div>
-  );
+  return <div ref={hostRef} className="marp-preview" />;
 }
 
 interface ParsedSlideContent {
   slides: Slide[];
   marpMode: boolean;
   marpSource: string;
+  marpTheme: MarpRenderOptions["theme"] | undefined;
 }
 
 export function parseSlideContent(content: string): ParsedSlideContent {
@@ -445,6 +475,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
     slides: [{ title: "Title Slide", blocks: [{ type: "text", content: "" }], notes: "" }],
     marpMode: false,
     marpSource: "",
+    marpTheme: undefined,
   };
   if (!content) return emptyDefault;
   try {
@@ -454,6 +485,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
         slides: parsed.slides,
         marpMode: parsed.marp?.enabled ?? false,
         marpSource: parsed.marp?.source ?? "",
+        marpTheme: parsed.marp?.theme,
       };
     }
   } catch {
@@ -463,5 +495,51 @@ export function parseSlideContent(content: string): ParsedSlideContent {
     slides: [{ title: "Slide 1", blocks: [{ type: "text", content }], notes: "" }],
     marpMode: false,
     marpSource: "",
+    marpTheme: undefined,
   };
+}
+
+/**
+ * Convert the structured `Slide[]` representation (used by the WYSIWYG slide
+ * editor) into a Marp-Markdown string suitable for handing to the Marp CLI.
+ *
+ * This is the path taken when a user exports a slide artifact to PPTX without
+ * having explicitly toggled Marp Mode — we synthesise a minimal Marp document
+ * from the structured blocks so the Marp CLI has something to render.
+ */
+export function slidesToMarpMarkdown(
+  slides: Slide[],
+  options?: { theme?: string },
+): string {
+  const theme = options?.theme ?? "default";
+  const header = ["---", "marp: true", `theme: ${theme}`, "paginate: true", "---"];
+  const body = slides.map((slide) => renderSlideAsMarp(slide));
+  return [header.join("\n"), ...body].join("\n\n");
+}
+
+function renderSlideAsMarp(slide: Slide): string {
+  const parts: string[] = [];
+  if (slide.title) {
+    parts.push(`# ${slide.title}`);
+  }
+  for (const block of slide.blocks) {
+    const content = (block.content ?? "").trim();
+    if (!content) continue;
+    if (block.type === "bullets") {
+      const lines = content
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map((line) => `- ${line.replace(/^[-*]\s*/, "")}`);
+      if (lines.length > 0) parts.push(lines.join("\n"));
+    } else if (block.type === "diagram") {
+      parts.push("```mermaid\n" + content + "\n```");
+    } else {
+      parts.push(content);
+    }
+  }
+  if (slide.notes && slide.notes.trim().length > 0) {
+    parts.push(`<!-- ${slide.notes.trim()} -->`);
+  }
+  return parts.join("\n\n");
 }

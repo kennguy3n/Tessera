@@ -93,11 +93,7 @@ pub fn export_docx(artifact: &Artifact, citations: &[Citation]) -> Vec<u8> {
             }
             // Numbered lists — keep the marker, render as plain paragraph.
             if line.len() > 2
-                && line
-                    .chars()
-                    .next()
-                    .map(|c| c.is_ascii_digit())
-                    .unwrap_or(false)
+                && line.chars().next().is_some_and(|c| c.is_ascii_digit())
                 && line.contains(". ")
             {
                 docx = docx.add_paragraph(
