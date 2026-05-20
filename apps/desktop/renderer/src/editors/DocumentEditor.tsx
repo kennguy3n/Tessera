@@ -22,12 +22,22 @@ export default function DocumentEditor({
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Initialize to empty string; updated to editor's parsed HTML in onCreate
   const lastSavedRef = useRef("");
-  // Ref-wrap onDraftChange so the TipTap `onUpdate` closure (created once at
-  // mount) always calls the latest callback without recreating the editor.
+  // Ref-wrap onDraftChange AND onSave so the TipTap `onUpdate` closure
+  // (created once at mount) always calls the latest callback without
+  // recreating the editor. Both props can change identity when the parent
+  // re-renders (e.g. when the artifact `id` route param changes and
+  // `ArtifactEditorPage` rebuilds its `handleSave` via `useCallback`).
+  // Without the ref the closure here would keep calling whatever
+  // `onSave` was at mount time — fine today because we tear the whole
+  // editor down on `id` change, but a foot-gun for future maintainers.
   const onDraftChangeRef = useRef(onDraftChange);
+  const onSaveRef = useRef(onSave);
   useEffect(() => {
     onDraftChangeRef.current = onDraftChange;
   }, [onDraftChange]);
+  useEffect(() => {
+    onSaveRef.current = onSave;
+  }, [onSave]);
 
   const editor = useEditor({
     extensions: [
@@ -62,7 +72,7 @@ export default function DocumentEditor({
       }
       saveTimeoutRef.current = setTimeout(() => {
         lastSavedRef.current = html;
-        onSave(html);
+        onSaveRef.current(html);
       }, autoSaveMs);
     },
   });

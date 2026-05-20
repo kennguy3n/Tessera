@@ -117,5 +117,29 @@ describe("mermaidRenderer", () => {
         globalThis.document = origDocument;
       }
     });
+
+    it("skipEnvironmentCheck bypasses the DOM availability gate", async () => {
+      // Regression for the previous `browserOnly` flag whose semantics were
+      // inverted relative to its name. The renamed `skipEnvironmentCheck`
+      // is the only opt-out for the DOM check, and a caller that opts out
+      // must NOT receive `MermaidEnvironmentError` even when window /
+      // document are missing. The downstream mermaid call may still fail
+      // for unrelated reasons (we have no real DOM), but it must not be the
+      // environment-gate error.
+      const origWindow = globalThis.window;
+      const origDocument = globalThis.document;
+      // @ts-expect-error simulating non-browser
+      delete globalThis.window;
+      // @ts-expect-error simulating non-browser
+      delete globalThis.document;
+      try {
+        await expect(
+          renderMermaid("flowchart TD\nA-->B", { skipEnvironmentCheck: true }),
+        ).rejects.not.toBeInstanceOf(MermaidEnvironmentError);
+      } finally {
+        globalThis.window = origWindow;
+        globalThis.document = origDocument;
+      }
+    });
   });
 });

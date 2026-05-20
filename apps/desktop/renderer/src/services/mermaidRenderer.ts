@@ -24,8 +24,23 @@ export interface MermaidRenderOptions {
   id?: string;
   /** Override the entire mermaid config; merged on top of Tessera defaults. */
   config?: MermaidConfig;
-  /** Force browser-only rendering (no-op outside browser). */
-  browserOnly?: boolean;
+  /**
+   * Bypass the environment check and call `mermaid.render()` directly.
+   *
+   * Mermaid normally requires a real DOM to render — we detect that at
+   * runtime via `isBrowserEnvironment()` and throw `MermaidEnvironmentError`
+   * otherwise. Set this to `true` only when you know a DOM-like environment
+   * is present even though the detection heuristic doesn't match (e.g. a
+   * jsdom test setup that polyfills the missing methods, or a future
+   * server-side mermaid-cli adapter that vendors its own DOM shim). All
+   * normal callers should leave this unset.
+   *
+   * Named for what it does — skip the environment check — rather than
+   * the old `browserOnly`, whose semantics read backwards (it sounded like
+   * "only allow browser rendering" but actually meant "allow non-browser
+   * rendering when the caller asserts a DOM exists").
+   */
+  skipEnvironmentCheck?: boolean;
 }
 
 const DEFAULT_CONFIG: MermaidConfig = {
@@ -89,7 +104,7 @@ export async function renderMermaid(
   dsl: string,
   options: MermaidRenderOptions = {},
 ): Promise<MermaidRenderResult> {
-  if (!isBrowserEnvironment() && !options.browserOnly) {
+  if (!isBrowserEnvironment() && !options.skipEnvironmentCheck) {
     throw new MermaidEnvironmentError(
       "Mermaid rendering requires a DOM. Render in the renderer process or use a server-side mermaid-cli adapter.",
     );

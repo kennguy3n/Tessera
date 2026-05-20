@@ -50,6 +50,7 @@ export class ModelSidecar {
   private startTime: number = 0;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private _generationActiveCount: number = 0;
+  private crashCleanupHandler: (() => void) | null = null;
 
   constructor(options: Partial<SidecarOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -98,10 +99,50 @@ export class ModelSidecar {
       spawnOpts,
     );
 
+    // On POSIX the child was spawned with `detached: true` so we can deliver
+    // signals to the whole process group via `process.kill(-pid, ...)`. That
+    // also means the child becomes a process-group leader of its own session
+    // and survives the parent's death by default. Two follow-on fixes are
+    // required to make this safe:
+    //
+    //   1. `unref()` so Node's event loop doesn't keep a reference to the
+    //      child handle — without this, an abnormal main-process shutdown
+    //      (uncaughtException default-exit, explicit `process.exit()` from
+    //      a fatal error path, the renderer crashing the main process)
+    //      would block Node from terminating while waiting on the child
+    //      that we intentionally detached.
+    //   2. A synchronous `exit` handler that delivers SIGKILL to the child's
+    //      process group when the parent dies without going through our
+    //      normal `stop()` path. Node 'exit' listeners must be synchronous
+    //      so we go straight to SIGKILL rather than the SIGTERM/grace
+    //      sequence used in `stop()` — at this point the parent is already
+    //      tearing down and we just need the child reaped, not gracefully
+    //      shut down. The normal `stop()` path runs *before* 'exit' fires
+    //      and clears the handler so we never double-signal.
+    if (process.platform !== "win32" && typeof this.process.pid === "number") {
+      this.process.unref();
+      const pid = this.process.pid;
+      const handler = () => {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          // ESRCH = already exited (the normal post-stop case);
+          // EPERM would mean we lost the right to signal it, which
+          // shouldn't happen for a child we spawned.
+        }
+      };
+      process.on("exit", handler);
+      this.crashCleanupHandler = handler;
+    }
+
     this.process.on("exit", (code) => {
       this._isRunning = false;
       this.stopHealthCheck();
       this.stopIdleMonitor();
+      // The child has reaped itself; the parent-exit fallback is no longer
+      // needed and would attempt to signal a dead PID (harmlessly but
+      // noisily).
+      this.clearCrashCleanup();
       if (this._isTerminating) return;
       if (code !== 0 && code !== null) {
         this.restartCount++;
@@ -156,8 +197,16 @@ export class ModelSidecar {
       });
       this.process = null;
     }
+    this.clearCrashCleanup();
     this._isRunning = false;
     this._isTerminating = false;
+  }
+
+  private clearCrashCleanup(): void {
+    if (this.crashCleanupHandler) {
+      process.removeListener("exit", this.crashCleanupHandler);
+      this.crashCleanupHandler = null;
+    }
   }
 
   async healthCheck(): Promise<boolean> {
