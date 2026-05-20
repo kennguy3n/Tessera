@@ -150,7 +150,12 @@ export interface InstalledModelRecord {
   filename: string;
   path: string;
   downloadSizeMb: number;
-  diskSizeMb: number;
+  // Records persisted before `diskSizeMb` was added (or by an older
+  // build) won't have this field — read via `effectiveDiskSizeMb`
+  // from `modelManagement.ts` to fall back to `downloadSizeMb`.
+  // Kept optional here so the type matches the on-disk wire shape
+  // and the canonical declaration in `modelManagement.ts`.
+  diskSizeMb?: number;
   sha256: string | null;
   downloadedAt: string;
 }

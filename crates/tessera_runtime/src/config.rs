@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DeviceTier {
     Low,
     Medium,
@@ -22,7 +23,12 @@ impl DeviceTier {
 /// `Gguf` is the only GGUF quantization Tessera ships — the
 /// `Q1_0_g128` ternary repack from the PrismML llama.cpp fork.
 /// `Mlx` is the 2-bit MLX weight used on Apple Silicon.
+///
+/// Serialised lowercase to match the TypeScript wire format used by
+/// `apps/desktop/electron/modelManagement.ts` and the `sidecars/models.json`
+/// manifest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ModelFormat {
     Gguf,
     Mlx,
@@ -51,6 +57,7 @@ impl ModelFormat {
 /// which acceleration paths are available and (b) pick which
 /// pre-built `llama-server` binary variant to download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ComputeBackend {
     Cpu,
     Cuda,
@@ -87,6 +94,7 @@ impl ComputeBackend {
 /// `llama-server` binary archive (linux/macos/windows × cpu/cuda/vulkan)
 /// to download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Platform {
     MacosAppleSilicon,
     MacosIntel,

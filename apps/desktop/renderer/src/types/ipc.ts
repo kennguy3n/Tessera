@@ -100,7 +100,11 @@ export interface InstalledModelRecord {
   filename: string;
   path: string;
   downloadSizeMb: number;
-  diskSizeMb: number;
+  // Optional to match the on-disk wire shape: records persisted before
+  // `diskSizeMb` was added by older builds won't have this field. Read
+  // via the `effectiveDiskSizeMb` helper in the electron module to fall
+  // back to `downloadSizeMb` for those legacy records.
+  diskSizeMb?: number;
   sha256: string | null;
   downloadedAt: string;
 }

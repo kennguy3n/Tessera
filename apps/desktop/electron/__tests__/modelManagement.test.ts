@@ -6,7 +6,7 @@
  * test — only the network fetch + SHA256 hasher are dependency-injected
  * because they touch HTTP / crypto that has no fixture in this environment).
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
@@ -651,6 +651,52 @@ describe("single-model enforcement", () => {
       : [];
     expect(onDisk).toEqual([]);
     expect(await getCurrentModel(workdir)).toBeNull();
+  });
+
+  it("getCurrentModel returns null and quarantines a corrupted active-model.json", async () => {
+    // Simulate a power loss mid-write or a manual edit that left
+    // active-model.json with invalid JSON. Callers must NOT see this as
+    // a fatal IO error — they should see "no model installed" and the
+    // file should be moved aside so the next downloadModel can write a
+    // clean record.
+    const active = path.join(workdir, "active-model.json");
+    await fsp.mkdir(workdir, { recursive: true });
+    await fsp.writeFile(active, "{not valid json");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await getCurrentModel(workdir);
+      expect(result).toBeNull();
+      // Original file is gone, replaced by a `.corrupt-<ts>` backup.
+      expect(fs.existsSync(active)).toBe(false);
+      const siblings = await fsp.readdir(workdir);
+      const backup = siblings.find((f) =>
+        f.startsWith("active-model.json.corrupt-"),
+      );
+      expect(backup).toBeDefined();
+      expect(
+        (await fsp.readFile(path.join(workdir, backup!), "utf8")),
+      ).toBe("{not valid json");
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("active-model.json was unparseable JSON"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("getCurrentModel propagates non-ENOENT IO errors (e.g. ENOTDIR on bogus dir)", async () => {
+    // Defense-in-depth: corruption is silently degraded (covered above),
+    // but a real disk fault must still surface so an operator can act on
+    // it — silently masking those would hide real problems.
+    //
+    // We point `getCurrentModel` at a userDataDir that's actually a
+    // regular file. The `<file>/active-model.json` join then fails with
+    // ENOTDIR — a real OS error that is NOT ENOENT — and must propagate.
+    const filePath = path.join(workdir, "not-a-directory");
+    await fsp.writeFile(filePath, "x");
+    await expect(getCurrentModel(filePath)).rejects.toMatchObject({
+      code: "ENOTDIR",
+    });
   });
 
   it("deleteCurrentModel removes file and clears active-model.json", async () => {

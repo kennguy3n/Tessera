@@ -233,7 +233,17 @@ pub fn pick_llama_server_variant(
 
 // --- Single-model download planning -------------------------------------
 
+/// On-disk record of the single model currently installed.
+///
+/// The serialised JSON shape is intentionally camelCase so it lines up
+/// with the TypeScript `InstalledModelRecord` in
+/// `apps/desktop/electron/modelManagement.ts`. Tessera's
+/// `active-model.json` is currently owned by the TS side, but keeping
+/// the wire format identical lets the Rust runtime read the same file
+/// without a translation layer the moment it needs to (e.g. when the
+/// model loader needs to know which file to mmap at startup).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InstalledModel {
     pub model_id: String,
     pub format: ModelFormat,
@@ -618,6 +628,60 @@ mod tests {
             }
             other => panic!("expected Swap, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn installed_model_serialises_with_camel_case_keys_matching_ts() {
+        let m = InstalledModel {
+            model_id: "ternary-bonsai-1.7b-gguf".into(),
+            format: ModelFormat::Gguf,
+            filename: "ternary-bonsai-1.7b-q1_0_g128.gguf".into(),
+            path: "/tmp/m".into(),
+            download_size_mb: 450,
+            disk_size_mb: 450,
+            downloaded_at: "2026-05-19T00:00:00Z".into(),
+        };
+        let json = serde_json::to_value(&m).unwrap();
+        // These are the camelCase keys the TypeScript `InstalledModelRecord`
+        // expects to find in `active-model.json`. If serde renaming ever
+        // regresses, the Rust runtime would silently fail to deserialise the
+        // file shipped by the TS Electron main process.
+        for key in [
+            "modelId",
+            "format",
+            "filename",
+            "path",
+            "downloadSizeMb",
+            "diskSizeMb",
+            "downloadedAt",
+        ] {
+            assert!(json.get(key).is_some(), "missing key {key} in {json}");
+        }
+        // And the snake_case names must NOT leak into the wire format.
+        for key in ["model_id", "download_size_mb", "disk_size_mb", "downloaded_at"] {
+            assert!(json.get(key).is_none(), "unexpected key {key} in {json}");
+        }
+    }
+
+    #[test]
+    fn installed_model_deserialises_camel_case_record_written_by_ts() {
+        // Verbatim shape that the TS Electron main process writes to
+        // active-model.json. Round-tripping this through serde must succeed
+        // so the Rust runtime can read the same file going forward.
+        let written_by_ts = r#"{
+            "modelId": "ternary-bonsai-1.7b-gguf",
+            "format": "gguf",
+            "filename": "ternary-bonsai-1.7b-q1_0_g128.gguf",
+            "path": "/var/data/models/ternary-bonsai-1.7b-q1_0_g128.gguf",
+            "downloadSizeMb": 450,
+            "diskSizeMb": 450,
+            "downloadedAt": "2026-05-19T00:00:00Z"
+        }"#;
+        let parsed: InstalledModel = serde_json::from_str(written_by_ts).unwrap();
+        assert_eq!(parsed.model_id, "ternary-bonsai-1.7b-gguf");
+        assert_eq!(parsed.download_size_mb, 450);
+        assert_eq!(parsed.disk_size_mb, 450);
+        assert_eq!(parsed.downloaded_at, "2026-05-19T00:00:00Z");
     }
 
     #[test]

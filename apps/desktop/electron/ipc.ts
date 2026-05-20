@@ -947,8 +947,12 @@ export function registerIpcHandlers(): void {
         );
       }
       const items: ExtractedItem[] = [];
+      const dropReasons: string[] = [];
       for (const raw of parsed) {
-        if (!raw || typeof raw !== "object") continue;
+        if (!raw || typeof raw !== "object") {
+          dropReasons.push("non-object payload");
+          continue;
+        }
         const rec = raw as Record<string, unknown>;
         const itemType =
           rec.itemType === "task" || rec.itemType === "decision"
@@ -961,15 +965,32 @@ export function registerIpcHandlers(): void {
           typeof rec.confidence === "number" && Number.isFinite(rec.confidence)
             ? rec.confidence
             : null;
-        if (
-          itemType === null ||
-          text === null ||
-          sourceCitation === null ||
-          confidence === null
-        ) {
+        if (itemType === null) {
+          dropReasons.push(`itemType=${JSON.stringify(rec.itemType)}`);
+          continue;
+        }
+        if (text === null) {
+          dropReasons.push("missing-text");
+          continue;
+        }
+        if (sourceCitation === null) {
+          dropReasons.push("missing-sourceCitation");
+          continue;
+        }
+        if (confidence === null) {
+          dropReasons.push(`bad-confidence=${JSON.stringify(rec.confidence)}`);
           continue;
         }
         items.push({ itemType, text, sourceCitation, confidence });
+      }
+      if (dropReasons.length > 0) {
+        // Surface bridge schema mismatches loudly during development so a
+        // Rust-side rename (e.g. itemType → item_type) doesn't disappear
+        // into an empty result with no diagnostic. We log a single summary
+        // per call to avoid log-spam when the entire batch is malformed.
+        console.warn(
+          `[tessera] extractTasksDecisions(${sourceId}): dropped ${dropReasons.length}/${parsed.length} item(s) failing schema validation: ${dropReasons.slice(0, 5).join(", ")}${dropReasons.length > 5 ? ", ..." : ""}`,
+        );
       }
       return items;
     },

@@ -443,15 +443,54 @@ export function activeModelPath(userDataDir: string): string {
   return path.join(userDataDir, "active-model.json");
 }
 
+/**
+ * Read the active-model.json record from disk.
+ *
+ * Returns `null` if the file does not exist (no model installed yet) OR
+ * if the file exists but is unparseable JSON. Corruption is treated as
+ * "no record" and the offending file is moved aside to a timestamped
+ * `.corrupt-<ts>` sibling so the user can re-download without manual
+ * filesystem surgery, the next `downloadModel` call clears the slot,
+ * and an operator can still recover the original bytes from disk for
+ * forensic purposes.
+ *
+ * IO errors other than ENOENT (permission denied, etc.) are propagated
+ * because they need explicit operator attention and silently masking
+ * them would hide real disk faults.
+ */
 export async function getCurrentModel(
   userDataDir: string,
 ): Promise<InstalledModelRecord | null> {
+  const p = activeModelPath(userDataDir);
+  let raw: string;
   try {
-    const raw = await fsp.readFile(activeModelPath(userDataDir), "utf8");
-    return JSON.parse(raw) as InstalledModelRecord;
+    raw = await fsp.readFile(p, "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
+  }
+  try {
+    return JSON.parse(raw) as InstalledModelRecord;
+  } catch (parseErr) {
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const backupPath = `${p}.corrupt-${ts}`;
+    // Best-effort move-aside. If even this fails we still want to log
+    // and degrade to `null` rather than rethrowing; a corrupt record
+    // shouldn't block all model operations.
+    try {
+      await fsp.rename(p, backupPath);
+      console.warn(
+        `[tessera] active-model.json was unparseable JSON; moved to ${backupPath}. ` +
+          `Returning null so the next model operation starts clean. Parse error: ${(parseErr as Error).message}`,
+      );
+    } catch (renameErr) {
+      console.warn(
+        `[tessera] active-model.json was unparseable JSON and could not be backed up ` +
+          `(${(renameErr as Error).message}); leaving the file in place and returning null. ` +
+          `Parse error: ${(parseErr as Error).message}`,
+      );
+    }
+    return null;
   }
 }
 
