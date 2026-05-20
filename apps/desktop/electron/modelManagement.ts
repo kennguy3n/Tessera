@@ -719,33 +719,46 @@ const defaultFetcher: NonNullable<DownloadDeps["fetcher"]> = async (
   // released back to the pool) on the next event-loop turn via the
   // usual GC path. (Devin Review INFO finding 3270976469.)
   const tmpHandle = await fsp.open(destPath, "w");
-  const reader = resp.body.getReader();
   let downloaded = 0;
+  // Nested try/finally so the file handle is closed even if the very
+  // next operation (`resp.body.getReader()`) throws. Per the WHATWG
+  // Streams spec `getReader()` only throws synchronously when the
+  // stream is already locked — unreachable for a just-received fetch
+  // response in practice — but the outer try/finally costs us nothing
+  // and eliminates the theoretical leak window entirely. Combined with
+  // the inner reader.cancel() in `finally`, the function now has no
+  // resource paths that can leak on either expected or surprise
+  // failures. (Devin Review INFO finding 3271010216.)
   try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value && value.byteLength > 0) {
-        await tmpHandle.write(value);
-        downloaded += value.byteLength;
-        // `onProgress` is wrapped at the `downloadModel` boundary
-        // (see `wrapProgressNoThrow`) so even a destroyed-BrowserWindow
-        // throw or a buggy custom callback cannot abort the byte
-        // pump. We just call it normally here. (Devin Review BUG
-        // finding 3270950107.)
-        onProgress(downloaded, total);
+    const reader = resp.body.getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value && value.byteLength > 0) {
+          await tmpHandle.write(value);
+          downloaded += value.byteLength;
+          // `onProgress` is wrapped at the `downloadModel` boundary
+          // (see `wrapProgressNoThrow`) so even a destroyed-BrowserWindow
+          // throw or a buggy custom callback cannot abort the byte
+          // pump. We just call it normally here. (Devin Review BUG
+          // finding 3270950107.)
+          onProgress(downloaded, total);
+        }
+      }
+    } finally {
+      // Always release the body reader so the underlying HTTP
+      // connection can be returned to the pool, even on read errors
+      // mid-stream. `reader.cancel()` both releases the lock AND
+      // aborts the response body, which is what we want — we don't
+      // need any further bytes.
+      try {
+        await reader.cancel();
+      } catch {
+        // ignore — reader may already be in a terminal state
       }
     }
   } finally {
-    // Always release the body reader so the underlying HTTP connection
-    // can be returned to the pool, even on read errors mid-stream.
-    // `reader.cancel()` both releases the lock AND aborts the response
-    // body, which is what we want — we don't need any further bytes.
-    try {
-      await reader.cancel();
-    } catch {
-      // ignore — reader may already be in a terminal state
-    }
     await tmpHandle.close();
   }
   return { totalBytes: downloaded };
