@@ -22,6 +22,7 @@ import {
   recommendModel,
   pickLlamaServerVariant,
   planDownload,
+  effectiveDiskSizeMb,
   getCurrentModel,
   deleteCurrentModel,
   downloadModel,
@@ -288,6 +289,67 @@ describe("single-model enforcement", () => {
       // differs from the disk size.
       expect(plan.message).not.toContain("100 MB");
       expect(plan.message).not.toContain("250 MB");
+    }
+  });
+
+  it("effectiveDiskSizeMb falls back to downloadSizeMb for legacy records (missing field, 0, NaN)", () => {
+    // Regression for Devin Review finding 3270718905: the TS side parsed
+    // active-model.json directly into InstalledModelRecord and assumed
+    // diskSizeMb was always populated. Records persisted before that
+    // field was introduced won't have it; the planner must mirror the
+    // Rust effective_disk_size_mb() fallback or netDelta becomes NaN.
+    const legacy: InstalledModelRecord = {
+      modelId: "legacy",
+      format: "gguf",
+      filename: "legacy.gguf",
+      path: "/tmp/legacy",
+      downloadSizeMb: 450,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+    expect(effectiveDiskSizeMb(legacy)).toBe(450);
+
+    const zero: InstalledModelRecord = { ...legacy, diskSizeMb: 0 };
+    expect(effectiveDiskSizeMb(zero)).toBe(450);
+
+    const nanRecord: InstalledModelRecord = {
+      ...legacy,
+      diskSizeMb: Number.NaN,
+    };
+    expect(effectiveDiskSizeMb(nanRecord)).toBe(450);
+
+    const populated: InstalledModelRecord = { ...legacy, diskSizeMb: 600 };
+    expect(effectiveDiskSizeMb(populated)).toBe(600);
+  });
+
+  it("planDownload swap honours effectiveDiskSizeMb for legacy installed records", () => {
+    // Pre-disk_size_mb record (no diskSizeMb field at all) — the swap
+    // accounting must fall back to downloadSizeMb so evict/install/delta
+    // are real numbers, not NaN.
+    const legacy: InstalledModelRecord = {
+      modelId: "legacy-gguf",
+      format: "gguf",
+      filename: "legacy.gguf",
+      path: "/tmp/legacy.gguf",
+      downloadSizeMb: 450,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+    const plan = planDownload(
+      legacy,
+      makeResolved({
+        id: "new-gguf",
+        downloadSizeMb: 1000,
+        diskSizeMb: 1000,
+      }),
+    );
+    expect(plan.kind).toBe("swap");
+    if (plan.kind === "swap") {
+      expect(plan.evictSizeMb).toBe(450);
+      expect(plan.installSizeMb).toBe(1000);
+      expect(plan.netDiskDeltaMb).toBe(550);
+      // Confirm no NaN leaked into the message.
+      expect(plan.message).not.toContain("NaN");
     }
   });
 

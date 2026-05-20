@@ -107,9 +107,28 @@ export interface InstalledModelRecord {
   filename: string;
   path: string;
   downloadSizeMb: number;
-  diskSizeMb: number;
+  // Records written before `diskSizeMb` was introduced won't have this
+  // field. Read via `effectiveDiskSizeMb(record)` so the swap accounting
+  // stays correct for legacy installs.
+  diskSizeMb?: number;
   sha256: string | null;
   downloadedAt: string;
+}
+
+/**
+ * Disk-size accessor that tolerates legacy records.
+ *
+ * Records persisted before the `diskSizeMb` field was added (or where
+ * the field was serialised as 0) fall back to `downloadSizeMb`. This
+ * mirrors Rust's `InstalledModel::effective_disk_size_mb` so the swap
+ * planner returns consistent values on both sides of the bridge.
+ */
+export function effectiveDiskSizeMb(record: InstalledModelRecord): number {
+  const ds = record.diskSizeMb;
+  if (typeof ds !== "number" || !Number.isFinite(ds) || ds <= 0) {
+    return record.downloadSizeMb;
+  }
+  return ds;
 }
 
 export interface SwapDecision {
@@ -474,18 +493,21 @@ export function planDownload(
   // delta fields. For GGUF models these match downloadSizeMb, but MLX
   // archives expand after extraction so the post-extract footprint is the
   // correct unit for swap planning. The download progress UI separately
-  // consumes downloadSizeMb.
-  const netDelta = requested.diskSizeMb - current.diskSizeMb;
+  // consumes downloadSizeMb. `effectiveDiskSizeMb` falls back to
+  // `downloadSizeMb` for legacy records that pre-date `diskSizeMb`.
+  const evictDiskSize = effectiveDiskSizeMb(current);
+  const installDiskSize = requested.diskSizeMb;
+  const netDelta = installDiskSize - evictDiskSize;
   return {
     kind: "swap",
     evictModelId: current.modelId,
     evictFilename: current.filename,
-    evictSizeMb: current.diskSizeMb,
+    evictSizeMb: evictDiskSize,
     installModelId: requested.id,
     installFilename: requested.filename,
-    installSizeMb: requested.diskSizeMb,
+    installSizeMb: installDiskSize,
     netDiskDeltaMb: netDelta,
-    message: `Current: ${current.modelId} (${current.diskSizeMb} MB). New: ${requested.name} (${requested.diskSizeMb} MB). This will remove ${current.filename} to save ${current.diskSizeMb} MB and install ${requested.diskSizeMb} MB.`,
+    message: `Current: ${current.modelId} (${evictDiskSize} MB). New: ${requested.name} (${installDiskSize} MB). This will remove ${current.filename} to save ${evictDiskSize} MB and install ${installDiskSize} MB.`,
   };
 }
 

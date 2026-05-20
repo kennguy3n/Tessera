@@ -134,7 +134,7 @@ describe("CreatePage", () => {
       artifactType: "document",
       templateId: "prd-v1",
       content: "",
-      citations: [],
+      citationCount: 0,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       version: 1,
