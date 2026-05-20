@@ -84,10 +84,110 @@ export interface SettingsData {
   watchPatterns: string[];
 }
 
+// Mirrors `ExtractedItem` in apps/desktop/renderer/src/types/ipc.ts and
+// the local copy in apps/desktop/electron/ipc.ts. We duplicate the shape
+// here so the preload's `extractTasksDecisions` signature is sound across
+// the contextBridge without forcing preload (main-side, Electron) to
+// import from the renderer module (which would pull React-aware build
+// settings into the main process). Any change to the schema must be made
+// in all three locations.
+export interface ExtractedItem {
+  itemType: "task" | "decision";
+  text: string;
+  sourceCitation: string;
+  confidence: number;
+}
+
 export interface ModelStatus {
   available: boolean;
   modelName: string | null;
   status: string;
+}
+
+export type ModelPlatform =
+  | "macos-apple-silicon"
+  | "macos-intel"
+  | "windows-x64"
+  | "linux-x64"
+  | "linux-arm64";
+
+export type ModelFormat = "gguf" | "mlx";
+export type ComputeBackend = "cpu" | "cuda" | "vulkan" | "metal" | "rocm";
+export type DeviceTier = "low" | "medium" | "high";
+
+export interface PlatformInfo {
+  platform: ModelPlatform;
+  platformLabel: string;
+  totalRamGb: number;
+  tier: DeviceTier;
+  tierLabel: string;
+  computeBackends: ComputeBackend[];
+  preferredFormat: ModelFormat;
+}
+
+export interface ResolvedModel {
+  id: string;
+  name: string;
+  parameters: string;
+  format: ModelFormat;
+  formatLabel: string;
+  quantization: string;
+  platform: ModelPlatform;
+  tier: DeviceTier;
+  computeBackends: ComputeBackend[];
+  downloadSizeMb: number;
+  diskSizeMb: number;
+  requiredRamGb: number;
+  contextLength: number;
+  filename: string;
+  url: string;
+  sha256: string | null;
+}
+
+export interface InstalledModelRecord {
+  modelId: string;
+  format: ModelFormat;
+  filename: string;
+  path: string;
+  downloadSizeMb: number;
+  // Records persisted before `diskSizeMb` was added (or by an older
+  // build) won't have this field — read via `effectiveDiskSizeMb`
+  // from `modelManagement.ts` to fall back to `downloadSizeMb`.
+  // Kept optional here so the type matches the on-disk wire shape
+  // and the canonical declaration in `modelManagement.ts`.
+  diskSizeMb?: number;
+  sha256: string | null;
+  downloadedAt: string;
+}
+
+export type DownloadPlan =
+  | { kind: "already-installed"; modelId: string }
+  | {
+      kind: "direct-download";
+      modelId: string;
+      filename: string;
+      downloadSizeMb: number;
+      message: string;
+    }
+  | {
+      kind: "swap";
+      evictModelId: string;
+      evictFilename: string;
+      evictSizeMb: number;
+      installModelId: string;
+      installFilename: string;
+      installSizeMb: number;
+      netDiskDeltaMb: number;
+      message: string;
+    };
+
+export interface ModelDownloadProgress {
+  modelId: string;
+  format: ModelFormat;
+  filename: string;
+  downloadedMb: number;
+  totalMb: number;
+  percent: number;
 }
 
 export interface ExportResult {
@@ -146,7 +246,7 @@ export interface TesseraApi {
     listVersions: (id: string) => Promise<ArtifactVersionInfo[]>;
     restoreVersion: (id: string, versionNumber: number) => Promise<ArtifactInfo>;
     generateFromTemplate: (templateId: string, sourceIds: string[]) => Promise<ArtifactInfo>;
-    extractTasksDecisions: (sourceId: string) => Promise<unknown>;
+    extractTasksDecisions: (sourceId: string) => Promise<ExtractedItem[]>;
     compareSources: (sourceIdA: string, sourceIdB: string) => Promise<ArtifactInfo>;
     exportEvidencePack: (artifactId: string, outputPath: string) => Promise<string>;
   };
@@ -172,6 +272,16 @@ export interface TesseraApi {
     cancelJob: () => Promise<void>;
     onToken: (callback: (chunk: unknown) => void) => () => void;
   };
+  runtime: {
+    detectPlatform: () => Promise<PlatformInfo>;
+    recommendModel: () => Promise<ResolvedModel | null>;
+    listModels: () => Promise<ResolvedModel[]>;
+    getCurrentModel: () => Promise<InstalledModelRecord | null>;
+    planDownload: (modelId: string) => Promise<DownloadPlan>;
+    downloadModel: (modelId: string) => Promise<InstalledModelRecord>;
+    deleteModel: () => Promise<void>;
+    onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) => () => void;
+  };
   connectors: {
     authenticate: (provider: string, clientId: string, clientSecret: string) => Promise<ConnectorStatusInfo>;
     disconnect: (provider: string) => Promise<ConnectorStatusInfo>;
@@ -180,6 +290,21 @@ export interface TesseraApi {
     selectItems: (items: Array<{ id: string; name: string; mimeType: string }>) => Promise<Array<{ id: string; name: string; mimeType: string; selected: boolean }>>;
     syncDrive: (selectedFileIds?: string[]) => Promise<{ added: number; modified: number; removed: number; status: string }>;
   };
+  dialog: {
+    showSaveDialog: (options: SaveDialogOptions) => Promise<SaveDialogResult>;
+  };
+}
+
+export interface SaveDialogOptions {
+  title?: string;
+  defaultPath?: string;
+  buttonLabel?: string;
+  filters?: Array<{ name: string; extensions: string[] }>;
+}
+
+export interface SaveDialogResult {
+  canceled: boolean;
+  filePath?: string;
 }
 
 const api: TesseraApi = {
@@ -250,6 +375,27 @@ const api: TesseraApi = {
       return () => { ipcRenderer.removeListener("model:token", listener as never); };
     },
   },
+  runtime: {
+    detectPlatform: () => ipcRenderer.invoke("runtime:detectPlatform"),
+    recommendModel: () => ipcRenderer.invoke("runtime:recommendModel"),
+    listModels: () => ipcRenderer.invoke("runtime:listModels"),
+    getCurrentModel: () => ipcRenderer.invoke("runtime:getCurrentModel"),
+    planDownload: (modelId: string) =>
+      ipcRenderer.invoke("runtime:planDownload", modelId),
+    // `downloadModel` handles both fresh-install and swap (delete-then-
+    // fetch). There is intentionally no separate `swapModel` channel —
+    // see Devin Review finding 3270524691.
+    downloadModel: (modelId: string) =>
+      ipcRenderer.invoke("runtime:downloadModel", modelId),
+    deleteModel: () => ipcRenderer.invoke("runtime:deleteModel"),
+    onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) => {
+      const listener = (_event: unknown, p: ModelDownloadProgress) => callback(p);
+      ipcRenderer.on("runtime:downloadProgress", listener as never);
+      return () => {
+        ipcRenderer.removeListener("runtime:downloadProgress", listener as never);
+      };
+    },
+  },
   connectors: {
     authenticate: (provider: string, clientId: string, clientSecret: string) =>
       ipcRenderer.invoke("connectors:authenticate", provider, clientId, clientSecret),
@@ -263,6 +409,10 @@ const api: TesseraApi = {
       ipcRenderer.invoke("connectors:gdrive:selectItems", items),
     syncDrive: (selectedFileIds?: string[]) =>
       ipcRenderer.invoke("connectors:gdrive:sync", selectedFileIds),
+  },
+  dialog: {
+    showSaveDialog: (options: SaveDialogOptions) =>
+      ipcRenderer.invoke("dialog:showSaveDialog", options),
   },
 };
 

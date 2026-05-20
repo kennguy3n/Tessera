@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
+import Button from "../components/Button";
+import { useSourceList } from "../hooks/useSources";
+import type { TemplateInfo } from "../types/ipc";
 
 interface CategoryItem {
   id: string;
@@ -35,6 +38,19 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
 
 const TABS = Object.keys(CATEGORIES);
 
+function localItemForTemplate(id: string): CategoryItem | undefined {
+  for (const list of Object.values(CATEGORIES)) {
+    const match = list.find((c) => c.id === id);
+    if (match) return match;
+  }
+  return undefined;
+}
+
+interface GenerateState {
+  status: "idle" | "loading" | "success" | "error";
+  message: string | null;
+}
+
 export default function CreatePage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -42,28 +58,7 @@ export default function CreatePage() {
   const [activeTab, setActiveTab] = useState(TABS[0]);
 
   if (templateId) {
-    return (
-      <div>
-        <PageHeader
-          title="Create Artifact"
-          description={`Template: ${templateId}`}
-        />
-        <Card>
-          <p style={{ color: "var(--color-text-secondary)" }}>
-            Artifact creation with the <strong>{templateId}</strong> template
-            will be available in Phase 3. The template structure and sections
-            are defined in <code>templates/</code>.
-          </p>
-          <button
-            className="btn btn-secondary"
-            style={{ marginTop: "var(--spacing-md)" }}
-            onClick={() => navigate("/create")}
-          >
-            Back to Templates
-          </button>
-        </Card>
-      </div>
-    );
+    return <TemplateRunner templateId={templateId} />;
   }
 
   return (
@@ -111,6 +106,225 @@ export default function CreatePage() {
           </Card>
         ))}
       </div>
+    </div>
+  );
+}
+
+function TemplateRunner({ templateId }: { templateId: string }) {
+  const navigate = useNavigate();
+  const localItem = localItemForTemplate(templateId);
+  const { sources, loading: sourcesLoading } = useSourceList();
+  const [template, setTemplate] = useState<TemplateInfo | null>(null);
+  const [templateLoaded, setTemplateLoaded] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [gen, setGen] = useState<GenerateState>({ status: "idle", message: null });
+
+  // NOTE: artifacts.generateFromTemplate runs synchronously through the Rust
+  // bridge (bridgeGenerateFromTemplate -> inference_router) and does NOT emit
+  // `model:token` SSE events the way the sidecar `model:generate` IPC does.
+  // We previously subscribed to `model:token` for a streaming preview here,
+  // but that was dead code — the channel is silent for template generation.
+  // A future PR can thread streaming token events through the artifacts
+  // pipeline (inference_router streaming -> N-API event -> renderer); until
+  // then we show an honest indeterminate progress indicator instead of a
+  // token preview that never updates.
+
+  useEffect(() => {
+    let cancelled = false;
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api) {
+      setTemplateLoaded(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+    api.templates
+      .get(templateId)
+      .then((result) => {
+        if (cancelled) return;
+        setTemplate(result);
+        setTemplateLoaded(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTemplateLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [templateId]);
+
+  const toggle = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleGenerate = useCallback(async () => {
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api) {
+      setGen({ status: "error", message: "Tessera bridge not available" });
+      return;
+    }
+    if (selected.size === 0) {
+      setGen({
+        status: "error",
+        message: "Select at least one source to ground the artifact.",
+      });
+      return;
+    }
+    setGen({ status: "loading", message: null });
+    try {
+      const artifact = await api.artifacts.generateFromTemplate(
+        templateId,
+        Array.from(selected),
+      );
+      setGen({ status: "success", message: artifact.id });
+      navigate(`/artifacts/${artifact.id}`);
+    } catch (err) {
+      setGen({
+        status: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [navigate, selected, templateId]);
+
+  const displayName = template?.name ?? localItem?.name ?? templateId;
+  const displayDescription =
+    template?.description ?? localItem?.description ?? "Template details";
+
+  return (
+    <div>
+      <PageHeader
+        title={`Create: ${displayName}`}
+        description={displayDescription}
+        actions={
+          <Button variant="secondary" onClick={() => navigate("/create")}>
+            Back to Templates
+          </Button>
+        }
+      />
+
+      <Card>
+        <h3 style={{ marginBottom: "var(--spacing-sm)" }}>
+          Select sources to ground this {displayName}
+        </h3>
+        <p
+          style={{
+            fontSize: "var(--font-size-sm)",
+            color: "var(--color-text-secondary)",
+            marginBottom: "var(--spacing-md)",
+          }}
+        >
+          Tessera will only cite content from the sources you select below.
+        </p>
+
+        {sourcesLoading && <p>Loading sources…</p>}
+        {!sourcesLoading && sources.length === 0 && (
+          <p style={{ color: "var(--color-text-secondary)" }}>
+            No sources connected.{" "}
+            <a href="#" onClick={(e) => {
+              e.preventDefault();
+              navigate("/sources");
+            }}>
+              Connect one in Sources
+            </a>{" "}
+            first.
+          </p>
+        )}
+        {!sourcesLoading && sources.length > 0 && (
+          <ul
+            data-testid="create-source-list"
+            style={{
+              listStyle: "none",
+              padding: 0,
+              margin: 0,
+              maxHeight: 300,
+              overflowY: "auto",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-sm)",
+            }}
+          >
+            {sources.map((source) => {
+              const checked = selected.has(source.id);
+              return (
+                <li
+                  key={source.id}
+                  style={{
+                    padding: "var(--spacing-sm) var(--spacing-md)",
+                    borderBottom: "1px solid var(--color-border)",
+                  }}
+                >
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "var(--spacing-sm)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggle(source.id)}
+                    />
+                    <span>
+                      <strong>{source.path}</strong>
+                      <span
+                        style={{
+                          marginLeft: "var(--spacing-sm)",
+                          fontSize: "var(--font-size-xs)",
+                          color: "var(--color-text-secondary)",
+                        }}
+                      >
+                        {source.sourceType} · {source.fileCount} files
+                      </span>
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--spacing-md)",
+            marginTop: "var(--spacing-md)",
+          }}
+        >
+          <Button
+            onClick={handleGenerate}
+            disabled={gen.status === "loading" || selected.size === 0}
+          >
+            {gen.status === "loading" ? "Generating…" : "Generate"}
+          </Button>
+          {gen.status === "loading" && (
+            <span data-testid="create-generating" style={{ fontSize: "var(--font-size-sm)" }}>
+              Generating from the local model…
+            </span>
+          )}
+          {gen.status === "error" && (
+            <span
+              data-testid="create-error"
+              style={{ color: "var(--color-danger, #ef4444)", fontSize: "var(--font-size-sm)" }}
+            >
+              {gen.message}
+            </span>
+          )}
+        </div>
+
+        {!templateLoaded && (
+          <p style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-secondary)" }}>
+            Resolving template…
+          </p>
+        )}
+      </Card>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
 import Button from "../components/Button";
+import ModelRuntimeCard from "../components/ModelRuntimeCard";
 import { useSettings, useUpdateSetting } from "../hooks/useSettings";
 
 export default function SettingsPage() {
@@ -126,24 +127,7 @@ export default function SettingsPage() {
           </div>
         </Card>
 
-        <Card>
-          <h3 style={{ marginBottom: "var(--spacing-md)" }}>Model Runtime</h3>
-          <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-sm)" }}>
-            <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                backgroundColor: "var(--color-text-secondary)",
-                display: "inline-block",
-              }}
-            />
-            <span style={{ color: "var(--color-text-secondary)", fontSize: "var(--font-size-sm)" }}>
-              Not configured — model sidecar support will be available when a
-              compatible GGUF model is provided.
-            </span>
-          </div>
-        </Card>
+        <ModelRuntimeCard />
 
         <Card>
           <h3 style={{ marginBottom: "var(--spacing-md)" }}>Export</h3>

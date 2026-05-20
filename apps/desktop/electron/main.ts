@@ -3,6 +3,7 @@ import * as path from "path";
 import { registerIpcHandlers } from "./ipc";
 import { loadConfig, saveWindowState } from "./config";
 import { initAppState } from "./appState";
+import { detectComputeBackends } from "./modelManagement";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -67,6 +68,33 @@ app.whenReady().then(() => {
   initAppState();
   registerIpcHandlers();
   createWindow();
+
+  // Warm the hardware-detection cache off the critical path. The first
+  // call to `detectComputeBackends()` issues `execFileSync` probes for
+  // `nvidia-smi`, `vulkaninfo`, and `/opt/rocm` — each up to ~3s — and
+  // the result is memoised for the lifetime of the process (see
+  // `modelManagement.ts` cache block). Running it once on app-ready
+  // means the *first* model-related IPC the user triggers (Settings ->
+  // open Model Runtime card, Recommend Model, etc.) doesn't block the
+  // main process for several seconds at the exact moment the user is
+  // waiting on it. We schedule via `setImmediate` so the first paint
+  // of the BrowserWindow runs to completion before the synchronous
+  // probes start; the probes then block only the idle event-loop tick
+  // before any user interaction. (Devin Review INFO finding
+  // b10fe43e — synchronous execFileSync inside async IPC handlers.)
+  setImmediate(() => {
+    try {
+      detectComputeBackends();
+    } catch (err) {
+      // Cache warm-up is best-effort. If hardware probes throw (extremely
+      // unlikely — they already swallow exec failures internally), the
+      // first real IPC call will retry. We log so platform-specific
+      // failures (e.g. a sandbox blocking exec) are visible in dev.
+      console.warn(
+        `[tessera] hardware-detection cache warm-up failed (continuing): ${(err as Error).message}`,
+      );
+    }
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

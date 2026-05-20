@@ -40,14 +40,16 @@
 |---|---|
 | macOS (Intel & Apple Silicon) | Planned |
 | Windows (x64) | Planned |
+| Linux (x64, arm64) | Planned |
 
 Desktop only. Supports **CPU-only** and **CPU+GPU** configurations.
 
 Local optimization:
 
-- **MLX** — Apple Silicon (macOS)
-- **llama.cpp** (PrismML fork) with **AVX2 / AVX-VNNI / AVX-512 VNNI** — CPU (Windows)
-- **Vulkan / CUDA** — GPU (Windows)
+- **MLX 2-bit** — Apple Silicon (macOS)
+- **llama.cpp** (PrismML fork) with **GGUF Q1_0_g128** ternary repack — Windows, Linux, macOS Intel
+- **CPU acceleration** — AVX2 minimum, AVX-VNNI / AVX-512 VNNI, ARM NEON / dotprod
+- **GPU acceleration** — Vulkan / CUDA (Windows, Linux), ROCm (Linux), Metal (macOS Apple Silicon)
 
 ---
 
@@ -139,14 +141,18 @@ The substrate is a modular 20-crate Rust architecture (`evidence_store`, `observ
 
 ## Local model support
 
-| Tier | Model | Use case |
-|---|---|---|
-| Lightweight | Ternary-Bonsai 1.7B | Quick drafts, extraction, tagging |
-| Balanced | Ternary-Bonsai 4B | Normal generation |
-| Higher quality | Ternary-Bonsai 8B | Longer reports, complex artifacts |
+Tessera ships **one** Ternary-Bonsai 1.58-bit weight on disk at a time. The file is selected automatically from the device tier (RAM) and the platform (format).
 
-- **CPU and CPU+GPU** support on Windows (AVX2 minimum, AVX-VNNI/AVX-512 VNNI when available; Vulkan/CUDA for GPU).
-- **MLX** on macOS Apple Silicon.
+| Tier | Model | MLX (Apple Silicon) | GGUF (Windows / Linux / macOS Intel) | Use case |
+|---|---|---|---|---|
+| Low (< 4 GB RAM) | Ternary-Bonsai 1.7B | ~248 MB · 2-bit | ~450 MB · Q1_0_g128 | Quick drafts, extraction, tagging |
+| Medium (4–8 GB) | Ternary-Bonsai 4B | ~600 MB · 2-bit | ~1.0 GB · Q1_0_g128 | Normal generation |
+| High (8+ GB) | Ternary-Bonsai 8B | ~1.2 GB · 2-bit | ~2.0 GB · Q1_0_g128 | Longer reports, complex artifacts |
+
+- **MLX 2-bit** is the preferred path on macOS Apple Silicon (smaller file, memory-bandwidth advantage).
+- **GGUF Q1_0_g128** (PrismML llama.cpp ternary repack — not Q4_K_M) is the path on every other platform.
+- **CPU and CPU+GPU** support on Windows and Linux (AVX2 minimum, AVX-VNNI / AVX-512 VNNI when available; Vulkan / CUDA / ROCm for GPU). Linux additionally supports ARM NEON / dotprod on arm64.
+- **Single-model storage** — only the recommended weight for your tier and platform is downloaded. Swapping tier deletes the prior file first so disk never holds two model variants.
 
 ---
 
@@ -157,6 +163,8 @@ The substrate is a modular 20-crate Rust architecture (`evidence_store`, `observ
 - **Rust** 1.75+ (`rustup` recommended)
 - **Node.js** 20+ and npm 10+
 - **C toolchain** for SQLCipher compilation (gcc/clang on Linux/macOS, MSVC on Windows)
+- **Python 3** on `PATH` — used by `sidecars/scripts/download-llama-server.sh` to resolve the correct `{url, sha256}` entry for your platform + compute backend from `sidecars/models.json`. Pre-installed on macOS and most Linux distros; on Windows install from [python.org](https://www.python.org/downloads/) or use `winget install Python.Python.3` (the equivalent PowerShell script does not need python3, but the bash script does and is what runs on macOS/Linux).
+- **Linux only** — install Electron's native build prerequisites: `libsecret-1-dev`, `libgtk-3-dev`, `libnss3-dev`, `libasound2-dev`, `libxss1`, `libxtst6`, `xdg-utils` (Debian/Ubuntu — adjust for your distro)
 - **Google API credentials** (optional, for Google Drive connector) — create a project in Google Cloud Console, enable the Drive API, and configure OAuth 2.0 credentials
 
 ### Setup

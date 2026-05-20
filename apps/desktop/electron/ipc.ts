@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, app } from "electron";
+import { ipcMain, BrowserWindow, app, dialog } from "electron";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { loadConfig, updateConfig } from "./config";
@@ -6,6 +6,30 @@ import { getBridge, getModelSidecar } from "./appState";
 import type { SettingsData, ModelStatus } from "./preload";
 import { startOAuthFlow, exchangeCodeForTokens, refreshAccessToken, revokeToken } from "./oauthServer";
 import * as tokenVault from "./tokenVault";
+import {
+  deleteCurrentModel,
+  detectPlatformInfo,
+  downloadModel,
+  getInstalledModel,
+  isModelInstalled,
+  listModelsForPlatform,
+  loadManifest,
+  planDownload,
+  recommendModel,
+  resetManifestCache,
+  type DownloadProgress,
+  type ResolvedModel,
+} from "./modelManagement";
+import {
+  validateExtractedItems,
+  type ExtractedItem,
+} from "./extractedItemValidation";
+
+// `ExtractedItem` (re-exported for callers that still imported it from
+// this module) mirrors the renderer's `src/types/ipc.ts`. The
+// validation logic lives in `./extractedItemValidation` so it can be
+// unit-tested without Electron.
+export type { ExtractedItem };
 
 async function getValidAccessToken(provider: string): Promise<string> {
   const stored = tokenVault.getTokens(provider);
@@ -371,7 +395,21 @@ export function registerIpcHandlers(): void {
     const controller = new AbortController();
     activeGenerationController = controller;
 
-    const win = BrowserWindow.fromWebContents(event.sender);
+    // Bind a destroyed-window-safe sender for the token channel. This is
+    // the same defense pattern used by `progressEmitter` for the download
+    // progress channel: if the user closes the window mid-generation,
+    // `webContents.send` would otherwise throw "Object has been
+    // destroyed", which propagates through the SSE read loop and out of
+    // the IPC handler. The renderer is already gone so the rejection is
+    // dropped, but the throw also short-circuits the `finally` cleanup
+    // (idle marking + controller reset) on the way out. Routing every
+    // `model:token` send through `safeRendererSender` makes the channel
+    // best-effort and keeps cleanup deterministic regardless of renderer
+    // state. (Devin Review BUG finding 3271137685.)
+    const sendToken = safeRendererSender<{ token: string; done: boolean }>(
+      event,
+      "model:token",
+    );
     let sentDone = false;
 
     try {
@@ -405,14 +443,14 @@ export function registerIpcHandlers(): void {
           if (!line.startsWith("data: ")) continue;
           const data = line.slice(6);
           if (data === "[DONE]") {
-            win?.webContents.send("model:token", { token: "", done: true });
+            sendToken({ token: "", done: true });
             sentDone = true;
             streamDone = true;
             break;
           }
           try {
             const parsed = JSON.parse(data) as { content?: string; stop?: boolean };
-            win?.webContents.send("model:token", {
+            sendToken({
               token: parsed.content ?? "",
               done: parsed.stop ?? false,
             });
@@ -432,7 +470,7 @@ export function registerIpcHandlers(): void {
         activeGenerationController = null;
       }
       if (!sentDone) {
-        win?.webContents.send("model:token", { token: "", done: true });
+        sendToken({ token: "", done: true });
       }
     }
   });
@@ -441,6 +479,229 @@ export function registerIpcHandlers(): void {
     if (activeGenerationController) {
       activeGenerationController.abort();
     }
+  });
+
+  // --- Runtime: platform / model registry / single-model enforcement ---
+
+  function userDataDir(): string {
+    return app.getPath("userData");
+  }
+
+  /**
+   * Stop the llama-server child process if it is currently running.
+   *
+   * The sidecar holds an OS-level file handle on the active model file
+   * (mapped/read by `llama-server`). On Windows that handle blocks
+   * `fsp.unlink`/`rename` with EPERM/EBUSY, so a swap or delete that does
+   * not stop the sidecar first will fail. On macOS / Linux the unlink
+   * succeeds (the open fd keeps the inode alive) but the orphaned sidecar
+   * still holds port 8384 and continues serving the now-deleted model,
+   * which collides with the next `model:start` and confuses
+   * `model:status`.
+   *
+   * Every IPC entry-point that mutates the on-disk model file
+   * (`runtime:downloadModel`, `runtime:deleteModel`) calls this BEFORE the
+   * mutation. The renderer is expected to do the same as a UX nicety, but
+   * we treat the server-side as the authoritative enforcement point so
+   * that direct IPC callers (tests, other windows, future automation) get
+   * the same correctness.
+   */
+  async function stopSidecarIfRunning(): Promise<void> {
+    const sidecar = getModelSidecar();
+    if (sidecar && sidecar.isRunning) {
+      await sidecar.stop();
+    }
+  }
+
+  function loadResolvedManifest() {
+    // In production the manifest is bundled into <resources>/sidecars and
+    // does not change at runtime, so the path-keyed cache in modelManagement
+    // is correct as-is and we get a fast in-memory hit on every model IPC.
+    //
+    // In development / tests we invalidate so:
+    //   - `npm run dev` hot-reload picks up edits to sidecars/models.json;
+    //   - tests that switch fixtures via TESSERA_MODELS_MANIFEST always see
+    //     the freshly-pointed file (the path-keyed cache also handles this
+    //     naturally when the path differs; the explicit reset covers the
+    //     edge case where the same path is re-used between fixtures).
+    if (process.env.NODE_ENV !== "production") {
+      resetManifestCache();
+    }
+    return loadManifest();
+  }
+
+  function findModelOrThrow(modelId: string): ResolvedModel {
+    const info = detectPlatformInfo();
+    const manifest = loadResolvedManifest();
+    const model = listModelsForPlatform(manifest, info.platform).find(
+      (m) => m.id === modelId,
+    );
+    if (!model) {
+      throw new Error(
+        `Model ${modelId} is not available on ${info.platformLabel}`,
+      );
+    }
+    return model;
+  }
+
+  ipcMain.handle("runtime:detectPlatform", async () => detectPlatformInfo());
+
+  ipcMain.handle("runtime:recommendModel", async () => {
+    const info = detectPlatformInfo();
+    const manifest = loadResolvedManifest();
+    return recommendModel(manifest, info.platform, info.tier);
+  });
+
+  ipcMain.handle("runtime:listModels", async () => {
+    const info = detectPlatformInfo();
+    const manifest = loadResolvedManifest();
+    return listModelsForPlatform(manifest, info.platform);
+  });
+
+  ipcMain.handle("runtime:getCurrentModel", async () =>
+    // Same "live record only" semantics as runtime:planDownload and the
+    // runtime:downloadModel fast-path: if active-model.json points at a
+    // file that's no longer on disk, treat it as no model installed.
+    //
+    // Round 10 left this IPC on `getCurrentModel` (raw record) on the
+    // theory that a future "ghost record → Re-download" UI would want to
+    // see the stale record. That UI doesn't exist today: both
+    // ModelRuntimeCard (line 261) and RuntimeStatus key off the truthiness
+    // of the result to switch between the "Installed" branch (Start /
+    // Delete buttons, Download hidden) and the "no model" branch
+    // (Download visible). Exposing the ghost record makes the Download
+    // button unreachable without first clicking Delete, which is the
+    // exact UX gap finding 3270889829 flags. Stale records get cleaned
+    // up on the next downloadModelLocked pass (it clears active-model.json
+    // when isModelInstalled returns null but a record still exists), so
+    // there's no orphan to manage at this layer. (Devin Review BUG
+    // finding 3270889829.)
+    getInstalledModel(userDataDir()),
+  );
+
+  ipcMain.handle("runtime:planDownload", async (_event, modelId: string) => {
+    const requested = findModelOrThrow(modelId);
+    // Use `getInstalledModel`, not `getCurrentModel`, so that a stale
+    // `active-model.json` record pointing at a manually-deleted file is
+    // treated as "no model installed". Otherwise the planner returns
+    // `already-installed` and the UI hides the Download button, forcing
+    // the user to click "Delete model" to clear the ghost record.
+    // (Devin Review BUG finding 3270859596.)
+    const current = await getInstalledModel(userDataDir());
+    return planDownload(current, requested);
+  });
+
+  /**
+   * Bind a destroyed-window-safe sender for an IPC channel.
+   *
+   * Captures the `BrowserWindow` for `event.sender` at IPC entry and
+   * returns a closure that pushes payloads on `channel` to that window.
+   * The returned function:
+   *
+   *   - Skips the send if the window has been destroyed (user closed it,
+   *     renderer crashed, etc.). `BrowserWindow.fromWebContents` returned
+   *     a truthy JS handle whose native backing Electron has since freed,
+   *     so optional-chaining `win?.webContents` does NOT short-circuit
+   *     — we need an explicit `isDestroyed()` check.
+   *   - try/catches the `.send()` call so a transient IPC failure (queue
+   *     overflow, renderer crash mid-stream) cannot propagate up and
+   *     short-circuit the caller's outer `try { ... } finally { ... }`
+   *     cleanup.
+   *
+   * This is the long-term-correct shape — every IPC handler that streams
+   * results back to the renderer should route its sends through this
+   * helper instead of reimplementing the guard pattern. Channels that
+   * use it today:
+   *
+   *   - `runtime:downloadProgress` (the download-progress emitter)
+   *   - `model:token` (the `model:generate` SSE stream)
+   *
+   * (Devin Review BUG findings 3270950107 + 3271137685.)
+   */
+  function safeRendererSender<T>(
+    event: Electron.IpcMainInvokeEvent,
+    channel: string,
+  ): (payload: T) => void {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return (payload: T) => {
+      if (!win || win.isDestroyed()) return;
+      try {
+        win.webContents.send(channel, payload);
+      } catch (err) {
+        console.warn(
+          `[tessera] ${channel} emit failed (continuing): ${(err as Error).message}`,
+        );
+      }
+    };
+  }
+
+  function progressEmitter(event: Electron.IpcMainInvokeEvent) {
+    return safeRendererSender<DownloadProgress>(event, "runtime:downloadProgress");
+  }
+
+  ipcMain.handle("runtime:downloadModel", async (event, modelId: string) => {
+    const requested = findModelOrThrow(modelId);
+    // Only stop the sidecar if we will actually mutate the model file.
+    //
+    // Three cases:
+    //   (a) Requested model is already installed AND file is still on disk
+    //       -> no-op, do NOT touch the sidecar (avoid killing a running
+    //       inference server when no download is needed, per Devin Review
+    //       finding 3270586297).
+    //   (b) Requested model is already installed but file is missing
+    //       -> we must re-download. Stop the sidecar in case it's still
+    //       pointing at the now-missing path (defensive; in practice if
+    //       the file was deleted out from under the sidecar it likely
+    //       died already, but we don't rely on that).
+    //   (c) A different model is installed (the swap case)
+    //       -> `downloadModel` will evict the existing file. The eviction
+    //       unlinks it, so we MUST stop the sidecar first — it holds the
+    //       OS file handle and on Windows that blocks the unlink with
+    //       EPERM/EBUSY.
+    //
+    // There is intentionally no separate `runtime:swapModel` channel:
+    // `downloadModel` already handles both fresh-install and swap, so a
+    // second handler that called the same function only invited drift
+    // (see Devin Review finding 3270524691).
+    //
+    // The "already installed AND file on disk" check is delegated to
+    // `isModelInstalled` so this IPC fast-path and the
+    // `downloadModelLocked` fast-path can't drift in what counts as
+    // "installed" (Devin Review finding 3270826130). There is still a
+    // window between this check and the actual download in which a
+    // concurrent caller could move the file out from under us, but
+    // (a) `downloadModelLocked` re-checks under the per-userDataDir
+    // lock anyway, and (b) the worst case is an unnecessary sidecar
+    // restart, not corruption.
+    const installed = await isModelInstalled(userDataDir(), requested.id);
+    if (installed) {
+      return installed;
+    }
+    // The sidecar-stop runs INSIDE `withDownloadLock` via the
+    // `beforeMutation` deps hook. Previously this call lived here in
+    // the IPC handler, BEFORE the lock was acquired, which left a race
+    // window: a parallel `runtime:downloadModel` invocation could
+    // complete its own download in the gap between our sidecar-stop
+    // and lock-acquire, and our subsequent eviction would then delete
+    // a model the other tab had just successfully installed. Moving
+    // it inside the lock makes the entire (stop → evict → download)
+    // sequence atomic per userDataDir. (Devin Review INFO finding
+    // f37a3c45.)
+    return downloadModel(userDataDir(), requested, progressEmitter(event), {
+      beforeMutation: stopSidecarIfRunning,
+    });
+  });
+
+  ipcMain.handle("runtime:deleteModel", async () => {
+    // Sidecar-stop is wired through `beforeMutation` so it runs INSIDE
+    // the per-userDataDir lock, after `deleteCurrentModel` has verified
+    // that there is actually something to delete. See the
+    // `runtime:downloadModel` handler above and the `beforeMutation`
+    // doc on `DownloadDeps` for the race-window rationale. (Devin
+    // Review INFO finding f37a3c45.)
+    await deleteCurrentModel(userDataDir(), {
+      beforeMutation: stopSidecarIfRunning,
+    });
   });
 
   // --- Connectors ---
@@ -773,7 +1034,17 @@ export function registerIpcHandlers(): void {
       const bridge = getBridge();
       if (!bridge) throw new Error("Native bridge not available");
       const json = bridge.bridgeExtractTasksDecisions(sourceId);
-      return JSON.parse(json) as unknown[];
+      // Validate at the IPC boundary so a misbehaving Rust bridge never
+      // ships shape-violating data to the renderer. The validator
+      // throws on non-array input and on 100%-drop input (unambiguous
+      // schema regressions); partial drops return valid items + log a
+      // single summary. Logic lives in ./extractedItemValidation so it
+      // can be exercised without Electron. (Devin Review BUG finding
+      // 3270889925.)
+      return validateExtractedItems(JSON.parse(json) as unknown, {
+        context: sourceId,
+        warn: (message) => console.warn(message),
+      });
     },
   );
 
@@ -792,6 +1063,17 @@ export function registerIpcHandlers(): void {
       const bridge = getBridge();
       if (!bridge) throw new Error("Native bridge not available");
       return bridge.bridgeExportEvidencePack(artifactId, outputPath);
+    },
+  );
+
+  ipcMain.handle(
+    "dialog:showSaveDialog",
+    async (event, options: Electron.SaveDialogOptions) => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      const result = win
+        ? await dialog.showSaveDialog(win, options)
+        : await dialog.showSaveDialog(options);
+      return result;
     },
   );
 }

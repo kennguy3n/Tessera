@@ -54,6 +54,104 @@ export interface ModelApi {
   onToken: (callback: (chunk: GenerateChunk) => void) => () => void;
 }
 
+export type ModelPlatform =
+  | "macos-apple-silicon"
+  | "macos-intel"
+  | "windows-x64"
+  | "linux-x64"
+  | "linux-arm64";
+
+export type ModelFormat = "gguf" | "mlx";
+export type ComputeBackend = "cpu" | "cuda" | "vulkan" | "metal" | "rocm";
+export type DeviceTier = "low" | "medium" | "high";
+
+export interface PlatformInfo {
+  platform: ModelPlatform;
+  platformLabel: string;
+  totalRamGb: number;
+  tier: DeviceTier;
+  tierLabel: string;
+  computeBackends: ComputeBackend[];
+  preferredFormat: ModelFormat;
+}
+
+export interface ResolvedModel {
+  id: string;
+  name: string;
+  parameters: string;
+  format: ModelFormat;
+  formatLabel: string;
+  quantization: string;
+  platform: ModelPlatform;
+  tier: DeviceTier;
+  computeBackends: ComputeBackend[];
+  downloadSizeMb: number;
+  diskSizeMb: number;
+  requiredRamGb: number;
+  contextLength: number;
+  filename: string;
+  url: string;
+  sha256: string | null;
+}
+
+export interface InstalledModelRecord {
+  modelId: string;
+  format: ModelFormat;
+  filename: string;
+  path: string;
+  downloadSizeMb: number;
+  // Optional to match the on-disk wire shape: records persisted before
+  // `diskSizeMb` was added by older builds won't have this field. Read
+  // via the `effectiveDiskSizeMb` helper in the electron module to fall
+  // back to `downloadSizeMb` for those legacy records.
+  diskSizeMb?: number;
+  sha256: string | null;
+  downloadedAt: string;
+}
+
+export type DownloadPlan =
+  | { kind: "already-installed"; modelId: string }
+  | {
+      kind: "direct-download";
+      modelId: string;
+      filename: string;
+      downloadSizeMb: number;
+      message: string;
+    }
+  | {
+      kind: "swap";
+      evictModelId: string;
+      evictFilename: string;
+      evictSizeMb: number;
+      installModelId: string;
+      installFilename: string;
+      installSizeMb: number;
+      netDiskDeltaMb: number;
+      message: string;
+    };
+
+export interface ModelDownloadProgress {
+  modelId: string;
+  format: ModelFormat;
+  filename: string;
+  downloadedMb: number;
+  totalMb: number;
+  percent: number;
+}
+
+export interface RuntimeApi {
+  detectPlatform: () => Promise<PlatformInfo>;
+  recommendModel: () => Promise<ResolvedModel | null>;
+  listModels: () => Promise<ResolvedModel[]>;
+  getCurrentModel: () => Promise<InstalledModelRecord | null>;
+  planDownload: (modelId: string) => Promise<DownloadPlan>;
+  // `downloadModel` handles both fresh-install and swap (delete-then-fetch).
+  // There is intentionally no separate `swapModel` channel.
+  downloadModel: (modelId: string) => Promise<InstalledModelRecord>;
+  deleteModel: () => Promise<void>;
+  onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) => () => void;
+}
+
 export interface DriveFileListResult {
   nextPageToken: string | null;
   files: ConnectorFileInfo[];
@@ -75,6 +173,22 @@ export interface ConnectorApi {
   syncDrive: (selectedFileIds?: string[]) => Promise<DriveSyncResult>;
 }
 
+export interface DialogApi {
+  showSaveDialog: (options: SaveDialogOptions) => Promise<SaveDialogResult>;
+}
+
+export interface SaveDialogOptions {
+  title?: string;
+  defaultPath?: string;
+  buttonLabel?: string;
+  filters?: Array<{ name: string; extensions: string[] }>;
+}
+
+export interface SaveDialogResult {
+  canceled: boolean;
+  filePath?: string;
+}
+
 export interface TesseraApi {
   sources: SourceApi;
   artifacts: ArtifactApi;
@@ -82,7 +196,9 @@ export interface TesseraApi {
   citations: CitationApi;
   settings: SettingsApi;
   model: ModelApi;
+  runtime: RuntimeApi;
   connectors: ConnectorApi;
+  dialog: DialogApi;
 }
 
 export interface SourceInfo {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
@@ -6,7 +6,10 @@ import Card from "../components/Card";
 import Modal from "../components/Modal";
 import StatusBadge from "../components/StatusBadge";
 import EmptyState from "../components/EmptyState";
+import ConnectorStatus from "../components/ConnectorStatus";
+import DriveFilePicker from "../components/DriveFilePicker";
 import { useSourceList, useAddSource, useRemoveSource } from "../hooks/useSources";
+import type { ConnectorFileInfo, ConnectorStatusInfo } from "../types/ipc";
 
 export default function SourcesPage() {
   const navigate = useNavigate();
@@ -17,6 +20,164 @@ export default function SourcesPage() {
   const [folderPath, setFolderPath] = useState("");
   const [addMode, setAddMode] = useState<"folder" | "file">("folder");
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [compareError, setCompareError] = useState<string | null>(null);
+  const [comparing, setComparing] = useState(false);
+
+  const [driveStatus, setDriveStatus] = useState<ConnectorStatusInfo>({
+    provider: "google_drive",
+    connected: false,
+    status: "unknown",
+  });
+  const [driveAuthOpen, setDriveAuthOpen] = useState(false);
+  const [driveAuthClientId, setDriveAuthClientId] = useState("");
+  const [driveAuthClientSecret, setDriveAuthClientSecret] = useState("");
+  const [driveAuthError, setDriveAuthError] = useState<string | null>(null);
+  const [driveAuthBusy, setDriveAuthBusy] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerBusy, setPickerBusy] = useState(false);
+  const [pickerError, setPickerError] = useState<string | null>(null);
+
+  const refreshDriveStatus = useCallback(async () => {
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api) return;
+    try {
+      const next = await api.connectors.status("google_drive");
+      setDriveStatus(next);
+    } catch {
+      setDriveStatus({ provider: "google_drive", connected: false, status: "error" });
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshDriveStatus();
+  }, [refreshDriveStatus]);
+
+  // Prune `selectedIds` whenever the source list changes so a removed
+  // source can never leave a stale ID in the selection. This fixes the
+  // failure mode where a user selected two sources, removed one via the
+  // Remove modal, and clicked Compare — the removed source's ID was
+  // still in `selectedIds` so the button remained enabled and dispatched
+  // an `artifacts:compareSources` call with a now-invalid ID, which
+  // failed on the backend. (Devin Review BUG finding eb2bc4d4.)
+  //
+  // We do this reactively against `sources` instead of patching
+  // `handleRemove` for two reasons:
+  //   1. Defense-in-depth — every code path that mutates the source
+  //      list (handleRemove, Drive sync that drops a no-longer-shared
+  //      file, hot-reload during npm run dev, future "trash" workflow,
+  //      multi-window concurrent removal) automatically prunes the
+  //      selection. There is no way to add a future source mutation
+  //      that accidentally bypasses this.
+  //   2. The "valid selection ⊆ visible sources" invariant is now
+  //      expressed in code rather than relying on every call site to
+  //      remember to clean up.
+  //
+  // Identity preservation: if no prune is needed we return the same
+  // `Set` reference so consumers (`selectedIds.size !== 2 || comparing`
+  // in the Compare button) don't trigger unnecessary re-renders.
+  useEffect(() => {
+    const validIds = new Set(sources.map((s) => s.id));
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (validIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [sources]);
+
+  const handleAuthenticateDrive = async () => {
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api) {
+      setDriveAuthError("Tessera bridge not available");
+      return;
+    }
+    if (!driveAuthClientId.trim() || !driveAuthClientSecret.trim()) {
+      setDriveAuthError("Client ID and Client Secret are required");
+      return;
+    }
+    setDriveAuthBusy(true);
+    setDriveAuthError(null);
+    try {
+      const next = await api.connectors.authenticate(
+        "google_drive",
+        driveAuthClientId.trim(),
+        driveAuthClientSecret.trim(),
+      );
+      setDriveStatus(next);
+      setDriveAuthOpen(false);
+      setDriveAuthClientId("");
+      setDriveAuthClientSecret("");
+    } catch (err) {
+      setDriveAuthError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDriveAuthBusy(false);
+    }
+  };
+
+  const handlePickerSelect = async (picked: ConnectorFileInfo[]) => {
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api) {
+      setPickerOpen(false);
+      return;
+    }
+    setPickerBusy(true);
+    setPickerError(null);
+    try {
+      await api.connectors.selectItems(
+        picked.map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType })),
+      );
+      await api.connectors.syncDrive(picked.map((f) => f.id));
+      refresh();
+    } catch (err) {
+      // selectItems / syncDrive failures (network errors, expired Drive
+      // creds, etc.) used to silently propagate to the nearest error boundary
+      // and the picker just closed — the user had no idea their picks were
+      // dropped. Surface the message as a top-level alert so they can retry.
+      setPickerError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPickerBusy(false);
+      setPickerOpen(false);
+    }
+  };
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleCompare = async () => {
+    if (selectedIds.size !== 2) {
+      setCompareError("Select exactly two sources to compare.");
+      return;
+    }
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api) {
+      setCompareError("Tessera bridge not available");
+      return;
+    }
+    setComparing(true);
+    setCompareError(null);
+    try {
+      const [a, b] = Array.from(selectedIds);
+      const artifact = await api.artifacts.compareSources(a, b);
+      navigate(`/artifacts/${artifact.id}`);
+    } catch (err) {
+      setCompareError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setComparing(false);
+    }
+  };
 
   const handleAdd = async () => {
     if (!folderPath.trim()) return;
@@ -51,9 +212,74 @@ export default function SourcesPage() {
         title="Sources"
         description="Manage your data sources"
         actions={
-          <Button onClick={() => setModalOpen(true)}>Add Source</Button>
+          <div style={{ display: "flex", gap: "var(--spacing-sm)" }}>
+            <Button
+              variant="secondary"
+              onClick={() => setDriveAuthOpen(true)}
+              data-testid="connect-google-drive"
+            >
+              {driveStatus.connected ? "Manage Google Drive" : "Connect Google Drive"}
+            </Button>
+            {driveStatus.connected && (
+              <Button
+                variant="secondary"
+                onClick={() => setPickerOpen(true)}
+                data-testid="pick-drive-files"
+              >
+                Pick Drive Files
+              </Button>
+            )}
+            <Button
+              variant="secondary"
+              onClick={handleCompare}
+              disabled={selectedIds.size !== 2 || comparing}
+              data-testid="compare-sources"
+            >
+              {comparing ? "Comparing…" : `Compare (${selectedIds.size}/2)`}
+            </Button>
+            <Button onClick={() => setModalOpen(true)}>Add Source</Button>
+          </div>
         }
       />
+
+      <div style={{ marginBottom: "var(--spacing-md)" }}>
+        <ConnectorStatus
+          provider="google_drive"
+          onSync={refresh}
+          onDisconnect={() => {
+            refreshDriveStatus();
+            refresh();
+          }}
+        />
+      </div>
+
+      {compareError && (
+        <div
+          style={{
+            marginBottom: "var(--spacing-md)",
+            padding: "var(--spacing-sm)",
+            color: "var(--color-danger, #ef4444)",
+            fontSize: "var(--font-size-sm)",
+          }}
+          data-testid="compare-error"
+        >
+          {compareError}
+        </div>
+      )}
+
+      {pickerError && (
+        <div
+          style={{
+            marginBottom: "var(--spacing-md)",
+            padding: "var(--spacing-sm)",
+            color: "var(--color-danger, #ef4444)",
+            fontSize: "var(--font-size-sm)",
+          }}
+          data-testid="picker-error"
+        >
+          Drive sync failed: {pickerError}
+        </div>
+      )}
 
       {sources.length === 0 ? (
         <EmptyState
@@ -80,7 +306,15 @@ export default function SourcesPage() {
                   alignItems: "flex-start",
                 }}
               >
-                <div>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--spacing-sm)" }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(source.id)}
+                    onChange={() => toggleSelected(source.id)}
+                    data-testid={`source-select-${source.id}`}
+                    style={{ marginTop: 6 }}
+                  />
+                  <div>
                   <div
                     style={{
                       display: "flex",
@@ -108,6 +342,7 @@ export default function SourcesPage() {
                         {new Date(source.lastIndexed).toLocaleString()}
                       </>
                     )}
+                  </div>
                   </div>
                 </div>
                 <Button
@@ -169,6 +404,85 @@ export default function SourcesPage() {
             Add
           </Button>
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={driveAuthOpen}
+        onClose={() => {
+          setDriveAuthOpen(false);
+          setDriveAuthError(null);
+        }}
+        title="Connect Google Drive"
+      >
+        <p style={{ marginBottom: "var(--spacing-md)", fontSize: "var(--font-size-sm)" }}>
+          Provide an OAuth client created in Google Cloud Console (Desktop app type).
+          Tessera stores the resulting refresh token encrypted in the platform keystore.
+        </p>
+        <input
+          className="input"
+          placeholder="Client ID"
+          value={driveAuthClientId}
+          onChange={(e) => setDriveAuthClientId(e.target.value)}
+          style={{ marginBottom: "var(--spacing-sm)" }}
+        />
+        <input
+          className="input"
+          placeholder="Client Secret"
+          type="password"
+          value={driveAuthClientSecret}
+          onChange={(e) => setDriveAuthClientSecret(e.target.value)}
+        />
+        {driveAuthError && (
+          <p
+            style={{
+              color: "var(--color-danger, #ef4444)",
+              fontSize: "var(--font-size-sm)",
+              marginTop: "var(--spacing-sm)",
+            }}
+            data-testid="drive-auth-error"
+          >
+            {driveAuthError}
+          </p>
+        )}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: "var(--spacing-sm)",
+            marginTop: "var(--spacing-md)",
+          }}
+        >
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setDriveAuthOpen(false);
+              setDriveAuthError(null);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleAuthenticateDrive}
+            disabled={driveAuthBusy || !driveAuthClientId.trim() || !driveAuthClientSecret.trim()}
+          >
+            {driveAuthBusy ? "Authenticating…" : "Authenticate"}
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        title="Pick Files from Google Drive"
+      >
+        {pickerBusy ? (
+          <p>Syncing selected files…</p>
+        ) : (
+          <DriveFilePicker
+            onSelect={handlePickerSelect}
+            onCancel={() => setPickerOpen(false)}
+          />
+        )}
       </Modal>
 
       <Modal

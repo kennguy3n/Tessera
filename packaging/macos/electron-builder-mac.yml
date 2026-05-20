@@ -1,0 +1,72 @@
+# macOS electron-builder config. Produces signed/notarized universal DMG.
+#
+# Apple Silicon ships the MLX adapter as the primary runtime; the bundled
+# llama-server (CPU build) is the fallback. We package both arm64 and x64
+# slices and let the runtime pick MLX vs llama-server based on detect_platform.
+#
+# Invocation:
+#   electron-builder --mac --config packaging/macos/electron-builder-mac.yml
+appId: com.tessera.desktop
+productName: Tessera
+copyright: Copyright (c) 2024 Tessera contributors
+directories:
+  buildResources: build
+  output: dist/macos
+
+files:
+  - "apps/desktop/dist/**/*"
+  - "apps/desktop/electron/**/*.js"
+  - "native/**/*.node"
+  - "templates/**/*"
+  - "schemas/**/*"
+  - "sidecars/models.json"
+  - "package.json"
+
+extraResources:
+  - from: "sidecars/llama-server/"
+    to: "sidecars/llama-server/"
+    filter:
+      - "**/*"
+      - "!*.exe"
+  - from: "sidecars/models.json"
+    to: "sidecars/models.json"
+  - from: "templates/"
+    to: "templates/"
+    filter:
+      - "**/*.yaml"
+      - "**/*.yml"
+
+mac:
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: packaging/macos/entitlements.mac.plist
+  entitlementsInherit: packaging/macos/entitlements.mac.plist
+  icon: build/icon.icns
+  # Code signing - env vars expected in CI:
+  #   CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
+  notarize: false
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.dmg
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+  window:
+    width: 540
+    height: 380
+
+publish: null

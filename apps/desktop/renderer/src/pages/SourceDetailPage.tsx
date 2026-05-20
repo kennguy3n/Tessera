@@ -1,15 +1,20 @@
+import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import StatusBadge from "../components/StatusBadge";
 import { useSourceDetail, useReindexSource } from "../hooks/useSources";
+import type { ExtractedItem } from "../types/ipc";
 
 export default function SourceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { detail, loading, error, refresh } = useSourceDetail(id);
   const { reindex, loading: reindexing } = useReindexSource();
+  const [extracted, setExtracted] = useState<ExtractedItem[] | null>(null);
+  const [extractError, setExtractError] = useState<string | null>(null);
+  const [extracting, setExtracting] = useState(false);
 
   const handleReindex = async () => {
     if (!id) return;
@@ -18,6 +23,34 @@ export default function SourceDetailPage() {
       refresh();
     } catch {
       // error handled by hook
+    }
+  };
+
+  const handleExtract = async () => {
+    if (!id) return;
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api) {
+      setExtractError("Tessera bridge not available");
+      return;
+    }
+    // Clear BOTH previous error and previous results when starting a new
+    // extraction. Without clearing `extracted`, a successful first
+    // extraction followed by a failed second extraction would render the
+    // new error alongside the stale results from the first run (the
+    // section's guard is `extractError || extracted`). Showing stale
+    // task/decision items next to an error is misleading because the
+    // user can't tell that those items are NOT the result of the call
+    // they just made. See Devin Review finding 3270586359.
+    setExtractError(null);
+    setExtracted(null);
+    setExtracting(true);
+    try {
+      const result = await api.artifacts.extractTasksDecisions(id);
+      setExtracted(result);
+    } catch (err) {
+      setExtractError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExtracting(false);
     }
   };
 
@@ -57,6 +90,14 @@ export default function SourceDetailPage() {
           <div style={{ display: "flex", gap: "var(--spacing-sm)" }}>
             <Button
               variant="secondary"
+              onClick={handleExtract}
+              disabled={extracting}
+              data-testid="extract-tasks-decisions"
+            >
+              {extracting ? "Extracting…" : "Extract Tasks & Decisions"}
+            </Button>
+            <Button
+              variant="secondary"
               onClick={handleReindex}
               disabled={reindexing}
             >
@@ -70,6 +111,34 @@ export default function SourceDetailPage() {
       />
 
       <div style={{ display: "grid", gap: "var(--spacing-md)" }}>
+        {(extractError || extracted) && (
+          <Card>
+            <h3 className="card-title">Extracted Tasks &amp; Decisions</h3>
+            {extractError && (
+              <p style={{ color: "var(--color-danger, #ef4444)" }} data-testid="extract-error">
+                {extractError}
+              </p>
+            )}
+            {extracted && extracted.length === 0 && (
+              <p style={{ color: "var(--color-text-secondary)" }}>
+                No tasks or decisions detected.
+              </p>
+            )}
+            {extracted && extracted.length > 0 && (
+              <ul data-testid="extracted-list" style={{ paddingLeft: "var(--spacing-md)" }}>
+                {extracted.map((item, idx) => (
+                  <li key={idx} style={{ marginBottom: "var(--spacing-xs)" }}>
+                    <strong>{item.itemType === "task" ? "Task" : "Decision"}:</strong>{" "}
+                    {item.text}{" "}
+                    <span style={{ fontSize: "var(--font-size-xs)", color: "var(--color-text-secondary)" }}>
+                      ({item.sourceCitation}, confidence {(item.confidence * 100).toFixed(0)}%)
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        )}
         <Card>
           <h3 className="card-title">Source Information</h3>
           <div
