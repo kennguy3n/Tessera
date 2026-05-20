@@ -276,4 +276,66 @@ describe("ArtifactEditorPage live-draft export", () => {
     // tokens get rewritten.
     expect(contentOverride).toContain("{{icon:lucide:does-not-exist}}");
   });
+
+  it("does NOT rewrite {{icon:...}} tokens in JSON-structured artifacts (sheets/bases/infographics/landing-pages) — regression for ANALYSIS_pr-review-job-b2d5a388d3234be29ad9e3139f4a3c63_0001", async () => {
+    // The user has manually typed a *resolvable* icon token into a sheet cell.
+    // Even though the format (HTML) is icon-aware and the token is resolvable,
+    // running `embedIcons` over stringified JSON would inject inline `<svg ...>`
+    // containing unescaped `"` characters, which would break the JSON the Rust
+    // exporter parses on the other side of the IPC.
+    //
+    // The correct architectural behaviour is to gate `embedIcons` by artifact
+    // type: only `document` artifacts (raw markdown/text content) get token
+    // rewriting; JSON-structured artifacts express icons through structured
+    // schema fields and are passed through to the exporter unchanged.
+    const sheetWithResolvableIcon = JSON.stringify({
+      columns: ["Col"],
+      rows: [["literal {{icon:lucide:home}} in a cell"]],
+    });
+    const sheetArtifact = {
+      ...baseArtifact,
+      id: "art-sheet-icon",
+      artifactType: "sheet" as const,
+      content: sheetWithResolvableIcon,
+    };
+    window.tessera.artifacts.get = vi.fn().mockResolvedValue(sheetArtifact);
+
+    render(
+      <MemoryRouter initialEntries={["/artifact/art-sheet-icon"]}>
+        <Routes>
+          <Route path="/artifact/:id" element={<ArtifactEditorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/literal \{\{icon:lucide:home\}\} in a cell/),
+      ).toBeInTheDocument();
+    });
+
+    const exportSelect = screen.getByLabelText(
+      "Export artifact",
+    ) as HTMLSelectElement;
+    await act(async () => {
+      fireEvent.change(exportSelect, { target: { value: "html" } });
+    });
+
+    await waitFor(() => {
+      expect(window.tessera.artifacts.exportArtifact).toHaveBeenCalled();
+    });
+    const mockFn = window.tessera.artifacts.exportArtifact as unknown as {
+      mock: { calls: unknown[][] };
+    };
+    const call = mockFn.mock.calls[0];
+    const contentOverride = call[2] as string | null;
+    // `contentOverride` may be null (no diff between draft and persisted)
+    // OR equal to the original JSON; either way the JSON structure must be
+    // intact and the `{{icon:...}}` token must survive (no inline `<svg>`).
+    const effective = contentOverride ?? sheetWithResolvableIcon;
+    expect(effective).toContain("{{icon:lucide:home}}");
+    expect(effective).not.toContain("<svg");
+    // Sanity: the JSON shape is preserved.
+    expect(() => JSON.parse(effective)).not.toThrow();
+  });
 });

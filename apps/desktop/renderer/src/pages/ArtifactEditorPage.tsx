@@ -19,6 +19,15 @@ import {
 import type { ArtifactInfo } from "../types/ipc";
 
 const ICON_AWARE_FORMATS = new Set(["html", "pdf", "docx"]);
+// Artifact types whose content is raw text/markdown and may therefore
+// contain `{{icon:lucide:home}}`-style tokens that `embedIcons` should
+// resolve. JSON-structured artifact types (sheet, base, infographic,
+// landing_page) embed icons through their schema fields
+// (e.g. `"icon":"lucide:trending-up"`), and running the token regex
+// replacer over stringified JSON would corrupt the structure when a user
+// manually typed `{{icon:...}}` into a cell or field — the inline `<svg>`
+// output contains unescaped `"` characters that break JSON.
+const ICON_TOKEN_ARTIFACT_TYPES = new Set(["document"]);
 // PPTX is intentionally NOT in BINARY_FORMATS — it does not flow through the
 // Rust exporter (which rejects pptx); it has a dedicated Marp-CLI path.
 const BINARY_FORMATS = new Set(["pdf", "docx", "xlsx"]);
@@ -162,7 +171,18 @@ export default function ArtifactEditorPage() {
         // could exit with `contentOverride === null` and the persisted (stale)
         // content would be exported instead of the live draft.
         let contentOverride: string | null = null;
-        if (ICON_AWARE_FORMATS.has(format) && /\{\{icon:/.test(liveContent)) {
+        // Token-based icon embedding only applies to artifact types whose
+        // content is raw text/markdown. For JSON-structured artifacts the
+        // icon is stored as a structured field, not a `{{icon:...}}` token;
+        // running the regex replacer on stringified JSON would inject
+        // unescaped `"` from the SVG output and corrupt the document.
+        const artifactType = artifact?.artifactType ?? "";
+        const isIconTokenArtifact = ICON_TOKEN_ARTIFACT_TYPES.has(artifactType);
+        if (
+          isIconTokenArtifact &&
+          ICON_AWARE_FORMATS.has(format) &&
+          /\{\{icon:/.test(liveContent)
+        ) {
           const embedded = embedIcons(liveContent);
           if (embedded !== liveContent) {
             contentOverride = embedded;

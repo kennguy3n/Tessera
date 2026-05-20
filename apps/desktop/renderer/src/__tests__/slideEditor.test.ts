@@ -3,6 +3,8 @@ import {
   parseSlideContent,
   slidesToMarpMarkdown,
   escapeHtmlComment,
+  extractFrontmatterTheme,
+  setFrontmatterTheme,
   type SlideContent,
 } from "../editors/SlideEditor";
 
@@ -196,5 +198,88 @@ describe("escapeHtmlComment", () => {
     // After escape, running it again is a no-op (no `-->` left).
     const escaped = escapeHtmlComment("a --> b --> c");
     expect(escapeHtmlComment(escaped)).toBe(escaped);
+  });
+});
+
+describe("extractFrontmatterTheme", () => {
+  it("returns undefined when there is no frontmatter", () => {
+    expect(extractFrontmatterTheme("")).toBeUndefined();
+    expect(extractFrontmatterTheme("# Slide 1\n\nbody")).toBeUndefined();
+  });
+
+  it("returns undefined when frontmatter has no theme directive", () => {
+    const src = "---\nmarp: true\npaginate: true\n---\n\n# Slide";
+    expect(extractFrontmatterTheme(src)).toBeUndefined();
+  });
+
+  it("extracts an unquoted theme", () => {
+    const src = "---\nmarp: true\ntheme: gaia\n---\n\n# Slide";
+    expect(extractFrontmatterTheme(src)).toBe("gaia");
+  });
+
+  it("strips a single layer of surrounding single or double quotes", () => {
+    expect(
+      extractFrontmatterTheme("---\ntheme: 'uncover'\n---"),
+    ).toBe("uncover");
+    expect(
+      extractFrontmatterTheme('---\ntheme: "default"\n---'),
+    ).toBe("default");
+  });
+
+  it("does not include the `---` slide separators that follow the frontmatter", () => {
+    // Regression: a naive greedy regex would match through multiple `---`
+    // lines and pull a stray theme value from later in the document.
+    const src =
+      "---\nmarp: true\ntheme: gaia\n---\n\n# Slide 1\n\n---\n\n# Slide 2\ntheme: uncover";
+    expect(extractFrontmatterTheme(src)).toBe("gaia");
+  });
+});
+
+describe("setFrontmatterTheme", () => {
+  it("rewrites an existing theme directive in place", () => {
+    const src = "---\nmarp: true\ntheme: default\npaginate: true\n---\n\n# Slide";
+    const out = setFrontmatterTheme(src, "gaia");
+    expect(out).toBe(
+      "---\nmarp: true\ntheme: gaia\npaginate: true\n---\n\n# Slide",
+    );
+  });
+
+  it("appends a theme directive when the frontmatter does not have one", () => {
+    const src = "---\nmarp: true\npaginate: true\n---\n\n# Slide";
+    const out = setFrontmatterTheme(src, "uncover");
+    expect(out).toContain("theme: uncover");
+    // Frontmatter block stays intact and closes properly.
+    expect(out.startsWith("---\n")).toBe(true);
+    expect(out).toContain("\n---\n\n# Slide");
+  });
+
+  it("prepends a minimal frontmatter when none exists", () => {
+    const src = "# Slide 1\n\nbody";
+    const out = setFrontmatterTheme(src, "gaia");
+    expect(out.startsWith("---\nmarp: true\ntheme: gaia\n---\n\n")).toBe(
+      true,
+    );
+    expect(out).toContain("# Slide 1");
+  });
+
+  it("round-trips with extractFrontmatterTheme", () => {
+    const start = "---\nmarp: true\ntheme: default\n---\n\n# Slide";
+    const after = setFrontmatterTheme(start, "uncover");
+    expect(extractFrontmatterTheme(after)).toBe("uncover");
+  });
+
+  it("does not corrupt slide-body `---` separators", () => {
+    // Set theme on a multi-slide source and confirm the bottom slides
+    // still have their separators intact.
+    const src =
+      "---\nmarp: true\ntheme: default\n---\n\n# Slide 1\n\n---\n\n# Slide 2";
+    const out = setFrontmatterTheme(src, "gaia");
+    expect(out).toContain("theme: gaia");
+    expect(out).toContain("\n# Slide 1\n");
+    expect(out).toContain("\n# Slide 2");
+    // Exactly one `---` separator between slide 1 and slide 2 (plus the
+    // closing `---` of the frontmatter).
+    const separators = (out.match(/^---$/gm) ?? []).length;
+    expect(separators).toBe(3); // open, close, between-slides
   });
 });

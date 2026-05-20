@@ -273,9 +273,13 @@ export default function SlideEditor({
                   onChange={(e) => {
                     const newTheme = e.target.value;
                     setMarpTheme(newTheme);
+                    // Also rewrite the frontmatter in the raw source so the
+                    // dropdown and source never desynchronize.
+                    const updatedSource = setFrontmatterTheme(marpSource, newTheme);
+                    setMarpSource(updatedSource);
                     debouncedSave(slides, {
                       enabled: marpMode,
-                      source: marpSource,
+                      source: updatedSource,
                       theme: newTheme,
                     });
                   }}
@@ -294,11 +298,19 @@ export default function SlideEditor({
                 className="marp-mode-source"
                 value={marpSource}
                 onChange={(e) => {
-                  setMarpSource(e.target.value);
+                  const newSource = e.target.value;
+                  setMarpSource(newSource);
+                  // Sync theme from frontmatter → dropdown if the user
+                  // manually edited the `theme:` directive.
+                  const fmTheme = extractFrontmatterTheme(newSource);
+                  const effectiveTheme = fmTheme ?? marpTheme;
+                  if (fmTheme && fmTheme !== marpTheme) {
+                    setMarpTheme(fmTheme);
+                  }
                   debouncedSave(slides, {
                     enabled: marpMode,
-                    source: e.target.value,
-                    theme: marpTheme,
+                    source: newSource,
+                    theme: effectiveTheme,
                   });
                 }}
                 placeholder="---&#10;marp: true&#10;theme: default&#10;---&#10;&#10;# Slide 1"
@@ -679,4 +691,58 @@ export function escapeHtmlComment(text: string): string {
   // beyond a single space inside the comment body — speaker notes are not
   // rendered as text, so the cosmetic change is invisible to the audience.
   return text.replace(/-->/g, "-- >");
+}
+
+/**
+ * Extract the `theme:` value from the YAML front-matter of a Marp source
+ * string. Returns `undefined` if the source has no front-matter or no
+ * `theme:` directive. Used by `SlideEditor` to keep the theme dropdown in
+ * sync when the user manually edits the raw Marp source.
+ *
+ * Front-matter detection is anchored at the start of the string and uses a
+ * non-greedy capture so trailing `---` separators between slides don't
+ * accidentally extend the front-matter region. Quoting is tolerated by
+ * trimming + stripping outer quote chars.
+ */
+export function extractFrontmatterTheme(src: string): string | undefined {
+  const fmMatch = src.match(/^---\s*\n([\s\S]*?)\n---/);
+  if (!fmMatch) return undefined;
+  const themeMatch = fmMatch[1].match(/^theme:\s*(.+)$/m);
+  if (!themeMatch) return undefined;
+  let value = themeMatch[1].trim();
+  // Strip a single layer of surrounding single or double quotes — YAML
+  // allows both `theme: gaia`, `theme: "gaia"`, and `theme: 'gaia'`.
+  if (
+    (value.startsWith("'") && value.endsWith("'")) ||
+    (value.startsWith('"') && value.endsWith('"'))
+  ) {
+    value = value.slice(1, -1);
+  }
+  return value;
+}
+
+/**
+ * Return a copy of the given Marp source with its front-matter `theme:`
+ * directive set to the given value. If the source has no front-matter,
+ * prepend a minimal one (`marp: true` + `theme:`). If front-matter exists
+ * but has no `theme:` line, append one at the end of the block.
+ *
+ * Used by `SlideEditor` so the theme dropdown rewrites the visible source
+ * front-matter rather than diverging silently from it.
+ */
+export function setFrontmatterTheme(src: string, theme: string): string {
+  const fmMatch = src.match(/^(---\s*\n)([\s\S]*?)(\n---)/);
+  if (!fmMatch) {
+    const prefix = src.length > 0 ? "\n\n" : "";
+    return `---\nmarp: true\ntheme: ${theme}\n---${prefix}${src}`;
+  }
+  const [whole, open, body, close] = fmMatch;
+  const themeRe = /^theme:\s*.+$/m;
+  let newBody: string;
+  if (themeRe.test(body)) {
+    newBody = body.replace(themeRe, `theme: ${theme}`);
+  } else {
+    newBody = body.trimEnd() + `\ntheme: ${theme}`;
+  }
+  return src.replace(whole, `${open}${newBody}${close}`);
 }
