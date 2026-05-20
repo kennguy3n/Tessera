@@ -728,6 +728,76 @@ describe("single-model enforcement", () => {
     expect(await getCurrentModel(workdir)).toBeNull();
   });
 
+  it("deleteCurrentModel defensively sweeps stray .tar.gz archives next to the extracted dir", async () => {
+    // Regression for Devin Review finding 3271010216: if a previous
+    // download's post-extract archive unlink failed (Windows EPERM/EBUSY,
+    // crash mid-cleanup, etc.), the source `.tar.gz` could survive next
+    // to the extracted directory. The next deleteCurrentModel call must
+    // sweep it up so the user doesn't have to manually clean the cache
+    // directory to restore the single-model-on-disk invariant.
+    const dir = modelsDir(workdir);
+    await fsp.mkdir(dir, { recursive: true });
+    const extractedDir = path.join(dir, "ternary-bonsai-1.7b-2bit.mlx");
+    const strayArchive = path.join(
+      dir,
+      "ternary-bonsai-1.7b-2bit.mlx.tar.gz",
+    );
+    await fsp.mkdir(extractedDir);
+    await fsp.writeFile(path.join(extractedDir, "config.json"), "{}");
+    await fsp.writeFile(strayArchive, "stray archive bytes");
+    const record: InstalledModelRecord = {
+      modelId: "ternary-bonsai-1.7b-mlx",
+      format: "mlx",
+      filename: "ternary-bonsai-1.7b-2bit.mlx.tar.gz",
+      path: extractedDir,
+      downloadSizeMb: 1,
+      diskSizeMb: 1,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+    await fsp.writeFile(activeModelPath(workdir), JSON.stringify(record));
+
+    await deleteCurrentModel(workdir);
+
+    expect(fs.existsSync(extractedDir)).toBe(false);
+    expect(fs.existsSync(strayArchive)).toBe(false);
+    expect(await getCurrentModel(workdir)).toBeNull();
+  });
+
+  it("deleteCurrentModel does not warn when no stray archive exists for a GGUF install", async () => {
+    // The defensive stray-archive sweep is gated on the install record's
+    // filename ending in .tar.gz / .tgz so GGUF installs (a single .gguf
+    // file) never trigger an unnecessary unlink-then-ENOENT path. This
+    // test guards against a regression where the sweep accidentally
+    // fires for every format and produces noisy ENOENT warnings.
+    const dir = modelsDir(workdir);
+    await fsp.mkdir(dir, { recursive: true });
+    const ggufPath = path.join(dir, "ternary-bonsai-1.7b-q1_0_g128.gguf");
+    await fsp.writeFile(ggufPath, "fake gguf bytes");
+    const record: InstalledModelRecord = {
+      modelId: "ternary-bonsai-1.7b-gguf",
+      format: "gguf",
+      filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+      path: ggufPath,
+      downloadSizeMb: 1,
+      diskSizeMb: 1,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+    await fsp.writeFile(activeModelPath(workdir), JSON.stringify(record));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await deleteCurrentModel(workdir);
+      expect(fs.existsSync(ggufPath)).toBe(false);
+      const sweepWarned = warnSpy.mock.calls.some(([msg]) =>
+        typeof msg === "string" && msg.includes("sweep stray archive"),
+      );
+      expect(sweepWarned).toBe(false);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("getCurrentModel returns null and quarantines a corrupted active-model.json", async () => {
     // Simulate a power loss mid-write or a manual edit that left
     // active-model.json with invalid JSON. Callers must NOT see this as

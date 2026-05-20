@@ -624,9 +624,18 @@ async function atomicWriteJson(
     await fsp.rename(tempPath, targetPath);
   } catch (err) {
     // Best-effort cleanup of the temp file if the rename failed.
-    // Errors here are swallowed because the caller's primary failure is
-    // the rename error, which we re-throw.
-    await fsp.unlink(tempPath).catch(() => {});
+    // The caller's primary failure is the rename error, which we
+    // re-throw, but secondary unlink failures are surfaced as warnings
+    // (rather than silently swallowed) so they show up in the main-
+    // process log if the temp file accumulates. See Devin Review
+    // finding 3271010216 — silent .catch(() => {}) on filesystem
+    // mutations is an invariant-violation surface we don't want.
+    await fsp.unlink(tempPath).catch((unlinkErr: unknown) => {
+      console.warn(
+        `[atomicWriteJson] failed to remove temp file ${tempPath} after rename error:`,
+        unlinkErr,
+      );
+    });
     throw err;
   }
 }
@@ -800,6 +809,32 @@ async function deleteCurrentModelUnlocked(userDataDir: string): Promise<void> {
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  // Defensive stray-archive sweep (Devin Review finding 3271010216):
+  //
+  // For MLX models, the install record's `filename` is the original
+  // `.tar.gz`/`.tgz` archive while `path` points at the extracted
+  // directory. The post-extract unlink in `downloadModelLocked` is
+  // best-effort — if a previous install crashed at the wrong moment, or
+  // hit a transient Windows EPERM/EBUSY on unlink, the source archive
+  // could survive next to the extracted dir. The download path now
+  // surfaces that as a console.warn, but we also reap any leftover
+  // archive here so the next user-initiated delete restores the
+  // single-model-on-disk invariant without manual cleanup.
+  if (isTarGz(current.filename)) {
+    const archivePath = path.join(path.dirname(current.path), current.filename);
+    if (archivePath !== current.path) {
+      try {
+        await fsp.unlink(archivePath);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          console.warn(
+            `[deleteCurrentModel] failed to sweep stray archive ${archivePath}:`,
+            err,
+          );
+        }
+      }
+    }
   }
   await writeCurrentModel(userDataDir, null);
 }
@@ -1003,7 +1038,15 @@ async function downloadModelLocked(
     await fsp.rename(partial, dest);
   } catch (err) {
     // Make sure no `.partial` artifact survives a failed download/verify.
-    await fsp.unlink(partial).catch(() => {});
+    // Surface secondary unlink failures (e.g. Windows EBUSY) as warnings
+    // so an accumulating .partial pile shows up in operator logs. See
+    // Devin Review finding 3271010216.
+    await fsp.unlink(partial).catch((unlinkErr: unknown) => {
+      console.warn(
+        `[downloadModel] failed to remove .partial ${partial} after download error:`,
+        unlinkErr,
+      );
+    });
     throw err;
   }
 
@@ -1030,13 +1073,36 @@ async function downloadModelLocked(
       await extractor(dest, extractDir);
     } catch (err) {
       await fsp.rm(extractDir, { recursive: true, force: true });
-      await fsp.unlink(dest).catch(() => {});
+      // Surface secondary unlink failures as warnings — the primary
+      // error (extraction) is re-thrown below, but a silently leaked
+      // archive would violate the single-model-on-disk invariant. See
+      // Devin Review finding 3271010216.
+      await fsp.unlink(dest).catch((unlinkErr: unknown) => {
+        console.warn(
+          `[downloadModel] failed to remove archive ${dest} after extraction error:`,
+          unlinkErr,
+        );
+      });
       throw err;
     }
     // Delete the source archive: the extracted directory is the
     // canonical on-disk representation from this point forward, and the
     // manifest's `diskSizeMb` is the post-extract footprint.
-    await fsp.unlink(dest).catch(() => {});
+    //
+    // If this unlink fails (transient Windows EPERM/EBUSY, a virus
+    // scanner holding the file, etc.) we DON'T fail the install — the
+    // model is already on disk and usable — but we DO log a warning
+    // (instead of silently swallowing) so the failure is visible. The
+    // next `deleteCurrentModel` call will sweep the stray archive via
+    // the defensive cleanup in `deleteCurrentModelUnlocked`, so the
+    // single-model invariant is eventually restored without user
+    // action. See Devin Review finding 3271010216.
+    await fsp.unlink(dest).catch((unlinkErr: unknown) => {
+      console.warn(
+        `[downloadModel] failed to remove source archive ${dest} after successful extraction; stray archive will be reaped on next deleteCurrentModel:`,
+        unlinkErr,
+      );
+    });
     installedPath = extractDir;
   }
 
