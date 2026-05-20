@@ -8,17 +8,26 @@ import { MermaidNode } from "./extensions/MermaidExtension";
 interface DocumentEditorProps {
   content: string;
   onSave: (content: string) => void;
+  /** See SheetEditor.onDraftChange — published synchronously on every edit. */
+  onDraftChange?: (content: string) => void;
   autoSaveMs?: number;
 }
 
 export default function DocumentEditor({
   content,
   onSave,
+  onDraftChange,
   autoSaveMs = 2000,
 }: DocumentEditorProps) {
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Initialize to empty string; updated to editor's parsed HTML in onCreate
   const lastSavedRef = useRef("");
+  // Ref-wrap onDraftChange so the TipTap `onUpdate` closure (created once at
+  // mount) always calls the latest callback without recreating the editor.
+  const onDraftChangeRef = useRef(onDraftChange);
+  useEffect(() => {
+    onDraftChangeRef.current = onDraftChange;
+  }, [onDraftChange]);
 
   const editor = useEditor({
     extensions: [
@@ -43,6 +52,10 @@ export default function DocumentEditor({
     onUpdate: ({ editor }) => {
       const html = editor.getHTML();
       if (html === lastSavedRef.current) return;
+
+      // Publish the draft immediately (no debounce) so exporting before the
+      // 2s auto-save fires still captures the live editor state.
+      onDraftChangeRef.current?.(html);
 
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);

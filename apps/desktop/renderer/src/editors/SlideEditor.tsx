@@ -37,12 +37,15 @@ export interface SlideContent {
 interface SlideEditorProps {
   content: string;
   onSave: (content: string) => void;
+  /** See SheetEditor.onDraftChange — published synchronously on every edit. */
+  onDraftChange?: (content: string) => void;
   autoSaveMs?: number;
 }
 
 export default function SlideEditor({
   content,
   onSave,
+  onDraftChange,
   autoSaveMs = 2000,
 }: SlideEditorProps) {
   // Parse the initial content exactly once. Subsequent prop-driven changes
@@ -86,18 +89,25 @@ export default function SlideEditor({
 
   const debouncedSave = useCallback(
     (updatedSlides: Slide[], marpState?: MarpModeState) => {
+      // Serialise eagerly so onDraftChange fires with the same payload
+      // the debounced onSave will commit. Doing it here (rather than
+      // inside the timer) also avoids reading marpStateRef twice and
+      // potentially seeing different state.
+      const data: SlideContent = {
+        slides: updatedSlides,
+        marp: marpState ?? marpStateRef.current,
+      };
+      const json = JSON.stringify(data);
+      // Publish the draft immediately (no debounce) so exporting before
+      // the auto-save fires still captures the live editor state.
+      onDraftChange?.(json);
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        const data: SlideContent = {
-          slides: updatedSlides,
-          marp: marpState ?? marpStateRef.current,
-        };
-        const json = JSON.stringify(data);
         lastSavedRef.current = json;
         onSave(json);
       }, autoSaveMs);
     },
-    [onSave, autoSaveMs],
+    [onSave, onDraftChange, autoSaveMs],
   );
 
   useEffect(() => {
@@ -433,6 +443,60 @@ function MermaidPreview({ dsl }: { dsl: string }) {
   );
 }
 
+/**
+ * Apply Marp-emitted CSS + HTML to a Shadow DOM safely.
+ *
+ * Exported for unit testing of the CSS injection / `</style>` breakout
+ * defence; not part of the editor's public API. See the `useEffect` in
+ * `MarpPreview` for the full security rationale.
+ */
+export function applyMarpToShadow(
+  shadow: ShadowRoot,
+  html: string,
+  css: string,
+): void {
+  const supportsConstructable =
+    typeof CSSStyleSheet !== "undefined" &&
+    typeof (CSSStyleSheet.prototype as { replaceSync?: unknown }).replaceSync ===
+      "function" &&
+    "adoptedStyleSheets" in shadow;
+
+  if (supportsConstructable) {
+    const existing = shadow.adoptedStyleSheets ?? [];
+    let sheet = existing[0];
+    if (!sheet) {
+      sheet = new CSSStyleSheet();
+      shadow.adoptedStyleSheets = [sheet];
+    }
+    try {
+      sheet.replaceSync(css);
+    } catch {
+      sheet.replaceSync("");
+    }
+    shadow.querySelector(":scope > style[data-marp-fallback]")?.remove();
+  } else {
+    // Sanitise `</style` so the HTML parser cannot close the stylesheet early.
+    const safeCss = css.replace(/<\/style/gi, "<\\/style");
+    let styleEl = shadow.querySelector<HTMLStyleElement>(
+      ":scope > style[data-marp-fallback]",
+    );
+    if (!styleEl) {
+      styleEl = document.createElement("style");
+      styleEl.setAttribute("data-marp-fallback", "");
+      shadow.appendChild(styleEl);
+    }
+    styleEl.textContent = safeCss;
+  }
+
+  let deck = shadow.querySelector<HTMLDivElement>(".marp-preview-deck");
+  if (!deck) {
+    deck = document.createElement("div");
+    deck.className = "marp-preview-deck";
+    shadow.appendChild(deck);
+  }
+  deck.innerHTML = html;
+}
+
 function MarpPreview({ markdown, theme }: { markdown: string; theme: string }) {
   const [html, setHtml] = useState("");
   const [css, setCss] = useState("");
@@ -469,11 +533,17 @@ function MarpPreview({ markdown, theme }: { markdown: string; theme: string }) {
   // Render the deck inside a Shadow DOM so the Marp-emitted CSS (which can
   // include global selectors like `:root` / `body` / `*`) cannot bleed out
   // into the surrounding Tessera UI.
+  //
+  // The shadow-DOM mutation is delegated to `applyMarpToShadow`, which uses
+  // Constructable Stylesheets (`adoptedStyleSheets`) where supported and a
+  // `</style`-sanitising `<style>` fallback otherwise. Either way the
+  // `</style>` breakout vector is closed — see `applyMarpToShadow` for the
+  // full rationale.
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
-    shadow.innerHTML = `<style>${css}</style><div class="marp-preview-deck">${html}</div>`;
+    applyMarpToShadow(shadow, html, css);
   }, [html, css]);
 
   if (error) {

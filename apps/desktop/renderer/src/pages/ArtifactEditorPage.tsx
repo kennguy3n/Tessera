@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
@@ -31,6 +31,22 @@ export default function ArtifactEditorPage() {
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+
+  // Tracks the latest *uncommitted* editor content. Editors publish into
+  // this ref via their `onDraftChange` prop synchronously on every edit
+  // (independent of the debounced auto-save), so an export triggered before
+  // the 2 s auto-save fires still operates on the live editor state instead
+  // of `artifact.content` (which only reflects the last persisted save).
+  const draftContentRef = useRef<string | null>(null);
+  const handleDraftChange = useCallback((next: string) => {
+    draftContentRef.current = next;
+  }, []);
+
+  // Reset the draft when the user navigates to a different artifact so
+  // we don't leak a previous artifact's draft into the new export.
+  useEffect(() => {
+    draftContentRef.current = null;
+  }, [id]);
 
   const loadArtifact = useCallback(async () => {
     if (!id) return;
@@ -76,6 +92,15 @@ export default function ArtifactEditorPage() {
         const api = window.tessera;
         if (!api) return;
 
+        // Prefer the live editor draft (captured synchronously via
+        // onDraftChange) over the last-persisted server snapshot. Falls
+        // back to the persisted content if the editor hasn't published a
+        // draft yet (e.g. nothing edited since load, or the artifact type
+        // doesn't emit drafts at all). This means clicking Export while
+        // the 2 s auto-save is still pending still operates on the
+        // current editor state instead of stale content.
+        const liveContent = draftContentRef.current ?? artifact?.content ?? "";
+
         // For icon-aware formats, resolve {{icon:...}} tokens to inline SVG
         // for the export only — never persist back to the artifact store.
         // The IPC layer forwards `contentOverride` to the Rust bridge, which
@@ -83,15 +108,16 @@ export default function ArtifactEditorPage() {
         // leaving the editable `{{icon:lucide:home}}`-style tokens untouched
         // in the database.
         let contentOverride: string | null = null;
-        if (
-          ICON_AWARE_FORMATS.has(format) &&
-          artifact?.content &&
-          /\{\{icon:/.test(artifact.content)
-        ) {
-          const embedded = embedIcons(artifact.content);
-          if (embedded !== artifact.content) {
+        if (ICON_AWARE_FORMATS.has(format) && /\{\{icon:/.test(liveContent)) {
+          const embedded = embedIcons(liveContent);
+          if (embedded !== liveContent) {
             contentOverride = embedded;
           }
+        } else if (liveContent !== (artifact?.content ?? "")) {
+          // The Rust exporter needs to see the live draft, not the
+          // persisted snapshot, even when icon-token embedding is a
+          // no-op. Pass the raw live content as the override.
+          contentOverride = liveContent;
         }
 
         // PPTX has its own dedicated pipeline: the Marp CLI consumes the
@@ -105,7 +131,7 @@ export default function ArtifactEditorPage() {
               "PPTX export is only available for slide artifacts",
             );
           }
-          const parsed = parseSlideContent(artifact?.content ?? "");
+          const parsed = parseSlideContent(liveContent);
           const marpMarkdown = parsed.marpMode
             ? parsed.marpSource
             : slidesToMarpMarkdown(parsed.slides);
@@ -313,7 +339,11 @@ export default function ArtifactEditorPage() {
         </div>
       )}
       <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-        <EditorSwitch artifact={artifact} onSave={handleSave} />
+        <EditorSwitch
+          artifact={artifact}
+          onSave={handleSave}
+          onDraftChange={handleDraftChange}
+        />
       </div>
     </div>
   );
@@ -322,23 +352,61 @@ export default function ArtifactEditorPage() {
 function EditorSwitch({
   artifact,
   onSave,
+  onDraftChange,
 }: {
   artifact: ArtifactInfo;
   onSave: (content: string) => void;
+  onDraftChange: (content: string) => void;
 }) {
   switch (artifact.artifactType) {
     case "document":
-      return <DocumentEditor content={artifact.content} onSave={onSave} />;
+      return (
+        <DocumentEditor
+          content={artifact.content}
+          onSave={onSave}
+          onDraftChange={onDraftChange}
+        />
+      );
     case "slides":
-      return <SlideEditor content={artifact.content} onSave={onSave} />;
+      return (
+        <SlideEditor
+          content={artifact.content}
+          onSave={onSave}
+          onDraftChange={onDraftChange}
+        />
+      );
     case "sheet":
-      return <SheetEditor content={artifact.content} onSave={onSave} />;
+      return (
+        <SheetEditor
+          content={artifact.content}
+          onSave={onSave}
+          onDraftChange={onDraftChange}
+        />
+      );
     case "base":
-      return <BaseEditor content={artifact.content} onSave={onSave} />;
+      return (
+        <BaseEditor
+          content={artifact.content}
+          onSave={onSave}
+          onDraftChange={onDraftChange}
+        />
+      );
     case "infographic":
-      return <InfographicEditor content={artifact.content} onSave={onSave} />;
+      return (
+        <InfographicEditor
+          content={artifact.content}
+          onSave={onSave}
+          onDraftChange={onDraftChange}
+        />
+      );
     case "landing_page":
-      return <LandingPageEditor content={artifact.content} onSave={onSave} />;
+      return (
+        <LandingPageEditor
+          content={artifact.content}
+          onSave={onSave}
+          onDraftChange={onDraftChange}
+        />
+      );
     default:
       return (
         <Card>

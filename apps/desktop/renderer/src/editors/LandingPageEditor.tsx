@@ -65,6 +65,8 @@ export interface LandingPageContent {
 interface LandingPageEditorProps {
   content: string;
   onSave: (content: string) => void;
+  /** See SheetEditor.onDraftChange — published synchronously on every edit. */
+  onDraftChange?: (content: string) => void;
   autoSaveMs?: number;
 }
 
@@ -146,6 +148,7 @@ export function parseLandingPageContent(content: string): LandingPageContent {
 export default function LandingPageEditor({
   content,
   onSave,
+  onDraftChange,
   autoSaveMs = 2000,
 }: LandingPageEditorProps) {
   const [data, setData] = useState<LandingPageContent>(() =>
@@ -157,14 +160,15 @@ export default function LandingPageEditor({
 
   const debouncedSave = useCallback(
     (next: LandingPageContent) => {
+      const json = JSON.stringify(next);
+      onDraftChange?.(json);
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        const json = JSON.stringify(next);
         lastSavedRef.current = json;
         onSave(json);
       }, autoSaveMs);
     },
-    [onSave, autoSaveMs],
+    [onSave, onDraftChange, autoSaveMs],
   );
 
   useEffect(

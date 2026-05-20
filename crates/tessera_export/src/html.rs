@@ -95,10 +95,18 @@ pub fn export_html(artifact: &Artifact, citations: &[Citation]) -> String {
 }
 
 fn escape_html(text: &str) -> String {
+    // Escape both `"` and `'` so this helper is safe to drop into either
+    // single- or double-quoted HTML attribute contexts. The Rust HTML export
+    // currently uses only double-quoted attributes, so escaping `'` is purely
+    // defensive — but it keeps us aligned with the TypeScript `escapeHtml`
+    // helpers in InfographicEditor.tsx / LandingPageEditor.tsx (which both
+    // emit `&#39;`), so future callers can copy text between exporters
+    // without risk of attribute escapes drifting out of sync.
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn content_to_html(content: &str) -> String {
@@ -272,5 +280,14 @@ mod tests {
         let html = export_html(&artifact, &[]);
         assert!(!html.contains("<script>"));
         assert!(html.contains("&lt;script&gt;"));
+        // Single quotes are also escaped (aligns with the TypeScript
+        // escapeHtml helpers in InfographicEditor/LandingPageEditor, both of
+        // which emit &#39;). This means the literal `'` from the title above
+        // must not appear in the output.
+        assert!(
+            !html.contains("alert('xss')"),
+            "single quotes should be escaped, but raw `'` is still present in:\n{html}",
+        );
+        assert!(html.contains("&#39;xss&#39;"));
     }
 }

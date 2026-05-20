@@ -52,6 +52,8 @@ export interface InfographicContent {
 interface InfographicEditorProps {
   content: string;
   onSave: (content: string) => void;
+  /** See SheetEditor.onDraftChange — published synchronously on every edit. */
+  onDraftChange?: (content: string) => void;
   autoSaveMs?: number;
 }
 
@@ -104,6 +106,7 @@ function iconSpecFromPick(v: IconPickerValue): string {
 export default function InfographicEditor({
   content,
   onSave,
+  onDraftChange,
   autoSaveMs = 2000,
 }: InfographicEditorProps) {
   const [data, setData] = useState<InfographicContent>(() =>
@@ -115,14 +118,15 @@ export default function InfographicEditor({
 
   const debouncedSave = useCallback(
     (next: InfographicContent) => {
+      const json = JSON.stringify(next);
+      onDraftChange?.(json);
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        const json = JSON.stringify(next);
         lastSavedRef.current = json;
         onSave(json);
       }, autoSaveMs);
     },
-    [onSave, autoSaveMs],
+    [onSave, onDraftChange, autoSaveMs],
   );
 
   useEffect(
