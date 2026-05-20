@@ -10,7 +10,6 @@ import {
   deleteCurrentModel,
   detectPlatformInfo,
   downloadModel,
-  getCurrentModel,
   getInstalledModel,
   isModelInstalled,
   listModelsForPlatform,

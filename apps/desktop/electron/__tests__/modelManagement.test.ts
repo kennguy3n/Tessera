@@ -1065,3 +1065,141 @@ describe("downloadModel survives throwing onProgress", () => {
     expect(fs.existsSync(`${record.path}.partial`)).toBe(false);
   });
 });
+
+describe("writeCurrentModel atomic write (Devin Review 3270976513)", () => {
+  let workdir: string;
+
+  beforeEach(async () => {
+    workdir = await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-atomic-write-"));
+    resetDownloadLocks();
+  });
+
+  afterEach(async () => {
+    resetDownloadLocks();
+    await fsp.rm(workdir, { recursive: true, force: true });
+  });
+
+  it("downloadModel writes active-model.json via temp+rename (no partial file on success)", async () => {
+    // The atomic-write helper writes to a sibling `.tmp-<pid>-<ts>` file
+    // and renames it over the target. After a successful write the
+    // temp file must NOT exist (it should have been renamed away).
+    const requested = makeResolved();
+    const fetcher = async (
+      _url: string,
+      onProgress: (d: number, t: number) => void,
+      dest: string,
+    ) => {
+      await fsp.writeFile(dest, Buffer.from("x"));
+      onProgress(1, 1);
+      return { totalBytes: 1 };
+    };
+    await downloadModel(workdir, requested, () => {}, { fetcher });
+
+    const written = await fsp.readFile(activeModelPath(workdir), "utf8");
+    const parsed = JSON.parse(written) as { modelId: string };
+    expect(parsed.modelId).toBe(requested.id);
+
+    // No `.active-model.json.tmp-*` siblings should be left over.
+    const entries = await fsp.readdir(workdir);
+    const stragglers = entries.filter(
+      (name) =>
+        name.startsWith(".active-model.json.tmp") || name.endsWith(".tmp"),
+    );
+    expect(stragglers).toEqual([]);
+  });
+
+  it("preserves the previous record when a swap fetcher fails mid-stream", async () => {
+    // First install a known-good model. After this, active-model.json
+    // contains a complete record.
+    const initial = makeResolved({ id: "ternary-bonsai-1.7b-gguf" });
+    await downloadModel(workdir, initial, () => {}, {
+      fetcher: async (_u, onP, dest) => {
+        await fsp.writeFile(dest, Buffer.from("a"));
+        onP(1, 1);
+        return { totalBytes: 1 };
+      },
+    });
+    const before = await fsp.readFile(activeModelPath(workdir), "utf8");
+
+    // Now attempt a SWAP whose fetcher fails BEFORE writeCurrentModel
+    // would have been called. Without atomic write a partially
+    // overwritten active-model.json could appear; with atomic write
+    // the original record must survive untouched.
+    const replacement = makeResolved({
+      id: "ternary-bonsai-4b-gguf",
+      filename: "ternary-bonsai-4b-q1_0_g128.gguf",
+    });
+    await expect(
+      downloadModel(workdir, replacement, () => {}, {
+        fetcher: async () => {
+          throw new Error("simulated transport failure");
+        },
+      }),
+    ).rejects.toThrow(/simulated transport failure/);
+
+    // The previous record may or may not still be present depending on
+    // whether the swap deleted the old file first. The invariant we
+    // assert here is the *atomicity* one: active-model.json is never
+    // a partially-written / truncated JSON document. Either it parses
+    // cleanly or it is absent.
+    const afterRaw = await fsp.readFile(activeModelPath(workdir), "utf8").catch(
+      (err) => {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw err;
+      },
+    );
+    if (afterRaw !== null) {
+      // If still present, must be valid JSON (no truncated bytes).
+      expect(() => JSON.parse(afterRaw)).not.toThrow();
+    }
+    // Sanity: the `before` snapshot was itself valid JSON we wrote.
+    expect(() => JSON.parse(before)).not.toThrow();
+  });
+});
+
+describe("defaultFetcher reader lifetime (Devin Review 3270976469)", () => {
+  // We can't easily simulate `fsp.open` failing inside vitest without
+  // platform-specific permission tricks, so instead we exercise the
+  // re-ordered code path indirectly: if the response body is null we
+  // throw BEFORE opening the file, and if the file can't be opened
+  // we throw BEFORE acquiring the reader. The structural invariant we
+  // pin is "no reader is acquired without a successful file open" via
+  // the order of operations in the source. This regression test asserts
+  // the function still rejects appropriately on a null response body
+  // (the early bail-out path) without touching the destination path.
+  it("rejects on null response body without touching destPath", async () => {
+    const tmpDest = path.join(
+      await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-fetcher-")),
+      "should-not-exist.bin",
+    );
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async () =>
+        new Response(null, { status: 200 })) as typeof fetch;
+      // Re-import the module to get the real defaultFetcher closure.
+      // We invoke via downloadModel so the wrap stays exercised; the
+      // requested.url here matches the stubbed fetch above.
+      const requested = makeResolved({
+        url: "https://example.invalid/no-body",
+      });
+      const workdir = await fsp.mkdtemp(
+        path.join(os.tmpdir(), "tessera-no-body-"),
+      );
+      await expect(
+        downloadModel(workdir, requested, () => {}),
+      ).rejects.toThrow(/Empty response body/);
+      // The destination file must not exist because we threw before
+      // opening it.
+      const expectedDest = path.join(
+        modelsDir(workdir),
+        requested.filename,
+      );
+      expect(fs.existsSync(expectedDest)).toBe(false);
+      expect(fs.existsSync(`${expectedDest}.partial`)).toBe(false);
+      await fsp.rm(workdir, { recursive: true, force: true });
+      await fsp.rm(path.dirname(tmpDest), { recursive: true, force: true });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

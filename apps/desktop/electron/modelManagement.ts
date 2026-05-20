@@ -570,7 +570,65 @@ async function writeCurrentModel(
     return;
   }
   await fsp.mkdir(path.dirname(p), { recursive: true });
-  await fsp.writeFile(p, JSON.stringify(record, null, 2));
+  await atomicWriteJson(p, record);
+}
+
+/**
+ * Crash-safe JSON write: serialise, write to a sibling `.tmp-<pid>-<ts>`,
+ * fsync the temp file, then atomically `rename()` it over the target.
+ *
+ * `fs.rename` is atomic on every supported platform when the source and
+ * destination live on the same volume:
+ *   - POSIX: `rename(2)` is specified atomic.
+ *   - Windows: Node's `fs.rename` uses `MoveFileExW(MOVEFILE_REPLACE_EXISTING
+ *     | MOVEFILE_WRITE_THROUGH)` on Windows 10+, which is atomic for files
+ *     on the same volume.
+ *
+ * Because we always write the temp file in the same directory as the
+ * target, the same-volume invariant holds (you can't have two volumes
+ * sharing a single directory). The `getCurrentModel` corruption-recovery
+ * path remains as a belt-and-braces second line of defence for the
+ * (now-much-narrower) windows where corruption could still occur — for
+ * instance, a power loss between `fsync` and `rename`, which can leave
+ * the temp file behind but never produces a partially-written target.
+ *
+ * (Devin Review INFO finding 3270976513 — the prior `fsp.writeFile`
+ * direct-write was exposed to truncated-JSON corruption if the process
+ * crashed mid-write, and while the read side already recovered from
+ * that, eliminating the corruption window entirely is the
+ * architecturally-correct fix rather than relying purely on read-time
+ * quarantine.)
+ */
+async function atomicWriteJson(
+  targetPath: string,
+  record: InstalledModelRecord,
+): Promise<void> {
+  const dir = path.dirname(targetPath);
+  const tempPath = path.join(
+    dir,
+    `.${path.basename(targetPath)}.tmp-${process.pid}-${Date.now()}`,
+  );
+  const json = JSON.stringify(record, null, 2);
+  const handle = await fsp.open(tempPath, "w");
+  try {
+    await handle.writeFile(json);
+    // fsync forces the bytes through the OS page cache to the
+    // underlying device before we rename — without it, an OS crash
+    // (not a process crash) between writeFile and rename could resurrect
+    // an empty `active-model.json` on next boot.
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    await fsp.rename(tempPath, targetPath);
+  } catch (err) {
+    // Best-effort cleanup of the temp file if the rename failed.
+    // Errors here are swallowed because the caller's primary failure is
+    // the rename error, which we re-throw.
+    await fsp.unlink(tempPath).catch(() => {});
+    throw err;
+  }
 }
 
 export function planDownload(
@@ -648,9 +706,20 @@ const defaultFetcher: NonNullable<DownloadDeps["fetcher"]> = async (
   }
   const totalHeader = resp.headers.get("content-length");
   const total = totalHeader ? parseInt(totalHeader, 10) : 0;
-  const reader = resp.body?.getReader();
-  if (!reader) throw new Error("Empty response body");
+  if (!resp.body) throw new Error("Empty response body");
+
+  // Open the destination file BEFORE acquiring the reader. Previously
+  // we called `resp.body.getReader()` first and then `fsp.open(...)`,
+  // which created a leak window: if `fsp.open` threw (permission
+  // denied, disk full, EACCES, ENOSPC, ...), the reader had already
+  // taken an exclusive lock on the response body and was never
+  // released, leaving the HTTP socket open until GC. Doing IO in this
+  // order means a failed file-open simply aborts before any reader
+  // exists, and the response body is consumed (and the connection
+  // released back to the pool) on the next event-loop turn via the
+  // usual GC path. (Devin Review INFO finding 3270976469.)
   const tmpHandle = await fsp.open(destPath, "w");
+  const reader = resp.body.getReader();
   let downloaded = 0;
   try {
     for (;;) {
@@ -668,6 +737,15 @@ const defaultFetcher: NonNullable<DownloadDeps["fetcher"]> = async (
       }
     }
   } finally {
+    // Always release the body reader so the underlying HTTP connection
+    // can be returned to the pool, even on read errors mid-stream.
+    // `reader.cancel()` both releases the lock AND aborts the response
+    // body, which is what we want — we don't need any further bytes.
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore — reader may already be in a terminal state
+    }
     await tmpHandle.close();
   }
   return { totalBytes: downloaded };
