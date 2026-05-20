@@ -16,6 +16,14 @@ import {
   parseSlideContent,
   slidesToMarpMarkdown,
 } from "../editors/SlideEditor";
+import {
+  parseInfographicContent,
+  buildPreviewHtml as buildInfographicPreviewHtml,
+} from "../editors/InfographicEditor";
+import {
+  parseLandingPageContent,
+  buildLandingPreviewHtml,
+} from "../editors/LandingPageEditor";
 import type { ArtifactInfo } from "../types/ipc";
 
 const ICON_AWARE_FORMATS = new Set(["html", "pdf", "docx"]);
@@ -171,14 +179,52 @@ export default function ArtifactEditorPage() {
         // could exit with `contentOverride === null` and the persisted (stale)
         // content would be exported instead of the live draft.
         let contentOverride: string | null = null;
+        const artifactType = artifact?.artifactType ?? "";
+
+        // Visual artifact types (infographic / landing_page) store their
+        // model as structured JSON. Exporting that JSON straight through
+        // the Rust HTML exporter would render `{"title":"...","sections":
+        // [...]}` as paragraphs, not as the rich layout the user sees in
+        // the live preview pane. For HTML export we pre-render the
+        // artifact through the same preview builder that powers the
+        // editor's preview (already exported from each editor module and
+        // unit-tested there), and pass the resulting HTML fragment
+        // through `contentOverride`. The Rust HTML exporter
+        // (`crates/tessera_export/src/html.rs`) detects these artifact
+        // types and inlines the override as raw HTML instead of running it
+        // through the markdown-like line parser.
+        //
+        // If the parser throws (e.g. corrupted JSON), we deliberately
+        // leave `contentOverride` null and let the Rust side fall back to
+        // its `<pre>` wrapper: a legible JSON dump beats a broken page.
+        if (format === "html") {
+          if (artifactType === "infographic") {
+            try {
+              contentOverride = buildInfographicPreviewHtml(
+                parseInfographicContent(liveContent),
+              );
+            } catch {
+              // fall through — Rust exporter wraps raw JSON in <pre>
+            }
+          } else if (artifactType === "landing_page") {
+            try {
+              contentOverride = buildLandingPreviewHtml(
+                parseLandingPageContent(liveContent),
+              );
+            } catch {
+              // see above
+            }
+          }
+        }
+
         // Token-based icon embedding only applies to artifact types whose
         // content is raw text/markdown. For JSON-structured artifacts the
         // icon is stored as a structured field, not a `{{icon:...}}` token;
         // running the regex replacer on stringified JSON would inject
         // unescaped `"` from the SVG output and corrupt the document.
-        const artifactType = artifact?.artifactType ?? "";
         const isIconTokenArtifact = ICON_TOKEN_ARTIFACT_TYPES.has(artifactType);
         if (
+          contentOverride === null &&
           isIconTokenArtifact &&
           ICON_AWARE_FORMATS.has(format) &&
           /\{\{icon:/.test(liveContent)

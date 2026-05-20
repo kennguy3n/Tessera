@@ -177,6 +177,14 @@ export async function runMarpExport(
     );
 
   await fs.promises.mkdir(tmpDir, { recursive: true });
+  // Defensive: ensure the parent of `outputPath` exists too. In production the
+  // sole caller (`apps/desktop/electron/ipc.ts`) already does this before
+  // invoking `runMarpExport`, but this keeps the function self-contained for
+  // future callers (CLI tools, batch export scripts, tests) — without it,
+  // Marp CLI fails with ENOENT when the parent directory does not yet exist.
+  // `recursive: true` is a no-op when the directory already exists, so this
+  // adds no observable cost on the production hot-path either.
+  await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.promises.writeFile(tmpInput, opts.markdown, "utf-8");
   try {
     const argv = buildMarpArgs(tmpInput, outputPath, opts);

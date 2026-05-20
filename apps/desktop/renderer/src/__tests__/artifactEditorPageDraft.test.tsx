@@ -338,4 +338,147 @@ describe("ArtifactEditorPage live-draft export", () => {
     // Sanity: the JSON shape is preserved.
     expect(() => JSON.parse(effective)).not.toThrow();
   });
+
+  it("pre-renders infographic JSON to rich HTML via buildPreviewHtml before exporting (regression for ANALYSIS_pr-review-job-944bd22719314f15b61523f7c7574bc6_0001)", async () => {
+    // Without the fix, the persisted infographic JSON would reach the Rust
+    // HTML exporter unchanged, which would chop `{"title":"...","sections":
+    // [...]}` into pseudo-paragraphs and lose the rich visual layout. The
+    // contract is: the renderer detects `infographic` + `html` format,
+    // runs the artifact through `buildPreviewHtml(parseInfographicContent(...))`,
+    // and passes the resulting HTML fragment through `contentOverride`.
+    const infographicJson = JSON.stringify({
+      title: "Q4 KPIs",
+      subtitle: "All-up snapshot",
+      sections: [
+        {
+          icon: "lucide:trending-up",
+          heading: "Growth",
+          body: "+42% YoY",
+          stat: "42%",
+          statLabel: "growth",
+        },
+      ],
+      colorScheme: { primary: "#7C3AED", secondary: "#5B21B6", accent: "#F59E0B" },
+      layout: "vertical",
+    });
+    const infographicArtifact = {
+      ...baseArtifact,
+      id: "art-infographic",
+      artifactType: "infographic" as const,
+      content: infographicJson,
+    };
+    window.tessera.artifacts.get = vi.fn().mockResolvedValue(infographicArtifact);
+
+    render(
+      <MemoryRouter initialEntries={["/artifact/art-infographic"]}>
+        <Routes>
+          <Route path="/artifact/:id" element={<ArtifactEditorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // Wait for the editor to render — the heading is one of the more
+    // specific strings only present after a successful parse + mount.
+    await waitFor(() => {
+      expect(screen.getAllByDisplayValue("Q4 KPIs").length).toBeGreaterThan(0);
+    });
+
+    const exportSelect = screen.getByLabelText(
+      "Export artifact",
+    ) as HTMLSelectElement;
+    await act(async () => {
+      fireEvent.change(exportSelect, { target: { value: "html" } });
+    });
+
+    await waitFor(() => {
+      expect(window.tessera.artifacts.exportArtifact).toHaveBeenCalled();
+    });
+    const mockFn = window.tessera.artifacts.exportArtifact as unknown as {
+      mock: { calls: unknown[][] };
+    };
+    const call = mockFn.mock.calls[0];
+    const contentOverride = call[2] as string | null;
+    // The override MUST be set — passing through the raw JSON is exactly
+    // the bug.
+    expect(contentOverride).not.toBeNull();
+    const html = contentOverride as string;
+    // It must look like HTML, not JSON.
+    expect(html.trimStart().startsWith("<")).toBe(true);
+    // Specific markers from buildPreviewHtml — the wrapper div class, the
+    // heading, the stat block. These pin the *content* of the override,
+    // not just its shape.
+    expect(html).toContain('class="infographic infographic-preview-vertical"');
+    expect(html).toContain("Q4 KPIs");
+    expect(html).toContain("Growth");
+    expect(html).toContain("+42% YoY");
+    // And it must NOT contain the literal JSON braces from the persisted
+    // model — that would mean the override was bypassed.
+    expect(html).not.toContain('"sections":');
+  });
+
+  it("pre-renders landing_page JSON to rich HTML via buildLandingPreviewHtml before exporting (regression for ANALYSIS_pr-review-job-944bd22719314f15b61523f7c7574bc6_0001)", async () => {
+    const landingJson = JSON.stringify({
+      hero: {
+        headline: "Ship Faster",
+        subheadline: "The fastest static-site generator.",
+        cta: "Get started",
+        ctaUrl: "https://example.com",
+      },
+      features: [
+        {
+          icon: "lucide:zap",
+          title: "Blazing fast",
+          description: "Sub-second builds.",
+        },
+      ],
+      stats: [],
+      testimonials: [],
+      cta: null,
+      colorScheme: { primary: "#7C3AED", secondary: "#5B21B6", accent: "#F59E0B" },
+    });
+    const landingArtifact = {
+      ...baseArtifact,
+      id: "art-landing",
+      artifactType: "landing_page" as const,
+      content: landingJson,
+    };
+    window.tessera.artifacts.get = vi.fn().mockResolvedValue(landingArtifact);
+
+    render(
+      <MemoryRouter initialEntries={["/artifact/art-landing"]}>
+        <Routes>
+          <Route path="/artifact/:id" element={<ArtifactEditorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByDisplayValue("Ship Faster").length,
+      ).toBeGreaterThan(0);
+    });
+
+    const exportSelect = screen.getByLabelText(
+      "Export artifact",
+    ) as HTMLSelectElement;
+    await act(async () => {
+      fireEvent.change(exportSelect, { target: { value: "html" } });
+    });
+
+    await waitFor(() => {
+      expect(window.tessera.artifacts.exportArtifact).toHaveBeenCalled();
+    });
+    const mockFn = window.tessera.artifacts.exportArtifact as unknown as {
+      mock: { calls: unknown[][] };
+    };
+    const call = mockFn.mock.calls[0];
+    const contentOverride = call[2] as string | null;
+    expect(contentOverride).not.toBeNull();
+    const html = contentOverride as string;
+    expect(html.trimStart().startsWith("<")).toBe(true);
+    expect(html).toContain('class="landing"');
+    expect(html).toContain("Ship Faster");
+    expect(html).toContain("Blazing fast");
+    expect(html).not.toContain('"features":');
+  });
 });

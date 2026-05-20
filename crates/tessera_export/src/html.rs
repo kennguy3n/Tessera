@@ -1,13 +1,35 @@
 use std::fmt::Write;
 use tessera_artifacts::Artifact;
 use tessera_citations::citation::Citation;
+use tessera_core::ArtifactType;
 
 use crate::mermaid;
+
+/// Artifact types whose content is a pre-rendered HTML fragment (produced by
+/// the renderer-side preview builders in `InfographicEditor.tsx` /
+/// `LandingPageEditor.tsx`) rather than markdown-like prose.
+///
+/// For these types the renderer is expected to ship the rich HTML through
+/// `content_override` on the export IPC; we then inline it verbatim instead
+/// of running it through the line-oriented `content_to_html` converter
+/// (which would HTML-escape every `<` and `>` and chop the layout into
+/// pseudo-paragraphs). If no override is passed and `artifact.content` is
+/// still the raw JSON model, we wrap it in `<pre>` as a legible fallback
+/// rather than producing a broken page.
+fn is_visual_artifact_type(t: ArtifactType) -> bool {
+    matches!(t, ArtifactType::Infographic | ArtifactType::LandingPage)
+}
 
 pub fn export_html(artifact: &Artifact, citations: &[Citation]) -> String {
     let mut output = String::new();
 
-    let has_mermaid = !mermaid::extract_blocks(&artifact.content).is_empty();
+    // Mermaid runtime is only meaningful when the content is markdown that
+    // can carry ```mermaid``` fences. Pre-rendered HTML from visual artifact
+    // types doesn't go through `mermaid::extract_blocks` (the layout uses
+    // inline `<svg>` from `embedIcons` instead), so we skip the detection
+    // and avoid emitting an unused CDN <script> for those exports.
+    let has_mermaid = !is_visual_artifact_type(artifact.artifact_type)
+        && !mermaid::extract_blocks(&artifact.content).is_empty();
 
     output.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
     output.push_str("  <meta charset=\"UTF-8\">\n");
@@ -27,7 +49,11 @@ pub fn export_html(artifact: &Artifact, citations: &[Citation]) -> String {
     let _ = writeln!(output, "  <h1>{}</h1>", escape_html(&artifact.title));
 
     if !artifact.content.is_empty() {
-        let html_content = content_to_html(&artifact.content);
+        let html_content = if is_visual_artifact_type(artifact.artifact_type) {
+            render_visual_artifact_content(&artifact.content)
+        } else {
+            content_to_html(&artifact.content)
+        };
         let _ = write!(
             output,
             "  <div class=\"content\">\n{html_content}  </div>\n"
@@ -118,6 +144,29 @@ fn escape_html(text: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+
+/// Render the content of a visual artifact (infographic / landing_page) for
+/// HTML export. The renderer-side preview builders
+/// (`buildPreviewHtml` / `buildLandingPreviewHtml`) emit a complete,
+/// self-contained HTML fragment with user data already HTML-escaped, CSS
+/// colors sanitised, and icon SVGs inlined. We inline that fragment
+/// verbatim. If the content is *not* HTML — the override pipeline never
+/// fired, so we still hold the raw JSON model — we wrap it in `<pre>` so
+/// the user can at least read their data instead of seeing the line parser
+/// chop the JSON braces into paragraphs.
+fn render_visual_artifact_content(content: &str) -> String {
+    if content.trim_start().starts_with('<') {
+        let mut out = String::new();
+        out.push_str("    ");
+        out.push_str(content);
+        if !content.ends_with('\n') {
+            out.push('\n');
+        }
+        out
+    } else {
+        format!("    <pre>{}</pre>\n", escape_html(content))
+    }
 }
 
 fn content_to_html(content: &str) -> String {
@@ -300,5 +349,105 @@ mod tests {
             "single quotes should be escaped, but raw `'` is still present in:\n{html}",
         );
         assert!(html.contains("&#39;xss&#39;"));
+    }
+
+    // Regression for ANALYSIS_pr-review-job-944bd22719314f15b61523f7c7574bc6_0001:
+    // Infographic HTML export used to round-trip the artifact's JSON content
+    // through `content_to_html`, which chopped `{"title":...}` into pseudo-
+    // paragraphs with HTML-escaped braces, completely losing the visual
+    // layout. The fix is two-sided — the renderer pre-renders via
+    // `buildPreviewHtml` and hands the resulting HTML through
+    // `content_override`, and the Rust exporter (this branch) inlines that
+    // HTML verbatim instead of treating it as markdown-like prose.
+    #[test]
+    fn export_html_inlines_pre_rendered_infographic_content_verbatim() {
+        let mut artifact = Artifact::new(
+            "Stats Overview".to_string(),
+            ArtifactType::Infographic,
+            None,
+        );
+        let pre_rendered = "<div class=\"infographic infographic-preview-vertical\" \
+                            style=\"--igc-primary:#7C3AED;\">\
+                            <header class=\"infographic-header\"><h1>Q4 KPIs</h1></header>\
+                            <div class=\"infographic-grid\">\
+                            <section class=\"infographic-section\">\
+                            <div class=\"infographic-section-icon\">\
+                            <svg viewBox=\"0 0 24 24\"><path d=\"M3 3h18\"/></svg>\
+                            </div><h3>Growth</h3><p>+42% YoY</p>\
+                            </section></div></div>";
+        artifact.update_content(pre_rendered.to_string());
+
+        let html = export_html(&artifact, &[]);
+        // The rich HTML fragment must reach the body inline, *not* HTML-escaped.
+        assert!(
+            html.contains(pre_rendered),
+            "pre-rendered infographic HTML must be inlined verbatim, got:\n{html}",
+        );
+        // Specifically, the inline <svg> must not have been turned into
+        // `&lt;svg ...&gt;` by `content_to_html`.
+        assert!(!html.contains("&lt;svg"));
+        // No mermaid CDN script is appended for visual artifact types.
+        assert!(!html.contains("mermaid.initialize"));
+    }
+
+    #[test]
+    fn export_html_wraps_raw_json_infographic_in_pre_as_fallback() {
+        // If the renderer fails to send a pre-rendered override (e.g. the
+        // JSON model is corrupted and `parseInfographicContent` threw), the
+        // Rust exporter still produces a legible page by wrapping the raw
+        // JSON in <pre>, rather than mis-parsing it into broken paragraphs.
+        let mut artifact = Artifact::new(
+            "Stats".to_string(),
+            ArtifactType::Infographic,
+            None,
+        );
+        let raw_json = "{\"title\":\"Q4\",\"sections\":[]}";
+        artifact.update_content(raw_json.to_string());
+
+        let html = export_html(&artifact, &[]);
+        assert!(html.contains("<pre>"));
+        // The JSON braces must be HTML-escaped inside the <pre> wrapper.
+        assert!(html.contains("&quot;title&quot;"));
+        // And NOT chopped into <p> blocks with stripped braces.
+        assert!(!html.contains("<p>{"));
+    }
+
+    #[test]
+    fn export_html_inlines_pre_rendered_landing_page_content_verbatim() {
+        let mut artifact = Artifact::new(
+            "Product Landing".to_string(),
+            ArtifactType::LandingPage,
+            None,
+        );
+        let pre_rendered = "<div class=\"landing\" style=\"--lp-primary:#7C3AED;\">\
+                            <header class=\"landing-hero\"><h1>Ship Faster</h1>\
+                            <p>The fastest static-site generator.</p>\
+                            <a class=\"landing-hero-cta\" href=\"#\">Get started</a>\
+                            </header></div>";
+        artifact.update_content(pre_rendered.to_string());
+
+        let html = export_html(&artifact, &[]);
+        assert!(
+            html.contains(pre_rendered),
+            "pre-rendered landing-page HTML must be inlined verbatim, got:\n{html}",
+        );
+        assert!(!html.contains("&lt;header"));
+        assert!(!html.contains("mermaid.initialize"));
+    }
+
+    #[test]
+    fn export_html_wraps_raw_json_landing_page_in_pre_as_fallback() {
+        let mut artifact = Artifact::new(
+            "Landing".to_string(),
+            ArtifactType::LandingPage,
+            None,
+        );
+        artifact.update_content(
+            "{\"hero\":{\"headline\":\"x\"},\"features\":[]}".to_string(),
+        );
+        let html = export_html(&artifact, &[]);
+        assert!(html.contains("<pre>"));
+        assert!(html.contains("&quot;headline&quot;"));
+        assert!(!html.contains("<p>{"));
     }
 }
