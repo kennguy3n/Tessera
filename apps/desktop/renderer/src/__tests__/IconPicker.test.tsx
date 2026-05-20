@@ -69,6 +69,23 @@ describe("IconPicker", () => {
     expect(arg.name).toBe("House");
   });
 
+  it("exposes a dynamic aria-label on the search input that matches the active icon set (regression for BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0002)", () => {
+    // Before the fix the aria-label was a static "Search icons" while
+    // the placeholder dynamically tracked the active set ("Search lucide
+    // icons…"). That inconsistency broke screen-reader navigation (the
+    // user never heard which set they were searching) and meant
+    // accessibility-by-label test queries could not pin the active set.
+    // The contract now: the aria-label MUST match the active set, and
+    // both Lucide and Phosphor must each be findable by their own label.
+    render(<IconPicker onChange={() => {}} />);
+    expect(screen.getByLabelText("Search lucide icons")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Search phosphor icons")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: /phosphor/i }));
+    expect(screen.getByLabelText("Search phosphor icons")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Search lucide icons")).toBeNull();
+  });
+
   it("highlights the currently selected value", () => {
     render(
       <IconPicker

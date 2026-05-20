@@ -115,7 +115,12 @@ export default function IconPicker({
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         className="icon-picker-search"
-        aria-label="Search icons"
+        // `aria-label` must mirror the dynamic `placeholder` so screen
+        // readers announce the current icon set ("Search lucide icons" /
+        // "Search phosphor icons"). Keeping the two strings in sync also
+        // means accessibility-driven test queries can pin the active set
+        // through a single source-of-truth label.
+        aria-label={`Search ${set} icons`}
       />
 
       <div className="icon-picker-grid" role="listbox" aria-label="Icons">
