@@ -740,9 +740,25 @@ export function setFrontmatterTheme(src: string, theme: string): string {
   const themeRe = /^theme:\s*.+$/m;
   let newBody: string;
   if (themeRe.test(body)) {
-    newBody = body.replace(themeRe, `theme: ${theme}`);
+    // Replace inside `body` with a function replacer to avoid `$&/$'/$\`/$$`
+    // pattern interpretation in user-supplied content (e.g. an existing
+    // `theme: "$50 Plan"` line). Same care applies for the outer splice.
+    newBody = body.replace(themeRe, () => `theme: ${theme}`);
   } else {
     newBody = body.trimEnd() + `\ntheme: ${theme}`;
   }
-  return src.replace(whole, `${open}${newBody}${close}`);
+  // Splice via slice() instead of String.replace because `newBody` is derived
+  // from user-editable YAML and may contain `$&`, `$'`, `` $` ``, or `$$`
+  // sequences — those would be interpreted as backreference placeholders by
+  // String.prototype.replace and silently rewrite the frontmatter into
+  // garbage (e.g. `$&` would expand to the entire matched frontmatter block).
+  // The regex is anchored at `^`, so fmMatch.index is always 0; we still use
+  // `match.index` explicitly so the call site reads correctly if the anchor
+  // ever changes.
+  const matchStart = fmMatch.index ?? 0;
+  return (
+    src.slice(0, matchStart) +
+    `${open}${newBody}${close}` +
+    src.slice(matchStart + whole.length)
+  );
 }

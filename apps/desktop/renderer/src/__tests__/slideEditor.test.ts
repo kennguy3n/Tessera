@@ -268,6 +268,47 @@ describe("setFrontmatterTheme", () => {
     expect(extractFrontmatterTheme(after)).toBe("uncover");
   });
 
+  it("preserves frontmatter content containing `$`-sequences (regression for BUG_pr-review-job-ca108947aa7742809663155c14f8b1bb_0001)", () => {
+    // Realistic example: a footer directive whose value happens to contain
+    // `$50M` (or any other `$`-followed-by-character). The previous code
+    // used `src.replace(whole, '<replacement-string>')`, which interprets
+    // `$&`/`$'`/`$\``/`$$` in the *replacement* as regex backreferences and
+    // would silently corrupt the frontmatter. The new slice-based splice
+    // (and the function-replacer used inside the body rewrite) must be
+    // immune to that — every `$`-sequence in the user's frontmatter has to
+    // survive verbatim.
+    const src =
+      "---\nmarp: true\ntheme: default\nfooter: '$50M Q4 target'\nheader: 'A & B $& C'\n---\n\n# Slide";
+    const out = setFrontmatterTheme(src, "gaia");
+    // Theme is updated.
+    expect(out).toContain("theme: gaia");
+    expect(out).not.toContain("theme: default");
+    // Every `$`-sequence in the user's frontmatter survives verbatim.
+    expect(out).toContain("footer: '$50M Q4 target'");
+    expect(out).toContain("header: 'A & B $& C'");
+    // The frontmatter block is well-formed (open + close) and the body is
+    // intact — no fragment of the matched frontmatter has been spliced into
+    // itself (which is what `$&` expansion would produce).
+    const fmCount = (out.match(/^---$/gm) ?? []).length;
+    expect(fmCount).toBe(2); // open + close
+    expect(out.endsWith("\n# Slide")).toBe(true);
+  });
+
+  it("preserves frontmatter when the *existing* theme line itself contains `$`-sequences (uses function replacer)", () => {
+    // The body-internal replace also has to avoid $-pattern interpretation,
+    // even though only the matched line is what gets rewritten — because
+    // String.replace with a string replacement still interprets $ patterns.
+    // Here the *replacement* is just `theme: gaia` (no $-chars), so the
+    // immediate bug is on the outer splice; this test still pins the
+    // behaviour by confirming a theme value containing `$` is overwritten
+    // cleanly without any $-pattern leakage from the *old* line.
+    const src = "---\nmarp: true\ntheme: 'My $1 Theme'\n---\n\n# Slide";
+    const out = setFrontmatterTheme(src, "uncover");
+    expect(out).toContain("theme: uncover");
+    expect(out).not.toContain("My $1 Theme");
+    expect(out).toContain("# Slide");
+  });
+
   it("does not corrupt slide-body `---` separators", () => {
     // Set theme on a multi-slide source and confirm the bottom slides
     // still have their separators intact.
