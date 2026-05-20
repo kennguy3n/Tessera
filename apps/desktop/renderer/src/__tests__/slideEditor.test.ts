@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseSlideContent,
   slidesToMarpMarkdown,
+  escapeHtmlComment,
   type SlideContent,
 } from "../editors/SlideEditor";
 
@@ -151,5 +152,49 @@ describe("slidesToMarpMarkdown", () => {
     expect(firstIdx).toBeGreaterThan(-1);
     expect(secondIdx).toBeGreaterThan(firstIdx);
     expect(thirdIdx).toBeGreaterThan(secondIdx);
+  });
+
+  it("escapes `-->` in speaker notes so the HTML comment cannot be terminated early (regression for ANALYSIS_pr-review-job-0364b468c3654054ad83fe2599369c02_0005)", () => {
+    // Adversarial speaker notes carrying the HTML comment terminator. Before
+    // the fix the resulting Marp markdown would contain
+    // `<!-- close --> evil <script>alert(1)</script> -->`, which the HTML
+    // tokenizer would parse as a closed comment followed by a literal
+    // `<script>` tag — leaking into PPTX / PDF / HTML exports.
+    const notes = "close --> evil <script>alert(1)</script>";
+    const out = slidesToMarpMarkdown([
+      {
+        title: "Hostile",
+        blocks: [{ type: "text", content: "body" }],
+        notes,
+      },
+    ]);
+    // The dangerous `-->` substring must NOT appear anywhere except as the
+    // explicit comment terminator we emit at the end of the notes line.
+    const occurrences = (out.match(/-->/g) ?? []).length;
+    expect(occurrences).toBe(1);
+    // Sanity: the escaped form is present and the original payload survives
+    // (we only insert a space, not strip characters).
+    expect(out).toContain("close -- > evil");
+    expect(out).toContain("<script>alert(1)</script>");
+  });
+});
+
+describe("escapeHtmlComment", () => {
+  it("leaves benign strings unchanged", () => {
+    expect(escapeHtmlComment("just notes")).toBe("just notes");
+    expect(escapeHtmlComment("a-b-c")).toBe("a-b-c");
+    expect(escapeHtmlComment("dashes -- here")).toBe("dashes -- here");
+  });
+
+  it("breaks every `-->` sequence with a space (idempotent on already-safe text)", () => {
+    expect(escapeHtmlComment("a --> b")).toBe("a -- > b");
+    expect(escapeHtmlComment("--> at start")).toBe("-- > at start");
+    expect(escapeHtmlComment("end with -->")).toBe("end with -- >");
+    expect(escapeHtmlComment("multi --> --> hops")).toBe(
+      "multi -- > -- > hops",
+    );
+    // After escape, running it again is a no-op (no `-->` left).
+    const escaped = escapeHtmlComment("a --> b --> c");
+    expect(escapeHtmlComment(escaped)).toBe(escaped);
   });
 });

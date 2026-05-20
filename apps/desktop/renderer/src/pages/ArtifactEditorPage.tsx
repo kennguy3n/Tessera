@@ -141,9 +141,17 @@ export default function ArtifactEditorPage() {
             );
           }
           const parsed = parseSlideContent(liveContent);
+          // When NOT in Marp Mode, we synthesise Marp Markdown from the
+          // structured slides. Pass the user's saved Marp theme through so
+          // the generated front-matter matches the `--theme` flag we send
+          // to the Marp CLI below — otherwise the front-matter would always
+          // read `theme: default` and (if the CLI doesn't override) the
+          // exported deck would silently lose the chosen theme.
           const marpMarkdown = parsed.marpMode
             ? parsed.marpSource
-            : slidesToMarpMarkdown(parsed.slides);
+            : slidesToMarpMarkdown(parsed.slides, {
+                theme: parsed.marpTheme,
+              });
           if (!marpMarkdown.trim()) {
             throw new Error(
               "Slide artifact has no Marp content to export — add slides or enable Marp mode first",

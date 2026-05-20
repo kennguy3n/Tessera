@@ -1,10 +1,14 @@
 //! XLSX export — converts Tessera Sheet artifacts (JSON cells/rows model)
 //! into a `.xlsx` workbook using `rust_xlsxwriter`.
 //!
-//! The Sheet artifact's `content` field stores JSON with `headers` and
-//! `rows` arrays; if the content is not parseable JSON we fall back to
-//! treating each line as a row and splitting on commas — the CSV exporter
-//! does the same conversion, so the two formats agree on shape.
+//! The Sheet artifact's `content` field is JSON produced by `SheetEditor.tsx`
+//! and matches the TypeScript `SheetContent` interface — i.e. `{ columns:
+//! string[], rows: string[][] }`. We accept the legacy `headers` field name
+//! via `#[serde(alias = "headers")]` so any persisted artifacts produced by
+//! older builds (or hand-authored test fixtures) still round-trip cleanly.
+//! If the content is not parseable JSON, we fall back to treating each line
+//! as a row and splitting on commas — the CSV exporter does the same
+//! conversion, so the two formats agree on shape.
 //!
 //! Formulas: cells whose string value starts with `=` are written via
 //! `write_formula` so Excel will evaluate them on open. Everything else is
@@ -16,8 +20,13 @@ use tessera_artifacts::Artifact;
 
 #[derive(Debug, Default, Deserialize)]
 struct SheetContent {
-    #[serde(default)]
-    headers: Vec<String>,
+    // `columns` matches the field name produced by `SheetEditor.tsx` (the
+    // sole producer of Sheet artifact JSON in production). `alias =
+    // "headers"` keeps backward compatibility with any older Tessera build
+    // that may have written `headers` instead — Devin Review BUG_pr-review-job-0364b468c3654054ad83fe2599369c02_0001
+    // caught this mismatch silently dropping all column names from XLSX exports.
+    #[serde(default, alias = "headers")]
+    columns: Vec<String>,
     #[serde(default)]
     rows: Vec<Vec<String>>,
 }
@@ -28,21 +37,21 @@ fn parse_sheet(content: &str) -> Option<SheetContent> {
     if content.trim().is_empty() {
         return None;
     }
-    // Preferred form: JSON with headers + rows.
+    // Preferred form: JSON with columns + rows.
     if let Ok(sheet) = serde_json::from_str::<SheetContent>(content) {
         return Some(sheet);
     }
     // Fallback: CSV-ish lines.
     let mut lines = content.lines();
     let header_line = lines.next()?;
-    let headers = header_line
+    let columns = header_line
         .split(',')
         .map(|s| s.trim().to_string())
         .collect();
     let rows = lines
         .map(|line| line.split(',').map(|s| s.trim().to_string()).collect())
         .collect();
-    Some(SheetContent { headers, rows })
+    Some(SheetContent { columns, rows })
 }
 
 /// Export a Tessera Sheet artifact to XLSX bytes.
@@ -57,7 +66,7 @@ pub fn export_xlsx(artifact: &Artifact) -> Vec<u8> {
     let header_fmt = Format::new().set_bold().set_background_color("#EFE7FD");
 
     if let Some(sheet) = parse_sheet(&artifact.content) {
-        for (col, header) in sheet.headers.iter().enumerate() {
+        for (col, header) in sheet.columns.iter().enumerate() {
             worksheet
                 .write_string_with_format(0, col as u16, header, &header_fmt)
                 .expect("write header");
@@ -142,15 +151,66 @@ mod tests {
         assert_eq!(&bytes[..4], b"PK\x03\x04", "XLSX missing PK ZIP signature");
     }
 
+    /// Concatenate the text content of every XML entry in the XLSX zip. Used
+    /// to assert that arbitrary user strings (column headers, cell values) made
+    /// it into the workbook, which is otherwise opaque since the bytes are
+    /// deflate-compressed inside a zip container.
+    fn read_xlsx_text(bytes: &[u8]) -> String {
+        use std::io::Read;
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor).expect("XLSX should be a valid zip");
+        let mut combined = String::new();
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).expect("entry");
+            let is_xml = std::path::Path::new(entry.name())
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("xml"));
+            if is_xml {
+                let mut buf = String::new();
+                entry.read_to_string(&mut buf).expect("read entry");
+                combined.push_str(&buf);
+                combined.push('\n');
+            }
+        }
+        combined
+    }
+
     #[test]
     fn export_basic_xlsx_returns_zip_bytes() {
+        // Production format: matches what SheetEditor.tsx serializes.
         let mut artifact = Artifact::new("Sales".to_string(), ArtifactType::Sheet, None);
         artifact.update_content(
-            r#"{"headers":["Region","Q1","Q2"],"rows":[["North","100","120"],["South","80","95"]]}"#
+            r#"{"columns":["Region","Q1","Q2"],"rows":[["North","100","120"],["South","80","95"]]}"#
                 .to_string(),
         );
         let bytes = export_xlsx(&artifact);
         assert_is_zip(&bytes);
+        // Column headers must actually appear inside the workbook XML —
+        // guards against the regression where the field-name mismatch
+        // silently dropped all column names. We unzip and read the XML
+        // entries because the headers end up in `xl/sharedStrings.xml` which
+        // is deflate-compressed inside the zip.
+        let xml = read_xlsx_text(&bytes);
+        assert!(xml.contains("Region"), "missing Region header in {xml}");
+        assert!(xml.contains("Q1"), "missing Q1 header in {xml}");
+        assert!(xml.contains("Q2"), "missing Q2 header in {xml}");
+    }
+
+    #[test]
+    fn export_xlsx_accepts_legacy_headers_field_name() {
+        // Backward compat: artifacts that were persisted under the old `headers`
+        // name still deserialize correctly via the serde alias. This guards
+        // against a regression where renaming the field to match production
+        // (`columns`) would have broken any in-flight test fixtures or older
+        // builds.
+        let mut artifact = Artifact::new("Legacy".to_string(), ArtifactType::Sheet, None);
+        artifact.update_content(
+            r#"{"headers":["OldCol"],"rows":[["v"]]}"#.to_string(),
+        );
+        let bytes = export_xlsx(&artifact);
+        assert_is_zip(&bytes);
+        let xml = read_xlsx_text(&bytes);
+        assert!(xml.contains("OldCol"), "legacy `headers` field was dropped");
     }
 
     #[test]
@@ -165,14 +225,12 @@ mod tests {
     fn export_xlsx_writes_formulas() {
         let mut artifact = Artifact::new("Math".to_string(), ArtifactType::Sheet, None);
         artifact
-            .update_content(r#"{"headers":["A","B","Sum"],"rows":[["1","2","=A2+B2"]]}"#.into());
+            .update_content(r#"{"columns":["A","B","Sum"],"rows":[["1","2","=A2+B2"]]}"#.into());
         let bytes = export_xlsx(&artifact);
         assert_is_zip(&bytes);
-        // Formula appears as a string `<f>A2+B2</f>` inside sheet1.xml when
-        // unzipped — we just smoke-check the bytes contain something
-        // formula-shaped if the substring is not compressed.
-        let s = String::from_utf8_lossy(&bytes);
-        assert!(s.contains("A2+B2") || bytes.len() > 512);
+        // Formula appears as `<f>A2+B2</f>` inside sheet1.xml when unzipped.
+        let xml = read_xlsx_text(&bytes);
+        assert!(xml.contains("A2+B2"), "formula not found in workbook XML");
     }
 
     #[test]
@@ -180,18 +238,20 @@ mod tests {
         // `'=NOTE: important` must be emitted as the text `=NOTE: important`,
         // not as a formula. This is the standard CSV/XLSX injection escape.
         let mut artifact = Artifact::new("Notes".to_string(), ArtifactType::Sheet, None);
-        artifact.update_content(r#"{"headers":["A"],"rows":[["'=NOTE: important"]]}"#.to_string());
+        artifact.update_content(r#"{"columns":["A"],"rows":[["'=NOTE: important"]]}"#.to_string());
         let bytes = export_xlsx(&artifact);
         assert_is_zip(&bytes);
-        // Sanity check: no formula record should appear for this value.
-        // (`f` is the formula element tag in sheet1.xml.) We can't unzip
-        // without pulling in a zip dep, but the substring `<f>NOTE` would
-        // only appear if write_formula was wrongly invoked — use a negative
-        // check on the raw uncompressed bytes.
-        let s = String::from_utf8_lossy(&bytes);
+        // Sanity check inside the unzipped workbook XML: the `<f>` formula
+        // element should not enclose `NOTE`, and the literal `=NOTE: important`
+        // text should appear in sharedStrings.xml as plain text.
+        let xml = read_xlsx_text(&bytes);
         assert!(
-            !s.contains("<f>NOTE"),
+            !xml.contains("<f>NOTE"),
             "apostrophe-prefixed value was incorrectly treated as a formula",
+        );
+        assert!(
+            xml.contains("=NOTE: important"),
+            "escaped literal text not present in shared strings",
         );
     }
 

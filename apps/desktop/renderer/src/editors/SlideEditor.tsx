@@ -635,7 +635,27 @@ function renderSlideAsMarp(slide: Slide): string {
     }
   }
   if (slide.notes && slide.notes.trim().length > 0) {
-    parts.push(`<!-- ${slide.notes.trim()} -->`);
+    parts.push(`<!-- ${escapeHtmlComment(slide.notes.trim())} -->`);
   }
   return parts.join("\n\n");
+}
+
+/**
+ * Escape a string so it can be embedded inside an HTML comment without the
+ * embedded `-->` closing the comment early.
+ *
+ * Used by `renderSlideAsMarp` when materialising speaker notes for the Marp
+ * CLI export pipeline. Without this, a user's notes containing `-->` would
+ * prematurely terminate the comment and inject the trailing text into the
+ * surrounding Marp Markdown, which then leaks into the rendered slide deck
+ * (PPTX/PDF/HTML) as visible content. The standard mitigation (used by
+ * mdast-util-to-markdown, remark, etc.) is to insert a space inside the
+ * `-->` sequence so the HTML tokenizer no longer recognises a comment-end.
+ */
+export function escapeHtmlComment(text: string): string {
+  // Replace every `-->` with `-- >`. The space breaks the HTML5 comment-end
+  // production (`--` followed by `>`) without altering the visible characters
+  // beyond a single space inside the comment body — speaker notes are not
+  // rendered as text, so the cosmetic change is invisible to the audience.
+  return text.replace(/-->/g, "-- >");
 }

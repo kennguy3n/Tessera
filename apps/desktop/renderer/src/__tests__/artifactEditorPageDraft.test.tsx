@@ -94,6 +94,68 @@ describe("ArtifactEditorPage live-draft export", () => {
     expect(contentOverride).not.toContain("original");
   });
 
+  it("propagates the saved Marp theme through PPTX export even when Marp Mode is OFF (regression for ANALYSIS_pr-review-job-3c40496bade1479cab1f5fa0a18d503c_0002)", async () => {
+    // Slide artifact whose persisted content carries `marp.theme: gaia` but
+    // has `marp.enabled = false` (the WYSIWYG path that synthesises Marp
+    // markdown rather than handing through user-authored Marp source).
+    const slideArtifact = {
+      ...baseArtifact,
+      id: "art-slide-theme",
+      artifactType: "slides" as const,
+      content: JSON.stringify({
+        slides: [
+          {
+            title: "Cover",
+            blocks: [{ type: "text", content: "hello" }],
+            notes: "",
+          },
+        ],
+        marp: {
+          enabled: false,
+          source: "",
+          theme: "gaia",
+        },
+      }),
+    };
+    window.tessera.artifacts.get = vi.fn().mockResolvedValue(slideArtifact);
+    window.tessera.artifacts.exportMarp = vi
+      .fn()
+      .mockResolvedValue("/tmp/Cover.pptx");
+
+    render(
+      <MemoryRouter initialEntries={["/artifact/art-slide-theme"]}>
+        <Routes>
+          <Route path="/artifact/:id" element={<ArtifactEditorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // Wait for the slide editor to mount so the export select is present.
+    const exportSelect = await waitFor(() => {
+      const el = screen.queryByLabelText("Export artifact");
+      if (!el) throw new Error("export select not mounted yet");
+      return el as HTMLSelectElement;
+    });
+    await act(async () => {
+      fireEvent.change(exportSelect, { target: { value: "pptx" } });
+    });
+
+    await waitFor(() => {
+      expect(window.tessera.artifacts.exportMarp).toHaveBeenCalled();
+    });
+    const mockFn = window.tessera.artifacts.exportMarp as unknown as {
+      mock: { calls: Array<[{ markdown: string; theme?: string }]> };
+    };
+    const arg = mockFn.mock.calls[0][0];
+    // The Marp CLI receives `--theme gaia` via the IPC argument …
+    expect(arg.theme).toBe("gaia");
+    // … AND the synthesised Marp Markdown front-matter must also carry
+    // `theme: gaia` so it stays consistent if the CLI ever stops overriding
+    // the front-matter (defence in depth, not just an aesthetic alignment).
+    expect(arg.markdown).toContain("theme: gaia");
+    expect(arg.markdown).not.toContain("theme: default");
+  });
+
   it("exports the live draft when icon-aware format has only unresolvable icon tokens (regression for BUG_pr-review-job-f080f66818c644baa7573bf023ef2675_0001)", async () => {
     // Override the default mocks for this test to use the icon-laden fixture.
     window.tessera.artifacts.get = vi
