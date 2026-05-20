@@ -21,6 +21,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import * as React from "react";
+import { sanitizeCssColor } from "../utils/cssColor";
 // Wildcard imports pull both icon catalogs into the renderer bundle
 // (~500KB–1MB combined). This is an intentional tradeoff:
 //   * `listIcons(set)` and `searchIcons(set)` need to enumerate every
@@ -140,7 +141,14 @@ export function resolveIconSvg(
   if (!Component) return null;
 
   const size = opts.size ?? 20;
-  const color = opts.color ?? "currentColor";
+  // Run user-controlled color strings through the same validator we use
+  // in InfographicEditor / LandingPageEditor before they land on the
+  // SVG's `color` attribute. `embedIcons` already character-restricts the
+  // token grammar, but the resolver is also called directly from the
+  // editors (and any future caller), so we sanitize at the resolution
+  // boundary for consistency and defence-in-depth. Anything that fails
+  // grammar validation falls back to `currentColor` — visible but inert.
+  const color = sanitizeCssColor(opts.color, "currentColor");
   const props: Record<string, unknown> = {
     size,
     color,

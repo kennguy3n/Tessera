@@ -108,6 +108,28 @@ describe("iconResolver", () => {
       // the version; assert it shows up somewhere in the output.
       expect(svg).toMatch(/#7C3AED/);
     });
+
+    it("falls back to currentColor when the color value fails CSS-color validation", () => {
+      // Regression for Devin Review ANALYSIS_pr-review-job-c259353b…_0001
+      // (iconResolver color consistency). We share the same sanitizer as
+      // InfographicEditor / LandingPageEditor so an injection payload in
+      // the color slot cannot ride through to the inlined SVG attribute.
+      const malicious = "red; background-image: url('javascript:alert(1)')";
+      const svg = resolveIconSvg("lucide:home", { color: malicious });
+      expect(svg).toBeTruthy();
+      expect(svg).not.toContain("javascript:");
+      expect(svg).not.toContain("background-image");
+      // The fallback `currentColor` keeps the icon themable while making
+      // the rejected payload invisible.
+      expect(svg).toMatch(/currentColor/i);
+    });
+
+    it("accepts well-formed rgb() and hsl() colors", () => {
+      expect(resolveIconSvg("lucide:home", { color: "rgb(124, 58, 237)" }))
+        .toMatch(/rgb\(124, 58, 237\)/);
+      expect(resolveIconSvg("lucide:home", { color: "hsl(258, 85%, 58%)" }))
+        .toMatch(/hsl\(258, 85%, 58%\)/);
+    });
   });
 
   describe("listIcons / searchIcons", () => {

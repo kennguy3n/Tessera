@@ -43,15 +43,28 @@ pub fn extract_blocks(content: &str) -> Vec<MermaidBlock> {
             .map_or(bytes.len(), |p| i + p);
         let line = &content[line_start..line_end];
         let trimmed = line.trim_start();
-        let fence = if trimmed.starts_with("```") {
-            "```"
+        // Per CommonMark §4.5, a fenced code block opens with a run of 3+
+        // backticks OR a run of 3+ tildes. We must capture the EXACT length of
+        // the opening run so the closing-fence check can require ≥ that
+        // many characters. Using a hard-coded 3-char prefix would mis-treat
+        // longer fences: e.g. with a 6-backtick opener (` ```````mermaid `),
+        // any 3-backtick line inside the block would be mistakenly accepted
+        // as the close, prematurely terminating extraction and corrupting
+        // both the captured DSL and the byte range we hand back to callers.
+        let fence_ch = if trimmed.starts_with("```") {
+            b'`'
         } else if trimmed.starts_with("~~~") {
-            "~~~"
+            b'~'
         } else {
             i = line_end + 1;
             continue;
         };
-        let after_fence = trimmed.trim_start_matches(fence).trim_start();
+        let fence_run_len = trimmed
+            .as_bytes()
+            .iter()
+            .take_while(|&&b| b == fence_ch)
+            .count();
+        let after_fence = trimmed[fence_run_len..].trim_start();
         // The info string must be exactly `mermaid` (optionally followed by
         // whitespace + further info-string tokens). Substring-matching alone
         // would incorrectly classify ```mermaidx, ```mermaid-v2, ```mermaid_old
@@ -75,7 +88,7 @@ pub fn extract_blocks(content: &str) -> Vec<MermaidBlock> {
             // optional trailing whitespace — it may NOT carry an info string.
             // Without this check, ```python on its own line inside a mermaid
             // block would be mistakenly treated as the close.
-            if is_closing_fence(inner_line, fence) {
+            if is_closing_fence(inner_line, fence_ch, fence_run_len) {
                 closing_line_start = Some(search);
                 break;
             }
@@ -122,19 +135,19 @@ fn is_mermaid_info_string(after_fence: &str) -> bool {
     }
 }
 
-/// Return true if `line` is a valid CommonMark closing fence for the given
-/// opening `fence` sequence. The line must contain only the fence character
-/// (at least as many as the opener) followed by optional whitespace — it
-/// must NOT carry an info string.
-fn is_closing_fence(line: &str, fence: &str) -> bool {
+/// Return true if `line` is a valid CommonMark closing fence for an opener
+/// composed of `opener_run_len` characters of `fence_ch`. The line must
+/// contain at least as many `fence_ch`s as the opener, followed only by
+/// optional whitespace — it must NOT carry an info string, and a shorter
+/// run does not close the block (CommonMark §4.5).
+fn is_closing_fence(line: &str, fence_ch: u8, opener_run_len: usize) -> bool {
     let trimmed = line.trim_start();
-    let fence_ch = fence.as_bytes()[0];
     let run_len = trimmed
         .as_bytes()
         .iter()
         .take_while(|&&b| b == fence_ch)
         .count();
-    if run_len < fence.len() {
+    if run_len < opener_run_len {
         return false;
     }
     // Everything after the fence run must be ASCII whitespace.
@@ -442,6 +455,58 @@ mod tests {
         let trailing_ws = "```mermaid\nflowchart TD\nA-->B\n```   \n";
         let blocks = extract_blocks(trailing_ws);
         assert_eq!(blocks.len(), 1);
+    }
+
+    #[test]
+    fn extended_fences_are_handled_per_commonmark() {
+        // Regression for Devin Review BUG_pr-review-job-c259353b…_0001. Before
+        // the fix, the opening fence was always treated as exactly 3 chars
+        // (via `trim_start_matches(\"```\")` stripping the pattern repeatedly),
+        // so a 6-backtick opener would be (a) accepted with a 3-backtick
+        // logical length and (b) prematurely closed by any 3-backtick line
+        // inside the block. Per CommonMark §4.5, the closing fence must
+        // contain at least as many fence chars as the opener.
+
+        // 1. 6-backtick opener with an embedded 3-backtick line that must NOT
+        //    close the block.
+        let extended = "``````mermaid\nflowchart TD\n```\nA-->B\n``````\n";
+        let blocks = extract_blocks(extended);
+        assert_eq!(
+            blocks.len(),
+            1,
+            "6-backtick fence with embedded ``` line was misclosed",
+        );
+        assert!(
+            blocks[0].dsl.contains("```"),
+            "expected the embedded 3-backtick line to survive inside the DSL, got {:?}",
+            blocks[0].dsl,
+        );
+
+        // 2. 4-backtick opener with a matching 4-backtick closer.
+        let four = "````mermaid\npie\ntitle X\n````\n";
+        let blocks = extract_blocks(four);
+        assert_eq!(blocks.len(), 1, "4-backtick fence not recognised");
+        assert_eq!(blocks[0].diagram_type, "pie");
+
+        // 3. Tilde variant with a 5-tilde opener.
+        let tildes = "~~~~~mermaid\nflowchart LR\n~~~\nA-->B\n~~~~~\n";
+        let blocks = extract_blocks(tildes);
+        assert_eq!(
+            blocks.len(),
+            1,
+            "5-tilde fence with embedded ~~~ line was misclosed"
+        );
+
+        // 4. A closer with MORE chars than the opener is still valid
+        //    (CommonMark allows the closing fence to be at least as long as
+        //    the opener).
+        let longer_close = "```mermaid\nflowchart TD\nA-->B\n``````\n";
+        let blocks = extract_blocks(longer_close);
+        assert_eq!(
+            blocks.len(),
+            1,
+            "longer closer should still close the block"
+        );
     }
 
     #[test]
