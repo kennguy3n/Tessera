@@ -938,6 +938,217 @@ describe("single-model enforcement", () => {
     expect(await fsp.readdir(modelsDir(workdir))).toEqual([]);
   });
 
+  // ---------------------------------------------------------------
+  // `beforeMutation` deps hook — runs INSIDE the per-userDataDir
+  // lock, only when the operation will actually mutate the filesystem.
+  // The Electron main process passes `stopSidecarIfRunning` through
+  // this hook so the llama-server child releases its OS file handle
+  // before we touch the active model. (Devin Review INFO finding
+  // f37a3c45.)
+  // ---------------------------------------------------------------
+
+  it("downloadModel skips beforeMutation on the already-installed fast path", async () => {
+    resetDownloadLocks();
+    const r = makeResolved();
+    // First install — beforeMutation should fire once (fresh install
+    // counts as a mutation).
+    const hook1 = vi.fn(async () => {});
+    await downloadModel(
+      workdir,
+      r,
+      () => {},
+      {
+        fetcher: async (_u, onP, d) => {
+          await fsp.writeFile(d, Buffer.from("payload"));
+          onP(7, 7);
+          return { totalBytes: 7 };
+        },
+        beforeMutation: hook1,
+      },
+    );
+    expect(hook1).toHaveBeenCalledTimes(1);
+
+    // Second call for the SAME model id — `downloadModelLocked`
+    // recognises it as already-installed and returns early WITHOUT
+    // running beforeMutation. Otherwise opening a stale window or
+    // double-clicking Download would needlessly tear down the
+    // sidecar that's already happily serving this model.
+    const hook2 = vi.fn(async () => {});
+    await downloadModel(
+      workdir,
+      r,
+      () => {},
+      {
+        fetcher: async () => {
+          throw new Error("fetcher must not be called on already-installed fast path");
+        },
+        beforeMutation: hook2,
+      },
+    );
+    expect(hook2).not.toHaveBeenCalled();
+  });
+
+  it("downloadModel invokes beforeMutation exactly once on swap, before eviction", async () => {
+    resetDownloadLocks();
+    const a = makeResolved({ id: "ternary-bonsai-1.7b-gguf", filename: "a.gguf" });
+    const b = makeResolved({ id: "ternary-bonsai-4b-gguf", filename: "b.gguf" });
+
+    // Install A.
+    await downloadModel(workdir, a, () => {}, {
+      fetcher: async (_u, onP, d) => {
+        await fsp.writeFile(d, Buffer.from("A"));
+        onP(1, 1);
+        return { totalBytes: 1 };
+      },
+    });
+    const aFile = path.join(modelsDir(workdir), a.filename);
+    expect(fs.existsSync(aFile)).toBe(true);
+
+    // Swap to B. beforeMutation must fire BEFORE A's file is unlinked
+    // so the sidecar releases its handle in time. We capture the
+    // existence of A's file at the moment beforeMutation runs as
+    // evidence of ordering.
+    let aFileExistedAtHook: boolean | null = null;
+    const hook = vi.fn(async () => {
+      aFileExistedAtHook = fs.existsSync(aFile);
+    });
+    await downloadModel(workdir, b, () => {}, {
+      fetcher: async (_u, onP, d) => {
+        await fsp.writeFile(d, Buffer.from("B"));
+        onP(1, 1);
+        return { totalBytes: 1 };
+      },
+      beforeMutation: hook,
+    });
+
+    expect(hook).toHaveBeenCalledTimes(1);
+    expect(aFileExistedAtHook).toBe(true);
+    // Post-conditions: A gone, B installed (single-model invariant).
+    expect(fs.existsSync(aFile)).toBe(false);
+    expect(fs.existsSync(path.join(modelsDir(workdir), b.filename))).toBe(true);
+  });
+
+  it("deleteCurrentModel skips beforeMutation when there is nothing to delete", async () => {
+    resetDownloadLocks();
+    // No prior downloadModel — active-model.json doesn't exist.
+    const hook = vi.fn(async () => {});
+    await deleteCurrentModel(workdir, { beforeMutation: hook });
+    // Skipping the hook is the whole point: invoking
+    // stopSidecarIfRunning() here would needlessly tear down a
+    // sidecar that may be serving a different model the user
+    // hasn't asked to delete (e.g. a stale UI double-click).
+    expect(hook).not.toHaveBeenCalled();
+  });
+
+  it("deleteCurrentModel invokes beforeMutation once, before the file is unlinked", async () => {
+    resetDownloadLocks();
+    const r = makeResolved();
+    await downloadModel(workdir, r, () => {}, {
+      fetcher: async (_u, onP, d) => {
+        await fsp.writeFile(d, Buffer.from("payload"));
+        onP(7, 7);
+        return { totalBytes: 7 };
+      },
+    });
+    const filePath = path.join(modelsDir(workdir), r.filename);
+    expect(fs.existsSync(filePath)).toBe(true);
+
+    let fileExistedAtHook: boolean | null = null;
+    const hook = vi.fn(async () => {
+      fileExistedAtHook = fs.existsSync(filePath);
+    });
+    await deleteCurrentModel(workdir, { beforeMutation: hook });
+
+    expect(hook).toHaveBeenCalledTimes(1);
+    expect(fileExistedAtHook).toBe(true);
+    expect(fs.existsSync(filePath)).toBe(false);
+    expect(await getCurrentModel(workdir)).toBeNull();
+  });
+
+  it("beforeMutation runs INSIDE the download lock (concurrent swap is serialised)", async () => {
+    // Regression for the race window where `stopSidecarIfRunning`
+    // ran in the IPC handler outside the lock: a parallel
+    // downloadModel could complete between sidecar-stop and lock-
+    // acquire and end up deleted by our subsequent eviction. With
+    // the hook inside the lock, the swap is fully atomic per
+    // userDataDir.
+    resetDownloadLocks();
+    const a = makeResolved({ id: "ternary-bonsai-1.7b-gguf", filename: "a.gguf" });
+    const b = makeResolved({ id: "ternary-bonsai-4b-gguf", filename: "b.gguf" });
+
+    // Install A first so the swap path is exercised on the second call.
+    await downloadModel(workdir, a, () => {}, {
+      fetcher: async (_u, onP, d) => {
+        await fsp.writeFile(d, Buffer.from("A"));
+        onP(1, 1);
+        return { totalBytes: 1 };
+      },
+    });
+
+    const events: string[] = [];
+    // Long-running swap to B: beforeMutation pushes a marker, fetcher
+    // takes a while, eviction unlinks A. A second concurrent call (to
+    // re-download A) MUST queue behind it and only see "no model"
+    // when it acquires the lock.
+    const swap = downloadModel(workdir, b, () => {}, {
+      fetcher: async (_u, onP, d) => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await fsp.writeFile(d, Buffer.from("B"));
+        onP(1, 1);
+        events.push("swap-fetcher-resolved");
+        return { totalBytes: 1 };
+      },
+      beforeMutation: async () => {
+        events.push("swap-beforeMutation");
+      },
+    });
+
+    // Queue a re-install of A concurrently. `beforeMutation` runs
+    // INSIDE the lock, BEFORE any eviction or fetcher work. If the
+    // swap completed atomically the reinstall's hook will see B as
+    // the current model — this is the proof that the swap's commit
+    // (writeCurrentModel(b)) happened strictly before the reinstall
+    // acquired the lock.
+    const reinstall = (async () => {
+      await Promise.resolve(); // yield so swap acquires the lock first
+      let currentAtHook: InstalledModelRecord | null = null;
+      const rec = await downloadModel(workdir, a, () => {}, {
+        fetcher: async (_u, onP, d) => {
+          await fsp.writeFile(d, Buffer.from("A2"));
+          onP(2, 2);
+          return { totalBytes: 2 };
+        },
+        beforeMutation: async () => {
+          // Capture BEFORE the locked block evicts B and clears
+          // active-model.json.
+          currentAtHook = await getCurrentModel(workdir);
+          events.push("reinstall-beforeMutation");
+        },
+      });
+      events.push("reinstall-completed");
+      return { rec, currentAtHook };
+    })();
+
+    const [, reinstallResult] = await Promise.all([swap, reinstall]);
+
+    // Expected ordering: the swap's beforeMutation + fetcher resolve
+    // before the reinstall's beforeMutation. The reinstall doesn't
+    // even start its hook until the swap has fully committed.
+    expect(events).toEqual([
+      "swap-beforeMutation",
+      "swap-fetcher-resolved",
+      "reinstall-beforeMutation",
+      "reinstall-completed",
+    ]);
+
+    // The reinstall's beforeMutation hook saw B as the active model,
+    // because the swap had already written `active-model.json` for B
+    // before the reinstall could acquire the lock. This is the
+    // assertion that proves the swap is atomic per userDataDir.
+    expect(reinstallResult.currentAtHook).not.toBeNull();
+    expect(reinstallResult.currentAtHook!.modelId).toBe(b.id);
+  });
+
   it("downloadModel verifies sha256 and deletes the file on mismatch", async () => {
     const requested = makeResolved({
       sha256: "deadbeef".padEnd(64, "0"),

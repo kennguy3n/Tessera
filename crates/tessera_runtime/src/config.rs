@@ -933,4 +933,233 @@ mod tests {
         assert_eq!(ModelFormat::Gguf.display_label(), "GGUF Q1_0_g128");
         assert_eq!(ModelFormat::Mlx.display_label(), "MLX 2-bit");
     }
+
+    // ---------------------------------------------------------------
+    // Manifest ↔ hardcoded registry cross-check
+    //
+    // `sidecars/models.json` is the single source of truth used by the
+    // Electron download path (it carries the HuggingFace URLs and the
+    // expected SHA-256 checksums). The Rust `full_model_registry()`
+    // duplicates the same metadata so the Rust runtime can answer
+    // "what's the best model for this device tier?" without parsing
+    // JSON at every startup AND can fall back gracefully if the
+    // manifest is ever missing on disk.
+    //
+    // The risk is silent drift: a future bump to a model size in the
+    // manifest (because we re-quantized, retrained, or HF mirror
+    // returned a different file) could leave the Rust copy stale.
+    // The swap-planner uses `disk_size_mb` to tell the user "swapping
+    // saves X MB / costs X MB", so drift here directly mis-informs
+    // the user.
+    //
+    // This test loads the manifest at test time and asserts that
+    // every field shared between the two representations matches
+    // EXACTLY (no tolerance — these are bytes-on-disk numbers, not
+    // measurements; if they don't match one of them is wrong). When
+    // it fires the failure message names the model id and the
+    // diverging field so the fix is mechanical.
+    // (Devin Review INFO finding e1f55a44.)
+    // ---------------------------------------------------------------
+
+    #[derive(serde::Deserialize)]
+    struct ManifestRoot {
+        models: Vec<ManifestModel>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ManifestModel {
+        id: String,
+        name: String,
+        parameters: String,
+        format: String,
+        quantization: String,
+        platform: String,
+        compute: Vec<String>,
+        tier: String,
+        download_size_mb: u64,
+        disk_size_mb: u64,
+        required_ram_gb: f64,
+        context_length: u32,
+        filename: String,
+        url: Option<String>,
+    }
+
+    fn load_manifest() -> ManifestRoot {
+        // CARGO_MANIFEST_DIR points at crates/tessera_runtime/.
+        // Manifest lives at <workspace_root>/sidecars/models.json.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../sidecars/models.json");
+        let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "failed to read manifest at {}: {e}. \
+                 This test must run from the workspace; \
+                 it cross-checks sidecars/models.json against \
+                 full_model_registry().",
+                path.display()
+            )
+        });
+        serde_json::from_str(&raw)
+            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
+    }
+
+    fn tier_from_str(s: &str, model_id: &str) -> DeviceTier {
+        match s {
+            "low" => DeviceTier::Low,
+            "medium" => DeviceTier::Medium,
+            "high" => DeviceTier::High,
+            other => panic!("manifest model {model_id} has unknown tier {other}"),
+        }
+    }
+
+    fn format_from_str(s: &str, model_id: &str) -> ModelFormat {
+        match s {
+            "gguf" => ModelFormat::Gguf,
+            "mlx" => ModelFormat::Mlx,
+            other => panic!("manifest model {model_id} has unknown format {other}"),
+        }
+    }
+
+    fn backend_from_str(s: &str, model_id: &str) -> ComputeBackend {
+        match s {
+            "cpu" => ComputeBackend::Cpu,
+            "cuda" => ComputeBackend::Cuda,
+            "vulkan" => ComputeBackend::Vulkan,
+            "metal" => ComputeBackend::Metal,
+            "rocm" => ComputeBackend::Rocm,
+            other => panic!("manifest model {model_id} has unknown compute backend {other}"),
+        }
+    }
+
+    #[test]
+    fn manifest_matches_full_registry_exactly() {
+        let manifest = load_manifest();
+        let registry = full_model_registry();
+
+        // Same set of model ids.
+        let manifest_ids: std::collections::BTreeSet<&str> =
+            manifest.models.iter().map(|m| m.id.as_str()).collect();
+        let registry_ids: std::collections::BTreeSet<&str> =
+            registry.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            manifest_ids, registry_ids,
+            "manifest and full_model_registry() must list the same model ids; \
+             update sidecars/models.json AND crates/tessera_runtime/src/config.rs \
+             together when adding or removing a variant"
+        );
+
+        // Each model id has identical metadata in both places.
+        for mm in &manifest.models {
+            let rm = registry
+                .iter()
+                .find(|r| r.id == mm.id)
+                .unwrap_or_else(|| panic!("registry missing manifest entry {}", mm.id));
+
+            assert_eq!(rm.name, mm.name, "{}: name", mm.id);
+            assert_eq!(rm.parameters, mm.parameters, "{}: parameters", mm.id);
+            assert_eq!(rm.quantization, mm.quantization, "{}: quantization", mm.id);
+            assert_eq!(rm.format, format_from_str(&mm.format, &mm.id), "{}: format", mm.id);
+            assert_eq!(rm.tier, tier_from_str(&mm.tier, &mm.id), "{}: tier", mm.id);
+            assert_eq!(rm.context_length, mm.context_length, "{}: context_length", mm.id);
+            assert_eq!(rm.filename, mm.filename, "{}: filename", mm.id);
+
+            // f64 ram in manifest, f64 in registry — exact equality is
+            // fine because both come from human-authored small
+            // decimals (2.0, 4.0, 8.0) with no arithmetic.
+            assert!(
+                (rm.required_ram_gb - mm.required_ram_gb).abs() < f64::EPSILON,
+                "{}: required_ram_gb registry={} manifest={}",
+                mm.id, rm.required_ram_gb, mm.required_ram_gb,
+            );
+
+            // The critical pair: swap planner uses these to compute
+            // "this swap saves X MB". They MUST match exactly.
+            assert_eq!(
+                rm.download_size_mb, mm.download_size_mb,
+                "{}: download_size_mb registry={} manifest={} — update both \
+                 (manifest at sidecars/models.json and registry at \
+                 crates/tessera_runtime/src/config.rs::full_model_registry)",
+                mm.id, rm.download_size_mb, mm.download_size_mb,
+            );
+            assert_eq!(
+                rm.disk_size_mb, mm.disk_size_mb,
+                "{}: disk_size_mb registry={} manifest={} — for MLX \
+                 archives this is the POST-EXTRACT footprint; the swap \
+                 planner uses it to size on-disk eviction. Update both \
+                 places together",
+                mm.id, rm.disk_size_mb, mm.disk_size_mb,
+            );
+
+            // Compute backends: order-independent compare. Manifest
+            // lists them lowercase strings, registry uses the enum.
+            let expected: Vec<ComputeBackend> = mm
+                .compute
+                .iter()
+                .map(|s| backend_from_str(s, &mm.id))
+                .collect();
+            let mut want: Vec<ComputeBackend> = expected;
+            let mut got: Vec<ComputeBackend> = rm.compute_backends.clone();
+            want.sort_by_key(|b| b.as_str());
+            got.sort_by_key(|b| b.as_str());
+            assert_eq!(got, want, "{}: compute_backends", mm.id);
+
+            // URL must be present in both and match. The manifest is
+            // the source of truth for the actual HuggingFace download
+            // URL; if these drift the runtime would compute a
+            // different URL than the manifest the downloader follows.
+            let manifest_url = mm
+                .url
+                .as_deref()
+                .unwrap_or_else(|| panic!("manifest model {} missing url", mm.id));
+            let registry_url = rm
+                .url
+                .as_deref()
+                .unwrap_or_else(|| panic!("registry model {} missing url", mm.id));
+            assert_eq!(
+                registry_url, manifest_url,
+                "{}: url mismatch — registry={} manifest={}",
+                mm.id, registry_url, manifest_url,
+            );
+
+            // Platform consistency: MLX variants in the manifest are
+            // declared `macos-apple-silicon`; in the registry MLX is
+            // hardcoded to MacosAppleSilicon. GGUF variants in the
+            // manifest are declared `any-non-apple-silicon` (because
+            // the same file runs on Windows, Linux, macOS Intel —
+            // available_models_for_platform rewrites the platform
+            // field per platform).
+            match mm.format.as_str() {
+                "mlx" => {
+                    assert_eq!(
+                        mm.platform, "macos-apple-silicon",
+                        "{}: MLX manifest entries must declare platform=macos-apple-silicon",
+                        mm.id
+                    );
+                    assert_eq!(
+                        rm.platform, Platform::MacosAppleSilicon,
+                        "{}: MLX registry entries must use Platform::MacosAppleSilicon",
+                        mm.id
+                    );
+                }
+                "gguf" => {
+                    assert_eq!(
+                        mm.platform, "any-non-apple-silicon",
+                        "{}: GGUF manifest entries must declare platform=any-non-apple-silicon",
+                        mm.id
+                    );
+                    // Registry GGUF entries carry a placeholder
+                    // Platform that's rewritten by
+                    // available_models_for_platform; just assert it's
+                    // not MacosAppleSilicon.
+                    assert_ne!(
+                        rm.platform, Platform::MacosAppleSilicon,
+                        "{}: GGUF registry entries must NOT declare \
+                         Platform::MacosAppleSilicon",
+                        mm.id
+                    );
+                }
+                _ => unreachable!("validated above"),
+            }
+        }
+    }
 }

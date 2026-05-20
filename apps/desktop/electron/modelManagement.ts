@@ -717,6 +717,35 @@ export interface DownloadDeps {
    * compressed fixtures.
    */
   extractTarGz?: (archivePath: string, destDir: string) => Promise<void>;
+  /**
+   * Hook invoked exactly once, INSIDE the per-`userDataDir` download
+   * lock, just before the first filesystem mutation (eviction of an
+   * existing model file, or writing the `.partial` for a fresh
+   * install). Skipped on the already-installed fast path because no
+   * mutation occurs there.
+   *
+   * The Electron main process wires `stopSidecarIfRunning()` through
+   * here so the `llama-server` child releases its OS-level file handle
+   * on the active model before we touch it. Doing this work INSIDE the
+   * lock closes the race window that existed when the sidecar-stop
+   * ran in the IPC handler outside the lock: a concurrent
+   * `runtime:downloadModel` from another window could have completed
+   * a download in the gap between sidecar-stop and lock-acquire,
+   * leading to a user-confusing "my just-downloaded model got
+   * deleted" sequence. With the hook inside the lock the entire
+   * (stop → mutate → commit) sequence is atomic per `userDataDir`.
+   * (Devin Review INFO finding f37a3c45.)
+   */
+  beforeMutation?: () => Promise<void>;
+}
+
+/**
+ * Knobs for `deleteCurrentModel`. Currently only the `beforeMutation`
+ * hook — same semantics as in `DownloadDeps` (run once, INSIDE the
+ * lock, only when a mutation will actually occur).
+ */
+export interface DeleteDeps {
+  beforeMutation?: () => Promise<void>;
 }
 
 const defaultFetcher: NonNullable<DownloadDeps["fetcher"]> = async (
@@ -868,10 +897,27 @@ async function deleteCurrentModelUnlocked(userDataDir: string): Promise<void> {
  * process, or any other parallel-execution context. The lock makes the
  * invariant explicit instead of implicit.
  */
-export async function deleteCurrentModel(userDataDir: string): Promise<void> {
-  return withDownloadLock(userDataDir, () =>
-    deleteCurrentModelUnlocked(userDataDir),
-  );
+export async function deleteCurrentModel(
+  userDataDir: string,
+  deps: DeleteDeps = {},
+): Promise<void> {
+  return withDownloadLock(userDataDir, async () => {
+    // No-op fast path INSIDE the lock: if there is no installed model
+    // we must not invoke `beforeMutation` at all (calling
+    // `stopSidecarIfRunning()` for a no-op delete would needlessly
+    // tear down a sidecar that's currently serving a *different*
+    // model the user hasn't asked to delete — which would be the
+    // case if `active-model.json` was already cleared but the user
+    // double-clicked Delete from a stale UI). Reading
+    // `getCurrentModel` here is cheap (one JSON file read) compared
+    // to the sidecar-stop it gates.
+    const current = await getCurrentModel(userDataDir);
+    if (!current) return;
+    if (deps.beforeMutation) {
+      await deps.beforeMutation();
+    }
+    return deleteCurrentModelUnlocked(userDataDir);
+  });
 }
 
 // --- Concurrency guard ---------------------------------------------------
@@ -988,10 +1034,22 @@ async function downloadModelLocked(
   if (alreadyInstalled) {
     return alreadyInstalled;
   }
-  // Not the fast path. We must download. If a *stale* record exists
-  // (right model id but file missing, OR a different model entirely),
-  // clean it up first so the post-download `writeCurrentModel` writes a
-  // clean state instead of merging with the stale one.
+  // Not the fast path — we will mutate the filesystem. Run the
+  // pre-mutation hook (e.g. sidecar-stop) exactly once now, INSIDE
+  // the lock, so the entire `(stop → evict → download → commit)`
+  // sequence is serialised against any other download/delete on this
+  // `userDataDir`. Skipped on the already-installed fast path above,
+  // and called BEFORE the eviction branch so callers can rely on
+  // "no filesystem mutation has happened yet" when the hook fires.
+  // (Devin Review INFO finding f37a3c45.)
+  if (deps.beforeMutation) {
+    await deps.beforeMutation();
+  }
+
+  // If a *stale* record exists (right model id but file missing, OR
+  // a different model entirely), clean it up first so the post-
+  // download `writeCurrentModel` writes a clean state instead of
+  // merging with the stale one.
   const current = await getCurrentModel(userDataDir);
   if (current) {
     if (current.modelId === requested.id) {
@@ -1004,7 +1062,10 @@ async function downloadModelLocked(
       // unlocked variant — going through the public locked
       // `deleteCurrentModel` would deadlock the per-userDataDir
       // promise chain (it would queue behind the very call that's
-      // awaiting it).
+      // awaiting it). Do NOT pass `deps.beforeMutation` through
+      // either: we already called it above, and calling it again
+      // here would double-invoke the sidecar-stop for the swap
+      // path.
       await deleteCurrentModelUnlocked(userDataDir);
     }
   }

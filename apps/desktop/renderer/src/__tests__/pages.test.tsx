@@ -4,6 +4,7 @@ import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import HomePage from "../pages/HomePage";
 import SettingsPage from "../pages/SettingsPage";
 import CreatePage from "../pages/CreatePage";
+import SourcesPage from "../pages/SourcesPage";
 
 describe("HomePage", () => {
   it("shows welcome state when no sources or artifacts", async () => {
@@ -207,5 +208,111 @@ describe("CreatePage", () => {
     expect(generateBtn).toBeDisabled();
 
     window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
+  });
+});
+
+describe("SourcesPage", () => {
+  it("prunes selectedIds when a selected source is removed (Compare counter drops from 2/2 to 1/2)", async () => {
+    // Regression for Devin Review BUG finding eb2bc4d4.
+    //
+    // Before the fix: selecting two sources, then removing one via the
+    // confirm-Remove modal, left the removed source's id in
+    // `selectedIds`. `refresh()` re-fetched the list (now showing one
+    // source) but the Compare button still read "Compare (2/2)" and
+    // stayed enabled — clicking it dispatched
+    // `artifacts:compareSources(stale-id, kept-id)`, which the
+    // backend would reject.
+    //
+    // After the fix: a `useEffect` watches `sources` and prunes any
+    // id in `selectedIds` that's not present in the current list.
+    // This test installs two sources, selects both, removes one,
+    // and asserts the counter drops from 2/2 to 1/2 and the button
+    // becomes disabled.
+    const s1 = {
+      id: "src-keep",
+      sourceType: "local_folder" as const,
+      path: "/docs/keep",
+      status: "connected" as const,
+      createdAt: new Date().toISOString(),
+      lastIndexed: null,
+      fileCount: 1,
+    };
+    const s2 = {
+      id: "src-remove",
+      sourceType: "local_folder" as const,
+      path: "/docs/remove",
+      status: "connected" as const,
+      createdAt: new Date().toISOString(),
+      lastIndexed: null,
+      fileCount: 1,
+    };
+
+    // First refresh returns both; after we remove s2 the next refresh
+    // returns only s1. `useSourceList` calls `listSources` once on
+    // mount and again after `refresh()` so two mock values are enough.
+    const listSources = vi
+      .fn()
+      .mockResolvedValueOnce([s1, s2])
+      .mockResolvedValue([s1]);
+    const removeSource = vi.fn().mockResolvedValue(undefined);
+    window.tessera.sources.listSources = listSources;
+    window.tessera.sources.removeSource = removeSource;
+
+    render(
+      <MemoryRouter>
+        <SourcesPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("/docs/keep")).toBeInTheDocument();
+      expect(screen.getByText("/docs/remove")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("source-select-src-keep"));
+    fireEvent.click(screen.getByTestId("source-select-src-remove"));
+
+    // Precondition: Compare button shows 2/2 and is enabled.
+    const compareBtn = screen.getByTestId("compare-sources");
+    await waitFor(() => {
+      expect(compareBtn.textContent).toMatch(/Compare \(2\/2\)/);
+    });
+    expect(compareBtn).not.toBeDisabled();
+
+    // Open the confirm-Remove modal for s2 by clicking its per-card
+    // Remove button. There are two "Remove" buttons rendered (one
+    // per source card); s2's card is rendered second so it's at
+    // index 1.
+    const cardRemoveButtons = screen.getAllByRole("button", { name: "Remove" });
+    fireEvent.click(cardRemoveButtons[1]);
+
+    // The modal renders its own "Remove" confirmation button. Click
+    // the last "Remove" in DOM order (the modal's).
+    await waitFor(() => {
+      const buttons = screen.getAllByRole("button", { name: "Remove" });
+      // The modal adds a 3rd button (2 card + 1 modal).
+      expect(buttons.length).toBeGreaterThan(cardRemoveButtons.length);
+    });
+    const allRemove = screen.getAllByRole("button", { name: "Remove" });
+    fireEvent.click(allRemove[allRemove.length - 1]);
+
+    await waitFor(() => {
+      expect(removeSource).toHaveBeenCalledWith("src-remove");
+    });
+
+    // After the refresh, s2 is gone from the list AND from
+    // selectedIds, so the counter drops to 1/2 and the button is
+    // disabled.
+    await waitFor(() => {
+      expect(screen.queryByText("/docs/remove")).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      const c = screen.getByTestId("compare-sources");
+      expect(c.textContent).toMatch(/Compare \(1\/2\)/);
+      expect(c).toBeDisabled();
+    });
+
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
+    window.tessera.sources.removeSource = vi.fn().mockResolvedValue(undefined);
   });
 });

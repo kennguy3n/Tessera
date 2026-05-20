@@ -677,16 +677,31 @@ export function registerIpcHandlers(): void {
     if (installed) {
       return installed;
     }
-    await stopSidecarIfRunning();
-    return downloadModel(userDataDir(), requested, progressEmitter(event));
+    // The sidecar-stop runs INSIDE `withDownloadLock` via the
+    // `beforeMutation` deps hook. Previously this call lived here in
+    // the IPC handler, BEFORE the lock was acquired, which left a race
+    // window: a parallel `runtime:downloadModel` invocation could
+    // complete its own download in the gap between our sidecar-stop
+    // and lock-acquire, and our subsequent eviction would then delete
+    // a model the other tab had just successfully installed. Moving
+    // it inside the lock makes the entire (stop → evict → download)
+    // sequence atomic per userDataDir. (Devin Review INFO finding
+    // f37a3c45.)
+    return downloadModel(userDataDir(), requested, progressEmitter(event), {
+      beforeMutation: stopSidecarIfRunning,
+    });
   });
 
   ipcMain.handle("runtime:deleteModel", async () => {
-    // Stop the sidecar before unlinking. See `stopSidecarIfRunning` doc
-    // for the OS-level rationale (EPERM/EBUSY on Windows, orphaned
-    // process on macOS / Linux).
-    await stopSidecarIfRunning();
-    await deleteCurrentModel(userDataDir());
+    // Sidecar-stop is wired through `beforeMutation` so it runs INSIDE
+    // the per-userDataDir lock, after `deleteCurrentModel` has verified
+    // that there is actually something to delete. See the
+    // `runtime:downloadModel` handler above and the `beforeMutation`
+    // doc on `DownloadDeps` for the race-window rationale. (Devin
+    // Review INFO finding f37a3c45.)
+    await deleteCurrentModel(userDataDir(), {
+      beforeMutation: stopSidecarIfRunning,
+    });
   });
 
   // --- Connectors ---

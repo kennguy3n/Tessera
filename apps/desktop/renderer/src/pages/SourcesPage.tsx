@@ -53,6 +53,45 @@ export default function SourcesPage() {
     refreshDriveStatus();
   }, [refreshDriveStatus]);
 
+  // Prune `selectedIds` whenever the source list changes so a removed
+  // source can never leave a stale ID in the selection. This fixes the
+  // failure mode where a user selected two sources, removed one via the
+  // Remove modal, and clicked Compare — the removed source's ID was
+  // still in `selectedIds` so the button remained enabled and dispatched
+  // an `artifacts:compareSources` call with a now-invalid ID, which
+  // failed on the backend. (Devin Review BUG finding eb2bc4d4.)
+  //
+  // We do this reactively against `sources` instead of patching
+  // `handleRemove` for two reasons:
+  //   1. Defense-in-depth — every code path that mutates the source
+  //      list (handleRemove, Drive sync that drops a no-longer-shared
+  //      file, hot-reload during npm run dev, future "trash" workflow,
+  //      multi-window concurrent removal) automatically prunes the
+  //      selection. There is no way to add a future source mutation
+  //      that accidentally bypasses this.
+  //   2. The "valid selection ⊆ visible sources" invariant is now
+  //      expressed in code rather than relying on every call site to
+  //      remember to clean up.
+  //
+  // Identity preservation: if no prune is needed we return the same
+  // `Set` reference so consumers (`selectedIds.size !== 2 || comparing`
+  // in the Compare button) don't trigger unnecessary re-renders.
+  useEffect(() => {
+    const validIds = new Set(sources.map((s) => s.id));
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (validIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [sources]);
+
   const handleAuthenticateDrive = async () => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
     if (!api) {
