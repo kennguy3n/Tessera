@@ -76,8 +76,17 @@ if (Test-Path $ModelsJson) {
 }
 
 if (-not $ResolvedUrl) {
-    $suffix = if ($Compute -ne "cpu") { "-$Compute" } else { "" }
-    $ResolvedUrl = "https://github.com/ggerganov/llama.cpp/releases/download/$Version/llama-$Version-bin-$Platform$suffix.zip"
+    # No usable URL in the manifest for this (platform, compute) variant.
+    # The shell counterpart used to construct a fallback URL against
+    # ggerganov/llama.cpp with PrismML platform names — those names don't
+    # match upstream release asset naming, so the fallback 404'd in
+    # practice and silently misled anyone who cleared the manifest during
+    # development. Fail loudly instead with a pointer to the manifest
+    # entry that needs populating.
+    #
+    # (Devin Review finding 3270628605.)
+    Write-Error "No URL configured in $ModelsJson for variant: $VariantKey. Populate llama_server.variants[].url for platform=$Platform, compute=$Compute with a real PrismML llama.cpp release asset before running this script."
+    exit 1
 }
 
 Write-Host "Downloading llama.cpp $Version for $VariantKey..."

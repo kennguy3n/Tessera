@@ -547,9 +547,15 @@ pub fn has_vulkan() -> bool {
     {
         let candidates = [
             "/usr/lib/x86_64-linux-gnu/libvulkan.so.1",
+            // Linux arm64 multiarch path (Debian/Ubuntu aarch64). Required
+            // for first-class Linux arm64 support so headless aarch64 hosts
+            // with the Vulkan loader installed but `vulkaninfo` missing are
+            // still detected as Vulkan-capable.
+            "/usr/lib/aarch64-linux-gnu/libvulkan.so.1",
             "/usr/lib64/libvulkan.so.1",
             "/usr/lib/libvulkan.so.1",
             "/lib/x86_64-linux-gnu/libvulkan.so.1",
+            "/lib/aarch64-linux-gnu/libvulkan.so.1",
         ];
         return candidates.iter().any(|p| std::path::Path::new(p).exists());
     }

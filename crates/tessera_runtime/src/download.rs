@@ -239,8 +239,28 @@ pub struct InstalledModel {
     pub format: ModelFormat,
     pub filename: String,
     pub path: String,
+    /// Bytes pulled over the wire when this model was installed.
     pub download_size_mb: u64,
+    /// On-disk footprint after extraction (equal to `download_size_mb`
+    /// for single-file GGUF; larger for MLX archives that expand on
+    /// disk). Carried separately so `plan_download` can compute correct
+    /// disk-space deltas independent of network-transfer size.
+    #[serde(default)]
+    pub disk_size_mb: u64,
     pub downloaded_at: String,
+}
+
+impl InstalledModel {
+    /// Fall back to `download_size_mb` if a record was persisted before
+    /// the `disk_size_mb` field was introduced (serde defaults to 0).
+    #[must_use]
+    pub fn effective_disk_size_mb(&self) -> u64 {
+        if self.disk_size_mb == 0 {
+            self.download_size_mb
+        } else {
+            self.disk_size_mb
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -274,39 +294,46 @@ pub enum DownloadPlan {
 ///
 /// The planner enforces single-model storage: at most one model file
 /// ever lives in the model cache directory.
+///
+/// `SwapDecision` describes disk-space accounting ("save X MB", "net
+/// disk delta"), so the evict / install / delta fields are filled
+/// from `disk_size_mb` (the post-extract footprint) on both sides.
+/// `DirectDownload.download_size_mb` describes network transfer and
+/// is kept as the requested download size for progress UI.
 #[must_use]
 pub fn plan_download(current: Option<&InstalledModel>, requested: &ModelInfo) -> DownloadPlan {
-    let install_size = requested.download_size_mb;
+    let download_size = requested.download_size_mb;
+    let install_disk_size = requested.disk_size_mb;
     match current {
         None => DownloadPlan::DirectDownload {
             model_id: requested.id.clone(),
             filename: requested.filename.clone(),
-            download_size_mb: install_size,
-            message: format!("Download {} ({} MB).", requested.name, install_size),
+            download_size_mb: download_size,
+            message: format!("Download {} ({} MB).", requested.name, download_size),
         },
         Some(inst) if inst.model_id == requested.id => DownloadPlan::AlreadyInstalled {
             model_id: inst.model_id.clone(),
         },
         Some(inst) => {
-            let evict_size = inst.download_size_mb;
-            let net = install_size as i64 - evict_size as i64;
+            let evict_disk_size = inst.effective_disk_size_mb();
+            let net = install_disk_size as i64 - evict_disk_size as i64;
             let message = format!(
-                "Current: {} ({} MB). New: {} ({} MB). This will remove {} to save {} MB and download {} MB.",
+                "Current: {} ({} MB). New: {} ({} MB). This will remove {} to save {} MB and install {} MB.",
                 inst.model_id,
-                evict_size,
+                evict_disk_size,
                 requested.name,
-                install_size,
+                install_disk_size,
                 inst.filename,
-                evict_size,
-                install_size,
+                evict_disk_size,
+                install_disk_size,
             );
             DownloadPlan::Swap(SwapDecision {
                 evict_model_id: inst.model_id.clone(),
                 evict_filename: inst.filename.clone(),
-                evict_size_mb: evict_size,
+                evict_size_mb: evict_disk_size,
                 install_model_id: requested.id.clone(),
                 install_filename: requested.filename.clone(),
-                install_size_mb: install_size,
+                install_size_mb: install_disk_size,
                 net_disk_delta_mb: net,
                 message,
             })
@@ -499,6 +526,7 @@ mod tests {
             filename: req.filename.clone(),
             path: "/tmp/x".into(),
             download_size_mb: req.download_size_mb,
+            disk_size_mb: req.disk_size_mb,
             downloaded_at: "2026-05-19T00:00:00Z".into(),
         };
         let plan = plan_download(Some(&installed), &req);
@@ -529,6 +557,7 @@ mod tests {
             filename: installed_info.filename.clone(),
             path: "/tmp/old".into(),
             download_size_mb: installed_info.download_size_mb,
+            disk_size_mb: installed_info.disk_size_mb,
             downloaded_at: "2026-05-19T00:00:00Z".into(),
         };
         let plan = plan_download(Some(&installed), &requested);
@@ -544,6 +573,71 @@ mod tests {
             }
             other => panic!("expected Swap, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn plan_swap_disk_size_used_when_diverges_from_download_size() {
+        // Simulate a model where the on-disk footprint after extract is
+        // bigger than the compressed download (e.g. future MLX archive).
+        // The swap decision must reflect disk usage, not network transfer.
+        let installed = InstalledModel {
+            model_id: "installed-archive".into(),
+            format: ModelFormat::Mlx,
+            filename: "installed.tar.gz".into(),
+            path: "/tmp/installed".into(),
+            download_size_mb: 100,
+            disk_size_mb: 300,
+            downloaded_at: "2026-05-19T00:00:00Z".into(),
+        };
+        let requested = ModelInfo {
+            id: "new-archive".into(),
+            name: "New Archive".into(),
+            parameters: "4B".into(),
+            quantization: "2-bit".into(),
+            format: ModelFormat::Mlx,
+            platform: Platform::MacosAppleSilicon,
+            compute_backends: vec![ComputeBackend::Metal],
+            required_ram_gb: 4.0,
+            download_size_mb: 250,
+            disk_size_mb: 700,
+            context_length: 4096,
+            tier: DeviceTier::Medium,
+            filename: "new.tar.gz".into(),
+            url: None,
+            checksum: None,
+            local_path: None,
+        };
+        let plan = plan_download(Some(&installed), &requested);
+        match plan {
+            DownloadPlan::Swap(decision) => {
+                assert_eq!(decision.evict_size_mb, 300);
+                assert_eq!(decision.install_size_mb, 700);
+                assert_eq!(decision.net_disk_delta_mb, 400);
+                assert!(decision.message.contains("300 MB"));
+                assert!(decision.message.contains("700 MB"));
+            }
+            other => panic!("expected Swap, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn installed_model_falls_back_to_download_size_when_disk_size_missing() {
+        let m = InstalledModel {
+            model_id: "legacy".into(),
+            format: ModelFormat::Gguf,
+            filename: "legacy.gguf".into(),
+            path: "/tmp/legacy".into(),
+            download_size_mb: 450,
+            disk_size_mb: 0,
+            downloaded_at: "2026-05-19T00:00:00Z".into(),
+        };
+        assert_eq!(m.effective_disk_size_mb(), 450);
+
+        let m2 = InstalledModel {
+            disk_size_mb: 700,
+            ..m
+        };
+        assert_eq!(m2.effective_disk_size_mb(), 700);
     }
 
     #[test]

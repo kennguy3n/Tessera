@@ -21,6 +21,7 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
+import * as tar from "tar";
 
 export type Platform =
   | "macos-apple-silicon"
@@ -231,6 +232,11 @@ export function hasVulkan(): boolean {
     process.platform === "linux"
       ? [
           "/usr/lib/x86_64-linux-gnu/libvulkan.so.1",
+          // Linux arm64 (Debian/Ubuntu multiarch path). Without this entry
+          // Vulkan is undetectable on headless aarch64 hosts where the
+          // loader is installed but `vulkaninfo` is not — and aarch64 is
+          // a first-class Tessera target.
+          "/usr/lib/aarch64-linux-gnu/libvulkan.so.1",
           "/usr/lib64/libvulkan.so.1",
           "/usr/lib/libvulkan.so.1",
         ]
@@ -463,17 +469,23 @@ export function planDownload(
   if (current.modelId === requested.id) {
     return { kind: "already-installed", modelId: current.modelId };
   }
-  const netDelta = requested.downloadSizeMb - current.downloadSizeMb;
+  // SwapDecision describes disk-space accounting ("save X MB", "net disk
+  // delta"), so we use diskSizeMb consistently for the install / evict /
+  // delta fields. For GGUF models these match downloadSizeMb, but MLX
+  // archives expand after extraction so the post-extract footprint is the
+  // correct unit for swap planning. The download progress UI separately
+  // consumes downloadSizeMb.
+  const netDelta = requested.diskSizeMb - current.diskSizeMb;
   return {
     kind: "swap",
     evictModelId: current.modelId,
     evictFilename: current.filename,
-    evictSizeMb: current.downloadSizeMb,
+    evictSizeMb: current.diskSizeMb,
     installModelId: requested.id,
     installFilename: requested.filename,
-    installSizeMb: requested.downloadSizeMb,
+    installSizeMb: requested.diskSizeMb,
     netDiskDeltaMb: netDelta,
-    message: `Current: ${current.modelId} (${current.downloadSizeMb} MB). New: ${requested.name} (${requested.downloadSizeMb} MB). This will remove ${current.filename} to save ${current.downloadSizeMb} MB and download ${requested.downloadSizeMb} MB.`,
+    message: `Current: ${current.modelId} (${current.diskSizeMb} MB). New: ${requested.name} (${requested.diskSizeMb} MB). This will remove ${current.filename} to save ${current.diskSizeMb} MB and install ${requested.diskSizeMb} MB.`,
   };
 }
 
@@ -494,6 +506,12 @@ export interface DownloadDeps {
   ) => Promise<{ totalBytes: number }>;
   hasher?: (filePath: string) => Promise<string>;
   now?: () => Date;
+  /**
+   * Tar+gzip archive extractor. Overridable for unit tests so we can
+   * exercise the archive-aware download path without producing real
+   * compressed fixtures.
+   */
+  extractTarGz?: (archivePath: string, destDir: string) => Promise<void>;
 }
 
 const defaultFetcher: NonNullable<DownloadDeps["fetcher"]> = async (
@@ -710,11 +728,44 @@ async function downloadModelLocked(
     throw err;
   }
 
+  // MLX models ship as `.tar.gz` archives that expand into a directory
+  // (config.json, weights/, tokenizer, etc.) consumed by the MLX adapter.
+  // GGUF models are a single file already usable by llama-server.
+  //
+  // Extracting at download time — instead of on every runtime start —
+  // preserves the single-model-on-disk invariant (the archive is removed
+  // after a successful extract, so we don't keep both the .tar.gz and the
+  // expanded directory) and makes `InstalledModelRecord.path` point
+  // directly at the artifact the runtime actually loads from.
+  let installedPath = dest;
+  if (isTarGz(requested.filename)) {
+    const extractor = deps.extractTarGz ?? defaultExtractTarGz;
+    const extractDirName = stripTarGzSuffix(requested.filename);
+    const extractDir = path.join(dir, extractDirName);
+    // Wipe any stale extract directory from a previous failed attempt so
+    // we don't merge mismatched contents into the new install. (We are
+    // inside the download lock here, so this is safe.)
+    await fsp.rm(extractDir, { recursive: true, force: true });
+    await fsp.mkdir(extractDir, { recursive: true });
+    try {
+      await extractor(dest, extractDir);
+    } catch (err) {
+      await fsp.rm(extractDir, { recursive: true, force: true });
+      await fsp.unlink(dest).catch(() => {});
+      throw err;
+    }
+    // Delete the source archive: the extracted directory is the
+    // canonical on-disk representation from this point forward, and the
+    // manifest's `diskSizeMb` is the post-extract footprint.
+    await fsp.unlink(dest).catch(() => {});
+    installedPath = extractDir;
+  }
+
   const record: InstalledModelRecord = {
     modelId: requested.id,
     format: requested.format,
     filename: requested.filename,
-    path: dest,
+    path: installedPath,
     downloadSizeMb: requested.downloadSizeMb,
     diskSizeMb: requested.diskSizeMb,
     sha256: requested.sha256,
@@ -723,6 +774,32 @@ async function downloadModelLocked(
   await writeCurrentModel(userDataDir, record);
   return record;
 }
+
+function isTarGz(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  return lower.endsWith(".tar.gz") || lower.endsWith(".tgz");
+}
+
+function stripTarGzSuffix(filename: string): string {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".tar.gz")) return filename.slice(0, -".tar.gz".length);
+  if (lower.endsWith(".tgz")) return filename.slice(0, -".tgz".length);
+  return filename;
+}
+
+/**
+ * Default tar+gzip extractor. Uses the pure-JS `tar` package so we don't
+ * depend on a system `tar` / `bsdtar` binary (Windows ships bsdtar on
+ * recent builds but it's not guaranteed in older fleets). The library
+ * streams gunzip-then-untar so we don't materialise the decompressed
+ * archive in memory.
+ */
+const defaultExtractTarGz: NonNullable<DownloadDeps["extractTarGz"]> = async (
+  archivePath,
+  destDir,
+) => {
+  await tar.x({ file: archivePath, cwd: destDir });
+};
 
 // --- Testing hooks ------------------------------------------------------
 

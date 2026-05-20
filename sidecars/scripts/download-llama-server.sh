@@ -161,14 +161,21 @@ EOF
 fi
 
 if [[ -z "$RESOLVED_URL" || "$RESOLVED_URL" == "placeholder" ]]; then
-    # Fallback: assume an upstream release artifact naming scheme. This keeps
-    # development unblocked when the manifest is still using placeholders.
-    BASE_URL="https://github.com/ggerganov/llama.cpp/releases/download/${VERSION}"
-    SUFFIX=""
-    if [[ "$COMPUTE" != "cpu" ]]; then
-        SUFFIX="-${COMPUTE}"
-    fi
-    RESOLVED_URL="${BASE_URL}/llama-${VERSION}-bin-${PLATFORM}${SUFFIX}.zip"
+    # No usable URL in the manifest for this (platform, compute) variant.
+    # Previously we constructed a fallback URL against ggerganov/llama.cpp
+    # using PrismML platform names (linux-x64, macos-apple-silicon, ...), but
+    # ggerganov's release assets use a different naming convention so the
+    # fallback would 404 in practice — silently misleading anyone who cleared
+    # the manifest during development. Fail loudly instead with a clear
+    # pointer to the manifest entry that needs to be populated.
+    #
+    # (Devin Review finding 3270628605.)
+    cat >&2 <<EOF
+ERROR: No URL configured in $MODELS_JSON for variant: $VARIANT_KEY
+       Populate llama_server.variants[].url for platform=$PLATFORM, compute=$COMPUTE
+       with a real PrismML llama.cpp release asset before running this script.
+EOF
+    exit 1
 fi
 
 echo "Downloading llama.cpp ${VERSION} for ${VARIANT_KEY}..."

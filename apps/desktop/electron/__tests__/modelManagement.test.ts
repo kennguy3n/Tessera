@@ -252,6 +252,45 @@ describe("single-model enforcement", () => {
     }
   });
 
+  it("planDownload swap uses diskSizeMb (post-extract footprint), not downloadSizeMb", () => {
+    // Regression for Devin Review finding 3270628327: the swap decision
+    // describes disk-space accounting; for any model whose archive expands
+    // after extraction (future MLX), diskSizeMb diverges from
+    // downloadSizeMb and the swap UI/CLI must show the on-disk numbers.
+    const installed: InstalledModelRecord = {
+      modelId: "installed-archive",
+      format: "mlx",
+      filename: "installed.tar.gz",
+      path: "/tmp/installed",
+      downloadSizeMb: 100,
+      diskSizeMb: 300,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+    const plan = planDownload(
+      installed,
+      makeResolved({
+        id: "new-archive",
+        format: "mlx",
+        filename: "new.tar.gz",
+        downloadSizeMb: 250,
+        diskSizeMb: 700,
+      }),
+    );
+    expect(plan.kind).toBe("swap");
+    if (plan.kind === "swap") {
+      expect(plan.evictSizeMb).toBe(300);
+      expect(plan.installSizeMb).toBe(700);
+      expect(plan.netDiskDeltaMb).toBe(400);
+      expect(plan.message).toContain("300 MB");
+      expect(plan.message).toContain("700 MB");
+      // The user-facing message must NOT leak the download size when it
+      // differs from the disk size.
+      expect(plan.message).not.toContain("100 MB");
+      expect(plan.message).not.toContain("250 MB");
+    }
+  });
+
   it("downloadModel installs to disk and records the active model", async () => {
     const payload = Buffer.from("hello-bonsai");
     const requested = makeResolved({
@@ -459,6 +498,97 @@ describe("single-model enforcement", () => {
     expect(current?.modelId).toBe("ternary-bonsai-4b-gguf");
     const onDisk = await fsp.readdir(modelsDir(workdir));
     expect(onDisk).toEqual(["b.gguf"]);
+  });
+
+  it("downloadModel extracts MLX .tar.gz archives, removes the archive, and stores the extract dir", async () => {
+    // Regression for Devin Review finding 3270628690: MLX models ship as
+    // tar.gz archives. The download path must extract them so the runtime
+    // adapter sees a directory (the MLX-native artifact), and the archive
+    // must be removed so the single-model invariant holds.
+    const requested = makeResolved({
+      id: "ternary-bonsai-1.7b-mlx",
+      format: "mlx",
+      filename: "ternary-bonsai-1.7b-2bit.mlx.tar.gz",
+      url: "https://example.invalid/mlx.tar.gz",
+      downloadSizeMb: 1,
+      diskSizeMb: 1,
+    });
+    let extractorCalled = 0;
+    const record = await downloadModel(
+      workdir,
+      requested,
+      () => {},
+      {
+        fetcher: async (_u, onP, d) => {
+          await fsp.writeFile(d, Buffer.from("not-a-real-tarball"));
+          onP(1, 1);
+          return { totalBytes: 1 };
+        },
+        extractTarGz: async (archivePath, destDir) => {
+          extractorCalled += 1;
+          // Verify the extractor sees the post-rename archive (not the
+          // .partial sibling) inside the model cache dir.
+          expect(archivePath).toBe(
+            path.join(modelsDir(workdir), requested.filename),
+          );
+          expect(fs.existsSync(archivePath)).toBe(true);
+          // Simulate what the real `tar` library does: produce some files
+          // inside destDir representing the MLX layout.
+          await fsp.writeFile(path.join(destDir, "config.json"), "{}");
+          await fsp.writeFile(path.join(destDir, "weights.safetensors"), "w");
+        },
+      },
+    );
+
+    expect(extractorCalled).toBe(1);
+    // The InstalledModelRecord.path must point at the extracted directory,
+    // not the (now-deleted) archive.
+    const expectedDir = path.join(
+      modelsDir(workdir),
+      "ternary-bonsai-1.7b-2bit.mlx",
+    );
+    expect(record.path).toBe(expectedDir);
+    expect(fs.statSync(record.path).isDirectory()).toBe(true);
+    expect(fs.existsSync(path.join(record.path, "config.json"))).toBe(true);
+
+    // The .tar.gz archive must be gone (single-model invariant: we don't
+    // keep both the archive and the directory on disk).
+    expect(
+      fs.existsSync(path.join(modelsDir(workdir), requested.filename)),
+    ).toBe(false);
+
+    // active-model.json round-trips correctly.
+    const written = await getCurrentModel(workdir);
+    expect(written?.path).toBe(expectedDir);
+  });
+
+  it("downloadModel cleans up the extract dir + archive if extraction fails", async () => {
+    const requested = makeResolved({
+      id: "ternary-bonsai-1.7b-mlx",
+      format: "mlx",
+      filename: "ternary-bonsai-1.7b-2bit.mlx.tar.gz",
+      url: "https://example.invalid/mlx.tar.gz",
+      downloadSizeMb: 1,
+      diskSizeMb: 1,
+    });
+    await expect(
+      downloadModel(workdir, requested, () => {}, {
+        fetcher: async (_u, onP, d) => {
+          await fsp.writeFile(d, Buffer.from("corrupt"));
+          onP(1, 1);
+          return { totalBytes: 1 };
+        },
+        extractTarGz: async () => {
+          throw new Error("tar: corrupt header");
+        },
+      }),
+    ).rejects.toThrow(/tar: corrupt header/);
+
+    const onDisk = fs.existsSync(modelsDir(workdir))
+      ? await fsp.readdir(modelsDir(workdir))
+      : [];
+    expect(onDisk).toEqual([]);
+    expect(await getCurrentModel(workdir)).toBeNull();
   });
 
   it("deleteCurrentModel removes file and clears active-model.json", async () => {
