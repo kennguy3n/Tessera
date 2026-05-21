@@ -27,10 +27,7 @@ impl SourceManager {
 
     /// Build a manager backed by a [`SharedConnection`] that is also
     /// used by other stores. Used by the napi bridge.
-    pub fn with_shared_conn(
-        conn: SharedConnection,
-        ignore_patterns: &[String],
-    ) -> Result<Self> {
+    pub fn with_shared_conn(conn: SharedConnection, ignore_patterns: &[String]) -> Result<Self> {
         let store = SourceStore::with_shared_conn(conn)?;
         let indexer = Indexer::new(ignore_patterns);
         Ok(Self { store, indexer })

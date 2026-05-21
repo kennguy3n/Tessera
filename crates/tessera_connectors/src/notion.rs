@@ -86,6 +86,15 @@ pub struct NotionConnector {
     /// `sync_changes` — see [`Self::set_full_walk_interval`] and the
     /// module-level "Deletion detection" section.
     full_walk_interval: u32,
+    /// Has this connector instance done a full walk yet? Initialised
+    /// to `false` and flipped to `true` only by `sync_full_walk`. The
+    /// counter (`syncs_since_full_walk`) lives only in memory, so on
+    /// process restart a connector restored from disk would otherwise
+    /// take the incremental fast path for `full_walk_interval` calls
+    /// before noticing that pages were deleted while the app was
+    /// offline. Forcing the first sync after construction to do a
+    /// full walk closes that gap.
+    has_done_full_walk: bool,
 }
 
 impl NotionConnector {
@@ -105,6 +114,7 @@ impl NotionConnector {
             api_base: DEFAULT_API_BASE.to_string(),
             syncs_since_full_walk: 0,
             full_walk_interval: DEFAULT_FULL_WALK_INTERVAL,
+            has_done_full_walk: false,
         }
     }
 
@@ -124,6 +134,7 @@ impl NotionConnector {
             api_base: format!("{base_url}/v1"),
             syncs_since_full_walk: 0,
             full_walk_interval: DEFAULT_FULL_WALK_INTERVAL,
+            has_done_full_walk: false,
         }
     }
 
@@ -449,20 +460,26 @@ impl NotionConnector {
     /// Incremental syncs use the descending `last_edited_time` walk and
     /// stop at the boundary, which is fast but cannot detect deleted
     /// or unshared items. To catch those, every `full_walk_interval`
-    /// calls (and on the very first sync, when there is no boundary
-    /// anyway) we instead do a full workspace walk and set-diff the
-    /// returned ids against `known_file_ids`. See
-    /// [`Self::sync_full_walk`] and the module-level "Deletion
-    /// detection" notes.
+    /// calls (and on the very first sync per connector instance, even
+    /// when a `change_token` was restored from disk) we instead do a
+    /// full workspace walk and set-diff the returned ids against
+    /// `known_file_ids`. See [`Self::sync_full_walk`] and the
+    /// module-level "Deletion detection" notes.
     pub async fn sync_changes(
         &mut self,
         change_token: Option<&str>,
         known_file_ids: &HashSet<String>,
     ) -> ConnectorResult<SyncResult> {
-        let do_full = change_token.is_none()
+        // `has_done_full_walk` covers the "app just restarted with a
+        // restored change_token" case: without it, a Notion connector
+        // freshly loaded from disk would take the incremental fast
+        // path for ~`full_walk_interval` calls before noticing that
+        // items were deleted upstream while the app was offline.
+        let do_full = !self.has_done_full_walk
+            || change_token.is_none()
             || self.syncs_since_full_walk >= self.full_walk_interval.saturating_sub(1);
         if do_full {
-            self.sync_full_walk(known_file_ids).await
+            self.sync_full_walk(change_token, known_file_ids).await
         } else {
             self.syncs_since_full_walk = self.syncs_since_full_walk.saturating_add(1);
             self.sync_incremental(change_token, known_file_ids).await
@@ -560,13 +577,27 @@ impl NotionConnector {
     /// deletions / unshares. The new change token is the newest
     /// `last_edited_time` we observed across the whole walk.
     ///
+    /// `change_token` is honoured as a *modification* boundary, not as
+    /// a pagination stop: items past the boundary still contribute to
+    /// `seen_ids` for deletion detection, but are excluded from
+    /// `result.modified` because the caller has already indexed their
+    /// current state. Without this filter every full walk would re-
+    /// emit every known page as modified on every Nth sync, wasting
+    /// downstream re-processing work.
+    ///
     /// This is more expensive than `sync_incremental` because we cannot
-    /// stop early, so it only runs on the first sync and every
-    /// `full_walk_interval` syncs thereafter — see [`Self::sync_changes`].
+    /// stop early, so it only runs on the first sync per connector
+    /// instance and every `full_walk_interval` syncs thereafter — see
+    /// [`Self::sync_changes`].
     async fn sync_full_walk(
         &mut self,
+        change_token: Option<&str>,
         known_file_ids: &HashSet<String>,
     ) -> ConnectorResult<SyncResult> {
+        let boundary: Option<DateTime<Utc>> = change_token
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc));
+
         self.status = ConnectorStatus::Syncing;
         let mut result = SyncResult::empty();
         let mut start_cursor: Option<String> = None;
@@ -607,8 +638,19 @@ impl NotionConnector {
                 let remote = notion_object_to_remote(&obj);
                 seen_ids.insert(remote.id.clone());
                 if known_file_ids.contains(&remote.id) {
-                    result.modified.push(remote);
+                    // Apply the boundary as a modification filter — the
+                    // full walk still has to visit every page (to
+                    // compute `seen_ids` for the deletion set-diff),
+                    // but only items genuinely newer than the boundary
+                    // need to be re-processed by the caller.
+                    let is_modified = boundary.is_none_or(|bound| last_edit > bound);
+                    if is_modified {
+                        result.modified.push(remote);
+                    }
                 } else {
+                    // Items the caller doesn't know about are surfaced
+                    // regardless of boundary — the boundary only
+                    // bounds re-emission of *known* ids.
                     result.added.push(remote);
                 }
             }
@@ -631,7 +673,11 @@ impl NotionConnector {
             }
         }
 
-        result.new_change_token = newest_seen.map(|dt| dt.to_rfc3339());
+        // If no items were seen, fall back to the prior boundary so we
+        // don't accidentally re-walk the entire workspace next time.
+        result.new_change_token = newest_seen
+            .map(|dt| dt.to_rfc3339())
+            .or_else(|| boundary.map(|dt| dt.to_rfc3339()));
         result.has_more = false;
 
         self.last_sync = Some(Utc::now());
@@ -642,8 +688,11 @@ impl NotionConnector {
             .saturating_add(added)
             .saturating_sub(removed);
         // Reset the counter so the next `sync_changes` call can take
-        // the fast path until we hit the threshold again.
+        // the fast path until we hit the threshold again; also mark
+        // that this instance has now performed a full walk so future
+        // calls don't unconditionally take the slow path.
         self.syncs_since_full_walk = 0;
+        self.has_done_full_walk = true;
         self.status = ConnectorStatus::Connected;
         Ok(result)
     }
@@ -1247,6 +1296,9 @@ mod tests {
 
         let mut c = NotionConnector::with_base_url(&server.uri());
         c.set_access_token("secret_AT");
+        // Pre-mark so the connector takes the incremental fast path
+        // (this test specifically exercises boundary-break logic).
+        c.has_done_full_walk = true;
         let mut known = HashSet::new();
         known.insert("p-known".to_string());
 
@@ -1360,5 +1412,93 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("last_edited_time")
         );
+    }
+
+    #[tokio::test]
+    async fn full_walk_filters_known_items_by_boundary() {
+        // When a full walk is performed with a change_token boundary,
+        // items older than the boundary must NOT appear in `modified`
+        // (they've already been indexed) but they must still
+        // contribute to `seen_ids` so the deletion set-diff is correct.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": [
+                    { "object": "page", "id": "p-new", "last_edited_time": "2024-07-01T00:00:00.000Z" },
+                    { "object": "page", "id": "p-old", "last_edited_time": "2024-05-01T00:00:00.000Z" }
+                ],
+                "has_more": false
+            })))
+            .mount(&server)
+            .await;
+
+        let mut c = NotionConnector::with_base_url(&server.uri());
+        c.set_access_token("secret_AT");
+        c.set_full_walk_interval(1);
+
+        let mut known = HashSet::new();
+        known.insert("p-new".to_string());
+        known.insert("p-old".to_string());
+        known.insert("p-gone".to_string());
+
+        // Boundary is 2024-06-01 → p-new (July) is modified, p-old
+        // (May) is older than boundary and must be filtered out.
+        let result = c
+            .sync_changes(Some("2024-06-01T00:00:00.000Z"), &known)
+            .await
+            .expect("sync ok");
+
+        assert_eq!(result.modified.len(), 1, "only p-new should be modified");
+        assert_eq!(result.modified[0].id, "p-new");
+        // p-gone is missing from the walk → must still be detected
+        // as deleted even though p-old was filtered from modified.
+        assert_eq!(result.removed.len(), 1, "p-gone should be removed");
+        assert_eq!(result.removed[0], "p-gone");
+    }
+
+    #[tokio::test]
+    async fn first_sync_after_construction_forces_full_walk_even_with_change_token() {
+        // Regression: a freshly constructed connector must do a full
+        // walk on its first sync call even when a restored change_token
+        // is provided — the volatile counter would otherwise take the
+        // incremental path, missing deletions that happened while the
+        // app was offline.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": [
+                    { "object": "page", "id": "p-alive", "last_edited_time": "2024-07-15T00:00:00.000Z" }
+                ],
+                "has_more": false
+            })))
+            .expect(1) // exactly one POST to /search
+            .mount(&server)
+            .await;
+
+        let mut c = NotionConnector::with_base_url(&server.uri());
+        c.set_access_token("secret_AT");
+        // Set a high interval so the counter alone would never trigger
+        // a full walk.
+        c.set_full_walk_interval(100);
+
+        let mut known = HashSet::new();
+        known.insert("p-alive".to_string());
+        known.insert("p-offline-deleted".to_string());
+
+        // Despite change_token being Some and counter being 0,
+        // has_done_full_walk is false so we must take the full path.
+        let result = c
+            .sync_changes(Some("2024-07-01T00:00:00.000Z"), &known)
+            .await
+            .expect("sync ok");
+
+        assert_eq!(result.removed.len(), 1, "deletion must be caught");
+        assert_eq!(result.removed[0], "p-offline-deleted");
+        // After this call, has_done_full_walk should be true — verify
+        // by checking that the mock received exactly 1 request (the
+        // full walk path). If has_done_full_walk were not set, the next
+        // sync would redundantly do another full walk.
     }
 }

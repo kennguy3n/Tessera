@@ -1,6 +1,9 @@
 use rusqlite::params;
 use tessera_core::error::{Error, Result};
-use tessera_core::{open_shared, open_shared_in_memory, ArtifactId, CitationId, SharedConnection, SourceId, SourceType};
+use tessera_core::{
+    open_shared, open_shared_in_memory, ArtifactId, CitationId, SharedConnection, SourceId,
+    SourceType,
+};
 
 use crate::citation::Citation;
 

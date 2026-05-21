@@ -455,11 +455,15 @@ impl SourceStore {
     }
 
     pub fn get_current_file_hash(&self, file_path: &str) -> Result<Option<String>> {
-        let result = self.conn.lock().expect("connection mutex poisoned").query_row(
-            "SELECT hash FROM indexed_files WHERE path = ?1 ORDER BY rowid DESC LIMIT 1",
-            params![file_path],
-            |row| row.get::<_, String>(0),
-        );
+        let result = self
+            .conn
+            .lock()
+            .expect("connection mutex poisoned")
+            .query_row(
+                "SELECT hash FROM indexed_files WHERE path = ?1 ORDER BY rowid DESC LIMIT 1",
+                params![file_path],
+                |row| row.get::<_, String>(0),
+            );
         match result {
             Ok(hash) => Ok(Some(hash)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),

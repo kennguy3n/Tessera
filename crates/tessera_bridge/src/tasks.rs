@@ -218,7 +218,7 @@ pub fn delete_task(store: &TaskStore, id: &str) -> Result<bool> {
     store.delete(&tid)
 }
 
-pub fn reorder_tasks(store: &mut TaskStore, status: &str, ids: &[String]) -> Result<()> {
+pub fn reorder_tasks(store: &TaskStore, status: &str, ids: &[String]) -> Result<()> {
     let parsed: Vec<TaskId> = ids
         .iter()
         .map(|s| parse_task_id(s))
@@ -362,8 +362,8 @@ mod tests {
 
     #[test]
     fn reorder_rejects_unknown_status() {
-        let mut s = store();
-        let err = reorder_tasks(&mut s, "wip", &[]).expect_err("unknown reorder bucket must fail");
+        let s = store();
+        let err = reorder_tasks(&s, "wip", &[]).expect_err("unknown reorder bucket must fail");
         assert!(format!("{err}").contains("unknown task status"));
     }
 

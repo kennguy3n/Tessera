@@ -659,12 +659,11 @@ pub fn bridge_delete_task(task_id: String) -> napi::Result<bool> {
 #[napi]
 pub fn bridge_reorder_tasks(status: String, ids: Vec<String>) -> napi::Result<()> {
     let s = state()?;
-    let mut store = s
+    let store = s
         .task_store
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    tasks::reorder_tasks(&mut store, &status, &ids)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    tasks::reorder_tasks(&store, &status, &ids).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 // --- Automations ---
