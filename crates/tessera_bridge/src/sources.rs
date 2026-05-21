@@ -146,6 +146,45 @@ pub fn reindex_source(manager: &SourceManager, source_id: &str) -> BridgeResult<
     Ok(SourceInfo::from(&source))
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct IndexingProgressInfo {
+    pub status: String,
+    pub scanned: u32,
+    pub indexed: u32,
+    pub unchanged: u32,
+    pub skipped: u32,
+    pub errors: u32,
+    pub total_files: u32,
+    pub current_path: Option<String>,
+    pub last_error: Option<String>,
+}
+
+pub fn get_indexing_progress(
+    manager: &SourceManager,
+    source_id: &str,
+) -> BridgeResult<IndexingProgressInfo> {
+    let uuid =
+        uuid::Uuid::parse_str(source_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    let snap = manager.indexing_progress(&SourceId(uuid));
+    Ok(IndexingProgressInfo {
+        status: match snap.status {
+            tessera_sources::progress::IndexStatus::Idle => "idle".to_string(),
+            tessera_sources::progress::IndexStatus::Running => "running".to_string(),
+            tessera_sources::progress::IndexStatus::Done => "done".to_string(),
+            tessera_sources::progress::IndexStatus::Failed => "failed".to_string(),
+        },
+        scanned: u32::try_from(snap.scanned).unwrap_or(u32::MAX),
+        indexed: u32::try_from(snap.indexed).unwrap_or(u32::MAX),
+        unchanged: u32::try_from(snap.unchanged).unwrap_or(u32::MAX),
+        skipped: u32::try_from(snap.skipped).unwrap_or(u32::MAX),
+        errors: u32::try_from(snap.errors).unwrap_or(u32::MAX),
+        total_files: u32::try_from(snap.total_files).unwrap_or(u32::MAX),
+        current_path: snap.current_path,
+        last_error: snap.last_error,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

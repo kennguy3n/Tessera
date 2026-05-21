@@ -1,8 +1,10 @@
 use std::path::Path;
+use std::sync::Arc;
 use tessera_core::error::{Error, Result};
 use tessera_core::{SharedConnection, SourceId};
 
 use crate::indexer::Indexer;
+use crate::progress::{ProgressSnapshot, ProgressTracker};
 use crate::search::{SearchEngine, SearchResult};
 use crate::source::Source;
 use crate::store::{IndexedFile, SourceStore};
@@ -10,19 +12,28 @@ use crate::store::{IndexedFile, SourceStore};
 pub struct SourceManager {
     store: SourceStore,
     indexer: Indexer,
+    progress: Arc<ProgressTracker>,
 }
 
 impl SourceManager {
     pub fn new(db_path: &str, ignore_patterns: &[String]) -> Result<Self> {
         let store = SourceStore::open(db_path)?;
         let indexer = Indexer::new(ignore_patterns);
-        Ok(Self { store, indexer })
+        Ok(Self {
+            store,
+            indexer,
+            progress: Arc::new(ProgressTracker::new()),
+        })
     }
 
     pub fn new_in_memory(ignore_patterns: &[String]) -> Result<Self> {
         let store = SourceStore::open_in_memory()?;
         let indexer = Indexer::new(ignore_patterns);
-        Ok(Self { store, indexer })
+        Ok(Self {
+            store,
+            indexer,
+            progress: Arc::new(ProgressTracker::new()),
+        })
     }
 
     /// Build a manager backed by a [`SharedConnection`] that is also
@@ -30,7 +41,17 @@ impl SourceManager {
     pub fn with_shared_conn(conn: SharedConnection, ignore_patterns: &[String]) -> Result<Self> {
         let store = SourceStore::with_shared_conn(conn)?;
         let indexer = Indexer::new(ignore_patterns);
-        Ok(Self { store, indexer })
+        Ok(Self {
+            store,
+            indexer,
+            progress: Arc::new(ProgressTracker::new()),
+        })
+    }
+
+    /// Returns the latest indexing progress snapshot for a source.
+    /// Idle by default if no index pass has been observed.
+    pub fn indexing_progress(&self, source_id: &SourceId) -> ProgressSnapshot {
+        self.progress.snapshot(source_id)
     }
 
     pub fn add_local_folder(&self, path: &str) -> Result<Source> {
@@ -112,23 +133,36 @@ impl SourceManager {
         let source = self.store.get_source(source_id)?;
         let path = Path::new(&source.path);
 
-        match source.source_type {
-            tessera_core::SourceType::LocalFolder => {
-                self.indexer.index_folder(source_id, path, &self.store)?;
-            }
-            tessera_core::SourceType::LocalFile => {
-                self.indexer
-                    .index_single_file(source_id, path, &self.store)?;
-                let file_count = self.store.file_count_for_source(source_id)?;
-                self.store.update_source_status(
-                    source_id,
-                    tessera_core::SourceStatus::Indexed,
-                    Some(file_count),
-                )?;
-            }
-            _ => {}
+        // Always allocate a fresh progress slot — the UI polls
+        // `bridge_get_indexing_progress` and expects `Running`
+        // status during the call.
+        let slot = self.progress.start(source_id);
+
+        let outcome = match source.source_type {
+            tessera_core::SourceType::LocalFolder => self
+                .indexer
+                .index_folder_with_progress(source_id, path, &self.store, Some(&slot))
+                .map(|_| ()),
+            tessera_core::SourceType::LocalFile => self
+                .indexer
+                .index_single_file(source_id, path, &self.store)
+                .and_then(|_| self.store.file_count_for_source(source_id))
+                .and_then(|file_count| {
+                    self.store.update_source_status(
+                        source_id,
+                        tessera_core::SourceStatus::Indexed,
+                        Some(file_count),
+                    )?;
+                    crate::progress::finish(&slot, file_count);
+                    Ok(())
+                }),
+            _ => Ok(()),
+        };
+
+        if let Err(ref e) = outcome {
+            crate::progress::mark_failed(&slot, &e.to_string());
         }
-        Ok(())
+        outcome
     }
 }
 

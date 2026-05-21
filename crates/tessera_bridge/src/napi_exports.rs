@@ -175,6 +175,22 @@ pub fn bridge_reindex_source(source_id: String) -> napi::Result<sources::SourceI
     sources::reindex_source(&mgr, &source_id).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+/// Returns the latest indexing progress snapshot. Safe to poll on
+/// a short interval — see [`tessera_sources::progress`] for the
+/// lifecycle semantics.
+#[napi]
+pub fn bridge_get_indexing_progress(
+    source_id: String,
+) -> napi::Result<sources::IndexingProgressInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::get_indexing_progress(&mgr, &source_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 // --- Artifacts ---
 
 #[napi]
@@ -362,6 +378,9 @@ pub fn bridge_add_citation(
 #[napi]
 pub fn bridge_remove_citation(artifact_id: String, citation_id: String) -> napi::Result<()> {
     let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_citation_removed(&artifact_id, &citation_id);
+    }
     let mut tracker = s
         .citation_tracker
         .lock()
@@ -384,6 +403,56 @@ pub fn bridge_check_source_changed(citation_id: String) -> napi::Result<bool> {
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     citations::check_source_changed(&tracker, &src_mgr, &citation_id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+#[napi]
+pub fn bridge_check_citation_freshness(citation_id: String) -> napi::Result<String> {
+    let s = state()?;
+    let src_mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let tracker = s
+        .citation_tracker
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let status = citations::check_source_freshness(&tracker, &src_mgr, &citation_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(status.as_str().to_string())
+}
+
+#[napi]
+pub fn bridge_replace_citation(
+    req: citations::ReplaceCitationRequest,
+) -> napi::Result<citations::ReplaceCitationResult> {
+    let s = state()?;
+    let artifact_id = req.artifact_id.clone();
+    let citation_id = req.citation_id.clone();
+    let new_source_uri = req.source_uri.clone();
+    let result = {
+        // Scoped lock acquisition matches the documented order:
+        // audit_logger lock is taken after replace returns so we can
+        // log the real previous URI captured by the bridge call.
+        let src_mgr = s
+            .source_manager
+            .lock()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        let mut tracker = s
+            .citation_tracker
+            .lock()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        citations::replace_citation(&mut tracker, &src_mgr, req)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    };
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_citation_replaced(
+            &artifact_id,
+            &citation_id,
+            &result.previous_source_uri,
+            &new_source_uri,
+        );
+    }
+    Ok(result)
 }
 
 // --- Version History ---

@@ -263,8 +263,18 @@ Tessera uses the PrismML fork of llama.cpp ([kennguy3n/llama.cpp@prism](https://
 ### Adapter bootstrap priority
 
 ```
-MLXAdapter → LlamaCppAdapter → Fallback (no model, extraction-only mode)
+MLXAdapter → LlamaCppAdapter → ExternalAdapter → Fallback (no model, extraction-only mode)
 ```
+
+The `ExternalAdapter` is disabled by default. When the user enables it
+on the Settings page, the renderer writes provider configuration to
+`apps/desktop/electron/config.ts` and stores the API key in the OS
+keychain through the same `tokenVault` pattern used by OAuth tokens
+(`apps/desktop/electron/secretsVault.ts`). The adapter speaks either the
+OpenAI-compatible `/v1/chat/completions` endpoint (covers OpenAI,
+Ollama, vLLM, LM Studio) or the Anthropic `/v1/messages` endpoint, and
+the chain falls through to it when both local adapters report
+unavailable. See `crates/tessera_runtime/src/external_provider.rs`.
 
 ### Inference tasks
 
@@ -394,23 +404,23 @@ tessera/
 ├── crates/                          # Rust core engine
 │   ├── tessera_core/                # Core types, config, lifecycle (ArtifactType: Document/Slides/Sheet/Base/Infographic/LandingPage)
 │   ├── tessera_bridge/              # N-API bindings for Electron
-│   ├── tessera_sources/             # Source management, file indexing
+│   ├── tessera_sources/             # Source management, file indexing, .gitignore-style ignore patterns, EXIF/XMP/IPTC image metadata extraction, incremental re-index progress tracker
 │   ├── tessera_templates/           # Template parsing and validation (Create / Analyze / Plan / Approve categories)
 │   ├── tessera_artifacts/           # Artifact creation, version history, storage, tasks model
 │   ├── tessera_export/              # csv.rs, markdown.rs, html.rs, pdf.rs, typst.rs, docx.rs, xlsx.rs, mermaid.rs, evidence_pack.rs
-│   ├── tessera_citations/           # Citation tracking and provenance
+│   ├── tessera_citations/           # Citation tracking, freshness checks, replace/remove flows, audit-event integration
 │   ├── tessera_connectors/          # gdrive.rs, onedrive.rs, notion.rs, jira.rs, confluence.rs, figma.rs + registry/token/types
-│   ├── tessera_runtime/             # Local model runtime management
+│   ├── tessera_runtime/             # Local model runtime + optional `external_provider` HTTP adapter (OpenAI-compatible / Anthropic / custom)
 │   └── tessera_audit/               # Audit trail logging
 ├── sidecars/                        # Model runtime binaries
 │   ├── llama-server/                # PrismML llama.cpp sidecar
 │   ├── scripts/                     # Platform download scripts (sh + ps1)
 │   └── models.json                  # Model download manifest
 ├── templates/                       # YAML artifact templates
-│   ├── documents/                   # PRD, Proposal, SOP, Report, Memo, Meeting agenda, Project plan, Task list, Launch checklist, Meeting notes, Brief, Purchase / Budget / Policy / Vendor approval flows
+│   ├── documents/                   # PRD, Proposal, SOP, Report, Memo, Form, Meeting agenda, Project plan, Task list, Launch checklist, Meeting notes, Brief, Purchase / Budget / Policy / Vendor approval flows
 │   ├── slides/                      # QBR, Strategy, Review, Training, Pitch
-│   ├── sheets/                      # Budget, Scorecard, Roadmap
-│   ├── bases/                       # Vendor register, Risk register, Decision log
+│   ├── sheets/                      # Budget, Scorecard, Roadmap, Tracker, Inventory
+│   ├── bases/                       # Vendor register, Risk register, Decision log, Asset inventory, Roadmap
 │   ├── infographics/                # Stats overview, Process flow, Comparison
 │   ├── landingpages/                # SaaS product
 │   └── grammars/                    # GBNF grammar files for structured LLM output

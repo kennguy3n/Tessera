@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use tessera_core::error::Result;
 use tessera_core::{SourceId, SourceStatus};
 use walkdir::WalkDir;
@@ -6,6 +7,7 @@ use walkdir::WalkDir;
 use crate::chunker::{chunk_text, ChunkerConfig};
 use crate::extractor::{extract_text, is_supported_extension};
 use crate::ignore::IgnoreRules;
+use crate::progress::{self, ProgressSnapshot};
 use crate::store::SourceStore;
 
 pub struct Indexer {
@@ -15,11 +17,11 @@ pub struct Indexer {
 
 impl Indexer {
     pub fn new(ignore_patterns: &[String]) -> Self {
-        let ignore_rules = if ignore_patterns.is_empty() {
-            IgnoreRules::default_rules()
-        } else {
-            IgnoreRules::new(ignore_patterns)
-        };
+        // Always layer user patterns on TOP of the curated defaults
+        // (binary files, VCS metadata, OS junk, …) so users get
+        // sensible behaviour out of the box and can extend — or
+        // negate with a leading `!` — without losing the defaults.
+        let ignore_rules = IgnoreRules::with_defaults(ignore_patterns);
         Self {
             chunker_config: ChunkerConfig::default(),
             ignore_rules,
@@ -37,6 +39,20 @@ impl Indexer {
         folder_path: &Path,
         store: &SourceStore,
     ) -> Result<IndexResult> {
+        self.index_folder_with_progress(source_id, folder_path, store, None)
+    }
+
+    /// Same as [`Indexer::index_folder`] but updates an optional
+    /// [`ProgressSnapshot`] slot every time a file is scanned /
+    /// indexed / skipped. The bridge layer wires this in so the UI
+    /// can poll progress without blocking the indexing thread.
+    pub fn index_folder_with_progress(
+        &self,
+        source_id: &SourceId,
+        folder_path: &Path,
+        store: &SourceStore,
+        progress_slot: Option<&Arc<Mutex<ProgressSnapshot>>>,
+    ) -> Result<IndexResult> {
         store.update_source_status(source_id, SourceStatus::Indexing, None)?;
 
         let mut result = IndexResult::default();
@@ -50,11 +66,18 @@ impl Indexer {
 
             if self.ignore_rules.is_ignored(path) {
                 result.skipped += 1;
+                if let Some(slot) = progress_slot {
+                    progress::record_skipped(slot);
+                }
                 continue;
             }
 
             if !path.is_file() {
                 continue;
+            }
+
+            if let Some(slot) = progress_slot {
+                progress::record_scanned(slot, &path.display().to_string());
             }
 
             let ext = path
@@ -64,6 +87,9 @@ impl Indexer {
 
             if !is_supported_extension(ext) {
                 result.skipped += 1;
+                if let Some(slot) = progress_slot {
+                    progress::record_skipped(slot);
+                }
                 continue;
             }
 
@@ -71,18 +97,31 @@ impl Indexer {
                 Ok(indexed) => {
                     if indexed {
                         result.indexed += 1;
+                        if let Some(slot) = progress_slot {
+                            progress::record_indexed(slot);
+                        }
                     } else {
                         result.unchanged += 1;
+                        if let Some(slot) = progress_slot {
+                            progress::record_unchanged(slot);
+                        }
                     }
                 }
                 Err(e) => {
                     result.errors.push(format!("{}: {e}", path.display()));
+                    if let Some(slot) = progress_slot {
+                        progress::record_error(slot);
+                    }
                 }
             }
         }
 
         let file_count = store.file_count_for_source(source_id)?;
         store.update_source_status(source_id, SourceStatus::Indexed, Some(file_count))?;
+
+        if let Some(slot) = progress_slot {
+            progress::finish(slot, file_count);
+        }
 
         result.total_files = file_count;
         Ok(result)

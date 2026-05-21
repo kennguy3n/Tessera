@@ -397,6 +397,74 @@ Tessera's UI follows the **KChat design system** ([https://kchat.com](https://kc
 
 ---
 
+## Phase 9 — Feature pass: missing templates, citations, external LLM, UI hardening
+
+**Status:** `DONE`
+
+**Goal:** Close the remaining gaps between PROPOSAL.md and the
+shipping product. Add the missing templates, ship advanced citation
+workflows (freshness / replace / remove), add optional external LLM
+provider support behind a keychain-stored API key, harden source
+indexing with ignore patterns + image metadata + incremental
+progress reporting, and finish UI / accessibility / production
+hardening (keyboard shortcuts, focus traps, dark mode, error
+boundary, structured logging, release workflow).
+
+### Build
+
+| Block | Item | Status |
+|---|---|---|
+| A | `templates/documents/form.yaml` | `DONE` |
+| A | `templates/bases/asset-inventory.yaml` | `DONE` |
+| A | `templates/sheets/tracker.yaml` | `DONE` |
+| A | `templates/sheets/inventory.yaml` | `DONE` |
+| A | `templates/bases/roadmap.yaml` | `DONE` |
+| B | `tessera_citations::freshness::check_source_freshness` + IPC + UI | `DONE` |
+| B | `tessera_citations::replace_citation` + IPC + UI flow | `DONE` |
+| B | `tessera_citations::remove_citation` + audit log + UI confirmation | `DONE` |
+| B | Citation panel polish + Ctrl+Shift+C toggle + freshness icon | `DONE` |
+| C | `tessera_runtime::external_provider` (OpenAI-compatible / Anthropic / custom) + wiremock tests | `DONE` |
+| C | Settings UI for external provider with keychain-backed API key | `DONE` |
+| C | Adapter chain `MLXAdapter → LlamaCppAdapter → ExternalAdapter → Fallback` | `DONE` |
+| D | `tessera_sources::ignore` module using the `ignore` crate | `DONE` |
+| D | `tessera_sources::image_metadata` (EXIF/XMP/IPTC via `kamadak-exif` + `image`) | `DONE` |
+| D | Incremental re-index progress (`ProgressTracker` + IPC + `useIndexingProgress` hook + `SourceDetailPage` UI) | `DONE` |
+| E | `useKeyboardShortcuts` global handler (Ctrl/Cmd+N/S/E/F/,/1–7 + Escape) + sidebar hints | `DONE` |
+| E | Modal focus trap, `aria-labelledby`, focus restoration, optional `closeOnOverlayClick=false` | `DONE` |
+| E | Toast dismiss button, `role=alert` for errors, leak-free timers | `DONE` |
+| E | Dark mode tokens (`[data-theme="dark"]` + `prefers-color-scheme` fallback) + `useTheme` hook | `DONE` |
+| F | `ErrorBoundary` at root with Reload / Report / Dismiss | `DONE` |
+| F | Structured JSONL logger (`apps/desktop/electron/logger.ts`) + uncaughtException handlers | `DONE` |
+| F | `.github/workflows/release.yml` per-platform `electron-builder` + git-log changelog | `DONE` |
+| G | This PROGRESS.md Phase 9 section + 2026-05-21 changelog entry | `DONE` |
+| G | README / ARCHITECTURE / PHASES updates | `DONE` |
+
+### Exit criteria
+
+- [x] Every template listed under PROPOSAL.md "Create" and "Bases"
+      exists in `templates/` and parses through `tessera_templates`.
+- [x] Citations track source freshness, can be replaced via a
+      source-picker modal, and can be removed without deleting the
+      cited text — all three flows log audit events.
+- [x] An external LLM provider can be configured in Settings; the
+      API key is stored in the OS keychain, never on disk; the
+      adapter chain falls through to it when local inference is
+      unavailable.
+- [x] `tessera_sources` honors `.gitignore`-style patterns,
+      extracts EXIF/XMP/IPTC metadata from images, and surfaces
+      incremental re-index progress through IPC to the renderer.
+- [x] Renderer supports global keyboard shortcuts, modal focus
+      trapping, dismissible toasts with `aria-live`, and a
+      light/dark/system theme switch.
+- [x] Renderer crashes are caught by a root error boundary;
+      uncaught main-process exceptions are written to
+      `~/.config/Tessera/logs/tessera.log` with 5-file rotation.
+- [x] `Release` workflow on `v*` tags builds AppImage / .deb /
+      .rpm / .dmg / NSIS exe and attaches them to a GitHub
+      Release with an auto-generated changelog.
+
+---
+
 ## Links
 
 - [README.md](README.md) — project overview
@@ -407,6 +475,69 @@ Tessera's UI follows the **KChat design system** ([https://kchat.com](https://kc
 ---
 
 ## Changelog
+
+### 2026-05-21 (Phase 9)
+- **Block A — Missing templates**: Five new YAML templates landed
+  to match PROPOSAL.md's surface — `templates/documents/form.yaml`,
+  `templates/bases/asset-inventory.yaml`,
+  `templates/sheets/tracker.yaml`,
+  `templates/sheets/inventory.yaml`, and
+  `templates/bases/roadmap.yaml`. All five are discovered by the
+  `tessera_templates` registry and surfaced in the Create / Bases /
+  Sheets tabs.
+- **Block B — Citation advanced workflows**: `tessera_citations`
+  gained `freshness::check_source_freshness` (compares the citation's
+  stored chunk hash against the current source chunk), plus
+  `replace_citation` and `remove_citation` that both write audit
+  events. The renderer's `CitationPanel` now shows a stale-source
+  warning icon, exposes Replace and Remove actions per citation, and
+  toggles via the Ctrl+Shift+C shortcut.
+- **Block C — Optional external LLM provider**: New
+  `tessera_runtime::external_provider` module ships an HTTP client
+  supporting OpenAI-compatible `/v1/chat/completions`, Anthropic
+  `/v1/messages`, and a `Custom` URL. Provider configuration lives
+  in the renderer Settings page; the API key is stored in the OS
+  keychain via the existing `tokenVault` pattern, never on disk in
+  plaintext. The adapter chain became
+  `MLXAdapter → LlamaCppAdapter → ExternalAdapter → Fallback`.
+  `wiremock` integration tests cover both endpoints + retry +
+  rate-limit handling.
+- **Block D — Source indexing improvements**: `tessera_sources`
+  added an `ignore` module that wraps the `ignore` crate with a
+  Tessera default list (`.git/`, `node_modules/`, `__pycache__/`,
+  `.DS_Store`, `Thumbs.db`, common binary extensions); an
+  `image_metadata` extractor that surfaces EXIF / XMP / IPTC
+  metadata for JPEG/PNG/TIFF/WebP as searchable chunks; and a
+  `ProgressTracker` whose `IndexStatus` lifecycle is polled by the
+  renderer's `useIndexingProgress` hook to drive a live progress
+  card in `SourceDetailPage`.
+- **Block E — UI hardening**: New `useKeyboardShortcuts` hook
+  registers Ctrl/Cmd+N/S/E/F/,/1–7 + Escape at the document level;
+  Sidebar items render their hint via `aria-keyshortcuts`. `Modal`
+  gained a proper focus trap (Tab cycling), `aria-labelledby`
+  wired to the title, focus restoration to the previously active
+  element on close, and an opt-in `closeOnOverlayClick={false}`
+  for destructive dialogs. `Toast` gained a dismiss button, an
+  `aria-label`'d notification region, `role="alert"` for error
+  toasts, and timer cleanup that survives StrictMode double-mount.
+  Dark mode tokens were added to `tokens.css` (selector-based
+  override + `prefers-color-scheme` fallback) and the renderer's
+  `useTheme` hook applies the user's choice from Settings.
+- **Block F — Production readiness**: A root `ErrorBoundary`
+  renders Reload / Report / Dismiss when the renderer throws. The
+  Electron main process gained a JSONL logger
+  (`apps/desktop/electron/logger.ts`) writing to
+  `~/.config/Tessera/logs/tessera.log` with 5-file × 10 MB
+  rotation, plus `uncaughtException` / `unhandledRejection`
+  handlers that route through the same logger. The new
+  `.github/workflows/release.yml` builds AppImage / .deb / .rpm /
+  .dmg / NSIS exe on `v*` tags via `electron-builder` and attaches
+  them to a GitHub Release with an auto-generated changelog from
+  `git log <prev>..<tag>`.
+- **Block G — Documentation**: This changelog entry; the Phase 9
+  section above; README's Stack / Templates / Editors / Keyboard
+  shortcuts updates; ARCHITECTURE's adapter-priority and ignore /
+  image-metadata module call-outs; PHASES' Phase 9 row.
 
 ### 2026-05-20 (Phase 8)
 - **Block A (delivered for real)**: Phase 7's intended surface — Mermaid /

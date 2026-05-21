@@ -6,6 +6,19 @@ export interface SourceApi {
   searchSources: (query: string, limit: number) => Promise<SearchHit[]>;
   getDetail: (id: string) => Promise<SourceDetailInfo>;
   reindex: (id: string) => Promise<SourceInfo>;
+  getIndexingProgress: (id: string) => Promise<IndexingProgressInfo>;
+}
+
+export interface IndexingProgressInfo {
+  status: "idle" | "running" | "done" | "failed";
+  scanned: number;
+  indexed: number;
+  unchanged: number;
+  skipped: number;
+  errors: number;
+  totalFiles: number;
+  currentPath: string | null;
+  lastError: string | null;
 }
 
 export interface ArtifactApi {
@@ -60,11 +73,70 @@ export interface CitationApi {
   add: (req: AddCitationRequest) => Promise<CitationInfo>;
   remove: (artifactId: string, citationId: string) => Promise<void>;
   checkChanged: (citationId: string) => Promise<boolean>;
+  checkFreshness: (citationId: string) => Promise<CitationFreshness>;
+  replace: (req: ReplaceCitationRequest) => Promise<ReplaceCitationResult>;
+}
+
+export type CitationFreshness = "fresh" | "changed" | "source_missing";
+
+export interface ReplaceCitationRequest {
+  artifactId: string;
+  citationId: string;
+  sourceId: string;
+  sourceType: string;
+  sourceTitle: string;
+  sourceUri: string;
+  /** Hash of the new source chunk. Required by the Rust N-API
+   *  `ReplaceCitationRequest` struct — without it, the bridge call
+   *  fails to deserialize and the entire replace flow throws. */
+  chunkHash: string;
+  page: number | null;
+  confidence: number;
+}
+
+export interface ReplaceCitationResult {
+  citation: CitationInfo;
+  previousSourceUri: string;
 }
 
 export interface SettingsApi {
   get: () => Promise<SettingsData>;
   update: (settings: Partial<SettingsData>) => Promise<SettingsData>;
+}
+
+export type ExternalProviderType =
+  | "openai_compatible"
+  | "anthropic"
+  | "custom";
+
+export interface ExternalProviderConfigInput {
+  enabled: boolean;
+  providerType: ExternalProviderType;
+  apiUrl: string;
+  apiKeyRef: string;
+  modelName: string;
+  maxTokens: number;
+  temperature: number;
+  timeoutSecs: number;
+  maxRetries: number;
+}
+
+export interface ExternalProviderConfigView
+  extends ExternalProviderConfigInput {
+  hasApiKey: boolean;
+}
+
+export type ExternalProviderTestResult =
+  | { ok: true; latencyMs: number }
+  | { ok: false; error: string };
+
+export interface ExternalProviderApi {
+  get: () => Promise<ExternalProviderConfigView>;
+  set: (
+    provider: ExternalProviderConfigInput,
+    apiKey: string | null,
+  ) => Promise<ExternalProviderConfigView>;
+  test: () => Promise<ExternalProviderTestResult>;
 }
 
 export interface ModelApi {
@@ -243,6 +315,7 @@ export interface TesseraApi {
   templates: TemplateApi;
   citations: CitationApi;
   settings: SettingsApi;
+  externalProvider: ExternalProviderApi;
   model: ModelApi;
   runtime: RuntimeApi;
   connectors: ConnectorApi;

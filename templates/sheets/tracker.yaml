@@ -1,0 +1,36 @@
+id: tracker-v1
+name: Tracker
+type: sheet
+description: General-purpose tracker for items with status, owner, due date, priority, notes, and last-updated columns
+sections:
+  - title: Tracker Header
+    prompt: >
+      State what is being tracked (initiatives, issues,
+      decisions, deliverables, ...), the tracking
+      period, and the responsible team.
+  - title: Items
+    prompt: >
+      For each tracked item record: a short item title,
+      the current status (Not started / In progress /
+      Blocked / Done), the owner, the due date, a
+      priority badge (P0 / P1 / P2 / P3), free-text
+      notes, and the last-updated timestamp.
+  - title: Status Summary
+    prompt: >
+      Roll up the counts by status and priority so the
+      reader can immediately see how many items are
+      blocked or overdue.
+  - title: Blockers and Risks
+    prompt: >
+      List items that are blocked, the reason they are
+      blocked, who is required to unblock them, and the
+      target date for resolution.
+  - title: Recent Updates
+    prompt: >
+      Highlight the most recent material changes,
+      newly added items, and items that have flipped
+      status since the last review.
+export:
+  - markdown
+  - csv
+  - xlsx

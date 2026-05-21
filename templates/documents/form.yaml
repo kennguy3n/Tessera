@@ -1,0 +1,37 @@
+id: form-v1
+name: Form
+type: document
+description: General-purpose fillable form with sections for title, description, fields, and submission instructions
+sections:
+  - title: Form Title and Description
+    prompt: >
+      Capture the form's title, a short purpose statement, and any
+      context the responder needs before completing the form.
+  - title: Respondent Information
+    prompt: >
+      Collect the respondent's identifying details (name, email,
+      role, organisation) and the date of submission.
+  - title: Form Fields
+    prompt: >
+      Define each field the form collects. For every field record the
+      label, the input type (text, long text, single-select, multi-select,
+      date, checkbox, number, file upload), whether it is required, and
+      any default value or option list.
+  - title: Validation and Conditional Logic
+    prompt: >
+      Describe validation rules (required, regex, min/max, allowed
+      values) and any conditional show/hide logic between fields.
+  - title: Submission Instructions
+    prompt: >
+      Explain how the completed form should be submitted, who reviews
+      it, the expected turnaround, and how the respondent will be
+      notified of the outcome.
+  - title: Privacy and Retention
+    prompt: >
+      State how the form data is stored, who can access it, and how
+      long it is retained before being deleted or anonymised.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

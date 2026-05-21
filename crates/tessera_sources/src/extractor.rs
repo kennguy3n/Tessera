@@ -3,6 +3,8 @@ use std::io::Read;
 use std::path::Path;
 use tessera_core::error::{Error, Result};
 
+use crate::image_metadata::{extract_image_metadata, is_image_extension};
+
 pub fn extract_text(path: &Path) -> Result<String> {
     let ext = path
         .extension()
@@ -17,6 +19,7 @@ pub fn extract_text(path: &Path) -> Result<String> {
         "json" => extract_json(path),
         "html" | "htm" => extract_html(path),
         "xlsx" | "xls" => extract_xlsx(path),
+        "jpg" | "jpeg" | "png" | "tif" | "tiff" | "webp" => extract_image_metadata(path),
         _ => Err(Error::Extraction {
             path: path.display().to_string(),
             message: format!("unsupported file type: .{ext}"),
@@ -25,10 +28,11 @@ pub fn extract_text(path: &Path) -> Result<String> {
 }
 
 pub fn is_supported_extension(ext: &str) -> bool {
+    let lower = ext.to_lowercase();
     matches!(
-        ext.to_lowercase().as_str(),
+        lower.as_str(),
         "txt" | "text" | "md" | "markdown" | "csv" | "json" | "html" | "htm" | "xlsx" | "xls"
-    )
+    ) || is_image_extension(&lower)
 }
 
 fn extract_plain_text(path: &Path) -> Result<String> {
@@ -340,9 +344,9 @@ mod tests {
     #[test]
     fn unsupported_extension_returns_error() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("image.png");
+        let path = dir.path().join("blob.bin");
         let mut f = std::fs::File::create(&path).unwrap();
-        f.write_all(b"fake png data").unwrap();
+        f.write_all(b"random binary").unwrap();
         let result = extract_text(&path);
         assert!(result.is_err());
     }
@@ -355,7 +359,22 @@ mod tests {
         assert!(is_supported_extension("json"));
         assert!(is_supported_extension("html"));
         assert!(is_supported_extension("xlsx"));
-        assert!(!is_supported_extension("png"));
+        // Image formats are now supported (metadata extraction)
+        assert!(is_supported_extension("png"));
+        assert!(is_supported_extension("jpg"));
+        assert!(is_supported_extension("webp"));
         assert!(!is_supported_extension("exe"));
+    }
+
+    #[test]
+    fn extracts_image_metadata_via_dispatcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dispatch.png");
+        let img = image::RgbaImage::from_fn(3, 3, |_, _| image::Rgba([100, 150, 200, 255]));
+        img.save_with_format(&path, image::ImageFormat::Png)
+            .unwrap();
+        let text = extract_text(&path).unwrap();
+        assert!(text.contains("Format: png"));
+        assert!(text.contains("Dimensions: 3x3"));
     }
 }

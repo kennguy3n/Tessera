@@ -1,0 +1,36 @@
+id: inventory-v1
+name: Inventory
+type: sheet
+description: Inventory management spreadsheet with item name, SKU, category, quantity, unit cost, total value, reorder level, supplier, and location
+sections:
+  - title: Inventory Header
+    prompt: >
+      Identify the inventory scope (warehouse, retail
+      location, project), the inventory period, and the
+      responsible owner.
+  - title: Items
+    prompt: >
+      For each item capture: item name, SKU or item ID,
+      category, on-hand quantity, unit cost, total value
+      (quantity * unit cost), reorder level, primary
+      supplier, and storage location.
+  - title: Reorder Watchlist
+    prompt: >
+      List every item whose on-hand quantity is at or
+      below its reorder level, with the supplier, the
+      typical lead time, and the recommended reorder
+      quantity.
+  - title: Value Summary
+    prompt: >
+      Roll up the total inventory value by category and
+      by location so the reader sees where the inventory
+      value is concentrated.
+  - title: Stock Movement Notes
+    prompt: >
+      Summarise notable stock movements since the last
+      inventory: receipts, shipments, write-offs, and
+      transfers between locations.
+export:
+  - markdown
+  - csv
+  - xlsx

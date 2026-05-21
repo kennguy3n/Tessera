@@ -9,8 +9,12 @@ import SettingsPage from "./pages/SettingsPage";
 import ArtifactEditorPage from "./pages/ArtifactEditorPage";
 import TasksPage from "./pages/TasksPage";
 import AutomationsPage from "./pages/AutomationsPage";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import { useTheme } from "./hooks/useTheme";
 
 export default function App() {
+  useKeyboardShortcuts();
+  useTheme();
   return (
     <div className="app-layout">
       <Sidebar />

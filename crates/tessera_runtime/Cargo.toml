@@ -21,6 +21,7 @@ http = ["reqwest"]
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = { workspace = true }
 
 [lints]
 workspace = true

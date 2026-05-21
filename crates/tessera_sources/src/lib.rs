@@ -1,8 +1,10 @@
 pub mod chunker;
 pub mod extractor;
 pub mod ignore;
+pub mod image_metadata;
 pub mod indexer;
 pub mod manager;
+pub mod progress;
 pub mod search;
 pub mod source;
 pub mod store;

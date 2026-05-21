@@ -10,6 +10,18 @@ export interface SourceInfo {
   fileCount: number;
 }
 
+export interface IndexingProgressInfo {
+  status: "idle" | "running" | "done" | "failed";
+  scanned: number;
+  indexed: number;
+  unchanged: number;
+  skipped: number;
+  errors: number;
+  totalFiles: number;
+  currentPath: string | null;
+  lastError: string | null;
+}
+
 export interface IndexedFileInfo {
   path: string;
   hash: string;
@@ -77,12 +89,62 @@ export interface AddCitationRequest {
   usedFor: string;
 }
 
+export type CitationFreshness = "fresh" | "changed" | "source_missing";
+
+export interface ReplaceCitationRequest {
+  artifactId: string;
+  citationId: string;
+  sourceId: string;
+  sourceType: string;
+  sourceTitle: string;
+  sourceUri: string;
+  /** Required by the Rust N-API `ReplaceCitationRequest`; omitting
+   *  it causes deserialization to fail at the bridge call site. */
+  chunkHash: string;
+  page: number | null;
+  confidence: number;
+}
+
+export interface ReplaceCitationResult {
+  citation: CitationInfo;
+  previousSourceUri: string;
+}
+
 export interface SettingsData {
   theme: string;
   defaultExportFormat: string;
   ignorePatterns: string[];
   watchPatterns: string[];
 }
+
+export type ExternalProviderType =
+  | "openai_compatible"
+  | "anthropic"
+  | "custom";
+
+/** Payload accepted by `externalProvider.set` from the renderer. */
+export interface ExternalProviderConfigInput {
+  enabled: boolean;
+  providerType: ExternalProviderType;
+  apiUrl: string;
+  apiKeyRef: string;
+  modelName: string;
+  maxTokens: number;
+  temperature: number;
+  timeoutSecs: number;
+  maxRetries: number;
+}
+
+/** Payload returned by `externalProvider.get` / `.set`. Includes the
+ *  derived `hasApiKey` so the renderer can hide the password field
+ *  when the keychain already has a value. */
+export interface ExternalProviderConfigView extends ExternalProviderConfigInput {
+  hasApiKey: boolean;
+}
+
+export type ExternalProviderTestResult =
+  | { ok: true; latencyMs: number }
+  | { ok: false; error: string };
 
 // Mirrors `ExtractedItem` in apps/desktop/renderer/src/types/ipc.ts and
 // the local copy in apps/desktop/electron/ipc.ts. We duplicate the shape
@@ -226,6 +288,7 @@ export interface TesseraApi {
     searchSources: (query: string, limit: number) => Promise<SearchHit[]>;
     getDetail: (id: string) => Promise<SourceDetailInfo>;
     reindex: (id: string) => Promise<SourceInfo>;
+    getIndexingProgress: (id: string) => Promise<IndexingProgressInfo>;
   };
   artifacts: {
     create: (
@@ -277,10 +340,20 @@ export interface TesseraApi {
     add: (req: AddCitationRequest) => Promise<CitationInfo>;
     remove: (artifactId: string, citationId: string) => Promise<void>;
     checkChanged: (citationId: string) => Promise<boolean>;
+    checkFreshness: (citationId: string) => Promise<CitationFreshness>;
+    replace: (req: ReplaceCitationRequest) => Promise<ReplaceCitationResult>;
   };
   settings: {
     get: () => Promise<SettingsData>;
     update: (settings: Partial<SettingsData>) => Promise<SettingsData>;
+  };
+  externalProvider: {
+    get: () => Promise<ExternalProviderConfigView>;
+    set: (
+      provider: ExternalProviderConfigInput,
+      apiKey: string | null,
+    ) => Promise<ExternalProviderConfigView>;
+    test: () => Promise<ExternalProviderTestResult>;
   };
   model: {
     status: () => Promise<ModelStatus>;
@@ -439,6 +512,8 @@ const api: TesseraApi = {
       ipcRenderer.invoke("sources:search", query, limit),
     getDetail: (id: string) => ipcRenderer.invoke("sources:getDetail", id),
     reindex: (id: string) => ipcRenderer.invoke("sources:reindex", id),
+    getIndexingProgress: (id: string) =>
+      ipcRenderer.invoke("sources:getIndexingProgress", id),
   },
   artifacts: {
     create: (title: string, artifactType: string, templateId?: string) =>
@@ -499,11 +574,21 @@ const api: TesseraApi = {
       ipcRenderer.invoke("citations:remove", artifactId, citationId),
     checkChanged: (citationId: string) =>
       ipcRenderer.invoke("citations:checkChanged", citationId),
+    checkFreshness: (citationId: string) =>
+      ipcRenderer.invoke("citations:checkFreshness", citationId),
+    replace: (req: ReplaceCitationRequest) =>
+      ipcRenderer.invoke("citations:replace", req),
   },
   settings: {
     get: () => ipcRenderer.invoke("settings:get"),
     update: (settings: Partial<SettingsData>) =>
       ipcRenderer.invoke("settings:update", settings),
+  },
+  externalProvider: {
+    get: () => ipcRenderer.invoke("externalProvider:get"),
+    set: (provider: ExternalProviderConfigInput, apiKey: string | null) =>
+      ipcRenderer.invoke("externalProvider:set", provider, apiKey),
+    test: () => ipcRenderer.invoke("externalProvider:test"),
   },
   model: {
     status: () => ipcRenderer.invoke("model:status"),
