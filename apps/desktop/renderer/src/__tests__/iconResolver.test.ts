@@ -7,6 +7,7 @@ import {
   listIcons,
   searchIcons,
   embedIcons,
+  iconsToTextPlaceholder,
 } from "../services/iconResolver";
 
 describe("iconResolver", () => {
@@ -201,6 +202,39 @@ describe("iconResolver", () => {
       );
       const svgCount = (out.match(/<svg/g) ?? []).length;
       expect(svgCount).toBe(2);
+    });
+  });
+
+  describe("iconsToTextPlaceholder", () => {
+    // The fallback PDF builder is text-only — these tests lock in the
+    // contract that icon tokens degrade to "[name]" placeholders
+    // instead of inline <svg> markup that the builder would render as
+    // garbled escaped text.
+    it("replaces tokens with [name] placeholders", () => {
+      const out = iconsToTextPlaceholder(
+        "a {{icon:lucide:home}} b {{icon:phosphor:check-circle weight=bold}} c",
+      );
+      expect(out).toBe("a [home] b [check-circle] c");
+      expect(out).not.toMatch(/<svg/);
+      expect(out).not.toMatch(/\{\{icon:/);
+    });
+
+    it("is idempotent — running twice produces the same output", () => {
+      const text = "Hello {{icon:lucide:home}}";
+      const once = iconsToTextPlaceholder(text);
+      const twice = iconsToTextPlaceholder(once);
+      expect(twice).toBe(once);
+      expect(once).toBe("Hello [home]");
+    });
+
+    it("leaves unresolved-name tokens intact (so missing icons stay visible)", () => {
+      // Token with no parseable name is left alone for authoring
+      // visibility — same behavior as embedIcons.
+      expect(iconsToTextPlaceholder("x {{icon:}} y")).toBe("x {{icon:}} y");
+    });
+
+    it("ignores text without tokens", () => {
+      expect(iconsToTextPlaceholder("plain text")).toBe("plain text");
     });
   });
 });

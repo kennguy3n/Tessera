@@ -1,4 +1,14 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import KanbanView from "./baseviews/KanbanView";
+import CalendarView from "./baseviews/CalendarView";
+import TimelineView from "./baseviews/TimelineView";
+import GalleryView from "./baseviews/GalleryView";
+import {
+  defaultViewConfig,
+  type BaseViewConfig,
+  type BaseViewKind,
+  type BaseViewProps,
+} from "./baseviews/types";
 
 export type FieldType = "text" | "number" | "date" | "select" | "checkbox" | "url";
 
@@ -12,6 +22,8 @@ export interface BaseContent {
   fields: BaseField[];
   records: Record<string, unknown>[];
 }
+
+export type { BaseViewConfig, BaseViewKind } from "./baseviews/types";
 
 interface BaseEditorProps {
   content: string;
@@ -32,6 +44,14 @@ export default function BaseEditor({
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showAddField, setShowAddField] = useState(false);
+  // Active view kind plus per-view config (which field drives kanban
+  // columns, which date drives the calendar, etc.). Both are
+  // renderer concerns: they're NOT serialized into the artifact
+  // JSON, so switching views never dirties the document.
+  const [view, setView] = useState<BaseViewKind>("grid");
+  const [viewConfig, setViewConfig] = useState<BaseViewConfig>(() =>
+    defaultViewConfig(parseBaseContent(content).fields),
+  );
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef(content);
 
@@ -109,6 +129,27 @@ export default function BaseEditor({
     updateData(updated);
   }, [data, updateData]);
 
+  // Used by Kanban ("+" button on a column header) and Calendar
+  // (click an empty day) to add a record pre-populated with the
+  // values that put it in the user-intended bucket / day.
+  const addRecordWith = useCallback(
+    (prefill: Record<string, unknown>) => {
+      const record: Record<string, unknown> = {};
+      for (const field of data.fields) {
+        record[field.name] =
+          field.name in prefill
+            ? prefill[field.name]
+            : getDefaultValue(field.type);
+      }
+      const updated: BaseContent = {
+        ...data,
+        records: [...data.records, record],
+      };
+      updateData(updated);
+    },
+    [data, updateData],
+  );
+
   const removeRecord = useCallback(
     (index: number) => {
       const updated: BaseContent = {
@@ -169,19 +210,81 @@ export default function BaseEditor({
     return records;
   }, [data.records, filters, sortField, sortDir]);
 
+  // Shared props passed to every non-grid view. The grid view stays
+  // inline below because it has filter/sort behavior the others
+  // don't need.
+  const viewProps: BaseViewProps = {
+    data,
+    onUpdateCell: updateCell,
+    onAddRecord: addRecord,
+    onAddRecordWith: addRecordWith,
+    onRemoveRecord: removeRecord,
+    config: viewConfig,
+    onConfigChange: setViewConfig,
+  };
+
   return (
     <div className="base-editor">
-      <div className="base-toolbar">
+      <div
+        className="base-toolbar"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "0.5rem",
+          padding: "0.5rem",
+          borderBottom: "1px solid var(--color-border, #e5e7eb)",
+        }}
+      >
         <button type="button" className="btn-sm" onClick={addRecord}>
           + Record
         </button>
         <button type="button" className="btn-sm" onClick={() => setShowAddField(true)}>
           + Field
         </button>
+        <div style={{ flex: 1 }} />
+        <div
+          role="tablist"
+          aria-label="Base view"
+          style={{ display: "flex", gap: "0.25rem" }}
+        >
+          {(
+            [
+              ["grid", "Grid"],
+              ["kanban", "Kanban"],
+              ["calendar", "Calendar"],
+              ["timeline", "Timeline"],
+              ["gallery", "Gallery"],
+            ] as [BaseViewKind, string][]
+          ).map(([v, label]) => (
+            <button
+              key={v}
+              type="button"
+              role="tab"
+              aria-selected={view === v}
+              className="btn-sm"
+              onClick={() => setView(v)}
+              style={{
+                fontWeight: view === v ? 600 : 400,
+                background:
+                  view === v
+                    ? "var(--color-primary-soft, #ede9fe)"
+                    : "transparent",
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {showAddField && <AddFieldDialog onAdd={addField} onCancel={() => setShowAddField(false)} />}
 
+      {view === "kanban" && <KanbanView {...viewProps} />}
+      {view === "calendar" && <CalendarView {...viewProps} />}
+      {view === "timeline" && <TimelineView {...viewProps} />}
+      {view === "gallery" && <GalleryView {...viewProps} />}
+
+      {view === "grid" && (
       <div className="base-grid-wrapper">
         <table className="base-grid">
           <thead>
@@ -251,6 +354,7 @@ export default function BaseEditor({
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }

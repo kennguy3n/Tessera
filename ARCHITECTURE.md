@@ -7,15 +7,27 @@
 ```mermaid
 flowchart TB
     subgraph "Electron Renderer"
-        UI["React / TypeScript UI"]
+        UI["React / TypeScript UI (Lucide + Phosphor icons)"]
         Home["Home"]
         SourceMgr["Source manager"]
         TemplateGallery["Template gallery"]
+        CreatePage["Create / Analyze / Plan / Approve"]
+        Tasks["Tasks / Plans"]
+        Automations["Automations"]
         DocEditor["Document editor"]
-        SlideEditor["Slide editor"]
+        SlideEditor["Slide editor (Marp mode)"]
         SheetEditor["Sheet editor"]
-        BaseEditor["Base editor"]
+        BaseEditor["Base editor (Grid / Kanban / Calendar / Timeline / Gallery)"]
+        InfographicEditor["Infographic editor"]
+        LandingPageEditor["Landing Page editor"]
         Settings["Settings"]
+        IconPicker["IconPicker (Lucide + Phosphor)"]
+    end
+
+    subgraph "Renderer services"
+        MermaidRenderer["mermaidRenderer"]
+        MarpRenderer["marpRenderer"]
+        IconResolver["iconResolver"]
     end
 
     subgraph "Electron Main Process"
@@ -25,6 +37,8 @@ flowchart TB
         OAuthHandoff["OAuth handoff"]
         NativeLoad["Native module loading"]
         SidecarSup["Sidecar supervision"]
+        Scheduler["Automation scheduler"]
+        MarpExport["Marp CLI PPTX export"]
     end
 
     subgraph "Rust Core"
@@ -34,8 +48,9 @@ flowchart TB
         Retrieval["Retrieval engine"]
         TemplateEng["Template engine"]
         ArtifactEng["Artifact engine"]
-        ExportEng["Export engine"]
+        ExportEng["Export engine (MD / HTML / PDF / Typst PDF / DOCX / XLSX / CSV / JSON)"]
         ConnectorFW["Connector framework"]
+        TasksModel["Tasks model"]
         PolicyAudit["Policy / audit layer"]
         NAPI["N-API bridge"]
     end
@@ -61,11 +76,22 @@ flowchart TB
     Home --> IPC
     SourceMgr --> IPC
     TemplateGallery --> IPC
+    CreatePage --> IPC
+    Tasks --> IPC
+    Automations --> IPC
     DocEditor --> IPC
     SlideEditor --> IPC
     SheetEditor --> IPC
     BaseEditor --> IPC
+    InfographicEditor --> IPC
+    LandingPageEditor --> IPC
     Settings --> IPC
+    DocEditor --> MermaidRenderer
+    SlideEditor --> MermaidRenderer
+    SlideEditor --> MarpRenderer
+    InfographicEditor --> IconPicker
+    LandingPageEditor --> IconPicker
+    IconPicker --> IconResolver
 
     IPC --> NAPI
     WinMgr --> NAPI
@@ -73,6 +99,9 @@ flowchart TB
     OAuthHandoff --> NAPI
     NativeLoad --> NAPI
     SidecarSup --> LlamaCpp
+    Automations --> Scheduler
+    Scheduler --> NAPI
+    SlideEditor --> MarpExport
 
     NAPI --> KnowledgeSub
     NAPI --> EncStorage
@@ -82,6 +111,7 @@ flowchart TB
     NAPI --> ArtifactEng
     NAPI --> ExportEng
     NAPI --> ConnectorFW
+    NAPI --> TasksModel
     NAPI --> PolicyAudit
 
     ConnectorFW --> LocalFolders
@@ -105,7 +135,9 @@ flowchart TB
 | Layer | Technology | Reason |
 |---|---|---|
 | Desktop shell | Electron | Cross-platform desktop with native access |
-| UI framework | React + TypeScript | Productivity UI with strong typing |
+| UI framework | React + TypeScript + Lucide + Phosphor icons | Productivity UI with strong typing and two complementary icon families (Lucide for action / outline, Phosphor for weighted / branded glyphs) |
+| Editor stack | TipTap (ProseMirror) for documents, custom Slide / Sheet / Base / Infographic / Landing Page editors | Block-level editing with citations and live preview |
+| Diagrams & slides | Mermaid (diagrams), Marp Core + Marpit (slides), Typst (high-fidelity PDF / SVG) | First-class rendering integrations wired into both the editors and the export pipeline |
 | Core engine | Rust | Performance, memory safety, indexing, storage, crypto |
 | Optional later | Go | Remote connector daemons, network services |
 | Local database | SQLite / SQLCipher | Local-first, encrypted, single-file DB |
@@ -130,7 +162,7 @@ Rust is the primary systems language for Tessera's core engine. It handles:
 - Artifact generation pipeline
 - Connector sync framework
 - Audit trail logging
-- Export engine (Markdown, HTML, PDF, CSV)
+- Export engine (Markdown, HTML, PDF, CSV, JSON, Typst PDF, DOCX, XLSX) with Mermaid block handling
 - Model runtime supervision (sidecar lifecycle)
 - N-API bridge to Electron
 
@@ -338,54 +370,63 @@ The full registry lives in `sidecars/models.json`. `available_models_for_platfor
 tessera/
 ├── apps/
 │   └── desktop/
-│       ├── electron/            # Electron main process
-│       │   ├── main.ts          # App entry, window management
-│       │   ├── ipc.ts           # IPC handler registration
-│       │   ├── appState.ts      # Bridge initialization and AppState
-│       │   ├── preload.ts       # Typed preload API exposed to renderer
-│       │   ├── sidecar.ts       # Model sidecar supervision
-│       │   └── config.ts        # Local JSON settings persistence
-│       └── renderer/            # React / TypeScript UI
+│       ├── electron/                # Electron main process
+│       │   ├── main.ts              # App entry, window management, before-quit drain
+│       │   ├── ipc.ts               # IPC handler registration (sources, artifacts, runtime, tasks, automations)
+│       │   ├── appState.ts          # Bridge initialization and AppState
+│       │   ├── preload.ts           # Typed preload API exposed to renderer
+│       │   ├── sidecar.ts           # Model sidecar supervision
+│       │   ├── scheduler.ts         # Automation scheduler (activeTick / queuedRunNow state machine)
+│       │   ├── marpExport.ts        # Marp CLI PPTX / HTML / PDF export
+│       │   └── config.ts            # Local JSON settings persistence
+│       └── renderer/                # React / TypeScript UI
 │           ├── src/
-│           │   ├── pages/       # Home, Sources, SourceDetail, Templates, Settings, ArtifactEditor
-│           │   ├── components/  # CitationPanel, VersionHistory, RuntimeStatus
-│           │   ├── editors/     # DocumentEditor (TipTap), SlideEditor, SheetEditor, BaseEditor
-│           │   ├── hooks/       # React hooks for IPC calls
-│           │   ├── types/       # TypeScript type definitions (ipc.ts)
-│           │   └── styles/      # Design tokens, theme
+│           │   ├── pages/               # Home, Sources, SourceDetail, Templates, Create, Tasks, Automations, Settings, ArtifactEditor
+│           │   ├── components/          # CitationPanel, VersionHistory, RuntimeStatus, IconPicker, Sidebar
+│           │   ├── editors/             # DocumentEditor (TipTap + Mermaid extension), SlideEditor (with Marp mode), SheetEditor, BaseEditor (5 views), InfographicEditor, LandingPageEditor
+│           │   │   ├── baseviews/       # KanbanView, CalendarView, TimelineView, GalleryView, types.ts
+│           │   │   └── extensions/      # TipTap Mermaid extension
+│           │   ├── services/            # mermaidRenderer, marpRenderer, iconResolver (Lucide + Phosphor + token rewriter)
+│           │   ├── hooks/               # React hooks for IPC calls (useTasks, useAutomations, …)
+│           │   ├── types/               # TypeScript type definitions (ipc.ts)
+│           │   └── styles/              # Design tokens, theme
 │           └── index.html
-├── crates/                      # Rust core engine
-│   ├── tessera_core/            # Core types, config, lifecycle
-│   ├── tessera_bridge/          # N-API bindings for Electron
-│   ├── tessera_sources/         # Source management, file indexing
-│   ├── tessera_templates/       # Template parsing and validation
-│   ├── tessera_artifacts/       # Artifact creation, version history, storage
-│   ├── tessera_export/          # Export engine (MD, HTML, CSV, JSON, PDF)
-│   ├── tessera_citations/       # Citation tracking and provenance
-│   ├── tessera_connectors/      # Remote connectors (Google Drive, etc.)
-│   ├── tessera_runtime/         # Local model runtime management
-│   └── tessera_audit/           # Audit trail logging
-├── sidecars/                    # Model runtime binaries
-│   ├── llama-server/            # PrismML llama.cpp sidecar
-│   ├── scripts/                 # Platform download scripts (sh + ps1)
-│   └── models.json              # Model download manifest
-├── templates/                   # YAML artifact templates
-│   ├── documents/
-│   ├── slides/
-│   ├── sheets/
-│   ├── bases/
-│   └── grammars/                # GBNF grammar files for structured LLM output
-├── schemas/                     # JSON Schema (template.schema.json, artifact.schema.json)
-├── packaging/                   # electron-builder configs
-│   ├── linux/                   # AppImage + .deb (x64, arm64)
-│   ├── macos/                   # DMG + .zip (universal)
-│   ├── windows/                 # NSIS installer + portable .zip
-│   └── electron-builder.yml     # Unified config used by `npm run package`
-├── docs/                        # Additional documentation
-├── LICENSE                      # MIT
+├── crates/                          # Rust core engine
+│   ├── tessera_core/                # Core types, config, lifecycle (ArtifactType: Document/Slides/Sheet/Base/Infographic/LandingPage)
+│   ├── tessera_bridge/              # N-API bindings for Electron
+│   ├── tessera_sources/             # Source management, file indexing
+│   ├── tessera_templates/           # Template parsing and validation (Create / Analyze / Plan / Approve categories)
+│   ├── tessera_artifacts/           # Artifact creation, version history, storage, tasks model
+│   ├── tessera_export/              # csv.rs, markdown.rs, html.rs, pdf.rs, typst.rs, docx.rs, xlsx.rs, mermaid.rs, evidence_pack.rs
+│   ├── tessera_citations/           # Citation tracking and provenance
+│   ├── tessera_connectors/          # gdrive.rs, onedrive.rs, notion.rs, jira.rs, confluence.rs, figma.rs + registry/token/types
+│   ├── tessera_runtime/             # Local model runtime management
+│   └── tessera_audit/               # Audit trail logging
+├── sidecars/                        # Model runtime binaries
+│   ├── llama-server/                # PrismML llama.cpp sidecar
+│   ├── scripts/                     # Platform download scripts (sh + ps1)
+│   └── models.json                  # Model download manifest
+├── templates/                       # YAML artifact templates
+│   ├── documents/                   # PRD, Proposal, SOP, Report, Memo, Meeting agenda, Project plan, Task list, Launch checklist, Meeting notes, Brief, Purchase / Budget / Policy / Vendor approval flows
+│   ├── slides/                      # QBR, Strategy, Review, Training, Pitch
+│   ├── sheets/                      # Budget, Scorecard, Roadmap
+│   ├── bases/                       # Vendor register, Risk register, Decision log
+│   ├── infographics/                # Stats overview, Process flow, Comparison
+│   ├── landingpages/                # SaaS product
+│   └── grammars/                    # GBNF grammar files for structured LLM output
+├── schemas/                         # JSON Schema (template.schema.json, artifact.schema.json)
+├── packaging/                       # electron-builder configs
+│   ├── linux/                       # AppImage + .deb / .rpm (x64, arm64)
+│   ├── macos/                       # DMG + .zip (universal)
+│   ├── windows/                     # NSIS installer + portable .zip
+│   └── electron-builder.yml         # Unified config used by `npm run package`
+├── .github/workflows/ci.yml         # CI matrix (Ubuntu 22.04 / macOS 13 / Windows 2022)
+├── docs/                            # Additional documentation
+├── LICENSE                          # MIT
 ├── README.md
 ├── PROPOSAL.md
 ├── ARCHITECTURE.md
+├── PHASES.md
 └── PROGRESS.md
 ```
 
@@ -416,5 +457,6 @@ Tessera's UI follows the **KChat design system** ([https://kchat.com](https://kc
 
 - [README.md](README.md) — project overview
 - [PROPOSAL.md](PROPOSAL.md) — product proposal
+- [PHASES.md](PHASES.md) — one-page phase index
 - [PROGRESS.md](PROGRESS.md) — phased delivery tracker
 - [kennguy3n/knowledge](https://github.com/kennguy3n/knowledge) — local knowledge substrate

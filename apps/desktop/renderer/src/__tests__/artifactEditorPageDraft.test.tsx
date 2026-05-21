@@ -654,4 +654,114 @@ describe("ArtifactEditorPage live-draft export", () => {
     expect(text).toContain("Jane Doe");
     expect(text).toContain("## Ready?");
   });
+
+  it("for PDF export: rewrites {{icon:...}} tokens in document content to [name] text placeholders (NOT inline <svg>)", async () => {
+    // Long-term-correct icon export contract:
+    //   - HTML / DOCX  -> inline <svg> (carries visual fidelity)
+    //   - PDF (minimal builder) -> "[name]" text placeholders
+    //
+    // The fallback PDF builder in `tessera_export::pdf` is text-only and
+    // cannot embed images. Previously the renderer ran `embedIcons` for
+    // PDF, which dumped inline `<svg ...>` markup into the document; the
+    // PDF builder then escaped the `<` / `>` and rendered the literal
+    // tag text in the body. Switching PDF onto `iconsToTextPlaceholder`
+    // produces a readable line like "Hello [home] world" instead, and
+    // preserves the Typst PDF pipeline's separate high-fidelity path
+    // (which DOES render real vectors).
+    const docArtifact = {
+      ...baseArtifact,
+      id: "art-doc-pdf-icons",
+      artifactType: "document" as const,
+      content: "Hello {{icon:lucide:home}} world",
+    };
+    window.tessera.artifacts.get = vi.fn().mockResolvedValue(docArtifact);
+    // PDF is a binary format: the renderer routes it through
+    // `artifacts.exportToFile` (which prompts the user via the
+    // native save dialog), NOT `exportArtifact`.
+    window.tessera.artifacts.exportToFile = vi
+      .fn()
+      .mockResolvedValue("/tmp/Draft Test.pdf");
+
+    render(
+      <MemoryRouter initialEntries={["/artifact/art-doc-pdf-icons"]}>
+        <Routes>
+          <Route path="/artifact/:id" element={<ArtifactEditorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      // The TipTap editor renders the prose text as a div containing
+      // the user-typed line.
+      expect(screen.getByText(/Hello/)).toBeInTheDocument();
+    });
+
+    const exportSelect = screen.getByLabelText(
+      "Export artifact",
+    ) as HTMLSelectElement;
+    await act(async () => {
+      fireEvent.change(exportSelect, { target: { value: "pdf" } });
+    });
+
+    await waitFor(() => {
+      expect(window.tessera.artifacts.exportToFile).toHaveBeenCalled();
+    });
+    const mockFn = window.tessera.artifacts.exportToFile as unknown as {
+      mock: { calls: unknown[][] };
+    };
+    // exportToFile(id, format, suggestedName, contentOverride)
+    const call = mockFn.mock.calls[0];
+    const contentOverride = call[3] as string | null;
+    expect(contentOverride).not.toBeNull();
+    const text = contentOverride as string;
+    expect(text).toContain("[home]");
+    expect(text).not.toMatch(/<svg/);
+    expect(text).not.toContain("{{icon:");
+  });
+
+  it("for HTML export: keeps inline <svg> markup for document {{icon:...}} tokens", async () => {
+    // Sibling contract to the PDF test above: HTML can carry inline
+    // SVG, so `embedIcons` (not the text-placeholder helper) is what
+    // the renderer must apply for html/docx formats.
+    const docArtifact = {
+      ...baseArtifact,
+      id: "art-doc-html-icons",
+      artifactType: "document" as const,
+      content: "Hello {{icon:lucide:home}} world",
+    };
+    window.tessera.artifacts.get = vi.fn().mockResolvedValue(docArtifact);
+
+    render(
+      <MemoryRouter initialEntries={["/artifact/art-doc-html-icons"]}>
+        <Routes>
+          <Route path="/artifact/:id" element={<ArtifactEditorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Hello/)).toBeInTheDocument();
+    });
+
+    const exportSelect = screen.getByLabelText(
+      "Export artifact",
+    ) as HTMLSelectElement;
+    await act(async () => {
+      fireEvent.change(exportSelect, { target: { value: "html" } });
+    });
+
+    await waitFor(() => {
+      expect(window.tessera.artifacts.exportArtifact).toHaveBeenCalled();
+    });
+    const mockFn = window.tessera.artifacts.exportArtifact as unknown as {
+      mock: { calls: unknown[][] };
+    };
+    const call = mockFn.mock.calls[0];
+    const contentOverride = call[2] as string | null;
+    expect(contentOverride).not.toBeNull();
+    const text = contentOverride as string;
+    expect(text).toMatch(/<svg/);
+    expect(text).not.toContain("{{icon:");
+    expect(text).not.toContain("[home]");
+  });
 });

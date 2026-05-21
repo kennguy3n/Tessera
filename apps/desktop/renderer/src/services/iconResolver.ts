@@ -279,3 +279,26 @@ export function embedIcons(text: string): string {
     return svg ?? match;
   });
 }
+
+/**
+ * Resolve `{{icon:...}}` tokens to a short bracketed text placeholder
+ * (e.g. `[home]`). Used by export targets that cannot meaningfully
+ * carry an inline `<svg>` element — currently the minimal PDF builder
+ * in `tessera_export::pdf`, which has no image support and would
+ * otherwise render escaped SVG markup as literal text on the page.
+ *
+ * The high-fidelity Typst PDF pipeline keeps inline SVG via Typst's
+ * native vector rendering; this helper is only for the fallback PDF.
+ *
+ * Returns the input unchanged when it contains no icon tokens.
+ */
+export function iconsToTextPlaceholder(text: string): string {
+  return text.replace(ICON_TOKEN_RE, (match, inner: string) => {
+    const parsed = parseToken(inner);
+    if (!parsed) return match;
+    // Use just the icon's bare name so a long line of placeholders
+    // ("[home] [chart-bar] [shield-check]") still reads naturally
+    // even in monospace PDF text.
+    return `[${parsed.spec.name}]`;
+  });
+}
