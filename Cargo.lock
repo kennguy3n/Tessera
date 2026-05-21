@@ -3054,6 +3054,7 @@ dependencies = [
 name = "tessera_bridge"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "napi",
  "napi-build",
  "napi-derive",

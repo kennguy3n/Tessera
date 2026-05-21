@@ -11,7 +11,10 @@ import {
   InfographicEditor,
   LandingPageEditor,
 } from "../editors";
-import { embedIcons } from "../services/iconResolver";
+import {
+  embedIcons,
+  iconsToTextPlaceholder,
+} from "../services/iconResolver";
 import {
   parseSlideContent,
   slidesToMarpMarkdown,
@@ -28,7 +31,17 @@ import {
 } from "../editors/LandingPageEditor";
 import type { ArtifactInfo } from "../types/ipc";
 
-const ICON_AWARE_FORMATS = new Set(["html", "pdf", "docx"]);
+// Formats whose body can carry inline `<svg>` markup directly
+// (HTML renders it; DOCX-rs forwards it inside drawing runs). PDF is
+// deliberately excluded — the minimal PDF builder is text-only and
+// would render escaped SVG markup as garbled literal text. PDF uses
+// `iconsToTextPlaceholder` below instead.
+const INLINE_ICON_FORMATS = new Set(["html", "docx"]);
+const TEXT_ICON_FORMATS = new Set(["pdf"]);
+const ICON_AWARE_FORMATS = new Set([
+  ...INLINE_ICON_FORMATS,
+  ...TEXT_ICON_FORMATS,
+]);
 // Artifact types whose content is raw text/markdown and may therefore
 // contain `{{icon:lucide:home}}`-style tokens that `embedIcons` should
 // resolve. JSON-structured artifact types (sheet, base, infographic,
@@ -261,9 +274,18 @@ export default function ArtifactEditorPage() {
           ICON_AWARE_FORMATS.has(format) &&
           /\{\{icon:/.test(liveContent)
         ) {
-          const embedded = embedIcons(liveContent);
-          if (embedded !== liveContent) {
-            contentOverride = embedded;
+          // PDF: tokens → "[home]" text placeholders so the minimal
+          // PDF builder produces a readable line. The Typst PDF
+          // pipeline handles real icon rendering via Typst's native
+          // SVG support, but this fallback PDF path is text-only.
+          //
+          // HTML / DOCX: tokens → inline `<svg>` markup, embedded
+          // directly in the exported document.
+          const replaced = TEXT_ICON_FORMATS.has(format)
+            ? iconsToTextPlaceholder(liveContent)
+            : embedIcons(liveContent);
+          if (replaced !== liveContent) {
+            contentOverride = replaced;
           }
         }
         // Independent of icon embedding: if the live editor draft has

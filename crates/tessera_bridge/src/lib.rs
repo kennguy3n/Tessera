@@ -1,9 +1,11 @@
 pub mod artifacts;
+pub mod automations;
 pub mod citations;
 pub mod exporter;
 pub mod napi_exports;
 pub mod settings;
 pub mod sources;
+pub mod tasks;
 pub mod templates;
 
 use serde::{Deserialize, Serialize};

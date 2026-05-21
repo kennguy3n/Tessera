@@ -4,6 +4,7 @@ import { registerIpcHandlers } from "./ipc";
 import { loadConfig, saveWindowState } from "./config";
 import { initAppState } from "./appState";
 import { detectComputeBackends } from "./modelManagement";
+import { startScheduler, stopScheduler } from "./scheduler";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -36,7 +37,15 @@ function createWindow(): void {
       responseHeaders: {
         ..._details.responseHeaders,
         "Content-Security-Policy": [
-          `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; ${connectSrc}`,
+          // `img-src 'self' data: https:` allows the GalleryView (and
+          // other Base cells whose URL field points at an external cover
+          // image) to display thumbnails from connected sources — Drive,
+          // OneDrive, Notion, Figma, etc. — without bouncing them through
+          // a privacy-preserving fetch proxy. We intentionally do NOT
+          // include `http:` so plaintext image URLs are still blocked.
+          // Scripts and connect-src remain locked to 'self', so widening
+          // img-src does not weaken Tessera's local-first guarantees.
+          `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; ${connectSrc}`,
         ],
       },
     });
@@ -79,6 +88,11 @@ function createWindow(): void {
 app.whenReady().then(() => {
   initAppState();
   registerIpcHandlers();
+  // Start the automations scheduler. Runs in the main process and
+  // ticks every 30s, dispatching due `Schedule` automations directly
+  // against the native bridge (i.e. without bouncing through the
+  // renderer). See `scheduler.ts` for the run-control protocol.
+  startScheduler();
   createWindow();
 
   // Warm the hardware-detection cache off the critical path. The first
@@ -119,4 +133,42 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+// Guard against the deferred-quit dance re-entering: when we call
+// `app.quit()` from inside the `will-quit` handler, Electron re-emits
+// `will-quit` and we'd loop infinitely without this flag.
+//
+// We deliberately hook `will-quit` rather than `before-quit` because
+// `before-quit` fires before any cancellation handlers (renderer
+// "are you sure?" dialogs, future plugin quit-blockers, etc.) get a
+// chance to call `event.preventDefault()`. If we tore the scheduler
+// down on `before-quit` and the quit was then cancelled, we'd be left
+// with a running app and a stopped scheduler. `will-quit` fires only
+// after every other listener has agreed to quit, so by the time we
+// stop the scheduler we know the process is committed to terminating.
+let schedulerShutdownStarted = false;
+
+app.on("will-quit", (event) => {
+  if (schedulerShutdownStarted) return;
+  schedulerShutdownStarted = true;
+  // Stop the interval immediately so no NEW ticks start, then wait
+  // for any in-flight tick (and its queued follow-up) to finish before
+  // tearing down the process. Without this, a slow re-index running
+  // when the user quits would have its bridge calls race process
+  // teardown, producing an ugly panic on slow disks. We use the
+  // `event.preventDefault()` + deferred `app.quit()` pattern Electron
+  // documents for async cleanup in quit handlers.
+  event.preventDefault();
+  void (async () => {
+    try {
+      await stopScheduler();
+    } catch (e) {
+      // We're already on the quit path — log and continue rather than
+      // hang the process indefinitely on a misbehaving tick.
+      console.error("[tessera] scheduler shutdown failed:", e);
+    } finally {
+      app.quit();
+    }
+  })();
 });

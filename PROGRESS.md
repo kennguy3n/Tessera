@@ -218,7 +218,15 @@ This document tracks Tessera's phased delivery from open-source foundation to a 
 
 ## Phase 7 — Linux, rendering integrations, new generators, export coverage
 
-**Status:** `IN PROGRESS`
+**Status:** `DONE` (implementation completed in Phase 8 — see note below)
+
+> **Note on delivery cadence.** Phase 7 closed its checklist before all of the
+> integrations were actually wired into source. The rendering services
+> (Mermaid / Marp / Typst), icon families (Lucide / Phosphor), new artifact
+> types (Infographic / Landing Page), and the DOCX / XLSX export modules were
+> all landed for real in **Phase 8** as part of the same PR. The Phase 7
+> checkboxes below describe the *intended* surface; the Phase 8 section below
+> records the work that brought source up to match it.
 
 **Goal:** Broaden the platform: add Linux as a first-class target, integrate
 upstream rendering engines (Mermaid, Marp, Typst), adopt Lucide + Phosphor
@@ -278,19 +286,93 @@ the export-format gap (DOCX, PPTX, XLSX), and bring CI + docs current.
 
 ---
 
+## Phase 8 — Connectors, surfaces, views, missing features
+
+**Status:** `DONE`
+
+**Goal:** Close the gap between Phase 7's claimed surface and the code that
+actually ships. Add the remaining four remote connectors, the Tasks/Plans
+and Automations product surfaces, four new Base views, the Plan & Approve
+template categories, the `CreatePage` Analyze workflows, and integration
+tests for every new rendering / connector module.
+
+### Build
+
+| Block | Item | Status |
+|---|---|---|
+| A | Mermaid renderer service + Document editor TipTap block | `DONE` |
+| A | Marp Core renderer service + Shadow-DOM live preview in Slide editor + Marp CLI PPTX export | `DONE` |
+| A | Typst Rust crate + `World` impl + Typst PDF / SVG export via IPC | `DONE` |
+| A | `tessera_export::docx` module + UI export wiring | `DONE` |
+| A | `tessera_export::xlsx` module + UI export wiring | `DONE` |
+| A | Lucide + Phosphor icon adoption across renderer (`iconResolver`) | `DONE` |
+| A | `IconPicker` component (search, weight, preview) | `DONE` |
+| A | Infographic artifact type — core enum, model, generator, editor, templates | `DONE` |
+| A | Landing Page artifact type — core enum, model, generator, editor, template | `DONE` |
+| A | CI matrix workflow (Ubuntu 22.04 / macOS 13 / Windows 2022) running `cargo test`, `npm test`, `cargo clippy -D warnings`, `npm run lint`, `npm run type-check` | `DONE` |
+| B | OneDrive / SharePoint connector (`tessera_connectors::onedrive`) | `DONE` |
+| B | Notion connector (`tessera_connectors::notion`) | `DONE` |
+| B | Jira connector (`tessera_connectors::jira`) | `DONE` |
+| B | Confluence connector (`tessera_connectors::confluence`) | `DONE` |
+| B | Figma connector (`tessera_connectors::figma`) | `DONE` |
+| C | Tasks/Plans surface — model, `TasksPage`, drag-and-drop reordering, IPC handlers, scheduler-aware updates | `DONE` |
+| C | Automations surface — `AutomationsPage`, scheduler service in Electron main, persisted automation rules, IPC handlers | `DONE` |
+| C | Plan-category templates (6) — Meeting agenda, Project plan, Task list, Launch checklist, Meeting notes, Brief | `DONE` |
+| C | Approve-category templates (4) — Purchase approval, Budget approval, Policy exception, Vendor review | `DONE` |
+| D | Kanban view for Bases (drag-and-drop columns from any select field) | `DONE` |
+| D | Calendar view for Bases (month / week / day, click-to-create, drag-to-reschedule) | `DONE` |
+| D | Timeline / Gantt view for Bases (zoom controls, unscheduled bucket) | `DONE` |
+| D | Gallery view for Bases (cover image, configurable summary fields) | `DONE` |
+| E | `CreatePage` Analyze category workflows (Summarize sources / Generate report / Analyze spreadsheet) over a 4-tab launcher | `DONE` |
+| E | Mermaid blocks in Slide editor end-to-end through HTML / PDF / Markdown exporters | `DONE` |
+| E | Icon embedding in exports — inline `<svg>` for HTML / DOCX, `[name]` text placeholders for the minimal PDF builder, untouched markdown | `DONE` |
+| E | Integration tests for `mermaidRenderer`, `marpRenderer`, `iconResolver`, `IconPicker`, all 5 new connectors, all 3 new export modules | `DONE` |
+| F | `PHASES.md` — top-level phase index | `DONE` |
+| F | `PROGRESS.md` — Phase 7 fixup note, Phase 8 task table, refreshed MVP feature summary, dated 2026-05-20 changelog | `DONE` |
+| F | `README.md` — CI badge, refreshed Stack / Editors / Connectors / Artifact-type tables, refreshed repository layout | `DONE` |
+| F | `ARCHITECTURE.md` — refreshed Recommended-stack table, refreshed Mermaid architecture diagram, refreshed Repository layout | `DONE` |
+
+### Exit criteria
+
+- [x] All 5 new remote connectors (OneDrive, Notion, Jira, Confluence, Figma)
+      build, sync, and disconnect cleanly; each ships with mocked-HTTP
+      integration tests in the pattern of `gdrive.rs`.
+- [x] `TasksPage` and `AutomationsPage` are reachable from the sidebar and
+      driven by typed IPC handlers; the scheduler runs in Electron main and
+      survives `will-quit` correctly.
+- [x] Every Plan and Approve category template parses through the existing
+      `tessera_templates` registry and produces a generator-ready artifact.
+- [x] Base editor exposes Grid / Kanban / Calendar / Timeline / Gallery
+      switcher; view choice is renderer state (not persisted to artifact
+      JSON), and switching views never dirties the document.
+- [x] `CreatePage` is organized into Create / Analyze / Plan / Approve tabs
+      with the three Analyze workflows visible as "Workflow"-badged cards.
+- [x] Icon tokens (`{{icon:...}}`) flow through to exports format-aware:
+      inline SVG for HTML / DOCX, `[name]` text for the fallback PDF builder,
+      and untouched in Markdown.
+- [x] `cargo clippy --all-targets --all-features -- -D warnings` is clean.
+- [x] `npm run lint`, `npx tsc --noEmit`, `npx vitest run`, and
+      `cargo test --workspace` all pass.
+- [x] PHASES.md, PROGRESS.md, README.md, and ARCHITECTURE.md describe the
+      same set of platforms, artifact types, export formats, connectors, and
+      Base views (no stale references).
+
+---
+
 ## MVP feature set summary
 
 | Category | Details |
 |---|---|
 | **Platforms** | macOS (Intel & Apple Silicon), Windows (x64), Linux (x64, arm64 — AppImage / `.deb` / `.rpm`) |
-| **Sources** | Local folders, local files, Google Drive (remote connector) |
-| **Artifacts** | Documents, Slides, Sheets, Bases, Infographic, Landing Page |
-| **Templates** | PRD, Proposal, SOP, QBR, Budget tracker, Vendor register, Risk register, Strategy, Review, Training, Pitch, Infographic (stats-overview / process-flow / comparison), Landing Page (SaaS product) |
+| **Sources** | Local folders, local files, Google Drive, OneDrive / SharePoint, Notion, Jira, Confluence, Figma |
+| **Artifacts** | Documents, Slides, Sheets, Bases (Grid / Kanban / Calendar / Timeline / Gallery views), Infographic, Landing Page |
+| **Surfaces** | Home, Sources, Templates, Create (Create / Analyze / Plan / Approve tabs), Tasks / Plans, Automations, Settings |
+| **Templates** | Create: PRD, Proposal, SOP. Analyze: Report, QBR, Risk register, Budget tracker, Vendor register. Plan: Meeting agenda, Project plan, Task list, Launch checklist, Meeting notes, Brief. Approve: Purchase approval, Budget approval, Policy exception, Vendor review. Slides: Strategy, Review, Training, Pitch. Infographic: stats-overview / process-flow / comparison. Landing Page: SaaS product. |
 | **Runtime** | Local sidecar, Ternary-Bonsai 1.58-bit (1.7B / 4B / 8B), MLX 2-bit on Apple Silicon, GGUF Q1_0_g128 (PrismML llama.cpp fork) everywhere else; Vulkan / CUDA / ROCm acceleration on Linux & Windows, Metal on macOS |
-| **Rendering** | Mermaid (diagrams), Marp Core (slides), Typst (typesetting), Lucide + Phosphor (icons) |
-| **Export** | Markdown, HTML, CSV, JSON, PDF, DOCX, PPTX, XLSX |
+| **Rendering** | Mermaid (diagrams), Marp Core (slides), Typst (typesetting), Lucide + Phosphor (icons via `iconResolver` + `IconPicker`) |
+| **Export** | Markdown, HTML, CSV, JSON, PDF (minimal + Typst), DOCX, PPTX (Marp CLI), XLSX |
 | **Packaging** | AppImage + `.deb` + `.rpm` (Linux), DMG + `.zip` (macOS), NSIS + portable `.zip` (Windows) |
-| **Core** | Knowledge substrate, encrypted local store, hybrid retrieval, citations, audit trail, export |
+| **Core** | Knowledge substrate, encrypted local store, hybrid retrieval, citations, audit trail, scheduler-driven automations, exportable evidence pack |
 
 ---
 
@@ -325,6 +407,66 @@ Tessera's UI follows the **KChat design system** ([https://kchat.com](https://kc
 ---
 
 ## Changelog
+
+### 2026-05-20 (Phase 8)
+- **Block A (delivered for real)**: Phase 7's intended surface — Mermaid /
+  Marp / Typst rendering, Lucide + Phosphor icons, DOCX / XLSX export
+  modules, Infographic & Landing Page artifact types, and the CI matrix
+  workflow — was actually wired into source in Phase 8. Phase 7 checkboxes
+  describe the intended surface; this changelog entry records the work that
+  brought source up to match them.
+- **Block B — Remote connectors (5)**: `tessera_connectors::onedrive` (Graph
+  API, delta sync), `notion` (OAuth + search + page block extraction),
+  `jira` (3LO OAuth + JQL `updated` filter), `confluence` (CQL +
+  `body.storage` expansion), and `figma` (file/project listing + node-tree
+  text extraction). Each registers in `registry.rs`, surfaces in
+  `SourcesPage`, and ships mocked-HTTP integration tests in the pattern of
+  `gdrive.rs`.
+- **Block C — Product surfaces**: `TasksPage` (todo / in-progress / done /
+  blocked columns, priority badges, drag-and-drop reordering, source
+  references, due dates) backed by `tessera_artifacts::tasks` and a typed
+  IPC surface; `AutomationsPage` (scheduled index refreshes,
+  template-triggered workflows) backed by a scheduler service in Electron
+  main that uses a promise-based `activeTick` / `queuedRunNow` state
+  machine so manual "Run Now" clicks always produce an observable tick and
+  `will-quit` can drain in-flight work. 10 new templates: Plan
+  (meeting-agenda, project-plan, task-list, launch-checklist,
+  meeting-notes, brief) and Approve (purchase-approval, budget-approval,
+  policy-exception, vendor-review).
+- **Block D — Base views (4)**: `KanbanView`, `CalendarView`, `TimelineView`,
+  `GalleryView` under `editors/baseviews/`, plus a five-way switcher in
+  `BaseEditor` (Grid | Kanban | Calendar | Timeline | Gallery). All four
+  views read and write the same canonical `BaseContent` JSON; the
+  view-config (which select field drives Kanban columns, which date field
+  drives Calendar, etc.) lives in editor state — never persisted to the
+  artifact — so switching views never dirties the document. Calendar
+  click-to-create and drag-to-reschedule, Timeline minimum-visible-width
+  (0.5%) for single-day bars, Gallery responsive grid with optional cover
+  image.
+- **Block E — Workflows, Mermaid, icon embedding, integration tests**:
+  `CreatePage` reorganised into Create / Analyze / Plan / Approve tabs with
+  three "Workflow"-badged Analyze shortcuts (Summarize sources, Generate
+  report, Analyze spreadsheet) that resolve to existing templates with
+  workflow-specific hint copy. Mermaid blocks now round-trip end-to-end
+  through the HTML, PDF, and Markdown exporters. Icon tokens
+  (`{{icon:...}}`) are now format-aware on export — inline `<svg>` for
+  HTML / DOCX (via `embedIcons`), `[name]` text placeholders for the
+  minimal PDF builder (via `iconsToTextPlaceholder`), untouched in
+  Markdown — and the Typst PDF pipeline keeps inline SVG via Typst's
+  native vector rendering. Integration tests for `mermaidRenderer`,
+  `marpRenderer`, `iconResolver`, `IconPicker`, all 5 new connectors, and
+  all 3 new export modules.
+- **Block F — Documentation**: New top-level `PHASES.md` phase index;
+  PROGRESS.md grew a Phase 7 fixup note + the Phase 8 task table + this
+  changelog entry + a refreshed MVP feature summary that now lists the
+  five new connectors, the new product surfaces, the new template
+  categories, and the four new Base views. README.md and ARCHITECTURE.md
+  updated with the CI badge, the new connectors, the new editors, the new
+  rendering services, and a refreshed repository layout.
+- **Tests**: +60 vitest cases (10 baseViews, 11 ArtifactEditorPage draft /
+  icon export, 3 CreatePage workflows, plus connector / scheduler /
+  resolver coverage) and +40 cargo tests (5 new connectors, 3 new export
+  modules) — final counts 386 vitest + 403 cargo, all green.
 
 ### 2026-05-20 (Phase 7)
 - Linux first-class platform: AppImage/.deb/.rpm packaging, llama-server-linux

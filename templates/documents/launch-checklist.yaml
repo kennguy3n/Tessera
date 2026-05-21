@@ -1,0 +1,49 @@
+id: launch-checklist-v1
+name: Launch Checklist
+type: document
+description: Pre-launch readiness checklist with sign-off owners across functions
+sections:
+  - title: Launch Overview
+    prompt: >
+      Capture the product/feature being launched, target launch
+      date, launch type (GA, beta, dark launch), and rollout plan.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Product Readiness
+    prompt: >
+      Confirm acceptance criteria met, known-issue list captured,
+      and the feature flag / config flips identified. Include
+      owner and sign-off status.
+  - title: Engineering Readiness
+    prompt: >
+      Confirm load testing, dashboards, alerting, rollback plan,
+      on-call rotation. Include owner and sign-off.
+  - title: Security and Privacy
+    prompt: >
+      Confirm threat model reviewed, secrets handled, PII flows
+      audited. Include owner and sign-off.
+  - title: Documentation
+    prompt: >
+      Confirm user-facing docs, release notes, internal runbooks,
+      and support FAQ are ready. Include owner and sign-off.
+  - title: Marketing and Communications
+    prompt: >
+      Confirm announcement plan, social copy, customer email,
+      and any embargo agreements. Include owner and sign-off.
+  - title: Support and Operations
+    prompt: >
+      Confirm support team trained, escalation path defined,
+      monitoring dashboards shared. Include owner and sign-off.
+  - title: Go / No-Go Criteria
+    prompt: >
+      Define explicit go and no-go conditions, decision owner,
+      and the decision meeting time.
+  - title: Post-Launch Plan
+    prompt: >
+      Capture metrics to watch in the first 24h / 7d / 30d, the
+      review cadence, and the rollback trigger criteria.
+export:
+  - markdown
+  - html
+  - pdf

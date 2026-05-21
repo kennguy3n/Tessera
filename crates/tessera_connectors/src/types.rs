@@ -127,12 +127,28 @@ pub struct ConnectorInfo {
 }
 
 /// Stored token pair for a connector.
+///
+/// `scopes` holds the OAuth scopes granted by the provider — strings
+/// that came back in the token response (or were requested in the
+/// consent URL).  It is **not** a free-form bag for provider-specific
+/// identifiers.  When a connector needs to round-trip a piece of
+/// provider state alongside the tokens (e.g. Atlassian `cloud_id`,
+/// Notion `workspace_id`), it uses [`StoredTokens::provider_metadata`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expiry: Option<DateTime<Utc>>,
     pub scopes: Vec<String>,
+    /// Opaque provider-specific metadata that needs to be persisted
+    /// alongside the tokens — for example the Atlassian
+    /// `cloud_id`, the Notion `workspace_id`, or a Figma team id.
+    /// `None` for connectors that don't need a per-installation handle.
+    ///
+    /// `#[serde(default)]` so existing on-disk token blobs written
+    /// before this field existed continue to deserialize cleanly.
+    #[serde(default)]
+    pub provider_metadata: Option<String>,
 }
 
 #[cfg(test)]
@@ -202,9 +218,49 @@ mod tests {
             refresh_token: Some("1//refresh".into()),
             expiry: Some(Utc::now()),
             scopes: vec!["drive.readonly".into()],
+            provider_metadata: None,
         };
         let json = serde_json::to_string(&tokens).unwrap();
         let deserialized: StoredTokens = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.access_token, "ya29.abc");
+        assert!(deserialized.provider_metadata.is_none());
+    }
+
+    #[test]
+    fn stored_tokens_backward_compat_missing_provider_metadata() {
+        // On-disk JSON written before `provider_metadata` existed must
+        // continue to deserialize — `#[serde(default)]` on the new
+        // field is what makes that safe.
+        let legacy = r#"{
+            "access_token": "AT",
+            "refresh_token": "RT",
+            "expiry": null,
+            "scopes": ["read:foo"]
+        }"#;
+        let tokens: StoredTokens = serde_json::from_str(legacy).unwrap();
+        assert_eq!(tokens.access_token, "AT");
+        assert_eq!(tokens.scopes, vec!["read:foo".to_string()]);
+        assert!(tokens.provider_metadata.is_none());
+    }
+
+    #[test]
+    fn stored_tokens_provider_metadata_round_trips() {
+        let tokens = StoredTokens {
+            access_token: "AT".into(),
+            refresh_token: None,
+            expiry: None,
+            scopes: vec![
+                "read:confluence-content.all".into(),
+                "offline_access".into(),
+            ],
+            provider_metadata: Some("cloud-abc-123".into()),
+        };
+        let json = serde_json::to_string(&tokens).unwrap();
+        let deserialized: StoredTokens = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            deserialized.provider_metadata.as_deref(),
+            Some("cloud-abc-123")
+        );
+        assert_eq!(deserialized.scopes.len(), 2);
     }
 }

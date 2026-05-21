@@ -1,0 +1,57 @@
+id: vendor-review-v1
+name: Vendor Review
+type: document
+description: Annual or periodic vendor review covering performance, risk, and renewal decision
+sections:
+  - title: Vendor Overview
+    prompt: >
+      Capture vendor name, contract owner, contract value, term
+      remaining, services provided, and the relationship start
+      date.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Performance Against SLA
+    prompt: >
+      Review SLA adherence over the review period. Include
+      uptime, response times, escalation patterns, and any
+      penalty / credit events.
+  - title: Quality of Service
+    prompt: >
+      Beyond SLA metrics, assess quality — responsiveness,
+      proactivity, support team competence, communication.
+      Include stakeholder feedback.
+  - title: Cost and Value
+    prompt: >
+      Total spend in the review period, cost-per-unit trends,
+      and value-for-money assessment relative to peers.
+  - title: Risk Profile
+    prompt: >
+      Security posture (latest audit / certifications), financial
+      health, geographic and concentration risk, key personnel
+      dependency.
+  - title: Compliance Status
+    prompt: >
+      Confirm compliance evidence is current — DPAs, security
+      assessments, certifications, contractual deliverables.
+  - title: Relationship Health
+    prompt: >
+      Strategic alignment, responsiveness to feedback, willingness
+      to evolve. Include the executive sponsor's view.
+  - title: Issues and Resolutions
+    prompt: >
+      Catalogue issues encountered in the period and how they
+      were resolved. Note repeated patterns.
+  - title: Renewal Recommendation
+    prompt: >
+      Recommend renew / renegotiate / replace / exit, with
+      justification. Include timeline for the recommended path.
+  - title: Approval and Sign-off
+    prompt: >
+      Approval chain (contract owner, finance, security, legal,
+      executive sponsor) and sign-off status.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

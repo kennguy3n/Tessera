@@ -1,0 +1,48 @@
+id: purchase-approval-v1
+name: Purchase Approval
+type: document
+description: Purchase approval request with justification, alternatives, and approval chain
+sections:
+  - title: Request Summary
+    prompt: >
+      Capture the requester, the item or service being purchased,
+      vendor, total cost (with currency), and target delivery date.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Business Justification
+    prompt: >
+      Explain why this purchase is needed, what problem it solves,
+      and the business outcomes expected. Quantify benefits where
+      possible.
+  - title: Alternatives Considered
+    prompt: >
+      Document the alternatives evaluated, including pricing,
+      pros/cons, and the rationale for selecting the recommended
+      vendor. Include build-vs-buy if relevant.
+  - title: Cost Breakdown
+    prompt: >
+      Itemised cost breakdown — one-time, recurring (monthly /
+      annual), implementation, training, ongoing support.
+  - title: Budget Impact
+    prompt: >
+      Identify the budget line this draws from, year-to-date
+      spend in that line, remaining budget, and any reallocation
+      needed.
+  - title: Risk Assessment
+    prompt: >
+      Identify risks (vendor lock-in, security, contract terms,
+      delivery) with likelihood, impact, and mitigation.
+  - title: Approval Chain
+    prompt: >
+      List required approvers in order with their role and the
+      threshold each is authorised to approve.
+  - title: Approval Conditions
+    prompt: >
+      Capture any conditions attached to approval (e.g. "approved
+      contingent on security review", "approved up to $X only").
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

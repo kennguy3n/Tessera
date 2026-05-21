@@ -1,0 +1,40 @@
+id: task-list-v1
+name: Task List
+type: document
+description: Prioritised task list with assignees, due dates, and dependencies
+sections:
+  - title: Context
+    prompt: >
+      One-paragraph context for this task list — what initiative
+      or project it serves and the current status.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Critical Path
+    prompt: >
+      List tasks that must complete on schedule for the broader
+      effort to succeed. Each should include owner and due date.
+  - title: In Progress
+    prompt: >
+      Tasks currently being worked on, with owner, current status,
+      blockers, and expected completion.
+  - title: Up Next
+    prompt: >
+      Tasks queued for the next sprint or cycle, with priority
+      ranking and owner.
+  - title: Backlog
+    prompt: >
+      Lower-priority tasks not yet scheduled, with priority and
+      rough effort estimate.
+  - title: Completed
+    prompt: >
+      Recently completed tasks, with completion date and outcome
+      summary for traceability.
+  - title: Notes and Dependencies
+    prompt: >
+      Cross-task dependencies, decisions affecting prioritisation,
+      and any blockers needing escalation.
+export:
+  - markdown
+  - html
+  - csv

@@ -77,6 +77,7 @@ mod tests {
             refresh_token: Some("1//refresh".into()),
             expiry: Some(Utc::now()),
             scopes: vec!["drive.readonly".into()],
+            provider_metadata: None,
         };
 
         assert!(!store.has_tokens("google_drive").unwrap());
@@ -101,12 +102,14 @@ mod tests {
             refresh_token: None,
             expiry: None,
             scopes: vec![],
+            provider_metadata: None,
         };
         let tokens2 = StoredTokens {
             access_token: "token2".into(),
             refresh_token: None,
             expiry: None,
             scopes: vec![],
+            provider_metadata: None,
         };
 
         store.store_tokens("provider", &tokens1).unwrap();
@@ -123,12 +126,14 @@ mod tests {
             refresh_token: None,
             expiry: None,
             scopes: vec![],
+            provider_metadata: None,
         };
         let onedrive = StoredTokens {
             access_token: "onedrive-token".into(),
             refresh_token: None,
             expiry: None,
             scopes: vec![],
+            provider_metadata: None,
         };
 
         store.store_tokens("google_drive", &gdrive).unwrap();

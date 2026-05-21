@@ -2,15 +2,19 @@ use std::sync::Mutex;
 
 use napi_derive::napi;
 
+use tessera_artifacts::automations::AutomationStore;
 use tessera_artifacts::manager::ArtifactManager;
+use tessera_artifacts::tasks::TaskStore;
 use tessera_audit::logger::AuditLogger;
 use tessera_citations::tracker::CitationTracker;
 use tessera_sources::manager::SourceManager;
 
 use crate::artifacts;
+use crate::automations;
 use crate::citations;
 use crate::exporter;
 use crate::sources;
+use crate::tasks;
 use crate::templates;
 
 static APP_STATE: std::sync::OnceLock<AppState> = std::sync::OnceLock::new();
@@ -19,14 +23,29 @@ static APP_STATE: std::sync::OnceLock<AppState> = std::sync::OnceLock::new();
 // concurrent lock acquisition cannot occur. Mutexes provide interior mutability.
 // If async work is added in the future, acquire locks in this order:
 // 1. audit_logger → 2. source_manager → 3. artifact_manager → 4. citation_tracker
+// → 5. task_store → 6. automation_store
+// (audit_logger first so every other path can log under its lock; task_store
+// and automation_store are leaf locks — nothing else acquires them.)
 struct AppState {
     source_manager: Mutex<SourceManager>,
     artifact_manager: Mutex<ArtifactManager>,
     audit_logger: Mutex<AuditLogger>,
     citation_tracker: Mutex<CitationTracker>,
+    task_store: Mutex<TaskStore>,
+    automation_store: Mutex<AutomationStore>,
     template_dir: String,
 }
 
+// Connection-pool note: Each store below opens its own
+// `rusqlite::Connection` to the same `db_path`. That keeps the lock graph
+// simple (each store owns its mutex) and works fine because N-API
+// callbacks are single-threaded so writes are already serialised, but it
+// uses 6 file handles where 1 would suffice and bloats per-instance
+// memory. The follow-up is to thread a shared `Arc<Mutex<Connection>>`
+// (or an r2d2 pool with `min_size=1`) through `SourceManager` /
+// `ArtifactManager` / `AuditLogger` / `CitationTracker` / `TaskStore` /
+// `AutomationStore`. That refactor changes ~6 store constructors and
+// dozens of call sites, so it lives in a dedicated PR — not in Phase 8.
 #[napi]
 pub fn init_bridge(db_path: String, template_dir: String) -> napi::Result<()> {
     let source_manager =
@@ -38,6 +57,10 @@ pub fn init_bridge(db_path: String, template_dir: String) -> napi::Result<()> {
     let citation_tracker =
         CitationTracker::new(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
     let citation_tracker = Mutex::new(citation_tracker);
+    let task_store =
+        TaskStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let automation_store =
+        AutomationStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
     APP_STATE
         .set(AppState {
@@ -45,6 +68,8 @@ pub fn init_bridge(db_path: String, template_dir: String) -> napi::Result<()> {
             artifact_manager: Mutex::new(artifact_manager),
             audit_logger: Mutex::new(audit_logger),
             citation_tracker,
+            task_store: Mutex::new(task_store),
+            automation_store: Mutex::new(automation_store),
             template_dir,
         })
         .map_err(|_| napi::Error::from_reason("Bridge already initialized"))?;
@@ -566,5 +591,178 @@ pub fn bridge_export_evidence_pack(
     let citation_list = tracker.list_for_artifact(&aid).unwrap_or_default();
 
     tessera_export::evidence_pack::build_evidence_pack(&artifact, &citation_list, &output_path)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+// --- Tasks ---
+
+#[napi]
+pub fn bridge_create_task(req_json: String) -> napi::Result<tasks::TaskInfo> {
+    let req: tasks::CreateTaskRequest =
+        serde_json::from_str(&req_json).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let s = state()?;
+    let store = s
+        .task_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    tasks::create_task(&store, req).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+#[napi]
+pub fn bridge_list_tasks() -> napi::Result<Vec<tasks::TaskInfo>> {
+    let s = state()?;
+    let store = s
+        .task_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    tasks::list_tasks(&store).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+#[napi]
+pub fn bridge_get_task(task_id: String) -> napi::Result<Option<tasks::TaskInfo>> {
+    let s = state()?;
+    let store = s
+        .task_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    tasks::get_task(&store, &task_id).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+#[napi]
+pub fn bridge_update_task(task_id: String, req_json: String) -> napi::Result<tasks::TaskInfo> {
+    let req: tasks::UpdateTaskRequest =
+        serde_json::from_str(&req_json).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let s = state()?;
+    let store = s
+        .task_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    tasks::update_task(&store, &task_id, req).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+#[napi]
+pub fn bridge_delete_task(task_id: String) -> napi::Result<bool> {
+    let s = state()?;
+    let store = s
+        .task_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    tasks::delete_task(&store, &task_id).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+#[napi]
+pub fn bridge_reorder_tasks(status: String, ids: Vec<String>) -> napi::Result<()> {
+    let s = state()?;
+    let mut store = s
+        .task_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    tasks::reorder_tasks(&mut store, &status, &ids)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+// --- Automations ---
+
+#[napi]
+pub fn bridge_create_automation(req_json: String) -> napi::Result<automations::AutomationInfo> {
+    let req: automations::CreateAutomationRequest =
+        serde_json::from_str(&req_json).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let s = state()?;
+    let store = s
+        .automation_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    automations::create_automation(&store, req).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+#[napi]
+pub fn bridge_list_automations() -> napi::Result<Vec<automations::AutomationInfo>> {
+    let s = state()?;
+    let store = s
+        .automation_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    automations::list_automations(&store).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+#[napi]
+pub fn bridge_get_automation(
+    automation_id: String,
+) -> napi::Result<Option<automations::AutomationInfo>> {
+    let s = state()?;
+    let store = s
+        .automation_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    automations::get_automation(&store, &automation_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+#[napi]
+pub fn bridge_set_automation_enabled(automation_id: String, enabled: bool) -> napi::Result<()> {
+    let s = state()?;
+    let store = s
+        .automation_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    automations::set_automation_enabled(&store, &automation_id, enabled)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+#[napi]
+pub fn bridge_delete_automation(automation_id: String) -> napi::Result<bool> {
+    let s = state()?;
+    let store = s
+        .automation_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    automations::delete_automation(&store, &automation_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Return enabled `Schedule` automations whose `next_scheduled_at` is
+/// at or before "now". Called every tick by the Electron-side
+/// `scheduler.ts` service.
+#[napi]
+pub fn bridge_due_scheduled_automations() -> napi::Result<Vec<automations::AutomationInfo>> {
+    let s = state()?;
+    let store = s
+        .automation_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    automations::due_scheduled_automations(&store, chrono::Utc::now())
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Return enabled `OnGenerate` automations tied to a template (by its
+/// stable string id, e.g. `"prd-v1"`). Used by the artifact-generation
+/// IPC handler to dispatch downstream automations immediately after a
+/// successful generation, without waiting for the next scheduler tick.
+#[napi]
+pub fn bridge_matching_on_generate_automations(
+    template_id: String,
+) -> napi::Result<Vec<automations::AutomationInfo>> {
+    let s = state()?;
+    let store = s
+        .automation_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    automations::matching_on_generate_automations(&store, &template_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Persist the result of an automation run. `status` is rendered
+/// verbatim in the UI (e.g. `"ok"` or `"failed: <reason>"`). Updates
+/// `last_run_at = now()` so subsequent `bridge_due_scheduled_automations`
+/// calls won't re-fire the same schedule until `interval_seconds`
+/// elapses.
+#[napi]
+pub fn bridge_record_automation_run(automation_id: String, status: String) -> napi::Result<()> {
+    let s = state()?;
+    let store = s
+        .automation_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    automations::record_automation_run(&store, &automation_id, &status)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
