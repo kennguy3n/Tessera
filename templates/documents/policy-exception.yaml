@@ -1,0 +1,51 @@
+id: policy-exception-v1
+name: Policy Exception Request
+type: document
+description: Request for an exception to an established policy with risk-based justification
+sections:
+  - title: Exception Request Overview
+    prompt: >
+      Capture requester, team, policy being excepted (with policy
+      ID and version), and the requested exception duration.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Policy Reference
+    prompt: >
+      Quote the specific policy clause(s) the exception applies
+      to. Include policy owner and last revision date.
+  - title: Business Need
+    prompt: >
+      Explain the business need that requires the exception. Be
+      specific about what cannot be accomplished under the policy
+      and the cost of compliance.
+  - title: Risk Assessment
+    prompt: >
+      Identify the risks the policy mitigates and how those risks
+      change under the exception. Rate likelihood and impact.
+  - title: Compensating Controls
+    prompt: >
+      Describe alternative controls in place during the exception
+      to address the risks the policy normally mitigates.
+  - title: Scope and Duration
+    prompt: >
+      Define the exception's scope (which systems / people / data)
+      and duration. Default to time-boxed exceptions.
+  - title: Monitoring Plan
+    prompt: >
+      Describe how the exception will be monitored during its
+      validity period and the trigger for early termination.
+  - title: Approval Chain
+    prompt: >
+      List approvers in order — typically policy owner, risk owner,
+      security/compliance, and an executive sponsor for high-risk
+      exceptions.
+  - title: Renewal and Revocation
+    prompt: >
+      Specify renewal conditions, revocation triggers, and the
+      review cadence during the exception period.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

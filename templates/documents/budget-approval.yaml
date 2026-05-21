@@ -1,0 +1,49 @@
+id: budget-approval-v1
+name: Budget Approval
+type: document
+description: Budget approval request for a project, department, or initiative
+sections:
+  - title: Budget Request Overview
+    prompt: >
+      Capture requesting team, budget period, total amount
+      requested, currency, and budget category (opex / capex).
+    required_sources:
+      - type: local
+        min: 0
+  - title: Strategic Alignment
+    prompt: >
+      Explain how this budget supports company strategy, the OKRs
+      or initiatives it funds, and the expected business outcomes.
+  - title: Line Items
+    prompt: >
+      Detailed line items with category, amount, vendor where
+      known, and timing. Total at the bottom must reconcile.
+  - title: Year-over-Year Comparison
+    prompt: >
+      Compare to prior period actuals and any approved baseline.
+      Explain material variances.
+  - title: Assumptions
+    prompt: >
+      Document the assumptions the budget is built on (headcount,
+      pricing, utilisation, etc.) so reviewers can stress-test.
+  - title: Sensitivity Analysis
+    prompt: >
+      Show how the budget shifts under +/- 20% scenarios on the
+      most material drivers. Identify hard floors and ceilings.
+  - title: Funding Source
+    prompt: >
+      Identify the source (existing approved budget, reallocation,
+      new funding request) and any approval already in place.
+  - title: Approval Chain
+    prompt: >
+      List required approvers in order with role and authority
+      threshold. Include any board approval if applicable.
+  - title: Conditions
+    prompt: >
+      Capture conditions attached to approval — e.g. quarterly
+      check-ins, claw-back triggers, reporting cadence.
+export:
+  - markdown
+  - html
+  - pdf
+  - xlsx

@@ -1,0 +1,49 @@
+id: brief-v1
+name: Brief
+type: document
+description: Concise project or campaign brief with objective, audience, deliverables, and timeline
+sections:
+  - title: Brief Title and Context
+    prompt: >
+      Title, requester, owner, target completion date, and a
+      one-paragraph context summary.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Objective
+    prompt: >
+      A single clear objective the brief is asking to be achieved.
+      Avoid multi-objective briefs — split them if needed.
+  - title: Background
+    prompt: >
+      Relevant background and prior work, citing source material.
+      Include links to research, prior briefs, or related artifacts.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Audience
+    prompt: >
+      Who the deliverable is for. Include primary, secondary,
+      and any explicitly out-of-scope audiences.
+  - title: Key Messages
+    prompt: >
+      Top 3-5 messages that must come through in the deliverable.
+      Each should be one sentence.
+  - title: Deliverables
+    prompt: >
+      List the concrete deliverables expected, with format,
+      length, and channel.
+  - title: Success Metrics
+    prompt: >
+      How success will be measured. Quantitative where possible.
+  - title: Timeline and Milestones
+    prompt: >
+      Key milestones with target dates and owners.
+  - title: Constraints
+    prompt: >
+      Budget, scope, brand, legal, or other constraints the
+      deliverable must respect.
+export:
+  - markdown
+  - html
+  - pdf

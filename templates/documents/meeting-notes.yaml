@@ -1,0 +1,41 @@
+id: meeting-notes-v1
+name: Meeting Notes
+type: document
+description: Structured notes captured during or after a meeting with decisions and actions
+sections:
+  - title: Meeting Metadata
+    prompt: >
+      Capture meeting title, date, attendees present and absent,
+      facilitator, and notetaker. Reference the agenda if any.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Summary
+    prompt: >
+      One-paragraph summary of the meeting — what was discussed
+      at a high level and the overall outcome.
+  - title: Discussion Notes
+    prompt: >
+      Topic-by-topic notes capturing key points raised,
+      perspectives shared, and context that informed decisions.
+  - title: Decisions
+    prompt: >
+      List decisions made, the rationale, the owner, and any
+      conditions or follow-ups. Reference relevant source material.
+  - title: Action Items
+    prompt: >
+      Action items with owner, due date, and acceptance criteria.
+      Each must be measurable.
+  - title: Risks and Open Questions
+    prompt: >
+      Capture risks raised, open questions that need follow-up,
+      and who owns chasing each item.
+  - title: Next Steps
+    prompt: >
+      Outline what happens next, including the next meeting date
+      if any, and the trigger for the next checkpoint.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

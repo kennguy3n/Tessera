@@ -1,0 +1,45 @@
+id: project-plan-v1
+name: Project Plan
+type: document
+description: Comprehensive project plan with timeline, milestones, owners, and risks
+sections:
+  - title: Project Summary
+    prompt: >
+      One-paragraph executive summary including objective,
+      scope, owner, target completion date, and current status.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Objectives and Success Criteria
+    prompt: >
+      Bullet the objectives (what success looks like) and the
+      measurable criteria the project will be evaluated against.
+  - title: Scope
+    prompt: >
+      Specify what is in scope, out of scope, and explicitly
+      deferred. Cite source material where relevant.
+  - title: Milestones and Timeline
+    prompt: >
+      Table of milestones with target date, deliverable, owner,
+      and acceptance criteria. Include critical path notes.
+  - title: Resources and Team
+    prompt: >
+      List team members, their roles/allocations, and any
+      cross-functional dependencies.
+  - title: Risks and Mitigations
+    prompt: >
+      Catalogue the top risks with likelihood, impact, owner,
+      and the planned mitigation.
+  - title: Dependencies
+    prompt: >
+      Document external and internal dependencies with owner
+      and status. Flag blockers.
+  - title: Communication Plan
+    prompt: >
+      Describe meeting cadence, status report frequency, and
+      escalation paths.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

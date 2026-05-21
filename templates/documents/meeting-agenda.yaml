@@ -1,0 +1,39 @@
+id: meeting-agenda-v1
+name: Meeting Agenda
+type: document
+description: Structured agenda with objectives, attendees, topics, and timing
+sections:
+  - title: Meeting Overview
+    prompt: >
+      Capture the meeting title, date, time, location/video link,
+      and a one-line objective. Reference scheduling source if any.
+  - title: Attendees
+    prompt: >
+      List required and optional attendees with their roles or
+      affiliations. Note any pre-reads they should consume.
+  - title: Objectives
+    prompt: >
+      Enumerate 2-5 specific outcomes the meeting should achieve.
+      Each should be measurable (decision made / artifact produced).
+  - title: Agenda Items
+    prompt: >
+      For each agenda item, capture topic, owner, allocated time,
+      desired outcome, and any pre-read links.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Decisions Needed
+    prompt: >
+      List the decisions that must be made during the meeting.
+      Each should reference the relevant agenda item.
+  - title: Pre-Reads
+    prompt: >
+      Link to source material attendees should review beforehand.
+  - title: Follow-ups
+    prompt: >
+      Reserve space for action items captured during the meeting,
+      to be populated post-meeting.
+export:
+  - markdown
+  - html
+  - pdf
