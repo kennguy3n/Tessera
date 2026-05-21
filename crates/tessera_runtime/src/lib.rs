@@ -8,6 +8,4 @@ pub mod health;
 pub mod manager;
 
 pub use adapters::{plan_chain, AdapterAvailability, AdapterKind, ChainInputs, ChainResult};
-pub use external_provider::{
-    ExternalGenerateInputs, ExternalProviderConfig, ExternalProviderType,
-};
+pub use external_provider::{ExternalGenerateInputs, ExternalProviderConfig, ExternalProviderType};

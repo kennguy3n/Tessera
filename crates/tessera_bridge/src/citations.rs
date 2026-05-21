@@ -368,8 +368,12 @@ mod tests {
         std::fs::write(&new_file, "new content").unwrap();
 
         let source_mgr = SourceManager::new(db_path.to_str().unwrap(), &[]).unwrap();
-        let old_source = source_mgr.add_local_file(old_file.to_str().unwrap()).unwrap();
-        let new_source = source_mgr.add_local_file(new_file.to_str().unwrap()).unwrap();
+        let old_source = source_mgr
+            .add_local_file(old_file.to_str().unwrap())
+            .unwrap();
+        let new_source = source_mgr
+            .add_local_file(new_file.to_str().unwrap())
+            .unwrap();
 
         let mut tracker = CitationTracker::new_in_memory().unwrap();
         let aid = ArtifactId::new();

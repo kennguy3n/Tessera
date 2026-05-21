@@ -371,7 +371,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("dispatch.png");
         let img = image::RgbaImage::from_fn(3, 3, |_, _| image::Rgba([100, 150, 200, 255]));
-        img.save_with_format(&path, image::ImageFormat::Png).unwrap();
+        img.save_with_format(&path, image::ImageFormat::Png)
+            .unwrap();
         let text = extract_text(&path).unwrap();
         assert!(text.contains("Format: png"));
         assert!(text.contains("Dimensions: 3x3"));

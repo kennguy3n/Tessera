@@ -143,22 +143,19 @@ impl SourceManager {
                 .indexer
                 .index_folder_with_progress(source_id, path, &self.store, Some(&slot))
                 .map(|_| ()),
-            tessera_core::SourceType::LocalFile => {
-                let res = self
-                    .indexer
-                    .index_single_file(source_id, path, &self.store)
-                    .and_then(|_| self.store.file_count_for_source(source_id))
-                    .and_then(|file_count| {
-                        self.store.update_source_status(
-                            source_id,
-                            tessera_core::SourceStatus::Indexed,
-                            Some(file_count),
-                        )?;
-                        crate::progress::finish(&slot, file_count);
-                        Ok(())
-                    });
-                res
-            }
+            tessera_core::SourceType::LocalFile => self
+                .indexer
+                .index_single_file(source_id, path, &self.store)
+                .and_then(|_| self.store.file_count_for_source(source_id))
+                .and_then(|file_count| {
+                    self.store.update_source_status(
+                        source_id,
+                        tessera_core::SourceStatus::Indexed,
+                        Some(file_count),
+                    )?;
+                    crate::progress::finish(&slot, file_count);
+                    Ok(())
+                }),
             _ => Ok(()),
         };
 

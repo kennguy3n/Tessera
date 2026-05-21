@@ -274,8 +274,7 @@ mod tests {
     #[test]
     fn user_negations_can_re_include_otherwise_ignored_files() {
         // Re-include a single binary-extension file via a `!` rule.
-        let rules =
-            IgnoreRules::with_defaults(&["!docs/diagram.dll".to_string()]);
+        let rules = IgnoreRules::with_defaults(&["!docs/diagram.dll".to_string()]);
         // The earlier `*.dll` default still matches *.dll names in
         // other locations…
         assert!(rules.is_ignored(Path::new("lib.dll")));

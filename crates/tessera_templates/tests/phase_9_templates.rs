@@ -65,8 +65,7 @@ fn asset_inventory_template_is_a_base() {
     assert!(
         titles
             .iter()
-            .any(|t| t.to_lowercase().contains("status")
-                || t.to_lowercase().contains("lifecycle")),
+            .any(|t| t.to_lowercase().contains("status") || t.to_lowercase().contains("lifecycle")),
         "Asset Inventory should include a status/lifecycle section. titles: {titles:?}"
     );
     let prompts_joined: String = tmpl.sections.iter().map(|s| s.prompt.clone()).collect();

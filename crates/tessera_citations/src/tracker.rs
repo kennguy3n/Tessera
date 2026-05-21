@@ -242,7 +242,9 @@ mod tests {
     fn replace_swaps_source_and_preserves_used_for() {
         let mut tracker = CitationTracker::new_in_memory().unwrap();
         let aid = ArtifactId::new();
-        let cid = tracker.add(aid, make_citation("Problem Statement")).unwrap();
+        let cid = tracker
+            .add(aid, make_citation("Problem Statement"))
+            .unwrap();
 
         let updated = tracker
             .replace(&aid, &cid, make_replacement("file:///new/source.pdf"))

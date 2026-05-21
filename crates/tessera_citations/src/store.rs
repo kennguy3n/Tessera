@@ -230,7 +230,10 @@ impl CitationStore {
 
     /// Return the artifact id this citation was attached to, or
     /// `None` if the citation does not exist.
-    pub fn artifact_for(&self, citation_id: &CitationId) -> Result<Option<tessera_core::ArtifactId>> {
+    pub fn artifact_for(
+        &self,
+        citation_id: &CitationId,
+    ) -> Result<Option<tessera_core::ArtifactId>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
             .prepare("SELECT artifact_id FROM citations WHERE citation_id = ?1")

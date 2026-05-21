@@ -161,7 +161,8 @@ pub struct ExternalGenerateInputs<'a> {
 
 #[cfg(feature = "http")]
 mod http_impl {
-    #[allow(clippy::wildcard_imports)] // entire parent module's surface is the natural import for the HTTP impl
+    #[allow(clippy::wildcard_imports)]
+    // entire parent module's surface is the natural import for the HTTP impl
     use super::*;
     use serde_json::json;
     use std::time::Duration;
@@ -255,9 +256,7 @@ mod http_impl {
         let content_arr = value
             .get("content")
             .and_then(|c| c.as_array())
-            .ok_or_else(|| {
-                format!("anthropic response missing content array: {value}")
-            })?;
+            .ok_or_else(|| format!("anthropic response missing content array: {value}"))?;
         let mut out = String::new();
         for block in content_arr {
             if block.get("type").and_then(|t| t.as_str()) == Some("text") {
@@ -387,9 +386,7 @@ pub async fn generate(
 /// the renderer uses for live token rendering. This keeps the Rust
 /// API surface symmetric across local and external adapters
 /// without duplicating SSE parsing twice.
-pub async fn stream(
-    inputs: ExternalGenerateInputs<'_>,
-) -> Result<Vec<GenerateChunk>, String> {
+pub async fn stream(inputs: ExternalGenerateInputs<'_>) -> Result<Vec<GenerateChunk>, String> {
     let response = generate(inputs).await?;
     Ok(vec![GenerateChunk {
         content: response.content,
@@ -486,7 +483,10 @@ mod tests {
     #[cfg(feature = "http")]
     #[test]
     fn endpoint_url_appends_when_missing() {
-        let url = endpoint_url("https://api.openai.com", ExternalProviderType::OpenAICompatible);
+        let url = endpoint_url(
+            "https://api.openai.com",
+            ExternalProviderType::OpenAICompatible,
+        );
         assert_eq!(url, "https://api.openai.com/v1/chat/completions");
         let url = endpoint_url(
             "https://api.openai.com/v1/chat/completions",

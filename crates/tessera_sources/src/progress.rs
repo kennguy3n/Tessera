@@ -88,7 +88,7 @@ impl ProgressTracker {
     pub fn slot(&self, source_id: &SourceId) -> Arc<Mutex<ProgressSnapshot>> {
         let mut guard = self.inner.lock().expect("tracker mutex poisoned");
         guard
-            .entry(source_id.clone())
+            .entry(*source_id)
             .or_insert_with(|| Arc::new(Mutex::new(ProgressSnapshot::default())))
             .clone()
     }

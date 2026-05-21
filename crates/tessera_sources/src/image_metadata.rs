@@ -26,10 +26,7 @@ use tessera_core::error::{Error, Result};
 /// extension when the file is one Tessera knows how to extract
 /// metadata from, or `None` otherwise.
 pub fn image_extension(path: &Path) -> Option<String> {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())?
-        .to_lowercase();
+    let ext = path.extension().and_then(|e| e.to_str())?.to_lowercase();
     match ext.as_str() {
         "jpg" | "jpeg" | "png" | "tif" | "tiff" | "webp" => Some(ext),
         _ => None,
@@ -96,7 +93,9 @@ fn read_metadata(path: &Path) -> std::result::Result<ImageMetadata, String> {
 
     // Pixel dimensions via the image crate's lightweight header
     // probe — does NOT decode the pixel data.
-    if let Ok(reader) = image::ImageReader::open(path).and_then(image::ImageReader::with_guessed_format) {
+    if let Ok(reader) =
+        image::ImageReader::open(path).and_then(image::ImageReader::with_guessed_format)
+    {
         if let Ok(dim) = reader.into_dimensions() {
             metadata.dimensions = Some(dim);
         }
@@ -136,23 +135,15 @@ fn read_metadata(path: &Path) -> std::result::Result<ImageMetadata, String> {
                 let value = field.display_value().to_string();
                 let value = value.trim_matches('"').to_string();
                 if !value.is_empty() && value != "0" && !already_recorded(&metadata.exif, label) {
-                    metadata.exif.push((label.to_string(), value));
+                    metadata.exif.push(((*label).to_string(), value));
                 }
             }
         }
 
         // GPS — decode the rational degree/minute/second fields
         // into a single signed decimal pair.
-        metadata.gps_lat = decode_gps(
-            &exif,
-            exif::Tag::GPSLatitude,
-            exif::Tag::GPSLatitudeRef,
-        );
-        metadata.gps_lon = decode_gps(
-            &exif,
-            exif::Tag::GPSLongitude,
-            exif::Tag::GPSLongitudeRef,
-        );
+        metadata.gps_lat = decode_gps(&exif, exif::Tag::GPSLatitude, exif::Tag::GPSLatitudeRef);
+        metadata.gps_lon = decode_gps(&exif, exif::Tag::GPSLongitude, exif::Tag::GPSLongitudeRef);
     }
 
     Ok(metadata)
@@ -218,7 +209,8 @@ mod tests {
 
     fn write_tiny_jpeg(path: &Path) {
         let img = image::RgbImage::from_fn(4, 3, |_, _| image::Rgb([128, 128, 128]));
-        img.save_with_format(path, image::ImageFormat::Jpeg).unwrap();
+        img.save_with_format(path, image::ImageFormat::Jpeg)
+            .unwrap();
     }
 
     #[test]
