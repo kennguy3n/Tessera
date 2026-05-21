@@ -7,6 +7,7 @@ import Modal from "../components/Modal";
 import StatusBadge from "../components/StatusBadge";
 import EmptyState from "../components/EmptyState";
 import ConnectorStatus from "../components/ConnectorStatus";
+import ConnectorsList from "../components/ConnectorsList";
 import DriveFilePicker from "../components/DriveFilePicker";
 import { useSourceList, useAddSource, useRemoveSource } from "../hooks/useSources";
 import type { ConnectorFileInfo, ConnectorStatusInfo } from "../types/ipc";
@@ -242,7 +243,17 @@ export default function SourcesPage() {
         }
       />
 
-      <div style={{ marginBottom: "var(--spacing-md)" }}>
+      <div
+        style={{
+          marginBottom: "var(--spacing-md)",
+          display: "grid",
+          gap: "var(--spacing-md)",
+        }}
+      >
+        {/* Google Drive keeps its own ConnectorStatus card here because
+            the Drive file picker flow lives in this page (see the
+            DriveFilePicker modal below) and the "Manage Google Drive"
+            button needs the current `driveStatus`. */}
         <ConnectorStatus
           provider="google_drive"
           onSync={refresh}
@@ -251,6 +262,11 @@ export default function SourcesPage() {
             refresh();
           }}
         />
+        {/* Phase 10 — the rest of the connectors (OneDrive / Notion /
+            Jira / Confluence / Figma) share the same multi-provider
+            list. Connecting one of these triggers the OAuth flow and
+            adds its synced files to the index. */}
+        <ConnectorsList onChange={refresh} />
       </div>
 
       {compareError && (

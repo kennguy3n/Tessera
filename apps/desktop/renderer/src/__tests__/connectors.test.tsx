@@ -11,6 +11,7 @@ const mockApi = {
     listDriveFiles: vi.fn(),
     selectItems: vi.fn(),
     authenticate: vi.fn(),
+    sync: vi.fn(),
   },
 };
 

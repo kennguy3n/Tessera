@@ -5,9 +5,28 @@ interface ConnectorStatusProps {
   provider: string;
   onSync?: () => void;
   onDisconnect?: () => void;
+  /**
+   * Optional human-friendly label override. By default a built-in
+   * label table is used (Google Drive, OneDrive, Notion, …).
+   */
+  label?: string;
 }
 
-export default function ConnectorStatus({ provider, onSync, onDisconnect }: ConnectorStatusProps) {
+const PROVIDER_LABELS: Record<string, string> = {
+  google_drive: "Google Drive",
+  onedrive: "OneDrive",
+  notion: "Notion",
+  jira: "Jira",
+  confluence: "Confluence",
+  figma: "Figma",
+};
+
+export default function ConnectorStatus({
+  provider,
+  onSync,
+  onDisconnect,
+  label,
+}: ConnectorStatusProps) {
   const [status, setStatus] = useState<ConnectorStatusInfo>({
     provider,
     connected: false,
@@ -15,6 +34,7 @@ export default function ConnectorStatus({ provider, onSync, onDisconnect }: Conn
   });
   const [syncing, setSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [offline, setOffline] = useState(false);
 
   const pollStatus = useCallback(async () => {
     try {
@@ -38,7 +58,14 @@ export default function ConnectorStatus({ provider, onSync, onDisconnect }: Conn
     try {
       const api = window.tessera;
       if (api) {
-        await api.connectors.syncDrive();
+        // Google Drive routes through the picker-driven syncDrive API
+        // (which falls back to the manifest when no fileIds are given).
+        // Every other provider uses the unified `sync(provider)` API.
+        const result =
+          provider === "google_drive"
+            ? await api.connectors.syncDrive()
+            : await api.connectors.sync(provider);
+        setOffline(result.status === "offline");
       }
       setLastSyncTime(new Date().toLocaleTimeString());
       onSync?.();
@@ -64,18 +91,32 @@ export default function ConnectorStatus({ provider, onSync, onDisconnect }: Conn
   };
 
   const statusColor = status.connected
-    ? "var(--color-success, #22c55e)"
+    ? offline
+      ? "var(--color-warning, #f59e0b)"
+      : "var(--color-success, #22c55e)"
     : "var(--color-muted, #6b7280)";
 
-  const providerLabel = provider === "google_drive" ? "Google Drive" : provider;
+  const providerLabel = label ?? PROVIDER_LABELS[provider] ?? provider;
 
   return (
     <div className="connector-status">
       <div className="connector-status-header">
-        <span className="connector-status-dot" style={{ backgroundColor: statusColor }} />
+        <span
+          className="connector-status-dot"
+          style={{ backgroundColor: statusColor }}
+          aria-hidden="true"
+        />
         <span className="connector-status-name">{providerLabel}</span>
-        <span className="connector-status-badge">
-          {status.connected ? "Connected" : "Disconnected"}
+        <span
+          className="connector-status-badge"
+          role="status"
+          aria-live="polite"
+        >
+          {status.connected
+            ? offline
+              ? "Offline"
+              : "Connected"
+            : "Disconnected"}
         </span>
       </div>
 
@@ -91,6 +132,7 @@ export default function ConnectorStatus({ provider, onSync, onDisconnect }: Conn
             className="btn btn-ghost btn-sm"
             onClick={handleSync}
             disabled={syncing}
+            aria-label={`Sync ${providerLabel} now`}
           >
             {syncing ? "Syncing..." : "Sync Now"}
           </button>
@@ -98,6 +140,7 @@ export default function ConnectorStatus({ provider, onSync, onDisconnect }: Conn
             type="button"
             className="btn btn-danger btn-sm"
             onClick={handleDisconnect}
+            aria-label={`Disconnect ${providerLabel}`}
           >
             Disconnect
           </button>

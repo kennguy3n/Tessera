@@ -380,6 +380,14 @@ export interface TesseraApi {
     listDriveFiles: (folderId?: string, pageToken?: string) => Promise<{ nextPageToken: string | null; files: ConnectorFileInfo[] }>;
     selectItems: (items: Array<{ id: string; name: string; mimeType: string }>) => Promise<Array<{ id: string; name: string; mimeType: string; selected: boolean }>>;
     syncDrive: (selectedFileIds?: string[]) => Promise<{ added: number; modified: number; removed: number; status: string }>;
+    /**
+     * Trigger an incremental sync for the given provider. Works for
+     * every provider — OneDrive, Notion, Jira, Confluence, Figma, and
+     * (when no `selectedFileIds` is supplied) Google Drive. The Drive
+     * picker-driven sync still goes through `syncDrive` because it
+     * accepts an explicit selection.
+     */
+    sync: (provider: string) => Promise<{ added: number; modified: number; removed: number; status: string }>;
   };
   tasks: {
     create: (req: CreateTaskRequest) => Promise<TaskInfo>;
@@ -636,6 +644,7 @@ const api: TesseraApi = {
       ipcRenderer.invoke("connectors:gdrive:selectItems", items),
     syncDrive: (selectedFileIds?: string[]) =>
       ipcRenderer.invoke("connectors:gdrive:sync", selectedFileIds),
+    sync: (provider: string) => ipcRenderer.invoke("connectors:sync", provider),
   },
   tasks: {
     create: (req) => ipcRenderer.invoke("tasks:create", req),

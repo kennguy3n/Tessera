@@ -265,6 +265,15 @@ export interface ConnectorApi {
   listDriveFiles: (folderId?: string, pageToken?: string) => Promise<DriveFileListResult>;
   selectItems: (items: Array<{ id: string; name: string; mimeType: string }>) => Promise<Array<{ id: string; name: string; mimeType: string; selected: boolean }>>;
   syncDrive: (selectedFileIds?: string[]) => Promise<DriveSyncResult>;
+  /**
+   * Provider-agnostic sync (Phase 10). Used for OneDrive / Notion /
+   * Jira / Confluence / Figma — Google Drive still uses `syncDrive`
+   * because it accepts an explicit file selection from the picker.
+   * Returns the same `{ added, modified, removed, status }` shape.
+   * `status === "offline"` indicates the sync failed with a network
+   * error and the UI should show the offline badge.
+   */
+  sync: (provider: string) => Promise<DriveSyncResult>;
 }
 
 export interface DialogApi {
