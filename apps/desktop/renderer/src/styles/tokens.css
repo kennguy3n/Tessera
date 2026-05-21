@@ -41,4 +41,57 @@
   --spacing-2xl: 3rem;
   --transition-fast: 150ms ease;
   --transition-normal: 250ms ease;
+  --color-bg-secondary: #f3f4f6;
+  --color-danger: #ef4444;
+}
+
+/* Phase 9 Task 18 — Dark theme overrides.
+ *
+ * Selectors:
+ *   - `[data-theme="dark"]` is set explicitly by the renderer when
+ *     the user chooses "Dark" in Settings.
+ *   - `@media (prefers-color-scheme: dark)` applies when the user
+ *     picks "System" and the OS reports a dark preference. The
+ *     scope is gated to `:root:not([data-theme="light"])` so that
+ *     an explicit "Light" preference always wins over the system
+ *     hint without us needing to override every individual token.
+ */
+[data-theme="dark"] {
+  --color-primary: #a78bfa;
+  --color-primary-hover: #c4b5fd;
+  --color-primary-light: #312e81;
+  --color-bg-page: #111827;
+  --color-bg-surface: #1f2937;
+  --color-bg-sidebar: #0f172a;
+  --color-bg-secondary: #374151;
+  --color-text-headline: #f9fafb;
+  --color-text-body: #d1d5db;
+  --color-text-secondary: #9ca3af;
+  --color-text-on-primary: #111827;
+  --color-border: #374151;
+  --color-border-light: #1f2937;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.6);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.7);
+  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.8);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    --color-primary: #a78bfa;
+    --color-primary-hover: #c4b5fd;
+    --color-primary-light: #312e81;
+    --color-bg-page: #111827;
+    --color-bg-surface: #1f2937;
+    --color-bg-sidebar: #0f172a;
+    --color-bg-secondary: #374151;
+    --color-text-headline: #f9fafb;
+    --color-text-body: #d1d5db;
+    --color-text-secondary: #9ca3af;
+    --color-text-on-primary: #111827;
+    --color-border: #374151;
+    --color-border-light: #1f2937;
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.6);
+    --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.7);
+    --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.8);
+  }
 }

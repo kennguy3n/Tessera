@@ -5,8 +5,26 @@ import { loadConfig, saveWindowState } from "./config";
 import { initAppState } from "./appState";
 import { detectComputeBackends } from "./modelManagement";
 import { startScheduler, stopScheduler } from "./scheduler";
+import { getLogger } from "./logger";
 
 let mainWindow: BrowserWindow | null = null;
+
+// Catch otherwise-unhandled errors so they end up on disk instead of
+// silently crashing the renderer. We deliberately do NOT call
+// `app.quit()` here because losing the window kills any in-progress
+// user edit — the user would much rather see the crash logged and
+// keep their session.
+process.on("uncaughtException", (err) => {
+  getLogger().error("uncaughtException", {
+    message: err.message,
+    stack: err.stack,
+  });
+});
+process.on("unhandledRejection", (reason) => {
+  getLogger().error("unhandledRejection", {
+    reason: reason instanceof Error ? reason.stack : String(reason),
+  });
+});
 
 function createWindow(): void {
   const config = loadConfig();

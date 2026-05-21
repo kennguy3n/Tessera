@@ -199,7 +199,24 @@ describe("Modal", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("calls onClose when clicking overlay", () => {
+  it("calls onClose when clicking overlay backdrop", () => {
+    const onClose = vi.fn();
+    const { container } = render(
+      <Modal isOpen={true} onClose={onClose} title="Test">
+        Body
+      </Modal>,
+    );
+    // The backdrop is `.modal-overlay`; the dialog is now its inner
+    // child with role="dialog", and a click inside the dialog itself
+    // is intentionally stopped (we don't want clicks on form fields
+    // to close the modal). Hit the outer overlay directly.
+    const overlay = container.querySelector(".modal-overlay");
+    expect(overlay).not.toBeNull();
+    fireEvent.click(overlay!);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("does NOT call onClose when clicking inside the dialog", () => {
     const onClose = vi.fn();
     render(
       <Modal isOpen={true} onClose={onClose} title="Test">
@@ -207,7 +224,36 @@ describe("Modal", () => {
       </Modal>,
     );
     fireEvent.click(screen.getByRole("dialog"));
-    expect(onClose).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("respects closeOnOverlayClick=false", () => {
+    const onClose = vi.fn();
+    const { container } = render(
+      <Modal
+        isOpen={true}
+        onClose={onClose}
+        title="Test"
+        closeOnOverlayClick={false}
+      >
+        Body
+      </Modal>,
+    );
+    fireEvent.click(container.querySelector(".modal-overlay")!);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("links role=dialog to title via aria-labelledby", () => {
+    render(
+      <Modal isOpen={true} onClose={vi.fn()} title="Confirm Delete">
+        Body
+      </Modal>,
+    );
+    const dialog = screen.getByRole("dialog");
+    const labelId = dialog.getAttribute("aria-labelledby");
+    expect(labelId).toBeTruthy();
+    const heading = document.getElementById(labelId!);
+    expect(heading?.textContent).toBe("Confirm Delete");
   });
 });
 

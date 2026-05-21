@@ -1,0 +1,140 @@
+name: Release
+
+# Phase 9 Task 23: Release workflow.
+#
+# Triggered when a tag matching `v*` is pushed. For each platform
+# (Linux, macOS, Windows) it:
+#   1. Builds the Rust + TypeScript bundle exactly the way CI does.
+#   2. Runs `electron-builder` with the matching packaging config.
+#   3. Uploads the resulting installers/binaries as workflow
+#      artifacts AND attaches them to a GitHub Release (auto-created
+#      from the tag).
+#
+# A separate `release-notes` job builds a changelog from `git log`
+# between the previous tag and the new one, and edits the GitHub
+# Release body with the result. We avoid a heavier tool (release-drafter,
+# changesets) because Tessera ships a small number of release notes
+# per cycle and a flat `git log` is honest about the actual change set.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            artifact: "dist/Tessera-*.AppImage dist/Tessera_*.deb dist/Tessera-*.rpm"
+          - os: macos-13
+            artifact: "dist/Tessera-*.dmg"
+          - os: windows-2022
+            artifact: "dist/Tessera Setup *.exe"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux native deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config rpm
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.88
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build all
+        # The repo's `package.json` already defines a top-level
+        # `build` script that compiles the Rust bridge, the
+        # renderer, and the Electron main process.
+        run: npm run build
+
+      - name: Package with electron-builder
+        # `--config packaging/electron-builder.yml` keeps the
+        # packaging metadata co-located with the platform-specific
+        # entitlements/icons. We invoke it directly through `npx`
+        # to avoid pinning a global install in package.json.
+        # Code-signing certificates are picked up from env if set
+        # (CSC_LINK / CSC_KEY_PASSWORD), but unsigned builds still
+        # produce installable artifacts.
+        run: npx electron-builder --config packaging/electron-builder.yml --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tessera-${{ matrix.os }}
+          path: dist/
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Anything we built that looks like an installable artifact
+          # is attached. `softprops/action-gh-release` will create the
+          # release on the tag if it doesn't already exist.
+          files: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+            dist/*.dmg
+            dist/*.exe
+            dist/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-notes:
+    name: Release notes
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          prev="$(git describe --tags --abbrev=0 "${tag}^" 2>/dev/null || echo '')"
+          if [ -z "$prev" ]; then
+            echo "No previous tag found; using full history."
+            log="$(git log --pretty=format:'- %s (%h)' "$tag")"
+          else
+            log="$(git log --pretty=format:'- %s (%h)' "${prev}..${tag}")"
+          fi
+          {
+            echo "body<<TESSERA_EOF"
+            echo "## Tessera ${tag}"
+            echo
+            echo "$log"
+            echo "TESSERA_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.changelog.outputs.body }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

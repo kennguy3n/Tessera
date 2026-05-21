@@ -5,6 +5,7 @@ import Button from "../components/Button";
 import Card from "../components/Card";
 import StatusBadge from "../components/StatusBadge";
 import { useSourceDetail, useReindexSource } from "../hooks/useSources";
+import { useIndexingProgress } from "../hooks/useIndexingProgress";
 import type { ExtractedItem } from "../types/ipc";
 
 export default function SourceDetailPage() {
@@ -12,6 +13,7 @@ export default function SourceDetailPage() {
   const navigate = useNavigate();
   const { detail, loading, error, refresh } = useSourceDetail(id);
   const { reindex, loading: reindexing } = useReindexSource();
+  const progress = useIndexingProgress(id, reindexing);
   const [extracted, setExtracted] = useState<ExtractedItem[] | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [extracting, setExtracting] = useState(false);
@@ -111,6 +113,45 @@ export default function SourceDetailPage() {
       />
 
       <div style={{ display: "grid", gap: "var(--spacing-md)" }}>
+        {reindexing && progress && progress.status === "running" && (
+          <Card>
+            <h3 className="card-title">Indexing</h3>
+            <p
+              role="status"
+              aria-live="polite"
+              style={{ color: "var(--color-text-secondary)" }}
+            >
+              Scanned {progress.scanned} · Indexed {progress.indexed} ·
+              Unchanged {progress.unchanged} · Skipped {progress.skipped}
+              {progress.errors > 0 && (
+                <span style={{ color: "var(--color-error)" }}>
+                  {" "}
+                  · Errors {progress.errors}
+                </span>
+              )}
+            </p>
+            {progress.currentPath && (
+              <p
+                style={{
+                  fontSize: "var(--font-size-xs)",
+                  color: "var(--color-text-secondary)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {progress.currentPath}
+              </p>
+            )}
+          </Card>
+        )}
+        {progress && progress.status === "failed" && (
+          <Card>
+            <p role="alert" style={{ color: "var(--color-error)" }}>
+              Indexing failed: {progress.lastError ?? "unknown error"}
+            </p>
+          </Card>
+        )}
         {(extractError || extracted) && (
           <Card>
             <h3 className="card-title">Extracted Tasks &amp; Decisions</h3>

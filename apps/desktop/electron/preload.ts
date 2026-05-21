@@ -10,6 +10,18 @@ export interface SourceInfo {
   fileCount: number;
 }
 
+export interface IndexingProgressInfo {
+  status: "idle" | "running" | "done" | "failed";
+  scanned: number;
+  indexed: number;
+  unchanged: number;
+  skipped: number;
+  errors: number;
+  totalFiles: number;
+  currentPath: string | null;
+  lastError: string | null;
+}
+
 export interface IndexedFileInfo {
   path: string;
   hash: string;
@@ -101,6 +113,35 @@ export interface SettingsData {
   ignorePatterns: string[];
   watchPatterns: string[];
 }
+
+export type ExternalProviderType =
+  | "openai_compatible"
+  | "anthropic"
+  | "custom";
+
+/** Payload accepted by `externalProvider.set` from the renderer. */
+export interface ExternalProviderConfigInput {
+  enabled: boolean;
+  providerType: ExternalProviderType;
+  apiUrl: string;
+  apiKeyRef: string;
+  modelName: string;
+  maxTokens: number;
+  temperature: number;
+  timeoutSecs: number;
+  maxRetries: number;
+}
+
+/** Payload returned by `externalProvider.get` / `.set`. Includes the
+ *  derived `hasApiKey` so the renderer can hide the password field
+ *  when the keychain already has a value. */
+export interface ExternalProviderConfigView extends ExternalProviderConfigInput {
+  hasApiKey: boolean;
+}
+
+export type ExternalProviderTestResult =
+  | { ok: true; latencyMs: number }
+  | { ok: false; error: string };
 
 // Mirrors `ExtractedItem` in apps/desktop/renderer/src/types/ipc.ts and
 // the local copy in apps/desktop/electron/ipc.ts. We duplicate the shape
@@ -244,6 +285,7 @@ export interface TesseraApi {
     searchSources: (query: string, limit: number) => Promise<SearchHit[]>;
     getDetail: (id: string) => Promise<SourceDetailInfo>;
     reindex: (id: string) => Promise<SourceInfo>;
+    getIndexingProgress: (id: string) => Promise<IndexingProgressInfo>;
   };
   artifacts: {
     create: (
@@ -301,6 +343,14 @@ export interface TesseraApi {
   settings: {
     get: () => Promise<SettingsData>;
     update: (settings: Partial<SettingsData>) => Promise<SettingsData>;
+  };
+  externalProvider: {
+    get: () => Promise<ExternalProviderConfigView>;
+    set: (
+      provider: ExternalProviderConfigInput,
+      apiKey: string | null,
+    ) => Promise<ExternalProviderConfigView>;
+    test: () => Promise<ExternalProviderTestResult>;
   };
   model: {
     status: () => Promise<ModelStatus>;
@@ -459,6 +509,8 @@ const api: TesseraApi = {
       ipcRenderer.invoke("sources:search", query, limit),
     getDetail: (id: string) => ipcRenderer.invoke("sources:getDetail", id),
     reindex: (id: string) => ipcRenderer.invoke("sources:reindex", id),
+    getIndexingProgress: (id: string) =>
+      ipcRenderer.invoke("sources:getIndexingProgress", id),
   },
   artifacts: {
     create: (title: string, artifactType: string, templateId?: string) =>
@@ -528,6 +580,12 @@ const api: TesseraApi = {
     get: () => ipcRenderer.invoke("settings:get"),
     update: (settings: Partial<SettingsData>) =>
       ipcRenderer.invoke("settings:update", settings),
+  },
+  externalProvider: {
+    get: () => ipcRenderer.invoke("externalProvider:get"),
+    set: (provider: ExternalProviderConfigInput, apiKey: string | null) =>
+      ipcRenderer.invoke("externalProvider:set", provider, apiKey),
+    test: () => ipcRenderer.invoke("externalProvider:test"),
   },
   model: {
     status: () => ipcRenderer.invoke("model:status"),

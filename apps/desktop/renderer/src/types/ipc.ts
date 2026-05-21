@@ -6,6 +6,19 @@ export interface SourceApi {
   searchSources: (query: string, limit: number) => Promise<SearchHit[]>;
   getDetail: (id: string) => Promise<SourceDetailInfo>;
   reindex: (id: string) => Promise<SourceInfo>;
+  getIndexingProgress: (id: string) => Promise<IndexingProgressInfo>;
+}
+
+export interface IndexingProgressInfo {
+  status: "idle" | "running" | "done" | "failed";
+  scanned: number;
+  indexed: number;
+  unchanged: number;
+  skipped: number;
+  errors: number;
+  totalFiles: number;
+  currentPath: string | null;
+  lastError: string | null;
 }
 
 export interface ArtifactApi {
@@ -85,6 +98,41 @@ export interface ReplaceCitationResult {
 export interface SettingsApi {
   get: () => Promise<SettingsData>;
   update: (settings: Partial<SettingsData>) => Promise<SettingsData>;
+}
+
+export type ExternalProviderType =
+  | "openai_compatible"
+  | "anthropic"
+  | "custom";
+
+export interface ExternalProviderConfigInput {
+  enabled: boolean;
+  providerType: ExternalProviderType;
+  apiUrl: string;
+  apiKeyRef: string;
+  modelName: string;
+  maxTokens: number;
+  temperature: number;
+  timeoutSecs: number;
+  maxRetries: number;
+}
+
+export interface ExternalProviderConfigView
+  extends ExternalProviderConfigInput {
+  hasApiKey: boolean;
+}
+
+export type ExternalProviderTestResult =
+  | { ok: true; latencyMs: number }
+  | { ok: false; error: string };
+
+export interface ExternalProviderApi {
+  get: () => Promise<ExternalProviderConfigView>;
+  set: (
+    provider: ExternalProviderConfigInput,
+    apiKey: string | null,
+  ) => Promise<ExternalProviderConfigView>;
+  test: () => Promise<ExternalProviderTestResult>;
 }
 
 export interface ModelApi {
@@ -263,6 +311,7 @@ export interface TesseraApi {
   templates: TemplateApi;
   citations: CitationApi;
   settings: SettingsApi;
+  externalProvider: ExternalProviderApi;
   model: ModelApi;
   runtime: RuntimeApi;
   connectors: ConnectorApi;

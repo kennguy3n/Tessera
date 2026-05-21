@@ -9,6 +9,7 @@ import {
   Settings,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { SIDEBAR_SHORTCUT_HINTS } from "../hooks/useKeyboardShortcuts";
 
 interface NavItem {
   to: string;
@@ -34,22 +35,35 @@ export default function Sidebar() {
         <span className="sidebar-title">Tessera</span>
       </div>
       <ul className="sidebar-nav">
-        {navItems.map((item) => (
-          <li key={item.to}>
-            <NavLink
-              to={item.to}
-              end={item.to === "/"}
-              className={({ isActive }) =>
-                `sidebar-link ${isActive ? "sidebar-link-active" : ""}`
-              }
-            >
-              <span className="sidebar-icon" aria-hidden="true">
-                <item.Icon size={20} strokeWidth={1.75} />
-              </span>
-              <span className="sidebar-label">{item.label}</span>
-            </NavLink>
-          </li>
-        ))}
+        {navItems.map((item) => {
+          const hint = SIDEBAR_SHORTCUT_HINTS[item.to];
+          const isMac =
+            typeof navigator !== "undefined" &&
+            /Mac|iPhone|iPad/.test(navigator.platform);
+          const modLabel = isMac ? "⌘" : "Ctrl";
+          return (
+            <li key={item.to}>
+              <NavLink
+                to={item.to}
+                end={item.to === "/"}
+                className={({ isActive }) =>
+                  `sidebar-link ${isActive ? "sidebar-link-active" : ""}`
+                }
+                aria-keyshortcuts={hint ? `${modLabel}+${hint}` : undefined}
+              >
+                <span className="sidebar-icon" aria-hidden="true">
+                  <item.Icon size={20} strokeWidth={1.75} />
+                </span>
+                <span className="sidebar-label">{item.label}</span>
+                {hint && (
+                  <span className="sidebar-kbd" aria-hidden="true">
+                    {modLabel}+{hint}
+                  </span>
+                )}
+              </NavLink>
+            </li>
+          );
+        })}
       </ul>
       <style>{`
         .sidebar {
@@ -117,6 +131,18 @@ export default function Sidebar() {
         .sidebar-icon {
           width: 20px;
           text-align: center;
+        }
+        .sidebar-label {
+          flex: 1;
+        }
+        .sidebar-kbd {
+          margin-left: auto;
+          font-size: var(--font-size-xs);
+          color: var(--color-text-secondary);
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          padding: 1px 4px;
+          border-radius: 4px;
+          background: var(--color-bg-secondary, transparent);
         }
       `}</style>
     </nav>

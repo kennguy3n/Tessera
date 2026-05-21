@@ -2,7 +2,12 @@ import { ipcMain, BrowserWindow, app, dialog } from "electron";
 import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { loadConfig, updateConfig } from "./config";
+import {
+  loadConfig,
+  updateConfig,
+  DEFAULT_EXTERNAL_PROVIDER,
+  type ExternalProviderConfig,
+} from "./config";
 import { getBridge, getModelSidecar } from "./appState";
 import {
   dispatchOnGenerate,
@@ -13,6 +18,7 @@ import { isSafeExportPath } from "./exportPathSafety";
 import type { SettingsData, ModelStatus } from "./preload";
 import { startOAuthFlow, exchangeCodeForTokens, refreshAccessToken, revokeToken } from "./oauthServer";
 import * as tokenVault from "./tokenVault";
+import * as secretsVault from "./secretsVault";
 import {
   deleteCurrentModel,
   detectPlatformInfo,
@@ -108,6 +114,83 @@ function getSafeExportRoots(): string[] {
   return roots;
 }
 
+/**
+ * Issue a minimal request against the configured external LLM provider
+ * to verify that the URL is reachable, the API key is accepted, and
+ * the model exists. Returns `{ ok: true, latencyMs }` on success and
+ * `{ ok: false, error }` on any HTTP-level or network failure.
+ *
+ * We deliberately keep this small (1-token completion) so the test
+ * does not burn user budget on actual generation work.
+ */
+async function testExternalProviderConnection(
+  provider: ExternalProviderConfig,
+  apiKey: string,
+): Promise<{ ok: true; latencyMs: number } | { ok: false; error: string }> {
+  const start = Date.now();
+  const controller = new AbortController();
+  const timeoutMs = Math.max(1, provider.timeoutSecs) * 1000;
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+
+  let url: string;
+  let headers: Record<string, string>;
+  let body: string;
+
+  const apiUrl = provider.apiUrl.replace(/\/+$/, "");
+  if (provider.providerType === "anthropic") {
+    url = `${apiUrl}/v1/messages`;
+    headers = {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    };
+    body = JSON.stringify({
+      model: provider.modelName,
+      max_tokens: 1,
+      messages: [{ role: "user", content: "ping" }],
+    });
+  } else {
+    // OpenAI-compatible (covers OpenAI, Ollama, vLLM, LM Studio, …)
+    url = `${apiUrl}/v1/chat/completions`;
+    headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    };
+    body = JSON.stringify({
+      model: provider.modelName,
+      max_tokens: 1,
+      messages: [{ role: "user", content: "ping" }],
+    });
+  }
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return {
+        ok: false,
+        error: `HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`,
+      };
+    }
+    return { ok: true, latencyMs: Date.now() - start };
+  } catch (e) {
+    if ((e as Error).name === "AbortError") {
+      return { ok: false, error: `Timed out after ${provider.timeoutSecs}s` };
+    }
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export function registerIpcHandlers(): void {
   // --- Sources ---
 
@@ -180,6 +263,17 @@ export function registerIpcHandlers(): void {
     }
     throw new Error("Native bridge not available");
   });
+
+  ipcMain.handle(
+    "sources:getIndexingProgress",
+    async (_event, id: string) => {
+      const bridge = getBridge();
+      if (bridge) {
+        return bridge.bridgeGetIndexingProgress(id);
+      }
+      throw new Error("Native bridge not available");
+    },
+  );
 
   // --- Artifacts ---
 
@@ -547,6 +641,85 @@ export function registerIpcHandlers(): void {
       } as SettingsData;
     },
   );
+
+  // --- External LLM provider ---
+  //
+  // Settings (URL, model, etc.) live in the on-disk JSON config so they
+  // survive restarts. The API key is *referenced* by `apiKeyRef` but
+  // never stored there — it lives encrypted in the OS keychain via
+  // `secretsVault`. Renderer code passes the key over IPC only when
+  // the user explicitly types/pastes it into the password field.
+
+  ipcMain.handle("externalProvider:get", async () => {
+    const config = loadConfig();
+    const provider = config.externalProvider ?? {
+      ...DEFAULT_EXTERNAL_PROVIDER,
+    };
+    return {
+      ...provider,
+      hasApiKey: provider.apiKeyRef
+        ? secretsVault.hasSecret(provider.apiKeyRef)
+        : false,
+    };
+  });
+
+  ipcMain.handle(
+    "externalProvider:set",
+    async (
+      _event,
+      provider: ExternalProviderConfig,
+      apiKey: string | null,
+    ) => {
+      // Merge with defaults so a partial payload from a renderer of an
+      // earlier release still ends up with all required fields.
+      const merged: ExternalProviderConfig = {
+        ...DEFAULT_EXTERNAL_PROVIDER,
+        ...provider,
+      };
+      updateConfig({ externalProvider: merged });
+
+      if (apiKey === null) {
+        // null = leave whatever's in the keychain alone.
+      } else if (apiKey === "") {
+        // empty string = explicitly forget the key.
+        secretsVault.deleteSecret(merged.apiKeyRef);
+      } else {
+        secretsVault.storeSecret(merged.apiKeyRef, apiKey);
+      }
+
+      return {
+        ...merged,
+        hasApiKey: secretsVault.hasSecret(merged.apiKeyRef),
+      };
+    },
+  );
+
+  ipcMain.handle("externalProvider:test", async () => {
+    const config = loadConfig();
+    const provider = config.externalProvider;
+    if (!provider || !provider.enabled) {
+      return { ok: false, error: "External provider is disabled" };
+    }
+    if (!provider.apiUrl.trim() || !provider.modelName.trim()) {
+      return { ok: false, error: "API URL and model name are required" };
+    }
+    if (!secretsVault.hasSecret(provider.apiKeyRef)) {
+      return { ok: false, error: "API key has not been stored" };
+    }
+    const apiKey = secretsVault.getSecret(provider.apiKeyRef);
+    if (!apiKey) {
+      return { ok: false, error: "API key has not been stored" };
+    }
+    try {
+      const result = await testExternalProviderConnection(provider, apiKey);
+      return result;
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  });
 
   // --- Version History ---
 

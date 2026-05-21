@@ -68,6 +68,17 @@ const mockApi = {
       lastIndexed: new Date().toISOString(),
       fileCount: 0,
     }),
+    getIndexingProgress: vi.fn().mockResolvedValue({
+      status: "idle",
+      scanned: 0,
+      indexed: 0,
+      unchanged: 0,
+      skipped: 0,
+      errors: 0,
+      totalFiles: 0,
+      currentPath: null,
+      lastError: null,
+    }),
   },
   artifacts: {
     create: vi.fn().mockResolvedValue({
@@ -204,6 +215,26 @@ const mockApi = {
       ignorePatterns: [".git", "node_modules"],
       watchPatterns: ["**/*.md"],
     }),
+  },
+  externalProvider: {
+    get: vi.fn().mockResolvedValue({
+      enabled: false,
+      providerType: "openai_compatible",
+      apiUrl: "",
+      apiKeyRef: "tessera.external_provider.primary",
+      modelName: "",
+      maxTokens: 1024,
+      temperature: 0.7,
+      timeoutSecs: 60,
+      maxRetries: 2,
+      hasApiKey: false,
+    }),
+    set: vi.fn().mockImplementation(async (provider, apiKey) => ({
+      ...provider,
+      hasApiKey:
+        apiKey === null ? false : apiKey === "" ? false : true,
+    })),
+    test: vi.fn().mockResolvedValue({ ok: true, latencyMs: 42 }),
   },
   model: {
     status: vi.fn().mockResolvedValue({

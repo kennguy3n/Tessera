@@ -3,6 +3,7 @@ import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
 import Button from "../components/Button";
 import ModelRuntimeCard from "../components/ModelRuntimeCard";
+import ExternalProviderCard from "../components/ExternalProviderCard";
 import { useSettings, useUpdateSetting } from "../hooks/useSettings";
 
 export default function SettingsPage() {
@@ -128,6 +129,8 @@ export default function SettingsPage() {
         </Card>
 
         <ModelRuntimeCard />
+
+        <ExternalProviderCard />
 
         <Card>
           <h3 style={{ marginBottom: "var(--spacing-md)" }}>Export</h3>

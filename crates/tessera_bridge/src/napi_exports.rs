@@ -175,6 +175,22 @@ pub fn bridge_reindex_source(source_id: String) -> napi::Result<sources::SourceI
     sources::reindex_source(&mgr, &source_id).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+/// Returns the latest indexing progress snapshot. Safe to poll on
+/// a short interval — see [`tessera_sources::progress`] for the
+/// lifecycle semantics.
+#[napi]
+pub fn bridge_get_indexing_progress(
+    source_id: String,
+) -> napi::Result<sources::IndexingProgressInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::get_indexing_progress(&mgr, &source_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 // --- Artifacts ---
 
 #[napi]

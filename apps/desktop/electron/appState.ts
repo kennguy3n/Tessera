@@ -12,6 +12,7 @@ export interface NativeBridge {
   bridgeSearchSources(query: string, limit: number): SearchHitInfo[];
   bridgeGetSourceDetail(sourceId: string): SourceDetailInfo;
   bridgeReindexSource(sourceId: string): SourceInfo;
+  bridgeGetIndexingProgress(sourceId: string): IndexingProgressInfo;
   bridgeCreateArtifact(
     title: string,
     artifactType: string,
@@ -124,6 +125,18 @@ export interface SourceInfo {
   createdAt: string;
   lastIndexed: string | null;
   fileCount: number;
+}
+
+export interface IndexingProgressInfo {
+  status: "idle" | "running" | "done" | "failed";
+  scanned: number;
+  indexed: number;
+  unchanged: number;
+  skipped: number;
+  errors: number;
+  totalFiles: number;
+  currentPath: string | null;
+  lastError: string | null;
 }
 
 export interface SearchHitInfo {
