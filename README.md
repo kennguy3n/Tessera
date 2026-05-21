@@ -105,7 +105,7 @@ for connect/sync/disconnect.
 | **Analyze workflows** | `CreatePage` Analyze tab — Summarize sources, Generate report, Analyze spreadsheet — preselected shortcuts onto the report / analysis templates |
 | **Plan & Approve templates** | Meeting agenda, Project plan, Task list, Launch checklist, Meeting notes, Brief, Purchase / Budget approval, Policy exception, Vendor review |
 | **Tasks / Plans** | Dedicated `TasksPage` with status (todo / in-progress / done / blocked), priority badges, drag-and-drop reordering, source references, due dates; tasks can be created manually or extracted from indexed sources |
-| **Automations** | Scheduled index refreshes and template-triggered workflows, driven by a scheduler service in Electron main with a `before-quit`-safe drain |
+| **Automations** | Scheduled index refreshes and template-triggered workflows, driven by a scheduler service in Electron main with a `will-quit`-safe drain |
 | **Task/Decision Extraction** | Keyword-proximity heuristics to extract actionable items from source material |
 | **Source Comparison** | N-gram analysis comparing two source sets — common themes, differences, similarity score |
 | **Review Checklist** | Generate checklists from source material for structured review |

@@ -339,7 +339,7 @@ tests for every new rendering / connector module.
       integration tests in the pattern of `gdrive.rs`.
 - [x] `TasksPage` and `AutomationsPage` are reachable from the sidebar and
       driven by typed IPC handlers; the scheduler runs in Electron main and
-      survives `before-quit` correctly.
+      survives `will-quit` correctly.
 - [x] Every Plan and Approve category template parses through the existing
       `tessera_templates` registry and produces a generator-ready artifact.
 - [x] Base editor exposes Grid / Kanban / Calendar / Timeline / Gallery
@@ -429,7 +429,7 @@ Tessera's UI follows the **KChat design system** ([https://kchat.com](https://kc
   template-triggered workflows) backed by a scheduler service in Electron
   main that uses a promise-based `activeTick` / `queuedRunNow` state
   machine so manual "Run Now" clicks always produce an observable tick and
-  `before-quit` can drain in-flight work. 10 new templates: Plan
+  `will-quit` can drain in-flight work. 10 new templates: Plan
   (meeting-agenda, project-plan, task-list, launch-checklist,
   meeting-notes, brief) and Approve (purchase-approval, budget-approval,
   policy-exception, vendor-review).

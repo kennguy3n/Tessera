@@ -82,7 +82,7 @@ export function startScheduler(tickMs: number = DEFAULT_TICK_MS): void {
  * queued follow-up, if any) to drain. Returns a promise that resolves
  * once it's safe to tear down the bridge / quit the process.
  *
- * Callers (`main.ts` on `before-quit`) must `await` this. The interval
+ * Callers (`main.ts` on `will-quit`) must `await` this. The interval
  * is cleared synchronously so no new tick can start the moment this
  * function is invoked; only the async wait phase covers the active
  * promise.

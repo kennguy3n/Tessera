@@ -267,6 +267,45 @@ describe("CreatePage", () => {
       screen.getByText(/Pick a Sheet you've already imported/),
     ).toBeInTheDocument();
   });
+
+  it("workflow shortcut keeps its workflow description after the underlying template async-loads", async () => {
+    // Regression for Devin Review BUG finding on commit 3f885a8:
+    // workflow shortcuts ("Summarize sources", "Generate report")
+    // share `report-v1` as their underlying template. Without
+    // workflow-aware precedence, once `templates.get('report-v1')`
+    // resolved with description "Analytical report", the generic
+    // template copy would replace the workflow's friendly text in
+    // the page header — but only *after* the async fetch landed,
+    // producing a confusing flicker. The fix gives workflow
+    // `localItem.description` priority over `template.description`,
+    // matching the parallel `displayName` precedence.
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
+    window.tessera.templates.get = vi.fn().mockResolvedValue({
+      id: "report-v1",
+      name: "Report",
+      description: "Analytical report",
+      version: "1",
+      category: "documents",
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/create"]}>
+        <CreatePage />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Analyze" }));
+    fireEvent.click(screen.getByText("Summarize sources"));
+
+    // After the async template fetch resolves, the workflow's
+    // friendly description must still be on screen — and the generic
+    // "Analytical report" template copy must NOT.
+    await waitFor(() => {
+      expect(
+        screen.getByText(/draft a grounded summary report/),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Analytical report")).not.toBeInTheDocument();
+  });
 });
 
 describe("SourcesPage", () => {

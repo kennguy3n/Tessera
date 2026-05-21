@@ -371,7 +371,7 @@ tessera/
 ├── apps/
 │   └── desktop/
 │       ├── electron/                # Electron main process
-│       │   ├── main.ts              # App entry, window management, before-quit drain
+│       │   ├── main.ts              # App entry, window management, will-quit drain
 │       │   ├── ipc.ts               # IPC handler registration (sources, artifacts, runtime, tasks, automations)
 │       │   ├── appState.ts          # Bridge initialization and AppState
 │       │   ├── preload.ts           # Typed preload API exposed to renderer

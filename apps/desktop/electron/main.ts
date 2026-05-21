@@ -37,7 +37,15 @@ function createWindow(): void {
       responseHeaders: {
         ..._details.responseHeaders,
         "Content-Security-Policy": [
-          `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; ${connectSrc}`,
+          // `img-src 'self' data: https:` allows the GalleryView (and
+          // other Base cells whose URL field points at an external cover
+          // image) to display thumbnails from connected sources — Drive,
+          // OneDrive, Notion, Figma, etc. — without bouncing them through
+          // a privacy-preserving fetch proxy. We intentionally do NOT
+          // include `http:` so plaintext image URLs are still blocked.
+          // Scripts and connect-src remain locked to 'self', so widening
+          // img-src does not weaken Tessera's local-first guarantees.
+          `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; ${connectSrc}`,
         ],
       },
     });
@@ -128,11 +136,20 @@ app.on("window-all-closed", () => {
 });
 
 // Guard against the deferred-quit dance re-entering: when we call
-// `app.quit()` from inside the `before-quit` handler, Electron re-emits
-// `before-quit` and we'd loop infinitely without this flag.
+// `app.quit()` from inside the `will-quit` handler, Electron re-emits
+// `will-quit` and we'd loop infinitely without this flag.
+//
+// We deliberately hook `will-quit` rather than `before-quit` because
+// `before-quit` fires before any cancellation handlers (renderer
+// "are you sure?" dialogs, future plugin quit-blockers, etc.) get a
+// chance to call `event.preventDefault()`. If we tore the scheduler
+// down on `before-quit` and the quit was then cancelled, we'd be left
+// with a running app and a stopped scheduler. `will-quit` fires only
+// after every other listener has agreed to quit, so by the time we
+// stop the scheduler we know the process is committed to terminating.
 let schedulerShutdownStarted = false;
 
-app.on("before-quit", (event) => {
+app.on("will-quit", (event) => {
   if (schedulerShutdownStarted) return;
   schedulerShutdownStarted = true;
   // Stop the interval immediately so no NEW ticks start, then wait

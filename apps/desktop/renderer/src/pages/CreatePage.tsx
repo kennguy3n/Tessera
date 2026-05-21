@@ -398,8 +398,16 @@ function TemplateRunner({
     localItem?.badge === "workflow"
       ? localItem.name
       : template?.name ?? localItem?.name ?? templateId;
+  // Workflow shortcuts whose underlying template carries a generic
+  // description (e.g. workflow "Summarize sources" → template "Report"
+  // → "Analytical report") must keep their workflow-specific copy even
+  // after the template async-resolves. So workflow `localItem.description`
+  // wins over `template?.description`. Non-workflow templates keep the
+  // existing precedence: prefer the loaded template's description, fall
+  // back to the local entry, finally a generic label.
   const displayDescription =
     localItem?.sourceHint ??
+    (localItem?.badge === "workflow" ? localItem?.description : null) ??
     template?.description ??
     localItem?.description ??
     "Template details";
