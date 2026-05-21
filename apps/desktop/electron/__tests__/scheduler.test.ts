@@ -22,6 +22,7 @@ vi.mock("../appState", () => ({
 import type { NativeBridge, AutomationInfo } from "../appState";
 import {
   tick,
+  runNow,
   dispatchOnGenerate,
   getSchedulerStatus,
   __testing__,
@@ -182,6 +183,91 @@ describe("scheduler.tick", () => {
     // `bridgeDueScheduledAutomations` was called exactly once because
     // the second tick bailed before reading due automations.
     expect(dueCallCount).toBe(1);
+  });
+});
+
+describe("scheduler.runNow", () => {
+  it("runs immediately when no tick is in flight", async () => {
+    const bridge = newBridge();
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "rn1",
+        '{"kind":"reindex_source","source_id":"src-immediate"}',
+      ),
+    ]);
+
+    await runNow(bridge as unknown as NativeBridge);
+
+    expect(bridge.bridgeReindexSource).toHaveBeenCalledWith("src-immediate");
+    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith("rn1", "ok");
+  });
+
+  it("queues a follow-up tick when one is already in flight so the caller always observes a fresh run", async () => {
+    const bridge = newBridge();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let dueCallCount = 0;
+    bridge.bridgeDueScheduledAutomations.mockImplementation(() => {
+      dueCallCount += 1;
+      // Both invocations return the same automation, so a successful
+      // queue-then-run produces two recorded runs (one for the active
+      // tick, one for the queued follow-up).
+      return [
+        fakeAutomation(
+          `slow-${dueCallCount}`,
+          '{"kind":"reindex_source","source_id":"src-slow"}',
+        ),
+      ];
+    });
+    bridge.bridgeReindexSource.mockImplementationOnce(async () => {
+      await blocked;
+    });
+
+    const firstTick = tick(bridge as unknown as NativeBridge);
+    const runNowPromise = runNow(bridge as unknown as NativeBridge);
+    release();
+    await Promise.all([firstTick, runNowPromise]);
+
+    // The interval-driven tick and the runNow-queued tick each ran
+    // once — the runNow caller's click was not silently dropped.
+    expect(dueCallCount).toBe(2);
+    expect(bridge.bridgeReindexSource).toHaveBeenCalledTimes(2);
+    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("coalesces concurrent runNow callers onto a single queued follow-up", async () => {
+    const bridge = newBridge();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let dueCallCount = 0;
+    bridge.bridgeDueScheduledAutomations.mockImplementation(() => {
+      dueCallCount += 1;
+      return [
+        fakeAutomation(
+          `coalesce-${dueCallCount}`,
+          '{"kind":"reindex_source","source_id":"src-coalesce"}',
+        ),
+      ];
+    });
+    bridge.bridgeReindexSource.mockImplementationOnce(async () => {
+      await blocked;
+    });
+
+    const firstTick = tick(bridge as unknown as NativeBridge);
+    // Three concurrent clicks while the first tick is still blocking.
+    // They must all resolve, but only ONE extra tick should run.
+    const r1 = runNow(bridge as unknown as NativeBridge);
+    const r2 = runNow(bridge as unknown as NativeBridge);
+    const r3 = runNow(bridge as unknown as NativeBridge);
+    release();
+    await Promise.all([firstTick, r1, r2, r3]);
+
+    // Active tick + single coalesced follow-up = 2 invocations total.
+    expect(dueCallCount).toBe(2);
   });
 });
 

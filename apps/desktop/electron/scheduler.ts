@@ -19,6 +19,15 @@
  * `OnGenerate` triggers are *not* polled here — they're invoked
  * synchronously from the `artifacts:generateFromTemplate` IPC handler
  * after a successful generation via {@link dispatchOnGenerate}.
+ *
+ * Note an intentional asymmetry: a `GenerateFromTemplate` action that
+ * fires from this scheduler does **not** in turn re-trigger any
+ * `OnGenerate` automations bound to that template. We dispatch the
+ * generation directly against the bridge (no IPC round-trip) precisely
+ * so the scheduler can't cascade into an infinite loop
+ * (Schedule → generate → OnGenerate-that-generates → OnGenerate → …).
+ * OnGenerate is reserved for *user-initiated* generations going through
+ * `artifacts:generateFromTemplate`.
  */
 import { getBridge, type NativeBridge, type AutomationInfo } from "./appState";
 
@@ -42,7 +51,17 @@ interface AutomationAction {
 // reference; module state matches the rest of the codebase
 // (config.ts, appState.ts).
 let tickHandle: ReturnType<typeof setInterval> | null = null;
-let inFlight = false;
+// Active tick promise. `null` means no tick is currently running.
+// The interval driver and `runNow()` both consult this to serialize
+// tick execution; see the comment on `runNow()` for the full state
+// machine.
+let activeTick: Promise<void> | null = null;
+// At most one queued follow-up tick. Set when `runNow()` is invoked
+// while a tick is already running — the queued tick fires as soon as
+// the active tick resolves. Concurrent `runNow()` callers coalesce
+// onto this single promise so a barrage of clicks produces exactly
+// one extra tick after the active one, not N.
+let queuedRunNow: Promise<void> | null = null;
 let lastTickAt: Date | null = null;
 let lastTickError: string | null = null;
 
@@ -78,42 +97,103 @@ export function getSchedulerStatus(): SchedulerStatus {
     running: tickHandle !== null,
     lastTickAt: lastTickAt ? lastTickAt.toISOString() : null,
     lastTickError,
-    inFlight,
+    inFlight: activeTick !== null,
   };
 }
 
 /**
  * Resolve currently-due `Schedule` automations and dispatch each one.
- * Exported for the test suite and for the manual "run now" UI action;
- * the scheduler interval calls it on a fixed cadence.
+ * Exported for the test suite and called by the scheduler interval on
+ * a fixed cadence.
+ *
+ * Interval semantics: if a previous tick is still running (a slow
+ * re-index, say), this call short-circuits and returns immediately.
+ * We deliberately do **not** queue interval-driven ticks — overlapping
+ * scheduled runs would corrupt `last_run_at` semantics (the second
+ * tick reads stale state because the first hasn't recorded yet) and a
+ * backlog of queued ticks would amplify any pathology.
+ *
+ * The manual "Run Now" UI action uses {@link runNow} instead, which
+ * waits for the active tick and then enqueues a single follow-up so
+ * the user's click always results in an observable fresh tick.
  */
 export async function tick(
   bridge: NativeBridge | null = getBridge(),
 ): Promise<void> {
   if (!bridge) return;
-  // Re-entrancy guard. A slow tick (e.g. a large re-index) must not
-  // produce overlapping invocations — we'd otherwise double-fire on
-  // every interval boundary and corrupt the `last_run_at` semantics
-  // (a second tick reads the still-stale `last_run_at` because the
-  // first hasn't recorded yet).
-  if (inFlight) return;
-  inFlight = true;
-  lastTickError = null;
-  try {
-    const due = bridge.bridgeDueScheduledAutomations();
-    for (const a of due) {
-      await runAutomation(bridge, a);
-    }
-  } catch (e) {
-    lastTickError = e instanceof Error ? e.message : String(e);
-    // Don't rethrow — the interval would otherwise stall on a single
-    // transient bridge error. The error is surfaced via
-    // `getSchedulerStatus()` and the per-automation `lastRunStatus`.
-    console.error("[scheduler] tick failed:", e);
-  } finally {
-    inFlight = false;
-    lastTickAt = new Date();
+  if (activeTick) return;
+  await runTick(bridge);
+}
+
+/**
+ * Manual "tick now" entry point used by the AutomationsPage UI. Unlike
+ * {@link tick}, this never silently no-ops on the user — if a tick is
+ * already running, it waits for it to complete and then runs a fresh
+ * one so the click is guaranteed to produce a new observable tick.
+ *
+ * Concurrent `runNow()` invocations coalesce onto a single queued
+ * follow-up: a burst of clicks while one tick is running results in
+ * exactly one extra tick afterward, not N. The returned promise
+ * resolves once the caller's tick (the follow-up they're queued onto)
+ * has completed.
+ */
+export async function runNow(
+  bridge: NativeBridge | null = getBridge(),
+): Promise<void> {
+  if (!bridge) return;
+  if (!activeTick) {
+    await runTick(bridge);
+    return;
   }
+  // A tick is currently running. Either join the existing queued
+  // follow-up (coalesce) or create one.
+  if (!queuedRunNow) {
+    const current = activeTick;
+    queuedRunNow = (async () => {
+      // Swallow the active tick's outcome — the queued tick fires
+      // regardless of whether the active one succeeded; its own
+      // errors are captured in `lastTickError`.
+      try {
+        await current;
+      } catch {
+        /* surfaced via lastTickError of the active tick */
+      }
+      await runTick(bridge);
+    })().finally(() => {
+      queuedRunNow = null;
+    });
+  }
+  await queuedRunNow;
+}
+
+/**
+ * Internal helper that performs the actual tick work and manages the
+ * `activeTick` promise lifecycle. Callers must check `activeTick`
+ * themselves before invoking this — it does NOT guard against
+ * re-entrancy on its own.
+ */
+async function runTick(bridge: NativeBridge): Promise<void> {
+  const p = (async () => {
+    lastTickError = null;
+    try {
+      const due = bridge.bridgeDueScheduledAutomations();
+      for (const a of due) {
+        await runAutomation(bridge, a);
+      }
+    } catch (e) {
+      lastTickError = e instanceof Error ? e.message : String(e);
+      // Don't rethrow — the interval would otherwise stall on a single
+      // transient bridge error. The error is surfaced via
+      // `getSchedulerStatus()` and the per-automation `lastRunStatus`.
+      console.error("[scheduler] tick failed:", e);
+    } finally {
+      lastTickAt = new Date();
+    }
+  })();
+  activeTick = p.finally(() => {
+    activeTick = null;
+  });
+  await activeTick;
 }
 
 /**
@@ -228,7 +308,8 @@ export const __testing__ = {
       clearInterval(tickHandle);
       tickHandle = null;
     }
-    inFlight = false;
+    activeTick = null;
+    queuedRunNow = null;
     lastTickAt = null;
     lastTickError = null;
   },

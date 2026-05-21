@@ -180,11 +180,7 @@ pub fn matching_on_generate_automations(
 /// the UI renders verbatim (`"ok"` / `"failed: <reason>"`). `ran_at`
 /// defaults to `Utc::now()` on the Rust side; the Electron scheduler
 /// doesn't need to thread a clock for the common case.
-pub fn record_automation_run(
-    store: &AutomationStore,
-    id: &str,
-    status: &str,
-) -> Result<()> {
+pub fn record_automation_run(store: &AutomationStore, id: &str, status: &str) -> Result<()> {
     let aid = parse_automation_id(id)?;
     if status.is_empty() {
         return Err(Error::InvalidConfig(
@@ -302,14 +298,17 @@ mod tests {
         let reloaded2 = get_automation(&store, &info.id)
             .expect("get")
             .expect("present");
-        assert_eq!(reloaded2.last_run_status.as_deref(), Some("failed: timeout"));
+        assert_eq!(
+            reloaded2.last_run_status.as_deref(),
+            Some("failed: timeout")
+        );
     }
 
     #[test]
     fn matching_on_generate_requires_template_id() {
         let store = open_store();
-        let err = matching_on_generate_automations(&store, "")
-            .expect_err("empty template_id rejected");
+        let err =
+            matching_on_generate_automations(&store, "").expect_err("empty template_id rejected");
         assert!(format!("{err}").contains("template_id is required"));
     }
 
@@ -338,14 +337,14 @@ mod tests {
         )
         .expect("create");
 
-        let matches = matching_on_generate_automations(&store, template_string_id)
-            .expect("matching");
+        let matches =
+            matching_on_generate_automations(&store, template_string_id).expect("matching");
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].id, info.id);
 
         // A different string id must NOT match (different UUID5).
-        let no_match = matching_on_generate_automations(&store, "other-template")
-            .expect("matching");
+        let no_match =
+            matching_on_generate_automations(&store, "other-template").expect("matching");
         assert!(no_match.is_empty());
     }
 

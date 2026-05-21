@@ -7,7 +7,7 @@ import { getBridge, getModelSidecar } from "./appState";
 import {
   dispatchOnGenerate,
   getSchedulerStatus,
-  tick as schedulerTick,
+  runNow as schedulerRunNow,
 } from "./scheduler";
 import { isSafeExportPath } from "./exportPathSafety";
 import type { SettingsData, ModelStatus } from "./preload";
@@ -1455,8 +1455,14 @@ export function registerIpcHandlers(): void {
     return getSchedulerStatus();
   });
 
+  // `runNow` always results in a fresh tick observable to the caller:
+  // if a tick is already in flight, it waits for it and then runs a
+  // new one (see scheduler.ts for the full semantics). This means a
+  // user clicking "Run Now" never gets the previous tick's stale
+  // status returned to them — the promise only resolves after their
+  // requested tick has completed.
   ipcMain.handle("automations:runNow", async () => {
-    await schedulerTick();
+    await schedulerRunNow();
     return getSchedulerStatus();
   });
 

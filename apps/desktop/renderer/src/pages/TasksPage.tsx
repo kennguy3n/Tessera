@@ -286,7 +286,16 @@ export default function TasksPage() {
           // single source of truth for column ordering).
           await update(source.id, { status });
           const targetIds = byStatus[status].map((t) => t.id);
-          targetIds.push(source.id);
+          // Defensive: if a future refactor adds background polling /
+          // WebSocket updates that refresh `tasks` mid-drag, the moved
+          // task could appear in `byStatus[status]` *before* this code
+          // path observes it (the server-side `update` above already
+          // changed its status). Without this guard the reorder list
+          // would contain `source.id` twice, which the bridge's
+          // `reorder_tasks` would resolve nondeterministically.
+          if (!targetIds.includes(source.id)) {
+            targetIds.push(source.id);
+          }
           await reorder(status, targetIds);
         }
         await refresh();
