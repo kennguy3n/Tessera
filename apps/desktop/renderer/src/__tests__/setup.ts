@@ -170,6 +170,22 @@ const mockApi = {
     }),
     remove: vi.fn().mockResolvedValue(undefined),
     checkChanged: vi.fn().mockResolvedValue(false),
+    checkFreshness: vi.fn().mockResolvedValue("fresh"),
+    replace: vi.fn().mockResolvedValue({
+      citation: {
+        citationId: "cit-1",
+        sourceId: "src-2",
+        sourceType: "local_file",
+        sourceTitle: "Replacement Source",
+        sourceUri: "file:///mock/replacement",
+        chunkHash: "feedbeef",
+        page: null,
+        confidence: 0.9,
+        usedFor: "test",
+        createdAt: new Date().toISOString(),
+      },
+      previousSourceUri: "file:///mock",
+    }),
   },
   templates: {
     list: vi.fn().mockResolvedValue([]),

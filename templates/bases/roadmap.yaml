@@ -1,0 +1,39 @@
+id: roadmap-base-v1
+name: Roadmap (Base)
+type: base
+description: Structured-data roadmap as a Base with initiatives, themes, quarters, status, owners, dates, effort, and dependencies
+sections:
+  - title: Initiatives
+    prompt: >
+      For every roadmap entry capture the initiative
+      name, a short one-line description, the strategic
+      theme it belongs to (Growth / Reliability /
+      Compliance / Customer Experience / Platform /
+      Other), and the target quarter (Q1 / Q2 / Q3 / Q4).
+  - title: Status and Ownership
+    prompt: >
+      Record the initiative's current status
+      (Planned / In Progress / Done / Deferred), the
+      single owner accountable for it, and any
+      supporting team or contributors.
+  - title: Timing and Effort
+    prompt: >
+      Capture the planned start date, planned end date,
+      and an effort estimate in T-shirt sizes
+      (S / M / L / XL) or person-weeks.
+  - title: Dependencies
+    prompt: >
+      List the upstream and downstream dependencies that
+      must land for this initiative to ship, including
+      other roadmap entries, external commitments, and
+      hardware / vendor dependencies.
+  - title: Notes
+    prompt: >
+      Free-form notes — open questions, customer
+      commitments, decisions taken, and links to the
+      source artifacts (PRDs, RFCs, proposals) backing
+      the initiative.
+export:
+  - markdown
+  - csv
+  - json

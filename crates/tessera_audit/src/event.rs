@@ -27,6 +27,9 @@ pub enum AuditEventType {
     ConnectorConnected,
     ConnectorSynced,
     ConnectorDisconnected,
+    CitationAdded,
+    CitationReplaced,
+    CitationRemoved,
 }
 
 impl AuditEvent {

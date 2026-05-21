@@ -15,11 +15,11 @@ pub struct Indexer {
 
 impl Indexer {
     pub fn new(ignore_patterns: &[String]) -> Self {
-        let ignore_rules = if ignore_patterns.is_empty() {
-            IgnoreRules::default_rules()
-        } else {
-            IgnoreRules::new(ignore_patterns)
-        };
+        // Always layer user patterns on TOP of the curated defaults
+        // (binary files, VCS metadata, OS junk, …) so users get
+        // sensible behaviour out of the box and can extend — or
+        // negate with a leading `!` — without losing the defaults.
+        let ignore_rules = IgnoreRules::with_defaults(ignore_patterns);
         Self {
             chunker_config: ChunkerConfig::default(),
             ignore_rules,

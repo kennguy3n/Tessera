@@ -60,6 +60,26 @@ export interface CitationApi {
   add: (req: AddCitationRequest) => Promise<CitationInfo>;
   remove: (artifactId: string, citationId: string) => Promise<void>;
   checkChanged: (citationId: string) => Promise<boolean>;
+  checkFreshness: (citationId: string) => Promise<CitationFreshness>;
+  replace: (req: ReplaceCitationRequest) => Promise<ReplaceCitationResult>;
+}
+
+export type CitationFreshness = "fresh" | "changed" | "source_missing";
+
+export interface ReplaceCitationRequest {
+  artifactId: string;
+  citationId: string;
+  sourceId: string;
+  sourceType: string;
+  sourceTitle: string;
+  sourceUri: string;
+  page: number | null;
+  confidence: number;
+}
+
+export interface ReplaceCitationResult {
+  citation: CitationInfo;
+  previousSourceUri: string;
 }
 
 export interface SettingsApi {

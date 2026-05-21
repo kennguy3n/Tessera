@@ -77,6 +77,24 @@ export interface AddCitationRequest {
   usedFor: string;
 }
 
+export type CitationFreshness = "fresh" | "changed" | "source_missing";
+
+export interface ReplaceCitationRequest {
+  artifactId: string;
+  citationId: string;
+  sourceId: string;
+  sourceType: string;
+  sourceTitle: string;
+  sourceUri: string;
+  page: number | null;
+  confidence: number;
+}
+
+export interface ReplaceCitationResult {
+  citation: CitationInfo;
+  previousSourceUri: string;
+}
+
 export interface SettingsData {
   theme: string;
   defaultExportFormat: string;
@@ -277,6 +295,8 @@ export interface TesseraApi {
     add: (req: AddCitationRequest) => Promise<CitationInfo>;
     remove: (artifactId: string, citationId: string) => Promise<void>;
     checkChanged: (citationId: string) => Promise<boolean>;
+    checkFreshness: (citationId: string) => Promise<CitationFreshness>;
+    replace: (req: ReplaceCitationRequest) => Promise<ReplaceCitationResult>;
   };
   settings: {
     get: () => Promise<SettingsData>;
@@ -499,6 +519,10 @@ const api: TesseraApi = {
       ipcRenderer.invoke("citations:remove", artifactId, citationId),
     checkChanged: (citationId: string) =>
       ipcRenderer.invoke("citations:checkChanged", citationId),
+    checkFreshness: (citationId: string) =>
+      ipcRenderer.invoke("citations:checkFreshness", citationId),
+    replace: (req: ReplaceCitationRequest) =>
+      ipcRenderer.invoke("citations:replace", req),
   },
   settings: {
     get: () => ipcRenderer.invoke("settings:get"),

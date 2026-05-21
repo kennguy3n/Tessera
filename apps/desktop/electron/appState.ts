@@ -41,6 +41,8 @@ export interface NativeBridge {
   bridgeAddCitation(req: AddCitationRequest): CitationInfo;
   bridgeRemoveCitation(artifactId: string, citationId: string): void;
   bridgeCheckSourceChanged(citationId: string): boolean;
+  bridgeCheckCitationFreshness(citationId: string): string;
+  bridgeReplaceCitation(req: ReplaceCitationRequest): ReplaceCitationResult;
   bridgeListVersions(artifactId: string): ArtifactVersionInfo[];
   bridgeRestoreVersion(artifactId: string, versionNumber: number): ArtifactInfo;
   bridgeGenerateFromTemplate(templateId: string, sourceIds: string[]): ArtifactInfo;
@@ -190,6 +192,22 @@ export interface AddCitationRequest {
   page: number | null;
   confidence: number;
   usedFor: string;
+}
+
+export interface ReplaceCitationRequest {
+  artifactId: string;
+  citationId: string;
+  sourceId: string;
+  sourceType: string;
+  sourceTitle: string;
+  sourceUri: string;
+  page: number | null;
+  confidence: number;
+}
+
+export interface ReplaceCitationResult {
+  citation: CitationInfo;
+  previousSourceUri: string;
 }
 
 let bridge: NativeBridge | null = null;

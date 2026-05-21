@@ -488,6 +488,36 @@ export function registerIpcHandlers(): void {
     },
   );
 
+  ipcMain.handle(
+    "citations:checkFreshness",
+    async (_event, citationId: string) => {
+      const bridge = getBridge();
+      if (bridge) {
+        return bridge.bridgeCheckCitationFreshness(citationId);
+      }
+      throw new Error("Native bridge not available");
+    },
+  );
+
+  ipcMain.handle("citations:replace", async (_event, req: unknown) => {
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeReplaceCitation(
+        req as {
+          artifactId: string;
+          citationId: string;
+          sourceId: string;
+          sourceType: string;
+          sourceTitle: string;
+          sourceUri: string;
+          page: number | null;
+          confidence: number;
+        },
+      );
+    }
+    throw new Error("Native bridge not available");
+  });
+
   // --- Settings (remain in electron-store/JSON config) ---
 
   ipcMain.handle("settings:get", async () => {

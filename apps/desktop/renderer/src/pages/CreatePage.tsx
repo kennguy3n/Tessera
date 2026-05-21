@@ -44,6 +44,11 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
     { id: "brief-v1", name: "Brief", description: "One-pager brief" },
     { id: "memo-v1", name: "Memo", description: "Internal memo" },
     { id: "sop-v1", name: "SOP", description: "Standard Operating Procedure" },
+    {
+      id: "form-v1",
+      name: "Form",
+      description: "Fillable form with fields, validation, and submission notes",
+    },
     // Slides
     { id: "pitch-v1", name: "Pitch Deck", description: "Investor / sales pitch" },
     { id: "training-v1", name: "Training Deck", description: "Slide-based training" },
@@ -111,8 +116,23 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
   ],
   Plan: [
     { id: "strategy-v1", name: "Strategy Deck", description: "Strategy deck" },
-    { id: "roadmap-v1", name: "Roadmap", description: "Project roadmap" },
+    { id: "roadmap-v1", name: "Roadmap", description: "Project roadmap (Sheet)" },
+    {
+      id: "roadmap-base-v1",
+      name: "Roadmap (Base)",
+      description: "Roadmap as a structured Base with initiatives, themes, owners",
+    },
     { id: "budget-v1", name: "Budget", description: "Budget tracker" },
+    {
+      id: "tracker-v1",
+      name: "Tracker",
+      description: "General-purpose item tracker (status, owner, due date)",
+    },
+    {
+      id: "inventory-v1",
+      name: "Inventory",
+      description: "Inventory sheet with SKU, quantity, reorder level",
+    },
     { id: "project-plan-v1", name: "Project Plan", description: "Phased project plan" },
     { id: "task-list-v1", name: "Task List", description: "Task list with owners" },
     {
@@ -161,6 +181,11 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
       id: "decision-log-v1",
       name: "Decision Log",
       description: "ADR-style decision tracking",
+    },
+    {
+      id: "asset-inventory-v1",
+      name: "Asset Inventory",
+      description: "Asset register Base with serial, owner, location, status",
     },
   ],
 };

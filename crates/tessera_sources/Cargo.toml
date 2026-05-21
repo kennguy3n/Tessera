@@ -20,6 +20,9 @@ walkdir = { workspace = true }
 notify = { workspace = true }
 pulldown-cmark = { workspace = true }
 calamine = { workspace = true }
+ignore = { workspace = true }
+kamadak-exif = { workspace = true }
+image = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

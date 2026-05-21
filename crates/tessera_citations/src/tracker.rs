@@ -1,8 +1,26 @@
-use tessera_core::error::Result;
-use tessera_core::{ArtifactId, CitationId, SharedConnection};
+use tessera_core::error::{Error, Result};
+use tessera_core::{ArtifactId, CitationId, SharedConnection, SourceId, SourceType};
 
 use crate::citation::Citation;
+use crate::freshness::{check_source_freshness, FreshnessStatus};
 use crate::store::CitationStore;
+
+/// Input to [`CitationTracker::replace`] — describes the new source
+/// pointer the citation should be re-bound to. Mirrors the fields
+/// that the user picks when they choose a replacement source in the
+/// React `CitationPanel`. The original `used_for` label is
+/// preserved automatically.
+#[derive(Debug, Clone)]
+pub struct CitationReplacement {
+    pub source_id: SourceId,
+    pub source_type: SourceType,
+    pub source_title: String,
+    pub source_uri: String,
+    pub chunk_hash: String,
+    pub source_file_hash: String,
+    pub page: Option<u32>,
+    pub confidence: f64,
+}
 
 pub struct CitationTracker {
     store: CitationStore,
@@ -53,6 +71,83 @@ impl CitationTracker {
             .store
             .get(citation_id)?
             .map(|c| c.source_changed(current_hash)))
+    }
+
+    /// Compute the typed freshness status for a citation.
+    /// `current_hash_lookup` should return `Ok(Some(hash))` when the
+    /// source is still indexed and `Ok(None)` when the source URI
+    /// has been removed. Returns
+    /// `Err(Error::Database("citation not found: ..."))` if the
+    /// citation does not exist.
+    pub fn check_freshness<F>(
+        &self,
+        citation_id: &CitationId,
+        current_hash_lookup: F,
+    ) -> Result<FreshnessStatus>
+    where
+        F: FnOnce(&str) -> Result<Option<String>>,
+    {
+        let citation = self
+            .store
+            .get(citation_id)?
+            .ok_or_else(|| Error::Database(format!("citation not found: {}", citation_id.0)))?;
+        check_source_freshness(&citation, current_hash_lookup)
+    }
+
+    /// Atomically swap the source the citation points at. The
+    /// citation keeps its original id, artifact, `used_for` label,
+    /// and `created_at` timestamp. Returns the citation as it
+    /// appears in the store after the update so callers (the bridge
+    /// layer) can return the new state to the UI.
+    pub fn replace(
+        &mut self,
+        artifact_id: &ArtifactId,
+        citation_id: &CitationId,
+        replacement: CitationReplacement,
+    ) -> Result<Citation> {
+        let existing = self
+            .store
+            .get(citation_id)?
+            .ok_or_else(|| Error::Database(format!("citation not found: {}", citation_id.0)))?;
+
+        let owning_artifact = self.store.artifact_for(citation_id)?.ok_or_else(|| {
+            Error::Database(format!(
+                "citation has no artifact association: {}",
+                citation_id.0
+            ))
+        })?;
+        if owning_artifact != *artifact_id {
+            return Err(Error::Database(format!(
+                "citation {} belongs to a different artifact",
+                citation_id.0
+            )));
+        }
+
+        self.store.replace_source(
+            citation_id,
+            &replacement.source_id,
+            replacement.source_type,
+            &replacement.source_title,
+            &replacement.source_uri,
+            &replacement.chunk_hash,
+            &replacement.source_file_hash,
+            replacement.page,
+            replacement.confidence,
+        )?;
+
+        // The store update preserves used_for/created_at by design,
+        // but we re-read the row so the caller sees a consistent
+        // round-tripped value.
+        let updated = self.store.get(citation_id)?.ok_or_else(|| {
+            Error::Database(format!(
+                "citation disappeared after replace: {}",
+                citation_id.0
+            ))
+        })?;
+        // Defensive: confirm the persisted row kept the original
+        // used_for label so we never silently drop provenance.
+        debug_assert_eq!(updated.used_for, existing.used_for);
+        Ok(updated)
     }
 
     pub fn count(&self) -> Result<usize> {
@@ -128,6 +223,88 @@ mod tests {
             tracker.check_source_changed(&cid, "different").unwrap(),
             Some(true)
         );
+    }
+
+    fn make_replacement(uri: &str) -> CitationReplacement {
+        CitationReplacement {
+            source_id: SourceId::new(),
+            source_type: SourceType::LocalFile,
+            source_title: "new.pdf".to_string(),
+            source_uri: uri.to_string(),
+            chunk_hash: "chunk_new".to_string(),
+            source_file_hash: "file_hash_new".to_string(),
+            page: Some(2),
+            confidence: 0.77,
+        }
+    }
+
+    #[test]
+    fn replace_swaps_source_and_preserves_used_for() {
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
+        let aid = ArtifactId::new();
+        let cid = tracker.add(aid, make_citation("Problem Statement")).unwrap();
+
+        let updated = tracker
+            .replace(&aid, &cid, make_replacement("file:///new/source.pdf"))
+            .unwrap();
+
+        assert_eq!(updated.citation_id, cid);
+        assert_eq!(updated.source_uri, "file:///new/source.pdf");
+        assert_eq!(updated.source_file_hash, "file_hash_new");
+        assert_eq!(updated.page, Some(2));
+        // used_for label is preserved across the swap.
+        assert_eq!(updated.used_for, "Problem Statement");
+    }
+
+    #[test]
+    fn replace_rejects_wrong_artifact() {
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
+        let aid = ArtifactId::new();
+        let other = ArtifactId::new();
+        let cid = tracker.add(aid, make_citation("Section")).unwrap();
+
+        let result = tracker.replace(&other, &cid, make_replacement("file:///x.pdf"));
+        assert!(
+            result.is_err(),
+            "replace should refuse to swap a citation for a different artifact"
+        );
+    }
+
+    #[test]
+    fn replace_errors_on_missing_citation() {
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
+        let aid = ArtifactId::new();
+        let missing = CitationId::new();
+        let result = tracker.replace(&aid, &missing, make_replacement("file:///x.pdf"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn check_freshness_reports_fresh_changed_and_missing() {
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
+        let aid = ArtifactId::new();
+        let cid = tracker.add(aid, make_citation("Section")).unwrap();
+
+        let fresh = tracker
+            .check_freshness(&cid, |_uri| Ok(Some("file_hash_456".to_string())))
+            .unwrap();
+        assert_eq!(fresh, FreshnessStatus::Fresh);
+
+        let changed = tracker
+            .check_freshness(&cid, |_uri| Ok(Some("file_hash_different".to_string())))
+            .unwrap();
+        assert_eq!(changed, FreshnessStatus::Changed);
+
+        let missing = tracker.check_freshness(&cid, |_uri| Ok(None)).unwrap();
+        assert_eq!(missing, FreshnessStatus::SourceMissing);
+    }
+
+    #[test]
+    fn check_freshness_errors_on_missing_citation() {
+        let tracker = CitationTracker::new_in_memory().unwrap();
+        let missing = CitationId::new();
+        let result = tracker.check_freshness(&missing, |_uri| Ok(Some("h".into())));
+        assert!(result.is_err());
     }
 
     #[test]

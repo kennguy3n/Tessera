@@ -1,0 +1,36 @@
+id: asset-inventory-v1
+name: Asset Inventory
+type: base
+description: Asset inventory register tracking name, category, serial, location, owner, value, and status
+sections:
+  - title: Asset Identification
+    prompt: >
+      For each asset capture the asset name, category
+      (Hardware / Software / Furniture / Vehicle / Other),
+      and the serial number or asset tag that uniquely
+      identifies it.
+  - title: Location and Assignment
+    prompt: >
+      Record the physical location, the person or team
+      the asset is assigned to, and the department that
+      owns the budget for it.
+  - title: Acquisition and Value
+    prompt: >
+      Track the purchase date, vendor, purchase order
+      reference, original purchase value, and the current
+      depreciated value if applicable.
+  - title: Status and Lifecycle
+    prompt: >
+      Track each asset's lifecycle status
+      (Active / Retired / In Repair / Lost / Disposed),
+      the date of the last status change, and the next
+      scheduled review.
+  - title: Maintenance Notes
+    prompt: >
+      Capture warranty information, service contract
+      references, recent maintenance events, and any
+      free-text notes relevant to the asset's condition.
+export:
+  - markdown
+  - csv
+  - json

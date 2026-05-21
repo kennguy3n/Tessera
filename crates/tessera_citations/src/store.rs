@@ -105,6 +105,69 @@ impl CitationStore {
         Ok(())
     }
 
+    /// Update the source-pointing fields of an existing citation,
+    /// preserving the original `citation_id`, `artifact_id`,
+    /// `used_for`, and `created_at` so the citation continues to
+    /// refer to the same artifact section. Returns
+    /// [`Error::Database`] with a `"not found"` message when the
+    /// citation does not exist.
+    #[allow(clippy::too_many_arguments)]
+    pub fn replace_source(
+        &self,
+        citation_id: &CitationId,
+        source_id: &SourceId,
+        source_type: SourceType,
+        source_title: &str,
+        source_uri: &str,
+        chunk_hash: &str,
+        source_file_hash: &str,
+        page: Option<u32>,
+        confidence: f64,
+    ) -> Result<()> {
+        let source_type_str = serde_json::to_value(source_type)
+            .map_err(|e| Error::Database(e.to_string()))?
+            .as_str()
+            .unwrap_or("LocalFile")
+            .to_string();
+
+        let updated = self
+            .conn
+            .lock()
+            .expect("connection mutex poisoned")
+            .execute(
+                "UPDATE citations
+                    SET source_id = ?1,
+                        source_type = ?2,
+                        source_title = ?3,
+                        source_uri = ?4,
+                        chunk_hash = ?5,
+                        source_file_hash = ?6,
+                        page = ?7,
+                        confidence = ?8
+                  WHERE citation_id = ?9",
+                params![
+                    source_id.0.to_string(),
+                    source_type_str,
+                    source_title,
+                    source_uri,
+                    chunk_hash,
+                    source_file_hash,
+                    page.map(|p| p as i64),
+                    confidence,
+                    citation_id.0.to_string(),
+                ],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        if updated == 0 {
+            return Err(Error::Database(format!(
+                "citation not found: {}",
+                citation_id.0
+            )));
+        }
+        Ok(())
+    }
+
     pub fn get(&self, citation_id: &CitationId) -> Result<Option<Citation>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
@@ -163,6 +226,26 @@ impl CitationStore {
             .query_row("SELECT COUNT(*) FROM citations", [], |row| row.get(0))
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(count as usize)
+    }
+
+    /// Return the artifact id this citation was attached to, or
+    /// `None` if the citation does not exist.
+    pub fn artifact_for(&self, citation_id: &CitationId) -> Result<Option<tessera_core::ArtifactId>> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
+            .prepare("SELECT artifact_id FROM citations WHERE citation_id = ?1")
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let row: std::result::Result<String, rusqlite::Error> =
+            stmt.query_row(params![citation_id.0.to_string()], |row| row.get(0));
+        match row {
+            Ok(s) => {
+                let uuid = uuid::Uuid::parse_str(&s)
+                    .map_err(|e| Error::Database(format!("Invalid artifact UUID: {e}")))?;
+                Ok(Some(tessera_core::ArtifactId(uuid)))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(Error::Database(e.to_string())),
+        }
     }
 
     fn row_to_citation(row: &rusqlite::Row) -> Result<Citation> {

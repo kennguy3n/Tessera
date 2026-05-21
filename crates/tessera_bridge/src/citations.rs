@@ -1,7 +1,8 @@
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tessera_citations::citation::Citation;
-use tessera_citations::tracker::CitationTracker;
+use tessera_citations::freshness::FreshnessStatus;
+use tessera_citations::tracker::{CitationReplacement, CitationTracker};
 use tessera_core::{ArtifactId, CitationId, SourceId, SourceType};
 use tessera_sources::manager::SourceManager;
 
@@ -127,21 +128,100 @@ pub fn check_source_changed(
     source_manager: &SourceManager,
     citation_id: &str,
 ) -> BridgeResult<bool> {
+    let status = check_source_freshness(tracker, source_manager, citation_id)?;
+    Ok(status.is_stale())
+}
+
+/// Typed freshness lookup — returns one of `Fresh`, `Changed`, or
+/// `SourceMissing` so the UI can distinguish the cases. Used by the
+/// `citations:checkFreshness` IPC handler. The legacy
+/// `check_source_changed` keeps returning `bool` for backwards
+/// compatibility with existing callers.
+pub fn check_source_freshness(
+    tracker: &CitationTracker,
+    source_manager: &SourceManager,
+    citation_id: &str,
+) -> BridgeResult<FreshnessStatus> {
     let citation_uuid =
         uuid::Uuid::parse_str(citation_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
-    let citation = tracker
+    tracker
+        .check_freshness(&CitationId(citation_uuid), |uri| {
+            source_manager.get_current_file_hash(uri)
+        })
+        .map_err(BridgeError::Core)
+}
+
+#[derive(Debug, Deserialize)]
+#[napi(object)]
+pub struct ReplaceCitationRequest {
+    pub artifact_id: String,
+    pub citation_id: String,
+    pub source_id: String,
+    pub source_type: String,
+    pub source_title: String,
+    pub source_uri: String,
+    pub chunk_hash: String,
+    pub page: Option<u32>,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[napi(object)]
+pub struct ReplaceCitationResult {
+    pub citation: CitationInfo,
+    pub previous_source_uri: String,
+}
+
+pub fn replace_citation(
+    tracker: &mut CitationTracker,
+    source_manager: &SourceManager,
+    req: ReplaceCitationRequest,
+) -> BridgeResult<ReplaceCitationResult> {
+    let artifact_uuid = uuid::Uuid::parse_str(&req.artifact_id)
+        .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    let citation_uuid = uuid::Uuid::parse_str(&req.citation_id)
+        .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    let source_uuid = uuid::Uuid::parse_str(&req.source_id)
+        .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    let source_type: SourceType = serde_json::from_str(&format!("\"{}\"", req.source_type))
+        .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+
+    let previous = tracker
         .get(&CitationId(citation_uuid))
         .map_err(BridgeError::Core)?
         .ok_or_else(|| BridgeError::InvalidArgs("Citation not found".to_string()))?;
+    let previous_source_uri = previous.source_uri.clone();
 
-    let current_hash = source_manager
-        .get_current_file_hash(&citation.source_uri)
+    // Resolve the new source's current file hash so freshness checks
+    // are valid immediately after the swap.
+    let source_file_hash = source_manager
+        .get_current_file_hash(&req.source_uri)
+        .map_err(BridgeError::Core)?
+        .unwrap_or_default();
+
+    let replacement = CitationReplacement {
+        source_id: SourceId(source_uuid),
+        source_type,
+        source_title: req.source_title,
+        source_uri: req.source_uri,
+        chunk_hash: req.chunk_hash,
+        source_file_hash,
+        page: req.page,
+        confidence: req.confidence,
+    };
+
+    let updated = tracker
+        .replace(
+            &ArtifactId(artifact_uuid),
+            &CitationId(citation_uuid),
+            replacement,
+        )
         .map_err(BridgeError::Core)?;
 
-    match current_hash {
-        Some(hash) => Ok(citation.source_changed(&hash)),
-        None => Ok(true), // file no longer indexed = treat as changed
-    }
+    Ok(ReplaceCitationResult {
+        citation: CitationInfo::from(&updated),
+        previous_source_uri,
+    })
 }
 
 #[cfg(test)]
@@ -244,5 +324,140 @@ mod tests {
         std::fs::write(&test_file, "modified content").unwrap();
         source_mgr.reindex_source(&source.id).unwrap();
         assert!(check_source_changed(&tracker, &source_mgr, &info.citation_id).unwrap());
+        assert_eq!(
+            check_source_freshness(&tracker, &source_mgr, &info.citation_id).unwrap(),
+            FreshnessStatus::Changed,
+        );
+    }
+
+    #[test]
+    fn bridge_check_freshness_reports_missing_when_source_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let source_mgr = SourceManager::new(db_path.to_str().unwrap(), &[]).unwrap();
+
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
+        let aid = ArtifactId::new();
+        let req = AddCitationRequest {
+            artifact_id: aid.to_string(),
+            source_id: SourceId::new().to_string(),
+            source_type: "local_file".to_string(),
+            source_title: "ghost.pdf".to_string(),
+            source_uri: "file:///does/not/exist.pdf".to_string(),
+            chunk_hash: "abc".to_string(),
+            page: None,
+            confidence: 0.5,
+            used_for: "Section".to_string(),
+        };
+        let info = add_citation(&mut tracker, &source_mgr, req).unwrap();
+
+        assert_eq!(
+            check_source_freshness(&tracker, &source_mgr, &info.citation_id).unwrap(),
+            FreshnessStatus::SourceMissing
+        );
+        assert!(check_source_changed(&tracker, &source_mgr, &info.citation_id).unwrap());
+    }
+
+    #[test]
+    fn bridge_replace_citation_updates_source_and_preserves_used_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let old_file = dir.path().join("old.txt");
+        let new_file = dir.path().join("new.txt");
+        std::fs::write(&old_file, "old content").unwrap();
+        std::fs::write(&new_file, "new content").unwrap();
+
+        let source_mgr = SourceManager::new(db_path.to_str().unwrap(), &[]).unwrap();
+        let old_source = source_mgr.add_local_file(old_file.to_str().unwrap()).unwrap();
+        let new_source = source_mgr.add_local_file(new_file.to_str().unwrap()).unwrap();
+
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
+        let aid = ArtifactId::new();
+
+        let initial_files = source_mgr.list_indexed_files(&old_source.id).unwrap();
+        let old_hash = initial_files[0].hash.clone();
+        let new_files = source_mgr.list_indexed_files(&new_source.id).unwrap();
+        let new_hash = new_files[0].hash.clone();
+        assert_ne!(old_hash, new_hash);
+
+        let req = AddCitationRequest {
+            artifact_id: aid.to_string(),
+            source_id: old_source.id.to_string(),
+            source_type: "local_file".to_string(),
+            source_title: "old.txt".to_string(),
+            source_uri: old_file.to_str().unwrap().to_string(),
+            chunk_hash: old_hash.clone(),
+            page: None,
+            confidence: 0.5,
+            used_for: "Problem Statement".to_string(),
+        };
+        let citation = add_citation(&mut tracker, &source_mgr, req).unwrap();
+
+        let replace_req = ReplaceCitationRequest {
+            artifact_id: aid.to_string(),
+            citation_id: citation.citation_id.clone(),
+            source_id: new_source.id.to_string(),
+            source_type: "local_file".to_string(),
+            source_title: "new.txt".to_string(),
+            source_uri: new_file.to_str().unwrap().to_string(),
+            chunk_hash: new_hash.clone(),
+            page: Some(3),
+            confidence: 0.9,
+        };
+        let result = replace_citation(&mut tracker, &source_mgr, replace_req).unwrap();
+
+        assert_eq!(result.previous_source_uri, citation.source_uri);
+        assert_eq!(result.citation.citation_id, citation.citation_id);
+        assert_eq!(result.citation.source_title, "new.txt");
+        assert_eq!(result.citation.chunk_hash, new_hash);
+        assert_eq!(result.citation.page, Some(3));
+        // used_for is preserved across the replace.
+        assert_eq!(result.citation.used_for, "Problem Statement");
+        // Citation count for the artifact is unchanged.
+        let list = list_citations(&tracker, &aid.to_string()).unwrap();
+        assert_eq!(list.len(), 1);
+        // After replace, freshness is Fresh because the new source's
+        // file hash was just resolved.
+        assert_eq!(
+            check_source_freshness(&tracker, &source_mgr, &citation.citation_id).unwrap(),
+            FreshnessStatus::Fresh,
+        );
+    }
+
+    #[test]
+    fn bridge_replace_citation_rejects_unknown_artifact() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let source_mgr = SourceManager::new(db_path.to_str().unwrap(), &[]).unwrap();
+        let mut tracker = CitationTracker::new_in_memory().unwrap();
+
+        let aid = ArtifactId::new();
+        let other_aid = ArtifactId::new();
+        let req = AddCitationRequest {
+            artifact_id: aid.to_string(),
+            source_id: SourceId::new().to_string(),
+            source_type: "local_file".to_string(),
+            source_title: "doc.pdf".to_string(),
+            source_uri: "file:///doc.pdf".to_string(),
+            chunk_hash: "h".to_string(),
+            page: None,
+            confidence: 0.5,
+            used_for: "Section".to_string(),
+        };
+        let info = add_citation(&mut tracker, &source_mgr, req).unwrap();
+
+        let replace = ReplaceCitationRequest {
+            artifact_id: other_aid.to_string(),
+            citation_id: info.citation_id.clone(),
+            source_id: SourceId::new().to_string(),
+            source_type: "local_file".to_string(),
+            source_title: "other.pdf".to_string(),
+            source_uri: "file:///other.pdf".to_string(),
+            chunk_hash: "h2".to_string(),
+            page: None,
+            confidence: 0.5,
+        };
+        let result = replace_citation(&mut tracker, &source_mgr, replace);
+        assert!(result.is_err(), "should reject mismatched artifact");
     }
 }

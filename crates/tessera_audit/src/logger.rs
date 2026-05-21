@@ -92,6 +92,43 @@ impl AuditLogger {
         )
     }
 
+    pub fn log_citation_added(
+        &self,
+        artifact_id: &str,
+        citation_id: &str,
+        source_uri: &str,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::CitationAdded,
+            format!(
+                "Citation added: artifact={artifact_id} citation={citation_id} source={source_uri}"
+            ),
+        )
+    }
+
+    pub fn log_citation_replaced(
+        &self,
+        artifact_id: &str,
+        citation_id: &str,
+        old_source_uri: &str,
+        new_source_uri: &str,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::CitationReplaced,
+            format!(
+                "Citation replaced: artifact={artifact_id} citation={citation_id} \
+                 old_source={old_source_uri} new_source={new_source_uri}"
+            ),
+        )
+    }
+
+    pub fn log_citation_removed(&self, artifact_id: &str, citation_id: &str) -> Result<()> {
+        self.log(
+            AuditEventType::CitationRemoved,
+            format!("Citation removed: artifact={artifact_id} citation={citation_id}"),
+        )
+    }
+
     pub fn query_by_type(&self, event_type: &AuditEventType) -> Result<Vec<AuditEvent>> {
         self.store.query_by_type(event_type)
     }
