@@ -174,11 +174,30 @@ export default function TasksPage() {
     [remove, refresh],
   );
 
+  // Same error-surface treatment as `onColumnDrop`: the dropdown
+  // change handlers are async + fire-and-forget at the call site (`void
+  // handleStatusChange(...)`), so a transient bridge failure would
+  // otherwise become an unhandled promise rejection. Route any failure
+  // through `dragError` so the user sees which task / which field
+  // change failed; refresh state regardless to recover from a partial
+  // write.
   const handleStatusChange = useCallback(
     async (task: TaskInfo, status: TaskStatus) => {
       if (task.status === status) return;
-      await update(task.id, { status });
-      await refresh();
+      try {
+        await update(task.id, { status });
+        await refresh();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setDragError(
+          `Failed to change status of "${task.title}" to ${status}: ${message}`,
+        );
+        try {
+          await refresh();
+        } catch {
+          /* surfaced above */
+        }
+      }
     },
     [update, refresh],
   );
@@ -186,8 +205,20 @@ export default function TasksPage() {
   const handlePriorityChange = useCallback(
     async (task: TaskInfo, priority: TaskPriority) => {
       if (task.priority === priority) return;
-      await update(task.id, { priority });
-      await refresh();
+      try {
+        await update(task.id, { priority });
+        await refresh();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setDragError(
+          `Failed to change priority of "${task.title}" to ${priority}: ${message}`,
+        );
+        try {
+          await refresh();
+        } catch {
+          /* surfaced above */
+        }
+      }
     },
     [update, refresh],
   );
