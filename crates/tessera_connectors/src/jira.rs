@@ -29,6 +29,7 @@ use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashSet;
+use std::fmt::Write as _;
 
 use crate::error::{ConnectorError, ConnectorResult};
 use crate::types::{AuthConfig, ConnectorStatus, RemoteFile, StoredTokens, SyncResult};
@@ -197,7 +198,8 @@ impl JiraConnector {
             access_token: token.access_token,
             refresh_token: token.refresh_token,
             expiry,
-            scopes: self.cloud_id.iter().cloned().collect(),
+            scopes: parse_scope_string(token.scope.as_deref()),
+            provider_metadata: self.cloud_id.clone(),
         })
     }
 
@@ -205,7 +207,13 @@ impl JiraConnector {
         self.access_token = Some(tokens.access_token.clone());
         self.refresh_token.clone_from(&tokens.refresh_token);
         self.token_expiry = tokens.expiry;
-        self.cloud_id = tokens.scopes.first().cloned();
+        // Prefer the dedicated `provider_metadata` slot. Fall back to
+        // `scopes.first()` only for tokens written by older Tessera
+        // builds that overloaded `scopes` to store the cloud id.
+        self.cloud_id = tokens
+            .provider_metadata
+            .clone()
+            .or_else(|| tokens.scopes.first().cloned());
         self.client_id = Some(client_id.to_string());
         self.client_secret = Some(client_secret.to_string());
         self.status = ConnectorStatus::Connected;
@@ -272,7 +280,8 @@ impl JiraConnector {
             access_token: token.access_token,
             refresh_token: self.refresh_token.clone(),
             expiry,
-            scopes: self.cloud_id.iter().cloned().collect(),
+            scopes: parse_scope_string(token.scope.as_deref()),
+            provider_metadata: self.cloud_id.clone(),
         })
     }
 
@@ -343,13 +352,16 @@ impl JiraConnector {
     }
 
     async fn search_issues(&mut self, jql: &str) -> ConnectorResult<Vec<RemoteFile>> {
-        let token = self.ensure_valid_token().await?;
         let url = self.cloud_url("/search")?;
         let mut out = Vec::new();
         let mut start_at: u32 = 0;
         let page_size: u32 = 100;
 
         loop {
+            // Refresh per page so long JQL walks (large projects /
+            // wide JQL) don't hit 401 once the access token crosses
+            // its expiry minus the 60s buffer.
+            let token = self.ensure_valid_token().await?;
             let resp = self
                 .client
                 .get(&url)
@@ -359,12 +371,15 @@ impl JiraConnector {
                     ("jql", jql),
                     ("startAt", &start_at.to_string()),
                     ("maxResults", &page_size.to_string()),
-                    ("fields", "summary,issuetype,priority,status,project,created,updated"),
+                    (
+                        "fields",
+                        "summary,issuetype,priority,status,project,created,updated",
+                    ),
                 ])
                 .send()
                 .await?;
 
-            handle_common_errors(&resp.status())?;
+            handle_common_errors(resp.status())?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
@@ -409,7 +424,7 @@ impl JiraConnector {
         if resp.status().as_u16() == 404 {
             return Err(ConnectorError::FileNotFound(issue_key.into()));
         }
-        handle_common_errors(&resp.status())?;
+        handle_common_errors(resp.status())?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
@@ -460,9 +475,7 @@ impl JiraConnector {
         let mut result = SyncResult::empty();
         let mut newest_seen: Option<DateTime<Utc>> = None;
         for remote in issues {
-            if remote.modified_time
-                > newest_seen.unwrap_or(DateTime::<Utc>::MIN_UTC)
-            {
+            if remote.modified_time > newest_seen.unwrap_or(DateTime::<Utc>::MIN_UTC) {
                 newest_seen = Some(remote.modified_time);
             }
             if known_file_ids.contains(&remote.id) {
@@ -478,13 +491,20 @@ impl JiraConnector {
         result.has_more = false;
 
         self.last_sync = Some(Utc::now());
-        self.file_count = self
-            .file_count
-            .saturating_add(result.added.len() as u64);
+        self.file_count = self.file_count.saturating_add(result.added.len() as u64);
         self.status = ConnectorStatus::Connected;
         Ok(result)
     }
 
+    /// Revoke local OAuth state.
+    ///
+    /// Atlassian exposes no token-revocation endpoint for 3LO, so
+    /// this method is logically synchronous — but every other
+    /// connector's `revoke()` (notably `GoogleDriveConnector::revoke`)
+    /// IS async because it hits the provider's revoke URL.  Keeping
+    /// this `async` lets the desktop disconnect flow `.await` every
+    /// provider through one uniform code path.
+    #[allow(clippy::unused_async)]
     pub async fn revoke(&mut self) -> ConnectorResult<()> {
         // Atlassian exposes no token-revocation endpoint for 3LO; the
         // user removes the app via id.atlassian.com. Clear local state.
@@ -510,7 +530,9 @@ impl Default for JiraConnector {
 
 // --- Helpers ---------------------------------------------------------------
 
-fn handle_common_errors(status: &reqwest::StatusCode) -> ConnectorResult<()> {
+// `StatusCode` is a 2-byte newtype around `u16` — cheaper to pass by
+// value (Clippy: `trivially_copy_pass_by_ref`).
+fn handle_common_errors(status: reqwest::StatusCode) -> ConnectorResult<()> {
     match status.as_u16() {
         401 => Err(ConnectorError::TokenExpired),
         403 => Err(ConnectorError::PermissionDenied(
@@ -523,8 +545,50 @@ fn handle_common_errors(status: &reqwest::StatusCode) -> ConnectorResult<()> {
     }
 }
 
+/// Parse a Jira timestamp tolerantly.
+///
+/// Jira REST v3 returns timestamps in ISO 8601 with a colon-less
+/// timezone offset, e.g. `"2024-06-01T10:00:00.000+0000"`.  Plain
+/// `DateTime::parse_from_rfc3339` is strict and rejects that shape,
+/// which previously caused every issue's `modified_time` to be
+/// silently replaced with `Utc::now()` and broke incremental sync
+/// (the change-token boundary collapsed to wall-clock time, missing
+/// issues that updated between the real boundary and "now").  We try
+/// the strict RFC 3339 form first and fall back to several common
+/// loose variants before giving up.
+fn parse_jira_timestamp(s: &str) -> Option<DateTime<Utc>> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&Utc));
+    }
+    // Try Jira's `+0000` (no colon) form with optional sub-second.
+    for fmt in [
+        "%Y-%m-%dT%H:%M:%S%.3f%z",
+        "%Y-%m-%dT%H:%M:%S%.f%z",
+        "%Y-%m-%dT%H:%M:%S%z",
+    ] {
+        if let Ok(dt) = DateTime::parse_from_str(s, fmt) {
+            return Some(dt.with_timezone(&Utc));
+        }
+    }
+    None
+}
+
 fn parse_rfc3339_or_now(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc))
+    parse_jira_timestamp(s).unwrap_or_else(Utc::now)
+}
+
+/// Atlassian returns granted scopes as a single space-separated string
+/// in `scope`.  Split into individual tokens so they round-trip as a
+/// proper `Vec<String>` of scopes.
+fn parse_scope_string(s: Option<&str>) -> Vec<String> {
+    match s {
+        Some(raw) => raw
+            .split_whitespace()
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+            .collect(),
+        None => Vec::new(),
+    }
 }
 
 fn issue_to_remote(issue: &JiraIssue, site_url: Option<&str>) -> RemoteFile {
@@ -575,24 +639,28 @@ fn issue_to_remote(issue: &JiraIssue, site_url: Option<&str>) -> RemoteFile {
 
 fn format_issue_markdown(issue: &JiraIssue) -> String {
     let mut out = String::new();
-    out.push_str(&format!("# {}\n\n", issue.key));
+    // Writing into a `String` via `write!` avoids the throw-away
+    // allocation that `format!(...) + push_str(&...)` would create
+    // for each line. The `Write` impl on `String` is infallible so
+    // the result is ignored.
+    let _ = writeln!(out, "# {}\n", issue.key);
     if let Some(fields) = &issue.fields {
         if let Some(summary) = &fields.summary {
-            out.push_str(&format!("**Summary**: {summary}\n\n"));
+            let _ = writeln!(out, "**Summary**: {summary}\n");
         }
         if let Some(status) = &fields.status {
             if let Some(name) = &status.name {
-                out.push_str(&format!("**Status**: {name}\n"));
+                let _ = writeln!(out, "**Status**: {name}");
             }
         }
         if let Some(p) = &fields.priority {
             if let Some(name) = &p.name {
-                out.push_str(&format!("**Priority**: {name}\n"));
+                let _ = writeln!(out, "**Priority**: {name}");
             }
         }
         if let Some(a) = &fields.assignee {
             if let Some(d) = &a.display_name {
-                out.push_str(&format!("**Assignee**: {d}\n"));
+                let _ = writeln!(out, "**Assignee**: {d}");
             }
         }
         out.push('\n');
@@ -611,9 +679,9 @@ fn format_issue_markdown(issue: &JiraIssue) -> String {
                         .and_then(|u| u.display_name.clone())
                         .unwrap_or_else(|| "Unknown".into());
                     let created = c.created.as_deref().unwrap_or("?");
-                    out.push_str(&format!("- *{author}* @ {created}\n"));
+                    let _ = writeln!(out, "- *{author}* @ {created}");
                     if let Some(body) = &c.body {
-                        out.push_str(&format!("  > {}\n", adf_to_text(body).trim()));
+                        let _ = writeln!(out, "  > {}", adf_to_text(body).trim());
                     }
                 }
             }
@@ -639,7 +707,7 @@ fn adf_to_text(value: &serde_json::Value) -> String {
             // Paragraph-like nodes get separated by newlines.
             if matches!(
                 v.get("type").and_then(|t| t.as_str()),
-                Some("paragraph") | Some("heading") | Some("listItem") | Some("hardBreak")
+                Some("paragraph" | "heading" | "listItem" | "hardBreak")
             ) {
                 buf.push('\n');
             }
@@ -656,7 +724,6 @@ struct AtlassianTokenResponse {
     access_token: String,
     refresh_token: Option<String>,
     expires_in: Option<i64>,
-    #[allow(dead_code)]
     scope: Option<String>,
     #[allow(dead_code)]
     token_type: Option<String>,
@@ -799,6 +866,77 @@ mod tests {
         assert_eq!(
             r.web_view_link.as_deref(),
             Some("https://acme.atlassian.net/browse/ABC-1")
+        );
+    }
+
+    /// Regression: `parse_jira_timestamp` must accept Jira's
+    /// colon-less `+0000` offset.  The original strict RFC 3339
+    /// parser rejected it and silently fell back to `Utc::now()`,
+    /// breaking incremental sync (every issue's `modified_time`
+    /// became wall-clock time, so the change-token boundary
+    /// collapsed and the next pass missed real edits).
+    #[test]
+    fn parse_jira_timestamp_accepts_atlassian_colonless_offset() {
+        // Real shape returned by Jira Cloud REST v3.
+        let parsed = parse_jira_timestamp("2024-06-01T10:00:00.000+0000")
+            .expect("Jira's `+0000` offset must parse");
+        assert_eq!(parsed.to_rfc3339(), "2024-06-01T10:00:00+00:00");
+
+        // Strict RFC 3339 should still work.
+        let strict = parse_jira_timestamp("2024-06-01T10:00:00Z").unwrap();
+        assert_eq!(strict.to_rfc3339(), "2024-06-01T10:00:00+00:00");
+
+        // Sub-second precision is fine in both shapes.
+        let with_subsec = parse_jira_timestamp("2024-06-01T10:00:00.123+0000").unwrap();
+        assert_eq!(with_subsec.timestamp_millis() % 1000, 123);
+
+        // Garbage returns None — caller decides whether to fall back.
+        assert!(parse_jira_timestamp("not-a-timestamp").is_none());
+    }
+
+    /// `issue_to_remote` must preserve Jira's `updated` timestamp
+    /// verbatim — the previous implementation silently replaced it
+    /// with `Utc::now()` because the colon-less offset failed strict
+    /// RFC 3339 parsing.  Sync boundaries depend on this being
+    /// correct.
+    #[test]
+    fn issue_to_remote_preserves_updated_with_colonless_offset() {
+        let issue = JiraIssue {
+            key: "ABC-9".into(),
+            fields: Some(JiraFields {
+                summary: Some("Bound check".into()),
+                description: None,
+                updated: Some("2024-06-01T10:00:00.000+0000".into()),
+                created: Some("2024-05-01T10:00:00.000+0000".into()),
+                status: None,
+                priority: None,
+                assignee: None,
+                project: Some(JiraProject {
+                    key: Some("ABC".into()),
+                }),
+                comment: None,
+            }),
+        };
+        let r = issue_to_remote(&issue, None);
+        assert_eq!(
+            r.modified_time.to_rfc3339(),
+            "2024-06-01T10:00:00+00:00",
+            "modified_time should come from Jira's payload, not Utc::now()"
+        );
+        assert_eq!(
+            r.created_time.expect("created_time").to_rfc3339(),
+            "2024-05-01T10:00:00+00:00"
+        );
+    }
+
+    #[test]
+    fn parse_scope_string_splits_and_filters() {
+        assert!(parse_scope_string(None).is_empty());
+        assert!(parse_scope_string(Some("")).is_empty());
+        let s = parse_scope_string(Some("read:jira-work  offline_access manage:jira-project"));
+        assert_eq!(
+            s,
+            vec!["read:jira-work", "offline_access", "manage:jira-project"]
         );
     }
 

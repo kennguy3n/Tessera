@@ -176,13 +176,20 @@ impl NotionConnector {
             // Notion bot tokens don't rotate — refresh_token stays None.
             refresh_token: None,
             expiry: None,
-            scopes: vec![token.workspace_id.unwrap_or_default()],
+            scopes: Vec::new(),
+            provider_metadata: token.workspace_id,
         })
     }
 
     pub fn restore_tokens(&mut self, tokens: &StoredTokens, client_id: &str, client_secret: &str) {
         self.access_token = Some(tokens.access_token.clone());
-        self.workspace_id = tokens.scopes.first().cloned();
+        // Prefer the dedicated `provider_metadata` slot. Fall back to
+        // `scopes.first()` only for tokens written by older Tessera
+        // builds that overloaded `scopes` to store the workspace id.
+        self.workspace_id = tokens
+            .provider_metadata
+            .clone()
+            .or_else(|| tokens.scopes.first().cloned());
         self.client_id = Some(client_id.to_string());
         self.client_secret = Some(client_secret.to_string());
         self.status = ConnectorStatus::Connected;
@@ -219,28 +226,103 @@ impl NotionConnector {
 
     /// List the pages and databases shared with this integration.
     ///
-    /// `folder_id` selects a specific database id; when `None`, this
-    /// hits the workspace-level `search` endpoint with no filter.
+    /// `folder_id` is interpreted as a Notion database id. When given,
+    /// we query that database's children via `/databases/{id}/query`.
+    /// When `None`, we walk the workspace-level `/search` endpoint with
+    /// no filter and surface every page and database the integration
+    /// has been shared with.
     pub async fn list_files(
         &mut self,
         folder_id: Option<&str>,
     ) -> ConnectorResult<Vec<RemoteFile>> {
+        match folder_id {
+            Some(db) if !db.is_empty() => self.list_database_children(db).await,
+            _ => self.list_search(None).await,
+        }
+    }
+
+    /// Walk the workspace-level `/search` endpoint. `query_text` is a
+    /// genuine free-text search (passed straight through to Notion's
+    /// `query` parameter); pass `None` to list everything shared with
+    /// the integration.
+    async fn list_search(&mut self, query_text: Option<&str>) -> ConnectorResult<Vec<RemoteFile>> {
         let mut out = Vec::new();
         let mut start_cursor: Option<String> = None;
 
         loop {
-            let body = build_search_body(folder_id, start_cursor.as_deref(), None);
+            let body = build_search_body(query_text, start_cursor.as_deref(), None);
             let resp = self
                 .request_post(&format!("{}/search", self.api_base), body)?
                 .send()
                 .await?;
-            handle_common_errors(&resp.status())?;
+            handle_common_errors(resp.status())?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
                 return Err(ConnectorError::ProviderError {
                     provider: "Notion".into(),
                     message: format!("HTTP {status}: {body}"),
+                });
+            }
+
+            let page: NotionSearchResponse = resp
+                .json()
+                .await
+                .map_err(|e| ConnectorError::NetworkError(e.to_string()))?;
+
+            for obj in page.results {
+                out.push(notion_object_to_remote(&obj));
+            }
+
+            if page.has_more.unwrap_or(false) {
+                start_cursor = page.next_cursor;
+                if start_cursor.is_none() {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        Ok(out)
+    }
+
+    /// Query a specific database's pages via `/v1/databases/{id}/query`.
+    /// This is the right endpoint for "list everything under this
+    /// database" — the workspace-level `/search` `query` parameter is a
+    /// free-text search, not a database-id filter.
+    async fn list_database_children(
+        &mut self,
+        database_id: &str,
+    ) -> ConnectorResult<Vec<RemoteFile>> {
+        let mut out = Vec::new();
+        let mut start_cursor: Option<String> = None;
+
+        let url = format!(
+            "{}/databases/{}/query",
+            self.api_base,
+            url_encode::encode(database_id)
+        );
+
+        loop {
+            let mut body = serde_json::Map::new();
+            if let Some(cursor) = &start_cursor {
+                body.insert(
+                    "start_cursor".to_string(),
+                    serde_json::Value::String(cursor.clone()),
+                );
+            }
+            let resp = self
+                .request_post(&url, serde_json::Value::Object(body))?
+                .send()
+                .await?;
+            handle_common_errors(resp.status())?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(ConnectorError::ProviderError {
+                    provider: "Notion".into(),
+                    message: format!("databases/query HTTP {status}: {body}"),
                 });
             }
 
@@ -277,7 +359,11 @@ impl NotionConnector {
         let mut out = String::new();
         let mut start_cursor: Option<String> = None;
         loop {
-            let url = format!("{}/blocks/{}/children", self.api_base, url_encode::encode(page_id));
+            let url = format!(
+                "{}/blocks/{}/children",
+                self.api_base,
+                url_encode::encode(page_id)
+            );
             let mut req = self.request_get(&url)?;
             if let Some(cursor) = &start_cursor {
                 req = req.query(&[("start_cursor", cursor.as_str())]);
@@ -286,7 +372,7 @@ impl NotionConnector {
             if resp.status().as_u16() == 404 {
                 return Err(ConnectorError::FileNotFound(page_id.into()));
             }
-            handle_common_errors(&resp.status())?;
+            handle_common_errors(resp.status())?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
@@ -334,9 +420,7 @@ impl NotionConnector {
 
         'outer: loop {
             let body = build_search_body(None, start_cursor.as_deref(), Some("descending"));
-            let resp = match self
-                .request_post(&format!("{}/search", self.api_base), body)
-            {
+            let resp = match self.request_post(&format!("{}/search", self.api_base), body) {
                 Ok(req) => req.send().await,
                 Err(e) => {
                     self.status = ConnectorStatus::Error;
@@ -397,13 +481,18 @@ impl NotionConnector {
         result.has_more = false;
 
         self.last_sync = Some(Utc::now());
-        self.file_count = self
-            .file_count
-            .saturating_add(result.added.len() as u64);
+        self.file_count = self.file_count.saturating_add(result.added.len() as u64);
         self.status = ConnectorStatus::Connected;
         Ok(result)
     }
 
+    /// Revoke local OAuth state.
+    ///
+    /// Notion has no public token-revocation endpoint, so this is
+    /// logically synchronous.  We keep the `async` signature so the
+    /// desktop disconnect flow can `.await` every provider through
+    /// one uniform path.
+    #[allow(clippy::unused_async)]
     pub async fn revoke(&mut self) -> ConnectorResult<()> {
         // Notion has no public token-revocation endpoint — the workspace
         // owner removes the integration via Notion's UI. We clear local
@@ -429,12 +518,15 @@ impl Default for NotionConnector {
 
 // --- Helpers ---------------------------------------------------------------
 
-fn handle_common_errors(status: &reqwest::StatusCode) -> ConnectorResult<()> {
+// `StatusCode` is a 2-byte newtype around `u16` — cheaper to pass by
+// value than by reference (Clippy: `trivially_copy_pass_by_ref`).
+fn handle_common_errors(status: reqwest::StatusCode) -> ConnectorResult<()> {
     match status.as_u16() {
         401 => Err(ConnectorError::TokenExpired),
-        403 => Err(ConnectorError::PermissionDenied(format!(
+        403 => Err(ConnectorError::PermissionDenied(
             "Notion returned 403 — check that the integration is shared with the target page"
-        ))),
+                .to_string(),
+        )),
         429 => Err(ConnectorError::RateLimited {
             retry_after_secs: 60,
         }),
@@ -442,16 +534,22 @@ fn handle_common_errors(status: &reqwest::StatusCode) -> ConnectorResult<()> {
     }
 }
 
+/// Build a body for Notion's workspace-level `/search` endpoint.
+///
+/// `query` is a genuine free-text search string — use `None` to list
+/// every accessible object.  Notion has no database-id filter on this
+/// endpoint; for "list pages under database X" call
+/// `/databases/{id}/query` instead (see `list_database_children`).
 fn build_search_body(
-    database_id: Option<&str>,
+    query: Option<&str>,
     start_cursor: Option<&str>,
     direction: Option<&str>,
 ) -> serde_json::Value {
     let mut body = serde_json::Map::new();
-    if let Some(db) = database_id {
+    if let Some(q) = query {
         body.insert(
             "query".to_string(),
-            serde_json::Value::String(db.to_string()),
+            serde_json::Value::String(q.to_string()),
         );
     }
     if let Some(cursor) = start_cursor {
@@ -522,7 +620,9 @@ fn notion_object_to_remote(o: &NotionObject) -> RemoteFile {
 
 fn extract_title(o: &NotionObject) -> Option<String> {
     if let Some(props) = &o.properties {
-        for (_, prop) in props {
+        // We only need the property values, not the property keys —
+        // iterate `.values()` directly (Clippy: `for_kv_map`).
+        for prop in props.values() {
             if prop.prop_type.as_deref() == Some("title") {
                 if let Some(arr) = &prop.title {
                     return Some(flatten_rich_text(arr));
@@ -537,10 +637,12 @@ fn extract_title(o: &NotionObject) -> Option<String> {
 }
 
 fn flatten_rich_text(arr: &[NotionRichText]) -> String {
+    // Collecting directly into a `String` avoids the intermediate
+    // `Vec<String>` that `.collect::<Vec<_>>().join("")` would build
+    // (Clippy: `unnecessary_join`).
     arr.iter()
         .filter_map(|t| t.plain_text.clone())
-        .collect::<Vec<_>>()
-        .join("")
+        .collect::<String>()
 }
 
 fn block_to_markdown(b: &NotionBlock) -> String {
@@ -556,11 +658,10 @@ fn block_to_markdown(b: &NotionBlock) -> String {
             arr.iter()
                 .filter_map(|item| {
                     item.get("plain_text")
-                        .and_then(|p| p.as_str())
-                        .map(|s| s.to_string())
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
                 })
-                .collect::<Vec<_>>()
-                .join("")
+                .collect::<String>()
         })
         .unwrap_or_default();
 
@@ -573,7 +674,7 @@ fn block_to_markdown(b: &NotionBlock) -> String {
         "to_do" => {
             let checked = body
                 .and_then(|v| v.get("checked"))
-                .and_then(|v| v.as_bool())
+                .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
             format!("- [{}] {text}", if checked { "x" } else { " " })
         }
@@ -831,6 +932,113 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert_eq!(files[0].name, "Alpha");
         assert!(files[1].is_folder);
+    }
+
+    /// Regression: when a `folder_id` is supplied, `list_files` must
+    /// hit the database-specific `/v1/databases/{id}/query` endpoint
+    /// instead of misusing the workspace `/v1/search` endpoint's
+    /// `query` parameter (which is a free-text search, not a
+    /// database-id filter — passing a UUID there returns nothing).
+    #[tokio::test]
+    async fn list_files_with_folder_id_queries_database_endpoint() {
+        let server = MockServer::start().await;
+        // The fix routes to /v1/databases/{id}/query, NOT /v1/search.
+        // We mount only the database endpoint; a request to /v1/search
+        // would 404 and fail the test.
+        Mock::given(method("POST"))
+            .and(path("/v1/databases/db-abc/query"))
+            .and(header("notion-version", NOTION_VERSION))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": [
+                    {
+                        "object": "page",
+                        "id": "row-1",
+                        "last_edited_time": "2024-02-01T00:00:00.000Z",
+                        "url": "https://notion.so/row-1",
+                        "properties": {
+                            "Name": {
+                                "type": "title",
+                                "title": [{ "plain_text": "Row One" }]
+                            }
+                        }
+                    }
+                ],
+                "has_more": false
+            })))
+            .mount(&server)
+            .await;
+
+        let mut c = NotionConnector::with_base_url(&server.uri());
+        c.set_access_token("secret_AT");
+
+        let files = c
+            .list_files(Some("db-abc"))
+            .await
+            .expect("database query ok");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].id, "row-1");
+        assert_eq!(files[0].name, "Row One");
+    }
+
+    /// Pagination cursor must round-trip through the database-query
+    /// endpoint just like through `/search`.
+    #[tokio::test]
+    async fn list_files_database_query_paginates_with_start_cursor() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/databases/db-paged/query"))
+            .and(body_string_contains("\"start_cursor\""))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": [
+                    {
+                        "object": "page",
+                        "id": "row-2",
+                        "last_edited_time": "2024-02-02T00:00:00.000Z",
+                        "properties": {
+                            "Name": { "type": "title", "title": [{ "plain_text": "Row Two" }] }
+                        }
+                    }
+                ],
+                "has_more": false
+            })))
+            .mount(&server)
+            .await;
+        // First page (no start_cursor) returns has_more=true so the
+        // second call must include start_cursor. We match it with
+        // `body_string_contains` above.
+        Mock::given(method("POST"))
+            .and(path("/v1/databases/db-paged/query"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": [
+                    {
+                        "object": "page",
+                        "id": "row-1",
+                        "last_edited_time": "2024-02-01T00:00:00.000Z",
+                        "properties": {
+                            "Name": { "type": "title", "title": [{ "plain_text": "Row One" }] }
+                        }
+                    }
+                ],
+                "has_more": true,
+                "next_cursor": "PAGE-2"
+            })))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        let mut c = NotionConnector::with_base_url(&server.uri());
+        c.set_access_token("secret_AT");
+
+        let files = c.list_files(Some("db-paged")).await.expect("paginated ok");
+        let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+        assert!(
+            names.contains(&"Row One"),
+            "missing first-page row: {names:?}"
+        );
+        assert!(
+            names.contains(&"Row Two"),
+            "missing second-page row: {names:?}"
+        );
     }
 
     #[tokio::test]

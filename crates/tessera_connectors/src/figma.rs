@@ -184,6 +184,7 @@ impl FigmaConnector {
             refresh_token: token.refresh_token,
             expiry,
             scopes: config.scopes.clone(),
+            provider_metadata: self.team_id.clone(),
         })
     }
 
@@ -191,6 +192,12 @@ impl FigmaConnector {
         self.access_token = Some(tokens.access_token.clone());
         self.refresh_token.clone_from(&tokens.refresh_token);
         self.token_expiry = tokens.expiry;
+        // Prefer `provider_metadata` (new field) and fall back to
+        // `scopes.first()` only for tokens written by older Tessera
+        // builds that hadn't separated these concerns yet.
+        if tokens.provider_metadata.is_some() {
+            self.team_id.clone_from(&tokens.provider_metadata);
+        }
         self.client_id = Some(client_id.to_string());
         self.client_secret = Some(client_secret.to_string());
         self.status = ConnectorStatus::Connected;
@@ -254,6 +261,7 @@ impl FigmaConnector {
             refresh_token: self.refresh_token.clone(),
             expiry,
             scopes: Vec::new(),
+            provider_metadata: self.team_id.clone(),
         })
     }
 
@@ -269,6 +277,41 @@ impl FigmaConnector {
             .ok_or(ConnectorError::TokenExpired)
     }
 
+    /// Fetch every project id under the configured team. Pulled out
+    /// of `list_files` so the top-level routing stays an `if let`
+    /// over a single short branch.
+    async fn fetch_team_project_ids(&mut self) -> ConnectorResult<Vec<String>> {
+        let team_id = self.team_id.clone().ok_or_else(|| {
+            ConnectorError::InvalidConfig(
+                "Missing team_id — call set_team_id() before list_files()".into(),
+            )
+        })?;
+        // Refresh the token immediately before each network call so
+        // a slow walk over many projects doesn't fail with 401 after
+        // the access token crosses its expiry buffer.
+        let token = self.ensure_valid_token().await?;
+        let url = format!(
+            "{}/teams/{}/projects",
+            self.api_base,
+            url_encode::encode(&team_id)
+        );
+        let resp = self.client.get(&url).bearer_auth(&token).send().await?;
+        handle_common_errors(resp.status())?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ConnectorError::ProviderError {
+                provider: "Figma".into(),
+                message: format!("Projects HTTP {status}: {body}"),
+            });
+        }
+        let page: FigmaProjectsResponse = resp
+            .json()
+            .await
+            .map_err(|e| ConnectorError::NetworkError(e.to_string()))?;
+        Ok(page.projects.into_iter().map(|p| p.id).collect())
+    }
+
     /// List files. `folder_id` is interpreted as a Figma project id.
     /// When `None`, we walk all projects in the configured team and
     /// flatten their files.
@@ -276,47 +319,25 @@ impl FigmaConnector {
         &mut self,
         folder_id: Option<&str>,
     ) -> ConnectorResult<Vec<RemoteFile>> {
-        let token = self.ensure_valid_token().await?;
-        let project_ids: Vec<String> = match folder_id {
-            Some(p) => vec![p.to_string()],
-            None => {
-                let team_id = self.team_id.as_deref().ok_or_else(|| {
-                    ConnectorError::InvalidConfig(
-                        "Missing team_id — call set_team_id() before list_files()".into(),
-                    )
-                })?;
-                let url = format!(
-                    "{}/teams/{}/projects",
-                    self.api_base,
-                    url_encode::encode(team_id)
-                );
-                let resp = self.client.get(&url).bearer_auth(&token).send().await?;
-                handle_common_errors(&resp.status())?;
-                if !resp.status().is_success() {
-                    let status = resp.status();
-                    let body = resp.text().await.unwrap_or_default();
-                    return Err(ConnectorError::ProviderError {
-                        provider: "Figma".into(),
-                        message: format!("Projects HTTP {status}: {body}"),
-                    });
-                }
-                let page: FigmaProjectsResponse = resp
-                    .json()
-                    .await
-                    .map_err(|e| ConnectorError::NetworkError(e.to_string()))?;
-                page.projects.into_iter().map(|p| p.id).collect()
-            }
+        let project_ids: Vec<String> = if let Some(p) = folder_id {
+            vec![p.to_string()]
+        } else {
+            self.fetch_team_project_ids().await?
         };
 
         let mut all = Vec::new();
         for pid in project_ids {
+            // Re-check the token between projects; walking a team with
+            // dozens of projects can take long enough to outlive the
+            // current access token.
+            let token = self.ensure_valid_token().await?;
             let url = format!(
                 "{}/projects/{}/files",
                 self.api_base,
                 url_encode::encode(&pid)
             );
             let resp = self.client.get(&url).bearer_auth(&token).send().await?;
-            handle_common_errors(&resp.status())?;
+            handle_common_errors(resp.status())?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
@@ -346,7 +367,7 @@ impl FigmaConnector {
         if resp.status().as_u16() == 404 {
             return Err(ConnectorError::FileNotFound(file_key.into()));
         }
-        handle_common_errors(&resp.status())?;
+        handle_common_errors(resp.status())?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
@@ -365,7 +386,10 @@ impl FigmaConnector {
         // and emit them as a compact JSON payload.
         let mut texts: Vec<String> = Vec::new();
         let mut components: Vec<String> = Vec::new();
-        walk_figma_node(&value.get("document").cloned().unwrap_or_default(), &mut texts);
+        walk_figma_node(
+            &value.get("document").cloned().unwrap_or_default(),
+            &mut texts,
+        );
         if let Some(comp_map) = value.get("components").and_then(|c| c.as_object()) {
             for (_, comp) in comp_map {
                 if let Some(name) = comp.get("name").and_then(|n| n.as_str()) {
@@ -380,11 +404,10 @@ impl FigmaConnector {
             "texts": texts,
             "components": components
         });
-        Ok(serde_json::to_vec(&extract)
-            .map_err(|e| ConnectorError::ProviderError {
-                provider: "Figma".into(),
-                message: format!("JSON encode: {e}"),
-            })?)
+        serde_json::to_vec(&extract).map_err(|e| ConnectorError::ProviderError {
+            provider: "Figma".into(),
+            message: format!("JSON encode: {e}"),
+        })
     }
 
     pub async fn sync_changes(
@@ -407,7 +430,12 @@ impl FigmaConnector {
 
         let mut result = SyncResult::empty();
         let mut newest_seen: Option<DateTime<Utc>> = None;
+        // Track every file we saw in the fresh listing so we can detect
+        // deletions by set-differencing against the caller's known
+        // ids. Figma exposes no native deletion feed.
+        let mut seen_ids: HashSet<String> = HashSet::with_capacity(files.len());
         for remote in files {
+            seen_ids.insert(remote.id.clone());
             if remote.modified_time > newest_seen.unwrap_or(DateTime::<Utc>::MIN_UTC) {
                 newest_seen = Some(remote.modified_time);
             }
@@ -422,6 +450,14 @@ impl FigmaConnector {
                 result.added.push(remote);
             }
         }
+        // Anything the caller previously knew about that's no longer
+        // listed has been deleted, moved out of the team, or had its
+        // permissions revoked — drop it locally.
+        for known in known_file_ids {
+            if !seen_ids.contains(known) {
+                result.removed.push(known.clone());
+            }
+        }
 
         result.new_change_token = newest_seen
             .map(|dt| dt.to_rfc3339())
@@ -429,13 +465,23 @@ impl FigmaConnector {
         result.has_more = false;
 
         self.last_sync = Some(Utc::now());
+        let added = result.added.len() as u64;
+        let removed = result.removed.len() as u64;
         self.file_count = self
             .file_count
-            .saturating_add(result.added.len() as u64);
+            .saturating_add(added)
+            .saturating_sub(removed);
         self.status = ConnectorStatus::Connected;
         Ok(result)
     }
 
+    /// Revoke local OAuth state.
+    ///
+    /// Figma exposes no token-revocation endpoint, so this is
+    /// logically synchronous.  We keep the `async` signature so the
+    /// desktop disconnect flow can `.await` every provider through
+    /// one uniform path (Google Drive's `revoke()` does hit network).
+    #[allow(clippy::unused_async)]
     pub async fn revoke(&mut self) -> ConnectorResult<()> {
         // Figma exposes no token-revocation endpoint; the user removes
         // the app via Figma → Settings → Connected apps. Clear local
@@ -459,7 +505,9 @@ impl Default for FigmaConnector {
     }
 }
 
-fn handle_common_errors(status: &reqwest::StatusCode) -> ConnectorResult<()> {
+// `StatusCode` is a 2-byte newtype around `u16` — cheaper to pass by
+// value (Clippy: `trivially_copy_pass_by_ref`).
+fn handle_common_errors(status: reqwest::StatusCode) -> ConnectorResult<()> {
     match status.as_u16() {
         401 => Err(ConnectorError::TokenExpired),
         403 => Err(ConnectorError::PermissionDenied(
@@ -477,7 +525,10 @@ fn parse_rfc3339_or_now(s: &str) -> DateTime<Utc> {
 }
 
 fn figma_file_to_remote(f: &FigmaFile, project_id: &str) -> RemoteFile {
-    let modified = f.last_modified.as_deref().map_or_else(Utc::now, parse_rfc3339_or_now);
+    let modified = f
+        .last_modified
+        .as_deref()
+        .map_or_else(Utc::now, parse_rfc3339_or_now);
     RemoteFile {
         id: f.key.clone(),
         name: f.name.clone().unwrap_or_else(|| f.key.clone()),

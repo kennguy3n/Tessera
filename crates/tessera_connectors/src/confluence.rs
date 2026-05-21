@@ -193,7 +193,8 @@ impl ConfluenceConnector {
             access_token: token.access_token,
             refresh_token: token.refresh_token,
             expiry,
-            scopes: self.cloud_id.iter().cloned().collect(),
+            scopes: parse_scope_string(token.scope.as_deref()),
+            provider_metadata: self.cloud_id.clone(),
         })
     }
 
@@ -201,7 +202,13 @@ impl ConfluenceConnector {
         self.access_token = Some(tokens.access_token.clone());
         self.refresh_token.clone_from(&tokens.refresh_token);
         self.token_expiry = tokens.expiry;
-        self.cloud_id = tokens.scopes.first().cloned();
+        // Prefer the dedicated `provider_metadata` slot. Fall back to
+        // `scopes.first()` only for tokens written by older Tessera
+        // builds that overloaded `scopes` to store the cloud id.
+        self.cloud_id = tokens
+            .provider_metadata
+            .clone()
+            .or_else(|| tokens.scopes.first().cloned());
         self.client_id = Some(client_id.to_string());
         self.client_secret = Some(client_secret.to_string());
         self.status = ConnectorStatus::Connected;
@@ -265,7 +272,8 @@ impl ConfluenceConnector {
             access_token: token.access_token,
             refresh_token: self.refresh_token.clone(),
             expiry,
-            scopes: self.cloud_id.iter().cloned().collect(),
+            scopes: parse_scope_string(token.scope.as_deref()),
+            provider_metadata: self.cloud_id.clone(),
         })
     }
 
@@ -332,11 +340,14 @@ impl ConfluenceConnector {
             _ => "/pages?limit=100&sort=-modified-date".to_string(),
         };
 
-        let token = self.ensure_valid_token().await?;
         let mut next_url = Some(self.wiki_url(&suffix)?);
         let mut all = Vec::new();
 
         while let Some(url) = next_url.take() {
+            // Refresh the token on every page so a long walk over a
+            // large workspace doesn't fail with 401 after the access
+            // token crosses its expiry minus the 60s buffer.
+            let token = self.ensure_valid_token().await?;
             let resp = self
                 .client
                 .get(&url)
@@ -344,7 +355,7 @@ impl ConfluenceConnector {
                 .header("Accept", "application/json")
                 .send()
                 .await?;
-            handle_common_errors(&resp.status())?;
+            handle_common_errors(resp.status())?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
@@ -375,14 +386,29 @@ impl ConfluenceConnector {
 
     fn build_cursor_url(&self, link: &str) -> ConnectorResult<String> {
         if link.starts_with("http") {
-            Ok(link.to_string())
-        } else if link.starts_with("/wiki") {
-            // Strip the `/wiki` prefix so we can re-prefix with the
-            // cloud-id-aware URL builder.
-            let suffix = link.trim_start_matches("/wiki");
-            self.wiki_url(suffix)
+            return Ok(link.to_string());
+        }
+        // Atlassian's `_links.next` for v2 endpoints is a host-rooted
+        // path such as `/wiki/api/v2/pages?cursor=ABC`.  The Cloud
+        // gateway mounts that exact path under
+        // `{api_base}/ex/confluence/{cloud_id}`, so we concatenate
+        // directly — we must NOT call `wiki_url()` again, because
+        // `wiki_url()` adds its own `/wiki/api/v2` prefix and would
+        // produce a doubled `.../wiki/api/v2/api/v2/...` URL.
+        let cloud_id = self
+            .cloud_id
+            .as_deref()
+            .ok_or_else(|| ConnectorError::InvalidConfig("Missing cloud_id".into()))?;
+        if link.starts_with('/') {
+            Ok(format!(
+                "{}/ex/confluence/{}{}",
+                self.api_base, cloud_id, link
+            ))
         } else {
-            self.wiki_url(link)
+            Ok(format!(
+                "{}/ex/confluence/{}/{}",
+                self.api_base, cloud_id, link
+            ))
         }
     }
 
@@ -404,7 +430,7 @@ impl ConfluenceConnector {
         if resp.status().as_u16() == 404 {
             return Err(ConnectorError::FileNotFound(page_id.into()));
         }
-        handle_common_errors(&resp.status())?;
+        handle_common_errors(resp.status())?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
@@ -446,7 +472,12 @@ impl ConfluenceConnector {
 
         let mut result = SyncResult::empty();
         let mut newest_seen: Option<DateTime<Utc>> = None;
+        // Track every page we saw in the fresh listing so we can detect
+        // server-side deletions by set-differencing against the caller's
+        // known ids. Confluence v2 has no deletion feed.
+        let mut seen_ids: HashSet<String> = HashSet::with_capacity(pages.len());
         for remote in pages {
+            seen_ids.insert(remote.id.clone());
             if remote.modified_time > newest_seen.unwrap_or(DateTime::<Utc>::MIN_UTC) {
                 newest_seen = Some(remote.modified_time);
             }
@@ -461,6 +492,14 @@ impl ConfluenceConnector {
                 result.added.push(remote);
             }
         }
+        // Anything the caller previously knew about that's no longer in
+        // the current listing has been deleted or made inaccessible —
+        // surface it so the indexer can drop it locally.
+        for known in known_file_ids {
+            if !seen_ids.contains(known) {
+                result.removed.push(known.clone());
+            }
+        }
 
         result.new_change_token = newest_seen
             .map(|dt| dt.to_rfc3339())
@@ -468,13 +507,24 @@ impl ConfluenceConnector {
         result.has_more = false;
 
         self.last_sync = Some(Utc::now());
+        let added = result.added.len() as u64;
+        let removed = result.removed.len() as u64;
         self.file_count = self
             .file_count
-            .saturating_add(result.added.len() as u64);
+            .saturating_add(added)
+            .saturating_sub(removed);
         self.status = ConnectorStatus::Connected;
         Ok(result)
     }
 
+    /// Revoke local OAuth state.
+    ///
+    /// Atlassian's 3LO has no token-revocation endpoint, so this is
+    /// logically synchronous.  We keep the `async` signature for
+    /// parity with the other connectors (e.g. Google Drive does hit
+    /// a network endpoint here), so the desktop disconnect flow can
+    /// `.await` every provider through one uniform path.
+    #[allow(clippy::unused_async)]
     pub async fn revoke(&mut self) -> ConnectorResult<()> {
         self.access_token = None;
         self.refresh_token = None;
@@ -496,7 +546,9 @@ impl Default for ConfluenceConnector {
     }
 }
 
-fn handle_common_errors(status: &reqwest::StatusCode) -> ConnectorResult<()> {
+// `StatusCode` is a 2-byte newtype around `u16` — cheaper to pass by
+// value (Clippy: `trivially_copy_pass_by_ref`).
+fn handle_common_errors(status: reqwest::StatusCode) -> ConnectorResult<()> {
     match status.as_u16() {
         401 => Err(ConnectorError::TokenExpired),
         403 => Err(ConnectorError::PermissionDenied(
@@ -511,6 +563,20 @@ fn handle_common_errors(status: &reqwest::StatusCode) -> ConnectorResult<()> {
 
 fn parse_rfc3339_or_now(s: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(s).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc))
+}
+
+/// Atlassian returns granted scopes as a single space-separated string
+/// in `scope`.  Split into individual tokens so they're stored as a
+/// proper `Vec<String>` of scopes.
+fn parse_scope_string(s: Option<&str>) -> Vec<String> {
+    match s {
+        Some(raw) => raw
+            .split_whitespace()
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+            .collect(),
+        None => Vec::new(),
+    }
 }
 
 fn page_to_remote(p: &ConfluencePage, site_url: Option<&str>) -> RemoteFile {
@@ -558,7 +624,6 @@ struct AtlassianTokenResponse {
     access_token: String,
     refresh_token: Option<String>,
     expires_in: Option<i64>,
-    #[allow(dead_code)]
     scope: Option<String>,
     #[allow(dead_code)]
     token_type: Option<String>,
@@ -634,7 +699,7 @@ struct ConfluencePageLinks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
@@ -679,10 +744,7 @@ mod tests {
             Some("https://acme.atlassian.net/wiki/spaces/S1/pages/1234/Hi")
         );
         // Modified should be from the version, not created_at.
-        assert_eq!(
-            r.modified_time.to_rfc3339(),
-            "2024-06-01T10:00:00+00:00"
-        );
+        assert_eq!(r.modified_time.to_rfc3339(), "2024-06-01T10:00:00+00:00");
     }
 
     #[tokio::test]
@@ -731,5 +793,92 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert_eq!(files[0].id, "1");
         assert_eq!(files[1].id, "2");
+    }
+
+    /// Regression: Atlassian Cloud's `_links.next` is a host-rooted
+    /// path (`/wiki/api/v2/pages?cursor=ABC`). The original cursor
+    /// builder trimmed only the `/wiki` prefix and then re-prefixed
+    /// with `/wiki/api/v2`, producing a doubled
+    /// `.../wiki/api/v2/api/v2/...` URL that 404'd the second page.
+    #[tokio::test]
+    async fn list_files_paginates_via_relative_links_next_without_doubling_path() {
+        let server = MockServer::start().await;
+        // First page returns a *relative* next-link, exactly as
+        // Atlassian Cloud does in production.
+        Mock::given(method("GET"))
+            .and(path("/api/ex/confluence/cloud-1/wiki/api/v2/pages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": [
+                    {
+                        "id": "1",
+                        "title": "First",
+                        "spaceId": "S1",
+                        "createdAt": "2024-06-01T10:00:00Z",
+                        "version": {"createdAt": "2024-06-02T10:00:00Z", "number": 2}
+                    }
+                ],
+                "_links": { "next": "/wiki/api/v2/pages?limit=100&cursor=NEXT" }
+            })))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        // Second page is hit at the SAME path with the cursor query
+        // string — proving the cursor builder didn't double the path
+        // into `.../wiki/api/v2/api/v2/...`.
+        Mock::given(method("GET"))
+            .and(path("/api/ex/confluence/cloud-1/wiki/api/v2/pages"))
+            .and(query_param("cursor", "NEXT"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": [
+                    {
+                        "id": "2",
+                        "title": "Second",
+                        "spaceId": "S1",
+                        "createdAt": "2024-06-03T10:00:00Z"
+                    }
+                ],
+                "_links": {}
+            })))
+            .mount(&server)
+            .await;
+
+        let mut c = ConfluenceConnector::with_base_url(&server.uri());
+        c.set_access_token("AT", 3600, "cloud-1");
+        let files = c.list_files(None).await.expect("ok");
+        assert_eq!(files.len(), 2, "should fetch both pages without 404");
+        assert_eq!(files[0].id, "1");
+        assert_eq!(files[1].id, "2");
+    }
+
+    #[test]
+    fn build_cursor_url_does_not_double_api_v2_segment() {
+        let mut c = ConfluenceConnector::with_base_url("https://gw.example");
+        c.set_access_token("AT", 3600, "cloud-42");
+
+        // Absolute link must pass through verbatim.
+        let abs = "https://override.example/wiki/api/v2/pages?cursor=X";
+        assert_eq!(c.build_cursor_url(abs).unwrap(), abs);
+
+        // Host-rooted link from Atlassian Cloud — must NOT produce a
+        // doubled `/api/v2/api/v2/` segment.
+        let rel = "/wiki/api/v2/pages?cursor=NEXT";
+        let built = c.build_cursor_url(rel).unwrap();
+        assert_eq!(
+            built,
+            "https://gw.example/api/ex/confluence/cloud-42/wiki/api/v2/pages?cursor=NEXT"
+        );
+        assert!(
+            !built.contains("/api/v2/api/v2/"),
+            "build_cursor_url doubled the /api/v2 segment in: {built}"
+        );
+
+        // Bare suffix (no leading `/`) should still resolve under the
+        // cloud-id-mounted host.
+        let bare = "pages?cursor=Y";
+        let built_bare = c.build_cursor_url(bare).unwrap();
+        assert_eq!(
+            built_bare,
+            "https://gw.example/api/ex/confluence/cloud-42/pages?cursor=Y"
+        );
     }
 }

@@ -166,6 +166,7 @@ impl GoogleDriveConnector {
             refresh_token: token_resp.refresh_token,
             expiry,
             scopes: config.scopes.clone(),
+            provider_metadata: None,
         })
     }
 
@@ -238,6 +239,7 @@ impl GoogleDriveConnector {
             refresh_token: self.refresh_token.clone(),
             expiry,
             scopes: Vec::new(),
+            provider_metadata: None,
         })
     }
 
@@ -755,6 +757,7 @@ mod tests {
             refresh_token: Some("1//ref".into()),
             expiry: Some(Utc::now() + chrono::Duration::hours(1)),
             scopes: vec!["drive.readonly".into()],
+            provider_metadata: None,
         };
         c.restore_tokens(&tokens, "cid", "csec");
         assert_eq!(c.status(), ConnectorStatus::Connected);

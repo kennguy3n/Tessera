@@ -49,7 +49,8 @@ const DEFAULT_TENANT: &str = "common";
 /// Selected `$select` fields on driveItem responses — kept tight to
 /// minimise payload size on the Graph endpoint, which is one of the
 /// more bandwidth-sensitive APIs we talk to.
-const DRIVE_ITEM_FIELDS: &str = "id,name,size,file,folder,deleted,parentReference,webUrl,createdDateTime,lastModifiedDateTime";
+const DRIVE_ITEM_FIELDS: &str =
+    "id,name,size,file,folder,deleted,parentReference,webUrl,createdDateTime,lastModifiedDateTime";
 
 pub struct OneDriveConnector {
     client: Client,
@@ -163,9 +164,7 @@ impl OneDriveConnector {
         if !scopes.iter().any(|s| s == "offline_access") {
             scopes.push("offline_access".to_string());
         }
-        if scopes.is_empty()
-            || scopes.iter().all(|s| s == "offline_access")
-        {
+        if scopes.is_empty() || scopes.iter().all(|s| s == "offline_access") {
             scopes.insert(0, "Files.Read.All".to_string());
         }
 
@@ -230,6 +229,7 @@ impl OneDriveConnector {
             refresh_token: token.refresh_token,
             expiry,
             scopes: config.scopes.clone(),
+            provider_metadata: None,
         })
     }
 
@@ -304,6 +304,7 @@ impl OneDriveConnector {
             refresh_token: self.refresh_token.clone(),
             expiry,
             scopes: Vec::new(),
+            provider_metadata: None,
         })
     }
 
@@ -325,8 +326,6 @@ impl OneDriveConnector {
         &mut self,
         folder_id: Option<&str>,
     ) -> ConnectorResult<Vec<RemoteFile>> {
-        let token = self.ensure_valid_token().await?;
-
         let url = match folder_id {
             Some(id) if !id.is_empty() && id != "root" => format!(
                 "{}/items/{}/children",
@@ -340,6 +339,10 @@ impl OneDriveConnector {
         let mut next: Option<String> = Some(url);
 
         while let Some(page_url) = next.take() {
+            // Re-check the token before every page so a long-running
+            // walk doesn't fail with 401 after the access token
+            // crosses its expiry minus the 60s buffer.
+            let token = self.ensure_valid_token().await?;
             let mut req = self.client.get(&page_url).bearer_auth(&token);
             if !page_url.contains("$select=") {
                 req = req.query(&[("$select", DRIVE_ITEM_FIELDS)]);
@@ -424,7 +427,6 @@ impl OneDriveConnector {
         change_token: Option<&str>,
         known_file_ids: &HashSet<String>,
     ) -> ConnectorResult<SyncResult> {
-        let token = self.ensure_valid_token().await?;
         self.status = ConnectorStatus::Syncing;
 
         let mut next_url = match change_token {
@@ -435,14 +437,25 @@ impl OneDriveConnector {
         let mut delta_link: Option<String> = None;
 
         loop {
-            let resp = match self
-                .client
-                .get(&next_url)
-                .bearer_auth(&token)
-                .query(&[("$select", DRIVE_ITEM_FIELDS)])
-                .send()
-                .await
-            {
+            // Re-check the token on every page; long delta windows or
+            // very large drives can easily span the access-token
+            // lifetime.
+            let token = match self.ensure_valid_token().await {
+                Ok(t) => t,
+                Err(e) => {
+                    self.status = ConnectorStatus::Error;
+                    return Err(e);
+                }
+            };
+            // Graph's `@odata.nextLink` / `@odata.deltaLink` already
+            // include `$select`; appending it again produces a
+            // duplicate query parameter.  Match the guard already in
+            // `list_files`.
+            let mut req = self.client.get(&next_url).bearer_auth(&token);
+            if !next_url.contains("$select=") {
+                req = req.query(&[("$select", DRIVE_ITEM_FIELDS)]);
+            }
+            let resp = match req.send().await {
                 Ok(r) => r,
                 Err(e) => {
                     self.status = ConnectorStatus::Error;
@@ -505,6 +518,13 @@ impl OneDriveConnector {
         Ok(result)
     }
 
+    /// Revoke local OAuth state.
+    ///
+    /// Microsoft Graph has no public revoke endpoint analogous to
+    /// Google's `oauth2/revoke`, so this is logically synchronous.
+    /// We keep the `async` signature so the desktop disconnect flow
+    /// can `.await` every provider through one uniform path.
+    #[allow(clippy::unused_async)]
     pub async fn revoke(&mut self) -> ConnectorResult<()> {
         // Microsoft Graph has no public revoke endpoint analogous to
         // Google's `oauth2/revoke` — the user must revoke consent in the
@@ -645,10 +665,7 @@ fn drive_item_to_remote(item: &DriveItem) -> RemoteFile {
         size_bytes: item.size.unwrap_or(0),
         modified_time,
         created_time,
-        parent_id: item
-            .parent_reference
-            .as_ref()
-            .and_then(|p| p.id.clone()),
+        parent_id: item.parent_reference.as_ref().and_then(|p| p.id.clone()),
         web_view_link: item.web_url.clone(),
         is_folder,
         md5_checksum: md5_or_sha,
@@ -872,10 +889,7 @@ mod tests {
     #[tokio::test]
     async fn sync_changes_tracks_added_modified_removed_via_delta() {
         let server = MockServer::start().await;
-        let delta_link = format!(
-            "{}/graph/me/drive/root/delta?token=ABC",
-            server.uri()
-        );
+        let delta_link = format!("{}/graph/me/drive/root/delta?token=ABC", server.uri());
 
         Mock::given(method("GET"))
             .and(path("/graph/me/drive/root/delta"))
