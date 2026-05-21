@@ -127,9 +127,31 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", () => {
-  // Stop the scheduler before the process exits so an in-flight tick
-  // doesn't outlive the bridge's mutexes (the panic that produces is
-  // ugly and would scare users on slow disks).
-  stopScheduler();
+// Guard against the deferred-quit dance re-entering: when we call
+// `app.quit()` from inside the `before-quit` handler, Electron re-emits
+// `before-quit` and we'd loop infinitely without this flag.
+let schedulerShutdownStarted = false;
+
+app.on("before-quit", (event) => {
+  if (schedulerShutdownStarted) return;
+  schedulerShutdownStarted = true;
+  // Stop the interval immediately so no NEW ticks start, then wait
+  // for any in-flight tick (and its queued follow-up) to finish before
+  // tearing down the process. Without this, a slow re-index running
+  // when the user quits would have its bridge calls race process
+  // teardown, producing an ugly panic on slow disks. We use the
+  // `event.preventDefault()` + deferred `app.quit()` pattern Electron
+  // documents for async cleanup in quit handlers.
+  event.preventDefault();
+  void (async () => {
+    try {
+      await stopScheduler();
+    } catch (e) {
+      // We're already on the quit path — log and continue rather than
+      // hang the process indefinitely on a misbehaving tick.
+      console.error("[tessera] scheduler shutdown failed:", e);
+    } finally {
+      app.quit();
+    }
+  })();
 });

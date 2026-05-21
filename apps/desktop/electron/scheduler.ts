@@ -77,10 +77,35 @@ export function startScheduler(tickMs: number = DEFAULT_TICK_MS): void {
   void tick();
 }
 
-export function stopScheduler(): void {
+/**
+ * Stop the scheduler interval and wait for any in-flight tick (and the
+ * queued follow-up, if any) to drain. Returns a promise that resolves
+ * once it's safe to tear down the bridge / quit the process.
+ *
+ * Callers (`main.ts` on `before-quit`) must `await` this. The interval
+ * is cleared synchronously so no new tick can start the moment this
+ * function is invoked; only the async wait phase covers the active
+ * promise.
+ */
+export async function stopScheduler(): Promise<void> {
   if (tickHandle) {
     clearInterval(tickHandle);
     tickHandle = null;
+  }
+  // Drain in two phases: queued follow-up first (it implicitly awaits
+  // the active tick before running), then the active tick itself. If
+  // either ever throws, we still want to honor the quit path, so
+  // swallow rejections — the tick's own error handling already wrote
+  // any failure into `lastTickError`.
+  try {
+    if (queuedRunNow) await queuedRunNow;
+  } catch {
+    /* surfaced via lastTickError */
+  }
+  try {
+    if (activeTick) await activeTick;
+  } catch {
+    /* surfaced via lastTickError */
   }
 }
 

@@ -116,6 +116,12 @@ export default function AutomationsPage() {
   } = useSchedulerStatus();
   const [runNowError, setRunNowError] = useState<string | null>(null);
   const [runningNow, setRunningNow] = useState(false);
+  // Visible error surface for enable/disable toggles and delete
+  // operations. Without this, a failed bridge call from the inline
+  // checkbox handler or the confirm-delete modal would produce an
+  // unhandled promise rejection and the user would see no feedback at
+  // all — the row would silently flip back on the next status poll.
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const handleRunNow = useCallback(async () => {
     setRunNowError(null);
@@ -221,18 +227,42 @@ export default function AutomationsPage() {
 
   const handleToggle = useCallback(
     async (a: AutomationInfo) => {
-      await setEnabled(a.id, !a.enabled);
-      await refresh();
+      setActionError(null);
+      try {
+        await setEnabled(a.id, !a.enabled);
+        await refresh();
+      } catch (e) {
+        // Surface the failure rather than leaving the checkbox silently
+        // reverting on the next 5-second status poll. Matches the
+        // pattern used by `handleRunNow` and the TasksPage drag
+        // handlers.
+        setActionError(
+          `Failed to ${a.enabled ? "disable" : "enable"} “${a.name}”: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
     },
     [setEnabled, refresh],
   );
 
   const handleDelete = useCallback(
     async (a: AutomationInfo) => {
+      setActionError(null);
       try {
         await remove(a.id);
         await refresh();
-      } finally {
+        setConfirmDelete(null);
+      } catch (e) {
+        // Keep the confirm modal open so the user can see the row they
+        // tried to delete is still there; surface the error in the
+        // page-level banner so it's visible even after they dismiss
+        // the modal.
+        setActionError(
+          `Failed to delete “${a.name}”: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
         setConfirmDelete(null);
       }
     },
@@ -298,14 +328,34 @@ export default function AutomationsPage() {
 
       {(schedulerStatus?.lastTickError ||
         schedulerError ||
-        runNowError) && (
+        runNowError ||
+        actionError) && (
         <div role="alert" className="scheduler-error">
           <AlertCircle size={16} strokeWidth={2} aria-hidden="true" />
           <span>
-            {runNowError ||
+            {actionError ||
+              runNowError ||
               schedulerError ||
               schedulerStatus?.lastTickError}
           </span>
+          {actionError && (
+            <button
+              type="button"
+              onClick={() => setActionError(null)}
+              aria-label="Dismiss error"
+              style={{
+                marginLeft: "auto",
+                background: "transparent",
+                border: "none",
+                color: "inherit",
+                cursor: "pointer",
+                fontSize: "1.1rem",
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+          )}
         </div>
       )}
 

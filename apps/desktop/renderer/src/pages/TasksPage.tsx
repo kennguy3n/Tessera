@@ -167,7 +167,15 @@ export default function TasksPage() {
       try {
         await remove(task.id);
         await refresh();
-      } finally {
+        setConfirmDelete(null);
+      } catch (err) {
+        // Surface deletion failures in the same alert banner used for
+        // drag/drop errors so the modal dismissing isn't the only
+        // signal the user gets. Without this catch the rejection
+        // becomes unhandled because the caller does `void
+        // handleDelete(...)` to fire-and-forget.
+        const message = err instanceof Error ? err.message : String(err);
+        setDragError(`Failed to delete "${task.title}": ${message}`);
         setConfirmDelete(null);
       }
     },

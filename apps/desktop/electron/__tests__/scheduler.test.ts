@@ -23,6 +23,7 @@ import type { NativeBridge, AutomationInfo } from "../appState";
 import {
   tick,
   runNow,
+  stopScheduler,
   dispatchOnGenerate,
   getSchedulerStatus,
   __testing__,
@@ -268,6 +269,87 @@ describe("scheduler.runNow", () => {
 
     // Active tick + single coalesced follow-up = 2 invocations total.
     expect(dueCallCount).toBe(2);
+  });
+});
+
+describe("scheduler.stopScheduler", () => {
+  it("awaits an in-flight tick before resolving", async () => {
+    const bridge = newBridge();
+    let released = false;
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = () => {
+        released = true;
+        resolve();
+      };
+    });
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "long-running",
+        '{"kind":"reindex_source","source_id":"src-block"}',
+      ),
+    ]);
+    bridge.bridgeReindexSource.mockImplementation(async () => {
+      await blocked;
+    });
+
+    const tickPromise = tick(bridge as unknown as NativeBridge);
+    const stopPromise = stopScheduler();
+    let stopResolved = false;
+    void stopPromise.then(() => {
+      stopResolved = true;
+    });
+    // Yield a few microtasks; stopScheduler must NOT resolve while the
+    // tick is still blocking.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(stopResolved).toBe(false);
+    expect(released).toBe(false);
+
+    release();
+    await Promise.all([tickPromise, stopPromise]);
+    expect(stopResolved).toBe(true);
+    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith(
+      "long-running",
+      "ok",
+    );
+  });
+
+  it("awaits a queued runNow follow-up as well", async () => {
+    const bridge = newBridge();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let dueCallCount = 0;
+    bridge.bridgeDueScheduledAutomations.mockImplementation(() => {
+      dueCallCount += 1;
+      return [
+        fakeAutomation(
+          `drain-${dueCallCount}`,
+          '{"kind":"reindex_source","source_id":"src-drain"}',
+        ),
+      ];
+    });
+    bridge.bridgeReindexSource.mockImplementationOnce(async () => {
+      await blocked;
+    });
+
+    const firstTick = tick(bridge as unknown as NativeBridge);
+    // Queue a follow-up while the first tick is blocked.
+    const queuedFollowUp = runNow(bridge as unknown as NativeBridge);
+    // stopScheduler must wait for BOTH the active tick and the queued
+    // follow-up — otherwise the process would tear down while the
+    // follow-up was still executing against the bridge.
+    const stopPromise = stopScheduler();
+
+    release();
+    await Promise.all([firstTick, queuedFollowUp, stopPromise]);
+
+    // Both the active tick and the queued follow-up executed before
+    // stopScheduler resolved.
+    expect(dueCallCount).toBe(2);
+    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledTimes(2);
   });
 });
 
