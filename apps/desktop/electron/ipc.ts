@@ -16,9 +16,13 @@ import {
 } from "./scheduler";
 import { isSafeExportPath } from "./exportPathSafety";
 import type { SettingsData, ModelStatus } from "./preload";
-import { startOAuthFlow, exchangeCodeForTokens, refreshAccessToken, revokeToken } from "./oauthServer";
+import { exchangeCodeForTokens, refreshAccessToken } from "./oauthServer";
 import * as tokenVault from "./tokenVault";
 import * as secretsVault from "./secretsVault";
+import { registerConnectorHandlers } from "./ipc/connectors/handlers";
+import { createDefaultContext } from "./ipc/context";
+import { defaultRateLimiter } from "./ipc/rateLimiter";
+import { getLogger } from "./logger";
 import {
   deleteCurrentModel,
   detectPlatformInfo,
@@ -1119,78 +1123,16 @@ export function registerIpcHandlers(): void {
   });
 
   // --- Connectors ---
-
-  ipcMain.handle(
-    "connectors:authenticate",
-    async (_event, provider: string, clientId: string, clientSecret: string) => {
-      if (provider !== "google_drive") {
-        throw new Error(`Unsupported provider: ${provider}`);
-      }
-      const oauthResult = await startOAuthFlow(clientId, clientSecret);
-      const tokens = await exchangeCodeForTokens(
-        oauthResult.code,
-        clientId,
-        clientSecret,
-      );
-      tokenVault.storeTokens(provider, {
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token,
-        expiresAt: Date.now() + tokens.expires_in * 1000,
-        scopes: ["https://www.googleapis.com/auth/drive.readonly"],
-        clientId,
-        clientSecret,
-      });
-      return { provider, connected: true, status: "connected" };
-    },
-  );
-
-  ipcMain.handle("connectors:disconnect", async (_event, provider: string) => {
-    let stored: ReturnType<typeof tokenVault.getTokens> = null;
-    try {
-      stored = tokenVault.getTokens(provider);
-    } catch {
-      // Vault may be corrupted — proceed with cleanup anyway
-    }
-    if (stored) {
-      await revokeToken(stored.refreshToken ?? stored.accessToken).catch(() => {});
-    }
-    try { tokenVault.deleteTokens(provider); } catch { /* best effort */ }
-
-    // Clean up synced files and their source index entries
-    if (provider !== "google_drive") return { provider, connected: false, status: "disconnected" };
-    const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
-    const manifestPath = path.join(syncDir, "manifest.json");
-    try {
-      const manifestData = await fsp.readFile(manifestPath, "utf-8");
-      const manifest = JSON.parse(manifestData) as string[];
-      const bridge = getBridge();
-      if (bridge) {
-        const sources = bridge.bridgeListSources() as Array<{ id: string; path: string }>;
-        const syncedSet = new Set(manifest);
-        for (const src of sources) {
-          if (syncedSet.has(src.path)) {
-            try { bridge.bridgeRemoveSource(src.id); } catch { /* best effort */ }
-          }
-        }
-      }
-      await Promise.all(manifest.map((filePath) => fsp.unlink(filePath).catch(() => {})));
-      await fsp.unlink(manifestPath).catch(() => {});
-      await fsp.rm(syncDir, { recursive: true, force: true }).catch(() => {});
-    } catch {
-      // No manifest — nothing to clean up
-    }
-
-    return { provider, connected: false, status: "disconnected" };
-  });
-
-  ipcMain.handle("connectors:status", async (_event, provider: string) => {
-    const hasTokens = tokenVault.hasTokens(provider);
-    return {
-      provider,
-      connected: hasTokens,
-      status: hasTokens ? "connected" : "disconnected",
-    };
-  });
+  //
+  // Phase 10 Task 17 / Tasks 1–6: the legacy gdrive-only handlers
+  // for `connectors:authenticate`, `connectors:disconnect`, and
+  // `connectors:status` have been replaced by a unified registrar
+  // that supports all six providers (Google Drive, OneDrive, Notion,
+  // Jira, Confluence, Figma). Provider-specific picker helpers like
+  // `connectors:gdrive:listFiles` are still defined inline below
+  // because they expose Drive-specific concepts (Drive folder ids,
+  // export MIME types) that don't generalise to the other providers.
+  registerConnectorHandlers(createDefaultContext(getLogger(), defaultRateLimiter));
 
   ipcMain.handle(
     "connectors:gdrive:listFiles",
@@ -1261,7 +1203,7 @@ export function registerIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle("connectors:gdrive:sync", async (_event, selectedFileIds?: string[]) => {
+  ipcMain.handle("connectors:gdrive:sync", async (_event, selectedFileIds?: string[]): Promise<{ added: number; modified: number; removed: number; status: string }> => {
     let added = 0;
     let modified = 0;
     let removed = 0;

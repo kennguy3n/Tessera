@@ -1,0 +1,323 @@
+/**
+ * OneDrive / Microsoft Graph connector sync logic (Task 1).
+ *
+ * Authentication: standard OAuth 2.0 authorization code grant against
+ * the Microsoft identity platform v2.0 endpoint.
+ *
+ * Sync model: pull the user's items via the Microsoft Graph
+ * `/me/drive/root/delta` endpoint. Delta tokens are persisted across
+ * runs so each subsequent sync only pulls the changed items.
+ *
+ * What gets indexed:
+ *   - Office documents (.docx, .xlsx, .pptx) — downloaded as their
+ *     native binary; the local indexer in `tessera_sources` handles
+ *     the actual text extraction via the docx / xlsx pipelines.
+ *   - Plain text, Markdown, CSV, JSON — downloaded as-is.
+ *   - PDFs — downloaded; the local indexer handles text extraction.
+ *   - OneNote / EPUB / RTF — downloaded as-is.
+ *   - Folders — skipped (only their items are indexed).
+ *   - Files larger than `MAX_BYTES_PER_FILE` — skipped to avoid
+ *     ballooning local storage on stray large items.
+ *
+ * Local layout:
+ *     <userData>/onedrive-sync/<remoteId>.<ext>
+ */
+
+import * as fsp from "fs/promises";
+import * as path from "path";
+
+import {
+  manifestPathFor,
+  purgeSyncDir,
+  readManifest,
+  sanitiseRemoteId,
+  syncDirFor,
+  writeManifest,
+  type SyncManifestEntry,
+} from "./syncDir";
+
+export interface OneDriveSyncResult {
+  added: number;
+  modified: number;
+  removed: number;
+  status: string;
+}
+
+interface DriveItem {
+  id: string;
+  name: string;
+  size?: number;
+  file?: { mimeType?: string };
+  folder?: unknown;
+  deleted?: { state?: string };
+  lastModifiedDateTime?: string;
+  "@microsoft.graph.downloadUrl"?: string;
+}
+
+const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+const DEFAULT_PAGE_SIZE = 200;
+const MAX_BYTES_PER_FILE = 100 * 1024 * 1024;
+// Allowlist of mime prefixes / extensions we know the local indexer
+// can extract text from. Everything else is downloaded verbatim but
+// indexed as raw bytes (the indexer will still produce metadata-only
+// chunks).
+const TEXTLIKE_MIME_PREFIXES = [
+  "text/",
+  "application/json",
+  "application/xml",
+  "application/x-yaml",
+  "application/yaml",
+];
+
+interface DeltaState {
+  deltaLink: string | null;
+}
+
+function deltaStatePath(userDataDir: string): string {
+  return path.join(syncDirFor(userDataDir, "onedrive"), "delta.json");
+}
+
+async function loadDeltaState(userDataDir: string): Promise<DeltaState> {
+  try {
+    const raw = await fsp.readFile(deltaStatePath(userDataDir), "utf8");
+    return JSON.parse(raw) as DeltaState;
+  } catch {
+    return { deltaLink: null };
+  }
+}
+
+async function saveDeltaState(
+  userDataDir: string,
+  state: DeltaState,
+): Promise<void> {
+  await fsp.mkdir(syncDirFor(userDataDir, "onedrive"), { recursive: true });
+  await fsp.writeFile(deltaStatePath(userDataDir), JSON.stringify(state), "utf8");
+}
+
+function extensionFor(item: DriveItem): string {
+  const dot = item.name.lastIndexOf(".");
+  if (dot > 0 && dot < item.name.length - 1) {
+    return item.name.slice(dot);
+  }
+  // Fall back to a generic .bin so the local indexer can still walk
+  // the file. The chunker treats binary-looking content as a no-op,
+  // so this is safe.
+  return ".bin";
+}
+
+function isIndexable(item: DriveItem): boolean {
+  if (item.folder) return false;
+  if (item.deleted) return false;
+  if ((item.size ?? 0) > MAX_BYTES_PER_FILE) return false;
+  const mime = item.file?.mimeType ?? "";
+  if (TEXTLIKE_MIME_PREFIXES.some((p) => mime.startsWith(p))) return true;
+  // Office files: we let the local indexer handle them via the docx /
+  // xlsx pipelines, so always pull them.
+  if (/\.(docx|xlsx|pptx|csv|md|rst|txt|html?|pdf|json|ya?ml)$/i.test(item.name)) {
+    return true;
+  }
+  return false;
+}
+
+async function graphFetch(
+  url: string,
+  accessToken: string,
+): Promise<Response> {
+  return fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+}
+
+async function downloadItem(
+  item: DriveItem,
+  accessToken: string,
+  localPath: string,
+): Promise<boolean> {
+  const downloadUrl =
+    item["@microsoft.graph.downloadUrl"] ??
+    `${GRAPH_BASE}/me/drive/items/${item.id}/content`;
+  // The pre-signed `@microsoft.graph.downloadUrl` does NOT need the
+  // Authorization header, but always sending it is safe (Microsoft
+  // documents both cases). When we fall back to the items/content
+  // endpoint the header is required.
+  const resp = await fetch(downloadUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!resp.ok) return false;
+  const buf = Buffer.from(await resp.arrayBuffer());
+  await fsp.writeFile(localPath, buf);
+  return true;
+}
+
+async function pullDeltaPage(
+  url: string,
+  accessToken: string,
+): Promise<{
+  items: DriveItem[];
+  nextLink: string | null;
+  deltaLink: string | null;
+}> {
+  const resp = await graphFetch(url, accessToken);
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(
+      `OneDrive delta request failed: HTTP ${resp.status} — ${text.slice(0, 500)}`,
+    );
+  }
+  const data = (await resp.json()) as {
+    value: DriveItem[];
+    "@odata.nextLink"?: string;
+    "@odata.deltaLink"?: string;
+  };
+  return {
+    items: data.value ?? [],
+    nextLink: data["@odata.nextLink"] ?? null,
+    deltaLink: data["@odata.deltaLink"] ?? null,
+  };
+}
+
+export interface OneDriveBridgeHooks {
+  /** Add a local file to the source index, returning the source id. */
+  addLocalFile(localPath: string): { id: string; path: string };
+  /** Force a re-index of an existing source. */
+  reindexSource(sourceId: string): void;
+  /** Remove a source from the index by id. */
+  removeSource(sourceId: string): void;
+  /** List currently-indexed sources. */
+  listSources(): Array<{ id: string; path: string }>;
+}
+
+export async function syncOneDrive(
+  ctx: {
+    accessToken: string;
+    userDataDir: string;
+    bridge: OneDriveBridgeHooks;
+  },
+): Promise<OneDriveSyncResult> {
+  const dir = syncDirFor(ctx.userDataDir, "onedrive");
+  await fsp.mkdir(dir, { recursive: true });
+
+  const manifest = await readManifest(ctx.userDataDir, "onedrive");
+  const entriesById = new Map<string, SyncManifestEntry>();
+  for (const e of manifest.entries) {
+    entriesById.set(e.remoteId, e);
+  }
+
+  const state = await loadDeltaState(ctx.userDataDir);
+  let url =
+    state.deltaLink ??
+    `${GRAPH_BASE}/me/drive/root/delta?$top=${DEFAULT_PAGE_SIZE}`;
+
+  let added = 0;
+  let modified = 0;
+  let removed = 0;
+  let deltaLink: string | null = null;
+
+  for (let safety = 0; safety < 500; safety += 1) {
+    const page = await pullDeltaPage(url, ctx.accessToken);
+    for (const item of page.items) {
+      if (item.deleted) {
+        const prior = entriesById.get(item.id);
+        if (prior) {
+          const existingSource = ctx.bridge
+            .listSources()
+            .find((s) => s.path === prior.localPath);
+          if (existingSource) {
+            try {
+              ctx.bridge.removeSource(existingSource.id);
+            } catch {
+              // best-effort
+            }
+          }
+          try {
+            await fsp.unlink(prior.localPath);
+          } catch {
+            // already gone
+          }
+          entriesById.delete(item.id);
+          removed += 1;
+        }
+        continue;
+      }
+      if (!isIndexable(item)) continue;
+
+      const ext = extensionFor(item);
+      const localPath = path.join(dir, `${sanitiseRemoteId(item.id)}${ext}`);
+      const ok = await downloadItem(item, ctx.accessToken, localPath);
+      if (!ok) continue;
+
+      const existingSource = ctx.bridge
+        .listSources()
+        .find((s) => s.path === localPath);
+      if (existingSource) {
+        try {
+          ctx.bridge.reindexSource(existingSource.id);
+        } catch {
+          // best-effort: leave the file on disk so a future sync can retry
+        }
+        modified += 1;
+      } else {
+        try {
+          ctx.bridge.addLocalFile(localPath);
+        } catch {
+          continue;
+        }
+        added += 1;
+      }
+      entriesById.set(item.id, {
+        localPath,
+        remoteId: item.id,
+        remoteModifiedAt: item.lastModifiedDateTime ?? null,
+      });
+    }
+
+    if (page.deltaLink) {
+      deltaLink = page.deltaLink;
+      break;
+    }
+    if (page.nextLink) {
+      url = page.nextLink;
+    } else {
+      // No nextLink + no deltaLink should not happen per the Graph API
+      // contract, but if it does, we exit cleanly.
+      break;
+    }
+  }
+
+  await saveDeltaState(ctx.userDataDir, { deltaLink });
+  await writeManifest(ctx.userDataDir, {
+    version: 1,
+    provider: "onedrive",
+    entries: Array.from(entriesById.values()),
+  });
+
+  return { added, modified, removed, status: "synced" };
+}
+
+export async function disconnectOneDrive(
+  userDataDir: string,
+  bridge: OneDriveBridgeHooks,
+): Promise<void> {
+  const manifest = await readManifest(userDataDir, "onedrive");
+  const sources = bridge.listSources();
+  const localPaths = new Set(manifest.entries.map((e) => e.localPath));
+  for (const source of sources) {
+    if (localPaths.has(source.path)) {
+      try {
+        bridge.removeSource(source.id);
+      } catch {
+        // best-effort
+      }
+    }
+  }
+  await purgeSyncDir(userDataDir, "onedrive");
+}
+
+// Exposed for tests that want to clear the delta marker between runs.
+export const __test = {
+  deltaStatePath,
+  manifestPathFor: (userData: string) => manifestPathFor(userData, "onedrive"),
+};
