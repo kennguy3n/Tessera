@@ -166,6 +166,57 @@ describe("KanbanView", () => {
     expect(cardARecord.Status).toBe("Done");
   });
 
+  it("dropping a legacy-bucketed card on the Other column preserves its original value", async () => {
+    // Regression for Devin Review BUG finding
+    // BUG_pr-review-job-c6936a0b5b8e426798d47bfdc62111c0_0001:
+    // Card C carries `Status: "Archived"`, a value no longer present
+    // in the field's `options`. The Kanban view buckets it into the
+    // "Other" catch-all so it stays visible. The bug was that re-
+    // dropping Card C onto the same Other column would silently
+    // rewrite its Status to "" — destroying the legacy value the
+    // user could see on the card — because `String("Archived") !== ""`
+    // bypassed the same-value guard. The fix is to treat the Other
+    // column as a display-only target: drops onto it are no-ops.
+    const { onSave } = renderEditor(KANBAN_BASE);
+    fireEvent.click(screen.getByRole("tab", { name: "Kanban" }));
+
+    const cardC = screen.getByText("Card C").closest('[draggable="true"]')!;
+    const otherHeader = screen.getByText(/Other \(1\)/);
+    const otherColumn = otherHeader.closest("div")!.parentElement!;
+
+    fireEvent.dragStart(cardC, {
+      dataTransfer: {
+        effectAllowed: "",
+        setData: vi.fn(),
+        getData: vi.fn().mockReturnValue("2"),
+      },
+    });
+    fireEvent.dragOver(otherColumn, {
+      dataTransfer: { dropEffect: "" },
+    });
+    fireEvent.drop(otherColumn, {
+      dataTransfer: { getData: vi.fn().mockReturnValue("2") },
+    });
+
+    await flushSave();
+
+    // Either no save fires (the cell didn't change) OR the saved
+    // payload still carries the legacy "Archived" value — never "".
+    if (onSave.mock.calls.length > 0) {
+      const last = JSON.parse(
+        onSave.mock.calls[onSave.mock.calls.length - 1][0],
+      );
+      const cardCRecord = last.records.find(
+        (r: Record<string, unknown>) => r.Title === "Card C",
+      );
+      expect(cardCRecord.Status).toBe("Archived");
+    }
+    // Card C must still appear in the Other column with the original
+    // value intact, not silently move to a different bucket.
+    expect(screen.getByText("Card C")).toBeInTheDocument();
+    expect(screen.getByText(/Other \(1\)/)).toBeInTheDocument();
+  });
+
   it("clicking the '+' button on a column header creates a record pre-bucketed there", async () => {
     const { onSave } = renderEditor(KANBAN_BASE);
     fireEvent.click(screen.getByRole("tab", { name: "Kanban" }));

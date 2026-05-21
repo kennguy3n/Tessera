@@ -103,13 +103,24 @@ export default function KanbanView({
     e.preventDefault();
     setHoverColumn(null);
     if (dragRecordIndex == null) return;
-    // For the "Other" pseudo-column we don't change the cell — it's a
-    // displayed-only catchall, not an actual option the user can
-    // assign by dragging.
-    const targetValue = column === OTHER_COLUMN ? "" : column;
+    // The "Other" pseudo-column is a displayed-only catchall — it's not
+    // an actual option the user can assign by dragging. Dropping onto
+    // it (including a re-drop onto the column the card was already in)
+    // MUST be a no-op: previously this branch overwrote whatever value
+    // the card had (e.g. a legacy "Archived" string from before the
+    // option was renamed) with "" because `String("Archived") !== ""`
+    // bypassed the same-value guard below, silently destroying the
+    // legacy data the card was showing.
+    if (column === OTHER_COLUMN) {
+      setDragRecordIndex(null);
+      return;
+    }
     const current = data.records[dragRecordIndex]?.[groupField.name];
-    if (String(current ?? "") === targetValue) return;
-    onUpdateCell(dragRecordIndex, groupField.name, targetValue);
+    if (String(current ?? "") === column) {
+      setDragRecordIndex(null);
+      return;
+    }
+    onUpdateCell(dragRecordIndex, groupField.name, column);
     setDragRecordIndex(null);
   };
 
