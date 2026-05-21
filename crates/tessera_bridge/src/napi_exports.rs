@@ -23,6 +23,9 @@ static APP_STATE: std::sync::OnceLock<AppState> = std::sync::OnceLock::new();
 // concurrent lock acquisition cannot occur. Mutexes provide interior mutability.
 // If async work is added in the future, acquire locks in this order:
 // 1. audit_logger → 2. source_manager → 3. artifact_manager → 4. citation_tracker
+// → 5. task_store → 6. automation_store
+// (audit_logger first so every other path can log under its lock; task_store
+// and automation_store are leaf locks — nothing else acquires them.)
 struct AppState {
     source_manager: Mutex<SourceManager>,
     artifact_manager: Mutex<ArtifactManager>,

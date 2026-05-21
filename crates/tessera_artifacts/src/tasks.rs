@@ -16,13 +16,27 @@ use serde::{Deserialize, Serialize};
 use tessera_core::error::{Error, Result};
 use tessera_core::types::{SourceId, TaskId, TaskPriority, TaskStatus};
 
-fn parse_dt(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc))
+/// Parse an RFC 3339 timestamp from a SQLite row, surfacing corruption as
+/// a `rusqlite::Error` instead of silently substituting the current time.
+/// The stores always write `to_rfc3339()` so any failure here indicates
+/// the database was edited externally or otherwise corrupted.
+fn parse_dt(s: &str, col: usize) -> rusqlite::Result<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                col,
+                rusqlite::types::Type::Text,
+                format!("invalid RFC 3339 timestamp `{s}`: {e}").into(),
+            )
+        })
 }
 
-fn parse_opt_dt(s: Option<String>) -> Option<DateTime<Utc>> {
-    s.and_then(|raw| DateTime::parse_from_rfc3339(&raw).ok())
-        .map(|dt| dt.with_timezone(&Utc))
+fn parse_opt_dt(s: Option<String>, col: usize) -> rusqlite::Result<Option<DateTime<Utc>>> {
+    match s {
+        None => Ok(None),
+        Some(raw) => parse_dt(&raw, col).map(Some),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -344,11 +358,11 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         priority,
         position: row.get(5)?,
         assignee: row.get(6)?,
-        due_date: parse_opt_dt(row.get::<_, Option<String>>(7)?),
+        due_date: parse_opt_dt(row.get::<_, Option<String>>(7)?, 7)?,
         source_id,
         extracted_item_id: row.get(9)?,
-        created_at: parse_dt(&row.get::<_, String>(10)?),
-        updated_at: parse_dt(&row.get::<_, String>(11)?),
+        created_at: parse_dt(&row.get::<_, String>(10)?, 10)?,
+        updated_at: parse_dt(&row.get::<_, String>(11)?, 11)?,
     })
 }
 

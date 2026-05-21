@@ -207,13 +207,12 @@ impl JiraConnector {
         self.access_token = Some(tokens.access_token.clone());
         self.refresh_token.clone_from(&tokens.refresh_token);
         self.token_expiry = tokens.expiry;
-        // Prefer the dedicated `provider_metadata` slot. Fall back to
-        // `scopes.first()` only for tokens written by older Tessera
-        // builds that overloaded `scopes` to store the cloud id.
-        self.cloud_id = tokens
-            .provider_metadata
-            .clone()
-            .or_else(|| tokens.scopes.first().cloned());
+        // The cloud id lives in `provider_metadata`. We do not fall
+        // back to `scopes.first()`: this connector is new in this PR,
+        // so no older Tessera build ever persisted Jira tokens, and
+        // misreading an OAuth scope string (e.g. `read:jira-work`) as
+        // a cloud id would silently break authenticated calls.
+        self.cloud_id.clone_from(&tokens.provider_metadata);
         self.client_id = Some(client_id.to_string());
         self.client_secret = Some(client_secret.to_string());
         self.status = ConnectorStatus::Connected;

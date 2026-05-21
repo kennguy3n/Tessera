@@ -24,13 +24,29 @@ use std::str::FromStr;
 use tessera_core::error::{Error, Result};
 use tessera_core::types::{AutomationId, SourceId, TemplateId};
 
-fn parse_dt(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s).map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc))
+/// Parse an RFC 3339 timestamp from a SQLite row, surfacing corruption as
+/// a `rusqlite::Error` instead of silently substituting the current time.
+/// The store always writes `to_rfc3339()` so any failure here indicates
+/// the database was edited externally or otherwise corrupted; for
+/// scheduled automations a wrong `created_at` would skew `is_due()`, so
+/// we'd rather fail loudly than silently re-anchor the schedule.
+fn parse_dt(s: &str, col: usize) -> rusqlite::Result<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                col,
+                rusqlite::types::Type::Text,
+                format!("invalid RFC 3339 timestamp `{s}`: {e}").into(),
+            )
+        })
 }
 
-fn parse_opt_dt(s: Option<String>) -> Option<DateTime<Utc>> {
-    s.and_then(|raw| DateTime::parse_from_rfc3339(&raw).ok())
-        .map(|dt| dt.with_timezone(&Utc))
+fn parse_opt_dt(s: Option<String>, col: usize) -> rusqlite::Result<Option<DateTime<Utc>>> {
+    match s {
+        None => Ok(None),
+        Some(raw) => parse_dt(&raw, col).map(Some),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -299,9 +315,9 @@ fn row_to_automation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Automation> {
         trigger,
         action,
         enabled: enabled != 0,
-        created_at: parse_dt(&row.get::<_, String>(5)?),
-        updated_at: parse_dt(&row.get::<_, String>(6)?),
-        last_run_at: parse_opt_dt(row.get::<_, Option<String>>(7)?),
+        created_at: parse_dt(&row.get::<_, String>(5)?, 5)?,
+        updated_at: parse_dt(&row.get::<_, String>(6)?, 6)?,
+        last_run_at: parse_opt_dt(row.get::<_, Option<String>>(7)?, 7)?,
         last_run_status: row.get(8)?,
     })
 }

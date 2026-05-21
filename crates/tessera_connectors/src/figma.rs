@@ -192,9 +192,9 @@ impl FigmaConnector {
         self.access_token = Some(tokens.access_token.clone());
         self.refresh_token.clone_from(&tokens.refresh_token);
         self.token_expiry = tokens.expiry;
-        // Prefer `provider_metadata` (new field) and fall back to
-        // `scopes.first()` only for tokens written by older Tessera
-        // builds that hadn't separated these concerns yet.
+        // The team id lives in `provider_metadata`. This connector is
+        // new in this PR, so we don't carry a back-compat fallback that
+        // might misinterpret an OAuth scope string as a team id.
         if tokens.provider_metadata.is_some() {
             self.team_id.clone_from(&tokens.provider_metadata);
         }
