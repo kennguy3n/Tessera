@@ -719,3 +719,50 @@ pub fn bridge_delete_automation(automation_id: String) -> napi::Result<bool> {
     automations::delete_automation(&store, &automation_id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
+
+/// Return enabled `Schedule` automations whose `next_scheduled_at` is
+/// at or before "now". Called every tick by the Electron-side
+/// `scheduler.ts` service.
+#[napi]
+pub fn bridge_due_scheduled_automations() -> napi::Result<Vec<automations::AutomationInfo>> {
+    let s = state()?;
+    let store = s
+        .automation_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    automations::due_scheduled_automations(&store, chrono::Utc::now())
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Return enabled `OnGenerate` automations tied to a template (by its
+/// stable string id, e.g. `"prd-v1"`). Used by the artifact-generation
+/// IPC handler to dispatch downstream automations immediately after a
+/// successful generation, without waiting for the next scheduler tick.
+#[napi]
+pub fn bridge_matching_on_generate_automations(
+    template_id: String,
+) -> napi::Result<Vec<automations::AutomationInfo>> {
+    let s = state()?;
+    let store = s
+        .automation_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    automations::matching_on_generate_automations(&store, &template_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Persist the result of an automation run. `status` is rendered
+/// verbatim in the UI (e.g. `"ok"` or `"failed: <reason>"`). Updates
+/// `last_run_at = now()` so subsequent `bridge_due_scheduled_automations`
+/// calls won't re-fire the same schedule until `interval_seconds`
+/// elapses.
+#[napi]
+pub fn bridge_record_automation_run(automation_id: String, status: String) -> napi::Result<()> {
+    let s = state()?;
+    let store = s
+        .automation_store
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    automations::record_automation_run(&store, &automation_id, &status)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}

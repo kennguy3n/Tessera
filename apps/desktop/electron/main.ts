@@ -4,6 +4,7 @@ import { registerIpcHandlers } from "./ipc";
 import { loadConfig, saveWindowState } from "./config";
 import { initAppState } from "./appState";
 import { detectComputeBackends } from "./modelManagement";
+import { startScheduler, stopScheduler } from "./scheduler";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -79,6 +80,11 @@ function createWindow(): void {
 app.whenReady().then(() => {
   initAppState();
   registerIpcHandlers();
+  // Start the automations scheduler. Runs in the main process and
+  // ticks every 30s, dispatching due `Schedule` automations directly
+  // against the native bridge (i.e. without bouncing through the
+  // renderer). See `scheduler.ts` for the run-control protocol.
+  startScheduler();
   createWindow();
 
   // Warm the hardware-detection cache off the critical path. The first
@@ -119,4 +125,11 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", () => {
+  // Stop the scheduler before the process exits so an in-flight tick
+  // doesn't outlive the bridge's mutexes (the panic that produces is
+  // ugly and would scare users on slow disks).
+  stopScheduler();
 });

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type {
   AutomationInfo,
   CreateAutomationRequest,
+  SchedulerStatus,
 } from "../types/ipc";
 
 interface UseAutomationListResult {
@@ -65,4 +66,47 @@ export function useAutomationMutations() {
   }, []);
 
   return { create, setEnabled, remove };
+}
+
+/**
+ * Poll the Electron scheduler's status. Used by the AutomationsPage
+ * to render the "running" indicator, last-tick timestamp, and any
+ * surfaced error so the user can debug stalled automations without
+ * leaving the page. We pull every {@link STATUS_POLL_MS} ms and on
+ * mount; `runNow()` triggers an immediate tick and refreshes status
+ * synchronously.
+ */
+const STATUS_POLL_MS = 5000;
+
+export function useSchedulerStatus() {
+  const [status, setStatus] = useState<SchedulerStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const api = getApi();
+    if (!api) return;
+    try {
+      const s = await api.automations.schedulerStatus();
+      setStatus(s);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  const runNow = useCallback(async () => {
+    const api = getApi();
+    if (!api) throw new Error("Tessera bridge not available");
+    const s = await api.automations.runNow();
+    setStatus(s);
+    return s;
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    const handle = setInterval(() => void refresh(), STATUS_POLL_MS);
+    return () => clearInterval(handle);
+  }, [refresh]);
+
+  return { status, error, refresh, runNow };
 }

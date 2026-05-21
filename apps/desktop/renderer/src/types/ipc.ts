@@ -220,12 +220,21 @@ export interface TaskApi {
   reorder: (status: string, ids: string[]) => Promise<void>;
 }
 
+export interface SchedulerStatus {
+  running: boolean;
+  lastTickAt: string | null;
+  lastTickError: string | null;
+  inFlight: boolean;
+}
+
 export interface AutomationApi {
   create: (req: CreateAutomationRequest) => Promise<AutomationInfo>;
   list: () => Promise<AutomationInfo[]>;
   get: (id: string) => Promise<AutomationInfo | null>;
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
   remove: (id: string) => Promise<boolean>;
+  schedulerStatus: () => Promise<SchedulerStatus>;
+  runNow: () => Promise<SchedulerStatus>;
 }
 
 export interface TesseraApi {

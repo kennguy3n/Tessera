@@ -322,6 +322,8 @@ export interface TesseraApi {
     get: (id: string) => Promise<AutomationInfo | null>;
     setEnabled: (id: string, enabled: boolean) => Promise<void>;
     remove: (id: string) => Promise<boolean>;
+    schedulerStatus: () => Promise<SchedulerStatusInfo>;
+    runNow: () => Promise<SchedulerStatusInfo>;
   };
   dialog: {
     showSaveDialog: (options: SaveDialogOptions) => Promise<SaveDialogResult>;
@@ -404,6 +406,13 @@ export interface CreateAutomationRequest {
   trigger: AutomationTrigger;
   action: AutomationAction;
   enabled?: boolean;
+}
+
+export interface SchedulerStatusInfo {
+  running: boolean;
+  lastTickAt: string | null;
+  lastTickError: string | null;
+  inFlight: boolean;
 }
 
 export interface SaveDialogOptions {
@@ -558,6 +567,8 @@ const api: TesseraApi = {
     setEnabled: (id, enabled) =>
       ipcRenderer.invoke("automations:setEnabled", id, enabled),
     remove: (id) => ipcRenderer.invoke("automations:delete", id),
+    schedulerStatus: () => ipcRenderer.invoke("automations:schedulerStatus"),
+    runNow: () => ipcRenderer.invoke("automations:runNow"),
   },
   dialog: {
     showSaveDialog: (options: SaveDialogOptions) =>

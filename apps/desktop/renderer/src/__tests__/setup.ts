@@ -242,12 +242,12 @@ const mockApi = {
     create: vi.fn().mockResolvedValue({
       id: "auto-1",
       name: "Auto",
-      description: "",
-      trigger: { kind: "schedule", interval_seconds: 3600 },
-      action: { kind: "reindex_source", source_id: "src-1" },
+      triggerJson: '{"kind":"schedule","interval_seconds":3600}',
+      actionJson: '{"kind":"reindex_source","source_id":"src-1"}',
       enabled: true,
-      lastRun: null,
-      lastResult: null,
+      lastRunAt: null,
+      lastRunStatus: null,
+      nextScheduledAt: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }),
@@ -255,6 +255,18 @@ const mockApi = {
     get: vi.fn().mockResolvedValue(null),
     setEnabled: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(true),
+    schedulerStatus: vi.fn().mockResolvedValue({
+      running: true,
+      lastTickAt: null,
+      lastTickError: null,
+      inFlight: false,
+    }),
+    runNow: vi.fn().mockResolvedValue({
+      running: true,
+      lastTickAt: new Date().toISOString(),
+      lastTickError: null,
+      inFlight: false,
+    }),
   },
   runtime: {
     detectPlatform: vi.fn().mockResolvedValue({

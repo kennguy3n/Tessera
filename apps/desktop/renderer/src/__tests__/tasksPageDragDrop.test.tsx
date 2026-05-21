@@ -154,4 +154,33 @@ describe("TasksPage drag-and-drop", () => {
     expect(window.tessera.tasks.update).not.toHaveBeenCalled();
     expect(window.tessera.tasks.reorder).not.toHaveBeenCalled();
   });
+
+  // ANALYSIS_0002 regression: a failed `update` or `reorder` must be
+  // surfaced to the user instead of bubbling as an unhandled promise
+  // rejection. We force the cross-column path to fail and assert the
+  // error alert appears.
+  it("surfaces a visible error when the bridge throws during a cross-column drop", async () => {
+    window.tessera.tasks.update = vi
+      .fn()
+      .mockRejectedValue(new Error("bridge unavailable"));
+    renderWithRouter();
+    await waitFor(() => {
+      expect(screen.getByText("Todo A")).toBeInTheDocument();
+    });
+
+    const cardA = screen.getByText("Todo A").closest('[draggable="true"]');
+    const progressColumn = screen.getByTestId("column-in_progress");
+    fireEvent.dragStart(cardA!);
+    fireEvent.dragOver(progressColumn);
+    fireEvent.drop(progressColumn);
+
+    // The alert region renders with the task title + error message.
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Failed to move");
+    expect(alert).toHaveTextContent("Todo A");
+    expect(alert).toHaveTextContent("bridge unavailable");
+    // `reorder` should never have been called because `update` failed
+    // first — proves we abort the multi-step flow on partial failure.
+    expect(window.tessera.tasks.reorder).not.toHaveBeenCalled();
+  });
 });

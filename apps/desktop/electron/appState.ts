@@ -3,7 +3,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { ModelSidecar } from "./sidecar";
 
-interface NativeBridge {
+export interface NativeBridge {
   initBridge(dbPath: string, templateDir: string): void;
   bridgeAddLocalFolder(path: string): SourceInfo;
   bridgeAddLocalFile(path: string): SourceInfo;
@@ -65,6 +65,14 @@ interface NativeBridge {
   bridgeGetAutomation(automationId: string): AutomationInfo | null;
   bridgeSetAutomationEnabled(automationId: string, enabled: boolean): void;
   bridgeDeleteAutomation(automationId: string): boolean;
+  /** Enabled `Schedule` automations whose `next_scheduled_at <= now`. */
+  bridgeDueScheduledAutomations(): AutomationInfo[];
+  /** Enabled `OnGenerate` automations tied to the given template string id
+   *  (e.g. `"prd-v1"`). The bridge hashes the id via
+   *  `TemplateId::from_string` to match the UUID5 stored on the trigger. */
+  bridgeMatchingOnGenerateAutomations(templateId: string): AutomationInfo[];
+  /** Persist a run result. `status` is rendered verbatim by the UI. */
+  bridgeRecordAutomationRun(automationId: string, status: string): void;
 }
 
 export interface TaskInfo {

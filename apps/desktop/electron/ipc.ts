@@ -4,6 +4,11 @@ import * as os from "os";
 import * as path from "path";
 import { loadConfig, updateConfig } from "./config";
 import { getBridge, getModelSidecar } from "./appState";
+import {
+  dispatchOnGenerate,
+  getSchedulerStatus,
+  tick as schedulerTick,
+} from "./scheduler";
 import { isSafeExportPath } from "./exportPathSafety";
 import type { SettingsData, ModelStatus } from "./preload";
 import { startOAuthFlow, exchangeCodeForTokens, refreshAccessToken, revokeToken } from "./oauthServer";
@@ -1224,7 +1229,18 @@ export function registerIpcHandlers(): void {
     ) => {
       const bridge = getBridge();
       if (!bridge) throw new Error("Native bridge not available");
-      return bridge.bridgeGenerateFromTemplate(templateId, sourceIds);
+      const artifact = bridge.bridgeGenerateFromTemplate(templateId, sourceIds);
+      // Fire any `OnGenerate` automations tied to this template
+      // immediately, off the request critical path. Awaiting would
+      // make the user wait on downstream re-indexes / cascade
+      // generations before the editor opens; we deliberately don't
+      // surface dispatch errors back to the caller — they're recorded
+      // per-automation via `bridgeRecordAutomationRun` and visible on
+      // the Automations page.
+      void dispatchOnGenerate(templateId).catch((e) => {
+        console.error("[ipc] OnGenerate dispatch failed:", e);
+      });
+      return artifact;
     },
   );
 
@@ -1430,6 +1446,19 @@ export function registerIpcHandlers(): void {
       return bridge.bridgeDeleteAutomation(automationId);
     },
   );
+
+  // Scheduler control surface used by the AutomationsPage UI: status
+  // (running? in-flight? last error?) + manual "tick now" trigger so
+  // the user can verify a freshly-saved schedule without waiting up
+  // to `DEFAULT_TICK_MS`.
+  ipcMain.handle("automations:schedulerStatus", async () => {
+    return getSchedulerStatus();
+  });
+
+  ipcMain.handle("automations:runNow", async () => {
+    await schedulerTick();
+    return getSchedulerStatus();
+  });
 
   ipcMain.handle(
     "dialog:showSaveDialog",

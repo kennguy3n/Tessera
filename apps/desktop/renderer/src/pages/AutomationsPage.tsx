@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, Zap, Clock } from "lucide-react";
+import { Plus, Trash2, Zap, Clock, Play, AlertCircle } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Modal from "../components/Modal";
@@ -7,6 +7,7 @@ import EmptyState from "../components/EmptyState";
 import {
   useAutomationList,
   useAutomationMutations,
+  useSchedulerStatus,
 } from "../hooks/useAutomations";
 import { useSourceList } from "../hooks/useSources";
 import { useTemplateList } from "../hooks/useTemplates";
@@ -108,6 +109,29 @@ export default function AutomationsPage() {
   const { create, setEnabled, remove } = useAutomationMutations();
   const { sources } = useSourceList();
   const { templates } = useTemplateList();
+  const {
+    status: schedulerStatus,
+    error: schedulerError,
+    runNow,
+  } = useSchedulerStatus();
+  const [runNowError, setRunNowError] = useState<string | null>(null);
+  const [runningNow, setRunningNow] = useState(false);
+
+  const handleRunNow = useCallback(async () => {
+    setRunNowError(null);
+    setRunningNow(true);
+    try {
+      await runNow();
+      // After a manual tick the list of `lastRunAt` values likely
+      // changed — refresh so the user sees the new state without
+      // waiting for the next list-poll.
+      await refresh();
+    } catch (e) {
+      setRunNowError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunningNow(false);
+    }
+  }, [runNow, refresh]);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [draft, setDraft] = useState<DraftAutomation>(EMPTY_DRAFT);
@@ -227,6 +251,63 @@ export default function AutomationsPage() {
           </Button>
         }
       />
+
+      {/*
+        Scheduler status panel. We surface the scheduler's running
+        flag, last-tick timestamp, and any tick error so a user
+        debugging "why didn't my reindex run?" doesn't have to open
+        devtools. The "Run Now" button forces an immediate tick (for
+        Schedule triggers) — handy after editing a source connector
+        config and not wanting to wait 30s for the next interval.
+      */}
+      <div
+        className="scheduler-status"
+        data-testid="scheduler-status"
+        role="status"
+        aria-live="polite"
+      >
+        <div className="scheduler-status-meta">
+          <span
+            className={
+              schedulerStatus?.running
+                ? "scheduler-pill scheduler-pill-on"
+                : "scheduler-pill scheduler-pill-off"
+            }
+          >
+            <Clock size={14} strokeWidth={2} aria-hidden="true" />
+            <span>
+              {schedulerStatus?.running ? "Scheduler running" : "Scheduler idle"}
+            </span>
+          </span>
+          <span className="scheduler-last-tick">
+            Last tick: {formatTimestamp(schedulerStatus?.lastTickAt ?? null)}
+            {schedulerStatus?.inFlight ? " (in progress)" : ""}
+          </span>
+        </div>
+        <Button
+          variant="secondary"
+          onClick={() => void handleRunNow()}
+          disabled={runningNow}
+        >
+          <Play size={14} strokeWidth={2} aria-hidden="true" />
+          <span style={{ marginLeft: 6 }}>
+            {runningNow ? "Running…" : "Run Now"}
+          </span>
+        </Button>
+      </div>
+
+      {(schedulerStatus?.lastTickError ||
+        schedulerError ||
+        runNowError) && (
+        <div role="alert" className="scheduler-error">
+          <AlertCircle size={16} strokeWidth={2} aria-hidden="true" />
+          <span>
+            {runNowError ||
+              schedulerError ||
+              schedulerStatus?.lastTickError}
+          </span>
+        </div>
+      )}
 
       {loading && automations.length === 0 && (
         <div className="automations-loading">Loading automations…</div>
@@ -518,6 +599,56 @@ export default function AutomationsPage() {
       </Modal>
 
       <style>{`
+        .scheduler-status {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: var(--spacing-md);
+          margin: var(--spacing-md) 0;
+          padding: var(--spacing-sm) var(--spacing-md);
+          background: var(--color-bg-subtle, #f8fafc);
+          border: 1px solid var(--color-border, #e2e8f0);
+          border-radius: var(--radius-md, 6px);
+        }
+        .scheduler-status-meta {
+          display: flex;
+          align-items: center;
+          gap: var(--spacing-md);
+          flex-wrap: wrap;
+        }
+        .scheduler-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: var(--spacing-xs);
+          padding: 2px var(--spacing-sm);
+          border-radius: 999px;
+          font-size: var(--font-size-sm);
+          font-weight: 500;
+        }
+        .scheduler-pill-on {
+          background: var(--color-success-subtle, #ecfdf5);
+          color: var(--color-success, #047857);
+        }
+        .scheduler-pill-off {
+          background: var(--color-bg-muted, #e2e8f0);
+          color: var(--color-text-secondary, #475569);
+        }
+        .scheduler-last-tick {
+          font-size: var(--font-size-sm);
+          color: var(--color-text-secondary, #475569);
+        }
+        .scheduler-error {
+          display: flex;
+          align-items: center;
+          gap: var(--spacing-sm);
+          margin: var(--spacing-md) 0;
+          padding: var(--spacing-sm) var(--spacing-md);
+          background: var(--color-danger-subtle, #fef2f2);
+          color: var(--color-danger, #b91c1c);
+          border: 1px solid var(--color-danger, #b91c1c);
+          border-radius: var(--radius-md, 6px);
+          font-size: var(--font-size-sm);
+        }
         .automations-loading {
           padding: var(--spacing-xl);
           color: var(--color-text-secondary);

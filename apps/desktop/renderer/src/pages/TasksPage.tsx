@@ -92,6 +92,11 @@ export default function TasksPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<TaskInfo | null>(null);
+  // Surfaced to the user when a drag-drop operation fails (network /
+  // bridge error). Without this, a failed `update`/`reorder` would
+  // produce an unhandled promise rejection and the column would silently
+  // snap back to its old state with no indication of why.
+  const [dragError, setDragError] = useState<string | null>(null);
 
   // Track which card is being dragged so onDrop on a column knows which
   // task to move. Using a ref instead of state avoids a re-render storm
@@ -217,34 +222,56 @@ export default function TasksPage() {
       dragSourceRef.current = null;
       setDragOverColumn(null);
       if (!source) return;
-      if (source.status === status) {
-        // Same-column drop: reorder the column so the dropped card is
-        // last. A more granular within-column ordering would need a
-        // drop-target index off the mouse Y, which is a future
-        // refinement.
-        const idsInColumn = byStatus[status].map((t) => t.id);
-        const filtered = idsInColumn.filter((id) => id !== source.id);
-        filtered.push(source.id);
-        await reorder(status, filtered);
-      } else {
-        // Cross-column drop. The Rust `TaskStore::update` preserves the
-        // existing `position` when not provided, so a bare
-        // `update(source.id, { status })` would leave the moved task
-        // with its old column's position — producing arbitrary order in
-        // the target column (e.g. ties broken by `created_at DESC`, or
-        // a card with position=5 inserted into a column whose existing
-        // cards have positions 0–2). Follow the same flow as the
-        // same-column branch: change status first, then call
-        // `reorder()` with the moved card appended to the end of the
-        // target column's current ordering so positions are reassigned
-        // sequentially via the bridge's `reorder_tasks` (which is the
-        // single source of truth for column ordering).
-        await update(source.id, { status });
-        const targetIds = byStatus[status].map((t) => t.id);
-        targetIds.push(source.id);
-        await reorder(status, targetIds);
+      // Drag-and-drop is a user-visible gesture; if the bridge errors
+      // we want to surface the failure rather than letting it bubble
+      // as an unhandled promise rejection (which is invisible in
+      // production). On failure we still call `refresh()` so the UI
+      // resyncs with the server's last-known good state — preventing
+      // the dropped card from sticking in a "ghost" position when the
+      // update silently failed.
+      setDragError(null);
+      try {
+        if (source.status === status) {
+          // Same-column drop: reorder the column so the dropped card is
+          // last. A more granular within-column ordering would need a
+          // drop-target index off the mouse Y, which is a future
+          // refinement.
+          const idsInColumn = byStatus[status].map((t) => t.id);
+          const filtered = idsInColumn.filter((id) => id !== source.id);
+          filtered.push(source.id);
+          await reorder(status, filtered);
+        } else {
+          // Cross-column drop. The Rust `TaskStore::update` preserves the
+          // existing `position` when not provided, so a bare
+          // `update(source.id, { status })` would leave the moved task
+          // with its old column's position — producing arbitrary order in
+          // the target column (e.g. ties broken by `created_at DESC`, or
+          // a card with position=5 inserted into a column whose existing
+          // cards have positions 0–2). Follow the same flow as the
+          // same-column branch: change status first, then call
+          // `reorder()` with the moved card appended to the end of the
+          // target column's current ordering so positions are reassigned
+          // sequentially via the bridge's `reorder_tasks` (which is the
+          // single source of truth for column ordering).
+          await update(source.id, { status });
+          const targetIds = byStatus[status].map((t) => t.id);
+          targetIds.push(source.id);
+          await reorder(status, targetIds);
+        }
+        await refresh();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setDragError(`Failed to move "${source.title}": ${message}`);
+        // Refresh anyway so the UI doesn't keep showing a stale state
+        // (e.g. the moved card visually in the wrong column because
+        // the `update` half-succeeded). `refresh()` swallows its own
+        // errors via the `useTaskList` hook, so it's safe to ignore.
+        try {
+          await refresh();
+        } catch {
+          // Already surfaced via setDragError above.
+        }
       }
-      await refresh();
     },
     [byStatus, reorder, update, refresh],
   );
@@ -274,6 +301,20 @@ export default function TasksPage() {
 
       {loading && tasks.length === 0 && (
         <div className="tasks-loading">Loading tasks…</div>
+      )}
+
+      {dragError && (
+        <div role="alert" className="tasks-drag-error">
+          {dragError}
+          <button
+            type="button"
+            className="tasks-drag-error__dismiss"
+            onClick={() => setDragError(null)}
+            aria-label="Dismiss drag error"
+          >
+            ×
+          </button>
+        </div>
       )}
 
       {!loading && tasks.length === 0 && (
@@ -559,6 +600,28 @@ export default function TasksPage() {
       </Modal>
 
       <style>{`
+        .tasks-drag-error {
+          margin: var(--spacing-md) 0;
+          padding: var(--spacing-sm) var(--spacing-md);
+          background: var(--color-danger-subtle, #fef2f2);
+          color: var(--color-danger, #b91c1c);
+          border: 1px solid var(--color-danger, #b91c1c);
+          border-radius: var(--radius-md, 6px);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: var(--spacing-md);
+          font-size: var(--font-size-sm);
+        }
+        .tasks-drag-error__dismiss {
+          background: transparent;
+          border: none;
+          color: inherit;
+          font-size: 1.25rem;
+          line-height: 1;
+          cursor: pointer;
+          padding: 0 var(--spacing-xs);
+        }
         .tasks-loading {
           padding: var(--spacing-xl);
           color: var(--color-text-secondary);
