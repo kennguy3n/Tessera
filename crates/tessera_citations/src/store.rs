@@ -1,6 +1,9 @@
-use rusqlite::{params, Connection};
+use rusqlite::params;
 use tessera_core::error::{Error, Result};
-use tessera_core::{ArtifactId, CitationId, SourceId, SourceType};
+use tessera_core::{
+    open_shared, open_shared_in_memory, ArtifactId, CitationId, SharedConnection, SourceId,
+    SourceType,
+};
 
 use crate::citation::Citation;
 
@@ -10,19 +13,21 @@ fn parse_datetime(s: &str) -> chrono::DateTime<chrono::Utc> {
 }
 
 pub struct CitationStore {
-    conn: Connection,
+    conn: SharedConnection,
 }
 
 impl CitationStore {
     pub fn open(path: &str) -> Result<Self> {
-        let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
-        let store = Self { conn };
-        store.init_schema()?;
-        Ok(store)
+        Self::with_shared_conn(open_shared(path)?)
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory().map_err(|e| Error::Database(e.to_string()))?;
+        Self::with_shared_conn(open_shared_in_memory()?)
+    }
+
+    /// Build a store on top of a [`SharedConnection`] that is already
+    /// shared with other stores. Used by the napi bridge.
+    pub fn with_shared_conn(conn: SharedConnection) -> Result<Self> {
         let store = Self { conn };
         store.init_schema()?;
         Ok(store)
@@ -30,6 +35,8 @@ impl CitationStore {
 
     fn init_schema(&self) -> Result<()> {
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS citations (
                     citation_id TEXT PRIMARY KEY,
@@ -60,6 +67,8 @@ impl CitationStore {
             .to_string();
 
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute(
                 "INSERT OR REPLACE INTO citations
                     (citation_id, artifact_id, source_id, source_type, source_title,
@@ -86,6 +95,8 @@ impl CitationStore {
 
     pub fn remove(&self, citation_id: &CitationId) -> Result<()> {
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute(
                 "DELETE FROM citations WHERE citation_id = ?1",
                 params![citation_id.0.to_string()],
@@ -95,8 +106,8 @@ impl CitationStore {
     }
 
     pub fn get(&self, citation_id: &CitationId) -> Result<Option<Citation>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare(
                 "SELECT citation_id, source_id, source_type, source_title, source_uri,
                         chunk_hash, source_file_hash, page, confidence, used_for, created_at
@@ -118,8 +129,8 @@ impl CitationStore {
     }
 
     pub fn list_for_artifact(&self, artifact_id: &ArtifactId) -> Result<Vec<Citation>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare(
                 "SELECT citation_id, source_id, source_type, source_title, source_uri,
                         chunk_hash, source_file_hash, page, confidence, used_for, created_at
@@ -147,6 +158,8 @@ impl CitationStore {
     pub fn count(&self) -> Result<usize> {
         let count: i64 = self
             .conn
+            .lock()
+            .expect("connection mutex poisoned")
             .query_row("SELECT COUNT(*) FROM citations", [], |row| row.get(0))
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(count as usize)
@@ -265,5 +278,18 @@ mod tests {
         store.insert(&aid, &make_citation()).unwrap();
         store.insert(&aid, &make_citation()).unwrap();
         assert_eq!(store.count().unwrap(), 2);
+    }
+
+    #[test]
+    fn citation_store_shares_database_with_clone() {
+        // Two stores built on the same SharedConnection see the same
+        // rows. Mirrors `audit_store_shares_database_with_clone` so the
+        // shared-connection refactor is exercised per-crate.
+        let conn = tessera_core::open_shared_in_memory().unwrap();
+        let a = CitationStore::with_shared_conn(conn.clone()).unwrap();
+        let b = CitationStore::with_shared_conn(conn).unwrap();
+        let aid = ArtifactId::new();
+        a.insert(&aid, &make_citation()).unwrap();
+        assert_eq!(b.count().unwrap(), 1);
     }
 }

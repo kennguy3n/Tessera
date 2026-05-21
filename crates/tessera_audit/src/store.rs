@@ -1,5 +1,6 @@
-use rusqlite::{params, Connection};
+use rusqlite::params;
 use tessera_core::error::{Error, Result};
+use tessera_core::{open_shared, open_shared_in_memory, SharedConnection};
 
 use crate::event::{AuditEvent, AuditEventType};
 
@@ -9,19 +10,22 @@ fn parse_datetime(s: &str) -> chrono::DateTime<chrono::Utc> {
 }
 
 pub struct AuditStore {
-    conn: Connection,
+    conn: SharedConnection,
 }
 
 impl AuditStore {
     pub fn open(path: &str) -> Result<Self> {
-        let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
-        let store = Self { conn };
-        store.init_schema()?;
-        Ok(store)
+        Self::with_shared_conn(open_shared(path)?)
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory().map_err(|e| Error::Database(e.to_string()))?;
+        Self::with_shared_conn(open_shared_in_memory()?)
+    }
+
+    /// Build a store on top of a [`SharedConnection`] that is already
+    /// shared with other stores. Used by the napi bridge to fold all
+    /// six per-store SQLite connections into one.
+    pub fn with_shared_conn(conn: SharedConnection) -> Result<Self> {
         let store = Self { conn };
         store.init_schema()?;
         Ok(store)
@@ -29,6 +33,8 @@ impl AuditStore {
 
     fn init_schema(&self) -> Result<()> {
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS audit_events (
                     id TEXT PRIMARY KEY,
@@ -59,6 +65,8 @@ impl AuditStore {
         let type_str =
             serde_json::to_string(&event.event_type).map_err(|e| Error::Database(e.to_string()))?;
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute(
                 "INSERT INTO audit_events (id, event_type, timestamp, details) VALUES (?1, ?2, ?3, ?4)",
                 params![
@@ -75,8 +83,8 @@ impl AuditStore {
     pub fn query_by_type(&self, event_type: &AuditEventType) -> Result<Vec<AuditEvent>> {
         let type_str =
             serde_json::to_string(event_type).map_err(|e| Error::Database(e.to_string()))?;
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare("SELECT id, event_type, timestamp, details FROM audit_events WHERE event_type = ?1 ORDER BY timestamp DESC")
             .map_err(|e| Error::Database(e.to_string()))?;
 
@@ -104,8 +112,8 @@ impl AuditStore {
         from: &chrono::DateTime<chrono::Utc>,
         to: &chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<AuditEvent>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare(
                 "SELECT id, event_type, timestamp, details FROM audit_events WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp DESC",
             )
@@ -133,6 +141,8 @@ impl AuditStore {
     pub fn count(&self) -> Result<u64> {
         let count: i64 = self
             .conn
+            .lock()
+            .expect("connection mutex poisoned")
             .query_row("SELECT COUNT(*) FROM audit_events", [], |row| row.get(0))
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(count as u64)
@@ -194,5 +204,22 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(store.count().unwrap(), 5);
+    }
+
+    #[test]
+    fn audit_store_shares_database_with_clone() {
+        // Two stores built on the same SharedConnection see the same
+        // rows — that's the entire point of the shared-connection
+        // refactor. If this ever fails, init_bridge probably
+        // accidentally rebuilt a fresh Connection per store.
+        let conn = open_shared_in_memory().unwrap();
+        let a = AuditStore::with_shared_conn(conn.clone()).unwrap();
+        let b = AuditStore::with_shared_conn(conn).unwrap();
+        a.append(&AuditEvent::new(
+            AuditEventType::SettingsChanged,
+            "via A".to_string(),
+        ))
+        .unwrap();
+        assert_eq!(b.count().unwrap(), 1);
     }
 }
