@@ -36,6 +36,16 @@ struct AppState {
     template_dir: String,
 }
 
+// TODO(connection-pool): Each store below opens its own
+// `rusqlite::Connection` to the same `db_path`. That keeps the lock graph
+// simple (each store owns its mutex) and works fine because N-API
+// callbacks are single-threaded so writes are already serialised, but it
+// uses 6 file handles where 1 would suffice and bloats per-instance
+// memory. The follow-up is to thread a shared `Arc<Mutex<Connection>>`
+// (or an r2d2 pool with `min_size=1`) through `SourceManager` /
+// `ArtifactManager` / `AuditLogger` / `CitationTracker` / `TaskStore` /
+// `AutomationStore`. That refactor changes ~6 store constructors and
+// dozens of call sites, so it lives in a dedicated PR — not in Phase 8.
 #[napi]
 pub fn init_bridge(db_path: String, template_dir: String) -> napi::Result<()> {
     let source_manager =

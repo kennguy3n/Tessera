@@ -16,6 +16,25 @@
 //!
 //! The store handles persistence; the runner (in
 //! [`automations_runner`]) loops over enabled rules and dispatches.
+//!
+//! # Scalability follow-up
+//!
+//! `due_scheduled()` and `matching_on_generate()` currently load every
+//! row and filter in process. That is acceptable for the realistic
+//! ceiling of automations a single user maintains (< a few hundred),
+//! but the long-term fix is:
+//!
+//! - add `next_scheduled_at TEXT` (nullable for non-schedule triggers),
+//!   maintained on insert/update/`record_run`, indexed on
+//!   `(enabled, next_scheduled_at)` so `due_scheduled()` becomes a
+//!   single indexed range scan rather than an in-process filter;
+//! - extract `trigger_template_id` into its own column (or a separate
+//!   `automation_triggers` table) and index it so
+//!   `matching_on_generate()` can push the predicate into SQLite.
+//!
+//! These require a schema migration plus a refactor of `is_due()` /
+//! `next_scheduled_at()` to read the precomputed column, so they live
+//! in a follow-up PR rather than mixing into Phase 8 scope.
 
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
