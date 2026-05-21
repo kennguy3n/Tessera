@@ -24,6 +24,21 @@
 //!
 //! [s]: https://developers.notion.com/reference/post-search
 //!
+//! ### Deletion detection
+//!
+//! The boundary-break fast path is efficient but architecturally
+//! incapable of seeing items that were deleted or unshared upstream —
+//! once the walker breaks past the boundary, anything missing from the
+//! workspace is invisible. To compensate we run a periodic *full
+//! walk*: every `full_walk_interval` calls (default 10), and on the
+//! very first sync (when there is no boundary anyway), `sync_changes`
+//! switches to `sync_full_walk`, which paginates the entire workspace
+//! with no boundary break and set-diffs the result against
+//! `known_file_ids`. Anything the caller previously knew about that
+//! the full walk did not return is surfaced in `result.removed` so
+//! the indexer can drop it locally — the same set-diff pattern
+//! Confluence and Figma use.
+//!
 //! ## What Notion calls "files"
 //!
 //! Notion's primitives are pages and databases. We surface both as
@@ -44,6 +59,13 @@ const DEFAULT_TOKEN_URL: &str = "https://api.notion.com/v1/oauth/token";
 const DEFAULT_API_BASE: &str = "https://api.notion.com/v1";
 const NOTION_VERSION: &str = "2022-06-28";
 
+/// How many incremental `sync_changes` calls happen between full
+/// workspace walks. Picked to be small enough that an upstream delete
+/// surfaces locally within ~10 sync ticks (≈ minutes-to-hours at
+/// realistic indexer cadences) and large enough that the fast path
+/// still dominates.
+const DEFAULT_FULL_WALK_INTERVAL: u32 = 10;
+
 pub struct NotionConnector {
     client: Client,
     status: ConnectorStatus,
@@ -57,6 +79,13 @@ pub struct NotionConnector {
     auth_url: String,
     token_url: String,
     api_base: String,
+    /// Number of `sync_changes` calls since the last full-workspace
+    /// walk. Reset to 0 each time `sync_full_walk` runs.
+    syncs_since_full_walk: u32,
+    /// Threshold for triggering an automatic full walk inside
+    /// `sync_changes` — see [`Self::set_full_walk_interval`] and the
+    /// module-level "Deletion detection" section.
+    full_walk_interval: u32,
 }
 
 impl NotionConnector {
@@ -74,6 +103,8 @@ impl NotionConnector {
             auth_url: DEFAULT_AUTH_URL.to_string(),
             token_url: DEFAULT_TOKEN_URL.to_string(),
             api_base: DEFAULT_API_BASE.to_string(),
+            syncs_since_full_walk: 0,
+            full_walk_interval: DEFAULT_FULL_WALK_INTERVAL,
         }
     }
 
@@ -91,7 +122,19 @@ impl NotionConnector {
             auth_url: format!("{base_url}/v1/oauth/authorize"),
             token_url: format!("{base_url}/v1/oauth/token"),
             api_base: format!("{base_url}/v1"),
+            syncs_since_full_walk: 0,
+            full_walk_interval: DEFAULT_FULL_WALK_INTERVAL,
         }
+    }
+
+    /// Override how often `sync_changes` should perform a full workspace
+    /// walk to surface deletions/unshares the boundary-break fast path
+    /// cannot detect. Setting this to `1` forces every sync to do a
+    /// full walk; `u32::MAX` effectively disables periodic full walks
+    /// (but the *first* sync — when `change_token` is `None` — still
+    /// does one, because the caller has no boundary anyway).
+    pub fn set_full_walk_interval(&mut self, interval: u32) {
+        self.full_walk_interval = interval.max(1);
     }
 
     pub fn set_access_token(&mut self, token: &str) {
@@ -400,10 +443,37 @@ impl NotionConnector {
         Ok(out.into_bytes())
     }
 
-    /// Incremental sync — Notion has no delta endpoint, so we use
-    /// `search` sorted by `last_edited_time` descending and stop when
-    /// we walk past the boundary.
+    /// Sync entry point — dispatches between the fast incremental path
+    /// and the periodic full walk.
+    ///
+    /// Incremental syncs use the descending `last_edited_time` walk and
+    /// stop at the boundary, which is fast but cannot detect deleted
+    /// or unshared items. To catch those, every `full_walk_interval`
+    /// calls (and on the very first sync, when there is no boundary
+    /// anyway) we instead do a full workspace walk and set-diff the
+    /// returned ids against `known_file_ids`. See
+    /// [`Self::sync_full_walk`] and the module-level "Deletion
+    /// detection" notes.
     pub async fn sync_changes(
+        &mut self,
+        change_token: Option<&str>,
+        known_file_ids: &HashSet<String>,
+    ) -> ConnectorResult<SyncResult> {
+        let do_full = change_token.is_none()
+            || self.syncs_since_full_walk >= self.full_walk_interval.saturating_sub(1);
+        if do_full {
+            self.sync_full_walk(known_file_ids).await
+        } else {
+            self.syncs_since_full_walk = self.syncs_since_full_walk.saturating_add(1);
+            self.sync_incremental(change_token, known_file_ids).await
+        }
+    }
+
+    /// Fast-path incremental sync. Walks `search` results sorted by
+    /// `last_edited_time` descending and stops at the boundary derived
+    /// from `change_token`. Cannot detect upstream deletions — that's
+    /// what `sync_full_walk` is for.
+    async fn sync_incremental(
         &mut self,
         change_token: Option<&str>,
         known_file_ids: &HashSet<String>,
@@ -485,6 +555,99 @@ impl NotionConnector {
         Ok(result)
     }
 
+    /// Walk the entire workspace (no boundary break) and set-diff the
+    /// returned ids against `known_file_ids` to surface upstream
+    /// deletions / unshares. The new change token is the newest
+    /// `last_edited_time` we observed across the whole walk.
+    ///
+    /// This is more expensive than `sync_incremental` because we cannot
+    /// stop early, so it only runs on the first sync and every
+    /// `full_walk_interval` syncs thereafter — see [`Self::sync_changes`].
+    async fn sync_full_walk(
+        &mut self,
+        known_file_ids: &HashSet<String>,
+    ) -> ConnectorResult<SyncResult> {
+        self.status = ConnectorStatus::Syncing;
+        let mut result = SyncResult::empty();
+        let mut start_cursor: Option<String> = None;
+        let mut newest_seen: Option<DateTime<Utc>> = None;
+        let mut seen_ids: HashSet<String> = HashSet::new();
+
+        loop {
+            let body = build_search_body(None, start_cursor.as_deref(), Some("descending"));
+            let resp = match self.request_post(&format!("{}/search", self.api_base), body) {
+                Ok(req) => req.send().await,
+                Err(e) => {
+                    self.status = ConnectorStatus::Error;
+                    return Err(e);
+                }
+            };
+
+            let resp = resp.map_err(|e| ConnectorError::NetworkError(e.to_string()))?;
+            if !resp.status().is_success() {
+                self.status = ConnectorStatus::Error;
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(ConnectorError::ProviderError {
+                    provider: "Notion".into(),
+                    message: format!("Full-walk sync HTTP {status}: {body}"),
+                });
+            }
+
+            let page: NotionSearchResponse = resp
+                .json()
+                .await
+                .map_err(|e| ConnectorError::NetworkError(e.to_string()))?;
+
+            for obj in page.results {
+                let last_edit = parse_rfc3339_or_now(&obj.last_edited_time);
+                if newest_seen.is_none_or(|cur| last_edit > cur) {
+                    newest_seen = Some(last_edit);
+                }
+                let remote = notion_object_to_remote(&obj);
+                seen_ids.insert(remote.id.clone());
+                if known_file_ids.contains(&remote.id) {
+                    result.modified.push(remote);
+                } else {
+                    result.added.push(remote);
+                }
+            }
+
+            if page.has_more.unwrap_or(false) && page.next_cursor.is_some() {
+                start_cursor = page.next_cursor;
+            } else {
+                break;
+            }
+        }
+
+        // Anything the caller previously knew about that the full walk
+        // did not return has been deleted, trashed, or unshared upstream
+        // — surface it so the indexer can drop it locally. Mirrors the
+        // Confluence / Figma set-diff approach (Notion lacks a deletion
+        // feed, hence the periodic full walk).
+        for known in known_file_ids {
+            if !seen_ids.contains(known) {
+                result.removed.push(known.clone());
+            }
+        }
+
+        result.new_change_token = newest_seen.map(|dt| dt.to_rfc3339());
+        result.has_more = false;
+
+        self.last_sync = Some(Utc::now());
+        let added = result.added.len() as u64;
+        let removed = result.removed.len() as u64;
+        self.file_count = self
+            .file_count
+            .saturating_add(added)
+            .saturating_sub(removed);
+        // Reset the counter so the next `sync_changes` call can take
+        // the fast path until we hit the threshold again.
+        self.syncs_since_full_walk = 0;
+        self.status = ConnectorStatus::Connected;
+        Ok(result)
+    }
+
     /// Revoke local OAuth state.
     ///
     /// Notion has no public token-revocation endpoint, so this is
@@ -533,12 +696,38 @@ fn handle_common_errors(status: reqwest::StatusCode) -> ConnectorResult<()> {
     }
 }
 
-/// Build a body for Notion's workspace-level `/search` endpoint.
+/// Build a JSON body for Notion's workspace-level `/v1/search`
+/// endpoint.
 ///
-/// `query` is a genuine free-text search string — use `None` to list
-/// every accessible object.  Notion has no database-id filter on this
-/// endpoint; for "list pages under database X" call
-/// `/databases/{id}/query` instead (see `list_database_children`).
+/// ## Endpoint routing
+///
+/// Notion exposes two distinct listing endpoints and Tessera dispatches
+/// between them based on whether the caller passed a `folder_id`:
+///
+/// * `folder_id = Some(id)` → [`NotionConnector::list_database_children`]
+///   calls `POST /v1/databases/{id}/query`, which returns the pages
+///   that live inside that specific database. This endpoint does *not*
+///   accept a `query` parameter — it filters by parent database id at
+///   the URL level.
+/// * `folder_id = None` → [`NotionConnector::list_search`] calls
+///   `POST /v1/search` with the body built by this function. `/search`
+///   is workspace-scoped and returns every page and database the
+///   integration has been shared with, modulo the `query` free-text
+///   match. It has no database-id parameter — passing a database id as
+///   `query` would just do a substring match against object titles,
+///   which is why we route through `list_database_children` for that
+///   case.
+///
+/// ## Parameters
+///
+/// * `query` — a genuine free-text search string. Pass `None` (the
+///   default for sync walks) to list every accessible object.
+/// * `start_cursor` — pagination cursor returned by a prior `/search`
+///   response. Pass `None` for the first page.
+/// * `direction` — sort direction over `last_edited_time`. Defaults to
+///   `"descending"` when omitted; sync paths use `"descending"`
+///   explicitly so the boundary-break fast path can terminate as soon
+///   as it sees an item older than the previous high-water mark.
 fn build_search_body(
     query: Option<&str>,
     start_cursor: Option<&str>,
@@ -1073,5 +1262,103 @@ mod tests {
         assert_eq!(result.modified[0].id, "p-known");
         assert!(result.removed.is_empty());
         assert!(result.new_change_token.as_deref().is_some());
+    }
+
+    #[tokio::test]
+    async fn sync_changes_first_sync_full_walks_and_surfaces_deletions() {
+        // First sync (change_token = None): every Notion sync starts
+        // with a full walk because the caller has no boundary to break
+        // against. That walk also set-diffs `known_file_ids` so any
+        // page the caller previously knew about but Notion no longer
+        // returns is surfaced as a deletion.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": [
+                    { "object": "page", "id": "p-still-here", "last_edited_time": "2024-06-02T00:00:00.000Z" }
+                ],
+                "has_more": false
+            })))
+            .mount(&server)
+            .await;
+
+        let mut c = NotionConnector::with_base_url(&server.uri());
+        c.set_access_token("secret_AT");
+
+        // Caller previously indexed two pages; only one is still in
+        // the workspace listing.
+        let mut known = HashSet::new();
+        known.insert("p-still-here".to_string());
+        known.insert("p-deleted-upstream".to_string());
+
+        let result = c.sync_changes(None, &known).await.expect("sync ok");
+        assert_eq!(result.modified.len(), 1);
+        assert_eq!(result.modified[0].id, "p-still-here");
+        assert_eq!(result.removed.len(), 1, "expected one deletion");
+        assert_eq!(result.removed[0], "p-deleted-upstream");
+    }
+
+    #[tokio::test]
+    async fn sync_changes_periodic_full_walk_surfaces_deletions() {
+        // Explicitly force the every-call full walk path by setting
+        // interval = 1, then verify the set-diff is run against
+        // known_file_ids even when a change_token boundary is supplied.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": [
+                    { "object": "page", "id": "p-a", "last_edited_time": "2024-06-02T00:00:00.000Z" }
+                ],
+                "has_more": false
+            })))
+            .mount(&server)
+            .await;
+
+        let mut c = NotionConnector::with_base_url(&server.uri());
+        c.set_access_token("secret_AT");
+        c.set_full_walk_interval(1);
+
+        let mut known = HashSet::new();
+        known.insert("p-a".to_string());
+        known.insert("p-gone".to_string());
+
+        let result = c
+            .sync_changes(Some("2024-05-15T00:00:00.000Z"), &known)
+            .await
+            .expect("sync ok");
+        assert_eq!(result.modified.len(), 1);
+        assert_eq!(result.modified[0].id, "p-a");
+        // p-gone is in known_file_ids but not in the full-walk result,
+        // so it must surface as a deletion.
+        assert_eq!(result.removed.len(), 1);
+        assert_eq!(result.removed[0], "p-gone");
+    }
+
+    #[tokio::test]
+    async fn build_search_body_workspace_walk_omits_query_and_uses_descending_default() {
+        // None query → no `query` field at all (workspace-level walk).
+        // None direction → defaults to `"descending"` so the
+        // boundary-break fast path can terminate early.
+        let body = build_search_body(None, None, None);
+        let obj = body.as_object().expect("object body");
+        assert!(
+            !obj.contains_key("query"),
+            "workspace walk should not send a query filter; got {obj:?}"
+        );
+        assert_eq!(
+            obj.get("sort")
+                .and_then(|v| v.get("direction"))
+                .and_then(|v| v.as_str()),
+            Some("descending"),
+            "default sort direction should be descending; got {obj:?}"
+        );
+        assert_eq!(
+            obj.get("sort")
+                .and_then(|v| v.get("timestamp"))
+                .and_then(|v| v.as_str()),
+            Some("last_edited_time")
+        );
     }
 }
