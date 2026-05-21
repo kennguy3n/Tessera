@@ -514,7 +514,10 @@ impl NotionConnector {
                 }
             };
 
-            let resp = resp.map_err(|e| ConnectorError::NetworkError(e.to_string()))?;
+            let resp = resp.map_err(|e| {
+                self.status = ConnectorStatus::Error;
+                ConnectorError::NetworkError(e.to_string())
+            })?;
             if !resp.status().is_success() {
                 self.status = ConnectorStatus::Error;
                 let status = resp.status();
@@ -525,10 +528,13 @@ impl NotionConnector {
                 });
             }
 
-            let page: NotionSearchResponse = resp
-                .json()
-                .await
-                .map_err(|e| ConnectorError::NetworkError(e.to_string()))?;
+            let page: NotionSearchResponse = match resp.json::<NotionSearchResponse>().await {
+                Ok(p) => p,
+                Err(e) => {
+                    self.status = ConnectorStatus::Error;
+                    return Err(ConnectorError::NetworkError(e.to_string()));
+                }
+            };
 
             for obj in page.results {
                 let last_edit = parse_rfc3339_or_now(&obj.last_edited_time);
@@ -614,7 +620,10 @@ impl NotionConnector {
                 }
             };
 
-            let resp = resp.map_err(|e| ConnectorError::NetworkError(e.to_string()))?;
+            let resp = resp.map_err(|e| {
+                self.status = ConnectorStatus::Error;
+                ConnectorError::NetworkError(e.to_string())
+            })?;
             if !resp.status().is_success() {
                 self.status = ConnectorStatus::Error;
                 let status = resp.status();
@@ -625,10 +634,13 @@ impl NotionConnector {
                 });
             }
 
-            let page: NotionSearchResponse = resp
-                .json()
-                .await
-                .map_err(|e| ConnectorError::NetworkError(e.to_string()))?;
+            let page: NotionSearchResponse = match resp.json::<NotionSearchResponse>().await {
+                Ok(p) => p,
+                Err(e) => {
+                    self.status = ConnectorStatus::Error;
+                    return Err(ConnectorError::NetworkError(e.to_string()));
+                }
+            };
 
             for obj in page.results {
                 let last_edit = parse_rfc3339_or_now(&obj.last_edited_time);
@@ -716,6 +728,12 @@ impl NotionConnector {
         self.client_secret = None;
         self.last_sync = None;
         self.file_count = 0;
+        // Reset full-walk state so a reconnect within the same process
+        // is treated as a fresh connector: the first sync after
+        // re-authentication must do a full walk to catch any pages
+        // deleted / unshared while the connector was disconnected.
+        self.syncs_since_full_walk = 0;
+        self.has_done_full_walk = false;
         self.status = ConnectorStatus::Disconnected;
         Ok(())
     }
@@ -1455,6 +1473,64 @@ mod tests {
         // as deleted even though p-old was filtered from modified.
         assert_eq!(result.removed.len(), 1, "p-gone should be removed");
         assert_eq!(result.removed[0], "p-gone");
+    }
+
+    #[tokio::test]
+    async fn revoke_resets_full_walk_state_so_reconnect_forces_full_walk() {
+        // Regression: after a disconnect (revoke) and reconnect within
+        // the same process, the next sync must do a full walk so any
+        // pages deleted/unshared during the offline window are caught.
+        // Without resetting has_done_full_walk, a restored change_token
+        // would route the post-reconnect sync through the incremental
+        // fast path and miss those deletions.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "results": [
+                    { "object": "page", "id": "p-alive", "last_edited_time": "2024-08-01T00:00:00.000Z" }
+                ],
+                "has_more": false
+            })))
+            .mount(&server)
+            .await;
+
+        let mut c = NotionConnector::with_base_url(&server.uri());
+        c.set_access_token("secret_AT");
+        c.set_full_walk_interval(100);
+
+        // First sync seeds the index and flips has_done_full_walk.
+        let known_initial: HashSet<String> = ["p-alive".to_string()].into_iter().collect();
+        c.sync_changes(None, &known_initial).await.expect("seed");
+        assert!(c.has_done_full_walk, "first sync should have set flag");
+
+        // User disconnects.
+        c.revoke().await.expect("revoke");
+        assert!(
+            !c.has_done_full_walk,
+            "revoke must reset has_done_full_walk"
+        );
+        assert_eq!(c.syncs_since_full_walk, 0, "revoke must reset counter");
+
+        // User reconnects. With a high interval and the flag reset,
+        // the only thing forcing a full walk is the reset itself.
+        c.set_access_token("secret_AT_new");
+
+        let mut known_after = HashSet::new();
+        known_after.insert("p-alive".to_string());
+        known_after.insert("p-deleted-while-offline".to_string());
+
+        let result = c
+            .sync_changes(Some("2024-07-15T00:00:00.000Z"), &known_after)
+            .await
+            .expect("post-reconnect sync");
+
+        assert_eq!(
+            result.removed.len(),
+            1,
+            "post-reconnect sync must detect deletions that happened during the offline window"
+        );
+        assert_eq!(result.removed[0], "p-deleted-while-offline");
     }
 
     #[tokio::test]
