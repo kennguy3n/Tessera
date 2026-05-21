@@ -196,12 +196,18 @@ export default function TasksPage() {
     setDragOverColumn(null);
   }, []);
 
+  // `setDragOverColumn` already bails out of a re-render when the new
+  // value is identical to the previous one, so we don't need to read
+  // the current `dragOverColumn` in the callback — keeping it in deps
+  // would recreate the callback on every column hover and update the
+  // `onDragOver` prop on every column div, triggering unnecessary
+  // reconciliation during a drag pass.
   const onColumnDragOver = useCallback(
     (status: TaskStatus, e: DragEvent<HTMLDivElement>) => {
       e.preventDefault();
-      if (dragOverColumn !== status) setDragOverColumn(status);
+      setDragOverColumn(status);
     },
-    [dragOverColumn],
+    [],
   );
 
   const onColumnDrop = useCallback(
@@ -221,7 +227,22 @@ export default function TasksPage() {
         filtered.push(source.id);
         await reorder(status, filtered);
       } else {
+        // Cross-column drop. The Rust `TaskStore::update` preserves the
+        // existing `position` when not provided, so a bare
+        // `update(source.id, { status })` would leave the moved task
+        // with its old column's position — producing arbitrary order in
+        // the target column (e.g. ties broken by `created_at DESC`, or
+        // a card with position=5 inserted into a column whose existing
+        // cards have positions 0–2). Follow the same flow as the
+        // same-column branch: change status first, then call
+        // `reorder()` with the moved card appended to the end of the
+        // target column's current ordering so positions are reassigned
+        // sequentially via the bridge's `reorder_tasks` (which is the
+        // single source of truth for column ordering).
         await update(source.id, { status });
+        const targetIds = byStatus[status].map((t) => t.id);
+        targetIds.push(source.id);
+        await reorder(status, targetIds);
       }
       await refresh();
     },
