@@ -1,6 +1,6 @@
 use std::path::Path;
 use tessera_core::error::{Error, Result};
-use tessera_core::SourceId;
+use tessera_core::{SharedConnection, SourceId};
 
 use crate::indexer::Indexer;
 use crate::search::{SearchEngine, SearchResult};
@@ -21,6 +21,17 @@ impl SourceManager {
 
     pub fn new_in_memory(ignore_patterns: &[String]) -> Result<Self> {
         let store = SourceStore::open_in_memory()?;
+        let indexer = Indexer::new(ignore_patterns);
+        Ok(Self { store, indexer })
+    }
+
+    /// Build a manager backed by a [`SharedConnection`] that is also
+    /// used by other stores. Used by the napi bridge.
+    pub fn with_shared_conn(
+        conn: SharedConnection,
+        ignore_patterns: &[String],
+    ) -> Result<Self> {
+        let store = SourceStore::with_shared_conn(conn)?;
         let indexer = Indexer::new(ignore_patterns);
         Ok(Self { store, indexer })
     }

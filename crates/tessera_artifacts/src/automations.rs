@@ -37,11 +37,12 @@
 //! in a follow-up PR rather than mixing into Phase 8 scope.
 
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use tessera_core::error::{Error, Result};
 use tessera_core::types::{AutomationId, SourceId, TemplateId};
+use tessera_core::{open_shared, open_shared_in_memory, SharedConnection};
 
 /// Parse an RFC 3339 timestamp from a SQLite row, surfacing corruption as
 /// a `rusqlite::Error` instead of silently substituting the current time.
@@ -148,19 +149,21 @@ impl Automation {
 }
 
 pub struct AutomationStore {
-    conn: Connection,
+    conn: SharedConnection,
 }
 
 impl AutomationStore {
     pub fn open(path: &str) -> Result<Self> {
-        let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
-        let s = Self { conn };
-        s.init_schema()?;
-        Ok(s)
+        Self::with_shared_conn(open_shared(path)?)
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory().map_err(|e| Error::Database(e.to_string()))?;
+        Self::with_shared_conn(open_shared_in_memory()?)
+    }
+
+    /// Build a store on top of a [`SharedConnection`] that is already
+    /// shared with other stores. Used by the napi bridge.
+    pub fn with_shared_conn(conn: SharedConnection) -> Result<Self> {
         let s = Self { conn };
         s.init_schema()?;
         Ok(s)
@@ -168,6 +171,8 @@ impl AutomationStore {
 
     fn init_schema(&self) -> Result<()> {
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS automations (
                     id TEXT PRIMARY KEY,
@@ -189,6 +194,8 @@ impl AutomationStore {
         let trigger_json = serde_json::to_string(&a.trigger)?;
         let action_json = serde_json::to_string(&a.action)?;
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute(
                 "INSERT INTO automations (
                     id, name, trigger_json, action_json, enabled,
@@ -211,8 +218,8 @@ impl AutomationStore {
     }
 
     pub fn get(&self, id: &AutomationId) -> Result<Option<Automation>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare(
                 "SELECT id, name, trigger_json, action_json, enabled,
                         created_at, updated_at, last_run_at, last_run_status
@@ -232,8 +239,8 @@ impl AutomationStore {
     }
 
     pub fn list(&self) -> Result<Vec<Automation>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare(
                 "SELECT id, name, trigger_json, action_json, enabled,
                         created_at, updated_at, last_run_at, last_run_status
@@ -252,6 +259,8 @@ impl AutomationStore {
 
     pub fn set_enabled(&self, id: &AutomationId, enabled: bool) -> Result<()> {
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute(
                 "UPDATE automations SET enabled = ?1, updated_at = ?2 WHERE id = ?3",
                 params![enabled as i64, Utc::now().to_rfc3339(), id.to_string(),],
@@ -263,6 +272,8 @@ impl AutomationStore {
     pub fn delete(&self, id: &AutomationId) -> Result<bool> {
         let rows = self
             .conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute(
                 "DELETE FROM automations WHERE id = ?1",
                 params![id.to_string()],
@@ -275,6 +286,8 @@ impl AutomationStore {
     /// status the UI can render (e.g. "ok", "failed: <message>").
     pub fn record_run(&self, id: &AutomationId, ran_at: DateTime<Utc>, status: &str) -> Result<()> {
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute(
                 "UPDATE automations SET last_run_at = ?1, last_run_status = ?2,
                         updated_at = ?3 WHERE id = ?4",
@@ -527,5 +540,28 @@ mod tests {
         let due_list = s.due_scheduled(now).unwrap();
         assert_eq!(due_list.len(), 1);
         assert_eq!(due_list[0].name, "due");
+    }
+
+    #[test]
+    fn automation_store_shares_database_with_clone() {
+        // Two stores built on the same SharedConnection see the same
+        // rows. Mirrors `audit_store_shares_database_with_clone` so the
+        // shared-connection refactor is exercised per-crate.
+        let conn = tessera_core::open_shared_in_memory().unwrap();
+        let a = AutomationStore::with_shared_conn(conn.clone()).unwrap();
+        let b = AutomationStore::with_shared_conn(conn).unwrap();
+        let auto = Automation::new(
+            "shared",
+            AutomationTrigger::Schedule {
+                interval_seconds: 60,
+            },
+            AutomationAction::ReindexSource {
+                source_id: SourceId::new(),
+            },
+        );
+        a.create(&auto).unwrap();
+        let list = b.list().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "shared");
     }
 }

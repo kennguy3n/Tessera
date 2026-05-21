@@ -1,4 +1,5 @@
 use tessera_core::error::Result;
+use tessera_core::SharedConnection;
 
 use crate::event::{AuditEvent, AuditEventType};
 use crate::store::AuditStore;
@@ -15,6 +16,13 @@ impl AuditLogger {
 
     pub fn new_in_memory() -> Result<Self> {
         let store = AuditStore::open_in_memory()?;
+        Ok(Self { store })
+    }
+
+    /// Build a logger backed by a [`SharedConnection`] that is also
+    /// used by other stores. Used by the napi bridge.
+    pub fn with_shared_conn(conn: SharedConnection) -> Result<Self> {
+        let store = AuditStore::with_shared_conn(conn)?;
         Ok(Self { store })
     }
 

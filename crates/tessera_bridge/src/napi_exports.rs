@@ -7,6 +7,7 @@ use tessera_artifacts::manager::ArtifactManager;
 use tessera_artifacts::tasks::TaskStore;
 use tessera_audit::logger::AuditLogger;
 use tessera_citations::tracker::CitationTracker;
+use tessera_core::open_shared;
 use tessera_sources::manager::SourceManager;
 
 use crate::artifacts;
@@ -26,6 +27,14 @@ static APP_STATE: std::sync::OnceLock<AppState> = std::sync::OnceLock::new();
 // → 5. task_store → 6. automation_store
 // (audit_logger first so every other path can log under its lock; task_store
 // and automation_store are leaf locks — nothing else acquires them.)
+//
+// Every store is also internally backed by a single shared
+// `Arc<Mutex<rusqlite::Connection>>` (opened once in `init_bridge`), so
+// regardless of which outer per-store mutex is held, all DB work
+// ultimately serialises on the same inner connection. That collapses
+// the lock graph to a single physical writer and means the per-store
+// outer mutexes really only protect interior state on the Rust side
+// (e.g. `ArtifactManager::last_version_at`).
 struct AppState {
     source_manager: Mutex<SourceManager>,
     artifact_manager: Mutex<ArtifactManager>,
@@ -36,38 +45,35 @@ struct AppState {
     template_dir: String,
 }
 
-// Connection-pool note: Each store below opens its own
-// `rusqlite::Connection` to the same `db_path`. That keeps the lock graph
-// simple (each store owns its mutex) and works fine because N-API
-// callbacks are single-threaded so writes are already serialised, but it
-// uses 6 file handles where 1 would suffice and bloats per-instance
-// memory. The follow-up is to thread a shared `Arc<Mutex<Connection>>`
-// (or an r2d2 pool with `min_size=1`) through `SourceManager` /
-// `ArtifactManager` / `AuditLogger` / `CitationTracker` / `TaskStore` /
-// `AutomationStore`. That refactor changes ~6 store constructors and
-// dozens of call sites, so it lives in a dedicated PR — not in Phase 8.
 #[napi]
 pub fn init_bridge(db_path: String, template_dir: String) -> napi::Result<()> {
-    let source_manager =
-        SourceManager::new(&db_path, &[]).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let artifact_manager =
-        ArtifactManager::new(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let audit_logger =
-        AuditLogger::new(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let citation_tracker =
-        CitationTracker::new(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let citation_tracker = Mutex::new(citation_tracker);
-    let task_store =
-        TaskStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let automation_store =
-        AutomationStore::open(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Open a single shared `rusqlite::Connection` and hand `Arc` clones to
+    // each store via `with_shared_conn`. This reduces the file-descriptor
+    // / per-connection-cache footprint from 6 to 1 and ensures every
+    // writer ultimately serialises on the same inner mutex, which keeps
+    // SQLite's write semantics unchanged even though the outer per-store
+    // mutexes used to be the only serialisation boundary.
+    let conn = open_shared(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+    let source_manager = SourceManager::with_shared_conn(conn.clone(), &[])
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let artifact_manager = ArtifactManager::with_shared_conn(conn.clone())
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let audit_logger = AuditLogger::with_shared_conn(conn.clone())
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let citation_tracker = CitationTracker::with_shared_conn(conn.clone())
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let task_store = TaskStore::with_shared_conn(conn.clone())
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let automation_store = AutomationStore::with_shared_conn(conn)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
     APP_STATE
         .set(AppState {
             source_manager: Mutex::new(source_manager),
             artifact_manager: Mutex::new(artifact_manager),
             audit_logger: Mutex::new(audit_logger),
-            citation_tracker,
+            citation_tracker: Mutex::new(citation_tracker),
             task_store: Mutex::new(task_store),
             automation_store: Mutex::new(automation_store),
             template_dir,

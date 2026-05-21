@@ -1,6 +1,6 @@
-use rusqlite::{params, Connection};
+use rusqlite::params;
 use tessera_core::error::{Error, Result};
-use tessera_core::ArtifactId;
+use tessera_core::{open_shared, open_shared_in_memory, ArtifactId, SharedConnection};
 
 use crate::artifact::Artifact;
 
@@ -10,19 +10,21 @@ fn parse_datetime(s: &str) -> chrono::DateTime<chrono::Utc> {
 }
 
 pub struct ArtifactStore {
-    conn: Connection,
+    conn: SharedConnection,
 }
 
 impl ArtifactStore {
     pub fn open(path: &str) -> Result<Self> {
-        let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
-        let store = Self { conn };
-        store.init_schema()?;
-        Ok(store)
+        Self::with_shared_conn(open_shared(path)?)
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory().map_err(|e| Error::Database(e.to_string()))?;
+        Self::with_shared_conn(open_shared_in_memory()?)
+    }
+
+    /// Build a store on top of a [`SharedConnection`] that is already
+    /// shared with other stores. Used by the napi bridge.
+    pub fn with_shared_conn(conn: SharedConnection) -> Result<Self> {
         let store = Self { conn };
         store.init_schema()?;
         Ok(store)
@@ -30,6 +32,8 @@ impl ArtifactStore {
 
     fn init_schema(&self) -> Result<()> {
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS artifacts (
                     id TEXT PRIMARY KEY,
@@ -60,6 +64,8 @@ impl ArtifactStore {
         let citations_json = serde_json::to_string(&artifact.citations)
             .map_err(|e| Error::Database(e.to_string()))?;
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute(
                 "INSERT INTO artifacts (id, title, artifact_type, template_id, content, citations, created_at, updated_at, version)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -83,6 +89,8 @@ impl ArtifactStore {
         let citations_json = serde_json::to_string(&artifact.citations)
             .map_err(|e| Error::Database(e.to_string()))?;
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute(
                 "UPDATE artifacts SET title = ?1, content = ?2, citations = ?3, updated_at = ?4, version = ?5 WHERE id = ?6",
                 params![
@@ -100,6 +108,8 @@ impl ArtifactStore {
 
     pub fn get(&self, id: &ArtifactId) -> Result<Artifact> {
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .query_row(
                 "SELECT id, title, artifact_type, template_id, content, citations, created_at, updated_at, version FROM artifacts WHERE id = ?1",
                 params![id.to_string()],
@@ -162,8 +172,8 @@ impl ArtifactStore {
     }
 
     pub fn list(&self) -> Result<Vec<Artifact>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare(
                 "SELECT id, title, artifact_type, template_id, content, citations, created_at, updated_at, version FROM artifacts ORDER BY updated_at DESC",
             )
@@ -237,6 +247,8 @@ impl ArtifactStore {
 
     pub fn delete(&self, id: &ArtifactId) -> Result<()> {
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute(
                 "DELETE FROM artifacts WHERE id = ?1",
                 params![id.to_string()],
@@ -253,6 +265,8 @@ impl ArtifactStore {
     ) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute(
                 "INSERT INTO artifact_versions (artifact_id, version_number, content_snapshot, created_at) VALUES (?1, ?2, ?3, ?4)",
                 params![artifact_id.to_string(), version_number, content, now],
@@ -262,8 +276,8 @@ impl ArtifactStore {
     }
 
     pub fn list_versions(&self, artifact_id: &ArtifactId) -> Result<Vec<ArtifactVersion>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare(
                 "SELECT version_number, content_snapshot, created_at FROM artifact_versions WHERE artifact_id = ?1 ORDER BY version_number DESC",
             )
@@ -291,6 +305,8 @@ impl ArtifactStore {
         version_number: u32,
     ) -> Result<ArtifactVersion> {
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .query_row(
                 "SELECT version_number, content_snapshot, created_at FROM artifact_versions WHERE artifact_id = ?1 AND version_number = ?2",
                 params![artifact_id.to_string(), version_number],
@@ -371,5 +387,19 @@ mod tests {
 
         let result = store.get(&artifact.id);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn artifact_store_shares_database_with_clone() {
+        // Two stores built on the same SharedConnection see the same
+        // rows. Mirrors `audit_store_shares_database_with_clone` so the
+        // shared-connection refactor is exercised per-crate.
+        let conn = tessera_core::open_shared_in_memory().unwrap();
+        let a = ArtifactStore::with_shared_conn(conn.clone()).unwrap();
+        let b = ArtifactStore::with_shared_conn(conn).unwrap();
+        let artifact = Artifact::new("Shared".to_string(), ArtifactType::Document, None);
+        a.insert(&artifact).unwrap();
+        let loaded = b.get(&artifact.id).unwrap();
+        assert_eq!(loaded.title, "Shared");
     }
 }

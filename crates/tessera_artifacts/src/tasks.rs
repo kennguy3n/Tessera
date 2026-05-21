@@ -11,10 +11,11 @@
 //! "open the source" affordances.
 
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tessera_core::error::{Error, Result};
 use tessera_core::types::{SourceId, TaskId, TaskPriority, TaskStatus};
+use tessera_core::{open_shared, open_shared_in_memory, SharedConnection};
 
 /// Parse an RFC 3339 timestamp from a SQLite row, surfacing corruption as
 /// a `rusqlite::Error` instead of silently substituting the current time.
@@ -101,19 +102,21 @@ pub struct TaskUpdate {
 }
 
 pub struct TaskStore {
-    conn: Connection,
+    conn: SharedConnection,
 }
 
 impl TaskStore {
     pub fn open(path: &str) -> Result<Self> {
-        let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
-        let s = Self { conn };
-        s.init_schema()?;
-        Ok(s)
+        Self::with_shared_conn(open_shared(path)?)
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory().map_err(|e| Error::Database(e.to_string()))?;
+        Self::with_shared_conn(open_shared_in_memory()?)
+    }
+
+    /// Build a store on top of a [`SharedConnection`] that is already
+    /// shared with other stores. Used by the napi bridge.
+    pub fn with_shared_conn(conn: SharedConnection) -> Result<Self> {
         let s = Self { conn };
         s.init_schema()?;
         Ok(s)
@@ -121,6 +124,8 @@ impl TaskStore {
 
     fn init_schema(&self) -> Result<()> {
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY,
@@ -146,6 +151,8 @@ impl TaskStore {
 
     pub fn create(&self, task: &Task) -> Result<()> {
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute(
                 "INSERT INTO tasks (
                     id, title, description, status, priority, position,
@@ -172,8 +179,8 @@ impl TaskStore {
     }
 
     pub fn get(&self, id: &TaskId) -> Result<Option<Task>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare(
                 "SELECT id, title, description, status, priority, position,
                         assignee, due_date, source_id, extracted_item_id,
@@ -195,8 +202,8 @@ impl TaskStore {
     /// Return all tasks ordered by (status, position) so the Kanban UI
     /// can render them directly.
     pub fn list(&self) -> Result<Vec<Task>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare(
                 "SELECT id, title, description, status, priority, position,
                         assignee, due_date, source_id, extracted_item_id,
@@ -215,8 +222,8 @@ impl TaskStore {
     }
 
     pub fn list_by_status(&self, status: TaskStatus) -> Result<Vec<Task>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare(
                 "SELECT id, title, description, status, priority, position,
                         assignee, due_date, source_id, extracted_item_id,
@@ -249,6 +256,8 @@ impl TaskStore {
         let updated_at = Utc::now();
 
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute(
                 "UPDATE tasks SET title=?1, description=?2, status=?3, priority=?4,
                         position=?5, assignee=?6, due_date=?7, updated_at=?8
@@ -285,6 +294,8 @@ impl TaskStore {
     pub fn delete(&self, id: &TaskId) -> Result<bool> {
         let rows = self
             .conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute("DELETE FROM tasks WHERE id = ?1", params![id.to_string()])
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(rows > 0)
@@ -293,9 +304,14 @@ impl TaskStore {
     /// Atomically reorder tasks within a single status column. The
     /// provided `ordered_ids` slice defines the new ordering — task at
     /// index N gets `position = N`. Tasks not listed are left untouched.
-    pub fn reorder_in_status(&mut self, status: TaskStatus, ordered_ids: &[TaskId]) -> Result<()> {
-        let tx = self
-            .conn
+    ///
+    /// Takes `&self` (not `&mut self`) now that the underlying
+    /// `Connection` lives behind an `Arc<Mutex<_>>`; the transaction is
+    /// held under the same mutex guard as every other store operation,
+    /// so write-serialisation is unchanged.
+    pub fn reorder_in_status(&self, status: TaskStatus, ordered_ids: &[TaskId]) -> Result<()> {
+        let mut conn = self.conn.lock().expect("connection mutex poisoned");
+        let tx = conn
             .transaction()
             .map_err(|e| Error::Database(e.to_string()))?;
         for (idx, tid) in ordered_ids.iter().enumerate() {
@@ -477,7 +493,7 @@ mod tests {
 
     #[test]
     fn reorder_in_status_sets_positions_transactionally() {
-        let mut s = store();
+        let s = store();
         let a = Task::new("A", TaskStatus::Todo, TaskPriority::Low);
         let b = Task::new("B", TaskStatus::Todo, TaskPriority::Low);
         let c = Task::new("C", TaskStatus::Todo, TaskPriority::Low);
@@ -512,5 +528,19 @@ mod tests {
             )
             .unwrap();
         assert_eq!(cleared.assignee, None);
+    }
+
+    #[test]
+    fn task_store_shares_database_with_clone() {
+        // Two stores built on the same SharedConnection see the same
+        // rows. Mirrors `audit_store_shares_database_with_clone` so the
+        // shared-connection refactor is exercised per-crate.
+        let conn = tessera_core::open_shared_in_memory().unwrap();
+        let a = TaskStore::with_shared_conn(conn.clone()).unwrap();
+        let b = TaskStore::with_shared_conn(conn).unwrap();
+        let t = Task::new("Shared task", TaskStatus::Todo, TaskPriority::Medium);
+        a.create(&t).unwrap();
+        let loaded = b.get(&t.id).unwrap().expect("task visible via clone");
+        assert_eq!(loaded.title, "Shared task");
     }
 }

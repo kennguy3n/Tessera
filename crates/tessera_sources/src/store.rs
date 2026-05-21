@@ -1,6 +1,8 @@
-use rusqlite::{params, Connection};
+use rusqlite::params;
 use tessera_core::error::{Error, Result};
-use tessera_core::{SourceId, SourceStatus, SourceType};
+use tessera_core::{
+    open_shared, open_shared_in_memory, SharedConnection, SourceId, SourceStatus, SourceType,
+};
 
 use crate::chunker::Chunk;
 use crate::source::Source;
@@ -17,19 +19,21 @@ fn parse_datetime_opt(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 }
 
 pub struct SourceStore {
-    conn: Connection,
+    conn: SharedConnection,
 }
 
 impl SourceStore {
     pub fn open(path: &str) -> Result<Self> {
-        let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
-        let store = Self { conn };
-        store.init_schema()?;
-        Ok(store)
+        Self::with_shared_conn(open_shared(path)?)
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory().map_err(|e| Error::Database(e.to_string()))?;
+        Self::with_shared_conn(open_shared_in_memory()?)
+    }
+
+    /// Build a store on top of a [`SharedConnection`] that is already
+    /// shared with other stores. Used by the napi bridge.
+    pub fn with_shared_conn(conn: SharedConnection) -> Result<Self> {
         let store = Self { conn };
         store.init_schema()?;
         Ok(store)
@@ -37,6 +41,8 @@ impl SourceStore {
 
     fn init_schema(&self) -> Result<()> {
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute_batch(
                 "
             CREATE TABLE IF NOT EXISTS sources (
@@ -95,6 +101,8 @@ impl SourceStore {
 
     pub fn add_source(&self, source: &Source) -> Result<()> {
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .execute(
                 "INSERT INTO sources (id, source_type, path, status, created_at, last_indexed, file_count)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -116,9 +124,9 @@ impl SourceStore {
 
     pub fn remove_source(&self, source_id: &SourceId) -> Result<()> {
         let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
 
-        let file_ids: Vec<i64> = self
-            .conn
+        let file_ids: Vec<i64> = conn
             .prepare("SELECT id FROM indexed_files WHERE source_id = ?1")
             .map_err(|e| Error::Database(e.to_string()))?
             .query_map(params![id_str], |row| row.get(0))
@@ -127,31 +135,28 @@ impl SourceStore {
             .collect();
 
         for fid in &file_ids {
-            self.conn
-                .execute(
-                    "DELETE FROM chunks WHERE indexed_file_id = ?1",
-                    params![fid],
-                )
-                .map_err(|e| Error::Database(e.to_string()))?;
-        }
-
-        self.conn
-            .execute(
-                "DELETE FROM indexed_files WHERE source_id = ?1",
-                params![id_str],
+            conn.execute(
+                "DELETE FROM chunks WHERE indexed_file_id = ?1",
+                params![fid],
             )
             .map_err(|e| Error::Database(e.to_string()))?;
+        }
 
-        self.conn
-            .execute("DELETE FROM sources WHERE id = ?1", params![id_str])
+        conn.execute(
+            "DELETE FROM indexed_files WHERE source_id = ?1",
+            params![id_str],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+
+        conn.execute("DELETE FROM sources WHERE id = ?1", params![id_str])
             .map_err(|e| Error::Database(e.to_string()))?;
 
         Ok(())
     }
 
     pub fn list_sources(&self) -> Result<Vec<Source>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare(
                 "SELECT id, source_type, path, status, created_at, last_indexed, file_count FROM sources",
             )
@@ -209,6 +214,8 @@ impl SourceStore {
     pub fn get_source(&self, source_id: &SourceId) -> Result<Source> {
         let id_str = source_id.to_string();
         self.conn
+            .lock()
+            .expect("connection mutex poisoned")
             .query_row(
                 "SELECT id, source_type, path, status, created_at, last_indexed, file_count FROM sources WHERE id = ?1",
                 params![id_str],
@@ -254,20 +261,19 @@ impl SourceStore {
             serde_json::to_string(&status).map_err(|e| Error::Database(e.to_string()))?;
         let now = chrono::Utc::now().to_rfc3339();
 
+        let conn = self.conn.lock().expect("connection mutex poisoned");
         if let Some(count) = file_count {
-            self.conn
-                .execute(
-                    "UPDATE sources SET status = ?1, last_indexed = ?2, file_count = ?3 WHERE id = ?4",
-                    params![status_str, now, count as i64, id_str],
-                )
-                .map_err(|e| Error::Database(e.to_string()))?;
+            conn.execute(
+                "UPDATE sources SET status = ?1, last_indexed = ?2, file_count = ?3 WHERE id = ?4",
+                params![status_str, now, count as i64, id_str],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
         } else {
-            self.conn
-                .execute(
-                    "UPDATE sources SET status = ?1 WHERE id = ?2",
-                    params![status_str, id_str],
-                )
-                .map_err(|e| Error::Database(e.to_string()))?;
+            conn.execute(
+                "UPDATE sources SET status = ?1 WHERE id = ?2",
+                params![status_str, id_str],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
         }
         Ok(())
     }
@@ -280,9 +286,9 @@ impl SourceStore {
         last_modified: &str,
     ) -> Result<i64> {
         let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
 
-        let existing: Option<(i64, String)> = self
-            .conn
+        let existing: Option<(i64, String)> = conn
             .query_row(
                 "SELECT id, hash FROM indexed_files WHERE path = ?1",
                 params![path],
@@ -294,56 +300,54 @@ impl SourceStore {
             if old_hash == hash {
                 return Ok(file_id);
             }
-            self.conn
-                .execute(
-                    "DELETE FROM chunks WHERE indexed_file_id = ?1",
-                    params![file_id],
-                )
-                .map_err(|e| Error::Database(e.to_string()))?;
-            self.conn
-                .execute(
-                    "UPDATE indexed_files SET hash = ?1, last_modified = ?2, chunk_count = 0 WHERE id = ?3",
-                    params![hash, last_modified, file_id],
-                )
-                .map_err(|e| Error::Database(e.to_string()))?;
+            conn.execute(
+                "DELETE FROM chunks WHERE indexed_file_id = ?1",
+                params![file_id],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+            conn.execute(
+                "UPDATE indexed_files SET hash = ?1, last_modified = ?2, chunk_count = 0 WHERE id = ?3",
+                params![hash, last_modified, file_id],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
             Ok(file_id)
         } else {
-            self.conn
-                .execute(
-                    "INSERT INTO indexed_files (source_id, path, hash, last_modified, chunk_count) VALUES (?1, ?2, ?3, ?4, 0)",
-                    params![id_str, path, hash, last_modified],
-                )
-                .map_err(|e| Error::Database(e.to_string()))?;
-            Ok(self.conn.last_insert_rowid())
+            conn.execute(
+                "INSERT INTO indexed_files (source_id, path, hash, last_modified, chunk_count) VALUES (?1, ?2, ?3, ?4, 0)",
+                params![id_str, path, hash, last_modified],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+            Ok(conn.last_insert_rowid())
         }
     }
 
     pub fn insert_chunks(&self, indexed_file_id: i64, chunks: &[Chunk]) -> Result<()> {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "INSERT INTO chunks (indexed_file_id, chunk_index, byte_offset, content, hash)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-            )
-            .map_err(|e| Error::Database(e.to_string()))?;
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        {
+            let mut stmt = conn
+                .prepare(
+                    "INSERT INTO chunks (indexed_file_id, chunk_index, byte_offset, content, hash)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                )
+                .map_err(|e| Error::Database(e.to_string()))?;
 
-        for chunk in chunks {
-            stmt.execute(params![
-                indexed_file_id,
-                chunk.chunk_index as i64,
-                chunk.byte_offset as i64,
-                chunk.content,
-                chunk.hash,
-            ])
-            .map_err(|e| Error::Database(e.to_string()))?;
+            for chunk in chunks {
+                stmt.execute(params![
+                    indexed_file_id,
+                    chunk.chunk_index as i64,
+                    chunk.byte_offset as i64,
+                    chunk.content,
+                    chunk.hash,
+                ])
+                .map_err(|e| Error::Database(e.to_string()))?;
+            }
         }
 
-        self.conn
-            .execute(
-                "UPDATE indexed_files SET chunk_count = ?1 WHERE id = ?2",
-                params![chunks.len() as i64, indexed_file_id],
-            )
-            .map_err(|e| Error::Database(e.to_string()))?;
+        conn.execute(
+            "UPDATE indexed_files SET chunk_count = ?1 WHERE id = ?2",
+            params![chunks.len() as i64, indexed_file_id],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
 
         Ok(())
     }
@@ -351,6 +355,8 @@ impl SourceStore {
     pub fn get_file_hash(&self, path: &str) -> Result<Option<String>> {
         let result = self
             .conn
+            .lock()
+            .expect("connection mutex poisoned")
             .query_row(
                 "SELECT hash FROM indexed_files WHERE path = ?1",
                 params![path],
@@ -361,27 +367,26 @@ impl SourceStore {
     }
 
     pub fn remove_indexed_file(&self, path: &str) -> Result<()> {
-        if let Ok(file_id) = self.conn.query_row(
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        if let Ok(file_id) = conn.query_row(
             "SELECT id FROM indexed_files WHERE path = ?1",
             params![path],
             |row| row.get::<_, i64>(0),
         ) {
-            self.conn
-                .execute(
-                    "DELETE FROM chunks WHERE indexed_file_id = ?1",
-                    params![file_id],
-                )
-                .map_err(|e| Error::Database(e.to_string()))?;
-            self.conn
-                .execute("DELETE FROM indexed_files WHERE id = ?1", params![file_id])
+            conn.execute(
+                "DELETE FROM chunks WHERE indexed_file_id = ?1",
+                params![file_id],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+            conn.execute("DELETE FROM indexed_files WHERE id = ?1", params![file_id])
                 .map_err(|e| Error::Database(e.to_string()))?;
         }
         Ok(())
     }
 
     pub fn search_fts(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare(
                 "SELECT c.content, c.hash, c.chunk_index, c.byte_offset, f.path,
                         f.source_id, rank
@@ -417,6 +422,8 @@ impl SourceStore {
         let id_str = source_id.to_string();
         let count: i64 = self
             .conn
+            .lock()
+            .expect("connection mutex poisoned")
             .query_row(
                 "SELECT COUNT(*) FROM indexed_files WHERE source_id = ?1",
                 params![id_str],
@@ -428,8 +435,8 @@ impl SourceStore {
 
     pub fn get_chunk_contents_for_source(&self, source_id: &SourceId) -> Result<Vec<String>> {
         let id_str = source_id.to_string();
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare(
                 "SELECT c.content FROM chunks c
                  INNER JOIN indexed_files f ON c.indexed_file_id = f.id
@@ -448,7 +455,7 @@ impl SourceStore {
     }
 
     pub fn get_current_file_hash(&self, file_path: &str) -> Result<Option<String>> {
-        let result = self.conn.query_row(
+        let result = self.conn.lock().expect("connection mutex poisoned").query_row(
             "SELECT hash FROM indexed_files WHERE path = ?1 ORDER BY rowid DESC LIMIT 1",
             params![file_path],
             |row| row.get::<_, String>(0),
@@ -462,8 +469,8 @@ impl SourceStore {
 
     pub fn list_indexed_files(&self, source_id: &SourceId) -> Result<Vec<IndexedFile>> {
         let id_str = source_id.to_string();
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
             .prepare(
                 "SELECT path, hash, last_modified, chunk_count FROM indexed_files WHERE source_id = ?1",
             )
@@ -623,5 +630,20 @@ mod tests {
 
         let count = store.file_count_for_source(&source.id).unwrap();
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn source_store_shares_database_with_clone() {
+        // Two stores built on the same SharedConnection see the same
+        // rows. Mirrors `audit_store_shares_database_with_clone` so the
+        // shared-connection refactor is exercised per-crate.
+        let conn = tessera_core::open_shared_in_memory().unwrap();
+        let a = SourceStore::with_shared_conn(conn.clone()).unwrap();
+        let b = SourceStore::with_shared_conn(conn).unwrap();
+        let source = Source::new_local_folder("/tmp/shared".to_string());
+        a.add_source(&source).unwrap();
+        let sources = b.list_sources().unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].path, "/tmp/shared");
     }
 }

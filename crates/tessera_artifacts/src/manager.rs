@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use tessera_core::error::Result;
-use tessera_core::{ArtifactId, ArtifactType, CitationId, TemplateId};
+use tessera_core::{ArtifactId, ArtifactType, CitationId, SharedConnection, TemplateId};
 
 use crate::artifact::Artifact;
 use crate::store::{ArtifactStore, ArtifactVersion};
@@ -28,6 +28,16 @@ impl ArtifactManager {
 
     pub fn new_in_memory() -> Result<Self> {
         let store = ArtifactStore::open_in_memory()?;
+        Ok(Self {
+            store,
+            last_version_at: Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// Build a manager backed by a [`SharedConnection`] that is also
+    /// used by other stores. Used by the napi bridge.
+    pub fn with_shared_conn(conn: SharedConnection) -> Result<Self> {
+        let store = ArtifactStore::with_shared_conn(conn)?;
         Ok(Self {
             store,
             last_version_at: Mutex::new(HashMap::new()),
