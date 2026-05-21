@@ -98,6 +98,9 @@ export interface ReplaceCitationRequest {
   sourceType: string;
   sourceTitle: string;
   sourceUri: string;
+  /** Required by the Rust N-API `ReplaceCitationRequest`; omitting
+   *  it causes deserialization to fail at the bridge call site. */
+  chunkHash: string;
   page: number | null;
   confidence: number;
 }

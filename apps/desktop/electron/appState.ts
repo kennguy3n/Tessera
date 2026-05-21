@@ -214,6 +214,7 @@ export interface ReplaceCitationRequest {
   sourceType: string;
   sourceTitle: string;
   sourceUri: string;
+  chunkHash: string;
   page: number | null;
   confidence: number;
 }

@@ -356,6 +356,7 @@ function ReplaceCitationDialog({
         sourceType: "local_file",
         sourceTitle: hit.sourcePath.split("/").pop() || hit.sourcePath,
         sourceUri: hit.sourcePath,
+        chunkHash: hit.chunkHash,
         page: null,
         confidence: hit.relevanceScore,
       });

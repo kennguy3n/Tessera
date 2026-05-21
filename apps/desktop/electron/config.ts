@@ -116,9 +116,42 @@ export function saveConfig(config: AppConfig): void {
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
 }
 
-export function updateConfig(partial: Partial<AppConfig>): void {
+/**
+ * Partial update payload accepted by {@link updateConfig}.
+ *
+ * The nested `externalProvider` may be a partial object: any fields
+ * the caller omits are taken from the currently persisted provider
+ * (or its defaults if no config exists yet). This lets callers say
+ * `updateConfig({ externalProvider: { enabled: true } })` without
+ * accidentally clobbering `apiUrl`, `apiKeyRef`, etc.
+ */
+export type AppConfigPartial = Omit<Partial<AppConfig>, "externalProvider"> & {
+  externalProvider?: Partial<ExternalProviderConfig>;
+};
+
+/**
+ * Apply a partial update to the on-disk config.
+ *
+ * Top-level fields are shallow-merged. The nested
+ * {@link ExternalProviderConfig} is merged field-by-field so
+ * passing only a subset of provider fields is safe; anyone wanting
+ * to fully replace the provider can pass the complete object.
+ */
+export function updateConfig(partial: AppConfigPartial): void {
   const current = loadConfig();
-  const updated = { ...current, ...partial };
+  const { externalProvider: providerPartial, ...topLevel } = partial;
+  const mergedProvider: ExternalProviderConfig | undefined =
+    providerPartial !== undefined
+      ? {
+          ...current.externalProvider,
+          ...providerPartial,
+        }
+      : undefined;
+  const updated: AppConfig = {
+    ...current,
+    ...topLevel,
+    ...(mergedProvider ? { externalProvider: mergedProvider } : {}),
+  };
   saveConfig(updated);
 }
 

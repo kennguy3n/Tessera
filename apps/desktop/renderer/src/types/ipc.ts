@@ -86,6 +86,10 @@ export interface ReplaceCitationRequest {
   sourceType: string;
   sourceTitle: string;
   sourceUri: string;
+  /** Hash of the new source chunk. Required by the Rust N-API
+   *  `ReplaceCitationRequest` struct — without it, the bridge call
+   *  fails to deserialize and the entire replace flow throws. */
+  chunkHash: string;
   page: number | null;
   confidence: number;
 }

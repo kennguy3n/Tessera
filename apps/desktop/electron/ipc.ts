@@ -596,6 +596,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("citations:replace", async (_event, req: unknown) => {
     const bridge = getBridge();
     if (bridge) {
+      // The inline shape MUST match the Rust N-API
+      // `ReplaceCitationRequest` struct in
+      // `crates/tessera_bridge/src/citations.rs` — in particular,
+      // `chunkHash` is required so the new citation can be looked
+      // up in the source store on the Rust side.
       return bridge.bridgeReplaceCitation(
         req as {
           artifactId: string;
@@ -604,6 +609,7 @@ export function registerIpcHandlers(): void {
           sourceType: string;
           sourceTitle: string;
           sourceUri: string;
+          chunkHash: string;
           page: number | null;
           confidence: number;
         },
