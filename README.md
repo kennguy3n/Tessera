@@ -90,10 +90,10 @@ for connect/sync/disconnect.
 
 | Artifact | Description |
 |---|---|
-| Documents | PRDs, proposals, SOPs, reports, memos |
+| Documents | PRDs, proposals, SOPs, reports, memos, forms |
 | Slides | QBRs, strategy decks, review presentations |
 | Sheets | Budgets, scorecards, roadmaps, trackers |
-| Bases | Vendor registers, risk registers, roadmap tables — five views (Grid / Kanban / Calendar / Timeline / Gallery) over the same records |
+| Bases | Vendor registers, risk registers, roadmap tables, asset inventory — five views (Grid / Kanban / Calendar / Timeline / Gallery) over the same records |
 | Infographics | Stats overview, process flow, comparison layouts with icon + heading + stat blocks |
 | Landing pages | Hero / features / stats / testimonials / CTA sections, exportable as standalone HTML or PDF |
 
@@ -125,8 +125,9 @@ for connect/sync/disconnect.
 | Local storage | SQLite / SQLCipher |
 | Model runtime | llama.cpp / PrismML sidecar |
 | Apple Silicon acceleration | MLX |
+| External LLM provider *(optional)* | OpenAI-compatible / Anthropic / custom — API key stored in OS keychain, disabled by default |
 | Electron ↔ Rust bridge | N-API |
-| Packaging | electron-builder |
+| Packaging | electron-builder (AppImage / .deb / .rpm / .dmg / NSIS exe) |
 
 ---
 
@@ -278,10 +279,10 @@ tessera/
 │   ├── tessera_runtime/         # Local model runtime management
 │   └── tessera_audit/           # Append-only audit logging
 ├── templates/               # YAML artifact templates
-│   ├── documents/           # PRD, Proposal, SOP, Report, Memo, Meeting agenda, Project plan, Task list, Launch checklist, Meeting notes, Brief, Purchase / Budget / Policy / Vendor approval flows
+│   ├── documents/           # PRD, Proposal, SOP, Report, Memo, Form, Meeting agenda, Project plan, Task list, Launch checklist, Meeting notes, Brief, Purchase / Budget / Policy / Vendor approval flows
 │   ├── slides/              # QBR, Strategy, Review, Training, Pitch
-│   ├── sheets/              # Budget, Scorecard, Roadmap
-│   ├── bases/               # Vendor Register, Risk Register, Decision Log
+│   ├── sheets/              # Budget, Scorecard, Roadmap, Tracker, Inventory
+│   ├── bases/               # Vendor Register, Risk Register, Decision Log, Asset Inventory, Roadmap
 │   ├── infographics/        # Stats overview, Process flow, Comparison
 │   ├── landingpages/        # SaaS product landing page
 │   └── grammars/            # GBNF grammar files for structured LLM output
@@ -322,6 +323,31 @@ Tessera's UI follows the **KChat design system**
 | **Secondary button** | Outlined with `#111827` border, dark text, uppercase tracking |
 | **Cards** | White `#FFFFFF` background, `border-radius: 12px`, subtle shadow `0 1px 3px rgba(0,0,0,0.1)` |
 | **Overall feel** | Clean, modern, minimal — purple dominant against white/light surfaces |
+
+Tessera also ships a complete dark theme. The renderer switches between
+`Light` / `Dark` / `System` via the **Theme** setting on the Settings page;
+the choice is applied through `[data-theme="dark"]` on the root element and
+backed by a `prefers-color-scheme: dark` fallback so first-run users on a
+dark OS desktop see dark mode immediately.
+
+---
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl/Cmd + N` | New artifact |
+| `Ctrl/Cmd + S` | Force save (in addition to auto-save) |
+| `Ctrl/Cmd + E` | Export current artifact |
+| `Ctrl/Cmd + F` | Focus search |
+| `Ctrl/Cmd + ,` | Open Settings |
+| `Ctrl/Cmd + 1..7` | Navigate to sidebar items |
+| `Ctrl + Shift + C` | Toggle citation panel |
+| `Escape` | Close modal / deselect |
+
+Sidebar items announce their shortcut through `aria-keyshortcuts`, so they
+also surface in screen-reader output and in browser dev-tools accessibility
+trees.
 
 ---
 
