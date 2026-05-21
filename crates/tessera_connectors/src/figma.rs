@@ -439,12 +439,18 @@ impl FigmaConnector {
             if remote.modified_time > newest_seen.unwrap_or(DateTime::<Utc>::MIN_UTC) {
                 newest_seen = Some(remote.modified_time);
             }
-            if let Some(bound) = boundary {
-                if remote.modified_time <= bound {
-                    continue;
+            let is_known = known_file_ids.contains(&remote.id);
+            // Boundary-skip only applies to *known* ids — a file newly
+            // shared with the integration may carry an old
+            // `last_modified` (Figma stamps it at the last edit, not at
+            // share-time), and we still need to surface it as `added`
+            // on the first sweep after it appears.
+            if is_known {
+                if let Some(bound) = boundary {
+                    if remote.modified_time <= bound {
+                        continue;
+                    }
                 }
-            }
-            if known_file_ids.contains(&remote.id) {
                 result.modified.push(remote);
             } else {
                 result.added.push(remote);

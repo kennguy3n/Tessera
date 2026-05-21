@@ -144,6 +144,16 @@ impl OneDriveConnector {
     pub fn last_sync_time(&self) -> Option<DateTime<Utc>> {
         self.last_sync
     }
+    /// Count of items observed by this connector since the last
+    /// `disconnect()`. Microsoft Graph's delta query *does* surface
+    /// deletions, but the delta cursor's "deleted" entries are
+    /// applied in [`Self::sync_changes`] via `result.removed` — they
+    /// do not decrement `file_count` here, because the field is
+    /// surface-level UI affordance (how many things the connector has
+    /// touched) rather than a precise inventory of currently-extant
+    /// items. Pair with [`Self::last_sync_time`] when reasoning about
+    /// freshness, and treat the indexer's local store as the source
+    /// of truth for "what currently exists".
     pub fn file_count(&self) -> u64 {
         self.file_count
     }

@@ -43,7 +43,7 @@ impl From<Task> for TaskInfo {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateTaskRequest {
     pub title: String,
     #[serde(default)]
@@ -69,6 +69,25 @@ fn default_priority() -> String {
     "medium".to_string()
 }
 
+impl Default for CreateTaskRequest {
+    // Keep `Default` in sync with the serde defaults above. We can't
+    // `derive(Default)` because the serde attribute would produce an
+    // empty-string status/priority, which now (correctly) fails
+    // parsing.
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            description: String::new(),
+            status: default_status(),
+            priority: default_priority(),
+            assignee: None,
+            due_date: None,
+            source_id: None,
+            extracted_item_id: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateTaskRequest {
     pub title: Option<String>,
@@ -84,23 +103,27 @@ pub struct UpdateTaskRequest {
     pub due_date: Option<Option<String>>,
 }
 
-fn parse_status(s: &str) -> TaskStatus {
+fn parse_status(s: &str) -> Result<TaskStatus> {
     match s {
-        "todo" => TaskStatus::Todo,
-        "in_progress" => TaskStatus::InProgress,
-        "done" => TaskStatus::Done,
-        "blocked" => TaskStatus::Blocked,
-        _ => TaskStatus::Todo,
+        "todo" => Ok(TaskStatus::Todo),
+        "in_progress" => Ok(TaskStatus::InProgress),
+        "done" => Ok(TaskStatus::Done),
+        "blocked" => Ok(TaskStatus::Blocked),
+        other => Err(tessera_core::error::Error::InvalidConfig(format!(
+            "unknown task status `{other}` (expected todo|in_progress|done|blocked)"
+        ))),
     }
 }
 
-fn parse_priority(s: &str) -> TaskPriority {
+fn parse_priority(s: &str) -> Result<TaskPriority> {
     match s {
-        "low" => TaskPriority::Low,
-        "medium" => TaskPriority::Medium,
-        "high" => TaskPriority::High,
-        "critical" => TaskPriority::Critical,
-        _ => TaskPriority::Medium,
+        "low" => Ok(TaskPriority::Low),
+        "medium" => Ok(TaskPriority::Medium),
+        "high" => Ok(TaskPriority::High),
+        "critical" => Ok(TaskPriority::Critical),
+        other => Err(tessera_core::error::Error::InvalidConfig(format!(
+            "unknown task priority `{other}` (expected low|medium|high|critical)"
+        ))),
     }
 }
 
@@ -144,8 +167,8 @@ fn parse_opt_source_id(s: Option<&str>) -> Result<Option<SourceId>> {
 pub fn create_task(store: &TaskStore, req: CreateTaskRequest) -> Result<TaskInfo> {
     let mut t = Task::new(
         req.title,
-        parse_status(&req.status),
-        parse_priority(&req.priority),
+        parse_status(&req.status)?,
+        parse_priority(&req.priority)?,
     );
     t.description = req.description;
     t.assignee = req.assignee;
@@ -176,11 +199,13 @@ pub fn update_task(store: &TaskStore, id: &str, req: UpdateTaskRequest) -> Resul
         None => None,
         Some(inner) => Some(parse_opt_rfc3339(inner.as_deref())?),
     };
+    let status = req.status.as_deref().map(parse_status).transpose()?;
+    let priority = req.priority.as_deref().map(parse_priority).transpose()?;
     let update = TaskUpdate {
         title: req.title,
         description: req.description,
-        status: req.status.as_deref().map(parse_status),
-        priority: req.priority.as_deref().map(parse_priority),
+        status,
+        priority,
         position: req.position,
         assignee: req.assignee,
         due_date,
@@ -198,7 +223,7 @@ pub fn reorder_tasks(store: &mut TaskStore, status: &str, ids: &[String]) -> Res
         .iter()
         .map(|s| parse_task_id(s))
         .collect::<Result<Vec<_>>>()?;
-    store.reorder_in_status(parse_status(status), &parsed)
+    store.reorder_in_status(parse_status(status)?, &parsed)
 }
 
 #[cfg(test)]
@@ -280,6 +305,66 @@ mod tests {
         // Verify the stored due date is untouched.
         let after = get_task(&s, &created.id).expect("get").expect("present");
         assert_eq!(after.due_date, original_due);
+    }
+
+    #[test]
+    fn create_task_rejects_unknown_status() {
+        let s = store();
+        let req = CreateTaskRequest {
+            title: "Bad status".into(),
+            status: "wip".into(),
+            ..Default::default()
+        };
+        let err = create_task(&s, req).expect_err("unknown status must fail");
+        assert!(
+            format!("{err}").contains("unknown task status"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn create_task_rejects_unknown_priority() {
+        let s = store();
+        let req = CreateTaskRequest {
+            title: "Bad priority".into(),
+            priority: "urgent".into(),
+            ..Default::default()
+        };
+        let err = create_task(&s, req).expect_err("unknown priority must fail");
+        assert!(
+            format!("{err}").contains("unknown task priority"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn update_task_rejects_unknown_status() {
+        let s = store();
+        let created = create_task(
+            &s,
+            CreateTaskRequest {
+                title: "Has status".into(),
+                ..Default::default()
+            },
+        )
+        .expect("create");
+        let err = update_task(
+            &s,
+            &created.id,
+            UpdateTaskRequest {
+                status: Some("wip".into()),
+                ..Default::default()
+            },
+        )
+        .expect_err("unknown status must fail");
+        assert!(format!("{err}").contains("unknown task status"));
+    }
+
+    #[test]
+    fn reorder_rejects_unknown_status() {
+        let mut s = store();
+        let err = reorder_tasks(&mut s, "wip", &[]).expect_err("unknown reorder bucket must fail");
+        assert!(format!("{err}").contains("unknown task status"));
     }
 
     #[test]

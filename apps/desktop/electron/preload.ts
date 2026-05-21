@@ -308,9 +308,102 @@ export interface TesseraApi {
     selectItems: (items: Array<{ id: string; name: string; mimeType: string }>) => Promise<Array<{ id: string; name: string; mimeType: string; selected: boolean }>>;
     syncDrive: (selectedFileIds?: string[]) => Promise<{ added: number; modified: number; removed: number; status: string }>;
   };
+  tasks: {
+    create: (req: CreateTaskRequest) => Promise<TaskInfo>;
+    list: () => Promise<TaskInfo[]>;
+    get: (id: string) => Promise<TaskInfo | null>;
+    update: (id: string, req: UpdateTaskRequest) => Promise<TaskInfo>;
+    remove: (id: string) => Promise<boolean>;
+    reorder: (status: string, ids: string[]) => Promise<void>;
+  };
+  automations: {
+    create: (req: CreateAutomationRequest) => Promise<AutomationInfo>;
+    list: () => Promise<AutomationInfo[]>;
+    get: (id: string) => Promise<AutomationInfo | null>;
+    setEnabled: (id: string, enabled: boolean) => Promise<void>;
+    remove: (id: string) => Promise<boolean>;
+  };
   dialog: {
     showSaveDialog: (options: SaveDialogOptions) => Promise<SaveDialogResult>;
   };
+}
+
+export interface TaskInfo {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  position: number;
+  assignee: string | null;
+  dueDate: string | null;
+  sourceId: string | null;
+  extractedItemId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTaskRequest {
+  title: string;
+  description?: string;
+  status?: string;
+  priority?: string;
+  assignee?: string | null;
+  dueDate?: string | null;
+  sourceId?: string | null;
+  extractedItemId?: string | null;
+}
+
+export interface UpdateTaskRequest {
+  title?: string;
+  description?: string;
+  status?: string;
+  priority?: string;
+  position?: number;
+  /**
+   * Tri-state field. `undefined` (key omitted) leaves the value
+   * unchanged. `null` explicitly clears the assignee. A string sets it.
+   * The bridge enforces this via `Option<Option<String>>` — see
+   * tessera_bridge::tasks::UpdateTaskRequest.
+   */
+  assignee?: string | null;
+  /** Same tri-state semantics as `assignee`. The bridge surfaces a
+   *  parse error if a non-empty string isn't valid RFC 3339 — see
+   *  the `update_task_with_invalid_due_date_does_not_clear_existing`
+   *  regression test. */
+  dueDate?: string | null;
+}
+
+export type AutomationTrigger =
+  | { kind: "schedule"; interval_seconds: number }
+  | { kind: "on_generate"; template_id: string };
+
+export type AutomationAction =
+  | { kind: "reindex_source"; source_id: string }
+  | {
+      kind: "generate_from_template";
+      template_id: string;
+      source_ids: string[];
+    };
+
+export interface AutomationInfo {
+  id: string;
+  name: string;
+  triggerJson: string;
+  actionJson: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt: string | null;
+  lastRunStatus: string | null;
+  nextScheduledAt: string | null;
+}
+
+export interface CreateAutomationRequest {
+  name: string;
+  trigger: AutomationTrigger;
+  action: AutomationAction;
+  enabled?: boolean;
 }
 
 export interface SaveDialogOptions {
@@ -449,6 +542,22 @@ const api: TesseraApi = {
       ipcRenderer.invoke("connectors:gdrive:selectItems", items),
     syncDrive: (selectedFileIds?: string[]) =>
       ipcRenderer.invoke("connectors:gdrive:sync", selectedFileIds),
+  },
+  tasks: {
+    create: (req) => ipcRenderer.invoke("tasks:create", req),
+    list: () => ipcRenderer.invoke("tasks:list"),
+    get: (id) => ipcRenderer.invoke("tasks:get", id),
+    update: (id, req) => ipcRenderer.invoke("tasks:update", id, req),
+    remove: (id) => ipcRenderer.invoke("tasks:delete", id),
+    reorder: (status, ids) => ipcRenderer.invoke("tasks:reorder", status, ids),
+  },
+  automations: {
+    create: (req) => ipcRenderer.invoke("automations:create", req),
+    list: () => ipcRenderer.invoke("automations:list"),
+    get: (id) => ipcRenderer.invoke("automations:get", id),
+    setEnabled: (id, enabled) =>
+      ipcRenderer.invoke("automations:setEnabled", id, enabled),
+    remove: (id) => ipcRenderer.invoke("automations:delete", id),
   },
   dialog: {
     showSaveDialog: (options: SaveDialogOptions) =>

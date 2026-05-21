@@ -107,6 +107,14 @@ impl JiraConnector {
     pub fn last_sync_time(&self) -> Option<DateTime<Utc>> {
         self.last_sync
     }
+    /// Monotonically-increasing count of issues observed by this
+    /// connector since the last `disconnect()`. Jira's JQL query
+    /// surface has no deletion feed (we sweep open issues only), so
+    /// this counter does **not** decrement when an issue is closed,
+    /// deleted, or moved to a project the integration no longer sees.
+    /// Use [`Self::last_sync_time`] together with this value when you
+    /// need to reason about freshness — the count is a UI affordance,
+    /// not a precise inventory.
     pub fn file_count(&self) -> u64 {
         self.file_count
     }

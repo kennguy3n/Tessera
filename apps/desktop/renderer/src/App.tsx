@@ -7,6 +7,8 @@ import TemplatesPage from "./pages/TemplatesPage";
 import CreatePage from "./pages/CreatePage";
 import SettingsPage from "./pages/SettingsPage";
 import ArtifactEditorPage from "./pages/ArtifactEditorPage";
+import TasksPage from "./pages/TasksPage";
+import AutomationsPage from "./pages/AutomationsPage";
 
 export default function App() {
   return (
@@ -19,6 +21,8 @@ export default function App() {
           <Route path="/sources/:id" element={<SourceDetailPage />} />
           <Route path="/templates" element={<TemplatesPage />} />
           <Route path="/create" element={<CreatePage />} />
+          <Route path="/tasks" element={<TasksPage />} />
+          <Route path="/automations" element={<AutomationsPage />} />
           <Route path="/artifacts/:id/edit" element={<ArtifactEditorPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

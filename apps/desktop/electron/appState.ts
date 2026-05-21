@@ -47,6 +47,57 @@ interface NativeBridge {
   bridgeExtractTasksDecisions(sourceId: string): string;
   bridgeCompareSources(sourceIdA: string, sourceIdB: string): ArtifactInfo;
   bridgeExportEvidencePack(artifactId: string, outputPath: string): string;
+  // --- Tasks ---
+  // `req_json` is a JSON-encoded `tessera_bridge::tasks::CreateTaskRequest`
+  // / `UpdateTaskRequest`. JSON-tunneling is used because the napi macro
+  // does not generate TS types for serde-default + Option-of-Option
+  // fields cleanly; the bridge's serde_json deserialization gives the
+  // backend full structural validation (including parse_opt_rfc3339).
+  bridgeCreateTask(reqJson: string): TaskInfo;
+  bridgeListTasks(): TaskInfo[];
+  bridgeGetTask(taskId: string): TaskInfo | null;
+  bridgeUpdateTask(taskId: string, reqJson: string): TaskInfo;
+  bridgeDeleteTask(taskId: string): boolean;
+  bridgeReorderTasks(status: string, ids: string[]): void;
+  // --- Automations ---
+  bridgeCreateAutomation(reqJson: string): AutomationInfo;
+  bridgeListAutomations(): AutomationInfo[];
+  bridgeGetAutomation(automationId: string): AutomationInfo | null;
+  bridgeSetAutomationEnabled(automationId: string, enabled: boolean): void;
+  bridgeDeleteAutomation(automationId: string): boolean;
+}
+
+export interface TaskInfo {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  position: number;
+  assignee: string | null;
+  dueDate: string | null;
+  sourceId: string | null;
+  extractedItemId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutomationInfo {
+  id: string;
+  name: string;
+  /** Tagged-enum JSON: `{ "kind": "schedule", "interval_seconds": N }` or
+   *  `{ "kind": "on_generate", "template_id": "..." }`. */
+  triggerJson: string;
+  /** Tagged-enum JSON: `{ "kind": "reindex_source", "source_id": "..." }`
+   *  or `{ "kind": "generate_from_template", "template_id": "...",
+   *  "source_ids": [...] }`. */
+  actionJson: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt: string | null;
+  lastRunStatus: string | null;
+  nextScheduledAt: string | null;
 }
 
 export interface ArtifactVersionInfo {

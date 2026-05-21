@@ -1266,6 +1266,171 @@ export function registerIpcHandlers(): void {
     },
   );
 
+  // --- Tasks ---
+  //
+  // The bridge expects a JSON-encoded `CreateTaskRequest`/`UpdateTaskRequest`
+  // because serde defaults and `Option<Option<...>>` don't round-trip
+  // cleanly through napi's auto-generated TS bindings. We accept a typed
+  // object from the renderer and re-serialize here, so the renderer sees
+  // a normal IPC signature while the bridge keeps its strict Rust
+  // deserialization (with `parse_opt_rfc3339` / `parse_opt_source_id`
+  // validation surfacing parse errors as IPC rejections — see
+  // tessera_bridge::tasks BUG_0001 regression tests).
+  ipcMain.handle(
+    "tasks:create",
+    async (
+      _event,
+      req: {
+        title: string;
+        description?: string;
+        status?: string;
+        priority?: string;
+        assignee?: string | null;
+        dueDate?: string | null;
+        sourceId?: string | null;
+        extractedItemId?: string | null;
+      },
+    ) => {
+      const bridge = getBridge();
+      if (!bridge) throw new Error("Native bridge not available");
+      // Map camelCase renderer field names to snake_case the bridge expects.
+      const payload: Record<string, unknown> = {
+        title: req.title,
+        description: req.description ?? "",
+        status: req.status ?? "todo",
+        priority: req.priority ?? "medium",
+        assignee: req.assignee ?? null,
+        due_date: req.dueDate ?? null,
+        source_id: req.sourceId ?? null,
+        extracted_item_id: req.extractedItemId ?? null,
+      };
+      return bridge.bridgeCreateTask(JSON.stringify(payload));
+    },
+  );
+
+  ipcMain.handle("tasks:list", async () => {
+    const bridge = getBridge();
+    if (!bridge) throw new Error("Native bridge not available");
+    return bridge.bridgeListTasks();
+  });
+
+  ipcMain.handle("tasks:get", async (_event, taskId: string) => {
+    const bridge = getBridge();
+    if (!bridge) throw new Error("Native bridge not available");
+    return bridge.bridgeGetTask(taskId);
+  });
+
+  ipcMain.handle(
+    "tasks:update",
+    async (
+      _event,
+      taskId: string,
+      req: {
+        title?: string;
+        description?: string;
+        status?: string;
+        priority?: string;
+        position?: number;
+        // Tri-state semantics preserved from the bridge:
+        //   undefined  -> field unchanged
+        //   null       -> explicit clear
+        //   string     -> set
+        assignee?: string | null;
+        dueDate?: string | null;
+      },
+    ) => {
+      const bridge = getBridge();
+      if (!bridge) throw new Error("Native bridge not available");
+      const payload: Record<string, unknown> = {};
+      if (req.title !== undefined) payload.title = req.title;
+      if (req.description !== undefined) payload.description = req.description;
+      if (req.status !== undefined) payload.status = req.status;
+      if (req.priority !== undefined) payload.priority = req.priority;
+      if (req.position !== undefined) payload.position = req.position;
+      // `assignee`/`due_date` use the Option<Option<...>> sentinel pattern
+      // on the bridge side. Translate JS undefined/null accordingly:
+      //   undefined (key omitted) → field unchanged
+      //   null                    → explicit clear -> Some(None)
+      //   string                  → set            -> Some(Some(s))
+      if (req.assignee !== undefined) payload.assignee = req.assignee;
+      if (req.dueDate !== undefined) payload.due_date = req.dueDate;
+      return bridge.bridgeUpdateTask(taskId, JSON.stringify(payload));
+    },
+  );
+
+  ipcMain.handle("tasks:delete", async (_event, taskId: string) => {
+    const bridge = getBridge();
+    if (!bridge) throw new Error("Native bridge not available");
+    return bridge.bridgeDeleteTask(taskId);
+  });
+
+  ipcMain.handle(
+    "tasks:reorder",
+    async (_event, status: string, ids: string[]) => {
+      const bridge = getBridge();
+      if (!bridge) throw new Error("Native bridge not available");
+      bridge.bridgeReorderTasks(status, ids);
+    },
+  );
+
+  // --- Automations ---
+
+  ipcMain.handle(
+    "automations:create",
+    async (
+      _event,
+      req: {
+        name: string;
+        trigger: Record<string, unknown>;
+        action: Record<string, unknown>;
+        enabled?: boolean;
+      },
+    ) => {
+      const bridge = getBridge();
+      if (!bridge) throw new Error("Native bridge not available");
+      const payload = {
+        name: req.name,
+        trigger_json: JSON.stringify(req.trigger),
+        action_json: JSON.stringify(req.action),
+        enabled: req.enabled ?? true,
+      };
+      return bridge.bridgeCreateAutomation(JSON.stringify(payload));
+    },
+  );
+
+  ipcMain.handle("automations:list", async () => {
+    const bridge = getBridge();
+    if (!bridge) throw new Error("Native bridge not available");
+    return bridge.bridgeListAutomations();
+  });
+
+  ipcMain.handle(
+    "automations:get",
+    async (_event, automationId: string) => {
+      const bridge = getBridge();
+      if (!bridge) throw new Error("Native bridge not available");
+      return bridge.bridgeGetAutomation(automationId);
+    },
+  );
+
+  ipcMain.handle(
+    "automations:setEnabled",
+    async (_event, automationId: string, enabled: boolean) => {
+      const bridge = getBridge();
+      if (!bridge) throw new Error("Native bridge not available");
+      bridge.bridgeSetAutomationEnabled(automationId, enabled);
+    },
+  );
+
+  ipcMain.handle(
+    "automations:delete",
+    async (_event, automationId: string) => {
+      const bridge = getBridge();
+      if (!bridge) throw new Error("Native bridge not available");
+      return bridge.bridgeDeleteAutomation(automationId);
+    },
+  );
+
   ipcMain.handle(
     "dialog:showSaveDialog",
     async (event, options: Electron.SaveDialogOptions) => {

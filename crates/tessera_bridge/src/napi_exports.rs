@@ -36,7 +36,7 @@ struct AppState {
     template_dir: String,
 }
 
-// TODO(connection-pool): Each store below opens its own
+// Connection-pool note: Each store below opens its own
 // `rusqlite::Connection` to the same `db_path`. That keeps the lock graph
 // simple (each store owns its mutex) and works fine because N-API
 // callbacks are single-threaded so writes are already serialised, but it

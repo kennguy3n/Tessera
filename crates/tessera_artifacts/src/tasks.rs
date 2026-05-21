@@ -336,19 +336,35 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
     } else {
         None
     };
+    // Unknown enum values from SQLite indicate either DB corruption or a
+    // schema migration mismatch — surface them as a typed error rather
+    // than silently coercing to a default which would mask bugs and
+    // could re-bucket "blocked" tasks as "todo" on the kanban board.
     let status = match status_str.as_str() {
         "todo" => TaskStatus::Todo,
         "in_progress" => TaskStatus::InProgress,
         "done" => TaskStatus::Done,
         "blocked" => TaskStatus::Blocked,
-        _ => TaskStatus::Todo,
+        other => {
+            return Err(rusqlite::Error::FromSqlConversionFailure(
+                3,
+                rusqlite::types::Type::Text,
+                format!("unknown task status `{other}`").into(),
+            ));
+        }
     };
     let priority = match priority_str.as_str() {
         "low" => TaskPriority::Low,
         "medium" => TaskPriority::Medium,
         "high" => TaskPriority::High,
         "critical" => TaskPriority::Critical,
-        _ => TaskPriority::Medium,
+        other => {
+            return Err(rusqlite::Error::FromSqlConversionFailure(
+                4,
+                rusqlite::types::Type::Text,
+                format!("unknown task priority `{other}`").into(),
+            ));
+        }
     };
     Ok(Task {
         id: TaskId(id),

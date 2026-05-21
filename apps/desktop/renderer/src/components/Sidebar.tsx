@@ -4,6 +4,8 @@ import {
   FolderOpen,
   Plus,
   ClipboardList,
+  CheckSquare,
+  Zap,
   Settings,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -19,6 +21,8 @@ const navItems: NavItem[] = [
   { to: "/sources", label: "Sources", Icon: FolderOpen },
   { to: "/create", label: "Create", Icon: Plus },
   { to: "/templates", label: "Templates", Icon: ClipboardList },
+  { to: "/tasks", label: "Tasks", Icon: CheckSquare },
+  { to: "/automations", label: "Automations", Icon: Zap },
   { to: "/settings", label: "Settings", Icon: Settings },
 ];
 

@@ -211,6 +211,23 @@ export interface SaveDialogResult {
   filePath?: string;
 }
 
+export interface TaskApi {
+  create: (req: CreateTaskRequest) => Promise<TaskInfo>;
+  list: () => Promise<TaskInfo[]>;
+  get: (id: string) => Promise<TaskInfo | null>;
+  update: (id: string, req: UpdateTaskRequest) => Promise<TaskInfo>;
+  remove: (id: string) => Promise<boolean>;
+  reorder: (status: string, ids: string[]) => Promise<void>;
+}
+
+export interface AutomationApi {
+  create: (req: CreateAutomationRequest) => Promise<AutomationInfo>;
+  list: () => Promise<AutomationInfo[]>;
+  get: (id: string) => Promise<AutomationInfo | null>;
+  setEnabled: (id: string, enabled: boolean) => Promise<void>;
+  remove: (id: string) => Promise<boolean>;
+}
+
 export interface TesseraApi {
   sources: SourceApi;
   artifacts: ArtifactApi;
@@ -220,7 +237,82 @@ export interface TesseraApi {
   model: ModelApi;
   runtime: RuntimeApi;
   connectors: ConnectorApi;
+  tasks: TaskApi;
+  automations: AutomationApi;
   dialog: DialogApi;
+}
+
+export type TaskStatus = "todo" | "in_progress" | "done" | "blocked";
+export type TaskPriority = "low" | "medium" | "high" | "critical";
+
+export interface TaskInfo {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  position: number;
+  assignee: string | null;
+  dueDate: string | null;
+  sourceId: string | null;
+  extractedItemId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTaskRequest {
+  title: string;
+  description?: string;
+  status?: string;
+  priority?: string;
+  assignee?: string | null;
+  dueDate?: string | null;
+  sourceId?: string | null;
+  extractedItemId?: string | null;
+}
+
+export interface UpdateTaskRequest {
+  title?: string;
+  description?: string;
+  status?: string;
+  priority?: string;
+  position?: number;
+  // Tri-state: `undefined` = unchanged, `null` = explicit clear,
+  // string = set. See tessera_bridge::tasks::UpdateTaskRequest.
+  assignee?: string | null;
+  dueDate?: string | null;
+}
+
+export type AutomationTrigger =
+  | { kind: "schedule"; interval_seconds: number }
+  | { kind: "on_generate"; template_id: string };
+
+export type AutomationAction =
+  | { kind: "reindex_source"; source_id: string }
+  | {
+      kind: "generate_from_template";
+      template_id: string;
+      source_ids: string[];
+    };
+
+export interface AutomationInfo {
+  id: string;
+  name: string;
+  triggerJson: string;
+  actionJson: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt: string | null;
+  lastRunStatus: string | null;
+  nextScheduledAt: string | null;
+}
+
+export interface CreateAutomationRequest {
+  name: string;
+  trigger: AutomationTrigger;
+  action: AutomationAction;
+  enabled?: boolean;
 }
 
 export interface SourceInfo {
