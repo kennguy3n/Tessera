@@ -24,6 +24,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { loadConfig, updateConfig } from "./config";
 import { getLogger } from "./logger";
+import { assertBoolean } from "./ipc/validate";
 
 interface UpdateStatusEvent {
   status:
@@ -254,8 +255,18 @@ export function registerAutoUpdaterIpc(): void {
 
   ipcMain.handle(
     "updates:setAutoUpdateEnabled",
-    async (_event, enabled: boolean) => {
-      updateConfig({ autoUpdate: Boolean(enabled) });
+    async (_event, enabled: unknown) => {
+      // Match the validator pattern every other IPC handler uses
+      // (handlers.ts assertString / assertProvider / etc.). The
+      // previous `Boolean(enabled)` coercion happened to be safe, but
+      // mixing coercion with assertion across the surface makes it
+      // harder to reason about what "validated" means — a renderer
+      // bug that passes `"true"` (string) would silently set the
+      // config to `true` under coercion, while every other handler
+      // would reject it loudly. Reject loudly here too. See Devin
+      // Review wave 10 ANALYSIS_0004.
+      const value = assertBoolean(enabled, "enabled");
+      updateConfig({ autoUpdate: value });
       return loadConfig().autoUpdate;
     },
   );

@@ -111,9 +111,28 @@ function isIndexable(item: DriveItem): boolean {
   if ((item.size ?? 0) > MAX_BYTES_PER_FILE) return false;
   const mime = item.file?.mimeType ?? "";
   if (TEXTLIKE_MIME_PREFIXES.some((p) => mime.startsWith(p))) return true;
-  // Office files: we let the local indexer handle them via the docx /
-  // xlsx pipelines, so always pull them.
-  if (/\.(docx|xlsx|pptx|csv|md|rst|txt|html?|pdf|json|ya?ml)$/i.test(item.name)) {
+  // OneNote / EPUB / RTF have distinctive MIME types Graph returns but
+  // not always reliably (some tenants return `application/octet-stream`
+  // for OneNote), so we match by both MIME and extension. Office files
+  // (docx/xlsx/pptx) are matched by extension only because the local
+  // indexer routes on extension anyway.
+  if (
+    mime === "application/onenote" ||
+    mime === "application/msonenote" ||
+    mime === "application/epub+zip" ||
+    mime === "application/rtf" ||
+    mime === "text/rtf"
+  ) {
+    return true;
+  }
+  // Extension matcher must mirror the indexable types documented in
+  // the module header. Anything added here MUST also be reflected in
+  // the "What gets indexed" doc block above.
+  if (
+    /\.(docx|xlsx|pptx|csv|md|rst|txt|html?|pdf|json|ya?ml|epub|rtf|one|onepkg)$/i.test(
+      item.name,
+    )
+  ) {
     return true;
   }
   return false;
@@ -216,83 +235,109 @@ export async function syncOneDrive(
   let removed = 0;
   let deltaLink: string | null = null;
 
-  for (let safety = 0; safety < 500; safety += 1) {
-    const page = await pullDeltaPage(url, ctx.accessToken);
-    for (const item of page.items) {
-      if (item.deleted) {
-        const prior = entriesById.get(item.id);
-        if (prior) {
-          const existingSource = ctx.bridge
-            .listSources()
-            .find((s) => s.path === prior.localPath);
-          if (existingSource) {
-            try {
-              ctx.bridge.removeSource(existingSource.id);
-            } catch {
-              // best-effort
+  // Wrap the pagination loop in try/finally so progress is *always*
+  // persisted before the function returns or rethrows. Without this, a
+  // transient error on page N of M (HTTP 500, network drop, JSON parse
+  // failure) would discard every item already downloaded and indexed
+  // from pages 1..N-1 because `saveDeltaState` and `writeManifest`
+  // would never run — the next sync would start over from the
+  // initial delta URL, re-downloading the entire drive. Mirrors the
+  // same defense-in-depth applied in notion.ts, jira.ts, figma.ts, and
+  // confluence.ts. See Devin Review wave 10 BUG_0001.
+  //
+  // Why save partial state on error is safe: the Microsoft Graph
+  // delta endpoint is monotonic — re-requesting the same `deltaLink`
+  // is idempotent. The upsert logic in this same loop is also
+  // idempotent (it matches by `remoteId` against `entriesById`), so
+  // any items that *were* persisted to the manifest mid-failure will
+  // be silently no-op'd on the retry rather than re-added as
+  // duplicates.
+  try {
+    for (let safety = 0; safety < 500; safety += 1) {
+      const page = await pullDeltaPage(url, ctx.accessToken);
+      for (const item of page.items) {
+        if (item.deleted) {
+          const prior = entriesById.get(item.id);
+          if (prior) {
+            const existingSource = ctx.bridge
+              .listSources()
+              .find((s) => s.path === prior.localPath);
+            if (existingSource) {
+              try {
+                ctx.bridge.removeSource(existingSource.id);
+              } catch {
+                // best-effort
+              }
             }
+            try {
+              await fsp.unlink(prior.localPath);
+            } catch {
+              // already gone
+            }
+            entriesById.delete(item.id);
+            removed += 1;
           }
-          try {
-            await fsp.unlink(prior.localPath);
-          } catch {
-            // already gone
-          }
-          entriesById.delete(item.id);
-          removed += 1;
-        }
-        continue;
-      }
-      if (!isIndexable(item)) continue;
-
-      const ext = extensionFor(item);
-      const localPath = path.join(dir, `${sanitiseRemoteId(item.id)}${ext}`);
-      const ok = await downloadItem(item, ctx.accessToken, localPath);
-      if (!ok) continue;
-
-      const existingSource = ctx.bridge
-        .listSources()
-        .find((s) => s.path === localPath);
-      if (existingSource) {
-        try {
-          ctx.bridge.reindexSource(existingSource.id);
-        } catch {
-          // best-effort: leave the file on disk so a future sync can retry
-        }
-        modified += 1;
-      } else {
-        try {
-          ctx.bridge.addLocalFile(localPath);
-        } catch {
           continue;
         }
-        added += 1;
+        if (!isIndexable(item)) continue;
+
+        const ext = extensionFor(item);
+        const localPath = path.join(dir, `${sanitiseRemoteId(item.id)}${ext}`);
+        const ok = await downloadItem(item, ctx.accessToken, localPath);
+        if (!ok) continue;
+
+        const existingSource = ctx.bridge
+          .listSources()
+          .find((s) => s.path === localPath);
+        if (existingSource) {
+          try {
+            ctx.bridge.reindexSource(existingSource.id);
+          } catch {
+            // best-effort: leave the file on disk so a future sync can retry
+          }
+          modified += 1;
+        } else {
+          try {
+            ctx.bridge.addLocalFile(localPath);
+          } catch {
+            continue;
+          }
+          added += 1;
+        }
+        entriesById.set(item.id, {
+          localPath,
+          remoteId: item.id,
+          remoteModifiedAt: item.lastModifiedDateTime ?? null,
+        });
       }
-      entriesById.set(item.id, {
-        localPath,
-        remoteId: item.id,
-        remoteModifiedAt: item.lastModifiedDateTime ?? null,
-      });
-    }
 
-    if (page.deltaLink) {
-      deltaLink = page.deltaLink;
-      break;
+      if (page.deltaLink) {
+        deltaLink = page.deltaLink;
+        break;
+      }
+      if (page.nextLink) {
+        url = page.nextLink;
+      } else {
+        // No nextLink + no deltaLink should not happen per the Graph API
+        // contract, but if it does, we exit cleanly.
+        break;
+      }
     }
-    if (page.nextLink) {
-      url = page.nextLink;
-    } else {
-      // No nextLink + no deltaLink should not happen per the Graph API
-      // contract, but if it does, we exit cleanly.
-      break;
-    }
+  } finally {
+    // Persist *whatever* progress we made — even on the unhappy path
+    // where the loop threw mid-pagination. `deltaLink` may still be
+    // null in that case; that's correct, because we have not yet
+    // reached a checkpoint the Graph API guarantees is consistent.
+    // Leaving `deltaLink: null` causes the next sync to re-scan from
+    // the start, which re-walks (but does not duplicate) any items
+    // already in the manifest.
+    await saveDeltaState(ctx.userDataDir, { deltaLink });
+    await writeManifest(ctx.userDataDir, {
+      version: 1,
+      provider: "onedrive",
+      entries: Array.from(entriesById.values()),
+    });
   }
-
-  await saveDeltaState(ctx.userDataDir, { deltaLink });
-  await writeManifest(ctx.userDataDir, {
-    version: 1,
-    provider: "onedrive",
-    entries: Array.from(entriesById.values()),
-  });
 
   return { added, modified, removed, status: "synced" };
 }

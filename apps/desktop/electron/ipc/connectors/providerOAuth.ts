@@ -15,9 +15,17 @@
  *   - We standardise on the loopback / localhost-redirect pattern
  *     (RFC 8252 — OAuth for Native Apps). Every provider here
  *     supports it for desktop applications.
- *   - PKCE (S256) is enabled for every provider. The verifier is
- *     attached to the request and the challenge is sent on the
- *     authorize URL.
+ *   - PKCE (S256) is enabled for every provider whose OAuth surface
+ *     supports it (Google Drive, OneDrive, Jira, Confluence). For
+ *     those, the verifier is attached to the request and the
+ *     challenge is sent on the authorize URL. Two providers opt out:
+ *     **Notion** (integration tokens follow a non-expiring
+ *     `client_secret + authorization_code` flow that does not accept
+ *     `code_challenge`) and **Figma** (whose OAuth implementation
+ *     predates PKCE and rejects the parameter outright). Both fall
+ *     back to plain authorization-code with state validation; their
+ *     `usePkce` flag is false. Re-enable PKCE for either the moment
+ *     the upstream provider starts honouring `code_challenge_method=S256`.
  *   - Token exchange uses `application/x-www-form-urlencoded` and
  *     either `Authorization: Basic <id:secret>` or
  *     `client_secret=<secret>` in the body, per provider config.
