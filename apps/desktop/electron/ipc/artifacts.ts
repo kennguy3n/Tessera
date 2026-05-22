@@ -17,7 +17,8 @@
  *      `artifacts:extractTasksDecisions`,
  *      `artifacts:compareSources`)
  */
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog } from "electron";
+import { idempotentHandle } from "./register";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import { getBridge } from "../appState";
@@ -29,7 +30,7 @@ import { MarpExportSchema, TypstExportSchema } from "./schemas";
 import { getSafeExportRoots } from "./shared";
 
 export function registerArtifactsHandlers(): void {
-  ipcMain.handle(
+  idempotentHandle(
     "artifacts:create",
     async (
       _event,
@@ -51,7 +52,7 @@ export function registerArtifactsHandlers(): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "artifacts:update",
     async (_event, id: unknown, content: unknown) => {
       const aId = assertId(id, "artifactId");
@@ -67,7 +68,7 @@ export function registerArtifactsHandlers(): void {
     },
   );
 
-  ipcMain.handle("artifacts:list", async () => {
+  idempotentHandle("artifacts:list", async () => {
     const bridge = getBridge();
     if (bridge) {
       return bridge.bridgeListArtifacts();
@@ -75,7 +76,7 @@ export function registerArtifactsHandlers(): void {
     return [];
   });
 
-  ipcMain.handle("artifacts:get", async (_event, id: unknown) => {
+  idempotentHandle("artifacts:get", async (_event, id: unknown) => {
     const validated = assertId(id, "artifactId");
     const bridge = getBridge();
     if (bridge) {
@@ -84,7 +85,7 @@ export function registerArtifactsHandlers(): void {
     throw new Error("Native bridge not available");
   });
 
-  ipcMain.handle("artifacts:remove", async (_event, id: unknown) => {
+  idempotentHandle("artifacts:remove", async (_event, id: unknown) => {
     const validated = assertId(id, "artifactId");
     const bridge = getBridge();
     if (bridge) {
@@ -93,7 +94,7 @@ export function registerArtifactsHandlers(): void {
     throw new Error("Native bridge not available");
   });
 
-  ipcMain.handle(
+  idempotentHandle(
     "artifacts:export",
     async (
       _event,
@@ -118,7 +119,7 @@ export function registerArtifactsHandlers(): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "artifacts:exportToFile",
     async (
       event,
@@ -203,7 +204,7 @@ export function registerArtifactsHandlers(): void {
     },
   );
 
-  ipcMain.handle("artifacts:exportTypst", async (_event, req: unknown) => {
+  idempotentHandle("artifacts:exportTypst", async (_event, req: unknown) => {
     const parsed = TypstExportSchema.parse(req);
     // Path safety: same allowlist gate as `artifacts:exportToFile`
     // and `artifacts:exportMarp` — a compromised renderer must not
@@ -227,7 +228,7 @@ export function registerArtifactsHandlers(): void {
     });
   });
 
-  ipcMain.handle("artifacts:exportMarp", async (event, req: unknown) => {
+  idempotentHandle("artifacts:exportMarp", async (event, req: unknown) => {
     const parsed = MarpExportSchema.parse(req);
     let resolvedPath: string;
     if (path.isAbsolute(parsed.outputPath)) {
@@ -277,7 +278,7 @@ export function registerArtifactsHandlers(): void {
 
   // --- Version History ---
 
-  ipcMain.handle("artifacts:listVersions", async (_event, id: unknown) => {
+  idempotentHandle("artifacts:listVersions", async (_event, id: unknown) => {
     const validated = assertId(id, "artifactId");
     const bridge = getBridge();
     if (bridge) {
@@ -286,7 +287,7 @@ export function registerArtifactsHandlers(): void {
     return [];
   });
 
-  ipcMain.handle(
+  idempotentHandle(
     "artifacts:restoreVersion",
     async (_event, id: unknown, versionNumber: unknown) => {
       const aId = assertId(id, "artifactId");
@@ -304,7 +305,7 @@ export function registerArtifactsHandlers(): void {
 
   // --- Artifact Generation ---
 
-  ipcMain.handle(
+  idempotentHandle(
     "artifacts:generateFromTemplate",
     async (_event, templateId: unknown, sourceIds: unknown) => {
       const tpl = assertId(templateId, "templateId");
@@ -337,7 +338,7 @@ export function registerArtifactsHandlers(): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "artifacts:extractTasksDecisions",
     async (_event, sourceId: unknown) => {
       const sId = assertId(sourceId, "sourceId");
@@ -358,7 +359,7 @@ export function registerArtifactsHandlers(): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "artifacts:compareSources",
     async (_event, sourceIdA: unknown, sourceIdB: unknown) => {
       const a = assertId(sourceIdA, "sourceIdA");
@@ -369,7 +370,7 @@ export function registerArtifactsHandlers(): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "artifacts:exportEvidencePack",
     async (_event, artifactId: unknown, outputPath: unknown) => {
       const aId = assertId(artifactId, "artifactId");

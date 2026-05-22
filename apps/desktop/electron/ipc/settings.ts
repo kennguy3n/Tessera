@@ -7,7 +7,7 @@
  * actual API key is *referenced* by `apiKeyRef` but stored encrypted
  * in the OS keychain via `secretsVault`.
  */
-import { ipcMain } from "electron";
+import { idempotentHandle } from "./register";
 import {
   loadConfig,
   updateConfig,
@@ -99,7 +99,7 @@ async function testExternalProviderConnection(
 }
 
 export function registerSettingsHandlers(): void {
-  ipcMain.handle("settings:get", async () => {
+  idempotentHandle("settings:get", async () => {
     const config = loadConfig();
     return {
       theme: config.theme,
@@ -109,7 +109,7 @@ export function registerSettingsHandlers(): void {
     } as SettingsData;
   });
 
-  ipcMain.handle("settings:update", async (_event, settings: unknown) => {
+  idempotentHandle("settings:update", async (_event, settings: unknown) => {
     const parsed = SettingsUpdateSchema.parse(settings);
     const config = loadConfig();
     const updated = {
@@ -125,7 +125,7 @@ export function registerSettingsHandlers(): void {
     } as SettingsData;
   });
 
-  ipcMain.handle("externalProvider:get", async () => {
+  idempotentHandle("externalProvider:get", async () => {
     const config = loadConfig();
     const provider = config.externalProvider ?? {
       ...DEFAULT_EXTERNAL_PROVIDER,
@@ -138,7 +138,7 @@ export function registerSettingsHandlers(): void {
     };
   });
 
-  ipcMain.handle(
+  idempotentHandle(
     "externalProvider:set",
     async (_event, provider: unknown, apiKey: unknown) => {
       const parsed = ExternalProviderConfigSchema.parse(provider);
@@ -176,7 +176,7 @@ export function registerSettingsHandlers(): void {
     },
   );
 
-  ipcMain.handle("externalProvider:test", async () => {
+  idempotentHandle("externalProvider:test", async () => {
     const config = loadConfig();
     const provider = config.externalProvider;
     if (!provider || !provider.enabled) {

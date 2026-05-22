@@ -7,7 +7,8 @@
  * llama-server (`model:*`) vs. which calls only read/write the
  * on-disk model file + active-model.json record (`runtime:*`).
  */
-import { app, ipcMain } from "electron";
+import { app } from "electron";
+import { idempotentHandle } from "./register";
 import { getModelSidecar } from "../appState";
 import {
   deleteCurrentModel,
@@ -95,21 +96,21 @@ function progressEmitter(event: Electron.IpcMainInvokeEvent) {
 }
 
 export function registerRuntimeHandlers(): void {
-  ipcMain.handle("runtime:detectPlatform", async () => detectPlatformInfo());
+  idempotentHandle("runtime:detectPlatform", async () => detectPlatformInfo());
 
-  ipcMain.handle("runtime:recommendModel", async () => {
+  idempotentHandle("runtime:recommendModel", async () => {
     const info = detectPlatformInfo();
     const manifest = loadResolvedManifest();
     return recommendModel(manifest, info.platform, info.tier);
   });
 
-  ipcMain.handle("runtime:listModels", async () => {
+  idempotentHandle("runtime:listModels", async () => {
     const info = detectPlatformInfo();
     const manifest = loadResolvedManifest();
     return listModelsForPlatform(manifest, info.platform);
   });
 
-  ipcMain.handle("runtime:getCurrentModel", async () =>
+  idempotentHandle("runtime:getCurrentModel", async () =>
     // Same "live record only" semantics as `runtime:planDownload` and
     // the `runtime:downloadModel` fast-path: if active-model.json
     // points at a file that's no longer on disk, treat it as no model
@@ -124,7 +125,7 @@ export function registerRuntimeHandlers(): void {
     getInstalledModel(userDataDir()),
   );
 
-  ipcMain.handle("runtime:planDownload", async (_event, modelId: unknown) => {
+  idempotentHandle("runtime:planDownload", async (_event, modelId: unknown) => {
     const id = assertId(modelId, "modelId");
     const requested = findModelOrThrow(id);
     // Use `getInstalledModel`, not `getCurrentModel`, so that a stale
@@ -137,7 +138,7 @@ export function registerRuntimeHandlers(): void {
     return planDownload(current, requested);
   });
 
-  ipcMain.handle(
+  idempotentHandle(
     "runtime:downloadModel",
     async (event, modelId: unknown) => {
       const id = assertId(modelId, "modelId");
@@ -179,7 +180,7 @@ export function registerRuntimeHandlers(): void {
     },
   );
 
-  ipcMain.handle("runtime:deleteModel", async () => {
+  idempotentHandle("runtime:deleteModel", async () => {
     // Sidecar-stop is wired through `beforeMutation` so it runs INSIDE
     // the per-userDataDir lock, after `deleteCurrentModel` has
     // verified that there is actually something to delete. See the

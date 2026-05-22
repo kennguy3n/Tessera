@@ -83,7 +83,14 @@ export const CreateTaskSchema = z.object({
 export type CreateTaskInput = z.infer<typeof CreateTaskSchema>;
 
 export const UpdateTaskSchema = z.object({
-  title: OptionalString,
+  // `title` is `NonEmptyString.optional()` rather than `OptionalString`:
+  // a task with an empty title would render as a blank Kanban card with
+  // no recoverable label, so we reject the rename at the IPC boundary
+  // instead of letting it through and depending on the bridge / UI to
+  // catch it later. `undefined` (field unchanged) is still allowed.
+  // `description` deliberately stays `OptionalString` — clearing a task
+  // description to empty is a legitimate user action.
+  title: NonEmptyString.optional(),
   description: OptionalString,
   status: TaskStatus.optional(),
   priority: TaskPriority.optional(),

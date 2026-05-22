@@ -8,7 +8,8 @@
  * `model:generate` channel that fans completion tokens out to the
  * renderer over `model:token`.
  */
-import { BrowserWindow, ipcMain } from "electron";
+import { BrowserWindow } from "electron";
+import { idempotentHandle } from "./register";
 import { getModelSidecar } from "../appState";
 import type { ModelStatus } from "../../shared/types";
 import { assertString } from "./validate";
@@ -54,7 +55,7 @@ export function safeRendererSender<T>(
 }
 
 export function registerModelHandlers(): void {
-  ipcMain.handle("model:status", async () => {
+  idempotentHandle("model:status", async () => {
     const sidecar = getModelSidecar();
     if (sidecar && sidecar.isRunning) {
       const healthy = await sidecar.healthCheck();
@@ -71,7 +72,7 @@ export function registerModelHandlers(): void {
     } as ModelStatus;
   });
 
-  ipcMain.handle("model:start", async (_event, modelPath: unknown) => {
+  idempotentHandle("model:start", async (_event, modelPath: unknown) => {
     const validated = assertString(modelPath, "modelPath", { maxLen: 4096 });
     const sidecar = getModelSidecar();
     if (!sidecar) throw new Error("Model sidecar not initialized");
@@ -80,7 +81,7 @@ export function registerModelHandlers(): void {
     await sidecar.start(true);
   });
 
-  ipcMain.handle("model:stop", async () => {
+  idempotentHandle("model:stop", async () => {
     const sidecar = getModelSidecar();
     if (sidecar && sidecar.isRunning) {
       await sidecar.stop();
@@ -89,7 +90,7 @@ export function registerModelHandlers(): void {
 
   let activeGenerationController: AbortController | null = null;
 
-  ipcMain.handle("model:generate", async (event, request: unknown) => {
+  idempotentHandle("model:generate", async (event, request: unknown) => {
     const parsed = GenerateRequestSchema.parse(request);
     const sidecar = getModelSidecar();
     if (!sidecar || !sidecar.isRunning) {
@@ -188,7 +189,7 @@ export function registerModelHandlers(): void {
     }
   });
 
-  ipcMain.handle("model:cancelJob", async () => {
+  idempotentHandle("model:cancelJob", async () => {
     if (activeGenerationController) {
       activeGenerationController.abort();
     }

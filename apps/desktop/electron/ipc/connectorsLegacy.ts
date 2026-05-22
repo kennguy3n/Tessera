@@ -12,7 +12,6 @@
  * cached tokens and the rate limiter would be silently bypassed. The
  * shared context comes from `getConnectorContext()` in `./shared.ts`.
  */
-import { ipcMain } from "electron";
 import { getLogger } from "../logger";
 import {
   isNetworkError,
@@ -22,6 +21,7 @@ import {
 import { RateLimitError } from "./rateLimiter";
 import { assertOptionalString } from "./validate";
 import { GdriveSelectedItemsSchema } from "./schemas";
+import { idempotentHandle } from "./register";
 import { getConnectorContext, getValidAccessToken } from "./shared";
 
 export function registerConnectorsLegacyHandlers(): void {
@@ -33,22 +33,10 @@ export function registerConnectorsLegacyHandlers(): void {
   // The three `connectors:gdrive:*` picker handlers below are
   // intentionally not part of the multi-provider dispatcher — they
   // expose Drive folder IDs / MIME-type filtering / export semantics
-  // that don't generalise. Defending against re-registration matches
-  // the idempotent-registration guard `registerConnectorHandlers` uses
-  // for its own channels: `registerIpcHandlers()` is called once per
-  // main-process startup today, but the test harness re-imports this
-  // module repeatedly and a future hot-reload path would otherwise
-  // crash with "Attempted to register a second handler for
-  // 'connectors:gdrive:listFiles'".
-  for (const channel of [
-    "connectors:gdrive:listFiles",
-    "connectors:gdrive:selectItems",
-    "connectors:gdrive:sync",
-  ] as const) {
-    ipcMain.removeHandler(channel);
-  }
-
-  ipcMain.handle(
+  // that don't generalise. `idempotentHandle` itself does the
+  // remove-then-attach dance, so a separate per-channel
+  // `removeHandler` loop is no longer needed.
+  idempotentHandle(
     "connectors:gdrive:listFiles",
     async (_event, folderIdRaw?: unknown, pageTokenRaw?: unknown) => {
       // Validate both renderer-supplied parameters before they touch
@@ -190,7 +178,7 @@ export function registerConnectorsLegacyHandlers(): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "connectors:gdrive:selectItems",
     async (_event, items: unknown) => {
       const parsed = GdriveSelectedItemsSchema.parse(items);
@@ -203,7 +191,7 @@ export function registerConnectorsLegacyHandlers(): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "connectors:gdrive:sync",
     async (
       _event,

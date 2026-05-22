@@ -67,11 +67,15 @@ describe("updateConfig", () => {
 
   it("preserves unrelated top-level fields when updating only one", () => {
     updateConfig({ theme: "dark", autoUpdate: false });
-    updateConfig({ defaultExportFormat: "pdf" });
+    // `"html"` is a valid `ExportFormat`; the previous fixture used
+    // `"pdf"`, which the new on-disk schema (correctly) heals back to
+    // the default since the codebase has never declared `"pdf"` as a
+    // supported export target.
+    updateConfig({ defaultExportFormat: "html" });
     const cfg = loadConfig();
     expect(cfg.theme).toBe("dark");
     expect(cfg.autoUpdate).toBe(false);
-    expect(cfg.defaultExportFormat).toBe("pdf");
+    expect(cfg.defaultExportFormat).toBe("html");
   });
 
   it("allows full replacement of externalProvider when caller supplies every field", () => {
@@ -91,5 +95,89 @@ describe("updateConfig", () => {
     const cfg = loadConfig();
     expect(cfg.externalProvider.modelName).toBe("gpt-4o-mini");
     expect(cfg.externalProvider.timeoutSecs).toBe(45);
+  });
+});
+
+// These tests bypass `updateConfig` (which goes through `AppConfigPartial`
+// at compile time) and write a raw JSON blob to disk so we can exercise
+// `loadConfig`'s defensive normalisation against the kinds of values
+// only a manual edit or a corrupted partial write would produce.
+describe("loadConfig defensive normalisation", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "tessera-config-heal-"));
+    userDataDir = dir;
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeConfig(raw: unknown): void {
+    fs.writeFileSync(
+      path.join(dir, "tessera-config.json"),
+      JSON.stringify(raw),
+    );
+  }
+
+  it("heals an unknown theme back to the default", () => {
+    writeConfig({ theme: "neon" });
+    const cfg = loadConfig();
+    expect(cfg.theme).toBe("light");
+  });
+
+  it("heals an unknown export format back to the default", () => {
+    writeConfig({ defaultExportFormat: "pdf" });
+    const cfg = loadConfig();
+    expect(cfg.defaultExportFormat).toBe("markdown");
+  });
+
+  it("clamps an out-of-range externalProvider.maxRetries", () => {
+    writeConfig({
+      externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER, maxRetries: 99 },
+    });
+    const cfg = loadConfig();
+    expect(cfg.externalProvider.maxRetries).toBe(
+      DEFAULT_EXTERNAL_PROVIDER.maxRetries,
+    );
+  });
+
+  it("clamps an out-of-range externalProvider.timeoutSecs", () => {
+    writeConfig({
+      externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER, timeoutSecs: 999_999 },
+    });
+    const cfg = loadConfig();
+    expect(cfg.externalProvider.timeoutSecs).toBe(
+      DEFAULT_EXTERNAL_PROVIDER.timeoutSecs,
+    );
+  });
+
+  it("clamps an out-of-range externalProvider.temperature", () => {
+    writeConfig({
+      externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER, temperature: -1 },
+    });
+    const cfg = loadConfig();
+    expect(cfg.externalProvider.temperature).toBe(
+      DEFAULT_EXTERNAL_PROVIDER.temperature,
+    );
+  });
+
+  it("recovers when externalProvider is the wrong type entirely", () => {
+    writeConfig({ externalProvider: "not an object" });
+    const cfg = loadConfig();
+    expect(cfg.externalProvider).toEqual(DEFAULT_EXTERNAL_PROVIDER);
+  });
+
+  it("preserves valid coexisting fields while healing invalid ones", () => {
+    writeConfig({
+      theme: "definitely-not-a-theme",
+      defaultExportFormat: "csv",
+      autoUpdate: false,
+    });
+    const cfg = loadConfig();
+    expect(cfg.theme).toBe("light");
+    expect(cfg.defaultExportFormat).toBe("csv");
+    expect(cfg.autoUpdate).toBe(false);
   });
 });

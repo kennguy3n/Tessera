@@ -5,12 +5,12 @@
  * They are read-only from the renderer's perspective; this module
  * therefore exposes only `list` and `get`.
  */
-import { ipcMain } from "electron";
 import { getBridge } from "../appState";
 import { assertId } from "./validate";
+import { idempotentHandle } from "./register";
 
 export function registerTemplatesHandlers(): void {
-  ipcMain.handle("templates:list", async () => {
+  idempotentHandle("templates:list", async () => {
     const bridge = getBridge();
     if (bridge) {
       return bridge.bridgeListTemplates();
@@ -18,7 +18,7 @@ export function registerTemplatesHandlers(): void {
     return [];
   });
 
-  ipcMain.handle("templates:get", async (_event, id: unknown) => {
+  idempotentHandle("templates:get", async (_event, id: unknown) => {
     const validated = assertId(id, "templateId");
     const bridge = getBridge();
     if (bridge) {

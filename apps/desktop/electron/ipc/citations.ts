@@ -13,13 +13,13 @@
  * malformed payload from a buggy renderer never reaches the SQL
  * driver.
  */
-import { ipcMain } from "electron";
 import { getBridge } from "../appState";
 import { assertId } from "./validate";
+import { idempotentHandle } from "./register";
 import { AddCitationSchema, ReplaceCitationSchema } from "./schemas";
 
 export function registerCitationsHandlers(): void {
-  ipcMain.handle("citations:list", async (_event, artifactId: unknown) => {
+  idempotentHandle("citations:list", async (_event, artifactId: unknown) => {
     const validated = assertId(artifactId, "artifactId");
     const bridge = getBridge();
     if (bridge) {
@@ -28,7 +28,7 @@ export function registerCitationsHandlers(): void {
     return [];
   });
 
-  ipcMain.handle("citations:add", async (_event, req: unknown) => {
+  idempotentHandle("citations:add", async (_event, req: unknown) => {
     const parsed = AddCitationSchema.parse(req);
     const bridge = getBridge();
     if (bridge) {
@@ -37,7 +37,7 @@ export function registerCitationsHandlers(): void {
     throw new Error("Native bridge not available");
   });
 
-  ipcMain.handle(
+  idempotentHandle(
     "citations:remove",
     async (_event, artifactId: unknown, citationId: unknown) => {
       const aId = assertId(artifactId, "artifactId");
@@ -51,7 +51,7 @@ export function registerCitationsHandlers(): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "citations:checkChanged",
     async (_event, citationId: unknown) => {
       const validated = assertId(citationId, "citationId");
@@ -63,7 +63,7 @@ export function registerCitationsHandlers(): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "citations:checkFreshness",
     async (_event, citationId: unknown) => {
       const validated = assertId(citationId, "citationId");
@@ -75,7 +75,7 @@ export function registerCitationsHandlers(): void {
     },
   );
 
-  ipcMain.handle("citations:replace", async (_event, req: unknown) => {
+  idempotentHandle("citations:replace", async (_event, req: unknown) => {
     const parsed = ReplaceCitationSchema.parse(req);
     const bridge = getBridge();
     if (bridge) {

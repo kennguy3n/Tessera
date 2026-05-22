@@ -7,12 +7,12 @@
  * the heavy indexing pipeline lives in `crates/tessera_sources` and is
  * reached through the N-API bridge.
  */
-import { ipcMain } from "electron";
 import { getBridge } from "../appState";
 import { assertId, assertNumber, assertString } from "./validate";
+import { idempotentHandle } from "./register";
 
 export function registerSourcesHandlers(): void {
-  ipcMain.handle(
+  idempotentHandle(
     "sources:addLocalFolder",
     async (_event, folderPath: unknown) => {
       const validated = assertString(folderPath, "folderPath", {
@@ -26,7 +26,7 @@ export function registerSourcesHandlers(): void {
     },
   );
 
-  ipcMain.handle("sources:addLocalFile", async (_event, filePath: unknown) => {
+  idempotentHandle("sources:addLocalFile", async (_event, filePath: unknown) => {
     const validated = assertString(filePath, "filePath", { maxLen: 4096 });
     const bridge = getBridge();
     if (bridge) {
@@ -35,7 +35,7 @@ export function registerSourcesHandlers(): void {
     throw new Error("Native bridge not available");
   });
 
-  ipcMain.handle("sources:list", async () => {
+  idempotentHandle("sources:list", async () => {
     const bridge = getBridge();
     if (bridge) {
       return bridge.bridgeListSources();
@@ -43,7 +43,7 @@ export function registerSourcesHandlers(): void {
     return [];
   });
 
-  ipcMain.handle("sources:remove", async (_event, id: unknown) => {
+  idempotentHandle("sources:remove", async (_event, id: unknown) => {
     const validated = assertId(id, "sourceId");
     const bridge = getBridge();
     if (bridge) {
@@ -52,7 +52,7 @@ export function registerSourcesHandlers(): void {
     throw new Error("Native bridge not available");
   });
 
-  ipcMain.handle(
+  idempotentHandle(
     "sources:search",
     async (_event, query: unknown, limit: unknown) => {
       const q = assertString(query, "query", { maxLen: 10_000 });
@@ -77,7 +77,7 @@ export function registerSourcesHandlers(): void {
     },
   );
 
-  ipcMain.handle("sources:getDetail", async (_event, id: unknown) => {
+  idempotentHandle("sources:getDetail", async (_event, id: unknown) => {
     const validated = assertId(id, "sourceId");
     const bridge = getBridge();
     if (bridge) {
@@ -86,7 +86,7 @@ export function registerSourcesHandlers(): void {
     throw new Error("Native bridge not available");
   });
 
-  ipcMain.handle("sources:reindex", async (_event, id: unknown) => {
+  idempotentHandle("sources:reindex", async (_event, id: unknown) => {
     const validated = assertId(id, "sourceId");
     const bridge = getBridge();
     if (bridge) {
@@ -95,7 +95,7 @@ export function registerSourcesHandlers(): void {
     throw new Error("Native bridge not available");
   });
 
-  ipcMain.handle(
+  idempotentHandle(
     "sources:getIndexingProgress",
     async (_event, id: unknown) => {
       const validated = assertId(id, "sourceId");

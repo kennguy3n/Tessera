@@ -179,6 +179,18 @@ describe("UpdateTaskSchema", () => {
   it("rejects a negative position", () => {
     expect(() => UpdateTaskSchema.parse({ position: -1 })).toThrow();
   });
+
+  it("rejects an empty title (blank Kanban card guard)", () => {
+    expect(() => UpdateTaskSchema.parse({ title: "" })).toThrow();
+  });
+
+  it("accepts a non-empty title rename", () => {
+    expect(UpdateTaskSchema.parse({ title: "renamed" }).title).toBe("renamed");
+  });
+
+  it("still allows an empty description (deliberate clear)", () => {
+    expect(UpdateTaskSchema.parse({ description: "" }).description).toBe("");
+  });
 });
 
 describe("AutomationTriggerSchema", () => {

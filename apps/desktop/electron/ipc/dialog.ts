@@ -13,11 +13,12 @@
  * `defaultPath` a 100 MB string and trigger pathological behaviour in
  * the underlying GTK / Cocoa / Win32 dialog implementation).
  */
-import { BrowserWindow, dialog, ipcMain } from "electron";
+import { BrowserWindow, dialog } from "electron";
+import { idempotentHandle } from "./register";
 import { SaveDialogOptionsSchema } from "./schemas";
 
 export function registerDialogHandlers(): void {
-  ipcMain.handle(
+  idempotentHandle(
     "dialog:showSaveDialog",
     async (event, options: unknown) => {
       const parsed = SaveDialogOptionsSchema.parse(options);

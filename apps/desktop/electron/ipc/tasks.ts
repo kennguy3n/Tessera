@@ -11,13 +11,13 @@
  * validation surfacing parse errors as IPC rejections — see the
  * typed-parse regression tests in `tessera_bridge::tasks`).
  */
-import { ipcMain } from "electron";
 import { getBridge } from "../appState";
 import { assertId, assertString, assertStringArray } from "./validate";
+import { idempotentHandle } from "./register";
 import { CreateTaskSchema, UpdateTaskSchema } from "./schemas";
 
 export function registerTasksHandlers(): void {
-  ipcMain.handle("tasks:create", async (_event, req: unknown) => {
+  idempotentHandle("tasks:create", async (_event, req: unknown) => {
     const parsed = CreateTaskSchema.parse(req);
     const bridge = getBridge();
     if (!bridge) throw new Error("Native bridge not available");
@@ -35,20 +35,20 @@ export function registerTasksHandlers(): void {
     return bridge.bridgeCreateTask(JSON.stringify(payload));
   });
 
-  ipcMain.handle("tasks:list", async () => {
+  idempotentHandle("tasks:list", async () => {
     const bridge = getBridge();
     if (!bridge) throw new Error("Native bridge not available");
     return bridge.bridgeListTasks();
   });
 
-  ipcMain.handle("tasks:get", async (_event, taskId: unknown) => {
+  idempotentHandle("tasks:get", async (_event, taskId: unknown) => {
     const validated = assertId(taskId, "taskId");
     const bridge = getBridge();
     if (!bridge) throw new Error("Native bridge not available");
     return bridge.bridgeGetTask(validated);
   });
 
-  ipcMain.handle(
+  idempotentHandle(
     "tasks:update",
     async (_event, taskId: unknown, req: unknown) => {
       const id = assertId(taskId, "taskId");
@@ -73,14 +73,14 @@ export function registerTasksHandlers(): void {
     },
   );
 
-  ipcMain.handle("tasks:delete", async (_event, taskId: unknown) => {
+  idempotentHandle("tasks:delete", async (_event, taskId: unknown) => {
     const validated = assertId(taskId, "taskId");
     const bridge = getBridge();
     if (!bridge) throw new Error("Native bridge not available");
     return bridge.bridgeDeleteTask(validated);
   });
 
-  ipcMain.handle(
+  idempotentHandle(
     "tasks:reorder",
     async (_event, status: unknown, ids: unknown) => {
       const s = assertString(status, "status", { maxLen: 64 });

@@ -5,8 +5,8 @@
  * because the `trigger_json` / `action_json` fields are opaque blobs
  * the scheduler reinterprets per-trigger / per-action variant.
  */
-import { ipcMain } from "electron";
 import { getBridge } from "../appState";
+import { idempotentHandle } from "./register";
 import {
   getSchedulerStatus,
   runNow as schedulerRunNow,
@@ -15,7 +15,7 @@ import { assertBoolean, assertId } from "./validate";
 import { CreateAutomationSchema } from "./schemas";
 
 export function registerAutomationsHandlers(): void {
-  ipcMain.handle("automations:create", async (_event, req: unknown) => {
+  idempotentHandle("automations:create", async (_event, req: unknown) => {
     const parsed = CreateAutomationSchema.parse(req);
     const bridge = getBridge();
     if (!bridge) throw new Error("Native bridge not available");
@@ -28,13 +28,13 @@ export function registerAutomationsHandlers(): void {
     return bridge.bridgeCreateAutomation(JSON.stringify(payload));
   });
 
-  ipcMain.handle("automations:list", async () => {
+  idempotentHandle("automations:list", async () => {
     const bridge = getBridge();
     if (!bridge) throw new Error("Native bridge not available");
     return bridge.bridgeListAutomations();
   });
 
-  ipcMain.handle(
+  idempotentHandle(
     "automations:get",
     async (_event, automationId: unknown) => {
       const validated = assertId(automationId, "automationId");
@@ -44,7 +44,7 @@ export function registerAutomationsHandlers(): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "automations:setEnabled",
     async (_event, automationId: unknown, enabled: unknown) => {
       const id = assertId(automationId, "automationId");
@@ -55,7 +55,7 @@ export function registerAutomationsHandlers(): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "automations:delete",
     async (_event, automationId: unknown) => {
       const validated = assertId(automationId, "automationId");
@@ -69,7 +69,7 @@ export function registerAutomationsHandlers(): void {
   // (running? in-flight? last error?) + manual "tick now" trigger so
   // the user can verify a freshly-saved schedule without waiting up
   // to `DEFAULT_TICK_MS`.
-  ipcMain.handle("automations:schedulerStatus", async () => {
+  idempotentHandle("automations:schedulerStatus", async () => {
     return getSchedulerStatus();
   });
 
@@ -79,7 +79,7 @@ export function registerAutomationsHandlers(): void {
   // user clicking "Run Now" never gets the previous tick's stale
   // status returned to them — the promise only resolves after their
   // requested tick has completed.
-  ipcMain.handle("automations:runNow", async () => {
+  idempotentHandle("automations:runNow", async () => {
     await schedulerRunNow();
     return getSchedulerStatus();
   });
