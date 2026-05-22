@@ -11,6 +11,8 @@
 import { describe, it, expect } from "vitest";
 import {
   AddCitationSchema,
+  AutomationActionSchema,
+  AutomationTriggerSchema,
   ReplaceCitationSchema,
   CreateTaskSchema,
   UpdateTaskSchema,
@@ -21,7 +23,14 @@ import {
   TypstExportSchema,
   MarpExportSchema,
   GdriveSelectedItemsSchema,
+  SaveDialogOptionsSchema,
 } from "../ipc/schemas";
+import {
+  TASK_STATUSES,
+  TASK_PRIORITIES,
+  THEMES,
+  EXPORT_FORMATS,
+} from "../../shared/types";
 
 const VALID_ADD_CITATION = {
   artifactId: "artifact-1",
@@ -40,6 +49,32 @@ const VALID_REPLACE_CITATION = {
   ...REPLACE_BASE,
   citationId: "citation-1",
 };
+
+describe("zod object strip semantics (forward-compat contract)", () => {
+  // Every schema in this file (with the deliberate exception of
+  // `SaveDialogOptionsSchema` which is `.strict()`) relies on zod's
+  // default `.strip()` behaviour so a future renderer release can add a
+  // new field to e.g. `CreateTaskRequest` and the old main process
+  // silently drops it instead of throwing. Pinning this contract in a
+  // test means a future zod upgrade (or accidental `.strict()`) that
+  // flips the default will fail loudly here.
+  it("strips unknown keys from CreateTaskSchema by default", () => {
+    const parsed = CreateTaskSchema.parse({
+      title: "x",
+      fromFutureRelease: "ignore me",
+    });
+    expect(parsed).toEqual({ title: "x" });
+    expect("fromFutureRelease" in parsed).toBe(false);
+  });
+
+  it("strips unknown keys from SettingsUpdateSchema by default", () => {
+    const parsed = SettingsUpdateSchema.parse({
+      theme: "dark",
+      newFutureField: 123,
+    });
+    expect(parsed).toEqual({ theme: "dark" });
+  });
+});
 
 describe("AddCitationSchema", () => {
   it("accepts a full valid payload", () => {
@@ -113,6 +148,19 @@ describe("CreateTaskSchema", () => {
     const parsed = CreateTaskSchema.parse({ title: "x", assignee: null });
     expect(parsed.assignee).toBeNull();
   });
+
+  it.each(TASK_STATUSES)("accepts every canonical TaskStatus: %s", (s) => {
+    const parsed = CreateTaskSchema.parse({ title: "t", status: s });
+    expect(parsed.status).toBe(s);
+  });
+
+  it.each(TASK_PRIORITIES)(
+    "accepts every canonical TaskPriority: %s",
+    (p) => {
+      const parsed = CreateTaskSchema.parse({ title: "t", priority: p });
+      expect(parsed.priority).toBe(p);
+    },
+  );
 });
 
 describe("UpdateTaskSchema", () => {
@@ -133,19 +181,78 @@ describe("UpdateTaskSchema", () => {
   });
 });
 
+describe("AutomationTriggerSchema", () => {
+  it("accepts a schedule trigger", () => {
+    const parsed = AutomationTriggerSchema.parse({
+      kind: "schedule",
+      interval_seconds: 3600,
+    });
+    expect(parsed.kind).toBe("schedule");
+  });
+
+  it("accepts an on_generate trigger", () => {
+    const parsed = AutomationTriggerSchema.parse({
+      kind: "on_generate",
+      template_id: "tmpl-1",
+    });
+    expect(parsed.kind).toBe("on_generate");
+  });
+
+  it("rejects an unknown trigger kind", () => {
+    expect(() =>
+      AutomationTriggerSchema.parse({ kind: "bogus" }),
+    ).toThrow();
+  });
+
+  it("rejects schedule with interval_seconds < 1", () => {
+    expect(() =>
+      AutomationTriggerSchema.parse({ kind: "schedule", interval_seconds: 0 }),
+    ).toThrow();
+  });
+});
+
+describe("AutomationActionSchema", () => {
+  it("accepts a reindex_source action", () => {
+    const parsed = AutomationActionSchema.parse({
+      kind: "reindex_source",
+      source_id: "src-1",
+    });
+    expect(parsed.kind).toBe("reindex_source");
+  });
+
+  it("accepts a generate_from_template action", () => {
+    const parsed = AutomationActionSchema.parse({
+      kind: "generate_from_template",
+      template_id: "tmpl-1",
+      source_ids: ["src-1", "src-2"],
+    });
+    expect(parsed.kind).toBe("generate_from_template");
+  });
+
+  it("rejects an unknown action kind", () => {
+    expect(() =>
+      AutomationActionSchema.parse({ kind: "bogus" }),
+    ).toThrow();
+  });
+});
+
 describe("CreateAutomationSchema", () => {
-  it("accepts well-formed trigger/action objects", () => {
+  it("accepts a well-formed automation", () => {
     const parsed = CreateAutomationSchema.parse({
       name: "auto-1",
-      trigger: { kind: "interval", every_secs: 60 },
-      action: { kind: "run_template", template_id: "t-1" },
+      trigger: { kind: "schedule", interval_seconds: 60 },
+      action: { kind: "reindex_source", source_id: "s-1" },
     });
     expect(parsed.name).toBe("auto-1");
   });
 
   it("rejects empty name", () => {
     expect(() =>
-      CreateAutomationSchema.parse({ name: "", trigger: {}, action: {} }),
+      CreateAutomationSchema.parse({
+        name: "",
+        trigger: { kind: "schedule", interval_seconds: 60 },
+        action: { kind: "reindex_source", source_id: "s-1" },
+      }),
     ).toThrow();
   });
 
@@ -154,7 +261,7 @@ describe("CreateAutomationSchema", () => {
       CreateAutomationSchema.parse({
         name: "auto-1",
         trigger: "wat",
-        action: {},
+        action: { kind: "reindex_source", source_id: "s-1" },
       }),
     ).toThrow();
   });
@@ -177,6 +284,19 @@ describe("SettingsUpdateSchema", () => {
       SettingsUpdateSchema.parse({ ignorePatterns: arr }),
     ).toThrow();
   });
+
+  it.each(THEMES)("accepts every canonical Theme: %s", (t) => {
+    const parsed = SettingsUpdateSchema.parse({ theme: t });
+    expect(parsed.theme).toBe(t);
+  });
+
+  it.each(EXPORT_FORMATS)(
+    "accepts every canonical ExportFormat: %s",
+    (f) => {
+      const parsed = SettingsUpdateSchema.parse({ defaultExportFormat: f });
+      expect(parsed.defaultExportFormat).toBe(f);
+    },
+  );
 });
 
 const VALID_PROVIDER = {
@@ -297,6 +417,34 @@ describe("GdriveSelectedItemsSchema", () => {
   it("rejects items missing id", () => {
     expect(() =>
       GdriveSelectedItemsSchema.parse([{ name: "a", mimeType: "x" }]),
+    ).toThrow();
+  });
+});
+
+describe("SaveDialogOptionsSchema", () => {
+  it("accepts a full valid payload", () => {
+    const opts = {
+      title: "Save report",
+      defaultPath: "/tmp/report.pdf",
+      buttonLabel: "Export",
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    };
+    expect(SaveDialogOptionsSchema.parse(opts)).toEqual(opts);
+  });
+
+  it("accepts an empty object (all fields optional)", () => {
+    expect(SaveDialogOptionsSchema.parse({})).toEqual({});
+  });
+
+  it("rejects unknown keys (strict mode)", () => {
+    expect(() =>
+      SaveDialogOptionsSchema.parse({ title: "x", bogus: true }),
+    ).toThrow();
+  });
+
+  it("rejects a title exceeding 512 chars", () => {
+    expect(() =>
+      SaveDialogOptionsSchema.parse({ title: "x".repeat(513) }),
     ).toThrow();
   });
 });

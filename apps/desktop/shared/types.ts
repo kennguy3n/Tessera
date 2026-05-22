@@ -208,9 +208,24 @@ export interface ReplaceCitationResult {
 // Settings
 // -----------------------------------------------------------------
 
+/**
+ * Single source of truth for the settings enum-like fields. The arrays
+ * are exported as runtime values so the IPC zod schemas
+ * (`apps/desktop/electron/ipc/schemas.ts`) and the renderer pages
+ * (Settings page dropdown) can both pull from one declaration — the
+ * historical pattern of redeclaring `"light" | "dark" | "system"` in
+ * each layer is what allowed an enum to silently drift on one side
+ * (cf. zod schema initially missing `"blocked"`/`"critical"`/`"csv"`).
+ */
+export const THEMES = ["light", "dark", "system"] as const;
+export type Theme = (typeof THEMES)[number];
+
+export const EXPORT_FORMATS = ["markdown", "html", "csv", "json"] as const;
+export type ExportFormat = (typeof EXPORT_FORMATS)[number];
+
 export interface SettingsData {
-  theme: string;
-  defaultExportFormat: string;
+  theme: Theme;
+  defaultExportFormat: ExportFormat;
   ignorePatterns: string[];
   watchPatterns: string[];
 }
@@ -431,8 +446,19 @@ export interface DrivePickerSelection extends DrivePickerItem {
 // Tasks
 // -----------------------------------------------------------------
 
-export type TaskStatus = "todo" | "in_progress" | "done" | "blocked";
-export type TaskPriority = "low" | "medium" | "high" | "critical";
+/**
+ * Single source of truth for task status / priority. The arrays are
+ * runtime values so the IPC zod schemas
+ * (`apps/desktop/electron/ipc/schemas.ts`) and the renderer's
+ * TasksPage Kanban columns + dropdowns can both pull from one
+ * declaration. Adding a new column means adding a value here and
+ * nothing else.
+ */
+export const TASK_STATUSES = ["todo", "in_progress", "done", "blocked"] as const;
+export type TaskStatus = (typeof TASK_STATUSES)[number];
+
+export const TASK_PRIORITIES = ["low", "medium", "high", "critical"] as const;
+export type TaskPriority = (typeof TASK_PRIORITIES)[number];
 
 export interface TaskInfo {
   id: string;

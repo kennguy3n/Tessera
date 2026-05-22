@@ -147,8 +147,13 @@ export function registerSettingsHandlers(): void {
           `apiKey must be a string or null (got ${typeof apiKey})`,
         );
       }
-      // Merge with defaults so a partial payload from a renderer of an
-      // earlier release still ends up with all required fields.
+      // `ExternalProviderConfigSchema` requires every field, so `parsed`
+      // is already complete; the default-spread below is defence in
+      // depth — if a future schema version makes a field optional, the
+      // on-disk config will still carry a deterministic value rather
+      // than `undefined` (which would then crash JSON.stringify on the
+      // way back out of `loadConfig` or trip the Rust bridge's strict
+      // serde deserialization).
       const merged: ExternalProviderConfig = {
         ...DEFAULT_EXTERNAL_PROVIDER,
         ...parsed,

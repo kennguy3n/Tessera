@@ -5,6 +5,25 @@ import Button from "../components/Button";
 import ModelRuntimeCard from "../components/ModelRuntimeCard";
 import ExternalProviderCard from "../components/ExternalProviderCard";
 import { useSettings, useUpdateSetting } from "../hooks/useSettings";
+import {
+  EXPORT_FORMATS,
+  THEMES,
+  type ExportFormat,
+  type Theme,
+} from "../types/ipc";
+
+const THEME_LABELS: Record<Theme, string> = {
+  light: "Light",
+  dark: "Dark",
+  system: "System",
+};
+
+const EXPORT_FORMAT_LABELS: Record<ExportFormat, string> = {
+  markdown: "Markdown",
+  html: "HTML",
+  csv: "CSV",
+  json: "JSON",
+};
 
 export default function SettingsPage() {
   const { settings, loading, refresh } = useSettings();
@@ -77,11 +96,13 @@ export default function SettingsPage() {
             <select
               className="input"
               value={theme}
-              onChange={(e) => setTheme(e.target.value)}
+              onChange={(e) => setTheme(e.target.value as Theme)}
             >
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-              <option value="system">System</option>
+              {THEMES.map((t) => (
+                <option key={t} value={t}>
+                  {THEME_LABELS[t]}
+                </option>
+              ))}
             </select>
           </div>
         </Card>
@@ -149,12 +170,15 @@ export default function SettingsPage() {
             <select
               className="input"
               value={defaultExportFormat}
-              onChange={(e) => setDefaultExportFormat(e.target.value)}
+              onChange={(e) =>
+                setDefaultExportFormat(e.target.value as ExportFormat)
+              }
             >
-              <option value="markdown">Markdown</option>
-              <option value="html">HTML</option>
-              <option value="csv">CSV</option>
-              <option value="json">JSON</option>
+              {EXPORT_FORMATS.map((fmt) => (
+                <option key={fmt} value={fmt}>
+                  {EXPORT_FORMAT_LABELS[fmt]}
+                </option>
+              ))}
             </select>
           </div>
         </Card>

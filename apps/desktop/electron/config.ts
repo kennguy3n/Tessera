@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { app } from "electron";
-import type { ExternalProviderType } from "../shared/types";
+import type { ExportFormat, ExternalProviderType, Theme } from "../shared/types";
 
 // Re-export so call sites that already pull `ExternalProviderType` from
 // `./config` keep working without churn. The canonical declaration lives
@@ -29,8 +29,8 @@ export interface AppConfig {
   windowY?: number;
   windowWidth: number;
   windowHeight: number;
-  theme: string;
-  defaultExportFormat: string;
+  theme: Theme;
+  defaultExportFormat: ExportFormat;
   ignorePatterns: string[];
   watchPatterns: string[];
   lastOpenedArtifacts: string[];
