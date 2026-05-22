@@ -406,6 +406,25 @@ async function runDisconnect(
     case "figma":
       await disconnectFigma(userDataDir, bridge);
       return;
+    default: {
+      // Exhaustiveness assertion. Same architectural rationale as the
+      // sibling `default` branch in `runSync` above: `ProviderId` is
+      // derived from the `KNOWN_PROVIDERS` tuple in `validate.ts`, so
+      // a future 7th provider added there without a matching `case`
+      // in this switch fails the compile here. Without the assertion
+      // `runDisconnect` would silently fall through and return `void`
+      // — the user clicks Disconnect, the tokens are revoked and
+      // deleted (the work above in the disconnect handler), but the
+      // per-provider cleanup (purging the sync directory, unhooking
+      // the bridge sources, deleting the local manifest) would never
+      // run for the new provider. The orphaned files and stale source
+      // index entries would persist until the user manually deletes
+      // the sync directory — exactly the silent-failure mode the
+      // wave-21 `runSync` exhaustiveness fix was meant to prevent.
+      // See Devin Review wave 22 BUG_0001 (handlers.ts:384-410).
+      const _exhaustive: never = provider;
+      throw new Error(`runDisconnect: unknown provider ${String(_exhaustive)}`);
+    }
   }
 }
 

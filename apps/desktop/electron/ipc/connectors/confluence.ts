@@ -26,6 +26,7 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 
 import {
+  FAILED_RETRY_MAX_ATTEMPTS,
   purgeSyncDir,
   readManifest,
   resolveAccessToken,
@@ -262,6 +263,37 @@ export interface ConfluenceBridgeHooks {
  */
 type PageSpaceMap = Record<string, string>;
 
+/**
+ * Per-page write-failure attempt counter, keyed by page id. The
+ * `version` field disambiguates a page that fails repeatedly at the
+ * same version (genuinely broken — retry budget should deplete) from
+ * a page whose remote `version.number` advances between attempts (a
+ * fresh edit upstream — retry budget should reset). Without this
+ * field, a single permanently-failing page could mask subsequent
+ * recovery: e.g. the user fixes the antivirus rule that was locking
+ * the file, Confluence advances the version, and we should let the
+ * page through again without the count clamping it forever. See
+ * Devin Review wave 22 ANALYSIS_0004 (confluence.ts:396-405).
+ */
+interface FailedWriteEntry {
+  /**
+   * The remote `version.number` we keep failing to write. If the
+   * page advances to a newer version upstream, this entry is
+   * superseded and `attempts` resets to 1.
+   */
+  version: number;
+  /**
+   * How many times in a row we have failed to write/index this page
+   * at `version`. Capped at `FAILED_RETRY_MAX_ATTEMPTS` — once we
+   * reach that, the sync advances `pageVersions[page.id]` to the
+   * failing version and stops retrying until either (a) the user
+   * deletes the connector state, or (b) the upstream version
+   * advances and resets the counter.
+   */
+  attempts: number;
+}
+type FailedWriteMap = Record<string, FailedWriteEntry>;
+
 interface ConfluenceState {
   cloudId: string | null;
   /**
@@ -278,6 +310,20 @@ interface ConfluenceState {
    * over subsequent successful syncs.
    */
   pageSpaces: PageSpaceMap;
+  /**
+   * Pages we have failed to write to disk or register with the
+   * bridge. Bounded by `FAILED_RETRY_MAX_ATTEMPTS` per page so a
+   * permanently-failing page (filesystem permission, antivirus lock,
+   * path collides with a directory, etc.) eventually stops burning
+   * one API call per sync forever. The wave-22 fix — prior to this
+   * field, the version-keyed retry contract had no cap and would
+   * keep re-fetching such pages indefinitely.
+   *
+   * Legacy state files (pre-wave-22) lack this field; loaded as `{}`,
+   * which is the correct "no failures recorded yet" default and lets
+   * the cap engage on the very next failure.
+   */
+  failedWrites: FailedWriteMap;
 }
 
 function statePath(userDataDir: string): string {
@@ -296,9 +342,26 @@ async function loadState(userDataDir: string): Promise<ConfluenceState> {
       cloudId: parsed.cloudId ?? null,
       pageVersions: parsed.pageVersions ?? {},
       pageSpaces: parsed.pageSpaces ?? {},
+      // Defensive sanitisation: if a corrupted state.json has a
+      // non-object or array-shaped `failedWrites`, drop it rather than
+      // letting bad data feed into the retry-cap arithmetic below.
+      // Same posture as the wave-9 `pageSpaces` default — unknown
+      // entries reset to the safe "no failures recorded" baseline
+      // which lets the cap engage cleanly on the next failed write.
+      failedWrites:
+        parsed.failedWrites &&
+        typeof parsed.failedWrites === "object" &&
+        !Array.isArray(parsed.failedWrites)
+          ? (parsed.failedWrites as FailedWriteMap)
+          : {},
     };
   } catch {
-    return { cloudId: null, pageVersions: {}, pageSpaces: {} };
+    return {
+      cloudId: null,
+      pageVersions: {},
+      pageSpaces: {},
+      failedWrites: {},
+    };
   }
 }
 
@@ -381,6 +444,13 @@ export async function syncConfluence(ctx: {
   // success/observation context. See Devin Review wave 9 ANALYSIS_0004.
   const nextVersions: PageVersionMap = {};
   const nextPageSpaces: PageSpaceMap = {};
+  // Fresh per-pass map: any page id NOT explicitly carried into
+  // `nextFailedWrites` during this pass naturally drops from the
+  // retry budget on save. That keeps the contract simple — a
+  // successful write is implicitly a "reset to zero" because the
+  // pageId never makes it into the new map. See Devin Review wave 22
+  // ANALYSIS_0004.
+  const nextFailedWrites: FailedWriteMap = {};
   const successfullyListedSpaceIds = new Set<string>();
 
   // Wrap the iteration + save in try/finally so progress is *always*
@@ -462,6 +532,48 @@ export async function syncConfluence(ctx: {
           continue;
         }
 
+        // Retry-budget check. If this page has already failed
+        // `FAILED_RETRY_MAX_ATTEMPTS` times AT THE CURRENT REMOTE
+        // VERSION, give up: advance `nextVersions[page.id]` to the
+        // failing version so future syncs treat the page as "caught
+        // up" (i.e. won't re-render the body or re-attempt the disk
+        // write) until upstream Confluence advances the version
+        // again. Without this gate, a permanently-broken page would
+        // burn one API call per sync indefinitely — see Devin Review
+        // wave 22 ANALYSIS_0004 (confluence.ts:396-405) for the
+        // original observation.
+        //
+        // The version-keyed comparison is important: if the page has
+        // moved to a newer version upstream (`prior.version !==
+        // currentVersion`), that is fresh content and the retry
+        // counter should reset — we re-enter the write path below
+        // and the new attempt starts at 1 in `nextFailedWrites`.
+        const prior = state.failedWrites[page.id];
+        if (
+          prior &&
+          prior.version === currentVersion &&
+          prior.attempts >= FAILED_RETRY_MAX_ATTEMPTS
+        ) {
+          nextVersions[page.id] = currentVersion;
+          nextPageSpaces[page.id] = space.id;
+          // Carry the cap forward so we keep skipping this page at
+          // this version until it actually changes upstream.
+          nextFailedWrites[page.id] = prior;
+          continue;
+        }
+
+        // Helper used at both failure call sites (writeFile catch and
+        // addLocalFile catch) so the budget arithmetic is identical
+        // for both failure modes.
+        const recordWriteFailure = (): void => {
+          const baseAttempts =
+            prior && prior.version === currentVersion ? prior.attempts : 0;
+          nextFailedWrites[page.id] = {
+            version: currentVersion,
+            attempts: baseAttempts + 1,
+          };
+        };
+
         const body = renderPage(page, space);
         const localPath = path.join(dir, `${sanitiseRemoteId(page.id)}.md`);
         try {
@@ -471,7 +583,12 @@ export async function syncConfluence(ctx: {
           // advance `nextVersions[page.id]`, so the next sync sees the
           // page as still-changed and naturally retries it. This is
           // the Confluence equivalent of pushing to `failedThisPass`
-          // in the watermark-based connectors.
+          // in the watermark-based connectors. Increment the
+          // version-keyed write-failure counter so the retry budget
+          // depletes across syncs — once it hits MAX, the gate above
+          // will short-circuit this page until upstream changes the
+          // version. See Devin Review wave 22 ANALYSIS_0004.
+          recordWriteFailure();
           continue;
         }
 
@@ -490,6 +607,11 @@ export async function syncConfluence(ctx: {
           } catch {
             // Same reasoning as the writeFile catch above — leave
             // `nextVersions[page.id]` unset so we retry naturally.
+            // Also count this as a write failure so the retry budget
+            // depletes; addLocalFile and writeFile share the same
+            // cap because both must succeed to call this page
+            // "indexed".
+            recordWriteFailure();
             continue;
           }
           // Keep the path index coherent so a (future) duplicate page
@@ -580,6 +702,13 @@ export async function syncConfluence(ctx: {
         cloudId,
         pageVersions: nextVersions,
         pageSpaces: nextPageSpaces,
+        // `nextFailedWrites` is fresh per pass: any pageId not
+        // explicitly carried into it (either via a fresh failure this
+        // pass, or because the prior cap is still in effect at the
+        // same version) naturally drops. A successful write is
+        // implicitly a "reset to zero" because the pageId never made
+        // it into the new map. See Devin Review wave 22 ANALYSIS_0004.
+        failedWrites: nextFailedWrites,
       });
       await writeManifest(ctx.userDataDir, {
         version: 1,

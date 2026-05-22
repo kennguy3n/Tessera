@@ -1187,6 +1187,165 @@ describe("Confluence sync", () => {
       ).rejects.toThrow(/fetch failed/);
     },
   );
+
+  it(
+    "caps per-page write-failure retries at FAILED_RETRY_MAX_ATTEMPTS — " +
+      "a permanently-failing page stops burning one API call per sync " +
+      "after the cap, then the budget resets when upstream version " +
+      "advances (wave 22 ANALYSIS_0004 regression guard)",
+    async () => {
+      const accessibleResp = {
+        ok: true,
+        json: async () => [
+          {
+            id: "cloud-1",
+            url: "https://x",
+            name: "site",
+            scopes: ["read:confluence-content.summary"],
+          },
+        ],
+      };
+      const spacesResp = {
+        ok: true,
+        json: async () => ({
+          results: [{ id: "s1", key: "K", name: "N" }],
+        }),
+      };
+      const pageAtVersion = (n: number) => ({
+        ok: true,
+        json: async () => ({
+          results: [
+            {
+              id: "p-bad",
+              title: "Broken page",
+              spaceId: "s1",
+              version: { number: n },
+              body: { storage: { value: "<p>body</p>" } },
+              createdAt: "2024-06-01T10:00:00Z",
+            },
+          ],
+        }),
+      });
+
+      // Sabotage `bridge.addLocalFile` so every attempt to register the
+      // page with the bridge throws — the same failure mode that would
+      // happen if a real filesystem permission error tripped at the
+      // Rust→TS boundary. Using `addLocalFile` (rather than writeFile)
+      // lets us test both failure-recording call sites: the catch in
+      // the bridge branch invokes the same `recordWriteFailure` helper
+      // as the writeFile catch above it, so locking in one validates
+      // both.
+      const originalAddLocalFile = bridge.addLocalFile.bind(bridge);
+      bridge.addLocalFile = () => {
+        throw new Error("simulated bridge failure (e.g. EACCES)");
+      };
+
+      // FAILED_RETRY_MAX_ATTEMPTS consecutive syncs at v1 with the
+      // bridge sabotaged. The cap is checked at the TOP of each sync
+      // against the state persisted by the previous sync, so the cap
+      // does not engage on the pass that records the Nth failure —
+      // it engages on the NEXT pass that reads N back from state.
+      // This mirrors `nextFailedRetryQueue`'s `failureCount >
+      // FAILED_RETRY_MAX_ATTEMPTS` semantics: MAX_ATTEMPTS attempts
+      // are allowed before the budget is depleted on the subsequent
+      // pass.
+      //
+      // The first sync issues 3 fetch calls (accessible-resources,
+      // spaces, pages); subsequent syncs persist `state.cloudId` from
+      // the first pass and skip the accessible-resources call,
+      // dropping to 2 fetch calls per sync. The mock queue must match
+      // exactly — an over-queued accessible response would slot into
+      // the spaces position on the second pass and trip
+      // `data.results is not iterable`. See the sibling watermark
+      // test above for the same accessible-skip pattern.
+      for (let i = 0; i < 5; i++) {
+        if (i === 0) {
+          fetchMock.mockResolvedValueOnce(accessibleResp);
+        }
+        fetchMock
+          .mockResolvedValueOnce(spacesResp)
+          .mockResolvedValueOnce(pageAtVersion(1));
+        const r = await syncConfluence({
+          accessToken: "AT",
+          userDataDir: dir,
+          bridge,
+        });
+        expect(r.added).toBe(0);
+      }
+
+      // After 5 attempts the failure counter has reached the cap, but
+      // the gate that ADVANCES pageVersions only fires on the next
+      // pass (it reads from `state.failedWrites`, not from
+      // mid-iteration scratch). pageVersions therefore stays at 0
+      // here — the page is still "pending" from the watermark's
+      // perspective.
+      const statePath = path.join(
+        dir,
+        "confluence-sync",
+        "state.json",
+      );
+      const preCap = JSON.parse(
+        await fsp.readFile(statePath, "utf8"),
+      ) as {
+        pageVersions: Record<string, number>;
+        failedWrites: Record<string, { version: number; attempts: number }>;
+      };
+      expect(preCap.pageVersions["p-bad"]).toBeUndefined();
+      expect(preCap.failedWrites["p-bad"]).toEqual({
+        version: 1,
+        attempts: 5,
+      });
+
+      // Sixth sync at the SAME version. The cap check at the top of
+      // the per-page loop reads prior.attempts=5 from state and short-
+      // circuits: pageVersions advances to 1 (so the page is no
+      // longer considered "modified"), failedWrites stays at 5. No
+      // attempt to addLocalFile is made — which is exactly the
+      // contract: a permanently-broken page stops burning one bridge
+      // call per sync. (No accessibleResp — cloudId was persisted on
+      // the first pass.)
+      fetchMock
+        .mockResolvedValueOnce(spacesResp)
+        .mockResolvedValueOnce(pageAtVersion(1));
+      await syncConfluence({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+      const capped = JSON.parse(
+        await fsp.readFile(statePath, "utf8"),
+      ) as typeof preCap;
+      expect(capped.pageVersions["p-bad"]).toBe(1);
+      // attempts must NOT climb past the cap — the helper that would
+      // increment it is gated behind the short-circuit above.
+      expect(capped.failedWrites["p-bad"].attempts).toBe(5);
+
+      // Now upstream advances the page to v2 AND we fix the bridge.
+      // The cap is version-keyed, so a fresh version must reset the
+      // attempt counter and let the page through. This is the
+      // recovery contract: a permanently-failing page that finally
+      // recovers (e.g. user fixes the antivirus rule, Confluence
+      // page is edited) must NOT be permanently shadow-banned.
+      bridge.addLocalFile = originalAddLocalFile;
+      fetchMock
+        .mockResolvedValueOnce(spacesResp)
+        .mockResolvedValueOnce(pageAtVersion(2));
+      const recovered = await syncConfluence({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+      expect(recovered.added).toBe(1);
+
+      // After successful write at v2, the failure counter must clear
+      // entirely (the page id no longer appears in nextFailedWrites).
+      const recoveredState = JSON.parse(
+        await fsp.readFile(statePath, "utf8"),
+      ) as typeof cappedState;
+      expect(recoveredState.pageVersions["p-bad"]).toBe(2);
+      expect(recoveredState.failedWrites["p-bad"]).toBeUndefined();
+    },
+  );
 });
 
 describe("Figma sync", () => {

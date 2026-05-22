@@ -27,6 +27,7 @@ import {
 import type { ProviderId } from "./ipc/connectors/providerOAuth";
 import { createDefaultContext } from "./ipc/context";
 import { defaultRateLimiter, RateLimitError } from "./ipc/rateLimiter";
+import { assertOptionalString } from "./ipc/validate";
 import { getLogger } from "./logger";
 import { registerAutoUpdaterIpc } from "./autoUpdater";
 import {
@@ -1178,7 +1179,34 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "connectors:gdrive:listFiles",
-    async (_event, folderId?: string, pageToken?: string) => {
+    async (_event, folderIdRaw?: unknown, pageTokenRaw?: unknown) => {
+      // Validate both renderer-supplied parameters before they touch
+      // any downstream code. Every other new IPC handler in this PR
+      // routes its inputs through the `assert*` helpers in
+      // `./ipc/validate.ts`, but this gdrive picker handler — preserved
+      // verbatim from the pre-PR monolith to minimise churn — was
+      // accepting the raw values directly. The pre-existing escape
+      // for the query interpolation (`replace(/\\/g, "\\\\")...`) is
+      // only narrow query-syntax defence and doesn't reject e.g. a
+      // 10MB string or a non-string value coerced via template
+      // literal. Routing through `assertOptionalString` (a) makes this
+      // handler consistent with the validation pattern the rest of
+      // the PR establishes, (b) caps the payload size at the shared
+      // `DEFAULT_MAX_STRING_LEN`, and (c) gives a descriptive throw
+      // instead of an opaque downstream error if the renderer sends
+      // garbage. The opaque-id check via `assertId` would be too
+      // strict for both inputs — Drive folder IDs ARE alphanumeric
+      // today but Drive's API accepts the literal token `root` and
+      // is otherwise free to widen the character set, and
+      // pageTokens are deliberately opaque server-generated cursors
+      // whose internal format we don't constrain. See Devin Review
+      // wave 22 ANALYSIS_0005.
+      const folderId =
+        assertOptionalString(folderIdRaw, "folderId", { maxLen: 256 }) ??
+        undefined;
+      const pageToken =
+        assertOptionalString(pageTokenRaw, "pageToken", { maxLen: 4096 }) ??
+        undefined;
       // Resolve a fresh access token *before* consuming the
       // rate-limit budget. Order matters: a disconnected user, an
       // expired token, or a network glitch must surface as
