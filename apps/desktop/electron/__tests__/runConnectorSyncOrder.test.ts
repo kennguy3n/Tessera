@@ -124,3 +124,92 @@ describe("RateLimitError exposed from rateLimiter module", () => {
     }
   });
 });
+
+describe("runConnectorSync — token refresh offline path (wave 7B BUG_0001)", () => {
+  it(
+    "returns `{ status: 'offline' }` when the refresh-token exchange " +
+      "fails with a transport-level error (DNS / connection refused), " +
+      "rather than letting a raw fetch rejection bubble out and bypass " +
+      "the Offline badge",
+    async () => {
+      const { ctx } = makeCtx();
+      // Pretend the user IS connected but their access token is
+      // expired AND they have a refresh token — i.e. we will take
+      // the `refreshProviderToken` branch.
+      (ctx.tokenVault as unknown as {
+        getTokens: ReturnType<typeof vi.fn>;
+      }).getTokens.mockReturnValue({
+        accessToken: "AT_OLD",
+        refreshToken: "RT",
+        // Force the expiry check at line 245 to fail so we fall
+        // through to the refresh path.
+        expiresAt: Date.now() - 60_000,
+        scopes: [],
+        clientId: "CLIENT_ID",
+        clientSecret: "CLIENT_SECRET",
+      });
+
+      // Stub global.fetch to simulate the user's wifi dropping
+      // mid-refresh. This is the exact shape Node 18+ undici emits
+      // when DNS resolution fails for a hostname.
+      const originalFetch = globalThis.fetch;
+      const fetchErr = Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("getaddrinfo ENOTFOUND auth.atlassian.com"), {
+          code: "ENOTFOUND",
+        }),
+      });
+      globalThis.fetch = vi.fn().mockRejectedValue(fetchErr) as typeof fetch;
+
+      try {
+        const result = await runConnectorSync(ctx, "jira");
+        expect(result).toEqual({
+          added: 0,
+          modified: 0,
+          removed: 0,
+          status: "offline",
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+  );
+
+  it(
+    "still propagates non-network refresh errors (4xx from the " +
+      "provider, missing credentials, etc.) as hard errors so the UI " +
+      "can prompt re-authentication",
+    async () => {
+      const { ctx } = makeCtx();
+      (ctx.tokenVault as unknown as {
+        getTokens: ReturnType<typeof vi.fn>;
+      }).getTokens.mockReturnValue({
+        accessToken: "AT_OLD",
+        refreshToken: "RT",
+        expiresAt: Date.now() - 60_000,
+        scopes: [],
+        clientId: "CLIENT_ID",
+        clientSecret: "CLIENT_SECRET",
+      });
+
+      const originalFetch = globalThis.fetch;
+      // HTTP 400 invalid_grant — a hard auth error, NOT a network
+      // failure. The Offline badge must NOT light up; the user
+      // needs to re-authenticate.
+      globalThis.fetch = vi.fn().mockResolvedValue(
+        new Response('{"error":"invalid_grant"}', {
+          status: 400,
+          statusText: "Bad Request",
+          headers: { "Content-Type": "application/json" },
+        }),
+      ) as typeof fetch;
+
+      try {
+        await expect(runConnectorSync(ctx, "jira")).rejects.toThrow(
+          /Token refresh failed for jira/,
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+  );
+});

@@ -13,6 +13,7 @@
  * entries without scanning the filesystem.
  */
 
+import { createHash } from "crypto";
 import * as fsp from "fs/promises";
 import * as path from "path";
 
@@ -95,10 +96,45 @@ export async function purgeSyncDir(
  * which are unsafe across all three desktop filesystems. We replace
  * every non-alphanumeric character with `_` and cap at 200 chars to
  * stay inside the per-filename limit on every supported platform.
+ *
+ * Collision-resistance: a naive `replace` strategy alone is
+ * vulnerable to two distinct remote ids mapping to the same filename
+ * — e.g. `page:123` and `page/123` both become `page_123`, which
+ * would clobber each other in the manifest and on disk. Today every
+ * shipping provider uses ids that contain only `[A-Za-z0-9._-]` (UUID
+ * for Notion, `ABC-123` for Jira, numeric for Confluence, opaque
+ * base-62 keys for Figma/Drive), so the substitution is a no-op and
+ * no collision can occur. But that's a brittle invariant to rely on:
+ * a future provider, or a provider that changes its id format, could
+ * silently corrupt synced files. To make the helper bulletproof
+ * without forcing a file-rename migration on existing users, we only
+ * append a short content-addressed suffix when the substitution
+ * actually changed the input — i.e. only when the input contained an
+ * unsafe character. For every id current providers emit, the output
+ * is bit-identical to the pre-suffix behaviour. See Devin Review
+ * wave 7B ANALYSIS_0007 (syncDir.ts:99-101).
  */
+const COLLISION_HASH_LEN = 8;
+const REMOTE_ID_MAX_LEN = 200;
 export function sanitiseRemoteId(id: string): string {
   const safe = id.replace(/[^A-Za-z0-9._-]/g, "_");
-  return safe.length > 200 ? safe.slice(0, 200) : safe;
+  if (safe === id) {
+    return safe.length > REMOTE_ID_MAX_LEN
+      ? safe.slice(0, REMOTE_ID_MAX_LEN)
+      : safe;
+  }
+  // The substitution changed the string: at least one character was
+  // remapped to `_`, which means a collision is possible with another
+  // id that differs only in those positions. Disambiguate with a
+  // truncated SHA-1 of the ORIGINAL id (not of `safe`, so siblings
+  // that sanitise to the same prefix still get distinct suffixes).
+  const hash = createHash("sha1").update(id).digest("hex").slice(
+    0,
+    COLLISION_HASH_LEN,
+  );
+  const suffix = `_${hash}`;
+  const head = safe.slice(0, REMOTE_ID_MAX_LEN - suffix.length);
+  return `${head}${suffix}`;
 }
 
 /**

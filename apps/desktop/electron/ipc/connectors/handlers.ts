@@ -244,7 +244,15 @@ async function getValidAccessToken(
 
   if (Date.now() < stored.expiresAt - 60_000) return stored.accessToken;
 
-  if (!config.supportsRefresh || !stored.refreshToken) {
+  // Reachability: the `!stored.refreshToken` early-return above means
+  // `stored.refreshToken` is necessarily truthy here, so the only way
+  // this guard can fire is `!config.supportsRefresh`. Keeping the
+  // `!config.supportsRefresh` half explicit makes the intent obvious
+  // and protects against a future code path that flips the early
+  // return into a fall-through (e.g. a hypothetical "refresh token
+  // is stored but provider config changed to supportsRefresh: false").
+  // See Devin Review wave 7B ANALYSIS_0001 (handlers.ts:247).
+  if (!config.supportsRefresh) {
     ctx.tokenVault.deleteTokens(provider);
     throw new NotConnectedError(
       `${provider} access token expired and refresh is not available — re-authenticate`,
@@ -256,11 +264,35 @@ async function getValidAccessToken(
       `${provider} client credentials missing — re-authenticate`,
     );
   }
-  const refreshed = await refreshProviderToken(config, {
-    refreshToken: stored.refreshToken,
-    clientId: stored.clientId,
-    clientSecret: stored.clientSecret,
-  });
+  // Wrap the refresh-token exchange so a transport-level failure
+  // (DNS, TCP refused, undici timeout, etc.) escapes via our branded
+  // `NetworkError` rather than as a bare `fetch` rejection. The
+  // outer `runConnectorSync` wrapper keys its `{ status: "offline" }`
+  // fallback on `isNetworkError(err)`, but `getValidAccessToken` runs
+  // OUTSIDE that wrapper's try/catch (so we don't burn the rate-limit
+  // budget on auth-state errors) — without this re-wrap, a refresh
+  // call that fails because the user's wifi dropped would bubble out
+  // as a raw fetch rejection and the renderer would surface a
+  // confusing "fetch failed" error instead of the Offline badge.
+  // See Devin Review wave 7B BUG_0001 (handlers.ts:357).
+  let refreshed: Awaited<ReturnType<typeof refreshProviderToken>>;
+  try {
+    refreshed = await refreshProviderToken(config, {
+      refreshToken: stored.refreshToken,
+      clientId: stored.clientId,
+      clientSecret: stored.clientSecret,
+    });
+  } catch (err) {
+    if (isNetworkError(err)) {
+      throw new NetworkError(
+        `Network error while refreshing ${provider} access token: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
   ctx.tokenVault.storeTokens(provider, {
     accessToken: refreshed.accessToken,
     refreshToken: refreshed.refreshToken,
@@ -345,6 +377,12 @@ export async function runConnectorSync(
   provider: ProviderId,
   options?: { selectedFileIds?: string[] },
 ): Promise<ConnectorSyncResult> {
+  const offlineResult = (): ConnectorSyncResult => ({
+    added: 0,
+    modified: 0,
+    removed: 0,
+    status: "offline",
+  });
   // Resolve the access token BEFORE consuming the rate-limit budget.
   // The token check is local (vault lookup + optional refresh-token
   // exchange) and short-circuits with `NotConnectedError` when the
@@ -354,7 +392,30 @@ export async function runConnectorSync(
   // The rate-limit is still consumed before any expensive per-
   // provider sync work (the actual API calls in `runSync`), which is
   // where defence-in-depth against a runaway renderer matters.
-  const token = await getValidAccessToken(ctx, provider);
+  let token: string;
+  try {
+    token = await getValidAccessToken(ctx, provider);
+  } catch (err) {
+    // A refresh-token exchange that fails because the network dropped
+    // must still surface as "offline" to the renderer; otherwise the
+    // user clicks Sync, sees a raw `fetch failed` and has no idea the
+    // problem is transport, not auth. `getValidAccessToken` now wraps
+    // its `refreshProviderToken` call so the rejection carries the
+    // `NetworkError` brand isNetworkError() recognises. Keeping the
+    // detection here too (rather than letting the brand survive
+    // unwrapped) means non-network refresh errors (4xx from the
+    // provider, missing credentials, etc.) still propagate as hard
+    // errors so the UI can prompt re-authentication. See Devin Review
+    // wave 7B BUG_0001 (handlers.ts:357).
+    if (isNetworkError(err)) {
+      ctx.log.warn("token refresh hit network failure", {
+        provider,
+        error: (err as Error).message,
+      });
+      return offlineResult();
+    }
+    throw err;
+  }
   try {
     ctx.rateLimiter.consume(`connectors:sync:${provider}`, {
       tokensPerInterval: 1,
@@ -378,12 +439,7 @@ export async function runConnectorSync(
         provider,
         error: (err as Error).message,
       });
-      return {
-        added: 0,
-        modified: 0,
-        removed: 0,
-        status: "offline",
-      };
+      return offlineResult();
     }
     throw err;
   }

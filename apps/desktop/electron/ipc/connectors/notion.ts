@@ -373,115 +373,115 @@ export async function syncNotion(ctx: {
   // defense-in-depth pattern in figma.ts. See Devin Review wave 7
   // ANALYSIS_0004 (architectural consistency).
   try {
-  // Phase 1 — explicitly re-fetch every page that the *previous*
-  // pass attempted but failed on. The watermark search below would
-  // miss them if any successful page from this pass advances the
-  // watermark past the failed page's `last_edited_time` (which is
-  // common in practice, because Notion's `/search` returns newest
-  // first and a transient failure usually fires on a single page
-  // while other newer pages succeed). Without this phase those
-  // failed pages would never be retried until the user edited them
-  // again — see the wave-5 Devin Review finding on this file.
-  const retryPages: NotionPage[] = [];
-  for (const entry of watermark.failedRetries) {
-    try {
-      const page = await fetchPageById(entry.remoteId, ctx.accessToken);
-      if (page === null) {
-        // Notion returned 404/410 — the page was deleted or moved
-        // out of the integration's visible scope. Drop it from the
-        // retry queue (counted as "succeeded" only for queue-removal
-        // purposes; the manifest entry will be pruned naturally on
-        // the next disconnect pass).
-        succeededIds.add(entry.remoteId);
-        continue;
-      }
-      retryPages.push(page);
-    } catch {
-      // Fetch failed *again* — record the failure so
-      // `nextFailedRetryQueue` bumps `failureCount` toward
-      // `FAILED_RETRY_MAX_ATTEMPTS` and we eventually give up rather
-      // than pinging a permanently-broken id every sync forever.
-      failedThisPass.push({
-        remoteId: entry.remoteId,
-        remoteModifiedAt: entry.remoteModifiedAt,
-      });
-    }
-  }
-
-  // Phase 2 — the normal watermark scan. Pages that appear in both
-  // phases (which can happen if the previous failure ran against a
-  // page whose `last_edited_time` is newer than the persisted
-  // watermark) are de-duplicated by id so we don't fetch their
-  // blocks twice.
-  const scanned = await listAllPages(ctx.accessToken, watermark.lastSyncIso);
-  const seenIds = new Set<string>(retryPages.map((p) => p.id));
-  const allPages: NotionPage[] = [...retryPages];
-  for (const p of scanned) {
-    if (seenIds.has(p.id)) continue;
-    seenIds.add(p.id);
-    allPages.push(p);
-  }
-
-  for (const page of allPages) {
-    let text: string;
-    try {
-      text = await fetchPageText(page, ctx.accessToken);
-    } catch {
-      // Record the failure so the *next* sync's Phase 1 picks it up
-      // and retries by id. The watermark may legitimately advance
-      // past this page on this pass (driven by other successful
-      // pages); that's fine because we no longer rely on the
-      // watermark to surface it.
-      failedThisPass.push({
-        remoteId: page.id,
-        remoteModifiedAt: page.last_edited_time,
-      });
-      continue;
-    }
-    if (text.trim().length === 0) {
-      // No content to index, but the page is reachable — drop it
-      // from the retry queue too.
-      succeededIds.add(page.id);
-      continue;
-    }
-
-    const localPath = path.join(dir, `${sanitiseRemoteId(page.id)}.md`);
-    await fsp.writeFile(localPath, text, "utf8");
-
-    const existing = ctx.bridge.listSources().find((s) => s.path === localPath);
-    if (existing) {
+    // Phase 1 — explicitly re-fetch every page that the *previous*
+    // pass attempted but failed on. The watermark search below would
+    // miss them if any successful page from this pass advances the
+    // watermark past the failed page's `last_edited_time` (which is
+    // common in practice, because Notion's `/search` returns newest
+    // first and a transient failure usually fires on a single page
+    // while other newer pages succeed). Without this phase those
+    // failed pages would never be retried until the user edited them
+    // again — see the wave-5 Devin Review finding on this file.
+    const retryPages: NotionPage[] = [];
+    for (const entry of watermark.failedRetries) {
       try {
-        ctx.bridge.reindexSource(existing.id);
+        const page = await fetchPageById(entry.remoteId, ctx.accessToken);
+        if (page === null) {
+          // Notion returned 404/410 — the page was deleted or moved
+          // out of the integration's visible scope. Drop it from the
+          // retry queue (counted as "succeeded" only for queue-removal
+          // purposes; the manifest entry will be pruned naturally on
+          // the next disconnect pass).
+          succeededIds.add(entry.remoteId);
+          continue;
+        }
+        retryPages.push(page);
       } catch {
-        // best-effort
+        // Fetch failed *again* — record the failure so
+        // `nextFailedRetryQueue` bumps `failureCount` toward
+        // `FAILED_RETRY_MAX_ATTEMPTS` and we eventually give up rather
+        // than pinging a permanently-broken id every sync forever.
+        failedThisPass.push({
+          remoteId: entry.remoteId,
+          remoteModifiedAt: entry.remoteModifiedAt,
+        });
       }
-      modified += 1;
-    } else {
+    }
+
+    // Phase 2 — the normal watermark scan. Pages that appear in both
+    // phases (which can happen if the previous failure ran against a
+    // page whose `last_edited_time` is newer than the persisted
+    // watermark) are de-duplicated by id so we don't fetch their
+    // blocks twice.
+    const scanned = await listAllPages(ctx.accessToken, watermark.lastSyncIso);
+    const seenIds = new Set<string>(retryPages.map((p) => p.id));
+    const allPages: NotionPage[] = [...retryPages];
+    for (const p of scanned) {
+      if (seenIds.has(p.id)) continue;
+      seenIds.add(p.id);
+      allPages.push(p);
+    }
+
+    for (const page of allPages) {
+      let text: string;
       try {
-        ctx.bridge.addLocalFile(localPath);
+        text = await fetchPageText(page, ctx.accessToken);
       } catch {
-        // Index registration failed — treat as a failure so the next
-        // sync retries.
+        // Record the failure so the *next* sync's Phase 1 picks it up
+        // and retries by id. The watermark may legitimately advance
+        // past this page on this pass (driven by other successful
+        // pages); that's fine because we no longer rely on the
+        // watermark to surface it.
         failedThisPass.push({
           remoteId: page.id,
           remoteModifiedAt: page.last_edited_time,
         });
         continue;
       }
-      added += 1;
+      if (text.trim().length === 0) {
+        // No content to index, but the page is reachable — drop it
+        // from the retry queue too.
+        succeededIds.add(page.id);
+        continue;
+      }
+
+      const localPath = path.join(dir, `${sanitiseRemoteId(page.id)}.md`);
+      await fsp.writeFile(localPath, text, "utf8");
+
+      const existing = ctx.bridge.listSources().find((s) => s.path === localPath);
+      if (existing) {
+        try {
+          ctx.bridge.reindexSource(existing.id);
+        } catch {
+          // best-effort
+        }
+        modified += 1;
+      } else {
+        try {
+          ctx.bridge.addLocalFile(localPath);
+        } catch {
+          // Index registration failed — treat as a failure so the next
+          // sync retries.
+          failedThisPass.push({
+            remoteId: page.id,
+            remoteModifiedAt: page.last_edited_time,
+          });
+          continue;
+        }
+        added += 1;
+      }
+      entriesById.set(page.id, {
+        localPath,
+        remoteId: page.id,
+        remoteModifiedAt: page.last_edited_time,
+      });
+      // Use epoch-ms comparison via `maxWatermark` rather than the
+      // string compare we used to do — see `parseWatermarkIso` in
+      // `syncDir.ts` for the failure mode (mixed `Z` / `+00:00` /
+      // millisecond-precision suffixes producing wrong-order results).
+      newWatermark = maxWatermark(newWatermark, page.last_edited_time);
+      succeededIds.add(page.id);
     }
-    entriesById.set(page.id, {
-      localPath,
-      remoteId: page.id,
-      remoteModifiedAt: page.last_edited_time,
-    });
-    // Use epoch-ms comparison via `maxWatermark` rather than the
-    // string compare we used to do — see `parseWatermarkIso` in
-    // `syncDir.ts` for the failure mode (mixed `Z` / `+00:00` /
-    // millisecond-precision suffixes producing wrong-order results).
-    newWatermark = maxWatermark(newWatermark, page.last_edited_time);
-    succeededIds.add(page.id);
-  }
   } finally {
     await saveWatermark(ctx.userDataDir, {
       lastSyncIso: newWatermark,
