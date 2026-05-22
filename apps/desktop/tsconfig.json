@@ -20,5 +20,5 @@
       "@/*": ["./renderer/src/*"]
     }
   },
-  "include": ["renderer/src"]
+  "include": ["renderer/src", "shared"]
 }

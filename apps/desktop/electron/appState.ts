@@ -193,8 +193,10 @@ function resolveSidecarBinary(): string {
   // `__dirname` at runtime is `<desktop>/dist-electron/electron/` (see
   // the comment in `resolveNativeAddon` above), so the relative paths
   // below climb two extra levels to land at `<desktop>/` and
-  // `<repo-root>/` respectively — without the bump they'd silently
-  // resolve inside `dist-electron/`.
+  // `<repo>/apps/` respectively — the `../../..` entry does NOT reach
+  // the repo root, it reaches `apps/`, which is consistent with how the
+  // pre-WS1 `../..` lookup behaved. Without the depth bump these would
+  // silently resolve inside `dist-electron/`.
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
     .resourcesPath;
   const possiblePaths = [
@@ -204,7 +206,9 @@ function resolveSidecarBinary(): string {
     path.join(app.getAppPath(), "..", "sidecars", "llama-server", binaryName),
     // `<desktop>/sidecars/...` (was previously the first `__dirname` entry).
     path.join(__dirname, "..", "..", "sidecars", "llama-server", binaryName),
-    // `<repo-root>/sidecars/...` (was previously the second entry).
+    // `<repo>/apps/sidecars/...` (was previously the second entry — kept
+    // for backwards compat even though the directory is not at the
+    // canonical repo-root `sidecars/` location).
     path.join(
       __dirname,
       "..",
