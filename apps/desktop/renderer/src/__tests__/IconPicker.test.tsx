@@ -69,7 +69,7 @@ describe("IconPicker", () => {
     expect(arg.name).toBe("House");
   });
 
-  it("exposes a dynamic aria-label on the search input that matches the active icon set (regression for BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0002)", () => {
+  it("exposes a dynamic aria-label on the search input that matches the active icon set", () => {
     // Before the fix the aria-label was a static "Search icons" while
     // the placeholder dynamically tracked the active set ("Search lucide
     // icons…"). That inconsistency broke screen-reader navigation (the

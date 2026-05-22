@@ -40,7 +40,7 @@ export default function DriveFilePicker({ onSelect, onCancel }: DriveFilePickerP
       // returns when it catches a transport failure (DNS, TCP, TLS,
       // fetch reject without status) so the picker can render a
       // network-specific affordance instead of a misleading
-      // "Auth expired" banner. See Devin Review wave 15 ANALYSIS_0007.
+      // "Auth expired" banner.
       if (result.offline) {
         setError(
           "You appear to be offline. Check your network connection and try again.",

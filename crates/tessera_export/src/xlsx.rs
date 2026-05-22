@@ -23,8 +23,9 @@ struct SheetContent {
     // `columns` matches the field name produced by `SheetEditor.tsx` (the
     // sole producer of Sheet artifact JSON in production). `alias =
     // "headers"` keeps backward compatibility with any older Tessera build
-    // that may have written `headers` instead — Devin Review BUG_pr-review-job-0364b468c3654054ad83fe2599369c02_0001
-    // caught this mismatch silently dropping all column names from XLSX exports.
+    // that may have written `headers` instead. Without the alias the
+    // field-name mismatch silently dropped all column names from XLSX
+    // exports.
     #[serde(default, alias = "headers")]
     columns: Vec<String>,
     #[serde(default)]

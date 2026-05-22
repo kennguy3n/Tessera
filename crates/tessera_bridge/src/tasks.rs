@@ -280,8 +280,8 @@ mod tests {
 
     #[test]
     fn update_task_with_invalid_due_date_does_not_clear_existing() {
-        // Regression for Devin Review BUG_0001: an unparseable due_date
-        // string must not silently overwrite the existing due date.
+        // Regression: an unparseable due_date string must not silently
+        // overwrite the existing due date.
         let s = store();
         let created = create_task(
             &s,

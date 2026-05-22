@@ -10,8 +10,7 @@ const REPO_ROOT = path.resolve(DESKTOP_ROOT, "..", "..");
 /**
  * Regression test: the four moving parts that determine where the packaged
  * Electron app loads its renderer from MUST agree on a single canonical
- * directory name. The failure mode this guards against (Devin Review
- * BUG_pr-review-job-b7cedd18ee6c4395b90418917f949569_0001) was a blank
+ * directory name. The failure mode this guards against was a blank
  * window in production builds because:
  *
  *   - `vite.config.ts` emitted the renderer to `apps/desktop/renderer-dist/`
@@ -21,10 +20,9 @@ const REPO_ROOT = path.resolve(DESKTOP_ROOT, "..", "..");
  * cross-config relationship. This test pins them together so any future
  * rename has to touch every site at once.
  *
- * The companion BUG_pr-review-job-b7cedd18ee6c4395b90418917f949569_0002
- * was that Vite's default `base: "/"` makes the built `index.html`
- * reference assets via absolute URLs which never resolve under
- * `file://` — captured here too.
+ * The companion regression is that Vite's default `base: "/"` makes
+ * the built `index.html` reference assets via absolute URLs which
+ * never resolve under `file://` — captured here too.
  */
 describe("packaged Electron renderer wiring", () => {
   it("vite.config.ts builds the renderer into renderer-dist/", () => {

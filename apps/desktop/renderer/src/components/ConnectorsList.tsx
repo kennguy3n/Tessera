@@ -33,14 +33,12 @@ export interface ConnectorDescriptor {
  * intentionally NOT stored here — it is fetched from the main
  * process at mount time via `api.connectors.getAllRedirectUris()`
  * so that `providerOAuth.ts > PROVIDER_OAUTH_CONFIGS` remains the
- * single source of truth. Hardcoded fallbacks were removed in wave 20
+ * single source of truth. Hardcoded fallbacks were removed
  * because they introduced a drift surface: a port-number change in
  * the OAuth config would silently work in the OAuth flow but show
  * a stale URI in the modal, leaving the user with
  * `redirect_uri_mismatch` errors that took several support cycles to
- * diagnose. See Devin Review wave 20 ANALYSIS: "ConnectorsList
- * hardcodes fallback redirectUri values that must sync with
- * providerOAuth.ts config".
+ * diagnose.
  */
 export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
   {
@@ -132,7 +130,6 @@ export default function ConnectorsList({
   // value, because the most common reason for that guessed value to
   // be wrong is exactly the case the user is about to act on
   // (registering a redirect URI in the provider's developer console).
-  // See Devin Review wave 20 ANALYSIS.
   const [redirectUris, setRedirectUris] = useState<
     Record<string, string> | null
   >(null);

@@ -1,6 +1,5 @@
 /**
- * Regression test for ANALYSIS_0002 — rate-limit ordering in
- * `runConnectorSync`.
+ * Regression tests for rate-limit ordering in `runConnectorSync`.
  *
  * The bug: the per-provider 1/30s rate-limit token was consumed
  * BEFORE `getValidAccessToken` ran. When a user clicked "Sync Now"
@@ -59,7 +58,7 @@ function makeCtx(): {
   return { ctx, rateLimiter };
 }
 
-describe("runConnectorSync — rate-limit ordering (ANALYSIS_0002)", () => {
+describe("runConnectorSync — rate-limit ordering", () => {
   it(
     "does NOT consume the rate-limit budget when the user is not " +
       "connected — the same budget is available for the next attempt",
@@ -125,7 +124,7 @@ describe("RateLimitError exposed from rateLimiter module", () => {
   });
 });
 
-describe("runConnectorSync — token refresh offline path (wave 7B BUG_0001)", () => {
+describe("runConnectorSync — token refresh offline path", () => {
   it(
     "returns `{ status: 'offline' }` when the refresh-token exchange " +
       "fails with a transport-level error (DNS / connection refused), " +

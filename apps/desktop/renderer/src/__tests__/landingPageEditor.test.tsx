@@ -79,7 +79,6 @@ describe("buildLandingPreviewHtml", () => {
   });
 
   it("neutralises javascript: URLs in hero and final-CTA hrefs", () => {
-    // Regression for Devin Review ANALYSIS_pr-review-job-157bbcc3...-0004.
     // The JSON is editable so a user-authored `javascript:` scheme must not
     // produce an executable `href` in either the preview or any exported
     // HTML. `escapeHtml` alone does not strip URL schemes — the editor must
@@ -135,7 +134,6 @@ describe("buildLandingPreviewHtml", () => {
   });
 
   it("drops malformed feature icon specs instead of letting them break out of the token", () => {
-    // Regression for Devin Review ANALYSIS_pr-review-job-...-0001 — mirror
     // of the InfographicEditor test. A spec containing `}}` would otherwise
     // let arbitrary trailing text (including `<script>`) reach the DOM.
     const html = buildLandingPreviewHtml({

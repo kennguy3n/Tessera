@@ -90,11 +90,9 @@ function bridgeHooks(ctx: IpcContext): BridgeHooks {
 // (`notion.ts`, `confluence.ts`, `figma.ts`, etc.) can import the
 // classifier without forming an import cycle with this file. See the
 // module-level docstring in `networkErrors.ts` for the full rationale.
-//
 // `handlers.ts` re-exports the public surface unchanged so existing
 // imports (`import { NetworkError, isNetworkError } from "./handlers"`
-// in tests and `ipc.ts`) continue to work without code churn. See
-// Devin Review wave 19 ANALYSIS_0001 / ANALYSIS_0008.
+// in tests and `ipc.ts`) continue to work without code churn.
 import {
   NetworkError,
   NotConnectedError,
@@ -123,7 +121,6 @@ async function getValidAccessToken(
   // of whether the provider config advertises `supportsRefresh: true`
   // — there is no point checking `expiresAt` and proactively
   // deleting the access token: we have nothing to refresh with.
-  //
   // The guard used to require BOTH `!supportsRefresh` AND
   // `!stored.refreshToken`, which silently force-disconnected users
   // whose stored tokens lacked a refresh token even when the provider
@@ -133,7 +130,6 @@ async function getValidAccessToken(
   // provider supports them) and for any Atlassian flow whose initial
   // exchange returned only an access token (e.g. an older integration
   // upgraded mid-session).
-  //
   // The reasoning is the same as the original Notion-only carve-out:
   // proactively deleting a token we *believe* expired is strictly
   // worse than letting the upstream API tell us via a 401 if the
@@ -141,10 +137,8 @@ async function getValidAccessToken(
   //   (a) we have no way to recover (no refresh token),
   //   (b) the only consequence of our guess being wrong is to forcibly
   //       sign the user out of a working integration.
-  //
   // So whenever we lack a refresh token, skip the expiry check
-  // entirely and return the stored access token verbatim. See Devin
-  // Review wave 7 ANALYSIS_0005 (providerOAuth.ts:198-207).
+  // entirely and return the stored access token verbatim.
   if (!stored.refreshToken) {
     return stored.accessToken;
   }
@@ -158,7 +152,6 @@ async function getValidAccessToken(
   // and protects against a future code path that flips the early
   // return into a fall-through (e.g. a hypothetical "refresh token
   // is stored but provider config changed to supportsRefresh: false").
-  // See Devin Review wave 7B ANALYSIS_0001 (handlers.ts:247).
   if (!config.supportsRefresh) {
     ctx.tokenVault.deleteTokens(provider);
     throw new NotConnectedError(
@@ -181,7 +174,6 @@ async function getValidAccessToken(
   // call that fails because the user's wifi dropped would bubble out
   // as a raw fetch rejection and the renderer would surface a
   // confusing "fetch failed" error instead of the Offline badge.
-  // See Devin Review wave 7B BUG_0001 (handlers.ts:357).
   let refreshed: Awaited<ReturnType<typeof refreshProviderToken>>;
   try {
     refreshed = await refreshProviderToken(config, {
@@ -247,9 +239,7 @@ async function runSync(
   // token. `getValidAccessToken` already returns the cached value
   // when there's >60s left and only hits the network when truly
   // expired, so the per-iteration cost is a vault read + a
-  // millisecond comparison in the common case. See Devin Review
-  // wave 13 BUG_0001 (gdrive.ts:123-126) and the cross-cutting
-  // ANALYSIS_0007 (handlers.ts:338-365).
+  // millisecond comparison in the common case.
   const getAccessToken = (): Promise<string> => getValidAccessToken(ctx, provider);
   switch (provider) {
     case "google_drive":
@@ -272,8 +262,8 @@ async function runSync(
       return syncFigma({ accessToken, getAccessToken, userDataDir, bridge });
     default: {
       // Exhaustiveness assertion. `ProviderId` is derived from the
-      // `KNOWN_PROVIDERS` tuple in `validate.ts` (wave-16 fix), so a
-      // future 7th provider added to that tuple without a matching
+      // `KNOWN_PROVIDERS` tuple in `validate.ts`, so a future 7th
+      // provider added to that tuple without a matching
       // `case` in this switch fails the compile here — the `never`
       // assignment is the only place TypeScript will narrow `provider`
       // to a non-empty type if the switch is non-exhaustive. The
@@ -282,8 +272,7 @@ async function runSync(
       // and routes an unknown provider id through to this function.
       // Without this branch a non-exhaustive switch returns `undefined`
       // at runtime and the IPC layer surfaces an opaque
-      // "Cannot read properties of undefined (reading 'then')". See
-      // Devin Review wave 21 ANALYSIS_0004.
+      // "Cannot read properties of undefined (reading 'then')".
       const _exhaustive: never = provider;
       throw new Error(`runSync: unknown provider ${String(_exhaustive)}`);
     }
@@ -341,8 +330,7 @@ export async function runConnectorSync(
     // detection here too (rather than letting the brand survive
     // unwrapped) means non-network refresh errors (4xx from the
     // provider, missing credentials, etc.) still propagate as hard
-    // errors so the UI can prompt re-authentication. See Devin Review
-    // wave 7B BUG_0001 (handlers.ts:357).
+    // errors so the UI can prompt re-authentication.
     if (isNetworkError(err)) {
       ctx.log.warn("token refresh hit network failure", {
         provider,
@@ -420,8 +408,7 @@ async function runDisconnect(
       // run for the new provider. The orphaned files and stale source
       // index entries would persist until the user manually deletes
       // the sync directory — exactly the silent-failure mode the
-      // wave-21 `runSync` exhaustiveness fix was meant to prevent.
-      // See Devin Review wave 22 BUG_0001 (handlers.ts:384-410).
+      // sibling `runSync` exhaustiveness assertion was added to prevent.
       const _exhaustive: never = provider;
       throw new Error(`runDisconnect: unknown provider ${String(_exhaustive)}`);
     }
@@ -448,7 +435,7 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
   // what lets `registerIpcHandlers()` be safely re-invoked from a
   // test harness, a hot-reload path, or future code that re-runs
   // `main.ts` bootstrap. Mirrors the `registerAutoUpdaterIpc` pattern
-  // in `autoUpdater.ts`. See Devin Review wave 7 ANALYSIS_0003.
+  // in `autoUpdater.ts`.
   for (const channel of CONNECTOR_IPC_CHANNELS) {
     ipcMain.removeHandler(channel);
   }
@@ -569,10 +556,9 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
       // this via IPC so the URI it tells the user to register in the
       // provider's developer console cannot drift from the one the
       // OAuth flow actually sends in the authorize request. Drift
-      // here caused a previous Devin Review bug where the UI told
-      // users to register `http://127.0.0.1:9876/callback` for
-      // Google Drive while the OAuth flow sent
-      // `http://localhost:9876/callback`, producing
+      // here caused a bug where the UI told users to register
+      // `http://127.0.0.1:9876/callback` for Google Drive while the
+      // OAuth flow sent `http://localhost:9876/callback`, producing
       // `redirect_uri_mismatch` on every connect attempt.
       const provider = assertProvider(providerRaw, "provider");
       const config = getProviderOAuthConfig(provider);

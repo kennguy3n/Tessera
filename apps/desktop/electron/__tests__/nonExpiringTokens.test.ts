@@ -1,7 +1,6 @@
 /**
  * Regression tests for the non-expiring access-token short-circuit in
- * `getValidAccessToken` (Devin Review wave 4, finding
- * BUG_pr-review-job-4afddb38ae6c4285a5134f8ca3aebb64_0001).
+ * `getValidAccessToken` .
  *
  * The bug: Notion's OAuth token-exchange response does NOT include
  * `expires_in` (its integration tokens are documented as non-expiring).
@@ -133,8 +132,8 @@ describe("getValidAccessToken — non-expiring providers (Notion)", () => {
 
   it(
     "returns the stored access token verbatim when a refreshable " +
-      "provider lacks a refresh token (regression: Devin Review wave " +
-      "7 ANALYSIS_0005 — used to force-disconnect)",
+      "provider lacks a refresh token (regression: used to " +
+      "force-disconnect)",
     async () => {
       // Before the fix, the early-return guard required BOTH
       // `!supportsRefresh` AND `!stored.refreshToken`, so a Drive /

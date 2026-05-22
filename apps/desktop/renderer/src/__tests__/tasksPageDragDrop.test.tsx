@@ -7,12 +7,12 @@
  *    in the new order (dropped card last).
  * 2. Cross-column drop calls `tasks.update` to change the status, then
  *    `tasks.reorder` with the target column's ids in the new order
- *    (dropped card last) — this is the BUG_0001 regression: a stale
- *    `position` value from the source column would otherwise place the
- *    moved card at an arbitrary visible position.
+ *    (dropped card last) — this guards against the stale-position
+ *    regression where a `position` value from the source column would
+ *    otherwise place the moved card at an arbitrary visible position.
  * 3. Hovering over a column repeatedly does NOT cause the `onDragOver`
  *    handler to be recreated — verified indirectly by asserting that the
- *    same handler reference is used across renders (ANALYSIS_0004
+ *    same handler reference is used across renders (handler-identity
  *    regression).
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -53,7 +53,6 @@ const TASKS: TaskInfo[] = [
   },
   // … and one card in `in_progress` whose position deliberately
   // collides with the todo column to expose stale-position ordering
-  // bugs (BUG_0001).
   {
     id: "t-prog",
     title: "Progress 1",
@@ -155,10 +154,10 @@ describe("TasksPage drag-and-drop", () => {
     expect(window.tessera.tasks.reorder).not.toHaveBeenCalled();
   });
 
-  // ANALYSIS_0002 regression: a failed `update` or `reorder` must be
-  // surfaced to the user instead of bubbling as an unhandled promise
-  // rejection. We force the cross-column path to fail and assert the
-  // error alert appears.
+  // Regression: a failed `update` or `reorder` must be surfaced to
+  // the user instead of bubbling as an unhandled promise rejection.
+  // We force the cross-column path to fail and assert the error alert
+  // appears.
   it("surfaces a visible error when the bridge throws during a cross-column drop", async () => {
     window.tessera.tasks.update = vi
       .fn()

@@ -191,8 +191,8 @@ interface JiraState {
    * Issue keys the previous sync attempted but failed to write. The
    * next pass folds them into the JQL via `OR key IN (...)` so they
    * get re-fetched even if the watermark has advanced past their
-   * `updated` timestamp — see the wave-5 Devin Review finding and
-   * `nextFailedRetryQueue` for the reasoning.
+   * `updated` timestamp — see `nextFailedRetryQueue` in `syncDir.ts`
+   * for the carry-forward reasoning.
    */
   failedRetries: FailedRetryEntry[];
 }
@@ -215,7 +215,7 @@ async function loadJiraState(userDataDir: string): Promise<JiraState> {
       // also unsafe to use as raw API keys (the escape would silently
       // resolve to a *different* issue). Dropping at load time lets
       // the queue self-heal on the next sync without any special-case
-      // logic downstream. See Devin Review wave 9 ANALYSIS_0001.
+      // logic downstream.
       failedRetries: Array.isArray(parsed.failedRetries)
         ? parsed.failedRetries.filter(
             (e): e is FailedRetryEntry =>
@@ -270,8 +270,8 @@ function sanitiseJqlWatermark(value: string | null): string | null {
 
 export async function syncJira(ctx: {
   accessToken: string;
-  /** Just-in-time refresh hook — called per JQL page. See Devin
-   *  Review wave 13 BUG_0001 / ANALYSIS_0007. */
+  /** Just-in-time refresh hook — called per JQL page so a
+   *  long-running sync does NOT outlive the access token. */
   getAccessToken?: () => Promise<string>;
   userDataDir: string;
   bridge: JiraBridgeHooks;
@@ -285,7 +285,7 @@ export async function syncJira(ctx: {
   let cloudId = ctx.cloudId ?? state.cloudId;
   if (!cloudId) {
     // Resolve via the JIT refresh hook (when present) instead of the
-    // static `ctx.accessToken`. The wave-13 BUG_0001 fix added
+    // static `ctx.accessToken`. Earlier hardening added
     // `resolveAccessToken` for hot-loop API calls; the
     // accessible-resources lookup happens early enough that it usually
     // hits the static field, but routing it through the same chokepoint
@@ -293,8 +293,7 @@ export async function syncJira(ctx: {
     // the OS was suspended and now runs hours later) still picks up a
     // refreshed token rather than 401-ing on the very first request.
     // Cheap, defensive, and removes the only remaining caller in this
-    // file that bypasses the standard token-resolution path. See Devin
-    // Review wave 16 ANALYSIS_0005.
+    // file that bypasses the standard token-resolution path.
     const resources = await listAccessibleResources(
       await resolveAccessToken(ctx),
     );
@@ -321,7 +320,7 @@ export async function syncJira(ctx: {
   // after assignment). The cache lets the hot loop's existence
   // check be O(1) instead of the previous
   // `bridge.listSources().find(...)` per-issue scan
-  // (O(issues × sources)). See Devin Review wave 20 ANALYSIS.
+  // (O(issues × sources)).
   let sourceIndex!: SourcePathIndex;
 
   let added = 0;
@@ -334,14 +333,13 @@ export async function syncJira(ctx: {
   // best-available deletion detection. The previous shape declared
   // this `const removed = 0` and never incremented it, leaving
   // Jira's sync result silently mis-counting upstream deletions vs
-  // OneDrive/Confluence. See Devin Review wave 13 ANALYSIS_0001.
+  // OneDrive/Confluence.
   let removed = 0;
   let watermark = state.lastSyncIso;
   const succeededIds = new Set<string>();
   const failedThisPass: Array<{ remoteId: string; remoteModifiedAt: string | null }> = [];
   // Parallel index over `failedThisPass.remoteId` so the post-loop
-  // dedup check is O(1) instead of O(n) per retry key. See Devin
-  // Review wave 13 ANALYSIS_0006 (figma variant, applied here for
+  // dedup check is O(1) instead of O(n) per retry key.
   // architectural symmetry). INVARIANT: every push to
   // `failedThisPass` MUST also add to this set — the `recordFailure`
   // helper below is the only call site.
@@ -356,7 +354,6 @@ export async function syncJira(ctx: {
   // updated-since scan. Without this, an item that errored mid-sync
   // would be skipped forever (the watermark would advance past its
   // `updated` timestamp on later passes).
-  //
   // `loadJiraState` already filters out entries whose remoteId is not
   // JQL-safe (would be mutated by `jqlEscapeKey`), so the values in
   // `state.failedRetries` should already be safe to interpolate.
@@ -371,8 +368,7 @@ export async function syncJira(ctx: {
   // being split between two distant functions. The double-escape is
   // a no-op for already-JQL-safe keys (identity transformation on the
   // alphanumeric+`-` alphabet), so this is purely a robustness
-  // improvement with zero behaviour change today. See Devin Review
-  // wave 9 ANALYSIS_0001 and wave 19 ANALYSIS_0002.
+  // improvement with zero behaviour change today.
   const retryKeys = state.failedRetries.map((e) => jqlEscapeKey(e.remoteId));
   // Strict-validate the watermark before interpolating into JQL.
   // `sanitiseJqlWatermark` returns null on anything that isn't a
@@ -388,7 +384,6 @@ export async function syncJira(ctx: {
       ? `key in (${retryKeys.join(",")})`
       : null;
   // JQL composition. The four cases:
-  //
   // 1. Valid watermark + retries → `(updated >= W) OR (key in K)`,
   //    so newly-updated issues AND carry-forward retry keys are both
   //    fetched in a single pass.
@@ -397,7 +392,6 @@ export async function syncJira(ctx: {
   //    retries) → `key in (K) ORDER BY …`. The retries are
   //    re-fetched explicitly; there is no watermark to widen with.
   // 4. No watermark, no retries → bare full scan.
-  //
   // The interesting *edge* case is "watermark was present but
   // rejected by `sanitiseJqlWatermark`" AND retries exist.
   // Previously this took path (3), which emitted `key in (K)`
@@ -407,8 +401,7 @@ export async function syncJira(ctx: {
   // watermark was *rejected* (non-null input, null output), degrade
   // to a full scan even when retries exist — retries naturally
   // surface via `ORDER BY updated DESC` because their `updated` is
-  // bounded above by the prior pass's watermark. See Devin Review
-  // wave 14 ANALYSIS_0004.
+  // bounded above by the prior pass's watermark.
   const watermarkWasRejected = watermark !== null && safeWatermark === null;
   let jql: string;
   if (watermarkClause && retryClause) {
@@ -436,8 +429,7 @@ export async function syncJira(ctx: {
   // try/catch) would skip `saveJiraState` and `writeManifest`
   // entirely — making every issue successfully fetched in this pass
   // invisible to the next sync and forcing redundant re-fetching.
-  // This mirrors the defense-in-depth pattern in figma.ts. See
-  // Devin Review wave 7 ANALYSIS_0004 (architectural consistency).
+  // This mirrors the defense-in-depth pattern in figma.ts.
   try {
     // Materialise the source-by-path index inside the try block so an
     // unlikely `bridge.listSources()` throw is still caught by the
@@ -447,8 +439,7 @@ export async function syncJira(ctx: {
     for (let safety = 0; safety < 1000; safety += 1) {
       // Refresh-on-demand at the top of every JQL page. A wide
       // updated-since scan on a large Jira project can paginate for
-      // far longer than the access token's 1h lifetime. See Devin
-      // Review wave 13 BUG_0001.
+      // far longer than the access token's 1h lifetime.
       const accessToken = await resolveAccessToken(ctx);
       const page = await searchIssues(cloudId, accessToken, jql, startAt);
       for (const issue of page.issues) {
@@ -514,11 +505,9 @@ export async function syncJira(ctx: {
     // present in the prior manifest, cascade the deletion to the
     // local sync dir and the bridge source so the user's index does
     // not keep stale copies of issues they no longer have access to.
-    // See Devin Review wave 13 ANALYSIS_0001.
-    //
     // The dedup check is O(1) via the `failedThisPassIds` parallel
-    // Set rather than the legacy O(n) `failedThisPass.some(…)`. See
-    // ANALYSIS_0006 for the same change in figma.ts.
+    // Set rather than the legacy O(n) `failedThisPass.some(…)` (the
+    // same change is in `figma.ts`).
     for (const key of retryKeys) {
       if (succeededIds.has(key) || failedThisPassIds.has(key)) continue;
       const prior = entriesById.get(key);
@@ -546,7 +535,7 @@ export async function syncJira(ctx: {
   } finally {
     // Persist progress in a nested try/catch so a state-write error
     // (e.g. disk full) doesn't shadow the original upstream error the
-    // try block raised. See Devin Review wave 12 ANALYSIS_0004.
+    // try block raised.
     try {
       await saveJiraState(ctx.userDataDir, {
         cloudId,

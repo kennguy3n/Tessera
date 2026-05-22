@@ -114,9 +114,9 @@ describe("manifest loading", () => {
   });
 
   it("MLX entries report a post-extract diskSizeMb larger than the compressed downloadSizeMb", () => {
-    // Devin Review finding 3271137805: MLX models ship as `.tar.gz`
-    // archives, so the on-disk extracted directory is bigger than the
-    // compressed download. Before this fix the manifest had
+    // MLX models ship as `.tar.gz` archives, so the on-disk extracted
+    // directory is bigger than the compressed download. Before this fix
+    // the manifest had
     // `diskSizeMb == downloadSizeMb` for every MLX entry, which made the
     // swap planner under-account for disk usage (the user "saves N MB"
     // calculation used the compressed size rather than the actual
@@ -248,10 +248,10 @@ describe("single-model enforcement", () => {
   });
 
   it("getInstalledModel returns null when the referenced file is missing on disk", async () => {
-    // Regression for Devin Review BUG finding 3270859596: planDownload was
-    // using getCurrentModel directly, so a stale active-model.json record
-    // pointing at a manually-deleted file caused the planner to return
-    // already-installed, hiding the Download button in Settings.
+    // planDownload used to call getCurrentModel directly, so a stale
+    // active-model.json record pointing at a manually-deleted file caused
+    // the planner to return already-installed, hiding the Download button
+    // in Settings.
     const ghost: InstalledModelRecord = {
       modelId: "ternary-bonsai-1.7b-gguf",
       format: "gguf",
@@ -357,10 +357,10 @@ describe("single-model enforcement", () => {
   });
 
   it("planDownload swap uses diskSizeMb (post-extract footprint), not downloadSizeMb", () => {
-    // Regression for Devin Review finding 3270628327: the swap decision
-    // describes disk-space accounting; for any model whose archive expands
-    // after extraction (future MLX), diskSizeMb diverges from
-    // downloadSizeMb and the swap UI/CLI must show the on-disk numbers.
+    // The swap decision describes disk-space accounting; for any model
+    // whose archive expands after extraction (future MLX), diskSizeMb
+    // diverges from downloadSizeMb and the swap UI/CLI must show the
+    // on-disk numbers.
     const installed: InstalledModelRecord = {
       modelId: "installed-archive",
       format: "mlx",
@@ -396,11 +396,11 @@ describe("single-model enforcement", () => {
   });
 
   it("effectiveDiskSizeMb falls back to downloadSizeMb for legacy records (missing field, 0, NaN)", () => {
-    // Regression for Devin Review finding 3270718905: the TS side parsed
-    // active-model.json directly into InstalledModelRecord and assumed
-    // diskSizeMb was always populated. Records persisted before that
-    // field was introduced won't have it; the planner must mirror the
-    // Rust effective_disk_size_mb() fallback or netDelta becomes NaN.
+    // The TS side used to parse active-model.json directly into
+    // InstalledModelRecord and assume diskSizeMb was always populated.
+    // Records persisted before that field was introduced won't have it;
+    // the planner must mirror the Rust `effective_disk_size_mb()`
+    // fallback or netDelta becomes NaN.
     const legacy: InstalledModelRecord = {
       modelId: "legacy",
       format: "gguf",
@@ -516,9 +516,9 @@ describe("single-model enforcement", () => {
   });
 
   it("downloadModel re-downloads when active-model.json claims installed but file is missing on disk", async () => {
-    // Regression for Devin Review finding 3270586440: if the user (or a
-    // disk error) removed the model file out from under Tessera, the fast
-    // path used to incorrectly return the stale record without
+    // If something outside Tessera (user `rm`, anti-virus quarantine,
+    // disk error) removed the model file out from under Tessera, the
+    // fast path used to incorrectly return the stale record without
     // re-downloading. The sidecar would then fail to start because its
     // model path no longer existed. Now we verify file existence before
     // taking the fast path.
@@ -666,10 +666,10 @@ describe("single-model enforcement", () => {
   });
 
   it("downloadModel extracts MLX .tar.gz archives, removes the archive, and stores the extract dir", async () => {
-    // Regression for Devin Review finding 3270628690: MLX models ship as
-    // tar.gz archives. The download path must extract them so the runtime
-    // adapter sees a directory (the MLX-native artifact), and the archive
-    // must be removed so the single-model invariant holds.
+    // MLX models in the manifest ship as `.tar.gz` archives. The download
+    // path must extract them so the runtime adapter sees a directory (the
+    // MLX-native artifact), and the archive must be removed so the
+    // single-model invariant holds.
     const requested = makeResolved({
       id: "ternary-bonsai-1.7b-mlx",
       format: "mlx",
@@ -757,12 +757,12 @@ describe("single-model enforcement", () => {
   });
 
   it("deleteCurrentModel defensively sweeps stray .tar.gz archives next to the extracted dir", async () => {
-    // Regression for Devin Review finding 3271010216: if a previous
-    // download's post-extract archive unlink failed (Windows EPERM/EBUSY,
-    // crash mid-cleanup, etc.), the source `.tar.gz` could survive next
-    // to the extracted directory. The next deleteCurrentModel call must
-    // sweep it up so the user doesn't have to manually clean the cache
-    // directory to restore the single-model-on-disk invariant.
+    // If a previous download's post-extract archive unlink failed
+    // (Windows EPERM/EBUSY, crash mid-cleanup, etc.), the source `.tar.gz`
+    // could survive next to the extracted directory. The next
+    // deleteCurrentModel call must sweep it up so the user doesn't have
+    // to manually clean the cache directory to restore the
+    // single-model-on-disk invariant.
     const dir = modelsDir(workdir);
     await fsp.mkdir(dir, { recursive: true });
     const extractedDir = path.join(dir, "ternary-bonsai-1.7b-2bit.mlx");
@@ -861,7 +861,6 @@ describe("single-model enforcement", () => {
     // Defense-in-depth: corruption is silently degraded (covered above),
     // but a real disk fault must still surface so an operator can act on
     // it — silently masking those would hide real problems.
-    //
     // We point `getCurrentModel` at a userDataDir that's actually a
     // regular file. The `<file>/active-model.json` join then fails with
     // ENOTDIR — a real OS error that is NOT ENOENT — and must propagate.
@@ -890,12 +889,10 @@ describe("single-model enforcement", () => {
   });
 
   it("deleteCurrentModel waits for an in-flight downloadModel instead of racing it", async () => {
-    // Regression for Devin Review finding 3270789432. Previously
     // `deleteCurrentModel` ran outside the per-userDataDir download lock
     // and relied on Node's cooperative scheduling to avoid clobbering or
     // being clobbered by a concurrent `downloadModel`. Now both go
     // through the same lock; this test asserts the resulting ordering.
-    //
     // We start a slow download, immediately fire a `deleteCurrentModel`,
     // and capture the wall-clock order of (a) when the download's
     // fetcher resolves and (b) when the delete's record-clear settles.
@@ -944,8 +941,7 @@ describe("single-model enforcement", () => {
   // lock, only when the operation will actually mutate the filesystem.
   // The Electron main process passes `stopSidecarIfRunning` through
   // this hook so the llama-server child releases its OS file handle
-  // before we touch the active model. (Devin Review INFO finding
-  // f37a3c45.)
+  // before we touch the active model.
   // ---------------------------------------------------------------
 
   it("downloadModel skips beforeMutation on the already-installed fast path", async () => {
@@ -1277,13 +1273,13 @@ describe("detectComputeBackends immutability", () => {
   it("never returns a mutable reference to the cached array", () => {
     // First (cold) call MUST hand back a copy, not the underlying cache,
     // so a future caller that does e.g. `result.push("custom")` cannot
-    // poison subsequent calls. Devin Review finding 3270926992 flagged
+    // poison subsequent calls.
     // an asymmetry where the cold-cache path returned the original array
     // while warm-cache calls returned `.slice()`. The test must be
     // hardware-agnostic — on a CI host with Vulkan/CUDA installed, those
     // backends naturally appear in the detected list — so we mutate
     // using a clearly-synthetic sentinel value and verify it doesn't
-    // leak into the cache. (Devin Review BUG finding 3270926992.)
+    // leak into the cache.
     const SENTINEL = "synthetic-test-only" as never;
     const first = detectComputeBackends();
     const baseline = first.slice();
@@ -1326,8 +1322,7 @@ describe("downloadModel survives throwing onProgress", () => {
   });
 
   it("never aborts the on-disk write when the progress callback throws", async () => {
-    // This is the headline of Devin Review BUG finding 3270950107: if a
-    // BrowserWindow gets destroyed mid-download, its
+    // If a BrowserWindow gets destroyed mid-download, its
     // `webContents.send` throws "Object has been destroyed", and
     // without the boundary wrap that exception would bubble back
     // through the fetcher's read loop into downloadModelLocked's
@@ -1378,7 +1373,7 @@ describe("downloadModel survives throwing onProgress", () => {
   });
 });
 
-describe("writeCurrentModel atomic write (Devin Review 3270976513)", () => {
+describe("writeCurrentModel atomic write ", () => {
   let workdir: string;
 
   beforeEach(async () => {
@@ -1469,7 +1464,7 @@ describe("writeCurrentModel atomic write (Devin Review 3270976513)", () => {
   });
 });
 
-describe("defaultFetcher reader lifetime (Devin Review 3270976469)", () => {
+describe("defaultFetcher reader lifetime ", () => {
   // We can't easily simulate `fsp.open` failing inside vitest without
   // platform-specific permission tricks, so instead we exercise the
   // re-ordered code path indirectly: if the response body is null we
@@ -1517,7 +1512,6 @@ describe("defaultFetcher reader lifetime (Devin Review 3270976469)", () => {
 });
 
 describe("manifest validation guard (parsePlatform + validateManifest)", () => {
-  // Regression for Devin Review INFO finding 3271329037:
   // `ManifestLlamaServerVariant.platform` is typed as `Platform` but
   // the JSON it comes from is untrusted at runtime. A manifest
   // containing e.g. `"linux-riscv64"` would parse successfully and
@@ -1653,7 +1647,6 @@ describe("manifest validation guard (parsePlatform + validateManifest)", () => {
 });
 
 describe("manifest validation guard — models[] entries", () => {
-  // Regression for Devin Review INFO finding 3271382651:
   // `validateManifest` originally only validated `llama_server.variants[]`,
   // leaving `models[]` entries untouched. A typo like `"tier": "hig"`
   // would parse successfully and silently drop the model from
@@ -1793,7 +1786,6 @@ describe("manifest validation guard — models[] entries", () => {
 });
 
 describe("ModelRuntimeCard fetcher / defaultFetcher socket-leak guard", () => {
-  // Regression for Devin Review INFO finding 3271382571:
   // `defaultFetcher` used to throw on `!resp.ok` without consuming or
   // cancelling `resp.body`. Under undici (Node's built-in fetch) that
   // keeps the underlying TCP socket open until the `Response` is

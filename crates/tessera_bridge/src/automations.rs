@@ -199,7 +199,7 @@ mod tests {
         // Zero would mean "fire on every tick", negative would flow
         // straight into `chrono::Duration::seconds` and produce a
         // next-run-in-the-past, which would re-fire forever — both
-        // are invariants Devin Review (ANALYSIS_0002) flagged.
+        // are invariants `parse_trigger` enforces.
         for bad in ["0", "-1", "-86400"] {
             let json = format!(r#"{{"kind":"schedule","interval_seconds":{bad}}}"#);
             let err = parse_trigger(&json).expect_err("non-positive interval must fail");

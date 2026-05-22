@@ -28,7 +28,7 @@
  *     returning [] reads to the user as "the model found nothing".
  *     The renderer's existing IPC-error path then surfaces this in
  *     the UI rather than burying it in the main-process console.
- *     (Devin Review BUG finding 3270889925.)
+ *
  */
 
 import type { ExtractedItem } from "../shared/types";

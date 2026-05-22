@@ -78,7 +78,7 @@ interface ConfluencePage {
    * endpoint returns both on every page; we persist `createdAt` as
    * the manifest's `remoteModifiedAt` so it carries the same
    * semantics (real ISO timestamp) as every other connector's
-   * manifest entry. See Devin Review wave 23 ANALYSIS_0006.
+   * manifest entry.
    */
   version?: { number?: number; createdAt?: string };
   body?: { storage?: { value?: string }; representation?: string };
@@ -265,8 +265,7 @@ export interface ConfluenceBridgeHooks {
  * decide — for any previously-seen page that was *not* observed this
  * pass — whether it should be dropped (its space listed successfully
  * and the page is gone) or kept (its space failed to list and we have
- * no information about the page's current state). See Devin Review
- * wave 9 ANALYSIS_0004.
+ * no information about the page's current state).
  */
 type PageSpaceMap = Record<string, string>;
 
@@ -280,7 +279,8 @@ type PageSpaceMap = Record<string, string>;
  * recovery: e.g. the user fixes the antivirus rule that was locking
  * the file, Confluence advances the version, and we should let the
  * page through again without the count clamping it forever. See
- * Devin Review wave 22 ANALYSIS_0004 (confluence.ts:396-405).
+ * `FAILED_RETRY_MAX_ATTEMPTS` and the failure-cap regression test
+ * in `connectorsSync.test.ts` for the contract this field encodes.
  */
 interface FailedWriteEntry {
   /**
@@ -311,7 +311,7 @@ interface ConfluenceState {
   /**
    * Per-page space id, used for the carry-forward decision when a
    * space's pages listing fails on the current pass. Legacy state
-   * files (pre-wave-9) lack this field; loaded entries without a
+   * files (predating this field) lack it; loaded entries without a
    * recorded space id are treated as "unknown" and always carried
    * forward, which is the safe default while the state self-heals
    * over subsequent successful syncs.
@@ -322,13 +322,13 @@ interface ConfluenceState {
    * bridge. Bounded by `FAILED_RETRY_MAX_ATTEMPTS` per page so a
    * permanently-failing page (filesystem permission, antivirus lock,
    * path collides with a directory, etc.) eventually stops burning
-   * one API call per sync forever. The wave-22 fix — prior to this
-   * field, the version-keyed retry contract had no cap and would
-   * keep re-fetching such pages indefinitely.
+   * one API call per sync forever. Prior to this field, the
+   * version-keyed retry contract had no cap and would keep
+   * re-fetching such pages indefinitely.
    *
-   * Legacy state files (pre-wave-22) lack this field; loaded as `{}`,
-   * which is the correct "no failures recorded yet" default and lets
-   * the cap engage on the very next failure.
+   * Legacy state files predating this field load as `{}`, which is
+   * the correct "no failures recorded yet" default and lets the cap
+   * engage on the very next failure.
    */
   failedWrites: FailedWriteMap;
 }
@@ -352,9 +352,9 @@ async function loadState(userDataDir: string): Promise<ConfluenceState> {
       // Defensive sanitisation: if a corrupted state.json has a
       // non-object or array-shaped `failedWrites`, drop it rather than
       // letting bad data feed into the retry-cap arithmetic below.
-      // Same posture as the wave-9 `pageSpaces` default — unknown
-      // entries reset to the safe "no failures recorded" baseline
-      // which lets the cap engage cleanly on the next failed write.
+      // Same posture as the `pageSpaces` default — unknown entries
+      // reset to the safe "no failures recorded" baseline which lets
+      // the cap engage cleanly on the next failed write.
       failedWrites:
         parsed.failedWrites &&
         typeof parsed.failedWrites === "object" &&
@@ -380,8 +380,7 @@ async function saveState(userDataDir: string, s: ConfluenceState): Promise<void>
 export async function syncConfluence(ctx: {
   accessToken: string;
   /** Just-in-time refresh hook — called per space and per page so a
-   *  large-tenant scan does NOT outlive the access token. See Devin
-   *  Review wave 13 BUG_0001 / ANALYSIS_0007. */
+   *  large-tenant scan does NOT outlive the access token. */
   getAccessToken?: () => Promise<string>;
   userDataDir: string;
   bridge: ConfluenceBridgeHooks;
@@ -398,8 +397,7 @@ export async function syncConfluence(ctx: {
     // instead of bypassing it via `ctx.accessToken`. The Confluence
     // sync was the only remaining caller in this file using the
     // static token, which made it the lone exception to the pattern
-    // every other API call follows. See Devin Review wave 16
-    // ANALYSIS_0005.
+    // every other API call follows.
     const resources = await listAccessibleResources(
       await resolveAccessToken(ctx),
     );
@@ -421,10 +419,9 @@ export async function syncConfluence(ctx: {
   // instead of paying `O(pages × sources)` for the per-iteration
   // `bridge.listSources().find(...)` check. The cache stays coherent
   // with the bridge as we add (via `addLocalFile`) and remove (via
-  // the deletion-cascade) sources during the pass. See Devin Review
-  // wave 20 ANALYSIS: "Confluence per-page loop calls
+  // the deletion-cascade) sources during the pass.
+  // "Confluence per-page loop calls
   // bridge.listSources() on every iteration".
-  //
   // Declared `let` and assigned inside the try block below so a
   // `bridge.listSources()` throw at the top of the sync is still
   // caught by the saveState + writeManifest cleanup path (defense-
@@ -442,21 +439,19 @@ export async function syncConfluence(ctx: {
   // that we did NOT see this pass — whether to drop it (its space
   // listed successfully, page is gone) or carry it forward (its space
   // failed to list, we know nothing new about the page).
-  //
   // We intentionally do NOT seed `nextVersions` from `state.pageVersions`
   // up front: that would prevent us from distinguishing "saw and
-  // still alive" from "didn't see at all", and would re-introduce the
-  // dangling-version concern noted in wave 7. The carry-forward step
-  // runs in the finally block, AFTER iteration, with the explicit
-  // success/observation context. See Devin Review wave 9 ANALYSIS_0004.
+  // still alive" from "didn't see at all", and would re-introduce a
+  // dangling-version concern (entries kept alive without observation).
+  // The carry-forward step runs in the finally block, AFTER
+  // iteration, with the explicit success/observation context.
   const nextVersions: PageVersionMap = {};
   const nextPageSpaces: PageSpaceMap = {};
   // Fresh per-pass map: any page id NOT explicitly carried into
   // `nextFailedWrites` during this pass naturally drops from the
   // retry budget on save. That keeps the contract simple — a
   // successful write is implicitly a "reset to zero" because the
-  // pageId never makes it into the new map. See Devin Review wave 22
-  // ANALYSIS_0004.
+  // pageId never makes it into the new map.
   const nextFailedWrites: FailedWriteMap = {};
   const successfullyListedSpaceIds = new Set<string>();
 
@@ -467,9 +462,7 @@ export async function syncConfluence(ctx: {
   // code path that forgets a try/catch) would skip `saveState` and
   // `writeManifest` entirely — making every page successfully fetched
   // in this pass invisible to the next sync. Mirrors the
-  // defense-in-depth pattern in figma.ts. See Devin Review wave 7
-  // ANALYSIS_0002 (architectural consistency).
-  //
+  // defense-in-depth pattern in figma.ts.
   // NOTE: Confluence intentionally does NOT need a separate failed-
   // retry queue like Notion/Jira/Figma. Its incremental algorithm uses
   // per-page `version.number` rather than a single global watermark:
@@ -479,20 +472,20 @@ export async function syncConfluence(ctx: {
   // `currentVersion > previousVersion` triggers a natural retry via
   // the same code path that handles fresh edits. No separate queue is
   // required because there is no "watermark advances past failed
-  // item" failure mode here. See Devin Review wave 7 ANALYSIS_0002.
+  // item" failure mode here.
   try {
     // Materialise the source-by-path index inside the try block so an
     // unlikely `bridge.listSources()` throw is still caught by the
-    // saveState + writeManifest cleanup below (wave-7 ANALYSIS_0004
-    // defense-in-depth contract).
+    // saveState + writeManifest cleanup below (defense-in-depth
+    // contract; the listSources-throw regression test in
+    // `connectorsSync.test.ts` locks this in).
     sourceIndex = SourcePathIndex.fromBridge(ctx.bridge);
     for (const space of spaces) {
       let pages: ConfluencePage[];
       try {
         // Refresh-on-demand per space. A tenant with hundreds of
         // spaces can take tens of minutes to walk; without this, all
-        // calls after the access token expires fail with 401. See
-        // Devin Review wave 13 BUG_0001.
+        // calls after the access token expires fail with 401.
         const accessToken = await resolveAccessToken(ctx);
         pages = await listPagesInSpace(cloudId, accessToken, space.id);
       } catch (err) {
@@ -506,8 +499,7 @@ export async function syncConfluence(ctx: {
         // network-error→offline translation; let it do its job.
         // Non-network errors (API-level 5xx, listing API removed a
         // space we still have in state, etc.) keep the per-space
-        // skip behaviour described below. See Devin Review wave 19
-        // ANALYSIS_0001.
+        // skip behaviour described below.
         if (isNetworkError(err)) throw err;
         // Failed to list pages in this space — skip it. The next sync
         // will re-list. Other spaces still process normally.
@@ -517,8 +509,7 @@ export async function syncConfluence(ctx: {
         // Without that, the next sync would re-fetch and re-render
         // every page in the affected space from scratch — expensive
         // for large workspaces and unnecessary because the page
-        // contents haven't actually changed. See Devin Review wave 9
-        // ANALYSIS_0004.
+        // contents haven't actually changed.
         continue;
       }
       successfullyListedSpaceIds.add(space.id);
@@ -546,10 +537,7 @@ export async function syncConfluence(ctx: {
         // up" (i.e. won't re-render the body or re-attempt the disk
         // write) until upstream Confluence advances the version
         // again. Without this gate, a permanently-broken page would
-        // burn one API call per sync indefinitely — see Devin Review
-        // wave 22 ANALYSIS_0004 (confluence.ts:396-405) for the
-        // original observation.
-        //
+        // burn one API call per sync indefinitely.
         // The version-keyed comparison is important: if the page has
         // moved to a newer version upstream (`prior.version !==
         // currentVersion`), that is fresh content and the retry
@@ -594,7 +582,7 @@ export async function syncConfluence(ctx: {
           // version-keyed write-failure counter so the retry budget
           // depletes across syncs — once it hits MAX, the gate above
           // will short-circuit this page until upstream changes the
-          // version. See Devin Review wave 22 ANALYSIS_0004.
+          // version.
           recordWriteFailure();
           continue;
         }
@@ -643,16 +631,15 @@ export async function syncConfluence(ctx: {
           // `last_modified_at`) instead of the prior shape which
           // stringified the version integer (`"1"`, `"2"`, ...) and
           // would parse as `NaN` through `parseWatermarkIso`.
-          //
           // The version-as-watermark contract is preserved entirely by
           // `state.pageVersions[page.id]` above; the manifest's
           // `remoteModifiedAt` is purely metadata for diagnostics and
           // cross-connector tooling that might read manifests
           // uniformly. Falling back to `null` (rather than
           // `String(version.number)`) is the conservative default
-          // when the API ever omits `createdAt` for a page. See
-          // Devin Review wave 23 ANALYSIS_0006 (confluence.ts:
-          // 626-634).
+          // when the API ever omits `createdAt` for a page (this
+          // matches the manifest-entry construction immediately
+          // above).
           remoteModifiedAt: page.version?.createdAt ?? null,
         });
         nextVersions[page.id] = currentVersion;
@@ -664,11 +651,12 @@ export async function syncConfluence(ctx: {
     // successfully this pass. For pages whose space listed but were
     // not returned (genuine deletions) we leave the entry out so
     // state self-prunes. Pages whose recorded space is unknown
-    // (legacy state pre-wave-9, or pages whose space we never had
-    // a record for) are carried forward as a safe default — they
+    // (legacy state predating the pageSpaces field, or pages whose
+    // space we never had a record for) are carried forward as a safe
+    // default — they
     // will self-heal as soon as their space lists successfully and
     // we either re-observe them (setting nextPageSpaces) or confirm
-    // their deletion. See Devin Review wave 9 ANALYSIS_0004.
+    // their deletion.
     for (const [pageId, prevVersion] of Object.entries(state.pageVersions)) {
       if (pageId in nextVersions) continue;
       const recordedSpace = state.pageSpaces[pageId];
@@ -689,8 +677,7 @@ export async function syncConfluence(ctx: {
         //   5. Increment `removed` so the IPC return value
         //      surfaces the deletion to the renderer status panel
         //      (matches OneDrive's contract; previously Confluence
-        //      always returned `removed: 0` even after deletions). See
-        //      Devin Review wave 11 ANALYSIS_0005 (🚩, confluence.ts:336).
+        //      always returned `removed: 0` even after deletions).
         const manifestEntry = entriesById.get(pageId);
         if (manifestEntry) {
           const existingSource = sourceIndex.get(manifestEntry.localPath);
@@ -721,7 +708,7 @@ export async function syncConfluence(ctx: {
     // this in `finally` is best-effort progress save; if it fails the
     // caller still needs to see the *original* upstream error (network
     // failure, auth expiry, etc.), not a derived "ENOSPC" from the
-    // recovery step. See Devin Review wave 12 ANALYSIS_0004.
+    // recovery step.
     try {
       await saveState(ctx.userDataDir, {
         cloudId,
@@ -732,7 +719,7 @@ export async function syncConfluence(ctx: {
         // pass, or because the prior cap is still in effect at the
         // same version) naturally drops. A successful write is
         // implicitly a "reset to zero" because the pageId never made
-        // it into the new map. See Devin Review wave 22 ANALYSIS_0004.
+        // it into the new map.
         failedWrites: nextFailedWrites,
       });
       await writeManifest(ctx.userDataDir, {

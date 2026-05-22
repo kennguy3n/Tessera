@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn today_returns_current_utc_date() {
-        // Regression for ANALYSIS_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0006 —
+        // Regression test —
         // verify that the chrono `Datelike`-based refactor produces the
         // same calendar date the previous string-formatting path did.
         // We compare against `chrono::Utc::now()` snapshotted in this

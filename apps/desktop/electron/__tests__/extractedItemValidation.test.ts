@@ -12,8 +12,7 @@
  *   4. All-invalid input against non-empty payload → throw with the
  *      drop reasons in the message, so the renderer's existing
  *      IPC-error path surfaces "Bridge schema mismatch …" in the UI
- *      instead of silently rendering an empty result. (Devin Review
- *      BUG finding 3270889925.)
+ *      instead of silently rendering an empty result.
  *   5. Empty input → return empty array, no warn, no throw.
  *   6. Each invalid-field branch (bad itemType, missing text, missing
  *      sourceCitation, bad confidence, non-object items, infinite
@@ -97,9 +96,9 @@ describe("validateExtractedItems", () => {
   });
 
   it("throws when 100% of items fail validation against non-empty input", () => {
-    // This is the headline of Devin Review BUG finding 3270889925: an
-    // empty-result IPC reply reads to the user as "the model found
-    // nothing", so a wholesale schema break must escalate to an error.
+    // A silent empty-result IPC reply reads to the user as "the model
+    // found nothing", so a wholesale schema break must escalate to an
+    // error rather than collapsing into a zero-item success.
     const warn = vi.fn();
     expect(() =>
       validateExtractedItems(

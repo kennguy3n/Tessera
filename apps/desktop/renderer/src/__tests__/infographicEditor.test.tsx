@@ -85,7 +85,6 @@ describe("buildPreviewHtml", () => {
   });
 
   it("drops malformed icon specs instead of letting them break out of the token", () => {
-    // Regression for Devin Review ANALYSIS_pr-review-job-...-0001. A spec
     // containing `}}` would close the `{{icon:...}}` token prematurely and
     // let arbitrary trailing text (including `<script>`) reach the DOM.
     const html = buildPreviewHtml({
@@ -106,7 +105,6 @@ describe("buildPreviewHtml", () => {
   });
 
   it("falls back to a safe layout class when `layout` is not allowlisted", () => {
-    // Regression for Devin Review BUG_pr-review-job-...-0002. The layout
     // value is interpolated into a class attribute; a value like
     // `vertical" onclick="alert(1)` would break out of the attribute.
     // The fix is to (a) constrain `layout` to the allowlist on parse, and
@@ -131,7 +129,6 @@ describe("buildPreviewHtml", () => {
 
 describe("parseInfographicContent layout allowlist", () => {
   it("rejects unknown layout values and falls back to vertical", () => {
-    // Regression for Devin Review BUG_pr-review-job-...-0002.
     const json = JSON.stringify({
       title: "X",
       layout: 'vertical" onclick="alert(1)',

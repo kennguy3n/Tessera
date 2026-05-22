@@ -57,13 +57,10 @@ export function syncDirFor(userDataDir: string, provider: string): string {
  *      believe the cached token will expire. Forcing every test to
  *      construct a callback for that single fetch adds a lot of
  *      ceremony for zero correctness benefit.
- *   2. The bug surface this refactor closes (BUG_pr-review-job-66735207854d49d5be917283fdba2dc0_0001:
- *      gdrive 401s after 1h syncs) only manifests inside the
- *      per-item hot loop. That's where `resolveAccessToken` is
- *      called, and that's where the callback path is exercised.
- *
- * See Devin Review wave 13 BUG_0001 (gdrive.ts:123-126) and the
- * cross-cutting ANALYSIS_0007 (handlers.ts:338-365).
+ *   2. The bug surface this refactor closes (gdrive 401s after
+ *      1h syncs) only manifests inside the per-item hot loop. That's
+ *      where `resolveAccessToken` is called, and that's where the
+ *      callback path is exercised.
  */
 export interface AccessTokenSource {
   /** Static initial token, used by the first few setup fetches and
@@ -165,8 +162,7 @@ export async function purgeSyncDir(
  * append a short content-addressed suffix when the substitution
  * actually changed the input — i.e. only when the input contained an
  * unsafe character. For every id current providers emit, the output
- * is bit-identical to the pre-suffix behaviour. See Devin Review
- * wave 7B ANALYSIS_0007 (syncDir.ts:99-101).
+ * is bit-identical to the pre-suffix behaviour.
  */
 const COLLISION_HASH_LEN = 8;
 const REMOTE_ID_MAX_LEN = 200;
@@ -209,7 +205,6 @@ export const FAILED_RETRY_QUEUE_MAX = 200;
  * to fetch so the next sync can retry them — otherwise the watermark
  * silently moves past the failed item's modification time and the
  * item is never retried until the user edits it again. (See the
- * Devin Review wave 5 finding on `notion.ts:304-341`.) The
  * `failureCount` lets us cap retries: an item that fails too many
  * passes in a row is almost certainly permanently gone (deleted,
  * permissions revoked, OAuth scope changed) and continuing to ping it
@@ -249,7 +244,7 @@ export const FAILED_RETRY_MAX_ATTEMPTS = 5;
  * `2024-06-01T12:00:00+00:00`. Figma and Notion currently happen to
  * return a stable shape, but the comparison is a footgun for any
  * future provider (Atlassian already mixes both forms in different
- * endpoints) and a Devin Review wave 7 finding flagged it as fragile.
+ * endpoints), so we normalise to epoch-ms once and compare numbers.
  *
  * Returning `null` (rather than throwing) for unparsable input lets
  * callers fall back to the same behaviour they had before this fix:
@@ -390,7 +385,6 @@ export function nextFailedRetryQueue(
  * Calling `index.remove(path)` after each `removeSource` keeps the
  * cache in sync with the bridge.
  *
- * See Devin Review wave 20 ANALYSIS: "Confluence per-page loop calls
  * bridge.listSources() on every iteration — O(n²) for large spaces".
  */
 export interface SourceMeta {

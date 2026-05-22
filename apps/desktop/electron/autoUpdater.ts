@@ -68,9 +68,6 @@ function broadcast(status: UpdateStatusEvent): void {
  * reference type). All non-`debug` methods are required; `debug` is
  * optional because production loggers commonly drop debug output
  * for cost reasons and `electron-updater` calls it best-effort.
- *
- * See Devin Review wave 20 ANALYSIS: "autoUpdater.ts uses `as never`
- * type assertion to bypass logger type mismatch".
  */
 export interface AutoUpdaterLogger {
   info(message?: unknown): void;
@@ -290,8 +287,7 @@ export function registerAutoUpdaterIpc(): void {
       // harder to reason about what "validated" means — a renderer
       // bug that passes `"true"` (string) would silently set the
       // config to `true` under coercion, while every other handler
-      // would reject it loudly. Reject loudly here too. See Devin
-      // Review wave 10 ANALYSIS_0004.
+      // would reject it loudly. Reject loudly here too.
       const value = assertBoolean(enabled, "enabled");
       updateConfig({ autoUpdate: value });
       return loadConfig().autoUpdate;

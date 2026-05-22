@@ -376,7 +376,6 @@ mod tests {
 
     #[test]
     fn markdown_replace_preserves_paragraph_separator_after_block() {
-        // Regression for Devin Review BUG_pr-review-job-...-0001. Previously
         // `to_markdown_block` returned `\`\`\`mermaid\n…\n\`\`\`` with no
         // trailing newline. Combined with `extract_blocks` consuming the
         // closing-fence line's `\n` as part of `block.range`, the `\n\n`
@@ -408,7 +407,6 @@ mod tests {
 
     #[test]
     fn rejects_info_strings_that_only_start_with_mermaid() {
-        // Regression for Devin Review BUG_pr-review-job-...-0001 (info-string
         // boundary). ```mermaidx, ```mermaid-v2, ```mermaid_old etc. are NOT
         // mermaid blocks and must be passed through unchanged.
         for not_mermaid in [
@@ -437,7 +435,6 @@ mod tests {
 
     #[test]
     fn closing_fence_must_not_have_info_string() {
-        // Regression for Devin Review ANALYSIS_pr-review-job-...-0003. Per
         // CommonMark, the closing fence may only contain fence characters
         // (≥ opener) followed by optional whitespace. Lines like ```python on
         // their own inside a mermaid block must NOT terminate the block.
@@ -459,7 +456,6 @@ mod tests {
 
     #[test]
     fn extended_fences_are_handled_per_commonmark() {
-        // Regression for Devin Review BUG_pr-review-job-c259353b…_0001. Before
         // the fix, the opening fence was always treated as exactly 3 chars
         // (via `trim_start_matches(\"```\")` stripping the pattern repeatedly),
         // so a 6-backtick opener would be (a) accepted with a 3-backtick

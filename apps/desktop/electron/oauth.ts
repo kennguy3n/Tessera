@@ -19,8 +19,7 @@
  * were not imported anywhere — so they were pruned in the same
  * cleanup. Keeping this file as a one-function module rather than
  * inlining `generateState()` into its single caller preserves a
- * grep-able home for the named helper. See Devin Review wave 19
- * ANALYSIS_0005.
+ * grep-able home for the named helper.
  */
 export function generateState(): string {
   const array = new Uint8Array(32);

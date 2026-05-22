@@ -8,7 +8,7 @@
  * sent (strings, numbers, objects). Every other IPC handler in this
  * codebase runs its inputs through the `assert*` helpers in
  * `ipc/validate.ts`, and the auto-updater handler now matches that
- * pattern. See Devin Review wave 10 ANALYSIS_0004.
+ * pattern.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

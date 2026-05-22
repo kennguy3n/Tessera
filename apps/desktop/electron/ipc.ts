@@ -85,14 +85,14 @@ function getConnectorContext(): ReturnType<typeof createDefaultContext> {
  * non-expiring-token short-circuit. Previously there were two
  * independent copies of this logic (one in the legacy
  * Google-Drive-only `oauthServer.ts`, one in `handlers.ts`) and they
- * could silently drift; the legacy copy was deleted in wave 19
- * ANALYSIS_0005 once the provider-agnostic dispatcher in
- * `ipc/connectors/providerOAuth.ts` had subsumed every caller.
+ * could silently drift; the legacy copy was deleted once the
+ * provider-agnostic dispatcher in `ipc/connectors/providerOAuth.ts`
+ * had subsumed every caller.
  *
  * The parameter is typed as `ProviderId` rather than `string` so the
  * compiler refuses any caller that doesn't already have a validated
  * provider id in scope. With `ProviderId` now derived from the
- * `KNOWN_PROVIDERS` runtime allowlist (wave 16 ANALYSIS_0004), the
+ * `KNOWN_PROVIDERS` runtime allowlist, the
  * legacy `as ProviderId` cast here is no longer necessary — the only
  * call site below passes the string literal `"google_drive"`, which
  * TypeScript narrows to `ProviderId` automatically.
@@ -401,7 +401,8 @@ export function registerIpcHandlers(): void {
           // Refuse the request outright instead of silently rewriting the
           // path or showing the user a dialog with a dangerous suggestion.
           // This is the security boundary; making it visible as an error
-          // is the point — see BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0003.
+          // is the point — see the export-path allowlist regression
+          // tests in `__tests__/exportPathSafety.test.ts`.
           throw new Error(
             `Export path is outside the allowed locations (Downloads, Documents, Desktop, Home, App data, system temp): ${filePath}`,
           );
@@ -674,7 +675,6 @@ export function registerIpcHandlers(): void {
   );
 
   // --- External LLM provider ---
-  //
   // Settings (URL, model, etc.) live in the on-disk JSON config so they
   // survive restarts. The API key is *referenced* by `apiKeyRef` but
   // never stored there — it lives encrypted in the OS keychain via
@@ -845,7 +845,7 @@ export function registerIpcHandlers(): void {
       // (idle marking + controller reset) on the way out. Routing every
       // `model:token` send through `safeRendererSender` makes the channel
       // best-effort and keeps cleanup deterministic regardless of renderer
-      // state. (Devin Review BUG finding 3271137685.)
+      // state.
       const sendToken = safeRendererSender<{ token: string; done: boolean }>(
         event,
         "model:token",
@@ -961,7 +961,6 @@ export function registerIpcHandlers(): void {
     // In production the manifest is bundled into <resources>/sidecars and
     // does not change at runtime, so the path-keyed cache in modelManagement
     // is correct as-is and we get a fast in-memory hit on every model IPC.
-    //
     // In development / tests we invalidate so:
     //   - `npm run dev` hot-reload picks up edits to sidecars/models.json;
     //   - tests that switch fixtures via TESSERA_MODELS_MANIFEST always see
@@ -1006,7 +1005,6 @@ export function registerIpcHandlers(): void {
     // Same "live record only" semantics as runtime:planDownload and the
     // runtime:downloadModel fast-path: if active-model.json points at a
     // file that's no longer on disk, treat it as no model installed.
-    //
     // Round 10 left this IPC on `getCurrentModel` (raw record) on the
     // theory that a future "ghost record → Re-download" UI would want to
     // see the stale record. That UI doesn't exist today: both
@@ -1015,11 +1013,10 @@ export function registerIpcHandlers(): void {
     // Delete buttons, Download hidden) and the "no model" branch
     // (Download visible). Exposing the ghost record makes the Download
     // button unreachable without first clicking Delete, which is the
-    // exact UX gap finding 3270889829 flags. Stale records get cleaned
+    // exact UX gap we want to avoid. Stale records get cleaned
     // up on the next downloadModelLocked pass (it clears active-model.json
     // when isModelInstalled returns null but a record still exists), so
-    // there's no orphan to manage at this layer. (Devin Review BUG
-    // finding 3270889829.)
+    // there's no orphan to manage at this layer.
     getInstalledModel(userDataDir()),
   );
 
@@ -1030,7 +1027,6 @@ export function registerIpcHandlers(): void {
     // treated as "no model installed". Otherwise the planner returns
     // `already-installed` and the UI hides the Download button, forcing
     // the user to click "Delete model" to clear the ghost record.
-    // (Devin Review BUG finding 3270859596.)
     const current = await getInstalledModel(userDataDir());
     return planDownload(current, requested);
   });
@@ -1060,7 +1056,7 @@ export function registerIpcHandlers(): void {
    *   - `runtime:downloadProgress` (the download-progress emitter)
    *   - `model:token` (the `model:generate` SSE stream)
    *
-   * (Devin Review BUG findings 3270950107 + 3271137685.)
+   *
    */
   function safeRendererSender<T>(
     event: Electron.IpcMainInvokeEvent,
@@ -1089,12 +1085,10 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("runtime:downloadModel", async (event, modelId: string) => {
     const requested = findModelOrThrow(modelId);
     // Only stop the sidecar if we will actually mutate the model file.
-    //
     // Three cases:
     //   (a) Requested model is already installed AND file is still on disk
     //       -> no-op, do NOT touch the sidecar (avoid killing a running
-    //       inference server when no download is needed, per Devin Review
-    //       finding 3270586297).
+    //       inference server when no download is needed).
     //   (b) Requested model is already installed but file is missing
     //       -> we must re-download. Stop the sidecar in case it's still
     //       pointing at the now-missing path (defensive; in practice if
@@ -1105,16 +1099,13 @@ export function registerIpcHandlers(): void {
     //       unlinks it, so we MUST stop the sidecar first — it holds the
     //       OS file handle and on Windows that blocks the unlink with
     //       EPERM/EBUSY.
-    //
     // There is intentionally no separate `runtime:swapModel` channel:
     // `downloadModel` already handles both fresh-install and swap, so a
-    // second handler that called the same function only invited drift
-    // (see Devin Review finding 3270524691).
-    //
+    // second handler that called the same function only invited drift.
     // The "already installed AND file on disk" check is delegated to
     // `isModelInstalled` so this IPC fast-path and the
     // `downloadModelLocked` fast-path can't drift in what counts as
-    // "installed" (Devin Review finding 3270826130). There is still a
+    // "installed". There is still a
     // window between this check and the actual download in which a
     // concurrent caller could move the file out from under us, but
     // (a) `downloadModelLocked` re-checks under the per-userDataDir
@@ -1132,8 +1123,7 @@ export function registerIpcHandlers(): void {
     // and lock-acquire, and our subsequent eviction would then delete
     // a model the other tab had just successfully installed. Moving
     // it inside the lock makes the entire (stop → evict → download)
-    // sequence atomic per userDataDir. (Devin Review INFO finding
-    // f37a3c45.)
+    // sequence atomic per userDataDir.
     return downloadModel(userDataDir(), requested, progressEmitter(event), {
       beforeMutation: stopSidecarIfRunning,
     });
@@ -1144,15 +1134,13 @@ export function registerIpcHandlers(): void {
     // the per-userDataDir lock, after `deleteCurrentModel` has verified
     // that there is actually something to delete. See the
     // `runtime:downloadModel` handler above and the `beforeMutation`
-    // doc on `DownloadDeps` for the race-window rationale. (Devin
-    // Review INFO finding f37a3c45.)
+    // doc on `DownloadDeps` for the race-window rationale.
     await deleteCurrentModel(userDataDir(), {
       beforeMutation: stopSidecarIfRunning,
     });
   });
 
   // --- Connectors ---
-  //
   // Phase 10 Task 17 / Tasks 1–6: the legacy gdrive-only handlers
   // for `connectors:authenticate`, `connectors:disconnect`, and
   // `connectors:status` have been replaced by a unified registrar
@@ -1169,7 +1157,7 @@ export function registerIpcHandlers(): void {
   // same in-memory bucket.
   registerConnectorHandlers(getConnectorContext());
 
-  // Wave 18 ANALYSIS_0002: mirror the idempotent-registration guard
+  // mirror the idempotent-registration guard
   // that `registerConnectorHandlers` uses for its own channels.
   // `registerIpcHandlers()` is called once per main-process startup
   // today, but the test harness re-imports this module repeatedly and
@@ -1211,8 +1199,7 @@ export function registerIpcHandlers(): void {
       // today but Drive's API accepts the literal token `root` and
       // is otherwise free to widen the character set, and
       // pageTokens are deliberately opaque server-generated cursors
-      // whose internal format we don't constrain. See Devin Review
-      // wave 22 ANALYSIS_0005.
+      // whose internal format we don't constrain.
       const folderId =
         assertOptionalString(folderIdRaw, "folderId", { maxLen: 256 }) ??
         undefined;
@@ -1227,9 +1214,8 @@ export function registerIpcHandlers(): void {
       // ran first, ten user-driven retries against a stale auth
       // state would exhaust the budget and the renderer would see
       // "rate-limited" messaging stacked on top of the real
-      // (auth/network) error — exactly the pattern the wave-15
-      // ANALYSIS_0005 fix corrected in `runConnectorSync`
-      // (`handlers.ts:434-457`). See wave 16 ANALYSIS_0002.
+      // (auth/network) error — exactly the pattern the matching
+      // fix in `runConnectorSync` (`handlers.ts:434-457`) corrected.
       let accessToken: string;
       try {
         accessToken = await getValidAccessToken("google_drive");
@@ -1240,8 +1226,7 @@ export function registerIpcHandlers(): void {
         // a raw `fetch failed` that the picker would render as
         // "Auth expired". Non-network refresh errors (4xx from
         // Google, missing credentials, NotConnectedError) still
-        // propagate so the renderer prompts re-auth. See Devin
-        // Review wave 15 ANALYSIS_0007.
+        // propagate so the renderer prompts re-auth.
         if (isNetworkError(err)) {
           getLogger().warn(
             "gdrive listFiles token refresh hit network failure",
@@ -1263,7 +1248,6 @@ export function registerIpcHandlers(): void {
       // loop. The sync handler uses a much stricter 1/30s budget
       // because each sync involves dozens of API calls; listFiles
       // is one call per click, so the per-call limit can be looser.
-      // See Devin Review wave 15 ANALYSIS_0007.
       try {
         getConnectorContext().rateLimiter.consume(
           "connectors:gdrive:listFiles",
@@ -1421,8 +1405,7 @@ export function registerIpcHandlers(): void {
       // throws on non-array input and on 100%-drop input (unambiguous
       // schema regressions); partial drops return valid items + log a
       // single summary. Logic lives in ./extractedItemValidation so it
-      // can be exercised without Electron. (Devin Review BUG finding
-      // 3270889925.)
+      // can be exercised without Electron.
       return validateExtractedItems(JSON.parse(json) as unknown, {
         context: sourceId,
         warn: (message) => console.warn(message),
@@ -1449,15 +1432,14 @@ export function registerIpcHandlers(): void {
   );
 
   // --- Tasks ---
-  //
   // The bridge expects a JSON-encoded `CreateTaskRequest`/`UpdateTaskRequest`
   // because serde defaults and `Option<Option<...>>` don't round-trip
   // cleanly through napi's auto-generated TS bindings. We accept a typed
   // object from the renderer and re-serialize here, so the renderer sees
   // a normal IPC signature while the bridge keeps its strict Rust
   // deserialization (with `parse_opt_rfc3339` / `parse_opt_source_id`
-  // validation surfacing parse errors as IPC rejections — see
-  // tessera_bridge::tasks BUG_0001 regression tests).
+  // validation surfacing parse errors as IPC rejections — see the
+  // typed-parse regression tests in `tessera_bridge::tasks`).
   ipcMain.handle(
     "tasks:create",
     async (

@@ -131,8 +131,7 @@ app.whenReady().then(() => {
   // waiting on it. We schedule via `setImmediate` so the first paint
   // of the BrowserWindow runs to completion before the synchronous
   // probes start; the probes then block only the idle event-loop tick
-  // before any user interaction. (Devin Review INFO finding
-  // b10fe43e — synchronous execFileSync inside async IPC handlers.)
+  // before any user interaction.
   setImmediate(() => {
     try {
       detectComputeBackends();
@@ -163,7 +162,6 @@ app.on("window-all-closed", () => {
 // Guard against the deferred-quit dance re-entering: when we call
 // `app.quit()` from inside the `will-quit` handler, Electron re-emits
 // `will-quit` and we'd loop infinitely without this flag.
-//
 // We deliberately hook `will-quit` rather than `before-quit` because
 // `before-quit` fires before any cancellation handlers (renderer
 // "are you sure?" dialogs, future plugin quit-blockers, etc.) get a

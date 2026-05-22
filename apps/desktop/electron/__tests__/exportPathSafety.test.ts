@@ -1,7 +1,6 @@
 /**
  * Regression tests for the export-path allowlist that backs the
- * `artifacts:exportToFile` and `artifacts:exportMarp` IPC handlers
- * (see BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0003).
+ * `artifacts:exportToFile` and `artifacts:exportMarp` IPC handlers.
  *
  * The handlers used to honour any absolute path the renderer supplied,
  * which turned them into a write-anywhere primitive accessible from a

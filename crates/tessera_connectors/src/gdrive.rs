@@ -636,28 +636,6 @@ fn google_file_to_remote(gf: &GoogleDriveFile) -> RemoteFile {
     }
 }
 
-// Module-level URL-encoding helper to avoid pulling in the full `url` crate
-// just for query-parameter encoding (the `url` dep is workspace-available but
-// this keeps the Google-specific code self-contained).
-mod urlencoding {
-    use std::fmt::Write;
-    pub fn encode(input: &str) -> String {
-        let mut encoded = String::with_capacity(input.len());
-        for byte in input.bytes() {
-            match byte {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                    encoded.push(byte as char);
-                }
-                _ => {
-                    encoded.push('%');
-                    let _ = write!(encoded, "{byte:02X}");
-                }
-            }
-        }
-        encoded
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -743,13 +721,6 @@ mod tests {
     }
 
     #[test]
-    fn urlencoding_basic() {
-        assert_eq!(urlencoding::encode("hello"), "hello");
-        assert_eq!(urlencoding::encode("a b"), "a%20b");
-        assert_eq!(urlencoding::encode("a@b.com"), "a%40b.com");
-    }
-
-    #[test]
     fn restore_tokens_sets_connected() {
         let mut c = GoogleDriveConnector::new();
         let tokens = StoredTokens {
@@ -775,5 +746,56 @@ mod tests {
         assert_eq!(c.status(), ConnectorStatus::Disconnected);
         assert!(c.access_token.is_none());
         assert_eq!(c.file_count(), 0);
+    }
+
+    #[test]
+    fn build_auth_url_percent_encodes_drive_inputs() {
+        // Drive client IDs end in `.apps.googleusercontent.com`, redirect
+        // URIs carry `://`, `/`, and `?`, and the scope value is a
+        // space-separated list of URLs. All of those characters must be
+        // percent-encoded so the resulting query string remains a single
+        // well-formed URL — the previous hand-rolled `urlencoding` module
+        // was the only place this contract was exercised, so when we
+        // switched to the `urlencoding` crate we keep the contract under
+        // test by exercising the actual call site.
+        let config = AuthConfig {
+            client_id: "123-abc.apps.googleusercontent.com".into(),
+            client_secret: "GOCSPX-secret".into(),
+            redirect_uri: "http://localhost:9876/callback".into(),
+            scopes: vec![
+                "https://www.googleapis.com/auth/drive.readonly".into(),
+                "https://www.googleapis.com/auth/userinfo.email".into(),
+            ],
+            auth_code: None,
+            access_token: None,
+            refresh_token: None,
+            token_expiry: None,
+        };
+
+        let url = GoogleDriveConnector::build_auth_url(&config);
+
+        // `://`, `/`, `?`, `:`, and ` ` (space joining scopes) must all be
+        // percent-encoded so the URL parses as a single query string. The
+        // `redirect_uri` value is the most fragile site since OAuth
+        // providers reject any mismatch with the registered URI, so we
+        // assert its encoded form explicitly.
+        assert!(
+            url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A9876%2Fcallback"),
+            "redirect_uri not properly percent-encoded in: {url}",
+        );
+        // Scope-list space separator must become `%20`, not `+`, since
+        // Google's OAuth endpoint treats `+` literally inside scope names.
+        assert!(
+            url.contains("auth%2Fdrive.readonly%20https"),
+            "scope-separator space not percent-encoded as %20 in: {url}",
+        );
+        // Client ID must round-trip unchanged through the encoder for the
+        // characters Google actually uses (`-`, `.`).
+        assert!(
+            url.contains("client_id=123-abc.apps.googleusercontent.com"),
+            "client_id encoding lost dots/hyphens in: {url}",
+        );
+        // The whole result must remain a valid absolute URL.
+        assert!(url.starts_with("https://accounts.google.com/o/oauth2/v2/auth?"));
     }
 }

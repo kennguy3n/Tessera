@@ -158,7 +158,7 @@ describe("marpExport", () => {
       expect(newFiles[0]).toMatch(/\.pptx$/);
     });
 
-    it("creates the outputPath parent directory when it doesn't exist (regression for ANALYSIS_944bd227_0003)", async () => {
+    it("creates the outputPath parent directory when it doesn't exist (regression for missing-parent-dir export failure)", async () => {
       // Defensive mkdir so runMarpExport is self-contained for non-production
       // callers (CLI tools, batch export scripts, future tests). Without it,
       // Marp CLI fails with ENOENT when an outputPath under a not-yet-created
@@ -181,7 +181,7 @@ describe("marpExport", () => {
       expect(fs.existsSync(outputPath)).toBe(true);
     });
 
-    it("uses crypto.randomBytes for temp-file uniqueness (regression for ANALYSIS_4813dc99_0005)", async () => {
+    it("uses crypto.randomBytes for temp-file uniqueness (regression for same-millisecond temp-name collisions)", async () => {
       // Two concurrent exports issued in the same millisecond must not
       // collide on the temp input filename. Math.random() with 6 base-36
       // chars only has ~2.2e9 namespace and `Date.now()` collapses to the

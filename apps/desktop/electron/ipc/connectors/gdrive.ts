@@ -89,7 +89,7 @@ export async function syncGoogleDrive(ctx: {
    * each iteration so a sync that outlives the access token's
    * remaining lifetime can transparently refresh via the stored
    * refresh token. When omitted (tests), the static `accessToken`
-   * field is used verbatim. See Devin Review wave 13 BUG_0001
+   * field is used verbatim.
    * (gdrive.ts:123-126).
    */
   getAccessToken?: () => Promise<string>;
@@ -126,7 +126,7 @@ export async function syncGoogleDrive(ctx: {
   // assignment). The cache lets the per-file existence check be O(1)
   // instead of the previous `bridge.listSources().find(...)`
   // per-iteration scan (O(files × sources)). Same pattern as the
-  // other five connectors; see Devin Review wave 20 ANALYSIS.
+  // other five connectors;
   let sourceIndex!: SourcePathIndex;
 
   // Wrap the iteration + manifest persistence in try/finally so partial
@@ -138,8 +138,7 @@ export async function syncGoogleDrive(ctx: {
   // quota and incrementing `added` again for files the bridge already
   // tracks. This brings gdrive into parity with the other five
   // connectors (Notion, Jira, Confluence, Figma, OneDrive) that were
-  // built with this defense-in-depth pattern from the start. See
-  // Devin Review wave 12 ANALYSIS_0001 (gdrive.ts:111-169).
+  // built with this defense-in-depth pattern from the start.
   try {
     // Materialise the source-by-path index inside the try block so an
     // unlikely `bridge.listSources()` throw is still caught by the
@@ -154,8 +153,7 @@ export async function syncGoogleDrive(ctx: {
       // (production wiring) hits the in-process cache + only
       // exchanges the refresh token when within 60s of expiry, so
       // the overhead per iteration is a single map lookup and a
-      // millisecond-precision comparison. See Devin Review wave 13
-      // BUG_0001 (gdrive.ts:123-126).
+      // millisecond-precision comparison.
       const accessToken = await resolveAccessToken(ctx);
       const metaResp = await fetch(
         `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,modifiedTime`,
@@ -169,9 +167,9 @@ export async function syncGoogleDrive(ctx: {
         // socket to the keep-alive pool immediately. Without this, an
         // unconsumed body keeps the socket pinned until GC reaps the
         // Response — noticeable when many files in a single sync are
-        // 404/410/5xx (e.g. a large carry-forward retry queue). See
-        // Devin Review wave 14 ANALYSIS_0003 (notion variant; applied
-        // here for architectural symmetry).
+        // 404/410/5xx (e.g. a large carry-forward retry queue). The
+        // export and download branches below drain on their non-ok
+        // paths for the same reason.
         await metaResp.text().catch(() => undefined);
         continue;
       }
@@ -189,8 +187,7 @@ export async function syncGoogleDrive(ctx: {
         );
         if (!exportResp.ok) {
           // Drain body before skipping so the underlying socket is
-          // returned to the pool immediately. See Devin Review wave
-          // 14 ANALYSIS_0003.
+          // returned to the pool immediately.
           await exportResp.text().catch(() => undefined);
           continue;
         }
@@ -265,8 +262,7 @@ export async function syncGoogleDrive(ctx: {
     // Persist manifest with whatever progress we have. The original
     // error (if any) is wrapped in a fresh try/catch so a manifest-
     // write failure (e.g. disk full) doesn't shadow the underlying
-    // network or auth error the caller actually needs to see. See
-    // Devin Review wave 12 ANALYSIS_0004 (cross-connector pattern).
+    // network or auth error the caller actually needs to see.
     try {
       const existingManifest = await readGdriveManifest(ctx.userDataDir);
       const failedIdSet = new Set(failedFileIds);

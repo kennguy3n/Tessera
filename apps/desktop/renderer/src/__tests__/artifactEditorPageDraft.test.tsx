@@ -23,9 +23,9 @@ const baseArtifact = {
 // Sheet content that includes an UNRESOLVABLE icon token. The `lucide:does-not-exist`
 // is intentionally not a real icon name — `embedIcons` will pass the content
 // through unchanged, so the icon branch of `handleExport` produces no override.
-// This is the exact precondition for the BUG_pr-review-job-f080f66818c644baa7573bf023ef2675_0001
-// regression: with the previous if/else-if, the draft-vs-persisted fallback
-// would never run for icon-aware formats whose tokens all fail to resolve.
+// This is the exact precondition for the draft-vs-persisted fallback
+// regression: with the previous if/else-if, the fallback would never run
+// for icon-aware formats whose tokens all fail to resolve.
 const SHEET_WITH_UNRESOLVABLE_ICON = JSON.stringify({
   columns: ["Col"],
   rows: [["original {{icon:lucide:does-not-exist}}"]],
@@ -99,7 +99,7 @@ describe("ArtifactEditorPage live-draft export", () => {
     expect(contentOverride).not.toContain("original");
   });
 
-  it("propagates the saved Marp theme through PPTX export even when Marp Mode is OFF (regression for ANALYSIS_pr-review-job-3c40496bade1479cab1f5fa0a18d503c_0002)", async () => {
+  it("propagates the saved Marp theme through PPTX export even when Marp Mode is OFF", async () => {
     // Slide artifact whose persisted content carries `marp.theme: gaia` but
     // has `marp.enabled = false` (the WYSIWYG path that synthesises Marp
     // markdown rather than handing through user-authored Marp source).
@@ -163,7 +163,7 @@ describe("ArtifactEditorPage live-draft export", () => {
     expect(arg.markdown).not.toContain("theme: 'default'");
   });
 
-  it("falls back to 'default' for BOTH the front-matter and the CLI flag when the artifact has no saved Marp theme (regression for ANALYSIS_pr-review-job-b7cedd18ee6c4395b90418917f949569_0004)", async () => {
+  it("falls back to 'default' for BOTH the front-matter and the CLI flag when the artifact has no saved Marp theme", async () => {
     // Slide artifact whose persisted content has no `marp` block at all
     // (e.g. authored before Marp support was added) — `parsed.marpTheme`
     // resolves to `undefined`. Previously the IPC argument and the
@@ -217,7 +217,7 @@ describe("ArtifactEditorPage live-draft export", () => {
     expect(arg.markdown).toContain("theme: 'default'");
   });
 
-  it("exports the live draft when icon-aware format has only unresolvable icon tokens (regression for BUG_pr-review-job-f080f66818c644baa7573bf023ef2675_0001)", async () => {
+  it("exports the live draft when icon-aware format has only unresolvable icon tokens", async () => {
     // Override the default mocks for this test to use the icon-laden fixture.
     window.tessera.artifacts.get = vi
       .fn()
@@ -277,7 +277,7 @@ describe("ArtifactEditorPage live-draft export", () => {
     expect(contentOverride).toContain("{{icon:lucide:does-not-exist}}");
   });
 
-  it("does NOT rewrite {{icon:...}} tokens in JSON-structured artifacts (sheets/bases/infographics/landing-pages) — regression for ANALYSIS_pr-review-job-b2d5a388d3234be29ad9e3139f4a3c63_0001", async () => {
+  it("does NOT rewrite {{icon:...}} tokens in JSON-structured artifacts (sheets/bases/infographics/landing-pages)", async () => {
     // The user has manually typed a *resolvable* icon token into a sheet cell.
     // Even though the format (HTML) is icon-aware and the token is resolvable,
     // running `embedIcons` over stringified JSON would inject inline `<svg ...>`
@@ -339,7 +339,7 @@ describe("ArtifactEditorPage live-draft export", () => {
     expect(() => JSON.parse(effective)).not.toThrow();
   });
 
-  it("pre-renders infographic JSON to rich HTML via buildPreviewHtml before exporting (regression for ANALYSIS_pr-review-job-944bd22719314f15b61523f7c7574bc6_0001)", async () => {
+  it("pre-renders infographic JSON to rich HTML via buildPreviewHtml before exporting", async () => {
     // Without the fix, the persisted infographic JSON would reach the Rust
     // HTML exporter unchanged, which would chop `{"title":"...","sections":
     // [...]}` into pseudo-paragraphs and lose the rich visual layout. The
@@ -416,7 +416,7 @@ describe("ArtifactEditorPage live-draft export", () => {
     expect(html).not.toContain('"sections":');
   });
 
-  it("pre-renders landing_page JSON to rich HTML via buildLandingPreviewHtml before exporting (regression for ANALYSIS_pr-review-job-944bd22719314f15b61523f7c7574bc6_0001)", async () => {
+  it("pre-renders landing_page JSON to rich HTML via buildLandingPreviewHtml before exporting", async () => {
     const landingJson = JSON.stringify({
       hero: {
         headline: "Ship Faster",
@@ -482,7 +482,7 @@ describe("ArtifactEditorPage live-draft export", () => {
     expect(html).not.toContain('"features":');
   });
 
-  it("pre-renders infographic JSON to printable text (NOT raw JSON) when exporting to PDF (regression for BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0001)", async () => {
+  it("pre-renders infographic JSON to printable text (NOT raw JSON) when exporting to PDF", async () => {
     // Visual artifact + PDF used to hit the binary-format branch with no
     // `contentOverride`, so the persisted `{"title":"…","sections":[…]}`
     // JSON went straight through the line-based PDF builder which
@@ -564,7 +564,7 @@ describe("ArtifactEditorPage live-draft export", () => {
     expect(text).toContain("+42% YoY");
   });
 
-  it("pre-renders landing_page JSON to printable text (NOT raw JSON) when exporting to PDF (regression for BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0001)", async () => {
+  it("pre-renders landing_page JSON to printable text (NOT raw JSON) when exporting to PDF", async () => {
     // Landing page parallel of the above — exports to PDF must produce
     // a structured markdown-like rendering (hero → features → stats →
     // testimonials → cta), never raw JSON.

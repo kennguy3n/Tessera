@@ -111,7 +111,7 @@ describe("slidesToMarpMarkdown", () => {
   });
 
   it("emits `---` separators between slides so multi-slide PPTX exports keep their slide boundaries", () => {
-    // Regression test for BUG_pr-review-job-32bf2b2f08cc44939a2d7cd9b9a9d396_0001:
+    // Regression test:
     // without `---` separators Marp collapses every following slide into the
     // first one, producing a 1-slide PPTX no matter how many slides were
     // authored in the WYSIWYG editor.
@@ -156,7 +156,7 @@ describe("slidesToMarpMarkdown", () => {
     expect(thirdIdx).toBeGreaterThan(secondIdx);
   });
 
-  it("escapes `-->` in speaker notes so the HTML comment cannot be terminated early (regression for ANALYSIS_pr-review-job-0364b468c3654054ad83fe2599369c02_0005)", () => {
+  it("escapes `-->` in speaker notes so the HTML comment cannot be terminated early", () => {
     // Adversarial speaker notes carrying the HTML comment terminator. Before
     // the fix the resulting Marp markdown would contain
     // `<!-- close --> evil <script>alert(1)</script> -->`, which the HTML
@@ -268,7 +268,7 @@ describe("setFrontmatterTheme", () => {
     expect(extractFrontmatterTheme(after)).toBe("uncover");
   });
 
-  it("preserves frontmatter content containing `$`-sequences (regression for BUG_pr-review-job-ca108947aa7742809663155c14f8b1bb_0001)", () => {
+  it("preserves frontmatter content containing `$`-sequences", () => {
     // Realistic example: a footer directive whose value happens to contain
     // `$50M` (or any other `$`-followed-by-character). The previous code
     // used `src.replace(whole, '<replacement-string>')`, which interprets
