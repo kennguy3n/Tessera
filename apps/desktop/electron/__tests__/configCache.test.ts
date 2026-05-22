@@ -161,19 +161,19 @@ describe("config cache", () => {
     // racing against a slow disk re-read) and contribute to a final
     // on-disk shape that reflects all writes.
     updateConfig({ theme: "dark" });
-    updateConfig({ defaultExportFormat: "pdf" });
+    updateConfig({ defaultExportFormat: "csv" });
     updateConfig({ autoUpdate: false });
 
     const cached = loadConfig();
     expect(cached.theme).toBe("dark");
-    expect(cached.defaultExportFormat).toBe("pdf");
+    expect(cached.defaultExportFormat).toBe("csv");
     expect(cached.autoUpdate).toBe(false);
 
     // Disk side-by-side check: the file should reflect the same shape.
     _clearConfigCacheForTests();
     const onDisk = loadConfig();
     expect(onDisk.theme).toBe("dark");
-    expect(onDisk.defaultExportFormat).toBe("pdf");
+    expect(onDisk.defaultExportFormat).toBe("csv");
     expect(onDisk.autoUpdate).toBe(false);
   });
 
@@ -308,9 +308,9 @@ describe("config cache", () => {
     updateConfig({ theme: "dark" });
     expect(loadConfig().theme).toBe("dark");
 
-    updateConfig({ defaultExportFormat: "pdf" });
+    updateConfig({ defaultExportFormat: "csv" });
     expect(loadConfig().theme).toBe("dark");
-    expect(loadConfig().defaultExportFormat).toBe("pdf");
+    expect(loadConfig().defaultExportFormat).toBe("csv");
 
     // Including the nested-provider merge path, which builds a new
     // `mergedProvider` from the previously-frozen one.

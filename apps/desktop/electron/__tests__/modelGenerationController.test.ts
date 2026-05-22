@@ -113,8 +113,11 @@ describe("model.ts — activeGenerationController module-scope contract", () => 
     registerModelHandlers();
     const cancel = registeredHandlers.get("model:cancelJob");
     expect(cancel).toBeDefined();
-    // No abort to observe; just confirm no throw.
-    await expect(cancel!({}, undefined)).resolves.not.toThrow;
+    // No abort to observe; just confirm no throw. The matcher is
+    // intentionally called as `.not.toThrow()` (with parentheses) —
+    // a bare property access would resolve to a matcher reference
+    // and never actually run the assertion.
+    await expect(cancel!({}, undefined)).resolves.not.toThrow();
   });
 
   it("idempotentHandle removes-then-registers on each registerModelHandlers() call", () => {
