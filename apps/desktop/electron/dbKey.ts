@@ -25,10 +25,13 @@
  *    file-system-level access by another process cannot recover the
  *    cipher key without an unlocked keyring.
  * 3. **Persist.** The wrapped blob is written to
- *    `<userData>/db.key`. The file is created with the default
- *    permissions (0600 on POSIX via `fs.writeFileSync`); we don't
- *    rely on those permissions for security — the wrapping is what
- *    keeps the key safe.
+ *    `<userData>/db.key`. The file inherits the default Node
+ *    `fs.writeFileSync` mode (0o666 pre-umask, typically 0o644
+ *    after the standard 0o022 umask — i.e. world-readable). We
+ *    don't rely on POSIX permissions for security: the blob is
+ *    `safeStorage`-encrypted ciphertext that only the user's
+ *    unlocked keyring can decrypt, so file-system-level read
+ *    access by another process or user gains nothing.
  * 4. **Subsequent launches.** Read `<userData>/db.key`, decrypt with
  *    `safeStorage.decryptString` to recover the hex key, pass it to
  *    `initBridge(dbPath, templateDir, hexKey)`.

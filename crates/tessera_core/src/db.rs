@@ -89,6 +89,7 @@
 //! want to thread a key argument through every store call. New
 //! production code should always go through `open_shared_with_key`.
 
+use std::io::Read;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -234,8 +235,6 @@ fn apply_pragma_key(conn: &Connection, key: &str) -> Result<()> {
 ///  - files shorter than 16 bytes (corrupted / WIP)
 ///  - files whose first 16 bytes are not the plaintext magic
 fn file_looks_like_plaintext_sqlite(path: &str) -> bool {
-    use std::io::Read;
-
     if !Path::new(path).exists() {
         return false;
     }
