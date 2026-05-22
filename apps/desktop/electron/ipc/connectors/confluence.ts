@@ -322,64 +322,103 @@ export async function syncConfluence(ctx: {
   // dangling version.
   const nextVersions: PageVersionMap = {};
 
-  for (const space of spaces) {
-    const pages = await listPagesInSpace(
-      cloudId,
-      ctx.accessToken,
-      space.id,
-    );
-    for (const page of pages) {
-      const currentVersion = page.version?.number ?? 0;
-      const previousVersion = state.pageVersions[page.id] ?? 0;
-      // Skip unchanged pages — their local file and source index entry
-      // are already up-to-date from the previous sync. We still record
-      // the version into `nextVersions` so the watermark survives.
-      if (
-        currentVersion > 0 &&
-        currentVersion === previousVersion &&
-        entriesById.has(page.id)
-      ) {
-        nextVersions[page.id] = currentVersion;
+  // Wrap the iteration + save in try/finally so progress is *always*
+  // persisted before the function returns or rethrows. Without this,
+  // an unexpected error anywhere inside the loops (`listPagesInSpace`
+  // rejecting after partial iteration, a bridge-layer crash, a future
+  // code path that forgets a try/catch) would skip `saveState` and
+  // `writeManifest` entirely — making every page successfully fetched
+  // in this pass invisible to the next sync. Mirrors the
+  // defense-in-depth pattern in figma.ts. See Devin Review wave 7
+  // ANALYSIS_0002 (architectural consistency).
+  //
+  // NOTE: Confluence intentionally does NOT need a separate failed-
+  // retry queue like Notion/Jira/Figma. Its incremental algorithm uses
+  // per-page `version.number` rather than a single global watermark:
+  // when a page fetch/write fails, we simply skip the
+  // `nextVersions[page.id] = currentVersion` assignment for that page.
+  // On the next sync `previousVersion` for that page remains stale and
+  // `currentVersion > previousVersion` triggers a natural retry via
+  // the same code path that handles fresh edits. No separate queue is
+  // required because there is no "watermark advances past failed
+  // item" failure mode here. See Devin Review wave 7 ANALYSIS_0002.
+  try {
+    for (const space of spaces) {
+      let pages: ConfluencePage[];
+      try {
+        pages = await listPagesInSpace(cloudId, ctx.accessToken, space.id);
+      } catch {
+        // Failed to list pages in this space — skip it. The next sync
+        // will re-list. Other spaces still process normally.
         continue;
       }
-
-      const body = renderPage(page, space);
-      const localPath = path.join(dir, `${sanitiseRemoteId(page.id)}.md`);
-      await fsp.writeFile(localPath, body, "utf8");
-
-      const existing = ctx.bridge.listSources().find((s) => s.path === localPath);
-      if (existing) {
-        try {
-          ctx.bridge.reindexSource(existing.id);
-        } catch {
-          // best-effort
-        }
-        modified += 1;
-      } else {
-        try {
-          ctx.bridge.addLocalFile(localPath);
-        } catch {
+      for (const page of pages) {
+        const currentVersion = page.version?.number ?? 0;
+        const previousVersion = state.pageVersions[page.id] ?? 0;
+        // Skip unchanged pages — their local file and source index
+        // entry are already up-to-date from the previous sync. We
+        // still record the version into `nextVersions` so the
+        // watermark survives.
+        if (
+          currentVersion > 0 &&
+          currentVersion === previousVersion &&
+          entriesById.has(page.id)
+        ) {
+          nextVersions[page.id] = currentVersion;
           continue;
         }
-        added += 1;
-      }
-      entriesById.set(page.id, {
-        localPath,
-        remoteId: page.id,
-        // Persist the version number as the remote modification
-        // identifier so the manifest mirrors what the watermark uses.
-        remoteModifiedAt: currentVersion > 0 ? String(currentVersion) : null,
-      });
-      nextVersions[page.id] = currentVersion;
-    }
-  }
 
-  await saveState(ctx.userDataDir, { cloudId, pageVersions: nextVersions });
-  await writeManifest(ctx.userDataDir, {
-    version: 1,
-    provider: "confluence",
-    entries: Array.from(entriesById.values()),
-  });
+        const body = renderPage(page, space);
+        const localPath = path.join(dir, `${sanitiseRemoteId(page.id)}.md`);
+        try {
+          await fsp.writeFile(localPath, body, "utf8");
+        } catch {
+          // Disk write failed (permission, ENOSPC, etc.) — do NOT
+          // advance `nextVersions[page.id]`, so the next sync sees the
+          // page as still-changed and naturally retries it. This is
+          // the Confluence equivalent of pushing to `failedThisPass`
+          // in the watermark-based connectors.
+          continue;
+        }
+
+        const existing = ctx.bridge
+          .listSources()
+          .find((s) => s.path === localPath);
+        if (existing) {
+          try {
+            ctx.bridge.reindexSource(existing.id);
+          } catch {
+            // best-effort
+          }
+          modified += 1;
+        } else {
+          try {
+            ctx.bridge.addLocalFile(localPath);
+          } catch {
+            // Same reasoning as the writeFile catch above — leave
+            // `nextVersions[page.id]` unset so we retry naturally.
+            continue;
+          }
+          added += 1;
+        }
+        entriesById.set(page.id, {
+          localPath,
+          remoteId: page.id,
+          // Persist the version number as the remote modification
+          // identifier so the manifest mirrors what the watermark uses.
+          remoteModifiedAt: currentVersion > 0 ? String(currentVersion) : null,
+        });
+        nextVersions[page.id] = currentVersion;
+      }
+    }
+  } finally {
+    await saveState(ctx.userDataDir, { cloudId, pageVersions: nextVersions });
+    await writeManifest(ctx.userDataDir, {
+      version: 1,
+      provider: "confluence",
+      entries: Array.from(entriesById.values()),
+    });
+  }
 
   return { added, modified, removed, status: "synced" };
 }

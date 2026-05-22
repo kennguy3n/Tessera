@@ -494,14 +494,26 @@ export async function syncFigma(ctx: {
       }
     }
 
-    // Anything still in `pendingRetries` was neither successfully
-    // re-synced nor explicitly failed this pass (the only way this
-    // happens is when `syncFileByKey` short-circuited via the
-    // confirmed-gone branch, which already removes from the set, so
-    // this is defensive cleanup for any future code path that bypasses
-    // the helper).
+    // Anything still in `pendingRetries` AND not in `failedThisPass`
+    // is a retry entry whose file we never observed this pass (e.g.
+    // the file was moved out of an accessible project, or the project
+    // listing failed) — count it as "succeeded" only for queue-removal
+    // purposes so we don't keep pinging it forever.
+    //
+    // The `!failedThisPass.some(...)` guard is critical: without it, a
+    // key that fails again in Phase 1 (e.g. `getFile` throws a 500)
+    // gets added to BOTH `failedThisPass` AND `succeededIds`.
+    // `nextFailedRetryQueue` would then delete the previous entry (with
+    // its accumulated `failureCount`) via the succeeded step, then
+    // create a fresh entry with `failureCount: 1` via the failed step
+    // — silently resetting the give-up counter on every pass and
+    // making `FAILED_RETRY_MAX_ATTEMPTS` unreachable. This matches the
+    // existing Jira cleanup pattern at `jira.ts` and was missing here.
+    // See Devin Review wave 7 BUG_0001 (figma.ts:503-505).
     for (const key of pendingRetries) {
-      succeededIds.add(key);
+      if (!failedThisPass.some((f) => f.remoteId === key)) {
+        succeededIds.add(key);
+      }
     }
   } finally {
     await saveState(ctx.userDataDir, {

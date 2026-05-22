@@ -212,21 +212,33 @@ async function getValidAccessToken(
   }
   const config = getProviderOAuthConfig(provider);
 
-  // Non-refreshable providers (currently only Notion's integration
-  // tokens, which the docs describe as non-expiring) give us no way
-  // to refresh, AND their token-exchange responses typically omit
-  // `expires_in` — which would otherwise fall through to the 3600s
-  // default in `exchangeAuthorizationCode` and make every stored
-  // token look "expired" after exactly one hour. Proactively deleting
-  // a token we *believe* expired is strictly worse than letting the
-  // upstream API tell us via a 401 if the token is actually invalid,
-  // because:
+  // If we have no refresh token stored — for ANY reason, regardless
+  // of whether the provider config advertises `supportsRefresh: true`
+  // — there is no point checking `expiresAt` and proactively
+  // deleting the access token: we have nothing to refresh with.
+  //
+  // The guard used to require BOTH `!supportsRefresh` AND
+  // `!stored.refreshToken`, which silently force-disconnected users
+  // whose stored tokens lacked a refresh token even when the provider
+  // config said it supported refresh. This shows up in practice for
+  // Figma (Figma's OAuth response sometimes omits `refresh_token`
+  // depending on the app's grant configuration, even though the
+  // provider supports them) and for any Atlassian flow whose initial
+  // exchange returned only an access token (e.g. an older integration
+  // upgraded mid-session).
+  //
+  // The reasoning is the same as the original Notion-only carve-out:
+  // proactively deleting a token we *believe* expired is strictly
+  // worse than letting the upstream API tell us via a 401 if the
+  // token is actually invalid, because:
   //   (a) we have no way to recover (no refresh token),
   //   (b) the only consequence of our guess being wrong is to forcibly
   //       sign the user out of a working integration.
-  // So for non-refreshable providers we skip the expiry check entirely
-  // and return the stored access token verbatim.
-  if (!config.supportsRefresh && !stored.refreshToken) {
+  //
+  // So whenever we lack a refresh token, skip the expiry check
+  // entirely and return the stored access token verbatim. See Devin
+  // Review wave 7 ANALYSIS_0005 (providerOAuth.ts:198-207).
+  if (!stored.refreshToken) {
     return stored.accessToken;
   }
 
@@ -405,7 +417,30 @@ async function runDisconnect(
   }
 }
 
+/** IPC channels owned by this module — kept in one list so the
+ * idempotency guard below cannot drift out of sync with the
+ * `ipcMain.handle()` calls that follow. If a new channel is added,
+ * append its name here too. */
+const CONNECTOR_IPC_CHANNELS = [
+  "connectors:authenticate",
+  "connectors:disconnect",
+  "connectors:status",
+  "connectors:getRedirectUri",
+  "connectors:sync",
+] as const;
+
 export function registerConnectorHandlers(ctx: IpcContext): void {
+  // Remove any previously-registered handlers before re-registering.
+  // `ipcMain.handle()` throws "Attempted to register a second handler
+  // for '<channel>'" if the channel already has one, so this guard is
+  // what lets `registerIpcHandlers()` be safely re-invoked from a
+  // test harness, a hot-reload path, or future code that re-runs
+  // `main.ts` bootstrap. Mirrors the `registerAutoUpdaterIpc` pattern
+  // in `autoUpdater.ts`. See Devin Review wave 7 ANALYSIS_0003.
+  for (const channel of CONNECTOR_IPC_CHANNELS) {
+    ipcMain.removeHandler(channel);
+  }
+
   ipcMain.handle(
     "connectors:authenticate",
     async (

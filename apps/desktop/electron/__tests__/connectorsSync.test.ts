@@ -1122,6 +1122,171 @@ describe("Figma sync", () => {
       ]);
     },
   );
+
+  it(
+    "bumps failureCount by exactly one when a Phase-1 retry fails again " +
+      "(regression: Devin Review wave 7 BUG_0001 — the defensive " +
+      "cleanup used to add the key to succeededIds unconditionally, " +
+      "which caused nextFailedRetryQueue to reset the count to 1)",
+    async () => {
+      const stateDir = path.join(dir, "figma-sync");
+      await fsp.mkdir(stateDir, { recursive: true });
+      // Seed state with a retry entry already at failureCount=2 and a
+      // saved teamIds list so the sync does NOT short-circuit via the
+      // "no-teams" early return (which would skip Phase 1 entirely).
+      await fsp.writeFile(
+        path.join(stateDir, "state.json"),
+        JSON.stringify({
+          lastSyncIso: "2024-06-01T00:00:00Z",
+          teamIds: ["t1"],
+          failedRetries: [
+            {
+              remoteId: "transiently-broken",
+              remoteModifiedAt: "2024-05-01T00:00:00Z",
+              failureCount: 2,
+            },
+          ],
+        }),
+        "utf8",
+      );
+
+      fetchMock
+        // Phase 1 retry: GET /v1/files/transiently-broken → 502
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 502,
+          text: async () => "Bad Gateway",
+        })
+        // Phase 2: GET /v1/teams/t1/projects → empty (nothing else to do)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ name: "Team A", projects: [] }),
+        });
+
+      await syncFigma({ accessToken: "AT", userDataDir: dir, bridge });
+      const state = JSON.parse(
+        await fsp.readFile(path.join(dir, "figma-sync", "state.json"), "utf8"),
+      ) as { failedRetries: Array<{ remoteId: string; failureCount: number }> };
+      expect(state.failedRetries).toHaveLength(1);
+      expect(state.failedRetries[0].remoteId).toBe("transiently-broken");
+      // With the BUG_0001 fix, the entry stays in failedThisPass only
+      // (NOT also in succeededIds), so nextFailedRetryQueue finds the
+      // previous entry and bumps the count: 2 → 3. Without the fix, the
+      // count would reset to 1 on every pass and the item would be
+      // retried indefinitely (never reaching FAILED_RETRY_MAX_ATTEMPTS).
+      expect(state.failedRetries[0].failureCount).toBe(3);
+    },
+  );
+
+  it(
+    "persists the watermark + manifest even when the iteration throws " +
+      "an unexpected error (regression: Devin Review wave 7 ANALYSIS_0004 " +
+      "— try/finally defense-in-depth around saveState + writeManifest)",
+    async () => {
+      // Seed teamIds so we get past the early "no-teams" return.
+      const stateDir = path.join(dir, "figma-sync");
+      await fsp.mkdir(stateDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(stateDir, "state.json"),
+        JSON.stringify({
+          lastSyncIso: null,
+          teamIds: ["t1"],
+          failedRetries: [],
+        }),
+        "utf8",
+      );
+
+      // p1 has TWO files; f1 succeeds normally, then bridge.listSources
+      // throws on the SECOND call (when f2 is being processed) — this
+      // is exactly the failure mode try/finally exists to tolerate
+      // (an unexpected error escaping the per-file inner code path
+      // would otherwise skip saveState + writeManifest entirely).
+      fetchMock
+        // GET /v1/teams/t1/projects
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: "Team A",
+            projects: [{ id: "p1", name: "Proj 1" }],
+          }),
+        })
+        // GET /v1/projects/p1/files → two files
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: "Proj 1",
+            files: [
+              { key: "f1", name: "F1", last_modified: "2024-06-01T10:00:00Z" },
+              { key: "f2", name: "F2", last_modified: "2024-06-01T11:00:00Z" },
+            ],
+          }),
+        })
+        // GET /v1/files/f1 (Phase 2 — first file)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: "F1",
+            lastModified: "2024-06-01T10:00:00Z",
+            document: {
+              id: "0:0",
+              children: [{ id: "1", type: "TEXT", characters: "captured" }],
+            },
+          }),
+        })
+        // GET /v1/files/f1/comments → empty
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ comments: [] }),
+        })
+        // GET /v1/files/f2 — succeeds; the throw happens AFTER this in
+        // syncFileByKey when listSources gets called for the second
+        // time.
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: "F2",
+            lastModified: "2024-06-01T11:00:00Z",
+            document: { id: "0:0", children: [] },
+          }),
+        })
+        // GET /v1/files/f2/comments → empty
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ comments: [] }),
+        });
+
+      // Throw on the 2nd `listSources` call only, so f1 completes
+      // cleanly before the bridge "crashes" mid-iteration.
+      let listCallCount = 0;
+      const origList = bridge.listSources.bind(bridge);
+      bridge.listSources = () => {
+        listCallCount += 1;
+        if (listCallCount > 1) {
+          throw new Error("Simulated bridge crash mid-sync");
+        }
+        return origList();
+      };
+
+      await expect(
+        syncFigma({ accessToken: "AT", userDataDir: dir, bridge }),
+      ).rejects.toThrow();
+
+      // Despite the throw, the state + manifest MUST be persisted with
+      // the watermark advanced for f1.
+      const state = JSON.parse(
+        await fsp.readFile(path.join(dir, "figma-sync", "state.json"), "utf8"),
+      ) as { lastSyncIso: string | null };
+      expect(state.lastSyncIso).toBe("2024-06-01T10:00:00Z");
+
+      const manifest = JSON.parse(
+        await fsp.readFile(
+          path.join(dir, "figma-sync", "manifest.json"),
+          "utf8",
+        ),
+      ) as { entries: Array<{ remoteId: string }> };
+      expect(manifest.entries.map((e) => e.remoteId)).toContain("f1");
+    },
+  );
 });
 
 describe("Jira sync — JQL watermark sanitisation", () => {

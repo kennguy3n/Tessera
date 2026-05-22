@@ -357,6 +357,22 @@ export async function syncNotion(ctx: {
   const succeededIds = new Set<string>();
   const failedThisPass: Array<{ remoteId: string; remoteModifiedAt: string | null }> = [];
 
+  let added = 0;
+  let modified = 0;
+  const removed = 0;
+  let newWatermark = watermark.lastSyncIso;
+
+  // Wrap the iteration + save in try/finally so progress is *always*
+  // persisted before the function returns or rethrows. Without this,
+  // an unexpected error anywhere inside the phases (e.g. an
+  // unhandled `fsp.writeFile` OS error, a bridge-layer crash, or a
+  // future code path that forgets a try/catch) would skip
+  // `saveWatermark` and `writeManifest` entirely — making every
+  // page successfully fetched in this pass invisible to the next
+  // sync and forcing redundant re-fetching. This mirrors the
+  // defense-in-depth pattern in figma.ts. See Devin Review wave 7
+  // ANALYSIS_0004 (architectural consistency).
+  try {
   // Phase 1 — explicitly re-fetch every page that the *previous*
   // pass attempted but failed on. The watermark search below would
   // miss them if any successful page from this pass advances the
@@ -405,11 +421,6 @@ export async function syncNotion(ctx: {
     seenIds.add(p.id);
     allPages.push(p);
   }
-
-  let added = 0;
-  let modified = 0;
-  const removed = 0;
-  let newWatermark = watermark.lastSyncIso;
 
   for (const page of allPages) {
     let text: string;
@@ -471,19 +482,20 @@ export async function syncNotion(ctx: {
     newWatermark = maxWatermark(newWatermark, page.last_edited_time);
     succeededIds.add(page.id);
   }
-
-  await saveWatermark(ctx.userDataDir, {
-    lastSyncIso: newWatermark,
-    failedRetries: nextFailedRetryQueue(watermark.failedRetries, {
-      succeeded: succeededIds,
-      failed: failedThisPass,
-    }),
-  });
-  await writeManifest(ctx.userDataDir, {
-    version: 1,
-    provider: "notion",
-    entries: Array.from(entriesById.values()),
-  });
+  } finally {
+    await saveWatermark(ctx.userDataDir, {
+      lastSyncIso: newWatermark,
+      failedRetries: nextFailedRetryQueue(watermark.failedRetries, {
+        succeeded: succeededIds,
+        failed: failedThisPass,
+      }),
+    });
+    await writeManifest(ctx.userDataDir, {
+      version: 1,
+      provider: "notion",
+      entries: Array.from(entriesById.values()),
+    });
+  }
 
   return { added, modified, removed, status: "synced" };
 }

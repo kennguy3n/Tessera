@@ -131,42 +131,58 @@ describe("getValidAccessToken — non-expiring providers (Notion)", () => {
     ).rejects.toBeInstanceOf(NotConnectedError);
   });
 
-  it("does not short-circuit refreshable providers: an expired Google Drive token without a refresh token still throws", async () => {
-    // Drive has `supportsRefresh = true` so the non-expiring guard
-    // must NOT fire here — the expiry check + auth-state cleanup path
-    // is correct for refreshable providers.
-    const { ctx, deletes } = makeCtx({
-      google_drive: {
-        accessToken: "ya29.gdrive_token",
-        refreshToken: null,
-        expiresAt: Date.now() - 60 * 60 * 1000,
-        scopes: [],
-      },
-    });
-    await expect(
-      getValidAccessTokenForProvider(ctx, "google_drive"),
-    ).rejects.toBeInstanceOf(NotConnectedError);
-    expect(deletes).toEqual(["google_drive"]);
-  });
+  it(
+    "returns the stored access token verbatim when a refreshable " +
+      "provider lacks a refresh token (regression: Devin Review wave " +
+      "7 ANALYSIS_0005 — used to force-disconnect)",
+    async () => {
+      // Before the fix, the early-return guard required BOTH
+      // `!supportsRefresh` AND `!stored.refreshToken`, so a Drive /
+      // Figma / Atlassian token that lacked a refresh token would be
+      // auto-deleted after 1 hour and the user would be force-signed-
+      // out of a potentially-still-working integration. The new guard
+      // is `!stored.refreshToken` alone: with nothing to refresh
+      // against, returning the stored access token and letting the
+      // upstream API tell us via a 401 is strictly better UX than
+      // proactively destroying credentials we cannot recover.
+      const { ctx, deletes } = makeCtx({
+        google_drive: {
+          accessToken: "ya29.gdrive_token",
+          refreshToken: null,
+          expiresAt: Date.now() - 60 * 60 * 1000,
+          scopes: [],
+        },
+      });
+      const token = await getValidAccessTokenForProvider(
+        ctx,
+        "google_drive",
+      );
+      expect(token).toBe("ya29.gdrive_token");
+      expect(deletes).toEqual([]);
+    },
+  );
 
-  it("does not short-circuit when a non-refreshable provider somehow has a refresh token (defense in depth)", async () => {
-    // Hypothetical: a provider whose config says `supportsRefresh =
-    // false` but a refresh token leaked into the store. The guard
-    // requires BOTH `!supportsRefresh` AND `!refreshToken`, so this
-    // case must still go through the normal expiry-check path. The
-    // expiry check would then fail (no client credentials), confirming
-    // we haven't accidentally widened the short-circuit.
-    const { ctx, deletes } = makeCtx({
-      notion: {
-        accessToken: "secret_notion_token",
-        refreshToken: "rogue_refresh_token",
-        expiresAt: Date.now() - 60 * 60 * 1000,
-        scopes: [],
-      },
-    });
-    await expect(
-      getValidAccessTokenForProvider(ctx, "notion"),
-    ).rejects.toBeInstanceOf(NotConnectedError);
-    expect(deletes).toEqual(["notion"]);
-  });
+  it(
+    "still goes through the refresh path when a refresh token IS " +
+      "stored (no regression on the happy path)",
+    async () => {
+      // With a refresh token present, the expiry check + refresh
+      // exchange must still run as before. We simulate the expired-
+      // and-no-client-credentials failure mode here: with a refresh
+      // token but no clientId/clientSecret, refreshing is impossible
+      // and `NotConnectedError` is still the correct outcome.
+      const { ctx, deletes } = makeCtx({
+        notion: {
+          accessToken: "secret_notion_token",
+          refreshToken: "rogue_refresh_token",
+          expiresAt: Date.now() - 60 * 60 * 1000,
+          scopes: [],
+        },
+      });
+      await expect(
+        getValidAccessTokenForProvider(ctx, "notion"),
+      ).rejects.toBeInstanceOf(NotConnectedError);
+      expect(deletes).toEqual(["notion"]);
+    },
+  );
 });

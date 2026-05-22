@@ -20,6 +20,7 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 
 import {
+  maxWatermark,
   nextFailedRetryQueue,
   purgeSyncDir,
   readManifest,
@@ -320,83 +321,97 @@ export async function syncJira(ctx: {
     jql = `ORDER BY updated DESC`;
   }
 
-  let startAt = 0;
-  for (let safety = 0; safety < 1000; safety += 1) {
-    const page = await searchIssues(cloudId, ctx.accessToken, jql, startAt);
-    for (const issue of page.issues) {
-      const updated = issue.fields.updated ?? null;
-      let body: string;
-      try {
-        body = renderIssue(issue);
-      } catch {
-        failedThisPass.push({ remoteId: issue.key, remoteModifiedAt: updated });
-        continue;
-      }
-      const localPath = path.join(
-        dir,
-        `${sanitiseRemoteId(issue.key)}.md`,
-      );
-      try {
-        await fsp.writeFile(localPath, body, "utf8");
-      } catch {
-        failedThisPass.push({ remoteId: issue.key, remoteModifiedAt: updated });
-        continue;
-      }
-
-      const existing = ctx.bridge.listSources().find((s) => s.path === localPath);
-      if (existing) {
+  // Wrap the iteration + cleanup + save in try/finally so progress
+  // is *always* persisted before the function returns or rethrows.
+  // Without this, an unexpected error anywhere inside the loops
+  // (network rejection on `searchIssues` after partial pages, a
+  // bridge-layer crash, or a future code path that forgets a
+  // try/catch) would skip `saveJiraState` and `writeManifest`
+  // entirely — making every issue successfully fetched in this pass
+  // invisible to the next sync and forcing redundant re-fetching.
+  // This mirrors the defense-in-depth pattern in figma.ts. See
+  // Devin Review wave 7 ANALYSIS_0004 (architectural consistency).
+  try {
+    let startAt = 0;
+    for (let safety = 0; safety < 1000; safety += 1) {
+      const page = await searchIssues(cloudId, ctx.accessToken, jql, startAt);
+      for (const issue of page.issues) {
+        const updated = issue.fields.updated ?? null;
+        let body: string;
         try {
-          ctx.bridge.reindexSource(existing.id);
-        } catch {
-          // best-effort
-        }
-        modified += 1;
-      } else {
-        try {
-          ctx.bridge.addLocalFile(localPath);
+          body = renderIssue(issue);
         } catch {
           failedThisPass.push({ remoteId: issue.key, remoteModifiedAt: updated });
           continue;
         }
-        added += 1;
-      }
-      entriesById.set(issue.key, {
-        localPath,
-        remoteId: issue.key,
-        remoteModifiedAt: updated,
-      });
-      if (updated && (!watermark || updated > watermark)) {
-        watermark = updated;
-      }
-      succeededIds.add(issue.key);
-    }
-    startAt += page.issues.length;
-    if (startAt >= page.total || page.issues.length === 0) break;
-  }
+        const localPath = path.join(
+          dir,
+          `${sanitiseRemoteId(issue.key)}.md`,
+        );
+        try {
+          await fsp.writeFile(localPath, body, "utf8");
+        } catch {
+          failedThisPass.push({ remoteId: issue.key, remoteModifiedAt: updated });
+          continue;
+        }
 
-  // Any retry key that the search response did not return at all
-  // (e.g. the issue was deleted) counts as "succeeded" for the
-  // queue's purpose — it's been resolved one way or another and we
-  // should stop pinging it every sync.
-  for (const key of retryKeys) {
-    if (!succeededIds.has(key) && !failedThisPass.some((f) => f.remoteId === key)) {
-      succeededIds.add(key);
+        const existing = ctx.bridge.listSources().find((s) => s.path === localPath);
+        if (existing) {
+          try {
+            ctx.bridge.reindexSource(existing.id);
+          } catch {
+            // best-effort
+          }
+          modified += 1;
+        } else {
+          try {
+            ctx.bridge.addLocalFile(localPath);
+          } catch {
+            failedThisPass.push({ remoteId: issue.key, remoteModifiedAt: updated });
+            continue;
+          }
+          added += 1;
+        }
+        entriesById.set(issue.key, {
+          localPath,
+          remoteId: issue.key,
+          remoteModifiedAt: updated,
+        });
+        // Use epoch-ms comparison via `maxWatermark` rather than the
+        // string compare we used to do — see `parseWatermarkIso` in
+        // `syncDir.ts` for the failure mode (mixed `Z` / `+00:00` /
+        // millisecond-precision suffixes producing wrong-order results).
+        watermark = maxWatermark(watermark, updated);
+        succeededIds.add(issue.key);
+      }
+      startAt += page.issues.length;
+      if (startAt >= page.total || page.issues.length === 0) break;
     }
-  }
 
-  await saveJiraState(ctx.userDataDir, {
-    cloudId,
-    lastSyncIso: watermark,
-    failedRetries: nextFailedRetryQueue(state.failedRetries, {
-      succeeded: succeededIds,
-      failed: failedThisPass,
-    }),
-  });
-  await writeManifest(ctx.userDataDir, {
-    version: 1,
-    provider: "jira",
-    entries: Array.from(entriesById.values()),
-  });
+    // Any retry key that the search response did not return at all
+    // (e.g. the issue was deleted) counts as "succeeded" for the
+    // queue's purpose — it's been resolved one way or another and we
+    // should stop pinging it every sync.
+    for (const key of retryKeys) {
+      if (!succeededIds.has(key) && !failedThisPass.some((f) => f.remoteId === key)) {
+        succeededIds.add(key);
+      }
+    }
+  } finally {
+    await saveJiraState(ctx.userDataDir, {
+      cloudId,
+      lastSyncIso: watermark,
+      failedRetries: nextFailedRetryQueue(state.failedRetries, {
+        succeeded: succeededIds,
+        failed: failedThisPass,
+      }),
+    });
+    await writeManifest(ctx.userDataDir, {
+      version: 1,
+      provider: "jira",
+      entries: Array.from(entriesById.values()),
+    });
+  }
 
   return { added, modified, removed, status: "synced" };
 }
