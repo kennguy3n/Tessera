@@ -387,10 +387,7 @@ mod http_impl {
     /// events, etc.) rather than failing the whole stream.
     ///
     /// [WHATWG]: https://html.spec.whatwg.org/multipage/server-sent-events.html
-    pub async fn stream<F>(
-        inputs: ExternalGenerateInputs<'_>,
-        mut emit: F,
-    ) -> Result<(), String>
+    pub async fn stream<F>(inputs: ExternalGenerateInputs<'_>, mut emit: F) -> Result<(), String>
     where
         F: FnMut(GenerateChunk),
     {
@@ -454,13 +451,13 @@ mod http_impl {
             while let Some(nl_idx) = byte_buf.iter().position(|&b| b == b'\n') {
                 let line_bytes = byte_buf.drain(..=nl_idx).collect::<Vec<u8>>();
                 // Strip trailing \n (always present) and \r (optional CRLF).
-                let line_end = line_bytes
-                    .len()
-                    .saturating_sub(if line_bytes.len() >= 2 && line_bytes[line_bytes.len() - 2] == b'\r' {
+                let line_end = line_bytes.len().saturating_sub(
+                    if line_bytes.len() >= 2 && line_bytes[line_bytes.len() - 2] == b'\r' {
                         2
                     } else {
                         1
-                    });
+                    },
+                );
                 let Ok(line) = std::str::from_utf8(&line_bytes[..line_end]) else {
                     continue; // skip lines that aren't valid utf-8 (shouldn't happen)
                 };
@@ -1001,10 +998,13 @@ mod http_tests {
             .mount(&server)
             .await;
 
-        let chunks =
-            collect_stream_chunks(&server, ExternalProviderType::OpenAICompatible, "test-secret")
-                .await
-                .unwrap();
+        let chunks = collect_stream_chunks(
+            &server,
+            ExternalProviderType::OpenAICompatible,
+            "test-secret",
+        )
+        .await
+        .unwrap();
 
         // The role-only chunk has no content, the finish-reason chunk
         // signals stop server-side but emits no content. The parser
@@ -1018,7 +1018,10 @@ mod http_tests {
 
         let stop = chunks.last().expect("at least one chunk");
         assert!(stop.stop, "final chunk should be stop=true");
-        assert!(stop.content.is_empty(), "final chunk content should be empty");
+        assert!(
+            stop.content.is_empty(),
+            "final chunk content should be empty"
+        );
     }
 
     #[tokio::test]
@@ -1083,10 +1086,9 @@ mod http_tests {
             .mount(&server)
             .await;
 
-        let chunks =
-            collect_stream_chunks(&server, ExternalProviderType::OpenAICompatible, "s")
-                .await
-                .unwrap();
+        let chunks = collect_stream_chunks(&server, ExternalProviderType::OpenAICompatible, "s")
+            .await
+            .unwrap();
         let content: Vec<&str> = chunks
             .iter()
             .filter(|c| !c.content.is_empty())
@@ -1113,10 +1115,9 @@ mod http_tests {
             .mount(&server)
             .await;
 
-        let chunks =
-            collect_stream_chunks(&server, ExternalProviderType::OpenAICompatible, "s")
-                .await
-                .unwrap();
+        let chunks = collect_stream_chunks(&server, ExternalProviderType::OpenAICompatible, "s")
+            .await
+            .unwrap();
         let content: Vec<&str> = chunks
             .iter()
             .filter(|c| !c.content.is_empty())
@@ -1169,10 +1170,9 @@ mod http_tests {
             .mount(&server)
             .await;
 
-        let chunks =
-            collect_stream_chunks(&server, ExternalProviderType::OpenAICompatible, "s")
-                .await
-                .unwrap();
+        let chunks = collect_stream_chunks(&server, ExternalProviderType::OpenAICompatible, "s")
+            .await
+            .unwrap();
         let stop = chunks.last().expect("at least one chunk");
         assert!(
             stop.stop,
@@ -1196,10 +1196,9 @@ mod http_tests {
             .mount(&server)
             .await;
 
-        let chunks =
-            collect_stream_chunks(&server, ExternalProviderType::OpenAICompatible, "s")
-                .await
-                .unwrap();
+        let chunks = collect_stream_chunks(&server, ExternalProviderType::OpenAICompatible, "s")
+            .await
+            .unwrap();
         let content: Vec<&str> = chunks
             .iter()
             .filter(|c| !c.content.is_empty())
