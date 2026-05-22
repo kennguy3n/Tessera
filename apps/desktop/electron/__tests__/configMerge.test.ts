@@ -14,6 +14,7 @@ vi.mock("electron", () => ({
 
 import {
   DEFAULT_EXTERNAL_PROVIDER,
+  _clearConfigCacheForTests,
   loadConfig,
   updateConfig,
 } from "../config";
@@ -21,10 +22,16 @@ import {
 describe("updateConfig", () => {
   beforeEach(() => {
     userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "tessera-config-"));
+    // WS7's in-memory cache is keyed by the resolved config path so a
+    // fresh `userDataDir` already invalidates it, but we drop it
+    // explicitly anyway so a future refactor of the keying strategy
+    // doesn't silently start sharing state across tests in this file.
+    _clearConfigCacheForTests();
   });
 
   afterEach(() => {
     fs.rmSync(userDataDir, { recursive: true, force: true });
+    _clearConfigCacheForTests();
   });
 
   it("returns defaults when no config exists yet", () => {
