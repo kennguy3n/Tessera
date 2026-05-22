@@ -1134,6 +1134,59 @@ describe("Confluence sync", () => {
       expect(r.modified).toBe(1);
     },
   );
+
+  it(
+    "re-throws NetworkError from the per-space catch instead of " +
+      "silently `continue`-ing — the per-space catch must only swallow " +
+      "API-level errors (5xx, permission revoked for one space) so a " +
+      "transport failure (wifi drops mid-sync, token refresh socket " +
+      "reset) propagates up to `runConnectorSync`'s outer catch and " +
+      "surfaces as `{ status: 'offline' }` rather than a misleading " +
+      "`{ status: 'synced', added: 0 }`. Regression guard for Devin " +
+      "Review wave 19 ANALYSIS_0001.",
+    async () => {
+      // accessible-resources succeeds — the initial cloudId resolve
+      // happens BEFORE the loop, so the failure must come from the
+      // per-space listPagesInSpace call to exercise the catch we're
+      // testing.
+      fetchMock
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => [
+            {
+              id: "cloud-1",
+              url: "https://x",
+              name: "site",
+              scopes: ["read:confluence-content.summary"],
+            },
+          ],
+        })
+        // spaces listing succeeds with one space
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [{ id: "s1", key: "TEAM", name: "Team" }],
+          }),
+        })
+        // listPagesInSpace fails with the EXACT shape Node 18+ fetch
+        // throws on a transport-level failure: `TypeError: fetch
+        // failed`. `isNetworkError` matches the `\bfetch failed\b`
+        // pattern, so this is the canonical NetworkError surface for
+        // the renderer/main contract.
+        .mockRejectedValueOnce(
+          Object.assign(new TypeError("fetch failed"), {
+            cause: { code: "ECONNRESET" },
+          }),
+        );
+      await expect(
+        syncConfluence({
+          accessToken: "AT",
+          userDataDir: dir,
+          bridge,
+        }),
+      ).rejects.toThrow(/fetch failed/);
+    },
+  );
 });
 
 describe("Figma sync", () => {
@@ -1584,6 +1637,39 @@ describe("Figma sync", () => {
         ),
       ) as { entries: Array<{ remoteId: string }> };
       expect(manifest.entries.map((e) => e.remoteId)).toContain("f1");
+    },
+  );
+
+  it(
+    "re-throws NetworkError from the per-team catch instead of " +
+      "silently `continue`-ing — same architectural contract as the " +
+      "Confluence per-space catch (wave 19 ANALYSIS_0001). Without " +
+      "this guard, a wifi drop during a multi-team Phase-2 scan would " +
+      "leave every remaining team un-listed AND return " +
+      "`{ status: 'synced', added: 0 }` to the renderer instead of " +
+      "the correct `{ status: 'offline' }` surface.",
+    async () => {
+      // Pass `teamIds: ["t1"]` so the Phase-2 prelude (`listTeams`)
+      // is skipped — the per-team loop runs directly. The first
+      // fetch the loop body issues is `listProjects`, and that's the
+      // call we want to fail to exercise the per-team catch.
+      // `Object.assign` brands the `TypeError("fetch failed")` with a
+      // libc-level `ECONNRESET` so `isNetworkError` matches via the
+      // code allowlist (the strictly stronger signal than the message
+      // pattern).
+      fetchMock.mockRejectedValueOnce(
+        Object.assign(new TypeError("fetch failed"), {
+          cause: { code: "ECONNRESET" },
+        }),
+      );
+      await expect(
+        syncFigma({
+          accessToken: "AT",
+          userDataDir: dir,
+          bridge,
+          teamIds: ["t1"],
+        }),
+      ).rejects.toThrow(/fetch failed/);
     },
   );
 });

@@ -346,12 +346,22 @@ export async function syncJira(ctx: {
   // `updated` timestamp on later passes).
   //
   // `loadJiraState` already filters out entries whose remoteId is not
-  // JQL-safe (would be mutated by `jqlEscapeKey`), so the raw value
-  // here is guaranteed to be both safe to interpolate into JQL *and*
-  // identity-equal to the raw `issue.key` values we observe from the
-  // API. That symmetry is what the cleanup loop below relies on —
-  // see Devin Review wave 9 ANALYSIS_0001 for the prior asymmetry.
-  const retryKeys = state.failedRetries.map((e) => e.remoteId);
+  // JQL-safe (would be mutated by `jqlEscapeKey`), so the values in
+  // `state.failedRetries` should already be safe to interpolate.
+  // BUT we re-apply `jqlEscapeKey` here at the interpolation site as
+  // defense-in-depth: the load-time filter and the use-site
+  // interpolation are linked only by a hidden invariant ("loadJiraState
+  // already filters"), and a future contributor adding a new
+  // failure-recording path that bypasses `loadJiraState` could
+  // silently break it without any compile-time signal. Re-escaping at
+  // every interpolation site removes that hidden coupling — the JQL
+  // safety contract now lives entirely on this expression rather than
+  // being split between two distant functions. The double-escape is
+  // a no-op for already-JQL-safe keys (identity transformation on the
+  // alphanumeric+`-` alphabet), so this is purely a robustness
+  // improvement with zero behaviour change today. See Devin Review
+  // wave 9 ANALYSIS_0001 and wave 19 ANALYSIS_0002.
+  const retryKeys = state.failedRetries.map((e) => jqlEscapeKey(e.remoteId));
   // Strict-validate the watermark before interpolating into JQL.
   // `sanitiseJqlWatermark` returns null on anything that isn't a
   // well-formed ISO-8601 timestamp, which causes the watermark

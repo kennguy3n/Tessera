@@ -32,6 +32,7 @@ import {
   type FailedRetryEntry,
   type SyncManifestEntry,
 } from "./syncDir";
+import { isNetworkError } from "./networkErrors";
 
 export interface NotionSyncResult {
   added: number;
@@ -153,8 +154,19 @@ async function fetchAllBlocks(
     const resp = await fetch(url.toString(), { headers: notionHeaders(accessToken) });
     if (!resp.ok) {
       const text = await resp.text();
+      // Avoid the phrase "fetch failed" in the message body — that
+      // exact substring is one of the patterns `isNetworkError`
+      // matches as a transport-level failure (Node 18+ `fetch`
+      // surfaces it as `TypeError: fetch failed` for genuine DNS /
+      // socket errors). An HTTP non-2xx response is by definition NOT
+      // a transport-level failure (the request and response both
+      // completed), and the per-iteration catches in this file rely
+      // on `isNetworkError` returning false for these errors so they
+      // record a per-page failure rather than bubbling up to
+      // `runConnectorSync`'s offline path. See Devin Review wave 19
+      // ANALYSIS_0001 follow-up.
       throw new Error(
-        `Notion blocks fetch failed: HTTP ${resp.status} — ${text.slice(0, 500)}`,
+        `Notion blocks API returned HTTP ${resp.status} — ${text.slice(0, 500)}`,
       );
     }
     const data = (await resp.json()) as BlocksResponse;
@@ -208,8 +220,11 @@ async function fetchPageById(
   }
   if (!resp.ok) {
     const text = await resp.text();
+    // Same rationale as the `blocks` endpoint above — keep the phrase
+    // "fetch failed" out of HTTP-status error messages so
+    // `isNetworkError` does not misclassify a Notion 5xx as offline.
     throw new Error(
-      `Notion page fetch failed: HTTP ${resp.status} — ${text.slice(0, 500)}`,
+      `Notion page API returned HTTP ${resp.status} — ${text.slice(0, 500)}`,
     );
   }
   return (await resp.json()) as NotionPage;
@@ -463,7 +478,18 @@ export async function syncNotion(ctx: {
           continue;
         }
         retryPages.push(page);
-      } catch {
+      } catch (err) {
+        // NetworkError must NOT advance the per-page `failureCount`
+        // toward `FAILED_RETRY_MAX_ATTEMPTS`. Offline syncs would
+        // otherwise evict legitimate pages from the retry queue
+        // (every offline sync increments the counter, and after
+        // `MAX_ATTEMPTS` syncs the entry is dropped — losing the
+        // record of a page we still owe a retry on). Bubble the
+        // NetworkError up so `runConnectorSync` surfaces
+        // `{ status: 'offline' }` and the retry queue is preserved
+        // verbatim for the next sync attempt. See Devin Review wave
+        // 19 ANALYSIS_0001.
+        if (isNetworkError(err)) throw err;
         // Fetch failed *again* — record the failure so
         // `nextFailedRetryQueue` bumps `failureCount` toward
         // `FAILED_RETRY_MAX_ATTEMPTS` and we eventually give up rather
@@ -513,7 +539,12 @@ export async function syncNotion(ctx: {
         // freshly resolved token. See Devin Review wave 13 BUG_0001.
         const accessToken = await resolveAccessToken(ctx);
         text = await fetchPageText(page, accessToken);
-      } catch {
+      } catch (err) {
+        // NetworkError bubbles up — same rationale as the Phase 1
+        // catch above. Offline syncs must not advance per-page
+        // `failureCount` toward `FAILED_RETRY_MAX_ATTEMPTS`. See
+        // Devin Review wave 19 ANALYSIS_0001.
+        if (isNetworkError(err)) throw err;
         // Record the failure so the *next* sync's Phase 1 picks it up
         // and retries by id. The watermark may legitimately advance
         // past this page on this pass (driven by other successful

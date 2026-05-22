@@ -78,8 +78,11 @@ function getConnectorContext(): ReturnType<typeof createDefaultContext> {
  * channels and the new `connectors:authenticate / sync / disconnect`
  * channels share a single source of truth for token refresh + the
  * non-expiring-token short-circuit. Previously there were two
- * independent copies of this logic (one in `oauthServer.ts`, one in
- * `handlers.ts`) and they could silently drift.
+ * independent copies of this logic (one in the legacy
+ * Google-Drive-only `oauthServer.ts`, one in `handlers.ts`) and they
+ * could silently drift; the legacy copy was deleted in wave 19
+ * ANALYSIS_0005 once the provider-agnostic dispatcher in
+ * `ipc/connectors/providerOAuth.ts` had subsumed every caller.
  *
  * The parameter is typed as `ProviderId` rather than `string` so the
  * compiler refuses any caller that doesn't already have a validated

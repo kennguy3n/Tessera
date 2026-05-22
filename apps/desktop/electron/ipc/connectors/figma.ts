@@ -39,6 +39,7 @@ import {
   type FailedRetryEntry,
   type SyncManifestEntry,
 } from "./syncDir";
+import { isNetworkError } from "./networkErrors";
 
 const FIGMA_API = "https://api.figma.com/v1";
 
@@ -424,6 +425,19 @@ export async function syncFigma(ctx: {
     try {
       file = await getFile(fileKey, accessToken);
     } catch (err) {
+      // NetworkError from a `getFile` mid-pass means transport failed
+      // (DNS, socket reset, undici-level abort) — NOT a per-file
+      // problem we should record in the retry queue. If we swallow
+      // it here, the per-file `failureCount` advances toward
+      // `FAILED_RETRY_MAX_ATTEMPTS` for files that are perfectly
+      // fine, just temporarily unreachable, and after enough offline
+      // syncs we'd evict legitimate files from the queue entirely.
+      // Bubble it up so `runConnectorSync` (`handlers.ts:476`) turns
+      // the whole pass into `{ status: 'offline' }`. The 404/410
+      // cascade and the generic `recordFailure` branch below remain
+      // for actual API-level errors. See Devin Review wave 19
+      // ANALYSIS_0001.
+      if (isNetworkError(err)) throw err;
       const status = (err as { status?: number }).status;
       if (status === 404 || status === 410) {
         // File was deleted or unshared — cascade the deletion to
@@ -544,7 +558,18 @@ export async function syncFigma(ctx: {
         // BUG_0001 (gdrive.ts:123-126).
         const accessToken = await resolveAccessToken(ctx);
         projects = await listProjects(teamId, accessToken);
-      } catch {
+      } catch (err) {
+        // NetworkError must NOT be swallowed: it means the access
+        // token refresh failed because the host is offline, or the
+        // listing call itself failed transport-level. Either way the
+        // correct surface is `{ status: 'offline' }` from
+        // `runConnectorSync` (`handlers.ts:476`), not a `continue`
+        // that silently turns into `{ status: 'synced', added: 0 }`.
+        // Non-network errors (API-level 5xx for a single team, perm
+        // revoked since accessible-resources was called, etc.) keep
+        // the per-team skip behaviour. See Devin Review wave 19
+        // ANALYSIS_0001.
+        if (isNetworkError(err)) throw err;
         continue;
       }
       for (const project of projects) {
@@ -556,7 +581,11 @@ export async function syncFigma(ctx: {
           // footprint tight.
           const accessToken = await resolveAccessToken(ctx);
           files = await listProjectFiles(project.id, accessToken);
-        } catch {
+        } catch (err) {
+          // Same rationale as the per-team catch above: NetworkError
+          // means offline and must bubble up; API-level errors stay
+          // per-project. See Devin Review wave 19 ANALYSIS_0001.
+          if (isNetworkError(err)) throw err;
           continue;
         }
         for (const summary of files) {

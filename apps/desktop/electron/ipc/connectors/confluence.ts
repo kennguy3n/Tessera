@@ -34,6 +34,7 @@ import {
   writeManifest,
   type SyncManifestEntry,
 } from "./syncDir";
+import { isNetworkError } from "./networkErrors";
 
 const ATLASSIAN_API = "https://api.atlassian.com";
 const PAGE_LIMIT = 50;
@@ -395,7 +396,20 @@ export async function syncConfluence(ctx: {
         // Devin Review wave 13 BUG_0001.
         const accessToken = await resolveAccessToken(ctx);
         pages = await listPagesInSpace(cloudId, accessToken, space.id);
-      } catch {
+      } catch (err) {
+        // NetworkError must NOT be swallowed here. If the user's
+        // wifi drops between the initial accessible-resources call
+        // and this per-space iteration, every remaining space would
+        // silently `continue` and the function would return
+        // `{ status: 'synced', added: 0, ... }` instead of the
+        // correct `{ status: 'offline' }`. The runConnectorSync
+        // outer catch at `handlers.ts:476` is the single owner of
+        // network-error→offline translation; let it do its job.
+        // Non-network errors (API-level 5xx, listing API removed a
+        // space we still have in state, etc.) keep the per-space
+        // skip behaviour described below. See Devin Review wave 19
+        // ANALYSIS_0001.
+        if (isNetworkError(err)) throw err;
         // Failed to list pages in this space — skip it. The next sync
         // will re-list. Other spaces still process normally.
         // Crucially we do NOT mark this space as successfully listed,
