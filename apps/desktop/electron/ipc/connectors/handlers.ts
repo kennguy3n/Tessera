@@ -220,7 +220,12 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
       const clientId = assertString(clientIdRaw, "clientId", { maxLen: 512 });
       const clientSecret = assertString(clientSecretRaw, "clientSecret", {
         maxLen: 512,
-        allowEmpty: provider === "notion" ? false : false,
+        // Every provider supported today (Google Drive, OneDrive,
+        // Notion, Jira, Confluence, Figma) is registered as a
+        // confidential OAuth client and therefore requires a non-empty
+        // `client_secret`. If a future connector is added with a public
+        // / PKCE-only OAuth client, special-case it here.
+        allowEmpty: false,
       });
       try {
         ctx.rateLimiter.consume(`connectors:authenticate:${provider}`, {

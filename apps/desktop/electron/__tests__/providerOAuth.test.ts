@@ -70,7 +70,11 @@ describe("buildAuthorizeUrl", () => {
     expect(url.searchParams.get("client_id")).toBe("abc");
     expect(url.searchParams.get("state")).toBe("xyz");
     expect(url.searchParams.get("response_type")).toBe("code");
-    expect(url.searchParams.get("redirect_uri")).toContain("127.0.0.1:9876");
+    // Google Drive is pinned to `localhost` (rather than `127.0.0.1`)
+    // because that is the URI users have already registered in their
+    // pre-existing Google Cloud OAuth client. See
+    // `providerOAuth.ts > redirectHost` for the rationale.
+    expect(url.searchParams.get("redirect_uri")).toContain("localhost:9876");
     expect(url.searchParams.get("code_challenge")).toBe("ch");
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
   });
@@ -98,6 +102,32 @@ describe("buildAuthorizeUrl", () => {
       }),
     );
     expect(url.searchParams.get("scope")).toBeNull();
+  });
+});
+
+describe("getRedirectUri", () => {
+  it(
+    "pins Google Drive to localhost (not 127.0.0.1) for backward " +
+      "compatibility with already-registered Cloud Console clients",
+    () => {
+      const cfg = getProviderOAuthConfig("google_drive");
+      expect(getRedirectUri(cfg)).toBe("http://localhost:9876/callback");
+    },
+  );
+
+  it("defaults every other provider to 127.0.0.1 per RFC 8252", () => {
+    for (const provider of [
+      "onedrive",
+      "notion",
+      "jira",
+      "confluence",
+      "figma",
+    ] as const) {
+      const cfg = getProviderOAuthConfig(provider);
+      expect(getRedirectUri(cfg)).toBe(
+        `http://127.0.0.1:${cfg.redirectPort}/callback`,
+      );
+    }
   });
 });
 

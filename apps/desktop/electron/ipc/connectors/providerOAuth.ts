@@ -21,10 +21,11 @@
  *   - Token exchange uses `application/x-www-form-urlencoded` and
  *     either `Authorization: Basic <id:secret>` or
  *     `client_secret=<secret>` in the body, per provider config.
- *   - Refresh handling is per-provider. Figma did not historically
- *     support refresh tokens for the public OAuth app; we expose a
+ *   - Refresh handling is per-provider. We expose a
  *     `supportsRefresh` flag so callers can surface a "reconnect
- *     needed" UX when the token expires.
+ *     needed" UX for providers whose OAuth flow does not issue a
+ *     refresh token (currently only Notion's integration tokens are
+ *     non-expiring and refresh-less).
  *
  * Security notes:
  *   - We always validate the OAuth `state` returned in the callback
@@ -67,13 +68,30 @@ export interface ProviderOAuthConfig {
   scope: string;
   /** Loopback port the redirect URI will listen on. Must be unique per provider. */
   redirectPort: number;
+  /**
+   * Loopback host for the redirect URI. RFC 8252 prefers `127.0.0.1`
+   * but Google's published examples and the legacy Tessera OAuth
+   * client (pre-Phase 10) use `localhost`. Existing user OAuth
+   * client configurations in Google Cloud Console therefore have
+   * `http://localhost:9876/callback` registered — switching to
+   * `127.0.0.1` would break every existing installation with a
+   * `redirect_uri_mismatch` error. We default new providers to
+   * `127.0.0.1` (the spec-compliant choice) but keep Google Drive
+   * on `localhost` for backward compatibility.
+   */
+  redirectHost?: "127.0.0.1" | "localhost";
   /** Optional extra params to add to the authorize URL (e.g. `prompt=consent`). */
   extraAuthorizeParams?: Record<string, string>;
   /** Whether to send `client_id:client_secret` as HTTP Basic Auth on token exchange. */
   basicAuth?: boolean;
   /** Whether `offline_access` should be added to the scope for refresh tokens. */
   requestOfflineAccess?: boolean;
-  /** Whether the provider supports refresh tokens (Figma classic OAuth historically did not). */
+  /**
+   * Whether the provider's OAuth flow issues a refresh token. Notion
+   * integration tokens are non-expiring and refresh-less; every other
+   * connector (Drive, OneDrive, Jira, Confluence, Figma) supports
+   * refresh.
+   */
   supportsRefresh: boolean;
   /** Whether to send PKCE code_challenge / code_verifier on the flow. */
   usePkce: boolean;
@@ -106,6 +124,12 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     revokeUrl: "https://oauth2.googleapis.com/revoke",
     scope: "https://www.googleapis.com/auth/drive.readonly",
     redirectPort: 9876,
+    // Google Drive was the first connector wired into Tessera (pre-
+    // Phase 10) using `http://localhost:9876/callback`. Users have
+    // already registered that exact URI in Google Cloud Console; we
+    // must preserve it bit-for-bit or every existing installation
+    // breaks with `redirect_uri_mismatch`.
+    redirectHost: "localhost",
     extraAuthorizeParams: {
       access_type: "offline",
       prompt: "consent",
@@ -190,7 +214,8 @@ export function getProviderOAuthConfig(provider: ProviderId): ProviderOAuthConfi
 }
 
 export function getRedirectUri(config: ProviderOAuthConfig): string {
-  return `http://127.0.0.1:${config.redirectPort}/callback`;
+  const host = config.redirectHost ?? "127.0.0.1";
+  return `http://${host}:${config.redirectPort}/callback`;
 }
 
 /** Build the provider authorize URL. */

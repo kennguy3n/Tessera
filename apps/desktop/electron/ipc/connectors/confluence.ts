@@ -10,7 +10,16 @@
  * strip tags to plain text + Markdown-ish headings, and write to
  * `<userData>/confluence-sync/<page-id>.md`.
  *
- * Incremental sync filters by `last-modified` on subsequent passes.
+ * Incremental sync uses the page's `version.number` as a monotonic
+ * watermark. The Confluence v2 list endpoint sorts by
+ * `-modified-date` but does not expose a last-modified timestamp on
+ * the list response payload — only `createdAt` (immutable) and
+ * `version.number` (monotonically increasing on every edit). We
+ * persist the per-page version number we last indexed and skip pages
+ * whose current version matches. This is the correct fix for the
+ * earlier bug where `createdAt` was compared against a single global
+ * watermark, causing every edit to existing pages to be silently
+ * dropped after the first full sync.
  */
 
 import * as fsp from "fs/promises";
@@ -54,15 +63,27 @@ interface ConfluencePage {
   status?: string;
   title: string;
   spaceId: string;
+  /**
+   * `version.number` increments on every edit, including non-content
+   * changes like title renames. It is the only monotonically
+   * increasing per-page integer exposed by the v2 list endpoint, so
+   * we use it as the incremental-sync watermark.
+   */
   version?: { number?: number };
   body?: { storage?: { value?: string }; representation?: string };
-  // v2 list endpoint surfaces this as a query param input only.
-  lastOwnerUpdatedAt?: string;
-  // v2 single-page endpoint surfaces this; we conform to "createdAt" in
-  // the index and "lastUpdated" via the version metadata.
+  /** Immutable creation timestamp — NOT used for incremental sync. */
   createdAt?: string;
   ownerId?: string;
 }
+
+/**
+ * Per-page version snapshot persisted between syncs. Stored alongside
+ * the manifest in `state.json`. The map is keyed by Confluence page
+ * id and tracks the highest `version.number` we have ever indexed
+ * for that page. A page whose current version <= the recorded value
+ * is skipped.
+ */
+type PageVersionMap = Record<string, number>;
 
 interface PagesResponse {
   results: ConfluencePage[];
@@ -118,11 +139,30 @@ async function listAllSpaces(
   return spaces;
 }
 
+/**
+ * Page through every page in a space. We deliberately do NOT
+ * short-circuit pagination based on the previous sync's watermark
+ * — the v2 list endpoint sorts by `-modified-date` but the
+ * payload does not surface the modification timestamp, only the
+ * version number. Because we don't know how many pages have changed
+ * since the last sync, we have to walk the whole list. Filtering by
+ * version vs the persisted `PageVersionMap` happens in the caller:
+ * pages whose `version.number` is unchanged are dropped without
+ * re-rendering their body.
+ *
+ * For very large Confluence instances this could be made smarter by
+ * walking only until we hit `PAGE_LIMIT` consecutive unchanged
+ * pages, but that optimisation requires confidence that the v2
+ * sort is stable and total-ordered — which the documentation does
+ * not guarantee. The current implementation is correct (no missed
+ * edits) and pays the cost of one extra list call per space per
+ * sync, which is bounded by the user's catalog and well within
+ * Atlassian's rate-limits.
+ */
 async function listPagesInSpace(
   cloudId: string,
   accessToken: string,
   spaceId: string,
-  watermarkIso: string | null,
 ): Promise<ConfluencePage[]> {
   const pages: ConfluencePage[] = [];
   const base = new URL(
@@ -145,20 +185,7 @@ async function listPagesInSpace(
       );
     }
     const data = (await resp.json()) as PagesResponse;
-    let stop = false;
-    for (const page of data.results) {
-      // The v2 sort key is `-modified-date` so once we cross the
-      // watermark we can short-circuit. Confluence does not expose
-      // last-modified directly on the list response payload (only on
-      // the single-page response), so we use the version number as a
-      // monotonic proxy via the watermark map kept below.
-      if (watermarkIso && (page.createdAt ?? "") <= watermarkIso) {
-        stop = true;
-        break;
-      }
-      pages.push(page);
-    }
-    if (stop) break;
+    pages.push(...data.results);
     if (data._links?.next) {
       url = `${ATLASSIAN_API}/ex/confluence/${cloudId}${data._links.next}`;
     } else {
@@ -223,7 +250,11 @@ export interface ConfluenceBridgeHooks {
 
 interface ConfluenceState {
   cloudId: string | null;
-  lastSyncIso: string | null;
+  /**
+   * Per-page version snapshot from the previous sync. Pages whose
+   * current `version.number` matches the recorded value are skipped.
+   */
+  pageVersions: PageVersionMap;
 }
 
 function statePath(userDataDir: string): string {
@@ -233,9 +264,17 @@ function statePath(userDataDir: string): string {
 async function loadState(userDataDir: string): Promise<ConfluenceState> {
   try {
     const raw = await fsp.readFile(statePath(userDataDir), "utf8");
-    return JSON.parse(raw) as ConfluenceState;
+    const parsed = JSON.parse(raw) as Partial<ConfluenceState> & {
+      // Legacy field from the pre-fix watermark scheme; harmlessly
+      // dropped on the next save.
+      lastSyncIso?: string | null;
+    };
+    return {
+      cloudId: parsed.cloudId ?? null,
+      pageVersions: parsed.pageVersions ?? {},
+    };
   } catch {
-    return { cloudId: null, lastSyncIso: null };
+    return { cloudId: null, pageVersions: {} };
   }
 }
 
@@ -274,16 +313,36 @@ export async function syncConfluence(ctx: {
   let added = 0;
   let modified = 0;
   const removed = 0;
-  let watermark = state.lastSyncIso;
+  // Start from the previous sync's per-page version snapshot and copy
+  // it forward as we observe each page. We intentionally do not mutate
+  // the loaded map in place — if a page's id disappears from
+  // Confluence (page deleted/moved out of a visible space) we want the
+  // entry to drop out of the persisted state so a re-add picks up a
+  // fresh sync, instead of being permanently "caught up" against a
+  // dangling version.
+  const nextVersions: PageVersionMap = {};
 
   for (const space of spaces) {
     const pages = await listPagesInSpace(
       cloudId,
       ctx.accessToken,
       space.id,
-      watermark,
     );
     for (const page of pages) {
+      const currentVersion = page.version?.number ?? 0;
+      const previousVersion = state.pageVersions[page.id] ?? 0;
+      // Skip unchanged pages — their local file and source index entry
+      // are already up-to-date from the previous sync. We still record
+      // the version into `nextVersions` so the watermark survives.
+      if (
+        currentVersion > 0 &&
+        currentVersion === previousVersion &&
+        entriesById.has(page.id)
+      ) {
+        nextVersions[page.id] = currentVersion;
+        continue;
+      }
+
       const body = renderPage(page, space);
       const localPath = path.join(dir, `${sanitiseRemoteId(page.id)}.md`);
       await fsp.writeFile(localPath, body, "utf8");
@@ -304,19 +363,18 @@ export async function syncConfluence(ctx: {
         }
         added += 1;
       }
-      const updated = page.createdAt ?? null;
       entriesById.set(page.id, {
         localPath,
         remoteId: page.id,
-        remoteModifiedAt: updated,
+        // Persist the version number as the remote modification
+        // identifier so the manifest mirrors what the watermark uses.
+        remoteModifiedAt: currentVersion > 0 ? String(currentVersion) : null,
       });
-      if (updated && (!watermark || updated > watermark)) {
-        watermark = updated;
-      }
+      nextVersions[page.id] = currentVersion;
     }
   }
 
-  await saveState(ctx.userDataDir, { cloudId, lastSyncIso: watermark });
+  await saveState(ctx.userDataDir, { cloudId, pageVersions: nextVersions });
   await writeManifest(ctx.userDataDir, {
     version: 1,
     provider: "confluence",

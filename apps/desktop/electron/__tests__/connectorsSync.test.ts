@@ -357,6 +357,114 @@ describe("Confluence sync", () => {
       fsp.access(path.join(dir, "confluence-sync")),
     ).rejects.toThrow();
   });
+
+  it(
+    "uses version.number as the incremental watermark — skips pages " +
+      "whose version is unchanged, re-indexes pages whose version bumped",
+    async () => {
+      const accessibleResp = {
+        ok: true,
+        json: async () => [
+          {
+            id: "cloud-1",
+            url: "https://x",
+            name: "site",
+            scopes: ["read:confluence-content.summary"],
+          },
+        ],
+      };
+      const spacesResp = {
+        ok: true,
+        json: async () => ({
+          results: [{ id: "s1", key: "K", name: "N" }],
+        }),
+      };
+
+      // ---- First sync: index `p1` at version 1, `p2` at version 5 ----
+      fetchMock
+        .mockResolvedValueOnce(accessibleResp)
+        .mockResolvedValueOnce(spacesResp)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "p1",
+                title: "Original 1",
+                spaceId: "s1",
+                version: { number: 1 },
+                body: { storage: { value: "<p>v1</p>" } },
+                // A 2023 createdAt that was previously triggering the
+                // watermark bug. The version-based fix must ignore it.
+                createdAt: "2023-01-01T00:00:00Z",
+              },
+              {
+                id: "p2",
+                title: "Original 2",
+                spaceId: "s1",
+                version: { number: 5 },
+                body: { storage: { value: "<p>v5</p>" } },
+                createdAt: "2023-01-01T00:00:00Z",
+              },
+            ],
+          }),
+        });
+
+      let r = await syncConfluence({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+      expect(r.added).toBe(2);
+      expect(r.modified).toBe(0);
+
+      // ---- Second sync: p1 unchanged (version still 1), p2 edited
+      // (version bumped to 6). Despite both having an old createdAt
+      // (which previously caused the early short-circuit), the
+      // version comparison must still produce exactly one modified
+      // page.
+      //
+      // Note: after the first sync, `state.cloudId` is persisted so
+      // syncConfluence skips the accessible-resources lookup on
+      // subsequent runs — only spaces + pages are fetched. ----
+      fetchMock
+        .mockResolvedValueOnce(spacesResp)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "p1",
+                title: "Original 1",
+                spaceId: "s1",
+                version: { number: 1 },
+                body: { storage: { value: "<p>v1</p>" } },
+                createdAt: "2023-01-01T00:00:00Z",
+              },
+              {
+                id: "p2",
+                title: "Edited 2",
+                spaceId: "s1",
+                version: { number: 6 },
+                body: { storage: { value: "<p>v6 edited</p>" } },
+                createdAt: "2023-01-01T00:00:00Z",
+              },
+            ],
+          }),
+        });
+
+      r = await syncConfluence({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+      expect(r.added).toBe(0);
+      // p2 must be detected as modified despite its createdAt being
+      // older than the previous "watermark". This is the regression
+      // guard.
+      expect(r.modified).toBe(1);
+    },
+  );
 });
 
 describe("Figma sync", () => {

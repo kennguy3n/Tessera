@@ -81,15 +81,17 @@ function notionHeaders(accessToken: string): Record<string, string> {
  * for newly-released block types.
  */
 function blockText(block: NotionBlock): string {
+  // Notion stores each block's content under a property whose key
+  // matches the block's `type` field. The caller passes that key
+  // explicitly so this helper can also pull from a sibling property
+  // (e.g. `caption`) on block types that ship more than one
+  // rich-text payload.
   const richTextOf = (key: string): string => {
-    const payload = block[block.type] as
+    const payload = block[key] as
       | { rich_text?: Array<{ plain_text?: string }> }
       | undefined;
     if (!payload?.rich_text) return "";
-    return payload.rich_text
-      .map((rt) => rt.plain_text ?? "")
-      .join("");
-    void key;
+    return payload.rich_text.map((rt) => rt.plain_text ?? "").join("");
   };
   switch (block.type) {
     case "paragraph":

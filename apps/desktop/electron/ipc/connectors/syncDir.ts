@@ -97,6 +97,6 @@ export async function purgeSyncDir(
  * stay inside the per-filename limit on every supported platform.
  */
 export function sanitiseRemoteId(id: string): string {
-  const safe = id.replace(/[^A-Za-z0-9._\-]/g, "_");
+  const safe = id.replace(/[^A-Za-z0-9._-]/g, "_");
   return safe.length > 200 ? safe.slice(0, 200) : safe;
 }

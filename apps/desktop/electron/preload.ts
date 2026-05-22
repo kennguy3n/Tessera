@@ -409,6 +409,40 @@ export interface TesseraApi {
   dialog: {
     showSaveDialog: (options: SaveDialogOptions) => Promise<SaveDialogResult>;
   };
+  /**
+   * Auto-update integration (Phase 10). The renderer never talks to
+   * `electron-updater` directly — every interaction goes through
+   * these IPC channels so the main process can validate state, run
+   * the updater out of the sandboxed renderer, and apply a single
+   * configuration source of truth (Settings -> Auto-update toggle).
+   */
+  updates: {
+    /** Last known update status. Useful for the Settings card. */
+    status: () => Promise<UpdateStatusInfo>;
+    /** Force-check the release feed now. */
+    check: () => Promise<UpdateStatusInfo>;
+    /** Install a downloaded update (quits + relaunches). */
+    install: () => Promise<{ ok: boolean; message?: string }>;
+    getAutoUpdateEnabled: () => Promise<boolean>;
+    setAutoUpdateEnabled: (enabled: boolean) => Promise<boolean>;
+    /** Subscribe to streaming update events. Returns an unsubscribe. */
+    onStatus: (cb: (s: UpdateStatusInfo) => void) => () => void;
+  };
+}
+
+export interface UpdateStatusInfo {
+  status:
+    | "idle"
+    | "checking"
+    | "available"
+    | "not-available"
+    | "downloading"
+    | "downloaded"
+    | "error";
+  message?: string;
+  percent?: number;
+  bytesPerSecond?: number;
+  newVersion?: string;
 }
 
 export interface TaskInfo {
@@ -667,6 +701,25 @@ const api: TesseraApi = {
   dialog: {
     showSaveDialog: (options: SaveDialogOptions) =>
       ipcRenderer.invoke("dialog:showSaveDialog", options),
+  },
+  updates: {
+    status: () => ipcRenderer.invoke("updates:status"),
+    check: () => ipcRenderer.invoke("updates:check"),
+    install: () => ipcRenderer.invoke("updates:install"),
+    getAutoUpdateEnabled: () =>
+      ipcRenderer.invoke("updates:getAutoUpdateEnabled"),
+    setAutoUpdateEnabled: (enabled: boolean) =>
+      ipcRenderer.invoke("updates:setAutoUpdateEnabled", enabled),
+    onStatus: (cb: (s: UpdateStatusInfo) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        status: UpdateStatusInfo,
+      ) => cb(status);
+      ipcRenderer.on("updates:status", listener as never);
+      return () => {
+        ipcRenderer.removeListener("updates:status", listener as never);
+      };
+    },
   },
 };
 

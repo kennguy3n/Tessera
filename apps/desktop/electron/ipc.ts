@@ -20,9 +20,11 @@ import { exchangeCodeForTokens, refreshAccessToken } from "./oauthServer";
 import * as tokenVault from "./tokenVault";
 import * as secretsVault from "./secretsVault";
 import { registerConnectorHandlers } from "./ipc/connectors/handlers";
+import { syncGoogleDrive } from "./ipc/connectors/gdrive";
 import { createDefaultContext } from "./ipc/context";
 import { defaultRateLimiter } from "./ipc/rateLimiter";
 import { getLogger } from "./logger";
+import { registerAutoUpdaterIpc } from "./autoUpdater";
 import {
   deleteCurrentModel,
   detectPlatformInfo,
@@ -1203,171 +1205,50 @@ export function registerIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle("connectors:gdrive:sync", async (_event, selectedFileIds?: string[]): Promise<{ added: number; modified: number; removed: number; status: string }> => {
-    let added = 0;
-    let modified = 0;
-    let removed = 0;
-    const syncedPaths: string[] = [];
-    const failedFileIds: string[] = [];
-
-    // When no file IDs provided ("Sync Now" button), re-sync previously synced files from manifest
-    let resolvedFileIds = selectedFileIds;
-    if (!resolvedFileIds || resolvedFileIds.length === 0) {
-      const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
-      const manifestPath = path.join(syncDir, "manifest.json");
-      try {
-        const manifestData = await fsp.readFile(manifestPath, "utf-8");
-        const manifestPaths = JSON.parse(manifestData) as string[];
-        // Extract file IDs from paths: <syncDir>/<fileId><ext> → fileId
-        resolvedFileIds = manifestPaths.map((p) => {
-          const basename = path.basename(p);
-          const dotIdx = basename.indexOf(".");
-          return dotIdx > 0 ? basename.substring(0, dotIdx) : basename;
-        });
-      } catch {
-        // No manifest — nothing to re-sync
-        return { added: 0, modified: 0, removed: 0, status: "synced" };
-      }
-    }
-
-    if (resolvedFileIds && resolvedFileIds.length > 0) {
-      for (const fileId of resolvedFileIds) {
-        const accessToken = await getValidAccessToken("google_drive");
-        const metaResp = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,modifiedTime`,
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-        );
-        if (!metaResp.ok) {
-          // Only treat 404/410 as confirmed Drive-side deletion; skip transient errors
-          if (metaResp.status === 404 || metaResp.status === 410) {
-            failedFileIds.push(fileId);
-          }
-          continue;
-        }
-        const meta = (await metaResp.json()) as {
-          id: string;
-          name: string;
-          mimeType: string;
-          size?: string;
-          modifiedTime?: string;
-        };
-
-        if (meta.mimeType === "application/vnd.google-apps.folder") continue;
-
-        const MAX_SYNC_FILE_BYTES = 100 * 1024 * 1024; // 100 MB
-        const fileSize = Number(meta.size ?? "0");
-        if (fileSize > MAX_SYNC_FILE_BYTES) continue;
-
-        const exportMimeMap: Record<string, string> = {
-          "application/vnd.google-apps.document": "text/plain",
-          "application/vnd.google-apps.spreadsheet": "text/csv",
-          "application/vnd.google-apps.presentation": "text/plain",
-        };
-
-        let contentBytes: ArrayBuffer;
-        const exportMime = exportMimeMap[meta.mimeType];
-        if (exportMime) {
-          const exportResp = await fetch(
-            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`,
-            { headers: { Authorization: `Bearer ${accessToken}` } },
-          );
-          if (!exportResp.ok) continue;
-          contentBytes = await exportResp.arrayBuffer();
-        } else {
-          const dlResp = await fetch(
-            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
-            { headers: { Authorization: `Bearer ${accessToken}` } },
-          );
-          if (!dlResp.ok) continue;
-          contentBytes = await dlResp.arrayBuffer();
-        }
-
-        const bridge = getBridge();
-        if (bridge && contentBytes.byteLength > 0) {
-          const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
-          await fsp.mkdir(syncDir, { recursive: true });
-          const ext = exportMime
-            ? (exportMime === "text/csv" ? ".csv" : ".txt")
-            : (meta.name.includes(".") ? meta.name.substring(meta.name.lastIndexOf(".")) : "");
-          const localPath = path.join(syncDir, `${fileId}${ext}`);
-          await fsp.writeFile(localPath, Buffer.from(contentBytes));
-
-          try {
-            // Upsert: reindex existing source instead of creating duplicate
-            const sources = bridge.bridgeListSources();
-            const existing = sources.find((s) => s.path === localPath);
-            if (existing) {
-              bridge.bridgeReindexSource(existing.id);
-              modified++;
-            } else {
-              bridge.bridgeAddLocalFile(localPath);
-              added++;
-            }
-            syncedPaths.push(localPath);
-          } catch {
-            // Indexing failed — do not count
-          }
-        }
-      }
-    }
-
-    // Remove local files + source index entries for Drive-side deletions
-    if (failedFileIds.length > 0) {
-      const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
+  ipcMain.handle(
+    "connectors:gdrive:sync",
+    async (
+      _event,
+      selectedFileIds?: string[],
+    ): Promise<{
+      added: number;
+      modified: number;
+      removed: number;
+      status: string;
+    }> => {
+      // Single implementation lives in `./ipc/connectors/gdrive.ts`.
+      // The legacy `connectors:gdrive:sync` channel and the new
+      // `connectors:sync` channel both delegate here so the two
+      // paths cannot drift, write the same manifest, and share all
+      // bug-fix / feature work going forward.
+      const accessToken = await getValidAccessToken("google_drive");
       const bridge = getBridge();
-      for (const failedId of failedFileIds) {
-        // Find and remove matching local files (any extension)
-        try {
-          const entries = await fsp.readdir(syncDir);
-          for (const entry of entries) {
-            const dotIdx = entry.indexOf(".");
-            const entryId = dotIdx > 0 ? entry.substring(0, dotIdx) : entry;
-            if (entryId === failedId) {
-              const localPath = path.join(syncDir, entry);
-              if (bridge) {
-                const sources = bridge.bridgeListSources() as Array<{ id: string; path: string }>;
-                const src = sources.find((s) => s.path === localPath);
-                if (src) {
-                  try { bridge.bridgeRemoveSource(src.id); } catch { /* best effort */ }
-                }
-              }
-              await fsp.unlink(localPath).catch(() => {});
-              removed++;
-            }
-          }
-        } catch {
-          // syncDir may not exist
-        }
+      if (!bridge) {
+        throw new Error("Native bridge not available");
       }
-    }
-
-    // Persist manifest with only currently-valid synced paths
-    const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
-    const manifestPath = path.join(syncDir, "manifest.json");
-    let existingManifest: string[] = [];
-    try {
-      existingManifest = JSON.parse(await fsp.readFile(manifestPath, "utf-8")) as string[];
-    } catch {
-      // No existing manifest
-    }
-    // Remove stale paths for failed file IDs and add new synced paths
-    const failedIdSet = new Set(failedFileIds);
-    const surviving = existingManifest.filter((p) => {
-      const bn = path.basename(p);
-      const dotIdx = bn.indexOf(".");
-      const fileId = dotIdx > 0 ? bn.substring(0, dotIdx) : bn;
-      return !failedIdSet.has(fileId);
-    });
-    const merged = [...new Set([...surviving, ...syncedPaths])];
-    if (merged.length > 0) {
-      await fsp.mkdir(syncDir, { recursive: true });
-      await fsp.writeFile(manifestPath, JSON.stringify(merged));
-    } else {
-      await fsp.unlink(manifestPath).catch(() => {});
-    }
-
-    return { added, modified, removed, status: "synced" };
-  });
+      return syncGoogleDrive({
+        accessToken,
+        userDataDir: app.getPath("userData"),
+        bridge: {
+          addLocalFile: (p) => {
+            const src = bridge.bridgeAddLocalFile(p);
+            return { id: src.id, path: src.path };
+          },
+          reindexSource: (id) => {
+            bridge.bridgeReindexSource(id);
+          },
+          removeSource: (id) => {
+            bridge.bridgeRemoveSource(id);
+          },
+          listSources: () =>
+            bridge
+              .bridgeListSources()
+              .map((s) => ({ id: s.id, path: s.path })),
+        },
+        selectedFileIds,
+      });
+    },
+  );
 
   // --- Artifact Generation ---
 
@@ -1627,4 +1508,7 @@ export function registerIpcHandlers(): void {
       return result;
     },
   );
+
+  // --- Auto-update (electron-updater) ---
+  registerAutoUpdaterIpc();
 }
