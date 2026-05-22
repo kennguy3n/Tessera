@@ -306,7 +306,16 @@ export async function syncFigma(ctx: {
   let added = 0;
   let modified = 0;
   const removed = 0;
-  let watermark = state.lastSyncIso;
+  // The previous-sync watermark is read-only during this run and used
+  // solely to decide which files to skip. The new watermark we will
+  // persist is tracked separately. Conflating the two caused the bug
+  // where the first sync (with `state.lastSyncIso === null`) wrote
+  // the first file's timestamp into `watermark` mid-loop, then
+  // skipped every subsequent file with an equal-or-earlier
+  // `last_modified` for the rest of the run — silently dropping the
+  // majority of the user's files.
+  const compareWatermark = state.lastSyncIso;
+  let nextWatermark = state.lastSyncIso;
 
   for (const teamId of teamIds) {
     let projects: FigmaProject[];
@@ -323,7 +332,12 @@ export async function syncFigma(ctx: {
         continue;
       }
       for (const summary of files) {
-        if (watermark && summary.last_modified <= watermark) continue;
+        if (
+          compareWatermark &&
+          summary.last_modified <= compareWatermark
+        ) {
+          continue;
+        }
         let file: FigmaFile;
         try {
           file = await getFile(summary.key, ctx.accessToken);
@@ -360,14 +374,14 @@ export async function syncFigma(ctx: {
           remoteId: summary.key,
           remoteModifiedAt: summary.last_modified,
         });
-        if (!watermark || summary.last_modified > watermark) {
-          watermark = summary.last_modified;
+        if (!nextWatermark || summary.last_modified > nextWatermark) {
+          nextWatermark = summary.last_modified;
         }
       }
     }
   }
 
-  await saveState(ctx.userDataDir, { lastSyncIso: watermark, teamIds });
+  await saveState(ctx.userDataDir, { lastSyncIso: nextWatermark, teamIds });
   await writeManifest(ctx.userDataDir, {
     version: 1,
     provider: "figma",

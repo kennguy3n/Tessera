@@ -17,6 +17,7 @@ import { syncNotion, disconnectNotion } from "../ipc/connectors/notion";
 import { syncJira, disconnectJira } from "../ipc/connectors/jira";
 import { syncConfluence, disconnectConfluence } from "../ipc/connectors/confluence";
 import { syncFigma, disconnectFigma } from "../ipc/connectors/figma";
+import { syncGoogleDrive } from "../ipc/connectors/gdrive";
 
 interface FakeSource {
   id: string;
@@ -121,6 +122,80 @@ describe("Notion sync", () => {
     expect(content).toContain("World");
     expect(content).toContain("# Subhead");
   });
+
+  it(
+    "scans all pages and filters by watermark instead of short-circuiting " +
+      "on the first <=watermark hit (regression: Notion search sort is best-effort)",
+    async () => {
+      // Pre-seed state.json with a watermark so the sync runs in
+      // "incremental" mode. Notion docs `sort` as best-effort, so we
+      // simulate the search API returning a page OLDER than the
+      // watermark *before* a page NEWER than the watermark within
+      // the same response. The buggy implementation broke on the
+      // first <=watermark hit and never indexed the newer page; the
+      // correct implementation must filter each result independently
+      // and keep scanning.
+      const stateDir = path.join(dir, "notion-sync");
+      await fsp.mkdir(stateDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(stateDir, "watermark.json"),
+        JSON.stringify({ lastSyncIso: "2024-06-01T00:00:00Z" }),
+        "utf8",
+      );
+      fetchMock
+        // POST /v1/search
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              // Page A — older than the watermark, must be skipped.
+              {
+                id: "page-A",
+                last_edited_time: "2024-05-01T00:00:00Z",
+                archived: false,
+                properties: {
+                  title: { type: "title", title: [{ plain_text: "Old" }] },
+                },
+              },
+              // Page B — newer than the watermark, must be picked up
+              // even though it followed a <=watermark page in the
+              // response.
+              {
+                id: "page-B",
+                last_edited_time: "2024-07-01T00:00:00Z",
+                archived: false,
+                properties: {
+                  title: { type: "title", title: [{ plain_text: "New" }] },
+                },
+              },
+            ],
+            has_more: false,
+            next_cursor: null,
+          }),
+        })
+        // GET /v1/blocks/page-B/children
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "b-1",
+                type: "paragraph",
+                paragraph: { rich_text: [{ plain_text: "Newer content" }] },
+              },
+            ],
+            has_more: false,
+            next_cursor: null,
+          }),
+        });
+
+      const r = await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      expect(r.added).toBe(1);
+      const content = await fsp.readFile(bridge.added[0].path, "utf8");
+      expect(content).toContain("# New");
+      expect(content).toContain("Newer content");
+    },
+  );
 
   it("disconnect cleans up sync dir + sources", async () => {
     fetchMock
@@ -601,4 +676,131 @@ describe("Figma sync", () => {
     expect(bridge.removed).toContain(added.id);
     await expect(fsp.access(path.join(dir, "figma-sync"))).rejects.toThrow();
   });
+
+  it(
+    "indexes every file on first sync even when timestamps are not strictly increasing " +
+      "(regression: watermark-mutation-during-iteration bug)",
+    async () => {
+      // Three files where the SECOND file has a strictly newer
+      // `last_modified` than the first. The buggy implementation set
+      // the watermark to f1's timestamp after processing f1, then
+      // skipped f2 and f3 because their timestamps were <= f1's. The
+      // correct implementation must only consult the *pre-run*
+      // watermark when deciding whether to skip.
+      fetchMock
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ teams: [{ id: "t1", name: "T" }] }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: "T",
+            projects: [{ id: "p1", name: "Proj" }],
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: "Proj",
+            files: [
+              { key: "f1", name: "File 1", last_modified: "2024-06-01T12:00:00Z" },
+              { key: "f2", name: "File 2", last_modified: "2024-06-01T08:00:00Z" },
+              { key: "f3", name: "File 3", last_modified: "2024-06-01T12:00:00Z" },
+            ],
+          }),
+        })
+        // f1 file body + comments
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: "File 1",
+            lastModified: "2024-06-01T12:00:00Z",
+            document: { id: "0:0", children: [{ id: "1:1", type: "TEXT", characters: "Body 1" }] },
+          }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ comments: [] }) })
+        // f2 file body + comments
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: "File 2",
+            lastModified: "2024-06-01T08:00:00Z",
+            document: { id: "0:0", children: [{ id: "1:1", type: "TEXT", characters: "Body 2" }] },
+          }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ comments: [] }) })
+        // f3 file body + comments
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: "File 3",
+            lastModified: "2024-06-01T12:00:00Z",
+            document: { id: "0:0", children: [{ id: "1:1", type: "TEXT", characters: "Body 3" }] },
+          }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ comments: [] }) });
+
+      const r = await syncFigma({ accessToken: "AT", userDataDir: dir, bridge });
+      expect(r.added).toBe(3);
+      expect(bridge.added).toHaveLength(3);
+    },
+  );
+});
+
+describe("Google Drive sync — manifest cleanup", () => {
+  const original = globalThis.fetch;
+  let fetchMock: ReturnType<typeof makeFetchMock>;
+  let dir: string;
+  let bridge: FakeBridge;
+
+  beforeEach(async () => {
+    fetchMock = makeFetchMock();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    dir = await tmpDir("gdrive");
+    bridge = new FakeBridge();
+  });
+  afterEach(async () => {
+    globalThis.fetch = original;
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it(
+    "deletes the manifest file when every tracked id is confirmed " +
+      "remotely deleted (regression: stale-manifest 404 loop)",
+    async () => {
+      // Pre-seed a manifest containing two file ids whose files
+      // already exist on disk. The Drive API will return 404 for
+      // both, marking them as remotely deleted. After this sync the
+      // manifest must be removed entirely — leaving an empty `[]`
+      // file would still cause `readGdriveManifest` to short-circuit
+      // future syncs that should be exercising the empty path.
+      const syncDir = path.join(dir, "gdrive-sync");
+      await fsp.mkdir(syncDir, { recursive: true });
+      const f1 = path.join(syncDir, "file-1.txt");
+      const f2 = path.join(syncDir, "file-2.txt");
+      await fsp.writeFile(f1, "stale 1");
+      await fsp.writeFile(f2, "stale 2");
+      const manifestPath = path.join(syncDir, "manifest.json");
+      await fsp.writeFile(manifestPath, JSON.stringify([f1, f2]), "utf8");
+      // Pretend the bridge already has source records for the two
+      // files so the disconnect cleanup path runs.
+      bridge.addLocalFile(f1);
+      bridge.addLocalFile(f2);
+
+      // Both metadata fetches 404 → both ids land in failedFileIds.
+      fetchMock
+        .mockResolvedValueOnce({ ok: false, status: 404 })
+        .mockResolvedValueOnce({ ok: false, status: 404 });
+
+      const r = await syncGoogleDrive({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+      expect(r.removed).toBe(2);
+      // Manifest must no longer exist (NOT an empty JSON array).
+      await expect(fsp.access(manifestPath)).rejects.toThrow();
+    },
+  );
 });

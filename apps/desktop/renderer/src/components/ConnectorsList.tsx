@@ -24,7 +24,13 @@ export interface ConnectorDescriptor {
   consoleUrl: string;
   /** Help text shown in the connect modal. */
   help: string;
-  /** Loopback redirect URI the user must register with the provider. */
+  /**
+   * Fallback loopback redirect URI shown before the live value is
+   * resolved from the main process. The authoritative value comes
+   * from `connectors.getRedirectUri()` so the UI cannot drift from
+   * the actual OAuth config — this is just the initial render value
+   * for the case where the IPC has not yet responded.
+   */
   redirectUri: string;
   /** Some providers (Notion) accept no secret in the public model. */
   secretRequired?: boolean;
@@ -36,7 +42,11 @@ export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
     label: "Google Drive",
     consoleUrl: "https://console.cloud.google.com/apis/credentials",
     help: "Create an OAuth 2.0 Client ID of type 'Desktop app' in Google Cloud Console and add the redirect URI below.",
-    redirectUri: "http://127.0.0.1:9876/callback",
+    // Google Drive is pinned to `localhost` (not `127.0.0.1`) for
+    // backward compatibility with the redirect URI users have already
+    // registered in pre-Phase-10 installs. See
+    // `electron/ipc/connectors/providerOAuth.ts > google_drive`.
+    redirectUri: "http://localhost:9876/callback",
     secretRequired: true,
   },
   {
@@ -94,6 +104,39 @@ export default function ConnectorsList({ onChange }: ConnectorsListProps) {
   const [clientSecret, setClientSecret] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
+  // Live redirect URIs sourced from the OAuth config in the main
+  // process. The static `redirectUri` on each descriptor is only used
+  // as the initial render value before this resolves.
+  const [liveRedirectUris, setLiveRedirectUris] = useState<
+    Record<string, string>
+  >({});
+
+  useEffect(() => {
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api) return;
+    let cancelled = false;
+    (async () => {
+      const next: Record<string, string> = {};
+      await Promise.all(
+        CONNECTOR_DESCRIPTORS.map(async (d) => {
+          try {
+            next[d.provider] = await api.connectors.getRedirectUri(d.provider);
+          } catch {
+            // Fall back to the descriptor's static value on error so
+            // the modal still renders a URI; the OAuth flow itself
+            // sources from the same config so connecting will fail
+            // loudly with a real error rather than silently mis-
+            // instructing the user.
+            next[d.provider] = d.redirectUri;
+          }
+        }),
+      );
+      if (!cancelled) setLiveRedirectUris(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const pollAll = useCallback(async () => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
@@ -257,7 +300,10 @@ export default function ConnectorsList({ onChange }: ConnectorsListProps) {
                 wordBreak: "break-all",
               }}
             >
-              Redirect URI: <code>{descriptor.redirectUri}</code>
+              Redirect URI:{" "}
+              <code>
+                {liveRedirectUris[descriptor.provider] ?? descriptor.redirectUri}
+              </code>
             </p>
             <input
               className="input"

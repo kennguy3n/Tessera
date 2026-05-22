@@ -38,6 +38,7 @@ import {
   exchangeAuthorizationCode,
   generatePkcePair,
   getProviderOAuthConfig,
+  getRedirectUri,
   refreshProviderToken,
   revokeProviderToken,
   runRedirectServer,
@@ -313,6 +314,25 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
         connected: hasTokens,
         status: hasTokens ? "connected" : "disconnected",
       };
+    },
+  );
+
+  ipcMain.handle(
+    "connectors:getRedirectUri",
+    async (_event, providerRaw: string): Promise<string> => {
+      // Single source of truth for the loopback redirect URI: the
+      // OAuth config in `providerOAuth.ts`. The Settings UI fetches
+      // this via IPC so the URI it tells the user to register in the
+      // provider's developer console cannot drift from the one the
+      // OAuth flow actually sends in the authorize request. Drift
+      // here caused a previous Devin Review bug where the UI told
+      // users to register `http://127.0.0.1:9876/callback` for
+      // Google Drive while the OAuth flow sent
+      // `http://localhost:9876/callback`, producing
+      // `redirect_uri_mismatch` on every connect attempt.
+      const provider = assertProvider(providerRaw, "provider");
+      const config = getProviderOAuthConfig(provider);
+      return getRedirectUri(config);
     },
   );
 

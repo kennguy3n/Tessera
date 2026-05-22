@@ -193,6 +193,23 @@ async function fetchPageText(
   return lines.join("\n\n");
 }
 
+/**
+ * Page through every (non-archived) page visible to the integration
+ * and return the ones edited since `lastSyncIso`. We deliberately do
+ * NOT short-circuit pagination based on the result ordering: Notion's
+ * `/v1/search` documents `sort` as a *best-effort* hint, not a
+ * guarantee. The previous implementation broke out of the scan loop
+ * the first time it observed `last_edited_time <= lastSyncIso`, which
+ * would silently miss any newer page that happened to be returned
+ * out of order (e.g. due to eventual consistency on the search index,
+ * or shard ordering for very large workspaces).
+ *
+ * The cost is one extra REST call per `PAGE_SIZE` block — bounded by
+ * the user's workspace size — which is well within Notion's published
+ * rate limits and matches what other vendors (Confluence, Atlassian,
+ * Microsoft Graph) require for safe incremental sync. Correctness
+ * over a marginal API saving.
+ */
 async function listAllPages(
   accessToken: string,
   lastSyncIso: string | null,
@@ -218,18 +235,15 @@ async function listAllPages(
       );
     }
     const data = (await resp.json()) as SearchResponse;
-    let stop = false;
     for (const p of data.results) {
       if (p.archived) continue;
-      if (lastSyncIso && p.last_edited_time <= lastSyncIso) {
-        // Search returns descending-by-edit-time, so once we cross
-        // the watermark we can stop scanning entirely.
-        stop = true;
-        break;
-      }
+      // Filter against the persisted watermark on every page, never
+      // stopping the scan early. See the function-level doc comment
+      // for why this is correct over the previous short-circuit.
+      if (lastSyncIso && p.last_edited_time <= lastSyncIso) continue;
       pages.push(p);
     }
-    if (stop || !data.has_more || !data.next_cursor) break;
+    if (!data.has_more || !data.next_cursor) break;
     cursor = data.next_cursor;
   }
   return pages;

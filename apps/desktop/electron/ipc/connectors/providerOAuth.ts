@@ -349,7 +349,16 @@ export async function runRedirectServer(
       resolve({ code, state });
     });
 
-    server.listen(config.redirectPort, "127.0.0.1", () => {
+    // Bind the loopback server to the same host the redirect URI
+    // advertises. Most systems map `localhost` to both `127.0.0.1`
+    // and `::1`, but on IPv6-only hosts (or hosts where `localhost`
+    // resolves only to `::1` per `/etc/hosts`) binding to a literal
+    // `127.0.0.1` while telling the browser to fetch `localhost`
+    // produces an unreachable callback. Binding to the same host
+    // string the redirect URI uses lets Node pick the address family
+    // the OS resolves `localhost` to, eliminating the mismatch.
+    const bindHost = config.redirectHost ?? "127.0.0.1";
+    server.listen(config.redirectPort, bindHost, () => {
       shell.openExternal(authUrl).catch((err) => {
         server.close();
         cleanup();

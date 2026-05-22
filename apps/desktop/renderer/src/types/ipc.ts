@@ -274,6 +274,14 @@ export interface ConnectorApi {
    * error and the UI should show the offline badge.
    */
   sync: (provider: string) => Promise<DriveSyncResult>;
+  /**
+   * Resolve the loopback redirect URI the user must register in the
+   * provider's developer console. Source of truth is the OAuth config
+   * in `electron/ipc/connectors/providerOAuth.ts` — the renderer
+   * fetches it via IPC instead of hard-coding so the displayed URI
+   * cannot drift from the one the authorize request actually sends.
+   */
+  getRedirectUri: (provider: string) => Promise<string>;
 }
 
 export interface DialogApi {

@@ -207,6 +207,15 @@ export async function syncGoogleDrive(ctx: {
   const merged = Array.from(new Set([...surviving, ...syncedPaths]));
   if (merged.length > 0) {
     await writeGdriveManifest(ctx.userDataDir, merged);
+  } else {
+    // Every previously-tracked file has been confirmed remotely
+    // deleted (404/410) and no new files were synced this pass.
+    // Remove the manifest entirely — otherwise the next sync would
+    // re-read the stale id list, re-issue HEAD requests for each
+    // deleted file, and 404 forever in a wasted-API-call loop.
+    await fsp
+      .unlink(manifestPathFor(ctx.userDataDir))
+      .catch(() => undefined);
   }
 
   return { added, modified, removed, status: "synced" };

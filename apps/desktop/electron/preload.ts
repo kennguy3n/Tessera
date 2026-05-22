@@ -388,6 +388,13 @@ export interface TesseraApi {
      * accepts an explicit selection.
      */
     sync: (provider: string) => Promise<{ added: number; modified: number; removed: number; status: string }>;
+    /**
+     * Fetch the loopback redirect URI the user must register in the
+     * provider's developer console. Sourced from the OAuth config
+     * (`providerOAuth.ts`) so the value displayed in the UI cannot
+     * drift from the value sent on the authorize request.
+     */
+    getRedirectUri: (provider: string) => Promise<string>;
   };
   tasks: {
     create: (req: CreateTaskRequest) => Promise<TaskInfo>;
@@ -679,6 +686,8 @@ const api: TesseraApi = {
     syncDrive: (selectedFileIds?: string[]) =>
       ipcRenderer.invoke("connectors:gdrive:sync", selectedFileIds),
     sync: (provider: string) => ipcRenderer.invoke("connectors:sync", provider),
+    getRedirectUri: (provider: string) =>
+      ipcRenderer.invoke("connectors:getRedirectUri", provider),
   },
   tasks: {
     create: (req) => ipcRenderer.invoke("tasks:create", req),
