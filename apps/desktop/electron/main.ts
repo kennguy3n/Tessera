@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session } from "electron";
+import { app, BrowserWindow, safeStorage, session } from "electron";
 import * as path from "path";
 import { registerIpcHandlers } from "./ipc";
 import { loadConfig, saveWindowState } from "./config";
@@ -7,6 +7,8 @@ import { detectComputeBackends } from "./modelManagement";
 import { startScheduler, stopScheduler } from "./scheduler";
 import { getLogger } from "./logger";
 import { initAutoUpdater } from "./autoUpdater";
+import { cspImageSources } from "./cspImageSources";
+import { initPasswordVaultIfNeeded, passwordVaultSaltExists } from "./passwordVault";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -56,15 +58,17 @@ function createWindow(): void {
       responseHeaders: {
         ..._details.responseHeaders,
         "Content-Security-Policy": [
-          // `img-src 'self' data: https:` allows the GalleryView (and
-          // other Base cells whose URL field points at an external cover
-          // image) to display thumbnails from connected sources — Drive,
-          // OneDrive, Notion, Figma, etc. — without bouncing them through
-          // a privacy-preserving fetch proxy. We intentionally do NOT
-          // include `http:` so plaintext image URLs are still blocked.
-          // Scripts and connect-src remain locked to 'self', so widening
-          // img-src does not weaken Tessera's local-first guarantees.
-          `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; ${connectSrc}`,
+          // img-src enumerates the image CDNs of each first-class
+          // connected provider rather than the previous wildcard
+          // `https:` which would allow any HTTPS host. The list is
+          // tracked in `apps/desktop/electron/cspImageSources.ts` so
+          // adding a new connector requires explicitly widening the
+          // allow-list in one place. Browser/tab tracking pixels,
+          // analytics beacons, and the long-tail of arbitrary HTTPS
+          // image hosts that don't belong to a connected provider
+          // are blocked. Scripts and connect-src remain locked to
+          // 'self', so this only narrows the previous policy.
+          `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: ${cspImageSources.join(" ")}; ${connectSrc}`,
         ],
       },
     });
@@ -106,8 +110,49 @@ function createWindow(): void {
   });
 }
 
-app.whenReady().then(() => {
+/**
+ * If the OS keyring is unavailable (typically headless Linux without
+ * gnome-keyring / kwallet), prompt the user for a vault password and
+ * cache the derived key for the session. This unlocks the password
+ * fallback in `tokenVault.ts` / `secretsVault.ts` so OAuth tokens
+ * and external-provider API keys stay encrypted at rest.
+ *
+ * Behaviour:
+ * - safeStorage available → no-op (existing flow)
+ * - safeStorage unavailable, existing vault salt on disk → prompt
+ *   for the existing password (single field, no confirm)
+ * - safeStorage unavailable, fresh install → prompt for a NEW
+ *   password (with confirm field)
+ * - User closes the prompt without entering a password → log
+ *   warning, continue; vault writes will throw with the actionable
+ *   "keyring unavailable" message and reads of password-vault blobs
+ *   will fail with a clear "no password cached" message
+ *
+ * The prompt is shown BEFORE registerIpcHandlers / startScheduler /
+ * createWindow so the rest of the app can safely treat the vault as
+ * ready (or unambiguously unavailable) without race conditions.
+ */
+async function maybeInitPasswordVault(): Promise<void> {
+  if (safeStorage.isEncryptionAvailable()) return;
+  try {
+    await initPasswordVaultIfNeeded({
+      isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+      existingVault: passwordVaultSaltExists(),
+    });
+    console.log(
+      "[Tessera] Password vault unlocked — OAuth tokens and secrets will be encrypted with the user-supplied password.",
+    );
+  } catch (err) {
+    console.warn(
+      "[Tessera] Password vault prompt declined or failed — token / secret writes will fail until the vault is unlocked or the OS keyring becomes available.",
+      err,
+    );
+  }
+}
+
+app.whenReady().then(async () => {
   initAppState();
+  await maybeInitPasswordVault();
   registerIpcHandlers();
   // Start the automations scheduler. Runs in the main process and
   // ticks every 30s, dispatching due `Schedule` automations directly

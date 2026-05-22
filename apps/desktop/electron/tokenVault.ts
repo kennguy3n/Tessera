@@ -2,6 +2,12 @@ import { safeStorage } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { app } from "electron";
+import {
+  decryptWithPasswordKey,
+  encryptWithPasswordKey,
+  isPasswordVaultBlob,
+  passwordVaultActive,
+} from "./passwordVault";
 
 export interface StoredTokens {
   accessToken: string;
@@ -51,6 +57,58 @@ export function encryptionUnavailableReason(): string {
   }
 }
 
+/**
+ * Encrypt `plaintext` using whichever vault mode is active. Prefers
+ * safeStorage when available; falls through to the password-derived
+ * vault if `initPasswordVaultIfNeeded` cached a key at app startup.
+ *
+ * Throws if NEITHER mode is available — refusing to store secrets
+ * unencrypted is the whole point.
+ */
+function encryptForVault(plaintext: string): Buffer {
+  if (safeStorage.isEncryptionAvailable()) {
+    return safeStorage.encryptString(plaintext);
+  }
+  if (passwordVaultActive()) {
+    return encryptWithPasswordKey(plaintext);
+  }
+  throw new Error(encryptionUnavailableReason());
+}
+
+/**
+ * Decrypt `blob` by sniffing its format. Password-vault blobs start
+ * with the `TSPV` magic; safeStorage blobs do not. This lets the
+ * vault tolerate a mixed-format directory — e.g. a user who first
+ * launched with a keyring and later lost it has both formats on disk.
+ *
+ * - `TSPV` blob + active password vault → decrypt with cached key.
+ * - `TSPV` blob + no active password vault → throw (we cannot decrypt).
+ * - non-`TSPV` blob + safeStorage available → decrypt via safeStorage.
+ * - non-`TSPV` blob + no safeStorage → throw with the actionable
+ *   recovery message.
+ */
+function decryptFromVault(blob: Buffer): string {
+  if (isPasswordVaultBlob(blob)) {
+    if (!passwordVaultActive()) {
+      throw new Error(
+        `Vault blob is password-encrypted but no password is cached. ${encryptionUnavailableReason()}`,
+      );
+    }
+    return decryptWithPasswordKey(blob);
+  }
+  if (safeStorage.isEncryptionAvailable()) {
+    return safeStorage.decryptString(blob);
+  }
+  // Mixed-format hazard: the file is a safeStorage blob from a
+  // previous session, but the user's keyring is no longer available.
+  // We CANNOT migrate it to password format on the fly because we
+  // can't decrypt it without the keyring. Surface the actionable
+  // recovery instructions rather than failing silently.
+  throw new Error(
+    `Vault file is encrypted with the OS keyring but the keyring is no longer available. Restore keyring access (${encryptionUnavailableReason()}) or delete the vault directory to re-authenticate from scratch (you will need to re-enter API keys and re-authorize OAuth providers).`,
+  );
+}
+
 const VALID_PROVIDER_RE = /^[a-zA-Z0-9_-]+$/;
 
 function validateProvider(provider: string): void {
@@ -66,22 +124,16 @@ function vaultPath(provider: string): string {
 
 export function storeTokens(provider: string, tokens: StoredTokens): void {
   ensureVaultDir();
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error(encryptionUnavailableReason());
-  }
   const json = JSON.stringify(tokens);
-  const encrypted = safeStorage.encryptString(json);
+  const encrypted = encryptForVault(json);
   fs.writeFileSync(vaultPath(provider), encrypted);
 }
 
 export function getTokens(provider: string): StoredTokens | null {
   const fp = vaultPath(provider);
   if (!fs.existsSync(fp)) return null;
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error(encryptionUnavailableReason());
-  }
   const encrypted = fs.readFileSync(fp);
-  const json = safeStorage.decryptString(encrypted);
+  const json = decryptFromVault(encrypted);
   return JSON.parse(json) as StoredTokens;
 }
 
