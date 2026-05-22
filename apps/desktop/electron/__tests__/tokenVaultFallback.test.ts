@@ -193,6 +193,43 @@ describe("tokenVault fallback — refusal cases", () => {
       /OS keyring but the keyring is no longer available/,
     );
   });
+
+  // Regression: Case 5 (existing safeStorage blob + lost keyring) is
+  // a recovery path where the password vault CANNOT help — the blob
+  // was encrypted with safeStorage's OS-managed key, not with a
+  // PBKDF2-derived key. If we include the generic "restart Tessera
+  // and enter a vault password" recovery hint here, the user wastes
+  // time on a recovery route that won't work.
+  //
+  // Pin that the Case-5 error message:
+  //   1. DOES say "Restore keyring access" (the correct recovery
+  //      surface for safeStorage blobs).
+  //   2. DOES mention the recovery directory ("delete the vault
+  //      directory") as the actionable second recovery.
+  //   3. DOES NOT include the password-vault hint ("vault password
+  //      when prompted") that would mislead the user.
+  it("does not include misleading password-vault hint in Case-5 error", () => {
+    hoisted.encryptionAvailable.value = true;
+    storeTokens("google", SAMPLE);
+    hoisted.encryptionAvailable.value = false;
+
+    let thrown: unknown;
+    try {
+      getTokens("google");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const msg = (thrown as Error).message;
+    expect(msg).toMatch(/Restore keyring access/);
+    expect(msg).toMatch(/delete the vault directory/);
+    // The misleading hint must NOT appear. A user reading
+    // "restart Tessera and enter a vault password when prompted"
+    // would do exactly that and still hit this same error, because
+    // the password vault cannot decrypt safeStorage blobs.
+    expect(msg).not.toMatch(/vault password when prompted/);
+    expect(msg).not.toMatch(/restart Tessera and enter a/);
+  });
 });
 
 describe("tokenVault fallback — utility methods", () => {

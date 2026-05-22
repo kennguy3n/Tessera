@@ -29,8 +29,14 @@ import {
 } from "./passwordVault";
 
 /**
- * Build a human-readable error explaining why the OS keyring is unavailable
- * AND what alternative recovery paths the user has.
+ * Platform-specific sentence explaining WHY the OS keyring is unavailable
+ * and how to re-enable it. Does NOT mention the password-vault fallback.
+ *
+ * Exported separately from `encryptionUnavailableReason` so callers that
+ * already know the password vault cannot help (e.g. decrypting an
+ * existing safeStorage-encrypted blob — the password vault cannot
+ * decrypt it because the key was never derived) can build a message
+ * without misleading the user.
  *
  * On Linux this commonly means the user is on a minimal or headless desktop
  * with no Secret Service-compatible daemon running (e.g. `gnome-keyring` /
@@ -39,6 +45,55 @@ import {
  *
  * On macOS this would mean Keychain is locked or sandboxed away (very rare);
  * on Windows it would mean DPAPI is unavailable (also very rare).
+ */
+export function keyringUnavailableSentence(): string {
+  switch (process.platform) {
+    case "linux":
+      return (
+        "Encryption not available — no OS keyring daemon detected. " +
+        "Install and start one of: gnome-keyring-daemon (GNOME / Ubuntu), " +
+        "kwallet5-daemon (KDE), or pass an X session manager that exposes the " +
+        "Secret Service D-Bus API. The Debian/Ubuntu packages are " +
+        "`gnome-keyring` and `libsecret-1-0`."
+      );
+    case "darwin":
+      return "Encryption not available — Keychain is locked or inaccessible.";
+    case "win32":
+      return "Encryption not available — Windows DPAPI is unavailable.";
+    default:
+      return "Encryption not available — unsupported platform.";
+  }
+}
+
+/**
+ * The "restart and enter a vault password" recovery hint. Appended to
+ * the no-keyring-available message when the password vault IS a valid
+ * recovery route — i.e. for fresh writes (`encryptForVault`) or when
+ * decrypting an existing TSPV blob (`decryptFromVault` cases 2 / 3).
+ *
+ * Importantly: do NOT append this when surfacing a Case-5 error
+ * (existing safeStorage blob + lost keyring). The password vault
+ * cannot decrypt safeStorage-encrypted blobs because the derivation
+ * keys are different — telling the user to "restart and enter a vault
+ * password" sends them on a recovery path that won't work.
+ */
+export const PASSWORD_VAULT_RECOVERY_HINT =
+  "If you cannot install a keyring daemon, restart Tessera and enter a " +
+  "vault password when prompted — the app will derive an encryption " +
+  "key from your password and use it in place of the OS keyring.";
+
+/**
+ * Build a human-readable error explaining why the OS keyring is unavailable
+ * AND that the user can fall back to a password vault.
+ *
+ * Use this for NEW writes (`encryptForVault`) and for decryption of
+ * existing TSPV (password-vault) blobs where the password fallback IS
+ * a valid recovery route.
+ *
+ * For decryption of safeStorage blobs after the keyring is lost (Case
+ * 5 in `decryptFromVault`), call `keyringUnavailableSentence()`
+ * directly and OMIT this hint — see the function-level doc on
+ * `keyringUnavailableSentence` for why.
  *
  * Recovery routes the message surfaces:
  *
@@ -54,36 +109,7 @@ import {
  *      restarting gives them another shot.
  */
 export function encryptionUnavailableReason(): string {
-  const passwordVaultHint =
-    "If you cannot install a keyring daemon, restart Tessera and enter a " +
-    "vault password when prompted — the app will derive an encryption " +
-    "key from your password and use it in place of the OS keyring.";
-  switch (process.platform) {
-    case "linux":
-      return (
-        "Encryption not available — no OS keyring daemon detected. " +
-        "Install and start one of: gnome-keyring-daemon (GNOME / Ubuntu), " +
-        "kwallet5-daemon (KDE), or pass an X session manager that exposes the " +
-        "Secret Service D-Bus API. The Debian/Ubuntu packages are " +
-        "`gnome-keyring` and `libsecret-1-0`. " +
-        passwordVaultHint
-      );
-    case "darwin":
-      return (
-        "Encryption not available — Keychain is locked or inaccessible. " +
-        passwordVaultHint
-      );
-    case "win32":
-      return (
-        "Encryption not available — Windows DPAPI is unavailable. " +
-        passwordVaultHint
-      );
-    default:
-      return (
-        "Encryption not available — unsupported platform. " +
-        passwordVaultHint
-      );
-  }
+  return `${keyringUnavailableSentence()} ${PASSWORD_VAULT_RECOVERY_HINT}`;
 }
 
 /**
@@ -185,8 +211,18 @@ export function decryptFromVault(blob: Buffer, label: VaultLabel): string {
   // password format on the fly because we can't decrypt it without the
   // keyring. Surface the actionable recovery instructions rather than
   // failing silently.
+  //
+  // CRITICAL: do NOT append `PASSWORD_VAULT_RECOVERY_HINT` here. The
+  // existing blob is safeStorage-encrypted; the password vault uses a
+  // PBKDF2-derived AES-256-GCM key, not safeStorage's OS-managed key.
+  // Restarting + entering a vault password will NOT decrypt this blob.
+  // The two valid recoveries are (a) restore keyring access
+  // (`keyringUnavailableSentence` tells the user how) or (b) delete
+  // the vault directory and re-authenticate from scratch
+  // (`label.recoveryDirectoryHint`).
   throw new Error(
-    `${label.noun} file is encrypted with the OS keyring but the keyring is no longer available. Restore keyring access (${encryptionUnavailableReason()}) ${label.recoveryDirectoryHint}`,
+    `${label.noun} file is encrypted with the OS keyring but the keyring is no longer available. ` +
+      `Restore keyring access (${keyringUnavailableSentence()}) ${label.recoveryDirectoryHint}`,
   );
 }
 

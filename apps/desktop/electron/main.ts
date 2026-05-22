@@ -229,9 +229,13 @@ async function maybeInitPasswordVault(): Promise<void> {
  * Performance: `console-message` is debounced to bursts of identical
  * messages so a runaway page that triggers thousands of CSP blocks
  * doesn't flood the log. We cache the last 50 unique CSP messages and
- * drop duplicates.
+ * drop duplicates. Eviction is true FIFO via a `Map` (which preserves
+ * insertion order per ECMAScript spec), so a long-running session
+ * with a slowly-rotating set of violations doesn't periodically
+ * re-log the same earliest messages — only the oldest unique entry
+ * is dropped when the cap is hit.
  */
-const cspLogSeen = new Set<string>();
+const cspLogSeen = new Map<string, true>();
 const CSP_LOG_DEDUP_LIMIT = 50;
 function installCSPDevtoolsLogger(): void {
   app.on("web-contents-created", (_event, contents) => {
@@ -253,18 +257,23 @@ function installCSPDevtoolsLogger(): void {
       ) {
         return;
       }
-      // Dedup so a thrashing page doesn't flood the log. The set is
+      // Dedup so a thrashing page doesn't flood the log. The Map is
       // capped to avoid unbounded memory growth on a long-running app.
+      // True FIFO via Map insertion-order iteration: drop the OLDEST
+      // unique entry when the cap is hit, not clear the whole cache.
+      // This keeps recently-seen violations suppressed while still
+      // making room for new ones.
       if (cspLogSeen.has(message)) return;
       if (cspLogSeen.size >= CSP_LOG_DEDUP_LIMIT) {
-        // FIFO: drop the oldest by clearing entirely. The set isn't
-        // ordered in V8, so we can't drop a specific entry without
-        // tracking insertion order separately; full clear is the
-        // simplest correct behaviour and means the next 50 unique
-        // violations get logged after a flush.
-        cspLogSeen.clear();
+        // Map keys iterate in insertion order per ECMAScript spec
+        // (see ECMA-262 sec 24.1.1.4). The first key yielded by
+        // `keys()` is the oldest entry; delete it to make room.
+        const oldest = cspLogSeen.keys().next().value;
+        if (oldest !== undefined) {
+          cspLogSeen.delete(oldest);
+        }
       }
-      cspLogSeen.add(message);
+      cspLogSeen.set(message, true);
       console.warn(`[Tessera CSP] ${message}`);
     });
   });
