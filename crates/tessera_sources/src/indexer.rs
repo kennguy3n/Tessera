@@ -198,7 +198,7 @@ impl Indexer {
                             }
                         }
                         Err(e) => {
-                            eprintln!("[tessera_sources] embedding failed for chunk {id}: {e}")
+                            eprintln!("[tessera_sources] embedding failed for chunk {id}: {e}");
                         }
                     }
                 }
@@ -237,7 +237,7 @@ impl Indexer {
                         total += 1;
                     }
                     Err(e) => {
-                        eprintln!("[tessera_sources] backfill embed failed for chunk {id}: {e}")
+                        eprintln!("[tessera_sources] backfill embed failed for chunk {id}: {e}");
                     }
                 }
             }
