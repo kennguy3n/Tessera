@@ -1,6 +1,20 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 
 // Stub electron before importing the module under test, since tokenVault imports `electron`.
+//
+// The import chain reaches `passwordVault.ts`, which imports `{ app,
+// BrowserWindow, ipcMain }` from "electron". This file's existing tests only
+// exercise `encryptionUnavailableReason()` (which touches `process.platform`
+// and string concatenation, NOT BrowserWindow/ipcMain), so the missing fields
+// would resolve to `undefined` and sit inert in module scope. That's fine
+// today, but a future test that calls e.g. `promptForVaultPassword` would
+// fail at runtime with "Cannot read properties of undefined (reading 'on')"
+// — a confusing error that would have to be traced back to here.
+//
+// Stub BrowserWindow / ipcMain explicitly so a future test failure points at
+// the missing setup rather than the symptom. The stubs are intentionally
+// inert: any test that actually exercises them must override the relevant
+// method via `(electron.ipcMain.on as Mock).mockImplementation(...)` etc.
 vi.mock("electron", () => ({
   app: {
     getPath: vi.fn().mockReturnValue("/tmp/devin-tessera-test-userdata"),
@@ -9,6 +23,16 @@ vi.mock("electron", () => ({
     isEncryptionAvailable: vi.fn().mockReturnValue(false),
     encryptString: vi.fn(),
     decryptString: vi.fn(),
+  },
+  // Inert stubs — tests that touch BrowserWindow / ipcMain must override.
+  // See module-level comment above for rationale.
+  BrowserWindow: vi.fn(),
+  ipcMain: {
+    on: vi.fn(),
+    once: vi.fn(),
+    handle: vi.fn(),
+    removeListener: vi.fn(),
+    removeAllListeners: vi.fn(),
   },
 }));
 

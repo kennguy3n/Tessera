@@ -579,6 +579,31 @@ function renderPromptHtml(opts: {
     // \`passwordPromptPreload.ts\`. \`require\` and \`ipcRenderer\`
     // are NOT available here — the page runs sandboxed.
     const bridge = window.tesseraPasswordPrompt;
+    // Failure mode: \`passwordPromptPreload.js\` failed to load (build
+    // artefact missing, preload threw on startup, Electron-version
+    // bug). Without this guard the Unlock button would call
+    // \`bridge.submit\` on \`undefined\`, throw a TypeError silently in
+    // the renderer console, and the user would have no idea why the
+    // button does nothing. Surface the failure inline so the user can
+    // at least close the window via Cancel and the maintainer has a
+    // clear reproduction signal.
+    //
+    // Disable BOTH buttons rather than silently no-op-ing on click —
+    // a disabled \`Unlock vault\` button + visible error message is a
+    // much louder signal than "click does nothing".
+    if (!bridge || typeof bridge.submit !== 'function' || typeof bridge.cancel !== 'function') {
+      document.getElementById('err').textContent =
+        'Password prompt failed to initialize (preload bridge unavailable). ' +
+        'Close this window and check the main-process log for [Tessera] errors.';
+      const okBtn = document.getElementById('ok');
+      const cancelBtn = document.getElementById('cancel');
+      okBtn.disabled = true;
+      cancelBtn.disabled = true;
+      // Do NOT return here — the outer promise still needs the OS
+      // close-button to reject. The "closed without a password" path
+      // in promptForVaultPassword fires on win.on('closed'), which is
+      // independent of this script's ability to send IPC.
+    } else {
     function submit() {
       const p = document.getElementById('pw').value;
       if (!p) {
@@ -607,6 +632,7 @@ function renderPromptHtml(opts: {
       if (e.key === 'Enter') submit();
       else if (e.key === 'Escape') cancel();
     });
+    }
   </script>
 </body></html>`;
 }
