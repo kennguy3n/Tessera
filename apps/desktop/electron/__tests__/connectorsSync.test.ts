@@ -233,6 +233,194 @@ describe("Notion sync", () => {
     expect(bridge.removed).toContain(added.id);
     await expect(fsp.access(path.join(dir, "notion-sync"))).rejects.toThrow();
   });
+
+  it(
+    "retries a transiently-failed page on the next sync via direct GET, " +
+      "even when the watermark has advanced past the failed page's edit time " +
+      "(regression: wave-5 Devin Review finding on watermark-based incremental sync)",
+    async () => {
+      // Pass 1: search returns page-fail (older) and page-ok (newer).
+      // page-fail's blocks fetch errors out; page-ok succeeds and
+      // advances the watermark past page-fail's last_edited_time.
+      fetchMock
+        // POST /v1/search
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "page-fail",
+                last_edited_time: "2024-06-01T00:00:00Z",
+                archived: false,
+                properties: {
+                  title: { type: "title", title: [{ plain_text: "Fail" }] },
+                },
+              },
+              {
+                id: "page-ok",
+                last_edited_time: "2024-07-01T00:00:00Z",
+                archived: false,
+                properties: {
+                  title: { type: "title", title: [{ plain_text: "Ok" }] },
+                },
+              },
+            ],
+            has_more: false,
+            next_cursor: null,
+          }),
+        })
+        // GET /v1/blocks/page-fail/children — error (transient)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 503,
+          text: async () => "Service Unavailable",
+        })
+        // GET /v1/blocks/page-ok/children — success
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "b-ok",
+                type: "paragraph",
+                paragraph: { rich_text: [{ plain_text: "ok body" }] },
+              },
+            ],
+            has_more: false,
+            next_cursor: null,
+          }),
+        });
+
+      const r1 = await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      expect(r1.added).toBe(1);
+      expect(bridge.added).toHaveLength(1);
+      expect(bridge.added[0].path).toContain("page-ok");
+
+      // Watermark should now be the newer page's timestamp.
+      const watermark = JSON.parse(
+        await fsp.readFile(path.join(dir, "notion-sync", "watermark.json"), "utf8"),
+      ) as { lastSyncIso: string; failedRetries: Array<{ remoteId: string }> };
+      expect(watermark.lastSyncIso).toBe("2024-07-01T00:00:00Z");
+      // The failed page must be recorded for retry.
+      expect(watermark.failedRetries.map((e) => e.remoteId)).toEqual(["page-fail"]);
+
+      // Pass 2: state has watermark=2024-07-01 and failedRetries=[page-fail].
+      // The naive watermark-only scan would never return page-fail
+      // again (its last_edited_time of 2024-06-01 is older than the
+      // watermark). The retry queue must force a direct GET of
+      // page-fail's page object, then (after the normal search runs)
+      // the unified for-loop re-fetches its blocks and indexes it.
+      //
+      // Mock order MUST mirror the actual fetch sequence in
+      // `syncNotion`:
+      //   (1) Phase 1: `fetchPageById('page-fail')`
+      //   (2) Phase 2: `listAllPages()` → POST /v1/search
+      //   (3) For-loop: `fetchPageText('page-fail')` → blocks GET
+      fetchMock
+        // (1) GET /v1/pages/page-fail
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            id: "page-fail",
+            last_edited_time: "2024-06-01T00:00:00Z",
+            archived: false,
+            properties: {
+              title: { type: "title", title: [{ plain_text: "Recovered" }] },
+            },
+          }),
+        })
+        // (2) POST /v1/search — no new results above the watermark
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [],
+            has_more: false,
+            next_cursor: null,
+          }),
+        })
+        // (3) GET /v1/blocks/page-fail/children — now succeeds
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "b-fail",
+                type: "paragraph",
+                paragraph: { rich_text: [{ plain_text: "recovered body" }] },
+              },
+            ],
+            has_more: false,
+            next_cursor: null,
+          }),
+        });
+
+      const r2 = await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      expect(r2.added).toBe(1);
+      expect(bridge.added).toHaveLength(2);
+      // Verify the recovered file is on disk and contains the title +
+      // body that came back from the retry path.
+      const recovered = bridge.added.find((s) => s.path.includes("page-fail"));
+      expect(recovered).toBeDefined();
+      const content = await fsp.readFile(recovered!.path, "utf8");
+      expect(content).toContain("# Recovered");
+      expect(content).toContain("recovered body");
+
+      // Queue must now be empty.
+      const watermark2 = JSON.parse(
+        await fsp.readFile(path.join(dir, "notion-sync", "watermark.json"), "utf8"),
+      ) as { lastSyncIso: string; failedRetries: Array<{ remoteId: string }> };
+      expect(watermark2.failedRetries).toEqual([]);
+    },
+  );
+
+  it(
+    "drops a retry entry when Notion returns 404 for it (page was deleted) " +
+      "so we don't keep pinging the missing id forever",
+    async () => {
+      // Pre-seed state with a failedRetries entry whose page is now
+      // gone (404 on direct GET).
+      const stateDir = path.join(dir, "notion-sync");
+      await fsp.mkdir(stateDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(stateDir, "watermark.json"),
+        JSON.stringify({
+          lastSyncIso: "2024-06-01T00:00:00Z",
+          failedRetries: [
+            {
+              remoteId: "deleted-page",
+              remoteModifiedAt: "2024-05-01T00:00:00Z",
+              failureCount: 2,
+            },
+          ],
+        }),
+        "utf8",
+      );
+
+      fetchMock
+        // GET /v1/pages/deleted-page → 404
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          text: async () => "Not Found",
+        })
+        // POST /v1/search → no new pages
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [],
+            has_more: false,
+            next_cursor: null,
+          }),
+        });
+
+      const r = await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      expect(r.added).toBe(0);
+      const watermark = JSON.parse(
+        await fsp.readFile(path.join(dir, "notion-sync", "watermark.json"), "utf8"),
+      ) as { failedRetries: Array<{ remoteId: string }> };
+      expect(watermark.failedRetries).toEqual([]);
+    },
+  );
 });
 
 describe("Jira sync", () => {

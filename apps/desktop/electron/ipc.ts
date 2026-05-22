@@ -22,9 +22,9 @@ import * as secretsVault from "./secretsVault";
 import {
   getValidAccessTokenForProvider,
   registerConnectorHandlers,
+  runConnectorSync,
 } from "./ipc/connectors/handlers";
 import type { ProviderId } from "./ipc/connectors/providerOAuth";
-import { syncGoogleDrive } from "./ipc/connectors/gdrive";
 import { createDefaultContext } from "./ipc/context";
 import { defaultRateLimiter } from "./ipc/rateLimiter";
 import { getLogger } from "./logger";
@@ -1228,35 +1228,18 @@ export function registerIpcHandlers(): void {
       removed: number;
       status: string;
     }> => {
-      // Single implementation lives in `./ipc/connectors/gdrive.ts`.
-      // The legacy `connectors:gdrive:sync` channel and the new
-      // `connectors:sync` channel both delegate here so the two
-      // paths cannot drift, write the same manifest, and share all
-      // bug-fix / feature work going forward.
-      const accessToken = await getValidAccessToken("google_drive");
-      const bridge = getBridge();
-      if (!bridge) {
-        throw new Error("Native bridge not available");
-      }
-      return syncGoogleDrive({
-        accessToken,
-        userDataDir: app.getPath("userData"),
-        bridge: {
-          addLocalFile: (p) => {
-            const src = bridge.bridgeAddLocalFile(p);
-            return { id: src.id, path: src.path };
-          },
-          reindexSource: (id) => {
-            bridge.bridgeReindexSource(id);
-          },
-          removeSource: (id) => {
-            bridge.bridgeRemoveSource(id);
-          },
-          listSources: () =>
-            bridge
-              .bridgeListSources()
-              .map((s) => ({ id: s.id, path: s.path })),
-        },
+      // Delegate to the shared `runConnectorSync` wrapper that
+      // backs the new multi-provider `connectors:sync` channel. This
+      // keeps the legacy gdrive channel on the *same* rate limit and
+      // the *same* network-error -> `{ status: "offline" }` semantics
+      // every other provider gets. Without this wrapper:
+      //   - the renderer's `syncDrive()` path had no rate limit at
+      //     all (a buggy renderer could hammer the Drive API), and
+      //   - the new Offline badge introduced for the other providers
+      //     never lit up for Drive because network errors threw out
+      //     of this handler and were silently swallowed by
+      //     `ConnectorStatus`'s empty `catch {}`.
+      return runConnectorSync(getConnectorContext(), "google_drive", {
         selectedFileIds,
       });
     },

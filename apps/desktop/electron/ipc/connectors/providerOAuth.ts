@@ -553,15 +553,13 @@ export async function refreshProviderToken(
   return {
     accessToken: access_token,
     refreshToken: refresh_token ?? params.refreshToken,
-    // Same rationale as `exchangeAuthorizationCode`: non-refreshable
-    // providers may return no `expires_in`; defaulting to one hour
-    // would silently sign the user out.
-    expiresIn:
-      typeof expires_in === "number"
-        ? expires_in
-        : config.supportsRefresh
-          ? 3600
-          : 10 * 365 * 24 * 3600,
+    // We bail out at the top of this function when `!supportsRefresh`,
+    // so by the time control reaches here `config.supportsRefresh` is
+    // always `true` and the non-refreshable-provider branch from
+    // `exchangeAuthorizationCode` would be dead code. Keep the simple
+    // 1-hour default and let the original token-exchange path own the
+    // non-expiring-token defense-in-depth.
+    expiresIn: typeof expires_in === "number" ? expires_in : 3600,
     tokenType: token_type ?? "Bearer",
     extra,
   };

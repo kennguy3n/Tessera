@@ -26,11 +26,13 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 
 import {
+  nextFailedRetryQueue,
   purgeSyncDir,
   readManifest,
   sanitiseRemoteId,
   syncDirFor,
   writeManifest,
+  type FailedRetryEntry,
   type SyncManifestEntry,
 } from "./syncDir";
 
@@ -161,9 +163,15 @@ async function getFile(
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(
+    // Attach the HTTP status on the thrown error so the retry-queue
+    // logic in `syncFigma` can distinguish "file was deleted /
+    // unshared" (4xx → stop retrying) from "transient network or
+    // server failure" (anything else → keep retrying).
+    const err = new Error(
       `Figma get file failed: HTTP ${resp.status} — ${text.slice(0, 500)}`,
-    );
+    ) as Error & { status?: number };
+    err.status = resp.status;
+    throw err;
   }
   return (await resp.json()) as FigmaFile;
 }
@@ -255,6 +263,16 @@ export interface FigmaBridgeHooks {
 interface FigmaState {
   lastSyncIso: string | null;
   teamIds: string[];
+  /**
+   * File keys the previous sync attempted but failed to fetch or
+   * write. The next pass forcibly re-fetches each one (by id, via
+   * the regular `/files/{key}` endpoint) before applying the
+   * watermark filter — otherwise the watermark would advance past
+   * the failed file's `last_modified` and the file would never be
+   * retried until the user edited it again. See the wave-5 Devin
+   * Review finding and `nextFailedRetryQueue` for details.
+   */
+  failedRetries: FailedRetryEntry[];
 }
 
 function statePath(userDataDir: string): string {
@@ -264,9 +282,16 @@ function statePath(userDataDir: string): string {
 async function loadState(userDataDir: string): Promise<FigmaState> {
   try {
     const raw = await fsp.readFile(statePath(userDataDir), "utf8");
-    return JSON.parse(raw) as FigmaState;
+    const parsed = JSON.parse(raw) as Partial<FigmaState>;
+    return {
+      lastSyncIso: parsed.lastSyncIso ?? null,
+      teamIds: Array.isArray(parsed.teamIds) ? parsed.teamIds : [],
+      failedRetries: Array.isArray(parsed.failedRetries)
+        ? parsed.failedRetries
+        : [],
+    };
   } catch {
-    return { lastSyncIso: null, teamIds: [] };
+    return { lastSyncIso: null, teamIds: [], failedRetries: [] };
   }
 }
 
@@ -294,8 +319,14 @@ export async function syncFigma(ctx: {
   if (teamIds.length === 0) {
     // The OAuth scope may not have surfaced teams. Persist an empty
     // sync rather than crashing — the user gets an actionable
-    // "no team membership" Toast at the UI layer.
-    await saveState(ctx.userDataDir, { lastSyncIso: state.lastSyncIso, teamIds: [] });
+    // "no team membership" Toast at the UI layer. Preserve any
+    // pending failed-retry entries so the next pass (once teams are
+    // available) can still recover them.
+    await saveState(ctx.userDataDir, {
+      lastSyncIso: state.lastSyncIso,
+      teamIds: [],
+      failedRetries: state.failedRetries,
+    });
     return { added: 0, modified: 0, removed: 0, status: "no-teams" };
   }
 
@@ -317,6 +348,92 @@ export async function syncFigma(ctx: {
   const compareWatermark = state.lastSyncIso;
   let nextWatermark = state.lastSyncIso;
 
+  const succeededIds = new Set<string>();
+  const failedThisPass: Array<{ remoteId: string; remoteModifiedAt: string | null }> = [];
+  // File keys still owed a retry after this pass. Items get removed
+  // from this set as we observe them (either successfully synced or
+  // confirmed-gone via 404); whatever remains is treated as
+  // "succeeded" only for queue-removal purposes so we don't keep
+  // pinging files that no longer exist or were moved out of scope.
+  const pendingRetries = new Set(state.failedRetries.map((e) => e.remoteId));
+
+  /**
+   * Sync one file by key. Records success/failure on the per-pass
+   * trackers above and writes the local file + manifest entry. Used
+   * by both the watermark scan (which passes the summary it already
+   * has from `listProjectFiles`) and the retry phase below (which
+   * fetches the file directly with no preceding listing).
+   */
+  const syncFileByKey = async (
+    fileKey: string,
+    remoteModifiedAt: string | null,
+  ): Promise<void> => {
+    let file: FigmaFile;
+    try {
+      file = await getFile(fileKey, ctx.accessToken);
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      if (status === 404 || status === 410) {
+        // File was deleted or unshared — stop retrying.
+        pendingRetries.delete(fileKey);
+        succeededIds.add(fileKey);
+        return;
+      }
+      failedThisPass.push({ remoteId: fileKey, remoteModifiedAt });
+      return;
+    }
+    const comments = await getComments(fileKey, ctx.accessToken);
+    const body = renderFigmaFile(fileKey, file, comments);
+
+    const localPath = path.join(dir, `${sanitiseRemoteId(fileKey)}.md`);
+    try {
+      await fsp.writeFile(localPath, body, "utf8");
+    } catch {
+      failedThisPass.push({ remoteId: fileKey, remoteModifiedAt });
+      return;
+    }
+
+    const existing = ctx.bridge.listSources().find((s) => s.path === localPath);
+    if (existing) {
+      try {
+        ctx.bridge.reindexSource(existing.id);
+      } catch {
+        // best-effort
+      }
+      modified += 1;
+    } else {
+      try {
+        ctx.bridge.addLocalFile(localPath);
+      } catch {
+        failedThisPass.push({ remoteId: fileKey, remoteModifiedAt });
+        return;
+      }
+      added += 1;
+    }
+    entriesById.set(fileKey, {
+      localPath,
+      remoteId: fileKey,
+      remoteModifiedAt,
+    });
+    if (
+      remoteModifiedAt &&
+      (!nextWatermark || remoteModifiedAt > nextWatermark)
+    ) {
+      nextWatermark = remoteModifiedAt;
+    }
+    pendingRetries.delete(fileKey);
+    succeededIds.add(fileKey);
+  };
+
+  // Phase 1 — explicitly retry every file the previous pass failed
+  // on. We have no `last_modified` for retries at this point, so we
+  // pass through `null` and let the watermark advance only when the
+  // watermark scan below sees newer files.
+  for (const entry of state.failedRetries) {
+    await syncFileByKey(entry.remoteId, entry.remoteModifiedAt);
+  }
+
+  // Phase 2 — the normal watermark-filtered scan.
   for (const teamId of teamIds) {
     let projects: FigmaProject[];
     try {
@@ -338,50 +455,33 @@ export async function syncFigma(ctx: {
         ) {
           continue;
         }
-        let file: FigmaFile;
-        try {
-          file = await getFile(summary.key, ctx.accessToken);
-        } catch {
+        if (succeededIds.has(summary.key) || failedThisPass.some((f) => f.remoteId === summary.key)) {
+          // Already handled in Phase 1; skip the duplicate fetch.
           continue;
         }
-        const comments = await getComments(summary.key, ctx.accessToken);
-        const body = renderFigmaFile(summary.key, file, comments);
-
-        const localPath = path.join(
-          dir,
-          `${sanitiseRemoteId(summary.key)}.md`,
-        );
-        await fsp.writeFile(localPath, body, "utf8");
-
-        const existing = ctx.bridge.listSources().find((s) => s.path === localPath);
-        if (existing) {
-          try {
-            ctx.bridge.reindexSource(existing.id);
-          } catch {
-            // best-effort
-          }
-          modified += 1;
-        } else {
-          try {
-            ctx.bridge.addLocalFile(localPath);
-          } catch {
-            continue;
-          }
-          added += 1;
-        }
-        entriesById.set(summary.key, {
-          localPath,
-          remoteId: summary.key,
-          remoteModifiedAt: summary.last_modified,
-        });
-        if (!nextWatermark || summary.last_modified > nextWatermark) {
-          nextWatermark = summary.last_modified;
-        }
+        await syncFileByKey(summary.key, summary.last_modified);
       }
     }
   }
 
-  await saveState(ctx.userDataDir, { lastSyncIso: nextWatermark, teamIds });
+  // Anything still in `pendingRetries` was neither successfully
+  // re-synced nor explicitly failed this pass (the only way this
+  // happens is when `syncFileByKey` short-circuited via the
+  // confirmed-gone branch, which already removes from the set, so
+  // this is defensive cleanup for any future code path that bypasses
+  // the helper).
+  for (const key of pendingRetries) {
+    succeededIds.add(key);
+  }
+
+  await saveState(ctx.userDataDir, {
+    lastSyncIso: nextWatermark,
+    teamIds,
+    failedRetries: nextFailedRetryQueue(state.failedRetries, {
+      succeeded: succeededIds,
+      failed: failedThisPass,
+    }),
+  });
   await writeManifest(ctx.userDataDir, {
     version: 1,
     provider: "figma",

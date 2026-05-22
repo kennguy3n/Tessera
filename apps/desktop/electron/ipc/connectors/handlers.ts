@@ -239,13 +239,27 @@ export function getValidAccessTokenForProvider(
   return getValidAccessToken(ctx, provider);
 }
 
+/**
+ * Result shape returned by every per-provider sync. The `status`
+ * field is `"synced"` on a normal run and `"offline"` when the
+ * shared wrapper (`runConnectorSync` below) catches a network
+ * failure on behalf of the caller. The renderer keys the Offline
+ * badge on `status === "offline"`.
+ */
+export interface ConnectorSyncResult {
+  added: number;
+  modified: number;
+  removed: number;
+  status: string;
+}
+
 async function runSync(
   ctx: IpcContext,
   provider: ProviderId,
   accessToken: string,
   userDataDir: string,
   options?: { selectedFileIds?: string[] },
-): Promise<{ added: number; modified: number; removed: number; status: string }> {
+): Promise<ConnectorSyncResult> {
   const bridge = bridgeHooks(ctx);
   switch (provider) {
     case "google_drive":
@@ -265,6 +279,64 @@ async function runSync(
       return syncConfluence({ accessToken, userDataDir, bridge });
     case "figma":
       return syncFigma({ accessToken, userDataDir, bridge });
+  }
+}
+
+/**
+ * Shared rate-limit + offline-catch wrapper used by every connector
+ * sync channel — both the new `connectors:sync` channel below and
+ * the legacy `connectors:gdrive:sync` channel registered in
+ * `ipc.ts`. Centralising this here means:
+ *
+ *   - Drive and the other five providers all get the same
+ *     1-per-30-second per-provider rate limit (the legacy gdrive
+ *     channel had no rate limit before this; a buggy renderer could
+ *     hammer the Drive API on its behalf).
+ *   - Network failures are surfaced as `{ status: "offline" }` for
+ *     Drive too, instead of being thrown out of the handler and
+ *     silently swallowed by the renderer's empty `catch {}` — that
+ *     was why the Offline badge introduced for the other providers
+ *     never lit up for Drive.
+ *   - Auth-prerequisite errors (`NotConnectedError`) still propagate
+ *     as hard errors so the UI can prompt re-authentication.
+ */
+export async function runConnectorSync(
+  ctx: IpcContext,
+  provider: ProviderId,
+  options?: { selectedFileIds?: string[] },
+): Promise<ConnectorSyncResult> {
+  try {
+    ctx.rateLimiter.consume(`connectors:sync:${provider}`, {
+      tokensPerInterval: 1,
+      intervalMs: 30_000,
+    });
+  } catch (err) {
+    if (err instanceof RateLimitError) {
+      throw new Error(
+        `Sync for ${provider} is rate-limited. Wait ${Math.ceil(
+          err.retryAfterMs / 1000,
+        )}s and try again.`,
+      );
+    }
+    throw err;
+  }
+  try {
+    const token = await getValidAccessToken(ctx, provider);
+    return await runSync(ctx, provider, token, ctx.userDataDir(), options);
+  } catch (err) {
+    if (isNetworkError(err)) {
+      ctx.log.warn("connector sync hit network failure", {
+        provider,
+        error: (err as Error).message,
+      });
+      return {
+        added: 0,
+        modified: 0,
+        removed: 0,
+        status: "offline",
+      };
+    }
+    throw err;
   }
 }
 
@@ -426,41 +498,9 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(
     "connectors:sync",
-    async (_event, providerRaw: string) => {
+    async (_event, providerRaw: string): Promise<ConnectorSyncResult> => {
       const provider = assertProvider(providerRaw, "provider");
-      try {
-        ctx.rateLimiter.consume(`connectors:sync:${provider}`, {
-          tokensPerInterval: 1,
-          intervalMs: 30_000,
-        });
-      } catch (err) {
-        if (err instanceof RateLimitError) {
-          throw new Error(
-            `Sync for ${provider} is rate-limited. Wait ${Math.ceil(
-              err.retryAfterMs / 1000,
-            )}s and try again.`,
-          );
-        }
-        throw err;
-      }
-      try {
-        const token = await getValidAccessToken(ctx, provider);
-        return await runSync(ctx, provider, token, ctx.userDataDir());
-      } catch (err) {
-        if (isNetworkError(err)) {
-          ctx.log.warn("connector sync hit network failure", {
-            provider,
-            error: (err as Error).message,
-          });
-          return {
-            added: 0,
-            modified: 0,
-            removed: 0,
-            status: "offline",
-          };
-        }
-        throw err;
-      }
+      return runConnectorSync(ctx, provider);
     },
   );
 }

@@ -20,11 +20,13 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 
 import {
+  nextFailedRetryQueue,
   purgeSyncDir,
   readManifest,
   sanitiseRemoteId,
   syncDirFor,
   writeManifest,
+  type FailedRetryEntry,
   type SyncManifestEntry,
 } from "./syncDir";
 
@@ -182,6 +184,14 @@ export interface JiraBridgeHooks {
 interface JiraState {
   cloudId: string | null;
   lastSyncIso: string | null;
+  /**
+   * Issue keys the previous sync attempted but failed to write. The
+   * next pass folds them into the JQL via `OR key IN (...)` so they
+   * get re-fetched even if the watermark has advanced past their
+   * `updated` timestamp — see the wave-5 Devin Review finding and
+   * `nextFailedRetryQueue` for the reasoning.
+   */
+  failedRetries: FailedRetryEntry[];
 }
 
 function statePath(userDataDir: string): string {
@@ -191,15 +201,32 @@ function statePath(userDataDir: string): string {
 async function loadJiraState(userDataDir: string): Promise<JiraState> {
   try {
     const raw = await fsp.readFile(statePath(userDataDir), "utf8");
-    return JSON.parse(raw) as JiraState;
+    const parsed = JSON.parse(raw) as Partial<JiraState>;
+    return {
+      cloudId: parsed.cloudId ?? null,
+      lastSyncIso: parsed.lastSyncIso ?? null,
+      failedRetries: Array.isArray(parsed.failedRetries)
+        ? parsed.failedRetries
+        : [],
+    };
   } catch {
-    return { cloudId: null, lastSyncIso: null };
+    return { cloudId: null, lastSyncIso: null, failedRetries: [] };
   }
 }
 
 async function saveJiraState(userDataDir: string, s: JiraState): Promise<void> {
   await fsp.mkdir(syncDirFor(userDataDir, "jira"), { recursive: true });
   await fsp.writeFile(statePath(userDataDir), JSON.stringify(s), "utf8");
+}
+
+/**
+ * Escape a Jira issue key for inclusion inside a JQL `IN (...)`
+ * clause. Issue keys are alphanumeric + `-` by construction, but we
+ * still strip anything outside that set defensively in case a
+ * corrupted state file ever contains user-provided text.
+ */
+function jqlEscapeKey(key: string): string {
+  return key.replace(/[^A-Za-z0-9_-]/g, "");
 }
 
 export async function syncJira(ctx: {
@@ -235,21 +262,55 @@ export async function syncJira(ctx: {
   let modified = 0;
   const removed = 0;
   let watermark = state.lastSyncIso;
+  const succeededIds = new Set<string>();
+  const failedThisPass: Array<{ remoteId: string; remoteModifiedAt: string | null }> = [];
 
-  const jql = watermark
-    ? `updated >= "${watermark}" ORDER BY updated DESC`
-    : `ORDER BY updated DESC`;
+  // Fold any carry-forward retry keys into the JQL so the previous
+  // pass's failures get re-fetched alongside the normal
+  // updated-since scan. Without this, an item that errored mid-sync
+  // would be skipped forever (the watermark would advance past its
+  // `updated` timestamp on later passes).
+  const retryKeys = state.failedRetries
+    .map((e) => jqlEscapeKey(e.remoteId))
+    .filter((k) => k.length > 0);
+  const watermarkClause = watermark ? `updated >= "${watermark}"` : null;
+  const retryClause =
+    retryKeys.length > 0
+      ? `key in (${retryKeys.join(",")})`
+      : null;
+  let jql: string;
+  if (watermarkClause && retryClause) {
+    jql = `(${watermarkClause}) OR (${retryClause}) ORDER BY updated DESC`;
+  } else if (watermarkClause) {
+    jql = `${watermarkClause} ORDER BY updated DESC`;
+  } else if (retryClause) {
+    jql = `${retryClause} ORDER BY updated DESC`;
+  } else {
+    jql = `ORDER BY updated DESC`;
+  }
 
   let startAt = 0;
   for (let safety = 0; safety < 1000; safety += 1) {
     const page = await searchIssues(cloudId, ctx.accessToken, jql, startAt);
     for (const issue of page.issues) {
-      const body = renderIssue(issue);
+      const updated = issue.fields.updated ?? null;
+      let body: string;
+      try {
+        body = renderIssue(issue);
+      } catch {
+        failedThisPass.push({ remoteId: issue.key, remoteModifiedAt: updated });
+        continue;
+      }
       const localPath = path.join(
         dir,
         `${sanitiseRemoteId(issue.key)}.md`,
       );
-      await fsp.writeFile(localPath, body, "utf8");
+      try {
+        await fsp.writeFile(localPath, body, "utf8");
+      } catch {
+        failedThisPass.push({ remoteId: issue.key, remoteModifiedAt: updated });
+        continue;
+      }
 
       const existing = ctx.bridge.listSources().find((s) => s.path === localPath);
       if (existing) {
@@ -263,11 +324,11 @@ export async function syncJira(ctx: {
         try {
           ctx.bridge.addLocalFile(localPath);
         } catch {
+          failedThisPass.push({ remoteId: issue.key, remoteModifiedAt: updated });
           continue;
         }
         added += 1;
       }
-      const updated = issue.fields.updated ?? null;
       entriesById.set(issue.key, {
         localPath,
         remoteId: issue.key,
@@ -276,14 +337,29 @@ export async function syncJira(ctx: {
       if (updated && (!watermark || updated > watermark)) {
         watermark = updated;
       }
+      succeededIds.add(issue.key);
     }
     startAt += page.issues.length;
     if (startAt >= page.total || page.issues.length === 0) break;
   }
 
+  // Any retry key that the search response did not return at all
+  // (e.g. the issue was deleted) counts as "succeeded" for the
+  // queue's purpose — it's been resolved one way or another and we
+  // should stop pinging it every sync.
+  for (const key of retryKeys) {
+    if (!succeededIds.has(key) && !failedThisPass.some((f) => f.remoteId === key)) {
+      succeededIds.add(key);
+    }
+  }
+
   await saveJiraState(ctx.userDataDir, {
     cloudId,
     lastSyncIso: watermark,
+    failedRetries: nextFailedRetryQueue(state.failedRetries, {
+      succeeded: succeededIds,
+      failed: failedThisPass,
+    }),
   });
   await writeManifest(ctx.userDataDir, {
     version: 1,

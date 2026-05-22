@@ -100,3 +100,107 @@ export function sanitiseRemoteId(id: string): string {
   const safe = id.replace(/[^A-Za-z0-9._-]/g, "_");
   return safe.length > 200 ? safe.slice(0, 200) : safe;
 }
+
+/**
+ * Maximum number of "failed last sync" remote ids we keep around per
+ * provider. Bounded so that a stuck connector (e.g. an account that
+ * lost permission to a thousand items at once) can't grow the state
+ * file unboundedly. If the queue overflows we drop the oldest entries
+ * — those items will only be retried when they're edited again,
+ * which is the same behaviour as before this fix.
+ */
+export const FAILED_RETRY_QUEUE_MAX = 200;
+
+/**
+ * Per-item failure record persisted between syncs.
+ *
+ * Connectors that use a monotonic timestamp watermark (Notion, Jira,
+ * Figma) need to remember individual items that *transiently* failed
+ * to fetch so the next sync can retry them — otherwise the watermark
+ * silently moves past the failed item's modification time and the
+ * item is never retried until the user edits it again. (See the
+ * Devin Review wave 5 finding on `notion.ts:304-341`.) The
+ * `failureCount` lets us cap retries: an item that fails too many
+ * passes in a row is almost certainly permanently gone (deleted,
+ * permissions revoked, OAuth scope changed) and continuing to ping it
+ * every sync just wastes API quota.
+ */
+export interface FailedRetryEntry {
+  /** Provider-side id of the item that failed. */
+  remoteId: string;
+  /**
+   * ISO-8601 of the provider-side modification time observed when the
+   * item failed. Used purely for diagnostics — the retry path fetches
+   * by id, not by timestamp.
+   */
+  remoteModifiedAt: string | null;
+  /** How many consecutive sync passes this item has failed. */
+  failureCount: number;
+}
+
+/**
+ * Retries are abandoned after this many consecutive failures for the
+ * same item. The runtime cost of retrying is one API call per failed
+ * item per sync, so even a very loose cap stays cheap; the cap exists
+ * to make sure perma-broken items don't accumulate forever.
+ */
+export const FAILED_RETRY_MAX_ATTEMPTS = 5;
+
+/**
+ * Compute the next-sync retry queue from the previous queue plus the
+ * outcome of this sync pass:
+ *   - `attempted`  — items the previous queue asked us to retry.
+ *   - `succeeded`  — items that were synced successfully this pass
+ *                    (regardless of whether they came from the queue
+ *                     or the normal watermark scan).
+ *   - `failed`     — items that errored on this pass.
+ *
+ * The result is bounded by `FAILED_RETRY_QUEUE_MAX` (FIFO eviction)
+ * and excludes items whose `failureCount` has hit
+ * `FAILED_RETRY_MAX_ATTEMPTS`.
+ */
+export function nextFailedRetryQueue(
+  previous: FailedRetryEntry[],
+  events: {
+    succeeded: Iterable<string>;
+    failed: Iterable<{ remoteId: string; remoteModifiedAt: string | null }>;
+  },
+): FailedRetryEntry[] {
+  const succeeded = new Set(events.succeeded);
+  const prevById = new Map<string, FailedRetryEntry>();
+  for (const e of previous) prevById.set(e.remoteId, e);
+
+  // Drop succeeded items from the carry-forward; they've been
+  // re-synced and don't need retrying.
+  for (const id of succeeded) prevById.delete(id);
+
+  // Bump or insert each failed item.
+  for (const f of events.failed) {
+    const existing = prevById.get(f.remoteId);
+    const next: FailedRetryEntry = existing
+      ? {
+          remoteId: f.remoteId,
+          remoteModifiedAt: f.remoteModifiedAt ?? existing.remoteModifiedAt,
+          failureCount: existing.failureCount + 1,
+        }
+      : {
+          remoteId: f.remoteId,
+          remoteModifiedAt: f.remoteModifiedAt,
+          failureCount: 1,
+        };
+    if (next.failureCount > FAILED_RETRY_MAX_ATTEMPTS) {
+      // Give up on this item; remove from the queue rather than
+      // pinging it forever.
+      prevById.delete(f.remoteId);
+      continue;
+    }
+    // Re-inserting moves the entry to the end so FIFO eviction below
+    // drops the oldest perma-failing ids first.
+    prevById.delete(f.remoteId);
+    prevById.set(f.remoteId, next);
+  }
+
+  const entries = Array.from(prevById.values());
+  if (entries.length <= FAILED_RETRY_QUEUE_MAX) return entries;
+  return entries.slice(entries.length - FAILED_RETRY_QUEUE_MAX);
+}
