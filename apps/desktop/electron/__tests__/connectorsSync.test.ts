@@ -3076,3 +3076,166 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
     },
   );
 });
+
+// =====================================================================
+// Wave 23 ANALYSIS_0004 — OneDrive per-item download resilience.
+//
+// Brings OneDrive into parity with Notion/Figma/Confluence: a single
+// item's download failure (HTTP throw, fs ENOSPC, arrayBuffer stream
+// abort) must be skipped per-item rather than aborting the whole sync
+// pass. The offline-detection contract (NetworkError → propagate to
+// runConnectorSync) is preserved.
+// =====================================================================
+describe("Wave 23 — OneDrive per-item download resilience", () => {
+  const original = globalThis.fetch;
+  let fetchMock: ReturnType<typeof makeFetchMock>;
+  let dir: string;
+  let bridge: FakeBridge;
+
+  beforeEach(async () => {
+    fetchMock = makeFetchMock();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    dir = await tmpDir("onedrive-w23");
+    bridge = new FakeBridge();
+  });
+  afterEach(async () => {
+    globalThis.fetch = original;
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it(
+    "non-network throw during a single item's download skips that item " +
+      "and continues — does NOT abort the whole sync (wave 23 ANALYSIS_0004)",
+    async () => {
+      const { syncOneDrive } = await import("../ipc/connectors/onedrive");
+
+      // Delta page returning three indexable items + a deltaLink so
+      // we reach the page checkpoint. Item `b` is the one we sabotage.
+      const deltaResp = {
+        ok: true,
+        json: async () => ({
+          value: [
+            {
+              id: "a",
+              name: "a.txt",
+              size: 4,
+              file: { mimeType: "text/plain" },
+              lastModifiedDateTime: "2024-06-01T10:00:00Z",
+            },
+            {
+              id: "b-broken",
+              name: "b-broken.txt",
+              size: 4,
+              file: { mimeType: "text/plain" },
+              lastModifiedDateTime: "2024-06-01T10:01:00Z",
+            },
+            {
+              id: "c",
+              name: "c.txt",
+              size: 4,
+              file: { mimeType: "text/plain" },
+              lastModifiedDateTime: "2024-06-01T10:02:00Z",
+            },
+          ],
+          "@odata.deltaLink": "https://graph.example/delta-final",
+        }),
+      };
+
+      // Per-item content responses. The middle item simulates a
+      // genuine non-network throw inside arrayBuffer() (e.g. body
+      // stream parse failure). The before- and after-items succeed
+      // normally so we can assert the loop kept going.
+      fetchMock
+        .mockResolvedValueOnce(deltaResp)
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: async () => new TextEncoder().encode("aaaa").buffer,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: async () => {
+            throw new Error("simulated body parse failure");
+          },
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: async () => new TextEncoder().encode("cccc").buffer,
+        });
+
+      const r = await syncOneDrive({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+
+      // a and c indexed; b skipped. removed=0 because nothing was
+      // marked as upstream-deleted.
+      expect(r.added).toBe(2);
+      expect(r.removed).toBe(0);
+      expect(bridge.added.map((s) => s.path).sort()).toEqual(
+        [
+          path.join(dir, "onedrive-sync", "a.txt"),
+          path.join(dir, "onedrive-sync", "c.txt"),
+        ].sort(),
+      );
+
+      // deltaLink was reached — finally block persists the real
+      // delta cursor, NOT null. This is the most important
+      // assertion: it proves the sync did NOT abort mid-loop. Prior
+      // to the fix, the throw on item `b` would propagate out of the
+      // for-loop, leaving `deltaLink = null` and forcing the next
+      // sync to re-walk from the initial delta URL.
+      const deltaState = JSON.parse(
+        await fsp.readFile(
+          path.join(dir, "onedrive-sync", "delta.json"),
+          "utf8",
+        ),
+      ) as { deltaLink: string | null };
+      expect(deltaState.deltaLink).toBe("https://graph.example/delta-final");
+    },
+  );
+
+  it(
+    "network error during a single item's download propagates so " +
+      "runConnectorSync can translate to offline (wave 23 ANALYSIS_0004)",
+    async () => {
+      const { syncOneDrive } = await import("../ipc/connectors/onedrive");
+
+      const deltaResp = {
+        ok: true,
+        json: async () => ({
+          value: [
+            {
+              id: "a",
+              name: "a.txt",
+              size: 4,
+              file: { mimeType: "text/plain" },
+              lastModifiedDateTime: "2024-06-01T10:00:00Z",
+            },
+          ],
+          "@odata.deltaLink": "https://graph.example/delta-final",
+        }),
+      };
+
+      // Genuine transport-level NetworkError. The connector must
+      // re-throw, not swallow — handlers.ts:476 owns the offline
+      // translation and would never see the signal if downloadItem
+      // ate it. Construct an Error whose `code` matches
+      // NETWORK_CODES so `isNetworkError(err)` returns true.
+      const netErr = Object.assign(new Error("ECONNRESET"), {
+        code: "ECONNRESET",
+      });
+      fetchMock
+        .mockResolvedValueOnce(deltaResp)
+        .mockRejectedValueOnce(netErr);
+
+      await expect(
+        syncOneDrive({
+          accessToken: "AT",
+          userDataDir: dir,
+          bridge,
+        }),
+      ).rejects.toThrow(/ECONNRESET/);
+    },
+  );
+});

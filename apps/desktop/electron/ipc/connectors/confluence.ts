@@ -68,12 +68,19 @@ interface ConfluencePage {
   title: string;
   spaceId: string;
   /**
-   * `version.number` increments on every edit, including non-content
-   * changes like title renames. It is the only monotonically
-   * increasing per-page integer exposed by the v2 list endpoint, so
-   * we use it as the incremental-sync watermark.
+   * `number` is the monotonic edit counter — increments on every
+   * edit including non-content changes like title renames, and is the
+   * only monotonically increasing per-page integer the v2 list
+   * endpoint exposes. We use it as the incremental-sync watermark.
+   *
+   * `createdAt` is the ISO-8601 timestamp of when this version was
+   * created — i.e. the page's last-modified time. The v2 list
+   * endpoint returns both on every page; we persist `createdAt` as
+   * the manifest's `remoteModifiedAt` so it carries the same
+   * semantics (real ISO timestamp) as every other connector's
+   * manifest entry. See Devin Review wave 23 ANALYSIS_0006.
    */
-  version?: { number?: number };
+  version?: { number?: number; createdAt?: string };
   body?: { storage?: { value?: string }; representation?: string };
   /** Immutable creation timestamp — NOT used for incremental sync. */
   createdAt?: string;
@@ -626,9 +633,27 @@ export async function syncConfluence(ctx: {
         entriesById.set(page.id, {
           localPath,
           remoteId: page.id,
-          // Persist the version number as the remote modification
-          // identifier so the manifest mirrors what the watermark uses.
-          remoteModifiedAt: currentVersion > 0 ? String(currentVersion) : null,
+          // Use the actual ISO-8601 timestamp of when this page version
+          // was created — i.e. the page's last-modified time, surfaced
+          // by the v2 list endpoint as `version.createdAt`. This keeps
+          // the manifest's `remoteModifiedAt` field semantically
+          // consistent with every other connector (gdrive's
+          // `modifiedTime`, notion's `last_edited_time`, onedrive's
+          // `lastModifiedDateTime`, jira's `fields.updated`, figma's
+          // `last_modified_at`) instead of the prior shape which
+          // stringified the version integer (`"1"`, `"2"`, ...) and
+          // would parse as `NaN` through `parseWatermarkIso`.
+          //
+          // The version-as-watermark contract is preserved entirely by
+          // `state.pageVersions[page.id]` above; the manifest's
+          // `remoteModifiedAt` is purely metadata for diagnostics and
+          // cross-connector tooling that might read manifests
+          // uniformly. Falling back to `null` (rather than
+          // `String(version.number)`) is the conservative default
+          // when the API ever omits `createdAt` for a page. See
+          // Devin Review wave 23 ANALYSIS_0006 (confluence.ts:
+          // 626-634).
+          remoteModifiedAt: page.version?.createdAt ?? null,
         });
         nextVersions[page.id] = currentVersion;
         nextPageSpaces[page.id] = space.id;

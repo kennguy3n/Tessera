@@ -37,6 +37,7 @@ import {
   writeManifest,
   type SyncManifestEntry,
 } from "./syncDir";
+import { isNetworkError } from "./networkErrors";
 
 export interface OneDriveSyncResult {
   added: number;
@@ -324,7 +325,38 @@ export async function syncOneDrive(
 
         const ext = extensionFor(item);
         const localPath = path.join(dir, `${sanitiseRemoteId(item.id)}${ext}`);
-        const ok = await downloadItem(item, accessToken, localPath);
+        // Per-item try/catch around the download. The three things
+        // `downloadItem` can throw are: (a) the `fetch` rejecting on a
+        // genuine transport-level network failure (DNS, socket reset,
+        // wifi drop), (b) `resp.arrayBuffer()` rejecting if the body
+        // stream is cut mid-read, and (c) `fsp.writeFile` rejecting on
+        // a filesystem error (ENOSPC, EACCES). Without this catch,
+        // case (c) — a single broken file out of potentially thousands
+        // in the delta page — would abort the entire OneDrive sync,
+        // and the `finally` block would persist `deltaLink: null`
+        // (because we never reach the page's `deltaLink` checkpoint),
+        // forcing the next sync to re-walk from the initial delta URL.
+        // That's a real cost on large workspaces.
+        //
+        // Re-throwing on `isNetworkError(err)` preserves the offline
+        // detection contract owned by `runConnectorSync`'s outer catch
+        // at `handlers.ts:476` — same posture every other connector
+        // (notion.ts:508/563, figma.ts:453/594/610, confluence.ts:434)
+        // has applied since wave 19. Non-network errors (the filesystem
+        // and arrayBuffer cases above) get the same treatment as the
+        // existing `!resp.ok` branch immediately below: skip the file
+        // and continue. The next sync's delta token will re-surface
+        // any item whose contents the upstream still considers
+        // changed, so a transient ENOSPC doesn't permanently shadow
+        // the file. See Devin Review wave 23 ANALYSIS_0004
+        // (onedrive.ts:166-185).
+        let ok: boolean;
+        try {
+          ok = await downloadItem(item, accessToken, localPath);
+        } catch (err) {
+          if (isNetworkError(err)) throw err;
+          continue;
+        }
         if (!ok) continue;
 
         const existingSource = sourceIndex.get(localPath);
