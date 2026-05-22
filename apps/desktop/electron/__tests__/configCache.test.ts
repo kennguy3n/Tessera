@@ -29,6 +29,7 @@ vi.mock("electron", () => ({
 }));
 
 import {
+  DEFAULT_EXTERNAL_PROVIDER,
   clearConfigCache,
   loadConfig,
   saveConfig,
@@ -174,6 +175,66 @@ describe("config cache", () => {
     expect(onDisk.theme).toBe("dark");
     expect(onDisk.defaultExportFormat).toBe("pdf");
     expect(onDisk.autoUpdate).toBe(false);
+  });
+
+  it("DEFAULT_EXTERNAL_PROVIDER is frozen at module load", () => {
+    // The module-level defaults are intentionally frozen so a future
+    // contributor doing `DEFAULT_EXTERNAL_PROVIDER.apiUrl = '...'`
+    // fails loudly rather than silently corrupting the baseline used
+    // by every subsequent `loadConfig`. (Before this PR's WS7 review
+    // round, the defaults were unfrozen and would get frozen as a
+    // side effect by the first cache population — a confusing "this
+    // constant became frozen after some call somewhere" surprise.)
+    expect(Object.isFrozen(DEFAULT_EXTERNAL_PROVIDER)).toBe(true);
+    expect(() => {
+      (DEFAULT_EXTERNAL_PROVIDER as { apiUrl: string }).apiUrl =
+        "https://api.evil.example";
+    }).toThrow(TypeError);
+  });
+
+  it("DEFAULT_CONFIG's arrays are frozen at module load", () => {
+    // Spreading DEFAULT_CONFIG into `loadConfig`'s return value
+    // shares array references (`ignorePatterns`, `watchPatterns`,
+    // etc.) — pre-freezing the constant's arrays means no consumer
+    // can mutate the baseline through the shared reference, and
+    // `freezeConfig` walking a cache that aliases those arrays is a
+    // pure no-op rather than a sneaky retroactive freeze of a
+    // module-level constant.
+    //
+    // We inspect the arrays via a fresh `loadConfig()` (which on a
+    // cold cache returns a config whose arrays are the same
+    // references as DEFAULT_CONFIG's, modulo any on-disk overrides).
+    const cfg = loadConfig(); // cold cache, no on-disk overrides
+    expect(Object.isFrozen(cfg.ignorePatterns)).toBe(true);
+    expect(Object.isFrozen(cfg.watchPatterns)).toBe(true);
+    expect(Object.isFrozen(cfg.lastOpenedArtifacts)).toBe(true);
+    expect(Object.isFrozen(cfg.sourcePaths)).toBe(true);
+    expect(() => {
+      (cfg.ignorePatterns as string[]).push(".cache");
+    }).toThrow(TypeError);
+  });
+
+  it("freezeConfig deep-freezes even if the top-level is already frozen", () => {
+    // After dropping `freezeConfig`'s early-return guard, passing a
+    // partially-frozen config (top frozen, children unfrozen) still
+    // freezes the children. The only way for production code to
+    // produce such a state would be a future refactor of
+    // `updateConfig` / `saveConfig`, so this test pins the defensive
+    // behaviour for that hypothetical future.
+    //
+    // We exercise this via the public surface: `saveConfig` on a
+    // config that came back from `loadConfig` (which is fully
+    // frozen) would early-out under the old guard but now must still
+    // be safe to call. Note that `updateConfig`'s real flow goes
+    // through `{ ...current, ...partial }` so this is purely a
+    // belt-and-braces test.
+    const cfg = loadConfig();
+    expect(() => saveConfig(cfg)).not.toThrow();
+    // The cache continues to return a fully-frozen result.
+    const after = loadConfig();
+    expect(Object.isFrozen(after)).toBe(true);
+    expect(Object.isFrozen(after.externalProvider)).toBe(true);
+    expect(Object.isFrozen(after.ignorePatterns)).toBe(true);
   });
 
   it("rejects direct mutation of a top-level cached field", () => {

@@ -40,24 +40,37 @@ export interface AppConfig {
   autoUpdate: boolean;
 }
 
-export const DEFAULT_EXTERNAL_PROVIDER: ExternalProviderConfig = {
-  enabled: false,
-  providerType: "openai_compatible",
-  apiUrl: "",
-  apiKeyRef: "tessera.external_provider.primary",
-  modelName: "",
-  maxTokens: 1024,
-  temperature: 0.7,
-  timeoutSecs: 60,
-  maxRetries: 2,
-};
+// Both DEFAULT_* constants are deep-frozen at module load so a
+// future contributor doing `DEFAULT_CONFIG.ignorePatterns.push(...)`
+// fails loudly at the mutation site rather than silently corrupting
+// every subsequent `loadConfig()` (which spreads DEFAULT_CONFIG as
+// its baseline). This also makes the side-effect of `freezeConfig`
+// running over a cache that shares DEFAULT_CONFIG's array references
+// a no-op rather than a sneaky cross-call mutation of a "constant".
+//
+// Consumers that need a mutable copy spread them: e.g. `{
+// ...DEFAULT_EXTERNAL_PROVIDER }` produces a fresh unfrozen object.
+// Every existing consumer in this module (and elsewhere) already
+// uses spreads, so no callsite changes.
+export const DEFAULT_EXTERNAL_PROVIDER: Readonly<ExternalProviderConfig> =
+  Object.freeze({
+    enabled: false,
+    providerType: "openai_compatible" as ExternalProviderType,
+    apiUrl: "",
+    apiKeyRef: "tessera.external_provider.primary",
+    modelName: "",
+    maxTokens: 1024,
+    temperature: 0.7,
+    timeoutSecs: 60,
+    maxRetries: 2,
+  });
 
-const DEFAULT_CONFIG: AppConfig = {
+const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   windowWidth: 1280,
   windowHeight: 800,
   theme: "light",
   defaultExportFormat: "markdown",
-  ignorePatterns: [
+  ignorePatterns: Object.freeze([
     ".git",
     "node_modules",
     ".DS_Store",
@@ -65,13 +78,18 @@ const DEFAULT_CONFIG: AppConfig = {
     "*.dll",
     "*.so",
     "*.dylib",
-  ],
-  watchPatterns: ["**/*.md", "**/*.txt", "**/*.csv", "**/*.json"],
-  lastOpenedArtifacts: [],
-  sourcePaths: [],
-  externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
+  ]) as readonly string[] as string[],
+  watchPatterns: Object.freeze([
+    "**/*.md",
+    "**/*.txt",
+    "**/*.csv",
+    "**/*.json",
+  ]) as readonly string[] as string[],
+  lastOpenedArtifacts: Object.freeze([]) as readonly string[] as string[],
+  sourcePaths: Object.freeze([]) as readonly string[] as string[],
+  externalProvider: DEFAULT_EXTERNAL_PROVIDER,
   autoUpdate: true,
-};
+});
 
 function getConfigPath(): string {
   try {
@@ -119,19 +137,31 @@ let cachedPath: string | null = null;
 /**
  * Deep-freeze an AppConfig (and every nested object/array) so the
  * cached value can be returned by reference without risk of a caller
- * accidentally mutating it. `Object.freeze` is shallow, so we recurse
- * into nested objects (`externalProvider`) and arrays
+ * accidentally mutating it. `Object.freeze` is shallow, so we walk
+ * one level into nested objects (`externalProvider`) and arrays
  * (`ignorePatterns`, `watchPatterns`, `lastOpenedArtifacts`,
- * `sourcePaths`). The freeze is idempotent — calling it on an already
- * frozen subtree is a no-op (and a future contributor relying on this
- * idempotency in `saveConfig`'s fast path will not be surprised).
+ * `sourcePaths`) and freeze each.
+ *
+ * There is intentionally NO top-level `Object.isFrozen(config)`
+ * short-circuit: a partially-frozen config (top frozen, children
+ * unfrozen) is a state no production path produces today, but if a
+ * future refactor ever does, skipping children based on the
+ * top-level state would silently leak unfrozen mutable references
+ * through the cache. Per-property `Object.isFrozen` checks below
+ * already make the work idempotent for the common case (everything
+ * already frozen) — `Object.freeze` on an already-frozen object is
+ * a no-op, so the only real cost of always iterating is one
+ * `Object.keys` call per `freezeConfig` invocation.
  */
 function freezeConfig(config: AppConfig): AppConfig {
-  if (Object.isFrozen(config)) return config;
-  Object.freeze(config);
+  Object.freeze(config); // no-op if already frozen
   for (const key of Object.keys(config) as (keyof AppConfig)[]) {
     const value = config[key];
-    if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      !Object.isFrozen(value)
+    ) {
       // Nested objects (`externalProvider`) and arrays
       // (`ignorePatterns`, etc.) are one level deep — none of them
       // contain further nested objects today. If a future field adds
