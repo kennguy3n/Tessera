@@ -359,7 +359,7 @@ mod tests {
         assert!(html.contains("&#39;xss&#39;"));
     }
 
-    // Regression for ANALYSIS_pr-review-job-944bd22719314f15b61523f7c7574bc6_0001:
+    // Regression test:
     // Infographic HTML export used to round-trip the artifact's JSON content
     // through `content_to_html`, which chopped `{"title":...}` into pseudo-
     // paragraphs with HTML-escaped braces, completely losing the visual

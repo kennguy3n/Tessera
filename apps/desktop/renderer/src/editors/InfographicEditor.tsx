@@ -500,10 +500,10 @@ function escapeHtml(s: string): string {
  * a textual hint so the reader still knows what symbol the section was
  * meant to carry.
  *
- * Regression for BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0001 —
- * before this fix, exporting an infographic to PDF would dump the raw
- * JSON model line-by-line through the PDF builder, producing pages of
- * `{"title": "..."}` syntax instead of the visual layout.
+ * Regression: before this fix, exporting an infographic to PDF would
+ * dump the raw JSON model line-by-line through the PDF builder,
+ * producing pages of `{"title": "..."}` syntax instead of the visual
+ * layout.
  */
 export function buildInfographicPrintableText(
   data: InfographicContent,

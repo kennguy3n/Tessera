@@ -401,7 +401,8 @@ export function registerIpcHandlers(): void {
           // Refuse the request outright instead of silently rewriting the
           // path or showing the user a dialog with a dangerous suggestion.
           // This is the security boundary; making it visible as an error
-          // is the point — see BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0003.
+          // is the point — see the export-path allowlist regression
+          // tests in `__tests__/exportPathSafety.test.ts`.
           throw new Error(
             `Export path is outside the allowed locations (Downloads, Documents, Desktop, Home, App data, system temp): ${filePath}`,
           );

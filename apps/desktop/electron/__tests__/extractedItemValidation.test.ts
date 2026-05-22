@@ -96,9 +96,9 @@ describe("validateExtractedItems", () => {
   });
 
   it("throws when 100% of items fail validation against non-empty input", () => {
-    // This is the headline of
-    // empty-result IPC reply reads to the user as "the model found
-    // nothing", so a wholesale schema break must escalate to an error.
+    // A silent empty-result IPC reply reads to the user as "the model
+    // found nothing", so a wholesale schema break must escalate to an
+    // error rather than collapsing into a zero-item success.
     const warn = vi.fn();
     expect(() =>
       validateExtractedItems(
