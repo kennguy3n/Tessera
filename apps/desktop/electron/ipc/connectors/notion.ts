@@ -514,7 +514,23 @@ export async function syncNotion(ctx: {
     // benefit from the over-retry default) and do the same-pass
     // reconciliation here at the Notion-specific call site instead.
     // See Devin Review wave 7C ANALYSIS_0001 (notion.ts:416-423).
-    const reconciledFailures = failedThisPass.filter(
+    // Dedupe by remoteId first. A page CAN appear twice in
+    // `failedThisPass` in one pathological case: it was already in the
+    // retry queue → Phase 1 `fetchPageById` threw with non-404 →
+    // entry pushed; then the user edited it since the last watermark
+    // so Phase 2's scan re-surfaced the same id → `fetchPageText`
+    // also failed → entry pushed again. Without this dedupe, the
+    // single iteration of `nextFailedRetryQueue` walks two entries
+    // with the same id, bumps `failureCount` by +2 instead of +1, and
+    // the page hits `FAILED_RETRY_MAX_ATTEMPTS` one pass earlier
+    // than designed. Keep the most recent `remoteModifiedAt` (later
+    // entries reflect the freshest server-side timestamp). See Devin
+    // Review wave 11 ANALYSIS_0001 (notion.ts:517).
+    const dedupedFailures = new Map<string, { remoteId: string; remoteModifiedAt: string | null }>();
+    for (const entry of failedThisPass) {
+      dedupedFailures.set(entry.remoteId, entry);
+    }
+    const reconciledFailures = Array.from(dedupedFailures.values()).filter(
       (entry) => !succeededIds.has(entry.remoteId),
     );
     await saveWatermark(ctx.userDataDir, {

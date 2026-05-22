@@ -108,6 +108,17 @@ function extensionFor(item: DriveItem): string {
 function isIndexable(item: DriveItem): boolean {
   if (item.folder) return false;
   if (item.deleted) return false;
+  // Microsoft Graph can return drive items that are neither files nor
+  // folders — remote items pointing at content in a shared drive,
+  // packages (.zip-like bundles surfaced as a single addressable
+  // item), and OneNote sections in some tenants — all of which lack
+  // the `file` facet entirely. If we let those fall through to the
+  // extension regex below, a remote-item shortcut named `report.docx`
+  // would pass the allowlist and the downloader would issue a content
+  // request that the API rejects. Gate on the `file` facet so only
+  // genuine drive files are even considered for download. See Devin
+  // Review wave 11 ANALYSIS_0003.
+  if (!item.file) return false;
   if ((item.size ?? 0) > MAX_BYTES_PER_FILE) return false;
   const mime = item.file?.mimeType ?? "";
   if (TEXTLIKE_MIME_PREFIXES.some((p) => mime.startsWith(p))) return true;

@@ -387,4 +387,54 @@ describe("OneDrive sync", () => {
     // The HEIC image must NOT have been pulled.
     expect(paths.some((p) => /image\.heic$/.test(p))).toBe(false);
   });
+
+  // ---------------------------------------------------------------
+  // Wave 11 ANALYSIS_0003: Microsoft Graph can return drive items
+  // that are neither files nor folders — remote-item shortcuts,
+  // packages, or OneNote sections without a `file` facet. If any
+  // such item had a name matching the extension regex (e.g.
+  // `quarterly.docx`), the previous implementation would let it pass
+  // `isIndexable` and the downloader would issue a content request
+  // the API rejects. `isIndexable` must gate on `item.file` being
+  // truthy so only genuine files are considered.
+  // ---------------------------------------------------------------
+  it("skips non-file items even when their name matches the extension allowlist", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        value: [
+          {
+            id: "remote-1",
+            name: "shared-report.docx",
+            size: 1234,
+            // `file` facet deliberately omitted — this is a remote-item
+            // shortcut or a package, NOT a downloadable file.
+            "@microsoft.graph.downloadUrl": "https://example.com/should-not-be-called",
+          },
+          {
+            id: "real-1",
+            name: "real-report.docx",
+            size: 1234,
+            file: { mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+            "@microsoft.graph.downloadUrl": "https://example.com/real",
+          },
+        ],
+        "@odata.deltaLink": "https://example.com/delta-2",
+      }),
+    })
+    // Only ONE download is expected — for the real file. If the
+    // gate is missing the test will fail because no second mock is
+    // queued for the shortcut's would-be download.
+    .mockResolvedValueOnce({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
+
+    const result = await syncOneDrive({ accessToken: "AT", userDataDir, bridge });
+    expect(result.added).toBe(1);
+    expect(bridge.added).toHaveLength(1);
+    // Local filenames are derived from sanitiseRemoteId(item.id) + ext
+    // (NOT the human-readable display name) — see `pathFor` in
+    // onedrive.ts. The real file lands as `real-1.docx`; the shortcut
+    // would have landed as `remote-1.docx` if the gate were missing.
+    expect(bridge.added[0].path).toMatch(/real-1\.docx$/);
+    expect(bridge.added[0].path).not.toMatch(/remote-1/);
+  });
 });

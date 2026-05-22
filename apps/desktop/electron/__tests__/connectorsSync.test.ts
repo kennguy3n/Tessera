@@ -746,6 +746,87 @@ describe("Notion sync", () => {
       expect(watermark.lastSyncIso).toBe("2024-07-01T00:00:00Z");
     },
   );
+
+  it(
+    "dedupes failedThisPass when the same page id fails in BOTH " +
+      "Phase 1 fetchPageById AND Phase 2 fetchPageText so " +
+      "failureCount bumps by exactly 1 per sync (regression: " +
+      "wave 11 ANALYSIS_0001)",
+    async () => {
+      // Pre-seed retry queue with one page (failureCount=1) and an
+      // older watermark so Phase 2's search will re-surface the same
+      // id once its last_edited_time advances past the watermark.
+      const stateDir = path.join(dir, "notion-sync");
+      await fsp.mkdir(stateDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(stateDir, "watermark.json"),
+        JSON.stringify({
+          lastSyncIso: "2024-06-01T00:00:00Z",
+          failedRetries: [
+            {
+              remoteId: "shared-page",
+              remoteModifiedAt: "2024-05-15T00:00:00Z",
+              failureCount: 1,
+            },
+          ],
+        }),
+        "utf8",
+      );
+
+      fetchMock
+        // Phase 1: GET /v1/pages/shared-page → 502 → throws → push #1.
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 502,
+          text: async () => "Bad Gateway",
+        })
+        // Phase 2: POST /v1/search → returns shared-page with a NEW
+        // last_edited_time strictly after the watermark, so the
+        // listAllPages filter doesn't drop it.
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "shared-page",
+                last_edited_time: "2024-07-01T00:00:00Z",
+                archived: false,
+                properties: {
+                  title: { type: "title", title: [{ plain_text: "Shared" }] },
+                },
+              },
+            ],
+            has_more: false,
+            next_cursor: null,
+          }),
+        })
+        // Phase 2: fetchPageText → fetchAllBlocks GET
+        // /v1/blocks/shared-page/children → 502 → throws → push #2.
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 502,
+          text: async () => "Bad Gateway",
+        });
+
+      await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+
+      const watermark = JSON.parse(
+        await fsp.readFile(
+          path.join(stateDir, "watermark.json"),
+          "utf8",
+        ),
+      ) as {
+        lastSyncIso: string | null;
+        failedRetries: Array<{ remoteId: string; failureCount: number }>;
+      };
+      // With the dedupe fix: only one bump → 1 + 1 = 2.
+      // Without the fix: two distinct entries in failedThisPass walked
+      // sequentially by `nextFailedRetryQueue` → 1 + 1 + 1 = 3.
+      expect(watermark.failedRetries).toHaveLength(1);
+      expect(watermark.failedRetries[0].remoteId).toBe("shared-page");
+      expect(watermark.failedRetries[0].failureCount).toBe(2);
+    },
+  );
 });
 
 describe("Jira sync", () => {
@@ -2011,6 +2092,105 @@ describe(
         // p1b's space listed cleanly but p1b wasn't returned → drop.
         expect(state.pageVersions).toEqual({ p1a: 1 });
         expect(state.pageSpaces).toEqual({ p1a: "s1" });
+      },
+    );
+
+    // ---------------------------------------------------------------
+    // Wave 11 ANALYSIS_0005 (🚩): when a Confluence page is confirmed
+    // deleted upstream, the connector must propagate the deletion all
+    // the way through the local workspace:
+    //   - increment the `removed` counter so the IPC return reflects it
+    //   - remove the bridge source-index entry so search stops returning it
+    //   - unlink the local on-disk file so it doesn't linger
+    //   - prune the manifest entry so the next sync's seed doesn't reintroduce it
+    // ---------------------------------------------------------------
+    it(
+      "cascades upstream deletion into bridge / disk / manifest / counter",
+      async () => {
+        const syncDir = path.join(dir, "confluence-sync");
+        await fsp.mkdir(syncDir, { recursive: true });
+
+        // Pre-seed the manifest with a previously-synced page p1b.
+        const p1bPath = path.join(syncDir, "p1b.md");
+        await fsp.writeFile(p1bPath, "# stale\n", "utf8");
+        await fsp.writeFile(
+          path.join(syncDir, "manifest.json"),
+          JSON.stringify({
+            version: 1,
+            provider: "confluence",
+            entries: [
+              { localPath: p1bPath, remoteId: "p1b", remoteModifiedAt: "1" },
+              // p1a manifest entry is intentionally seeded too so the
+              // assertion that *only* p1b is pruned is meaningful.
+              {
+                localPath: path.join(syncDir, "p1a.md"),
+                remoteId: "p1a",
+                remoteModifiedAt: "1",
+              },
+            ],
+          }),
+          "utf8",
+        );
+
+        // Pre-seed the bridge with the matching source so we can
+        // observe the `removeSource` call.
+        const p1bSource = bridge.addLocalFile(p1bPath);
+        bridge.added.length = 0; // ignore the seed in the assertion below
+
+        // Pre-seed the version-state.
+        await fsp.writeFile(
+          path.join(syncDir, "state.json"),
+          JSON.stringify({
+            cloudId: "cloud-1",
+            pageVersions: { p1a: 1, p1b: 1 },
+            pageSpaces: { p1a: "s1", p1b: "s1" },
+          }),
+          "utf8",
+        );
+
+        fetchMock
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({
+              results: [{ id: "s1", key: "ONE", name: "Space One" }],
+            }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({
+              results: [
+                {
+                  id: "p1a",
+                  title: "P1A",
+                  spaceId: "s1",
+                  version: { number: 1 },
+                  body: { storage: { value: "<p>still here</p>" } },
+                },
+              ],
+            }),
+          });
+
+        const result = await syncConfluence({
+          accessToken: "AT",
+          userDataDir: dir,
+          bridge,
+        });
+
+        // 1. Counter surfaced to the renderer.
+        expect(result.removed).toBe(1);
+        // 2. Bridge source entry removed.
+        expect(bridge.removed).toContain(p1bSource.id);
+        // 3. Local file unlinked.
+        await expect(fsp.access(p1bPath)).rejects.toThrow();
+        // 4. Manifest entry pruned (and p1a survives).
+        const manifest = JSON.parse(
+          await fsp.readFile(
+            path.join(syncDir, "manifest.json"),
+            "utf8",
+          ),
+        ) as { entries: Array<{ remoteId: string }> };
+        const ids = manifest.entries.map((e) => e.remoteId).sort();
+        expect(ids).toEqual(["p1a"]);
       },
     );
 

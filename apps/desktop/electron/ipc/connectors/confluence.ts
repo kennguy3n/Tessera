@@ -333,7 +333,7 @@ export async function syncConfluence(ctx: {
 
   let added = 0;
   let modified = 0;
-  const removed = 0;
+  let removed = 0;
   // Tracks the pages and spaces actually observed during this pass.
   // After the iteration completes the finally block consults these
   // sets to decide — for each entry already in `state.pageVersions`
@@ -465,7 +465,44 @@ export async function syncConfluence(ctx: {
       if (pageId in nextVersions) continue;
       const recordedSpace = state.pageSpaces[pageId];
       if (recordedSpace && successfullyListedSpaceIds.has(recordedSpace)) {
-        // Space listed cleanly, page not in results — deleted. Drop.
+        // Space listed cleanly, page not in results — the page was
+        // deleted (or moved out of the integration's scope) on the
+        // Confluence side. Cascade the deletion into the local
+        // workspace so search results don't keep returning content
+        // that no longer exists upstream:
+        //   1. Drop the version-state entry (already implicit via the
+        //      missing `nextVersions[pageId]` assignment).
+        //   2. Remove the manifest entry so the next sync's seed of
+        //      `entriesById` doesn't reintroduce it.
+        //   3. Unregister the local file from the bridge's source
+        //      index so it stops appearing in search.
+        //   4. Unlink the on-disk file so it doesn't linger in the
+        //      `confluence-sync/` directory forever.
+        //   5. Increment `removed` so the IPC return value
+        //      surfaces the deletion to the renderer status panel
+        //      (matches OneDrive's contract; previously Confluence
+        //      always returned `removed: 0` even after deletions). See
+        //      Devin Review wave 11 ANALYSIS_0005 (🚩, confluence.ts:336).
+        const manifestEntry = entriesById.get(pageId);
+        if (manifestEntry) {
+          const existingSource = ctx.bridge
+            .listSources()
+            .find((s) => s.path === manifestEntry.localPath);
+          if (existingSource) {
+            try {
+              ctx.bridge.removeSource(existingSource.id);
+            } catch {
+              // best-effort
+            }
+          }
+          try {
+            await fsp.unlink(manifestEntry.localPath);
+          } catch {
+            // already gone
+          }
+          entriesById.delete(pageId);
+          removed += 1;
+        }
         continue;
       }
       nextVersions[pageId] = prevVersion;
