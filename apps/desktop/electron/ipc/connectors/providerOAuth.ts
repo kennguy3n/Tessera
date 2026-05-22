@@ -299,11 +299,38 @@ export async function runRedirectServer(
 
   return new Promise((resolve, reject) => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    const cleanup = () => {
+    // Single-shot guard around all `server.close()` + Promise
+    // settlement paths. Each event (callback hit, server-level
+    // error, timeout) is internally safe — `server.close()` after a
+    // prior close is a documented no-op (Node may emit an `'error'`
+    // event but the listener is detached by the time we attach the
+    // next one), and `resolve`/`reject` on an already-settled
+    // Promise are spec no-ops. Even so, racing the timeout against a
+    // late callback (or the server-error path against an external
+    // close) would historically have invoked `server.close()` twice
+    // and walked the cleanup branch twice. Making the guard
+    // explicit removes the silent reliance on N layers of
+    // idempotency and gives a single place to add future invariants
+    // (e.g. event-bus emit, structured-log write). See Devin Review
+    // wave 15 ANALYSIS_0006.
+    let settled = false;
+    const settleOnce = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      try {
+        server.close();
+      } catch {
+        // Already closed or never bound — Node's HTTP server
+        // tolerates either case and the surrounding code did so
+        // implicitly before this guard existed. Swallowed so the
+        // outer Promise settlement path can never reject from a
+        // best-effort cleanup.
+      }
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
       }
+      fn();
     };
 
     const server = http.createServer((req, res) => {
@@ -330,9 +357,13 @@ export async function runRedirectServer(
             error,
           )}${desc ? `: ${escapeHtml(desc)}` : ""}</p><p>You can close this window.</p></body></html>`,
         );
-        server.close();
-        cleanup();
-        reject(new Error(`OAuth error from ${config.provider}: ${error}${desc ? ` (${desc})` : ""}`));
+        settleOnce(() =>
+          reject(
+            new Error(
+              `OAuth error from ${config.provider}: ${error}${desc ? ` (${desc})` : ""}`,
+            ),
+          ),
+        );
         return;
       }
       if (!code || returnedState !== state) {
@@ -340,9 +371,9 @@ export async function runRedirectServer(
           400,
           "<html><body><h2>Invalid response</h2><p>State mismatch or missing code.</p></body></html>",
         );
-        server.close();
-        cleanup();
-        reject(new Error("Invalid OAuth callback: state mismatch or missing code"));
+        settleOnce(() =>
+          reject(new Error("Invalid OAuth callback: state mismatch or missing code")),
+        );
         return;
       }
 
@@ -352,9 +383,7 @@ export async function runRedirectServer(
           config.provider,
         )}</h2><p>You can close this window and return to Tessera.</p></body></html>`,
       );
-      server.close();
-      cleanup();
-      resolve({ code, state });
+      settleOnce(() => resolve({ code, state }));
     });
 
     // Bind the loopback server to the same host the redirect URI
@@ -368,9 +397,7 @@ export async function runRedirectServer(
     const bindHost = config.redirectHost ?? "127.0.0.1";
     server.listen(config.redirectPort, bindHost, () => {
       shell.openExternal(authUrl).catch((err) => {
-        server.close();
-        cleanup();
-        reject(err);
+        settleOnce(() => reject(err));
       });
     });
 
@@ -385,19 +412,19 @@ export async function runRedirectServer(
       // releases it deterministically rather than relying on GC.
       // Cheap insurance against the rare post-listen error path.
       // See Devin Review wave 13 ANALYSIS_0004.
-      server.close();
-      cleanup();
-      reject(
-        new Error(
-          `Failed to start OAuth redirect server for ${config.provider} on port ${config.redirectPort}: ${err.message}`,
+      settleOnce(() =>
+        reject(
+          new Error(
+            `Failed to start OAuth redirect server for ${config.provider} on port ${config.redirectPort}: ${err.message}`,
+          ),
         ),
       );
     });
 
     timeoutId = setTimeout(() => {
-      server.close();
-      cleanup();
-      reject(new Error(`OAuth flow for ${config.provider} timed out after 5 minutes`));
+      settleOnce(() =>
+        reject(new Error(`OAuth flow for ${config.provider} timed out after 5 minutes`)),
+      );
     }, 300_000);
   });
 }

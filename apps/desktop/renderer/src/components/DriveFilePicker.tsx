@@ -36,6 +36,24 @@ export default function DriveFilePicker({ onSelect, onCancel }: DriveFilePickerP
     try {
       const fid = folderId === "root" ? undefined : folderId;
       const result: DriveFileListResult = await api.connectors.listDriveFiles(fid, pageToken);
+      // `offline: true` is the soft-offline contract the IPC handler
+      // returns when it catches a transport failure (DNS, TCP, TLS,
+      // fetch reject without status) so the picker can render a
+      // network-specific affordance instead of a misleading
+      // "Auth expired" banner. See Devin Review wave 15 ANALYSIS_0007.
+      if (result.offline) {
+        setError(
+          "You appear to be offline. Check your network connection and try again.",
+        );
+        // Drop the page token so a retry refetches from the first
+        // page rather than trying to resume a paginated cursor that
+        // the soft-offline branch never advanced.
+        nextPageTokenRef.current = null;
+        if (!pageToken) {
+          setFiles([]);
+        }
+        return;
+      }
       const items = result.files ?? [];
       if (pageToken) {
         setFiles((prev) => [...prev, ...items]);

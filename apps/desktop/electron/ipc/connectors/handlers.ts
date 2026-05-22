@@ -94,14 +94,22 @@ function bridgeHooks(ctx: IpcContext): BridgeHooks {
 export class NetworkError extends Error {
   /** Branded so duck-type checks survive cross-realm boundaries. */
   readonly isNetworkError = true as const;
-  /** Underlying cause (e.g. the original `fetch` rejection). */
-  readonly cause?: unknown;
   constructor(message: string, options?: { cause?: unknown }) {
-    super(message);
+    // Forward the cause through the ES2022 `Error` options bag so
+    // the V8 engine stores it on the standard `Error.cause` property
+    // (writable, non-enumerable). Previously this class declared its
+    // own `cause` field and assigned it in the constructor body,
+    // which *shadowed* the built-in `Error.cause` — every consumer
+    // that read `err.cause` saw the class-owned copy, but anything
+    // walking the standard `Error.cause` chain (debuggers, error
+    // serializers, structured loggers built on the spec contract)
+    // saw `undefined` on `NetworkError` instances. The options-bag
+    // form is the only spec-compliant way to set `Error.cause` and
+    // it gives us the same `err.cause` read access the previous code
+    // already relied on (e.g. `isNetworkError` reading `e.cause?.code`).
+    // See Devin Review wave 15 ANALYSIS_0003.
+    super(message, options);
     this.name = "NetworkError";
-    if (options && "cause" in options) {
-      this.cause = options.cause;
-    }
   }
 }
 

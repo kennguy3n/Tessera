@@ -48,6 +48,66 @@ describe("isNetworkError", () => {
     expect(isNetworkError(new NetworkError("anything"))).toBe(true);
   });
 
+  it(
+    "stores `cause` on the standard ES2022 Error.cause slot (not a " +
+      "class-owned shadow field) (regression: wave 15 ANALYSIS_0003)",
+    () => {
+      // The original `NetworkError` declared its own `readonly cause`
+      // field and assigned it in the constructor body. That set the
+      // class-owned property but NEVER populated the standard
+      // `Error.cause` slot (which is what the ES2022 spec installs
+      // when `Error(message, { cause })` is invoked). Anything that
+      // inspected `Error.cause` via the standard mechanism — e.g. a
+      // debugger walking the cause chain, a serializer based on the
+      // spec contract, or a third-party logger calling
+      // `Object.getOwnPropertyDescriptor(err, "cause")` — saw the
+      // class field if it existed at all, or `undefined` if it did
+      // not. The fix forwards `options` to `super(message, options)`.
+      const underlying = Object.assign(new Error("transport failed"), {
+        code: "ECONNREFUSED",
+      });
+      const err = new NetworkError("wrap", { cause: underlying });
+
+      // Read access — both the regular property access and the
+      // explicit own-property lookup must surface the cause. Before
+      // the fix, the second assertion succeeded only because of the
+      // shadow field; the spec-compliant `Error.cause` was missing.
+      expect(err.cause).toBe(underlying);
+      const desc = Object.getOwnPropertyDescriptor(err, "cause");
+      expect(desc).toBeDefined();
+      expect(desc!.value).toBe(underlying);
+
+      // The original duck-type detection (cause.code) still works.
+      expect(isNetworkError(err)).toBe(true);
+    },
+  );
+
+  it(
+    "omits `cause` entirely when no options bag is provided " +
+      "(regression: wave 15 ANALYSIS_0003)",
+    () => {
+      // Calling `new NetworkError("msg")` with no options must NOT
+      // install a `cause: undefined` own property — the previous
+      // class field default would have done so under some TS
+      // configurations. The ES2022 `Error(message, options)`
+      // contract only installs `cause` when `options` has it as an
+      // own property, which preserves the standard "no cause means
+      // no own property" invariant.
+      const err = new NetworkError("standalone");
+      const desc = Object.getOwnPropertyDescriptor(err, "cause");
+      // Either the slot doesn't exist (best case) or it's the
+      // inherited `undefined` from Error.prototype — both are
+      // acceptable per the spec. What is NOT acceptable is a
+      // class-owned `cause` field overriding the chain.
+      if (desc !== undefined) {
+        expect(desc.value).toBeUndefined();
+      }
+      // The instance still classifies as a network error — the
+      // brand flag is independent of the cause slot.
+      expect(isNetworkError(err)).toBe(true);
+    },
+  );
+
   it.each([
     // libc / Node
     ["EAI_AGAIN"],

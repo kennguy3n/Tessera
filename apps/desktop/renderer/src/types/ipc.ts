@@ -249,6 +249,18 @@ export interface RuntimeApi {
 export interface DriveFileListResult {
   nextPageToken: string | null;
   files: ConnectorFileInfo[];
+  /**
+   * Set to `true` when the IPC handler caught a `NetworkError` while
+   * talking to Google Drive (DNS failure, TCP refused, fetch rejected
+   * without a status code, etc.) and degraded to a soft-offline
+   * response instead of throwing. The renderer uses this to show an
+   * "Offline" affordance in the file picker rather than a raw error
+   * banner that says "fetch failed", which would mislead the user
+   * into thinking their token expired or the Drive API is down. Same
+   * idea as the `"offline"` `ConnectorSyncResult.status` that the
+   * sync wrapper returns. See Devin Review wave 15 ANALYSIS_0007.
+   */
+  offline?: boolean;
 }
 
 export interface DriveSyncResult {

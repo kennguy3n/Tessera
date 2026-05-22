@@ -20,12 +20,13 @@ import * as tokenVault from "./tokenVault";
 import * as secretsVault from "./secretsVault";
 import {
   getValidAccessTokenForProvider,
+  isNetworkError,
   registerConnectorHandlers,
   runConnectorSync,
 } from "./ipc/connectors/handlers";
 import type { ProviderId } from "./ipc/connectors/providerOAuth";
 import { createDefaultContext } from "./ipc/context";
-import { defaultRateLimiter } from "./ipc/rateLimiter";
+import { defaultRateLimiter, RateLimitError } from "./ipc/rateLimiter";
 import { getLogger } from "./logger";
 import { registerAutoUpdaterIpc } from "./autoUpdater";
 import {
@@ -1150,7 +1151,55 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "connectors:gdrive:listFiles",
     async (_event, folderId?: string, pageToken?: string) => {
-      const accessToken = await getValidAccessToken("google_drive");
+      // Defence-in-depth rate limit on Drive file-listing calls. The
+      // renderer's `DriveFilePicker` debounces user input, but a
+      // buggy effect loop or a misbehaving renderer-side test could
+      // still hammer this handler — and Drive's per-user quota
+      // (1,000 queries per 100 seconds) is global to the OAuth
+      // client, so once burned the next *legitimate* user has a
+      // degraded experience. 10/s is well above any human-driven
+      // navigation rate but tight enough to neutralise a runaway
+      // loop. The sync handler uses a much stricter 1/30s budget
+      // because each sync involves dozens of API calls; listFiles
+      // is one call per click, so the per-call limit can be looser.
+      // See Devin Review wave 15 ANALYSIS_0007.
+      try {
+        getConnectorContext().rateLimiter.consume(
+          "connectors:gdrive:listFiles",
+          { tokensPerInterval: 10, intervalMs: 1_000 },
+        );
+      } catch (err) {
+        if (err instanceof RateLimitError) {
+          throw new Error(
+            `Drive file listing is rate-limited. Wait ${Math.ceil(
+              err.retryAfterMs / 1000,
+            )}s and try again.`,
+          );
+        }
+        throw err;
+      }
+
+      let accessToken: string;
+      try {
+        accessToken = await getValidAccessToken("google_drive");
+      } catch (err) {
+        // A refresh-token exchange that fails because the host has
+        // no network must surface as soft-offline (same contract as
+        // `runConnectorSync`'s offline branch) rather than throwing
+        // a raw `fetch failed` that the picker would render as
+        // "Auth expired". Non-network refresh errors (4xx from
+        // Google, missing credentials, NotConnectedError) still
+        // propagate so the renderer prompts re-auth. See Devin
+        // Review wave 15 ANALYSIS_0007.
+        if (isNetworkError(err)) {
+          getLogger().warn(
+            "gdrive listFiles token refresh hit network failure",
+            { error: (err as Error).message },
+          );
+          return { nextPageToken: null, files: [], offline: true };
+        }
+        throw err;
+      }
 
       const sanitizedFolderId = (folderId ?? "root").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
       const query = `'${sanitizedFolderId}' in parents and trashed = false`;
@@ -1162,12 +1211,25 @@ export function registerIpcHandlers(): void {
       });
       if (pageToken) params.set("pageToken", pageToken);
 
-      const resp = await fetch(
-        `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        },
-      );
+      let resp: Response;
+      try {
+        resp = await fetch(
+          `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          },
+        );
+      } catch (err) {
+        // `fetch` rejecting without a status object is the canonical
+        // signal of transport failure (DNS, TCP, TLS). Map to soft-
+        // offline so the picker shows the same "Offline" affordance
+        // the connector status bar already shows, rather than a raw
+        // error banner.
+        getLogger().warn("gdrive listFiles fetch hit network failure", {
+          error: (err as Error).message,
+        });
+        return { nextPageToken: null, files: [], offline: true };
+      }
 
       if (!resp.ok) {
         const text = await resp.text();

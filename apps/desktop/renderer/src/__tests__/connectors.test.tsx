@@ -528,4 +528,38 @@ describe("DriveFilePicker", () => {
     expect(addBtn).toBeDisabled();
     expect(screen.getByText("0 files selected")).toBeInTheDocument();
   });
+
+  it(
+    "renders a network-specific Offline message when the IPC handler " +
+      "returns `offline: true` (regression: wave 15 ANALYSIS_0007)",
+    async () => {
+      // The IPC handler now catches `NetworkError` from the Drive API
+      // path (DNS, TCP, TLS, undici reject) and returns a soft-offline
+      // payload instead of throwing — the same contract the
+      // multi-provider sync wrapper uses. The picker must surface
+      // this specifically (not as "fetch failed" or "Auth expired"),
+      // because the user's actual problem is transport, not auth, and
+      // a wrong message would push them into a re-auth flow that
+      // cannot possibly succeed while the network is down.
+      mockApi.connectors.listDriveFiles.mockResolvedValue({
+        nextPageToken: null,
+        files: [],
+        offline: true,
+      });
+
+      render(<DriveFilePicker onSelect={vi.fn()} onCancel={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(
+            /You appear to be offline\. Check your network connection and try again\./,
+          ),
+        ).toBeInTheDocument();
+      });
+      // No raw error banner / auth-expired text should leak through —
+      // those would mislead the user into re-authenticating.
+      expect(screen.queryByText("Auth expired")).not.toBeInTheDocument();
+      expect(screen.queryByText(/fetch failed/i)).not.toBeInTheDocument();
+    },
+  );
 });
