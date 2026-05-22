@@ -7,7 +7,7 @@ use tessera_artifacts::manager::ArtifactManager;
 use tessera_artifacts::tasks::TaskStore;
 use tessera_audit::logger::AuditLogger;
 use tessera_citations::tracker::CitationTracker;
-use tessera_core::open_shared;
+use tessera_core::open_shared_with_key;
 use tessera_sources::manager::SourceManager;
 
 use crate::artifacts;
@@ -45,15 +45,49 @@ struct AppState {
     template_dir: String,
 }
 
+/// Initialise the bridge. `db_key`, when non-empty, is a 64-character
+/// hex string holding the raw SQLCipher key derived by
+/// `apps/desktop/electron/dbKey.ts` (random 32 bytes, persisted on disk
+/// wrapped by `safeStorage`). When `db_key` is empty or `None`, the
+/// database is opened unencrypted — this path exists for testing and
+/// for headless environments where Electron's `safeStorage` is
+/// unavailable and the renderer chose not to prompt for a fallback
+/// password (see WS10).
+///
+/// `napi-rs` 2.x maps `Option<String>` to a TypeScript `string | null | undefined`
+/// at the boundary, so callers can simply pass `null` or omit the
+/// argument in JS.
 #[napi]
-pub fn init_bridge(db_path: String, template_dir: String) -> napi::Result<()> {
+pub fn init_bridge(
+    db_path: String,
+    template_dir: String,
+    db_key: Option<String>,
+) -> napi::Result<()> {
     // Open a single shared `rusqlite::Connection` and hand `Arc` clones to
     // each store via `with_shared_conn`. This reduces the file-descriptor
     // / per-connection-cache footprint from 6 to 1 and ensures every
     // writer ultimately serialises on the same inner mutex, which keeps
     // SQLite's write semantics unchanged even though the outer per-store
     // mutexes used to be the only serialisation boundary.
-    let conn = open_shared(&db_path).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    //
+    // When `db_key` is `Some(hex)`, `open_shared_with_key` issues
+    // `PRAGMA key = "x'<hex>'"` immediately after open and, if the
+    // file is a pre-encryption plaintext DB, transparently migrates
+    // it via `sqlcipher_export`. See `tessera_core::db` for the full
+    // protocol including wrong-key behaviour and the file-header
+    // heuristic that drives the migration path.
+    //
+    // Treat an empty string from JS the same as `None`: the renderer
+    // sometimes serialises an unset key as `""` rather than `null`,
+    // and silently letting an empty key flow into `validate_hex_key`
+    // would produce a confusing "db key must be 64 hex characters,
+    // got 0" error instead of the intended "no encryption" path.
+    let key_ref = match db_key.as_deref() {
+        Some("") | None => None,
+        Some(k) => Some(k),
+    };
+    let conn = open_shared_with_key(&db_path, key_ref)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
     let source_manager = SourceManager::with_shared_conn(conn.clone(), &[])
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;

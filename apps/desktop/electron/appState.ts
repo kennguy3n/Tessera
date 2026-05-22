@@ -2,6 +2,7 @@ import { app } from "electron";
 import * as path from "path";
 import * as fs from "fs";
 import { ModelSidecar } from "./sidecar";
+import { getOrCreateDbKey, EncryptionUnavailableError } from "./dbKey";
 import type {
   AddCitationRequest,
   ArtifactInfo,
@@ -41,7 +42,17 @@ export type {
 } from "../shared/types";
 
 export interface NativeBridge {
-  initBridge(dbPath: string, templateDir: string): void;
+  /**
+   * Initialise the Rust-side workspace.
+   *
+   * `dbKey`, when provided, is the 64-character hex SQLCipher key
+   * derived by `electron/dbKey.ts`. The Rust side issues
+   * `PRAGMA key = "x'<hex>'"` on the connection and, on first launch
+   * against a pre-encryption plaintext DB, transparently migrates
+   * via `sqlcipher_export`. Pass `null` or omit to open the DB
+   * unencrypted (only used in fallback / test paths).
+   */
+  initBridge(dbPath: string, templateDir: string, dbKey?: string | null): void;
   bridgeAddLocalFolder(path: string): SourceInfo;
   bridgeAddLocalFile(path: string): SourceInfo;
   bridgeListSources(): SourceInfo[];
@@ -167,9 +178,55 @@ export function initAppState(): boolean {
   const dbPath = path.join(userData, "tessera.db");
   const templateDir = path.join(app.getAppPath(), "templates");
 
+  // Derive the SQLCipher key. Two-tier failure handling:
+  //
+  // - `EncryptionUnavailableError` means the platform itself can't
+  //   back the keyring (typically Linux headless without
+  //   gnome-keyring / kwallet5). The on-disk DB is either fresh or
+  //   was previously opened unencrypted, so falling through to an
+  //   unencrypted bridge is the right degradation path. WS10
+  //   replaces this with an interactive password prompt.
+  //
+  // - Any OTHER error from `getOrCreateDbKey` (zero-byte key file,
+  //   wrong decrypted length, decrypt failure from a userData dir
+  //   copied to a different machine) means the user previously had
+  //   encryption working and the key is now lost or corrupted. The
+  //   on-disk DB is almost certainly encrypted, so we MUST NOT fall
+  //   back to unencrypted mode — doing so would either fail noisily
+  //   at the next `CREATE TABLE` or, in the corner case where the
+  //   DB doesn't yet exist, silently regress to plaintext storage
+  //   without the user realising. Refuse to bring up the bridge
+  //   and surface the actionable recovery message (`db.key` corrupt
+  //   → restore from backup or accept data loss).
+  let dbKey: string | null = null;
   try {
-    bridge.initBridge(dbPath, templateDir);
-    console.log("[Tessera] Native bridge initialized:", dbPath);
+    dbKey = getOrCreateDbKey();
+  } catch (keyErr) {
+    if (keyErr instanceof EncryptionUnavailableError) {
+      console.warn(
+        "[Tessera] Database encryption unavailable — running in unencrypted mode.",
+        keyErr.message,
+      );
+    } else {
+      console.error(
+        "[Tessera] Database key is unrecoverable. Refusing to bring up the bridge to avoid corrupting an existing encrypted database.",
+        keyErr,
+      );
+      console.error(
+        "[Tessera] Recovery: restore <userData>/db.key from backup, or delete both <userData>/db.key and <userData>/tessera.db to start fresh (data loss).",
+      );
+      bridge = null;
+      return false;
+    }
+  }
+
+  try {
+    bridge.initBridge(dbPath, templateDir, dbKey);
+    console.log(
+      "[Tessera] Native bridge initialized:",
+      dbPath,
+      dbKey ? "(encrypted)" : "(UNENCRYPTED — keyring unavailable)",
+    );
   } catch (err) {
     console.error("[Tessera] Failed to initialize native bridge:", err);
     bridge = null;
