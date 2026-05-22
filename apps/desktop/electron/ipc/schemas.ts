@@ -255,6 +255,18 @@ export type GdriveSelectedItemsInput = z.infer<typeof GdriveSelectedItemsSchema>
 // `defaultPath`, hundreds of filter entries, etc.). Validating here
 // keeps the validation policy uniform across every IPC channel and
 // gives the OS dialog APIs a clean payload to work with.
+//
+// This is the ONE schema in this file that uses `.strict()` instead of
+// the default `.strip()`. Every other schema strips unknown keys so a
+// newer renderer can send forward-compat fields the older main process
+// doesn't know about without crashing; the Rust bridge's serde layer
+// rejects unknown fields downstream so stripping is safe. Here the
+// payload flows directly into Electron's native dialog API (Cocoa /
+// Win32 / GTK), each of which has provider-specific options we do NOT
+// want a renderer bug accidentally enabling. `.strict()` makes the
+// validator reject unknown keys outright. If you add a new field to
+// `SaveDialogOptions` in `shared/types.ts`, extend this schema in the
+// same commit — strict mode will reject the new field otherwise.
 export const SaveDialogOptionsSchema = z
   .object({
     title: z.string().max(512).optional(),
