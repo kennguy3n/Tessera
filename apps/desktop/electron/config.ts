@@ -282,6 +282,22 @@ export type AppConfigPartial = Omit<Partial<AppConfig>, "externalProvider"> & {
  * {@link ExternalProviderConfig} is merged field-by-field so
  * passing only a subset of provider fields is safe; anyone wanting
  * to fully replace the provider can pass the complete object.
+ *
+ * **Ownership transfer.** Any nested array or object reference in
+ * `partial` (e.g. `partial.ignorePatterns`, `partial.externalProvider`)
+ * that ends up in the new cached config is deep-frozen by
+ * `saveConfig`. Callers that need to keep mutating the original
+ * arrays/objects after the call should spread them at the call site:
+ *
+ *   updateConfig({ ignorePatterns: [...myList] })
+ *
+ * Today the only production callsite is `ipc/settings.ts`'s
+ * `settings:update` handler, where `partial` is already a fresh
+ * structured-clone copy of the renderer's payload — so the freeze
+ * side-effect is invisible to any retainable reference. This
+ * contract is here so a future main-process caller doing
+ * `updateConfig({ ignorePatterns: this.myArray })` knows that
+ * `this.myArray` will become frozen after the call.
  */
 export function updateConfig(partial: AppConfigPartial): void {
   const current = loadConfig();
