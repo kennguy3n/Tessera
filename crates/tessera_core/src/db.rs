@@ -515,7 +515,10 @@ mod tests {
         let count: i64 = conn
             .query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
             .expect("plaintext probe should succeed");
-        assert!(count >= 1, "expected sqlite_master to have at least one row");
+        assert!(
+            count >= 1,
+            "expected sqlite_master to have at least one row"
+        );
     }
 
     #[test]
