@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { Editor } from "@tiptap/core";
 import Document from "@tiptap/extension-document";
 import Paragraph from "@tiptap/extension-paragraph";
@@ -20,11 +20,33 @@ beforeAll(() => {
   }
 });
 
+// Each `new Editor({...})` boots ProseMirror's `DOMObserver`, which
+// schedules a `setTimeout` that accesses `document` ~50 ms later. If the
+// editor is not destroyed and vitest tears down the jsdom environment
+// between test files, the pending timer fires against the torn-down
+// document and surfaces as
+//   `ReferenceError: document is not defined`
+// at `EditorView.domSelection` — an unhandled error on Windows CI that
+// passes locally because the teardown ordering happens to fire the
+// timer before jsdom is gone. Tracking every editor in `liveEditors`
+// and calling `.destroy()` in `afterEach` cancels those timers
+// deterministically.
+const liveEditors: Editor[] = [];
+
 function makeEditor() {
-  return new Editor({
+  const editor = new Editor({
     extensions: [Document, Paragraph, Text, MermaidNode],
   });
+  liveEditors.push(editor);
+  return editor;
 }
+
+afterEach(() => {
+  while (liveEditors.length > 0) {
+    const editor = liveEditors.pop();
+    editor?.destroy();
+  }
+});
 
 describe("MermaidNode TipTap extension", () => {
   it("exposes the expected name and group", () => {
