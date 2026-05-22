@@ -249,6 +249,18 @@ export interface RuntimeApi {
 export interface DriveFileListResult {
   nextPageToken: string | null;
   files: ConnectorFileInfo[];
+  /**
+   * Set to `true` when the IPC handler caught a `NetworkError` while
+   * talking to Google Drive (DNS failure, TCP refused, fetch rejected
+   * without a status code, etc.) and degraded to a soft-offline
+   * response instead of throwing. The renderer uses this to show an
+   * "Offline" affordance in the file picker rather than a raw error
+   * banner that says "fetch failed", which would mislead the user
+   * into thinking their token expired or the Drive API is down. Same
+   * idea as the `"offline"` `ConnectorSyncResult.status` that the
+   * sync wrapper returns. See Devin Review wave 15 ANALYSIS_0007.
+   */
+  offline?: boolean;
 }
 
 export interface DriveSyncResult {
@@ -265,6 +277,32 @@ export interface ConnectorApi {
   listDriveFiles: (folderId?: string, pageToken?: string) => Promise<DriveFileListResult>;
   selectItems: (items: Array<{ id: string; name: string; mimeType: string }>) => Promise<Array<{ id: string; name: string; mimeType: string; selected: boolean }>>;
   syncDrive: (selectedFileIds?: string[]) => Promise<DriveSyncResult>;
+  /**
+   * Provider-agnostic sync (Phase 10). Used for OneDrive / Notion /
+   * Jira / Confluence / Figma — Google Drive still uses `syncDrive`
+   * because it accepts an explicit file selection from the picker.
+   * Returns the same `{ added, modified, removed, status }` shape.
+   * `status === "offline"` indicates the sync failed with a network
+   * error and the UI should show the offline badge.
+   */
+  sync: (provider: string) => Promise<DriveSyncResult>;
+  /**
+   * Resolve the loopback redirect URI the user must register in the
+   * provider's developer console. Source of truth is the OAuth config
+   * in `electron/ipc/connectors/providerOAuth.ts` — the renderer
+   * fetches it via IPC instead of hard-coding so the displayed URI
+   * cannot drift from the one the authorize request actually sends.
+   */
+  getRedirectUri: (provider: string) => Promise<string>;
+  /**
+   * Bulk-fetch the canonical redirect URI for every known provider
+   * in a single IPC round-trip. Used by `ConnectorsList` at mount
+   * time so the modal renders the authoritative value without
+   * carrying any per-provider hardcoded fallback. See Devin Review
+   * wave 20 ANALYSIS: "ConnectorsList hardcodes fallback redirectUri
+   * values that must sync with providerOAuth.ts config".
+   */
+  getAllRedirectUris: () => Promise<Record<string, string>>;
 }
 
 export interface DialogApi {

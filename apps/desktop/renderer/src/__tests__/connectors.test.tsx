@@ -11,6 +11,7 @@ const mockApi = {
     listDriveFiles: vi.fn(),
     selectItems: vi.fn(),
     authenticate: vi.fn(),
+    sync: vi.fn(),
   },
 };
 
@@ -131,6 +132,280 @@ describe("ConnectorStatus", () => {
       expect(screen.getByText("Disconnected")).toBeInTheDocument();
     });
   });
+
+  it(
+    "shows Offline badge when sync returns status === 'offline'",
+    async () => {
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "notion",
+        connected: true,
+        status: "connected",
+      });
+      mockApi.connectors.sync.mockResolvedValue({
+        added: 0,
+        modified: 0,
+        removed: 0,
+        status: "offline",
+      });
+
+      render(<ConnectorStatus provider="notion" />);
+      await waitFor(() => {
+        expect(screen.getByText("Sync Now")).toBeInTheDocument();
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText("Sync Now"));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Offline")).toBeInTheDocument();
+      });
+    },
+  );
+
+  it(
+    "clears the Offline badge on subsequent NON-network errors " +
+      "(regression: ANALYSIS_0003 — badge previously persisted)",
+    async () => {
+      // First sync returns "offline" → badge lights up.
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "notion",
+        connected: true,
+        status: "connected",
+      });
+      mockApi.connectors.sync
+        .mockResolvedValueOnce({
+          added: 0,
+          modified: 0,
+          removed: 0,
+          status: "offline",
+        })
+        // Second sync throws a NON-network error (e.g. NotConnectedError
+        // after the user revoked access in the provider UI).
+        .mockRejectedValueOnce(
+          new Error("notion is not connected — authenticate first"),
+        );
+
+      render(<ConnectorStatus provider="notion" />);
+      await waitFor(() => {
+        expect(screen.getByText("Sync Now")).toBeInTheDocument();
+      });
+
+      // First click → Offline.
+      await act(async () => {
+        fireEvent.click(screen.getByText("Sync Now"));
+      });
+      await waitFor(() => {
+        expect(screen.getByText("Offline")).toBeInTheDocument();
+      });
+
+      // Second click → throws a non-network error. Badge must clear
+      // back to "Connected" (or whatever the connected state shows),
+      // NOT stay on "Offline".
+      await act(async () => {
+        fireEvent.click(screen.getByText("Sync Now"));
+      });
+      await waitFor(() => {
+        expect(screen.queryByText("Offline")).not.toBeInTheDocument();
+        expect(screen.getByText("Connected")).toBeInTheDocument();
+      });
+    },
+  );
+
+  it(
+    "does NOT stamp 'Last sync' timestamp when the sync returned offline " +
+      "(regression: wave 9 ANALYSIS_0003 — misleading freshness)",
+    async () => {
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "notion",
+        connected: true,
+        status: "connected",
+      });
+      mockApi.connectors.sync.mockResolvedValue({
+        added: 0,
+        modified: 0,
+        removed: 0,
+        status: "offline",
+      });
+
+      render(<ConnectorStatus provider="notion" />);
+      await waitFor(() => {
+        expect(screen.getByText("Sync Now")).toBeInTheDocument();
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText("Sync Now"));
+      });
+
+      // Offline badge must light up …
+      await waitFor(() => {
+        expect(screen.getByText("Offline")).toBeInTheDocument();
+      });
+      // … but the misleading "Last sync: ..." line must NOT appear,
+      // because the attempt never actually transferred. The previous
+      // (buggy) code unconditionally stamped the timestamp regardless
+      // of result.status, telling the user the data was fresh when in
+      // fact this attempt failed at the network layer.
+      expect(screen.queryByText(/^Last sync:/)).not.toBeInTheDocument();
+    },
+  );
+
+  it(
+    "stamps 'Last sync' timestamp on a successful (non-offline) sync",
+    async () => {
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "notion",
+        connected: true,
+        status: "connected",
+      });
+      mockApi.connectors.sync.mockResolvedValue({
+        added: 1,
+        modified: 0,
+        removed: 0,
+        status: "synced",
+      });
+
+      render(<ConnectorStatus provider="notion" />);
+      await waitFor(() => {
+        expect(screen.getByText("Sync Now")).toBeInTheDocument();
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText("Sync Now"));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText(/^Last sync:/)).toBeInTheDocument();
+      });
+    },
+  );
+
+  it(
+    "clears the Offline badge on every thrown sync error, regardless " +
+      "of message shape, because `runConnectorSync` (electron side) " +
+      "is the single owner of network-error classification and " +
+      "converts every NetworkError to a `{ status: 'offline' }` " +
+      "return — anything that still throws to the renderer is by " +
+      "definition not a network error (rate limit, NotConnectedError, " +
+      "bridge fault). Previously the renderer reimplemented a weaker " +
+      "regex copy of `isNetworkError` here, which created a drift " +
+      "surface between renderer and main-process classifiers " +
+      "(wave 18 ANALYSIS_0005).",
+    async () => {
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "notion",
+        connected: true,
+        status: "connected",
+      });
+      // A network-shaped message reaching the renderer would be a bug
+      // in `runConnectorSync`, not in the renderer. We assert the
+      // renderer no longer guesses at it: the badge clears, the next
+      // poll surfaces whatever the real connector status is, and the
+      // user gets an accurate signal instead of a stale "Offline" left
+      // over from heuristics.
+      mockApi.connectors.sync.mockRejectedValue(
+        new Error("getaddrinfo ENOTFOUND api.notion.com"),
+      );
+
+      render(<ConnectorStatus provider="notion" />);
+      await waitFor(() => {
+        expect(screen.getByText("Sync Now")).toBeInTheDocument();
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText("Sync Now"));
+      });
+
+      // The badge must NOT light up from a thrown error: the contract
+      // is that offline state lives entirely on the structured
+      // `result.status === 'offline'` field returned by the main
+      // process. Asserting `queryByText` returns null guards against
+      // any future re-introduction of an in-renderer message classifier.
+      await waitFor(() => {
+        expect(screen.queryByText("Offline")).not.toBeInTheDocument();
+      });
+    },
+  );
+
+  it(
+    "clears stale Offline badge on disconnect so a reconnect cycle " +
+      "does not show Offline when the network is healthy " +
+      "(regression: wave 14 BUG_0001)",
+    async () => {
+      // Phase 1: connected + offline (sync failed due to network).
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "google_drive",
+        connected: true,
+        status: "connected",
+      });
+      mockApi.connectors.syncDrive.mockResolvedValue({
+        added: 0,
+        modified: 0,
+        removed: 0,
+        status: "offline",
+      });
+
+      render(<ConnectorStatus provider="google_drive" />);
+      await waitFor(() => {
+        expect(screen.getByText("Sync Now")).toBeInTheDocument();
+      });
+
+      // Sync → Offline badge appears.
+      await act(async () => {
+        fireEvent.click(screen.getByText("Sync Now"));
+      });
+      await waitFor(() => {
+        expect(screen.getByText("Offline")).toBeInTheDocument();
+      });
+
+      // Phase 2: user clicks Disconnect. After the call, pollStatus
+      // returns `connected: false` (the connector was torn down).
+      mockApi.connectors.disconnect.mockResolvedValue({
+        provider: "google_drive",
+        connected: false,
+        status: "disconnected",
+      });
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "google_drive",
+        connected: false,
+        status: "disconnected",
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText("Disconnect"));
+      });
+
+      // The badge text must now be "Disconnected" — NOT "Offline".
+      // Before the fix, `offline` was still `true` in React state,
+      // but with `connected: false` the ternary renders
+      // "Disconnected" anyway. The real bug manifests when `connected`
+      // flips back to `true` (reconnect) below.
+      await waitFor(() => {
+        expect(screen.getByText("Disconnected")).toBeInTheDocument();
+      });
+
+      // Phase 3: user reconnects (OAuth). Status now returns
+      // `connected: true` again. A stale `offline = true` would make
+      // the ternary evaluate to "Offline" even though the brand-new
+      // OAuth flow proves the network is healthy.
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "google_drive",
+        connected: true,
+        status: "connected",
+      });
+
+      // Trigger a re-poll by advancing the fake timer past the 10s
+      // interval. Use `act` to let React process state updates.
+      await act(async () => {
+        vi.advanceTimersByTime(11_000);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Connected")).toBeInTheDocument();
+        expect(screen.queryByText("Offline")).not.toBeInTheDocument();
+      });
+    },
+  );
 });
 
 describe("DriveFilePicker", () => {
@@ -273,4 +548,38 @@ describe("DriveFilePicker", () => {
     expect(addBtn).toBeDisabled();
     expect(screen.getByText("0 files selected")).toBeInTheDocument();
   });
+
+  it(
+    "renders a network-specific Offline message when the IPC handler " +
+      "returns `offline: true` (regression: wave 15 ANALYSIS_0007)",
+    async () => {
+      // The IPC handler now catches `NetworkError` from the Drive API
+      // path (DNS, TCP, TLS, undici reject) and returns a soft-offline
+      // payload instead of throwing — the same contract the
+      // multi-provider sync wrapper uses. The picker must surface
+      // this specifically (not as "fetch failed" or "Auth expired"),
+      // because the user's actual problem is transport, not auth, and
+      // a wrong message would push them into a re-auth flow that
+      // cannot possibly succeed while the network is down.
+      mockApi.connectors.listDriveFiles.mockResolvedValue({
+        nextPageToken: null,
+        files: [],
+        offline: true,
+      });
+
+      render(<DriveFilePicker onSelect={vi.fn()} onCancel={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(
+            /You appear to be offline\. Check your network connection and try again\./,
+          ),
+        ).toBeInTheDocument();
+      });
+      // No raw error banner / auth-expired text should leak through —
+      // those would mislead the user into re-authenticating.
+      expect(screen.queryByText("Auth expired")).not.toBeInTheDocument();
+      expect(screen.queryByText(/fetch failed/i)).not.toBeInTheDocument();
+    },
+  );
 });

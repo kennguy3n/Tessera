@@ -1,0 +1,129 @@
+/**
+ * In-memory rate limiter for expensive IPC operations (Phase 10 Task 23).
+ *
+ * Defense-in-depth against a buggy or compromised renderer that
+ * hammers a single channel. The renderer already debounces user
+ * input, so any traffic that trips a limit here represents a real
+ * fault (infinite loop, runaway component re-render, malicious code)
+ * and should fail fast rather than tie up the main process.
+ *
+ * Strategy: a simple token bucket per "channel:discriminator" key.
+ *   - `channel` is the IPC channel name.
+ *   - `discriminator` lets us scope limits per-provider (so
+ *     `connectors:sync:google_drive` and `connectors:sync:notion`
+ *     have independent budgets), per-job, etc.
+ *
+ * The bucket is refilled at `tokensPerInterval / intervalMs`. Calls
+ * that hit an empty bucket throw `RateLimitError`. We intentionally
+ * keep this in-process / in-memory — the limits are sized for
+ * "one user, one Electron window" and do not need persistence.
+ */
+
+export interface RateLimitConfig {
+  /** Number of tokens added to the bucket each interval. */
+  tokensPerInterval: number;
+  /** Interval in milliseconds. */
+  intervalMs: number;
+  /** Maximum tokens the bucket can hold. Defaults to tokensPerInterval. */
+  burst?: number;
+}
+
+interface Bucket {
+  tokens: number;
+  lastRefillMs: number;
+}
+
+export class RateLimitError extends Error {
+  constructor(
+    public readonly channel: string,
+    public readonly retryAfterMs: number,
+  ) {
+    super(
+      `Rate limit exceeded for ${channel} — retry in ${Math.ceil(
+        retryAfterMs / 1000,
+      )}s`,
+    );
+    this.name = "RateLimitError";
+  }
+}
+
+export class RateLimiter {
+  private buckets = new Map<string, Bucket>();
+  private now: () => number;
+
+  constructor(now: () => number = Date.now) {
+    this.now = now;
+  }
+
+  /**
+   * Attempt to consume one token from the bucket for the given key.
+   * Throws {@link RateLimitError} when the bucket is empty.
+   */
+  consume(key: string, config: RateLimitConfig): void {
+    const burst = config.burst ?? config.tokensPerInterval;
+    const t = this.now();
+    let bucket = this.buckets.get(key);
+    if (!bucket) {
+      bucket = { tokens: burst, lastRefillMs: t };
+      this.buckets.set(key, bucket);
+    } else {
+      const elapsed = t - bucket.lastRefillMs;
+      if (elapsed > 0) {
+        const refill = (elapsed / config.intervalMs) * config.tokensPerInterval;
+        bucket.tokens = Math.min(burst, bucket.tokens + refill);
+        bucket.lastRefillMs = t;
+      }
+    }
+    if (bucket.tokens < 1) {
+      const deficit = 1 - bucket.tokens;
+      const retryAfterMs =
+        (deficit / config.tokensPerInterval) * config.intervalMs;
+      throw new RateLimitError(key, retryAfterMs);
+    }
+    bucket.tokens -= 1;
+  }
+
+  /** Reset all buckets (used by tests). */
+  reset(): void {
+    this.buckets.clear();
+  }
+
+  /** Visible state for tests. */
+  inspect(key: string): { tokens: number; lastRefillMs: number } | undefined {
+    return this.buckets.get(key);
+  }
+}
+
+/**
+ * Default profile for the limits called out in the Phase 10 brief.
+ *
+ * - `connectors:authenticate` — 1 per 5s per provider.
+ * - `connectors:sync` — 1 per 30s per provider.
+ * - `runtime:downloadModel` — 1 concurrent (handled with a separate
+ *   in-flight flag in the runtime handler; rate limiter still bounds
+ *   *start* attempts to 1 every 5s as a safety net).
+ * - `sources:search` — 10 per second (debounce is in renderer, this
+ *   is defense-in-depth).
+ */
+export const RATE_LIMIT_PROFILES = {
+  "connectors:authenticate": {
+    tokensPerInterval: 1,
+    intervalMs: 5_000,
+  },
+  "connectors:sync": {
+    tokensPerInterval: 1,
+    intervalMs: 30_000,
+  },
+  "runtime:downloadModel": {
+    tokensPerInterval: 1,
+    intervalMs: 5_000,
+  },
+  "sources:search": {
+    tokensPerInterval: 10,
+    intervalMs: 1_000,
+    burst: 20,
+  },
+} satisfies Record<string, RateLimitConfig>;
+
+/** Shared default limiter instance used by the IPC layer. */
+export const defaultRateLimiter = new RateLimiter();

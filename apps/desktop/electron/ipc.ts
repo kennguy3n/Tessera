@@ -16,9 +16,20 @@ import {
 } from "./scheduler";
 import { isSafeExportPath } from "./exportPathSafety";
 import type { SettingsData, ModelStatus } from "./preload";
-import { startOAuthFlow, exchangeCodeForTokens, refreshAccessToken, revokeToken } from "./oauthServer";
 import * as tokenVault from "./tokenVault";
 import * as secretsVault from "./secretsVault";
+import {
+  getValidAccessTokenForProvider,
+  isNetworkError,
+  registerConnectorHandlers,
+  runConnectorSync,
+} from "./ipc/connectors/handlers";
+import type { ProviderId } from "./ipc/connectors/providerOAuth";
+import { createDefaultContext } from "./ipc/context";
+import { defaultRateLimiter, RateLimitError } from "./ipc/rateLimiter";
+import { assertOptionalString } from "./ipc/validate";
+import { getLogger } from "./logger";
+import { registerAutoUpdaterIpc } from "./autoUpdater";
 import {
   deleteCurrentModel,
   detectPlatformInfo,
@@ -44,36 +55,46 @@ import {
 // unit-tested without Electron.
 export type { ExtractedItem };
 
-async function getValidAccessToken(provider: string): Promise<string> {
-  const stored = tokenVault.getTokens(provider);
-  if (!stored) throw new Error(`${provider} not connected`);
-
-  if (Date.now() < stored.expiresAt - 60_000) {
-    return stored.accessToken;
+// Shared `IpcContext` used by both `registerConnectorHandlers` (the
+// unified multi-provider connector dispatcher in
+// `ipc/connectors/handlers.ts`) and the Drive-only legacy handlers
+// below (`connectors:gdrive:listFiles`, `connectors:gdrive:sync`). The
+// context exposes `tokenVault`, the rate-limiter, the logger, and the
+// userData directory so both paths share the SAME OAuth refresh logic
+// — see `getValidAccessToken` below. Captured lazily on first use so
+// `app.getPath('userData')` is only invoked after `ready`.
+let sharedConnectorContext: ReturnType<typeof createDefaultContext> | null = null;
+function getConnectorContext(): ReturnType<typeof createDefaultContext> {
+  if (!sharedConnectorContext) {
+    sharedConnectorContext = createDefaultContext(getLogger(), defaultRateLimiter);
   }
+  return sharedConnectorContext;
+}
 
-  if (!stored.refreshToken) {
-    tokenVault.deleteTokens(provider);
-    throw new Error(`${provider} token expired and no refresh token available — re-authenticate`);
-  }
-
-  const clientId = stored.clientId;
-  const clientSecret = stored.clientSecret;
-  if (!clientId || !clientSecret) {
-    tokenVault.deleteTokens(provider);
-    throw new Error("OAuth credentials missing from token store — re-authenticate");
-  }
-
-  const refreshed = await refreshAccessToken(clientId, clientSecret, stored.refreshToken);
-  tokenVault.storeTokens(provider, {
-    accessToken: refreshed.access_token,
-    refreshToken: refreshed.refresh_token ?? stored.refreshToken,
-    expiresAt: Date.now() + refreshed.expires_in * 1000,
-    scopes: stored.scopes,
-    clientId,
-    clientSecret,
-  });
-  return refreshed.access_token;
+/**
+ * Resolve a fresh access token for an OAuth provider, refreshing via
+ * the stored refresh token if needed. Delegates to the unified
+ * `getValidAccessTokenForProvider` helper in
+ * `ipc/connectors/handlers.ts` so the legacy `connectors:gdrive:*`
+ * channels and the new `connectors:authenticate / sync / disconnect`
+ * channels share a single source of truth for token refresh + the
+ * non-expiring-token short-circuit. Previously there were two
+ * independent copies of this logic (one in the legacy
+ * Google-Drive-only `oauthServer.ts`, one in `handlers.ts`) and they
+ * could silently drift; the legacy copy was deleted in wave 19
+ * ANALYSIS_0005 once the provider-agnostic dispatcher in
+ * `ipc/connectors/providerOAuth.ts` had subsumed every caller.
+ *
+ * The parameter is typed as `ProviderId` rather than `string` so the
+ * compiler refuses any caller that doesn't already have a validated
+ * provider id in scope. With `ProviderId` now derived from the
+ * `KNOWN_PROVIDERS` runtime allowlist (wave 16 ANALYSIS_0004), the
+ * legacy `as ProviderId` cast here is no longer necessary — the only
+ * call site below passes the string literal `"google_drive"`, which
+ * TypeScript narrows to `ProviderId` automatically.
+ */
+async function getValidAccessToken(provider: ProviderId): Promise<string> {
+  return getValidAccessTokenForProvider(getConnectorContext(), provider);
 }
 
 /**
@@ -1119,83 +1140,133 @@ export function registerIpcHandlers(): void {
   });
 
   // --- Connectors ---
+  //
+  // Phase 10 Task 17 / Tasks 1–6: the legacy gdrive-only handlers
+  // for `connectors:authenticate`, `connectors:disconnect`, and
+  // `connectors:status` have been replaced by a unified registrar
+  // that supports all six providers (Google Drive, OneDrive, Notion,
+  // Jira, Confluence, Figma). Provider-specific picker helpers like
+  // `connectors:gdrive:listFiles` are still defined inline below
+  // because they expose Drive-specific concepts (Drive folder ids,
+  // export MIME types) that don't generalise to the other providers.
+  // Use the *same* `IpcContext` the legacy `connectors:gdrive:*`
+  // handlers below use for `getValidAccessToken` — see
+  // `getConnectorContext()` near the top of this file. Sharing one
+  // context guarantees both code paths read/write the same
+  // `tokenVault`, log to the same logger, and rate-limit against the
+  // same in-memory bucket.
+  registerConnectorHandlers(getConnectorContext());
 
-  ipcMain.handle(
-    "connectors:authenticate",
-    async (_event, provider: string, clientId: string, clientSecret: string) => {
-      if (provider !== "google_drive") {
-        throw new Error(`Unsupported provider: ${provider}`);
-      }
-      const oauthResult = await startOAuthFlow(clientId, clientSecret);
-      const tokens = await exchangeCodeForTokens(
-        oauthResult.code,
-        clientId,
-        clientSecret,
-      );
-      tokenVault.storeTokens(provider, {
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token,
-        expiresAt: Date.now() + tokens.expires_in * 1000,
-        scopes: ["https://www.googleapis.com/auth/drive.readonly"],
-        clientId,
-        clientSecret,
-      });
-      return { provider, connected: true, status: "connected" };
-    },
-  );
-
-  ipcMain.handle("connectors:disconnect", async (_event, provider: string) => {
-    let stored: ReturnType<typeof tokenVault.getTokens> = null;
-    try {
-      stored = tokenVault.getTokens(provider);
-    } catch {
-      // Vault may be corrupted — proceed with cleanup anyway
-    }
-    if (stored) {
-      await revokeToken(stored.refreshToken ?? stored.accessToken).catch(() => {});
-    }
-    try { tokenVault.deleteTokens(provider); } catch { /* best effort */ }
-
-    // Clean up synced files and their source index entries
-    if (provider !== "google_drive") return { provider, connected: false, status: "disconnected" };
-    const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
-    const manifestPath = path.join(syncDir, "manifest.json");
-    try {
-      const manifestData = await fsp.readFile(manifestPath, "utf-8");
-      const manifest = JSON.parse(manifestData) as string[];
-      const bridge = getBridge();
-      if (bridge) {
-        const sources = bridge.bridgeListSources() as Array<{ id: string; path: string }>;
-        const syncedSet = new Set(manifest);
-        for (const src of sources) {
-          if (syncedSet.has(src.path)) {
-            try { bridge.bridgeRemoveSource(src.id); } catch { /* best effort */ }
-          }
-        }
-      }
-      await Promise.all(manifest.map((filePath) => fsp.unlink(filePath).catch(() => {})));
-      await fsp.unlink(manifestPath).catch(() => {});
-      await fsp.rm(syncDir, { recursive: true, force: true }).catch(() => {});
-    } catch {
-      // No manifest — nothing to clean up
-    }
-
-    return { provider, connected: false, status: "disconnected" };
-  });
-
-  ipcMain.handle("connectors:status", async (_event, provider: string) => {
-    const hasTokens = tokenVault.hasTokens(provider);
-    return {
-      provider,
-      connected: hasTokens,
-      status: hasTokens ? "connected" : "disconnected",
-    };
-  });
+  // Wave 18 ANALYSIS_0002: mirror the idempotent-registration guard
+  // that `registerConnectorHandlers` uses for its own channels.
+  // `registerIpcHandlers()` is called once per main-process startup
+  // today, but the test harness re-imports this module repeatedly and
+  // a future hot-reload path (or a contributor extracting these
+  // picker handlers into their own registrar — Block C Task 17 plans
+  // exactly that) would otherwise crash with
+  // `Attempted to register a second handler for 'connectors:gdrive:listFiles'`.
+  // Other inline handlers in this file lack the guard for historical
+  // reasons; defending the three gdrive picker channels here matches
+  // the pattern established by the new multi-provider dispatcher
+  // without churning the rest of the monolith ahead of Task 17.
+  for (const channel of [
+    "connectors:gdrive:listFiles",
+    "connectors:gdrive:selectItems",
+    "connectors:gdrive:sync",
+  ] as const) {
+    ipcMain.removeHandler(channel);
+  }
 
   ipcMain.handle(
     "connectors:gdrive:listFiles",
-    async (_event, folderId?: string, pageToken?: string) => {
-      const accessToken = await getValidAccessToken("google_drive");
+    async (_event, folderIdRaw?: unknown, pageTokenRaw?: unknown) => {
+      // Validate both renderer-supplied parameters before they touch
+      // any downstream code. Every other new IPC handler in this PR
+      // routes its inputs through the `assert*` helpers in
+      // `./ipc/validate.ts`, but this gdrive picker handler — preserved
+      // verbatim from the pre-PR monolith to minimise churn — was
+      // accepting the raw values directly. The pre-existing escape
+      // for the query interpolation (`replace(/\\/g, "\\\\")...`) is
+      // only narrow query-syntax defence and doesn't reject e.g. a
+      // 10MB string or a non-string value coerced via template
+      // literal. Routing through `assertOptionalString` (a) makes this
+      // handler consistent with the validation pattern the rest of
+      // the PR establishes, (b) caps the payload size at the shared
+      // `DEFAULT_MAX_STRING_LEN`, and (c) gives a descriptive throw
+      // instead of an opaque downstream error if the renderer sends
+      // garbage. The opaque-id check via `assertId` would be too
+      // strict for both inputs — Drive folder IDs ARE alphanumeric
+      // today but Drive's API accepts the literal token `root` and
+      // is otherwise free to widen the character set, and
+      // pageTokens are deliberately opaque server-generated cursors
+      // whose internal format we don't constrain. See Devin Review
+      // wave 22 ANALYSIS_0005.
+      const folderId =
+        assertOptionalString(folderIdRaw, "folderId", { maxLen: 256 }) ??
+        undefined;
+      const pageToken =
+        assertOptionalString(pageTokenRaw, "pageToken", { maxLen: 4096 }) ??
+        undefined;
+      // Resolve a fresh access token *before* consuming the
+      // rate-limit budget. Order matters: a disconnected user, an
+      // expired token, or a network glitch must surface as
+      // `NotConnectedError` / soft-offline without ever debiting the
+      // 10-per-second listFiles bucket. If the rate-limit consume
+      // ran first, ten user-driven retries against a stale auth
+      // state would exhaust the budget and the renderer would see
+      // "rate-limited" messaging stacked on top of the real
+      // (auth/network) error — exactly the pattern the wave-15
+      // ANALYSIS_0005 fix corrected in `runConnectorSync`
+      // (`handlers.ts:434-457`). See wave 16 ANALYSIS_0002.
+      let accessToken: string;
+      try {
+        accessToken = await getValidAccessToken("google_drive");
+      } catch (err) {
+        // A refresh-token exchange that fails because the host has
+        // no network must surface as soft-offline (same contract as
+        // `runConnectorSync`'s offline branch) rather than throwing
+        // a raw `fetch failed` that the picker would render as
+        // "Auth expired". Non-network refresh errors (4xx from
+        // Google, missing credentials, NotConnectedError) still
+        // propagate so the renderer prompts re-auth. See Devin
+        // Review wave 15 ANALYSIS_0007.
+        if (isNetworkError(err)) {
+          getLogger().warn(
+            "gdrive listFiles token refresh hit network failure",
+            { error: (err as Error).message },
+          );
+          return { nextPageToken: null, files: [], offline: true };
+        }
+        throw err;
+      }
+
+      // Defence-in-depth rate limit on Drive file-listing calls. The
+      // renderer's `DriveFilePicker` debounces user input, but a
+      // buggy effect loop or a misbehaving renderer-side test could
+      // still hammer this handler — and Drive's per-user quota
+      // (1,000 queries per 100 seconds) is global to the OAuth
+      // client, so once burned the next *legitimate* user has a
+      // degraded experience. 10/s is well above any human-driven
+      // navigation rate but tight enough to neutralise a runaway
+      // loop. The sync handler uses a much stricter 1/30s budget
+      // because each sync involves dozens of API calls; listFiles
+      // is one call per click, so the per-call limit can be looser.
+      // See Devin Review wave 15 ANALYSIS_0007.
+      try {
+        getConnectorContext().rateLimiter.consume(
+          "connectors:gdrive:listFiles",
+          { tokensPerInterval: 10, intervalMs: 1_000 },
+        );
+      } catch (err) {
+        if (err instanceof RateLimitError) {
+          throw new Error(
+            `Drive file listing is rate-limited. Wait ${Math.ceil(
+              err.retryAfterMs / 1000,
+            )}s and try again.`,
+          );
+        }
+        throw err;
+      }
 
       const sanitizedFolderId = (folderId ?? "root").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
       const query = `'${sanitizedFolderId}' in parents and trashed = false`;
@@ -1207,12 +1278,25 @@ export function registerIpcHandlers(): void {
       });
       if (pageToken) params.set("pageToken", pageToken);
 
-      const resp = await fetch(
-        `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        },
-      );
+      let resp: Response;
+      try {
+        resp = await fetch(
+          `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          },
+        );
+      } catch (err) {
+        // `fetch` rejecting without a status object is the canonical
+        // signal of transport failure (DNS, TCP, TLS). Map to soft-
+        // offline so the picker shows the same "Offline" affordance
+        // the connector status bar already shows, rather than a raw
+        // error banner.
+        getLogger().warn("gdrive listFiles fetch hit network failure", {
+          error: (err as Error).message,
+        });
+        return { nextPageToken: null, files: [], offline: true };
+      }
 
       if (!resp.ok) {
         const text = await resp.text();
@@ -1261,171 +1345,33 @@ export function registerIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle("connectors:gdrive:sync", async (_event, selectedFileIds?: string[]) => {
-    let added = 0;
-    let modified = 0;
-    let removed = 0;
-    const syncedPaths: string[] = [];
-    const failedFileIds: string[] = [];
-
-    // When no file IDs provided ("Sync Now" button), re-sync previously synced files from manifest
-    let resolvedFileIds = selectedFileIds;
-    if (!resolvedFileIds || resolvedFileIds.length === 0) {
-      const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
-      const manifestPath = path.join(syncDir, "manifest.json");
-      try {
-        const manifestData = await fsp.readFile(manifestPath, "utf-8");
-        const manifestPaths = JSON.parse(manifestData) as string[];
-        // Extract file IDs from paths: <syncDir>/<fileId><ext> → fileId
-        resolvedFileIds = manifestPaths.map((p) => {
-          const basename = path.basename(p);
-          const dotIdx = basename.indexOf(".");
-          return dotIdx > 0 ? basename.substring(0, dotIdx) : basename;
-        });
-      } catch {
-        // No manifest — nothing to re-sync
-        return { added: 0, modified: 0, removed: 0, status: "synced" };
-      }
-    }
-
-    if (resolvedFileIds && resolvedFileIds.length > 0) {
-      for (const fileId of resolvedFileIds) {
-        const accessToken = await getValidAccessToken("google_drive");
-        const metaResp = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,modifiedTime`,
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-        );
-        if (!metaResp.ok) {
-          // Only treat 404/410 as confirmed Drive-side deletion; skip transient errors
-          if (metaResp.status === 404 || metaResp.status === 410) {
-            failedFileIds.push(fileId);
-          }
-          continue;
-        }
-        const meta = (await metaResp.json()) as {
-          id: string;
-          name: string;
-          mimeType: string;
-          size?: string;
-          modifiedTime?: string;
-        };
-
-        if (meta.mimeType === "application/vnd.google-apps.folder") continue;
-
-        const MAX_SYNC_FILE_BYTES = 100 * 1024 * 1024; // 100 MB
-        const fileSize = Number(meta.size ?? "0");
-        if (fileSize > MAX_SYNC_FILE_BYTES) continue;
-
-        const exportMimeMap: Record<string, string> = {
-          "application/vnd.google-apps.document": "text/plain",
-          "application/vnd.google-apps.spreadsheet": "text/csv",
-          "application/vnd.google-apps.presentation": "text/plain",
-        };
-
-        let contentBytes: ArrayBuffer;
-        const exportMime = exportMimeMap[meta.mimeType];
-        if (exportMime) {
-          const exportResp = await fetch(
-            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`,
-            { headers: { Authorization: `Bearer ${accessToken}` } },
-          );
-          if (!exportResp.ok) continue;
-          contentBytes = await exportResp.arrayBuffer();
-        } else {
-          const dlResp = await fetch(
-            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
-            { headers: { Authorization: `Bearer ${accessToken}` } },
-          );
-          if (!dlResp.ok) continue;
-          contentBytes = await dlResp.arrayBuffer();
-        }
-
-        const bridge = getBridge();
-        if (bridge && contentBytes.byteLength > 0) {
-          const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
-          await fsp.mkdir(syncDir, { recursive: true });
-          const ext = exportMime
-            ? (exportMime === "text/csv" ? ".csv" : ".txt")
-            : (meta.name.includes(".") ? meta.name.substring(meta.name.lastIndexOf(".")) : "");
-          const localPath = path.join(syncDir, `${fileId}${ext}`);
-          await fsp.writeFile(localPath, Buffer.from(contentBytes));
-
-          try {
-            // Upsert: reindex existing source instead of creating duplicate
-            const sources = bridge.bridgeListSources();
-            const existing = sources.find((s) => s.path === localPath);
-            if (existing) {
-              bridge.bridgeReindexSource(existing.id);
-              modified++;
-            } else {
-              bridge.bridgeAddLocalFile(localPath);
-              added++;
-            }
-            syncedPaths.push(localPath);
-          } catch {
-            // Indexing failed — do not count
-          }
-        }
-      }
-    }
-
-    // Remove local files + source index entries for Drive-side deletions
-    if (failedFileIds.length > 0) {
-      const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
-      const bridge = getBridge();
-      for (const failedId of failedFileIds) {
-        // Find and remove matching local files (any extension)
-        try {
-          const entries = await fsp.readdir(syncDir);
-          for (const entry of entries) {
-            const dotIdx = entry.indexOf(".");
-            const entryId = dotIdx > 0 ? entry.substring(0, dotIdx) : entry;
-            if (entryId === failedId) {
-              const localPath = path.join(syncDir, entry);
-              if (bridge) {
-                const sources = bridge.bridgeListSources() as Array<{ id: string; path: string }>;
-                const src = sources.find((s) => s.path === localPath);
-                if (src) {
-                  try { bridge.bridgeRemoveSource(src.id); } catch { /* best effort */ }
-                }
-              }
-              await fsp.unlink(localPath).catch(() => {});
-              removed++;
-            }
-          }
-        } catch {
-          // syncDir may not exist
-        }
-      }
-    }
-
-    // Persist manifest with only currently-valid synced paths
-    const syncDir = path.join(app.getPath("userData"), "gdrive-sync");
-    const manifestPath = path.join(syncDir, "manifest.json");
-    let existingManifest: string[] = [];
-    try {
-      existingManifest = JSON.parse(await fsp.readFile(manifestPath, "utf-8")) as string[];
-    } catch {
-      // No existing manifest
-    }
-    // Remove stale paths for failed file IDs and add new synced paths
-    const failedIdSet = new Set(failedFileIds);
-    const surviving = existingManifest.filter((p) => {
-      const bn = path.basename(p);
-      const dotIdx = bn.indexOf(".");
-      const fileId = dotIdx > 0 ? bn.substring(0, dotIdx) : bn;
-      return !failedIdSet.has(fileId);
-    });
-    const merged = [...new Set([...surviving, ...syncedPaths])];
-    if (merged.length > 0) {
-      await fsp.mkdir(syncDir, { recursive: true });
-      await fsp.writeFile(manifestPath, JSON.stringify(merged));
-    } else {
-      await fsp.unlink(manifestPath).catch(() => {});
-    }
-
-    return { added, modified, removed, status: "synced" };
-  });
+  ipcMain.handle(
+    "connectors:gdrive:sync",
+    async (
+      _event,
+      selectedFileIds?: string[],
+    ): Promise<{
+      added: number;
+      modified: number;
+      removed: number;
+      status: string;
+    }> => {
+      // Delegate to the shared `runConnectorSync` wrapper that
+      // backs the new multi-provider `connectors:sync` channel. This
+      // keeps the legacy gdrive channel on the *same* rate limit and
+      // the *same* network-error -> `{ status: "offline" }` semantics
+      // every other provider gets. Without this wrapper:
+      //   - the renderer's `syncDrive()` path had no rate limit at
+      //     all (a buggy renderer could hammer the Drive API), and
+      //   - the new Offline badge introduced for the other providers
+      //     never lit up for Drive because network errors threw out
+      //     of this handler and were silently swallowed by
+      //     `ConnectorStatus`'s empty `catch {}`.
+      return runConnectorSync(getConnectorContext(), "google_drive", {
+        selectedFileIds,
+      });
+    },
+  );
 
   // --- Artifact Generation ---
 
@@ -1685,4 +1631,7 @@ export function registerIpcHandlers(): void {
       return result;
     },
   );
+
+  // --- Auto-update (electron-updater) ---
+  registerAutoUpdaterIpc();
 }

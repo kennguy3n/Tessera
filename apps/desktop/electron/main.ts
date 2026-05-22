@@ -6,6 +6,7 @@ import { initAppState } from "./appState";
 import { detectComputeBackends } from "./modelManagement";
 import { startScheduler, stopScheduler } from "./scheduler";
 import { getLogger } from "./logger";
+import { initAutoUpdater } from "./autoUpdater";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -112,6 +113,10 @@ app.whenReady().then(() => {
   // renderer). See `scheduler.ts` for the run-control protocol.
   startScheduler();
   createWindow();
+  // Kick off the auto-update check. No-op in dev (app.isPackaged ==
+  // false) and silently disabled when the user has unchecked
+  // "Automatically check for updates" in Settings.
+  initAutoUpdater();
 
   // Warm the hardware-detection cache off the critical path. The first
   // call to `detectComputeBackends()` issues `execFileSync` probes for

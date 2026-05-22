@@ -1,41 +1,27 @@
-export interface OAuthConfig {
-  clientId: string;
-  redirectUri: string;
-  scope: string;
-  authUrl: string;
-  tokenUrl: string;
-}
-
-export interface OAuthToken {
-  accessToken: string;
-  refreshToken: string | null;
-  expiresAt: number;
-  tokenType: string;
-}
-
-export interface OAuthProvider {
-  name: string;
-  config: OAuthConfig;
-  authorize(): Promise<OAuthToken>;
-  refresh(token: OAuthToken): Promise<OAuthToken>;
-  revoke(token: OAuthToken): Promise<void>;
-}
-
-export function buildAuthorizationUrl(config: OAuthConfig, state: string): string {
-  const params = new URLSearchParams({
-    client_id: config.clientId,
-    redirect_uri: config.redirectUri,
-    scope: config.scope,
-    response_type: "code",
-    state,
-  });
-  return `${config.authUrl}?${params.toString()}`;
-}
-
-export function isTokenExpired(token: OAuthToken): boolean {
-  return Date.now() >= token.expiresAt - 60_000;
-}
-
+/**
+ * Cryptographically-strong random state value for OAuth 2.0 CSRF
+ * protection. 32 random bytes encoded as 64 hex characters (256 bits
+ * of entropy — well above the RFC 6749 §10.12 recommendation of "at
+ * least 128 bits").
+ *
+ * This is the only export this file still owns. The rest of the
+ * historical OAuth surface — `OAuthConfig`, `OAuthToken`,
+ * `OAuthProvider`, `buildAuthorizationUrl`, `isTokenExpired` — used
+ * to live here and was consumed exclusively by the legacy
+ * `oauthServer.ts` Google-Drive-only loopback server. That file was
+ * superseded by the provider-agnostic dispatcher in
+ * `ipc/connectors/providerOAuth.ts` during the Block A wiring of
+ * Phase 10. That module owns the loopback redirect server, the
+ * authorization-URL construction, the token exchange, and the
+ * refresh flow — replacing every export the deleted file used to
+ * consume. With the legacy file deleted, the other exports here
+ * became unreachable — every grep across the repo confirmed they
+ * were not imported anywhere — so they were pruned in the same
+ * cleanup. Keeping this file as a one-function module rather than
+ * inlining `generateState()` into its single caller preserves a
+ * grep-able home for the named helper. See Devin Review wave 19
+ * ANALYSIS_0005.
+ */
 export function generateState(): string {
   const array = new Uint8Array(32);
   crypto.getRandomValues(array);
