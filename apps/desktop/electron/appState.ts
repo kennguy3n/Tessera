@@ -122,11 +122,23 @@ let bridge: NativeBridge | null = null;
 let modelSidecar: ModelSidecar | null = null;
 
 function resolveNativeAddon(): NativeBridge | null {
+  // The compiled main bundle now lives at `dist-electron/electron/main.js`
+  // (Workstream 1 sibling-rooted layout — see `tsconfig.electron.json`),
+  // so `__dirname` at runtime is `<desktop>/dist-electron/electron/`.
+  // The `__dirname`-relative fallbacks below compensate by going up
+  // one more level than they did before; without this they'd resolve
+  // inside `dist-electron/` itself (which never contains a sibling
+  // `native/` directory) and degenerate into dead paths.
   const possiblePaths = [
     path.join(app.getAppPath(), "native", "tessera_bridge.node"),
     path.join(app.getAppPath(), "..", "native", "tessera_bridge.node"),
-    path.join(__dirname, "..", "native", "tessera_bridge.node"),
+    path.join(__dirname, "..", "..", "native", "tessera_bridge.node"),
+    // Sibling-of-main: build scripts that drop the .node binary next
+    // to `main.js` end up at `dist-electron/electron/<binary>`.
     path.join(__dirname, "tessera_bridge.node"),
+    // Legacy sibling-of-`dist-electron`: covers the historical layout
+    // where main.js was at `dist-electron/main.js`.
+    path.join(__dirname, "..", "tessera_bridge.node"),
   ];
 
   for (const addonPath of possiblePaths) {
@@ -178,6 +190,11 @@ function resolveSidecarBinary(): string {
   const binaryName = `llama-server${ext}`;
   // electron-builder copies sidecars/llama-server/ into process.resourcesPath/sidecars/llama-server
   // for packaged builds. In dev we look relative to the repo root.
+  // `__dirname` at runtime is `<desktop>/dist-electron/electron/` (see
+  // the comment in `resolveNativeAddon` above), so the relative paths
+  // below climb two extra levels to land at `<desktop>/` and
+  // `<repo-root>/` respectively — without the bump they'd silently
+  // resolve inside `dist-electron/`.
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
     .resourcesPath;
   const possiblePaths = [
@@ -185,8 +202,18 @@ function resolveSidecarBinary(): string {
       path.join(resourcesPath, "sidecars", "llama-server", binaryName),
     path.join(app.getAppPath(), "sidecars", "llama-server", binaryName),
     path.join(app.getAppPath(), "..", "sidecars", "llama-server", binaryName),
-    path.join(__dirname, "..", "sidecars", "llama-server", binaryName),
+    // `<desktop>/sidecars/...` (was previously the first `__dirname` entry).
     path.join(__dirname, "..", "..", "sidecars", "llama-server", binaryName),
+    // `<repo-root>/sidecars/...` (was previously the second entry).
+    path.join(
+      __dirname,
+      "..",
+      "..",
+      "..",
+      "sidecars",
+      "llama-server",
+      binaryName,
+    ),
   ].filter((p): p is string => typeof p === "string");
   for (const p of possiblePaths) {
     if (fs.existsSync(p)) return p;
