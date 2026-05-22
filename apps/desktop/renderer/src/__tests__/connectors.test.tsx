@@ -165,7 +165,7 @@ describe("ConnectorStatus", () => {
 
   it(
     "clears the Offline badge on subsequent NON-network errors " +
-      "(regression: ANALYSIS_0003 — badge previously persisted)",
+      "(regression: badge previously persisted across non-network errors)",
     async () => {
       // First sync returns "offline" → badge lights up.
       mockApi.connectors.status.mockResolvedValue({
@@ -214,7 +214,7 @@ describe("ConnectorStatus", () => {
 
   it(
     "does NOT stamp 'Last sync' timestamp when the sync returned offline " +
-      "(regression: wave 9 ANALYSIS_0003 — misleading freshness)",
+      "(regression: misleading freshness for offline syncs)",
     async () => {
       mockApi.connectors.status.mockResolvedValue({
         provider: "notion",
@@ -289,8 +289,7 @@ describe("ConnectorStatus", () => {
       "definition not a network error (rate limit, NotConnectedError, " +
       "bridge fault). Previously the renderer reimplemented a weaker " +
       "regex copy of `isNetworkError` here, which created a drift " +
-      "surface between renderer and main-process classifiers " +
-      "(wave 18 ANALYSIS_0005).",
+      "surface between renderer and main-process classifiers.",
     async () => {
       mockApi.connectors.status.mockResolvedValue({
         provider: "notion",
@@ -330,7 +329,7 @@ describe("ConnectorStatus", () => {
   it(
     "clears stale Offline badge on disconnect so a reconnect cycle " +
       "does not show Offline when the network is healthy " +
-      "(regression: wave 14 BUG_0001)",
+      "(regression: stale-badge across reconnect)",
     async () => {
       // Phase 1: connected + offline (sync failed due to network).
       mockApi.connectors.status.mockResolvedValue({
@@ -551,7 +550,7 @@ describe("DriveFilePicker", () => {
 
   it(
     "renders a network-specific Offline message when the IPC handler " +
-      "returns `offline: true` (regression: wave 15 ANALYSIS_0007)",
+      "returns `offline: true` (regression: offline status propagation)",
     async () => {
       // The IPC handler now catches `NetworkError` from the Drive API
       // path (DNS, TCP, TLS, undici reject) and returns a soft-offline

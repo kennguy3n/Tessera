@@ -50,7 +50,7 @@ describe("isNetworkError", () => {
 
   it(
     "stores `cause` on the standard ES2022 Error.cause slot (not a " +
-      "class-owned shadow field) (regression: )",
+      "class-owned shadow field)",
     () => {
       // The original `NetworkError` declared its own `readonly cause`
       // field and assigned it in the constructor body. That set the
@@ -83,8 +83,7 @@ describe("isNetworkError", () => {
   );
 
   it(
-    "omits `cause` entirely when no options bag is provided " +
-      "(regression: )",
+    "omits `cause` entirely when no options bag is provided",
     () => {
       // Calling `new NetworkError("msg")` with no options must NOT
       // install a `cause: undefined` own property — the previous
@@ -122,13 +121,13 @@ describe("isNetworkError", () => {
     ["ENETUNREACH"],
     ["EHOSTUNREACH"],
     ["EPIPE"],
-    // undici (Node 18+ fetch) — ANALYSIS_0008
+    // undici (Node 18+ fetch).
     ["UND_ERR_SOCKET"],
     ["UND_ERR_CONNECT_TIMEOUT"],
     ["UND_ERR_HEADERS_TIMEOUT"],
     ["UND_ERR_BODY_TIMEOUT"],
     ["UND_ERR_REQ_RETRY"],
-    // Node fetch / Electron — ANALYSIS_0008
+    // Node fetch / Electron.
     ["ERR_NETWORK"],
     ["ERR_NETWORK_CHANGED"],
     ["ERR_NETWORK_IO_SUSPENDED"],

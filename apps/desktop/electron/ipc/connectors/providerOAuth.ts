@@ -585,11 +585,8 @@ export async function exchangeAuthorizationCode(
  *   - Figma: the modern OAuth v2 flow at
  *     `api.figma.com/v1/oauth/token` returns and accepts refresh
  *     tokens (`supportsRefresh: true`). The early-2024 "classic"
- *     endpoint that did not support refresh has been retired; the
- *     wave-20 doc-comment update brings this comment back in line
- *     with the live config.
- *     "providerOAuth.ts refreshProviderToken doc says Figma does not
- *     support refresh, but config sets supportsRefresh: true".
+ *     endpoint that did not support refresh has been retired; this
+ *     comment reflects the live config.
  *
  * Callers must check `config.supportsRefresh` before invoking this;
  * the early `if (!config.supportsRefresh) throw` below is a guard,

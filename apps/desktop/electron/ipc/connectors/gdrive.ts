@@ -138,7 +138,7 @@ export async function syncGoogleDrive(ctx: {
   // quota and incrementing `added` again for files the bridge already
   // tracks. This brings gdrive into parity with the other five
   // connectors (Notion, Jira, Confluence, Figma, OneDrive) that were
-  // built with this defense-in-depth pattern from the start. See
+  // built with this defense-in-depth pattern from the start.
   try {
     // Materialise the source-by-path index inside the try block so an
     // unlikely `bridge.listSources()` throw is still caught by the
@@ -167,8 +167,9 @@ export async function syncGoogleDrive(ctx: {
         // socket to the keep-alive pool immediately. Without this, an
         // unconsumed body keeps the socket pinned until GC reaps the
         // Response — noticeable when many files in a single sync are
-        // 404/410/5xx (e.g. a large carry-forward retry queue). See
-        // here for architectural symmetry).
+        // 404/410/5xx (e.g. a large carry-forward retry queue). The
+        // export and download branches below drain on their non-ok
+        // paths for the same reason.
         await metaResp.text().catch(() => undefined);
         continue;
       }
@@ -187,7 +188,6 @@ export async function syncGoogleDrive(ctx: {
         if (!exportResp.ok) {
           // Drain body before skipping so the underlying socket is
           // returned to the pool immediately.
-          // 14 ANALYSIS_0003.
           await exportResp.text().catch(() => undefined);
           continue;
         }
@@ -262,7 +262,7 @@ export async function syncGoogleDrive(ctx: {
     // Persist manifest with whatever progress we have. The original
     // error (if any) is wrapped in a fresh try/catch so a manifest-
     // write failure (e.g. disk full) doesn't shadow the underlying
-    // network or auth error the caller actually needs to see. See
+    // network or auth error the caller actually needs to see.
     try {
       const existingManifest = await readGdriveManifest(ctx.userDataDir);
       const failedIdSet = new Set(failedFileIds);

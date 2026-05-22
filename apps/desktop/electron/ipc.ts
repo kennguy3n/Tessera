@@ -1100,12 +1100,11 @@ export function registerIpcHandlers(): void {
     //       EPERM/EBUSY.
     // There is intentionally no separate `runtime:swapModel` channel:
     // `downloadModel` already handles both fresh-install and swap, so a
-    // second handler that called the same function only invited drift
-    // .
+    // second handler that called the same function only invited drift.
     // The "already installed AND file on disk" check is delegated to
     // `isModelInstalled` so this IPC fast-path and the
     // `downloadModelLocked` fast-path can't drift in what counts as
-    // "installed" . There is still a
+    // "installed". There is still a
     // window between this check and the actual download in which a
     // concurrent caller could move the file out from under us, but
     // (a) `downloadModelLocked` re-checks under the per-userDataDir
@@ -1438,8 +1437,8 @@ export function registerIpcHandlers(): void {
   // object from the renderer and re-serialize here, so the renderer sees
   // a normal IPC signature while the bridge keeps its strict Rust
   // deserialization (with `parse_opt_rfc3339` / `parse_opt_source_id`
-  // validation surfacing parse errors as IPC rejections — see
-  // tessera_bridge::tasks BUG_0001 regression tests).
+  // validation surfacing parse errors as IPC rejections — see the
+  // typed-parse regression tests in `tessera_bridge::tasks`).
   ipcMain.handle(
     "tasks:create",
     async (

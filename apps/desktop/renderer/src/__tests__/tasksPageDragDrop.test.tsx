@@ -7,12 +7,12 @@
  *    in the new order (dropped card last).
  * 2. Cross-column drop calls `tasks.update` to change the status, then
  *    `tasks.reorder` with the target column's ids in the new order
- *    (dropped card last) — this is the BUG_0001 regression: a stale
- *    `position` value from the source column would otherwise place the
- *    moved card at an arbitrary visible position.
+ *    (dropped card last) — this guards against the stale-position
+ *    regression where a `position` value from the source column would
+ *    otherwise place the moved card at an arbitrary visible position.
  * 3. Hovering over a column repeatedly does NOT cause the `onDragOver`
  *    handler to be recreated — verified indirectly by asserting that the
- *    same handler reference is used across renders (ANALYSIS_0004
+ *    same handler reference is used across renders (handler-identity
  *    regression).
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";

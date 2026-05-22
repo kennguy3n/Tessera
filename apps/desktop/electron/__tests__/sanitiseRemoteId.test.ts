@@ -1,6 +1,5 @@
 /**
- * Regression tests for `sanitiseRemoteId` collision-resistance
- * .
+ * Regression tests for `sanitiseRemoteId` collision-resistance.
  *
  * The bug this guards against: ids that differ only in *unsafe*
  * characters (e.g. `page:123` vs. `page/123`) used to collide to the

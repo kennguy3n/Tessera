@@ -226,8 +226,7 @@ export async function syncOneDrive(
   ctx: {
     accessToken: string;
     /** Just-in-time refresh hook — called per delta page so a long
-     *  sync does NOT outlive the access token's lifetime.
-     *  Review wave 13 BUG_0001 / ANALYSIS_0007. */
+     *  sync does NOT outlive the access token's lifetime. */
     getAccessToken?: () => Promise<string>;
     userDataDir: string;
     bridge: OneDriveBridgeHooks;
@@ -260,10 +259,8 @@ export async function syncOneDrive(
   // is inside the try block, after assignment). The cache lets the
   // hot loop's existence check be O(1) instead of the previous
   // `bridge.listSources().find(...)` per-item scan
-  // (O(deltaItems × sources)). Brings OneDrive into parity with
-  // notion.ts/jira.ts/confluence.ts/figma.ts/gdrive.ts which all
-  // received this treatment in wave 20 — OneDrive was missed in that
-  // pass and is the wave-21 follow-up.
+  // (O(deltaItems × sources)). Matches the same O(1) cache pattern
+  // used by notion.ts/jira.ts/confluence.ts/figma.ts/gdrive.ts.
   let sourceIndex!: SourcePathIndex;
 
   // Wrap the pagination loop in try/finally so progress is *always*
@@ -291,7 +288,9 @@ export async function syncOneDrive(
     for (let safety = 0; safety < 500; safety += 1) {
       // Refresh-on-demand at the top of every page. OneDrive uses
       // server-driven pagination via `@odata.nextLink`; a workspace
-      // with deep history can paginate for tens of minutes. See
+      // with deep history can paginate for tens of minutes — long
+      // enough for a single static access token to expire mid-loop
+      // and 401 the remainder of the sync.
       const accessToken = await resolveAccessToken(ctx);
       const page = await pullDeltaPage(url, accessToken);
       for (const item of page.items) {
@@ -335,16 +334,13 @@ export async function syncOneDrive(
         // That's a real cost on large workspaces.
         // Re-throwing on `isNetworkError(err)` preserves the offline
         // detection contract owned by `runConnectorSync`'s outer catch
-        // at `handlers.ts:476` — same posture every other connector
-        // (notion.ts:508/563, figma.ts:453/594/610, confluence.ts:434)
-        // has applied since wave 19. Non-network errors (the filesystem
-        // and arrayBuffer cases above) get the same treatment as the
-        // existing `!resp.ok` branch immediately below: skip the file
-        // and continue. The next sync's delta token will re-surface
-        // any item whose contents the upstream still considers
-        // changed, so a transient ENOSPC doesn't permanently shadow
-        // the file.
-        // (onedrive.ts:166-185).
+        // — the same posture every other connector applies. Non-network
+        // errors (the filesystem and arrayBuffer cases above) get the
+        // same treatment as the existing `!resp.ok` branch immediately
+        // below: skip the file and continue. The next sync's delta
+        // token will re-surface any item whose contents the upstream
+        // still considers changed, so a transient ENOSPC doesn't
+        // permanently shadow the file.
         let ok: boolean;
         try {
           ok = await downloadItem(item, accessToken, localPath);

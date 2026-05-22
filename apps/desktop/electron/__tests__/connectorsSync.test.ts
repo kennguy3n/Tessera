@@ -1187,7 +1187,7 @@ describe("Confluence sync", () => {
     "caps per-page write-failure retries at FAILED_RETRY_MAX_ATTEMPTS — " +
       "a permanently-failing page stops burning one API call per sync " +
       "after the cap, then the budget resets when upstream version " +
-      "advances (wave 22 ANALYSIS_0004 regression guard)",
+      "advances (failure-cap regression guard)",
     async () => {
       const accessibleResp = {
         ok: true,
@@ -1549,7 +1549,7 @@ describe("Figma sync", () => {
 
   it(
     "persists state + manifest even when getComments rejects mid-pass " +
-      "(regression: BUG_0001 — uncaught fetch rejection aborted whole sync)",
+      "(regression: uncaught fetch rejection aborted whole sync)",
     async () => {
       // Two files, both /v1/files/{key} return OK, but the SECOND
       // file's /v1/files/{key}/comments call rejects with a transport
@@ -1674,7 +1674,7 @@ describe("Figma sync", () => {
       ) as { failedRetries: Array<{ remoteId: string; failureCount: number }> };
       expect(state.failedRetries).toHaveLength(1);
       expect(state.failedRetries[0].remoteId).toBe("transiently-broken");
-      // With the BUG_0001 fix, the entry stays in failedThisPass only
+      // With the carry-forward fix, the entry stays in failedThisPass only
       // (NOT also in succeededIds), so nextFailedRetryQueue finds the
       // previous entry and bumps the count: 2 → 3. Without the fix, the
       // count would reset to 1 on every pass and the item would be
@@ -1686,7 +1686,7 @@ describe("Figma sync", () => {
   it(
     "persists the watermark + manifest even when bridge.listSources " +
       "throws at the top of the sync — try/finally wraps the source-by-" +
-      "path index construction (wave 20 ANALYSIS: O(n²) listSources() " +
+      "path index construction (O(n²) listSources() " +
       "collapse) so an unexpected bridge crash at the very start of " +
       "iteration still triggers the saveState + writeManifest cleanup " +
       "(regression: try/finally " +
@@ -1705,8 +1705,8 @@ describe("Figma sync", () => {
         "utf8",
       );
 
-      // Throw on the 1st (and only) `bridge.listSources` call. Wave 20
-      // moved the call inside the outer try block so this crash MUST
+      // Throw on the 1st (and only) `bridge.listSources` call. The
+      // call is inside the outer try block so this crash MUST
       // still trigger the saveState + writeManifest cleanup — the
       // property under test. Before the fix, the call lived above
       // the try block and a listSources crash would skip cleanup
@@ -1755,7 +1755,7 @@ describe("Figma sync", () => {
   it(
     "re-throws NetworkError from the per-team catch instead of " +
       "silently `continue`-ing — same architectural contract as the " +
-      "Confluence per-space catch (wave 19 ANALYSIS_0001). Without " +
+      "Confluence per-space catch. Without " +
       "this guard, a wifi drop during a multi-team Phase-2 scan would " +
       "leave every remaining team un-listed AND return " +
       "`{ status: 'synced', added: 0 }` to the renderer instead of " +
@@ -1805,7 +1805,7 @@ describe("Jira sync — JQL watermark sanitisation", () => {
 
   it(
     "drops a malformed watermark from state.json instead of interpolating " +
-      "it into JQL (regression: ANALYSIS_0004 — JQL injection vector)",
+      "it into JQL (regression: JQL injection vector)",
     async () => {
       // Pre-seed state.json with a malformed watermark containing a `"`
       // — the kind of value that would otherwise close the JQL string
@@ -1910,8 +1910,7 @@ describe("Jira sync — JQL watermark sanitisation", () => {
 
   it(
     "corrupted watermark + non-empty retries degrades to a full scan " +
-      "(not a retry-only JQL) so newly-updated issues are not missed " +
-      "(regression: )",
+      "(not a retry-only JQL) so newly-updated issues are not missed",
     async () => {
       const syncDir = path.join(dir, "jira-sync");
       await fsp.mkdir(syncDir, { recursive: true });
@@ -2110,7 +2109,7 @@ describe(
     it(
       "preserves per-page versions for pages in a space whose listing " +
         "threw, so the next sync does not re-process every page from " +
-        "scratch (regression: )",
+        "scratch",
       async () => {
         // ---- First sync: two spaces, four pages, all listed successfully ----
         fetchMock
@@ -2190,7 +2189,7 @@ describe(
         expect(r1.modified).toBe(0);
 
         // After first sync, state must record both pageVersions AND
-        // pageSpaces — the wave-9 schema enrichment.
+        // pageSpaces from the schema enrichment.
         const state1 = JSON.parse(
           await fsp.readFile(
             path.join(dir, "confluence-sync", "state.json"),
@@ -2461,7 +2460,7 @@ describe(
 
     it(
       "carries forward legacy state entries that lack a recorded " +
-        "space id (pre-wave-9 state.json migration)",
+        "space id (state.json migration from pre-pageSpaces format)",
       async () => {
         // Legacy state: pageVersions populated, pageSpaces missing.
         // The carry-forward must default to "unknown" → keep the entry
@@ -2681,10 +2680,9 @@ describe("Google Drive sync — manifest cleanup", () => {
 });
 
 // =================================================================
-// Wave 13 — token refresh + cascading-deletion regression tests
+// Token refresh + cascading-deletion regression tests
 // =================================================================
-// These cover the four real bugs flagged by
-// commit 707f9f7:
+// These cover the four real bugs introduced in commit 707f9f7:
 //   the connector's hot loop used a
 //   single pre-resolved access token, so any sync that ran longer
 //   than the OAuth token's remaining lifetime (Google issues 1h
@@ -2704,7 +2702,7 @@ describe("Google Drive sync — manifest cleanup", () => {
 //   the local file, decrement the manifest entry, increment
 //   `removed`. Tests below verify all three.
 
-describe("Wave 13 — token refresh + cascading deletions", () => {
+describe("Token refresh + cascading deletions", () => {
   const original = globalThis.fetch;
   let fetchMock: ReturnType<typeof makeFetchMock>;
   let dir: string;
@@ -2713,7 +2711,7 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
   beforeEach(async () => {
     fetchMock = makeFetchMock();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
-    dir = await tmpDir("wave13");
+    dir = await tmpDir("token-refresh-cascading");
     bridge = new FakeBridge();
   });
   afterEach(async () => {
@@ -2730,7 +2728,7 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
   // ---------------------------------------------------------------
   it(
     "gdrive calls getAccessToken per-iteration so mid-sync token " +
-      "refresh transparently kicks in (regression: )",
+      "refresh transparently kicks in",
     async () => {
       const tokens = ["T1", "T2", "T3", "T4"];
       let callCount = 0;
@@ -2812,7 +2810,7 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
   // ---------------------------------------------------------------
   it(
     "onedrive calls getAccessToken per delta page (regression: " +
-      "BUG_0001 cross-cutting variant)",
+      "static token outlived the OAuth lifetime mid-sync)",
     async () => {
       const { syncOneDrive } = await import("../ipc/connectors/onedrive");
       const getAccessToken = vi.fn(async () => "REFRESHED");
@@ -2854,7 +2852,7 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
   // ---------------------------------------------------------------
   it(
     "figma cascades upstream-deletion 404 to local file + bridge " +
-      "source (regression: )",
+      "source",
     async () => {
       // Pre-seed manifest + bridge so we have something to delete.
       const figmaDir = path.join(dir, "figma-sync");
@@ -2934,7 +2932,7 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
   // ---------------------------------------------------------------
   it(
     "notion cascades upstream-deletion 404 to local file + bridge " +
-      "source (regression: )",
+      "source",
     async () => {
       const notionDir = path.join(dir, "notion-sync");
       await fsp.mkdir(notionDir, { recursive: true });
@@ -3007,8 +3005,7 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
   // manifest, the connector must cascade.
   // ---------------------------------------------------------------
   it(
-    "jira cascades absent-retry-key to local file + bridge source " +
-      "(regression: )",
+    "jira cascades absent-retry-key to local file + bridge source",
     async () => {
       const jiraDir = path.join(dir, "jira-sync");
       await fsp.mkdir(jiraDir, { recursive: true });
@@ -3075,7 +3072,7 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
 // pass. The offline-detection contract (NetworkError → propagate to
 // runConnectorSync) is preserved.
 // =====================================================================
-describe("Wave 23 — OneDrive per-item download resilience", () => {
+describe("OneDrive per-item download resilience", () => {
   const original = globalThis.fetch;
   let fetchMock: ReturnType<typeof makeFetchMock>;
   let dir: string;
@@ -3094,7 +3091,7 @@ describe("Wave 23 — OneDrive per-item download resilience", () => {
 
   it(
     "non-network throw during a single item's download skips that item " +
-      "and continues — does NOT abort the whole sync (wave 23 ANALYSIS_0004)",
+      "and continues — does NOT abort the whole sync",
     async () => {
       const { syncOneDrive } = await import("../ipc/connectors/onedrive");
 
@@ -3186,7 +3183,7 @@ describe("Wave 23 — OneDrive per-item download resilience", () => {
 
   it(
     "network error during a single item's download propagates so " +
-      "runConnectorSync can translate to offline (wave 23 ANALYSIS_0004)",
+      "runConnectorSync can translate to offline",
     async () => {
       const { syncOneDrive } = await import("../ipc/connectors/onedrive");
 

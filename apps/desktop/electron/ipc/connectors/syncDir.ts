@@ -57,12 +57,10 @@ export function syncDirFor(userDataDir: string, provider: string): string {
  *      believe the cached token will expire. Forcing every test to
  *      construct a callback for that single fetch adds a lot of
  *      ceremony for zero correctness benefit.
- *   2. The bug surface this refactor closes (BUG_pr-review-job-66735207854d49d5be917283fdba2dc0_0001:
- *      gdrive 401s after 1h syncs) only manifests inside the
- *      per-item hot loop. That's where `resolveAccessToken` is
- *      called, and that's where the callback path is exercised.
- *
- * cross-cutting ANALYSIS_0007 (handlers.ts:338-365).
+ *   2. The bug surface this refactor closes (gdrive 401s after
+ *      1h syncs) only manifests inside the per-item hot loop. That's
+ *      where `resolveAccessToken` is called, and that's where the
+ *      callback path is exercised.
  */
 export interface AccessTokenSource {
   /** Static initial token, used by the first few setup fetches and
@@ -165,7 +163,6 @@ export async function purgeSyncDir(
  * actually changed the input — i.e. only when the input contained an
  * unsafe character. For every id current providers emit, the output
  * is bit-identical to the pre-suffix behaviour.
- * wave 7B ANALYSIS_0007 (syncDir.ts:99-101).
  */
 const COLLISION_HASH_LEN = 8;
 const REMOTE_ID_MAX_LEN = 200;

@@ -306,9 +306,8 @@ async function listAllPages(
       // `isAfterWatermark` parses both sides to epoch ms before
       // comparing — the previous lexicographic compare was a
       // footgun if Notion ever returns a mix of `Z` / `+00:00` /
-      // millisecond-precision suffixes for `last_edited_time` (see
-      // `parseWatermarkIso` in `syncDir.ts` and the
-      // wave 7 finding).
+      // millisecond-precision suffixes for `last_edited_time`. See
+      // `parseWatermarkIso` in `syncDir.ts` for the parsing contract.
       if (lastSyncIso && !isAfterWatermark(p.last_edited_time, lastSyncIso)) continue;
       pages.push(p);
     }
@@ -411,10 +410,10 @@ export async function syncNotion(ctx: {
   // visible scope) *and* the page used to be tracked in the
   // manifest. The previous shape declared this `const removed = 0`
   // and never incremented it, leaving Notion's sync result silently
-  // mis-counting upstream deletions vs OneDrive/Confluence. See
-  // the local markdown file and detaches the bridge source so the
-  // user's index does not keep stale copies of pages they no
-  // longer have access to.
+  // mis-counting upstream deletions vs OneDrive/Confluence. The
+  // cascade below now unlinks the local markdown file and detaches
+  // the bridge source so the user's index does not keep stale copies
+  // of pages they no longer have access to.
   let removed = 0;
   let newWatermark = watermark.lastSyncIso;
 
@@ -441,7 +440,8 @@ export async function syncNotion(ctx: {
     // first and a transient failure usually fires on a single page
     // while other newer pages succeed). Without this phase those
     // failed pages would never be retried until the user edited them
-    // again — see the wave-5
+    // again — see `nextFailedRetryQueue` in `syncDir.ts` for the
+    // carry-forward semantics this phase consumes.
     const retryPages: NotionPage[] = [];
     for (const entry of watermark.failedRetries) {
       try {
@@ -495,7 +495,6 @@ export async function syncNotion(ctx: {
         // NetworkError up so `runConnectorSync` surfaces
         // `{ status: 'offline' }` and the retry queue is preserved
         // verbatim for the next sync attempt.
-        // 19 ANALYSIS_0001.
         if (isNetworkError(err)) throw err;
         // Fetch failed *again* — record the failure so
         // `nextFailedRetryQueue` bumps `failureCount` toward
@@ -523,9 +522,9 @@ export async function syncNotion(ctx: {
     // same page in the same minute. Pre-filtering would forfeit
     // that same-sync recovery and force the user to wait a whole
     // sync interval for a transient Phase-1 502 to clear. The cost
-    // is the post-loop reconciliation below; the benefit is documented
-    // in the wave-7C regression test
-    // (`connectorsSync.test.ts:644-747`) and re-asserted
+    // is the post-loop reconciliation below; the benefit is locked
+    // in by the same-pass-recovery regression test in
+    // `connectorsSync.test.ts`.
     const scanned = await listAllPages(ctx, watermark.lastSyncIso);
     const seenIds = new Set<string>(retryPages.map((p) => p.id));
     const allPages: NotionPage[] = [...retryPages];
@@ -547,7 +546,7 @@ export async function syncNotion(ctx: {
       } catch (err) {
         // NetworkError bubbles up — same rationale as the Phase 1
         // catch above. Offline syncs must not advance per-page
-        // `failureCount` toward `FAILED_RETRY_MAX_ATTEMPTS`. See
+        // `failureCount` toward `FAILED_RETRY_MAX_ATTEMPTS`.
         if (isNetworkError(err)) throw err;
         // Record the failure so the *next* sync's Phase 1 picks it up
         // and retries by id. The watermark may legitimately advance
@@ -580,7 +579,6 @@ export async function syncNotion(ctx: {
         // re-fetch the failed page until the user edits it again in
         // Notion. This matches the defensive pattern in
         // `jira.ts` / `confluence.ts` / `figma.ts`.
-        // wave 7C BUG_0001 (notion.ts:449).
         failedThisPass.push({
           remoteId: page.id,
           remoteModifiedAt: page.last_edited_time,
@@ -632,7 +630,7 @@ export async function syncNotion(ctx: {
     // re-synced in this pass. Without this reconciliation the
     // conservative semantics of `nextFailedRetryQueue` (failed wins
     // over succeeded for the same pass — see
-    // `failedRetryQueue.test.ts:124-142`) would waste one API call
+    // `failedRetryQueue.test.ts`) would waste one API call
     // per sync re-fetching it. We deliberately keep the generic
     // helper's conservative semantics untouched (other connectors
     // benefit from the over-retry default) and do the same-pass
@@ -649,11 +647,11 @@ export async function syncNotion(ctx: {
     // than designed. Keep the most recent `remoteModifiedAt` (later
     // entries reflect the freshest server-side timestamp).
     // The asymmetry vs `figma.ts` (which pre-filters Phase 2 against
-    // failed-this-pass) is intentional and re-confirmed
+    // failed-this-pass) is intentional: Notion's Phase 1 and Phase 2
     // paths hit different endpoints (`/v1/pages/:id` vs `/v1/search` +
     // `/v1/blocks/:id`), so Phase 2 can rescue a transient Phase-1
-    // 5xx within the same sync — a recovery property the wave-7C
-    // regression test at `connectorsSync.test.ts:644-747` locks in.
+    // 5xx within the same sync — a recovery property the same-pass
+    // recovery regression test in `connectorsSync.test.ts` locks in.
     // Figma's Phase 1 and Phase 2 both call `getFile`, so pre-filter
     // there is correct.
     const dedupedFailures = new Map<string, { remoteId: string; remoteModifiedAt: string | null }>();

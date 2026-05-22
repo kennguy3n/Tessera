@@ -95,7 +95,7 @@ describe("typstExport", () => {
     ).rejects.toThrow(/typst-compile-failed/);
   });
 
-  it("uses crypto.randomBytes for temp-file uniqueness (regression for BUG_681f8bfb_0001)", async () => {
+  it("uses crypto.randomBytes for temp-file uniqueness (regression for same-millisecond temp-name collisions)", async () => {
     // Same class of bug as marpExport's earlier fix: two concurrent
     // exports issued in the same millisecond would collide on the
     // Math.random()-derived suffix (only ~2.2e9 namespace). 8 random

@@ -132,8 +132,8 @@ describe("getValidAccessToken — non-expiring providers (Notion)", () => {
 
   it(
     "returns the stored access token verbatim when a refreshable " +
-      "provider lacks a refresh token (regression: wave " +
-      "7 ANALYSIS_0005 — used to force-disconnect)",
+      "provider lacks a refresh token (regression: used to " +
+      "force-disconnect)",
     async () => {
       // Before the fix, the early-return guard required BOTH
       // `!supportsRefresh` AND `!stored.refreshToken`, so a Drive /

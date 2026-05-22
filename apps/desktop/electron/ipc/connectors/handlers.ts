@@ -92,7 +92,7 @@ function bridgeHooks(ctx: IpcContext): BridgeHooks {
 // module-level docstring in `networkErrors.ts` for the full rationale.
 // `handlers.ts` re-exports the public surface unchanged so existing
 // imports (`import { NetworkError, isNetworkError } from "./handlers"`
-// in tests and `ipc.ts`) continue to work without code churn. See
+// in tests and `ipc.ts`) continue to work without code churn.
 import {
   NetworkError,
   NotConnectedError,
@@ -240,7 +240,6 @@ async function runSync(
   // when there's >60s left and only hits the network when truly
   // expired, so the per-iteration cost is a vault read + a
   // millisecond comparison in the common case.
-  // wave 13 BUG_0001 (gdrive.ts:123-126) and the cross-cutting
   const getAccessToken = (): Promise<string> => getValidAccessToken(ctx, provider);
   switch (provider) {
     case "google_drive":
@@ -263,8 +262,8 @@ async function runSync(
       return syncFigma({ accessToken, getAccessToken, userDataDir, bridge });
     default: {
       // Exhaustiveness assertion. `ProviderId` is derived from the
-      // `KNOWN_PROVIDERS` tuple in `validate.ts` (wave-16 fix), so a
-      // future 7th provider added to that tuple without a matching
+      // `KNOWN_PROVIDERS` tuple in `validate.ts`, so a future 7th
+      // provider added to that tuple without a matching
       // `case` in this switch fails the compile here — the `never`
       // assignment is the only place TypeScript will narrow `provider`
       // to a non-empty type if the switch is non-exhaustive. The
@@ -273,7 +272,7 @@ async function runSync(
       // and routes an unknown provider id through to this function.
       // Without this branch a non-exhaustive switch returns `undefined`
       // at runtime and the IPC layer surfaces an opaque
-      // "Cannot read properties of undefined (reading 'then')". See
+      // "Cannot read properties of undefined (reading 'then')".
       const _exhaustive: never = provider;
       throw new Error(`runSync: unknown provider ${String(_exhaustive)}`);
     }
@@ -332,7 +331,6 @@ export async function runConnectorSync(
     // unwrapped) means non-network refresh errors (4xx from the
     // provider, missing credentials, etc.) still propagate as hard
     // errors so the UI can prompt re-authentication.
-    // wave 7B BUG_0001 (handlers.ts:357).
     if (isNetworkError(err)) {
       ctx.log.warn("token refresh hit network failure", {
         provider,
@@ -410,7 +408,7 @@ async function runDisconnect(
       // run for the new provider. The orphaned files and stale source
       // index entries would persist until the user manually deletes
       // the sync directory — exactly the silent-failure mode the
-      // wave-21 `runSync` exhaustiveness fix was meant to prevent.
+      // sibling `runSync` exhaustiveness assertion was added to prevent.
       const _exhaustive: never = provider;
       throw new Error(`runDisconnect: unknown provider ${String(_exhaustive)}`);
     }

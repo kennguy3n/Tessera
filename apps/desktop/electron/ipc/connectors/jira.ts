@@ -191,8 +191,8 @@ interface JiraState {
    * Issue keys the previous sync attempted but failed to write. The
    * next pass folds them into the JQL via `OR key IN (...)` so they
    * get re-fetched even if the watermark has advanced past their
-   * `updated` timestamp — see the wave-5
-   * `nextFailedRetryQueue` for the reasoning.
+   * `updated` timestamp — see `nextFailedRetryQueue` in `syncDir.ts`
+   * for the carry-forward reasoning.
    */
   failedRetries: FailedRetryEntry[];
 }
@@ -285,7 +285,7 @@ export async function syncJira(ctx: {
   let cloudId = ctx.cloudId ?? state.cloudId;
   if (!cloudId) {
     // Resolve via the JIT refresh hook (when present) instead of the
-    // static `ctx.accessToken`. The wave-13 BUG_0001 fix added
+    // static `ctx.accessToken`. Earlier hardening added
     // `resolveAccessToken` for hot-loop API calls; the
     // accessible-resources lookup happens early enough that it usually
     // hits the static field, but routing it through the same chokepoint
@@ -369,7 +369,6 @@ export async function syncJira(ctx: {
   // a no-op for already-JQL-safe keys (identity transformation on the
   // alphanumeric+`-` alphabet), so this is purely a robustness
   // improvement with zero behaviour change today.
-  // wave 9 ANALYSIS_0001 and wave 19 ANALYSIS_0002.
   const retryKeys = state.failedRetries.map((e) => jqlEscapeKey(e.remoteId));
   // Strict-validate the watermark before interpolating into JQL.
   // `sanitiseJqlWatermark` returns null on anything that isn't a
@@ -430,7 +429,7 @@ export async function syncJira(ctx: {
   // try/catch) would skip `saveJiraState` and `writeManifest`
   // entirely — making every issue successfully fetched in this pass
   // invisible to the next sync and forcing redundant re-fetching.
-  // This mirrors the defense-in-depth pattern in figma.ts. See
+  // This mirrors the defense-in-depth pattern in figma.ts.
   try {
     // Materialise the source-by-path index inside the try block so an
     // unlikely `bridge.listSources()` throw is still caught by the

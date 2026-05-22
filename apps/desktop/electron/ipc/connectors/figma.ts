@@ -275,7 +275,8 @@ interface FigmaState {
    * the regular `/files/{key}` endpoint) before applying the
    * watermark filter — otherwise the watermark would advance past
    * the failed file's `last_modified` and the file would never be
-   * retried until the user edited it again. See
+   * retried until the user edited it again. See `nextFailedRetryQueue`
+   * in `syncDir.ts` for the carry-forward semantics this list feeds.
    */
   failedRetries: FailedRetryEntry[];
 }
@@ -308,8 +309,7 @@ async function saveState(userDataDir: string, s: FigmaState): Promise<void> {
 export async function syncFigma(ctx: {
   accessToken: string;
   /** Just-in-time refresh hook — called per team/project/file so a
-   *  multi-team scan does NOT outlive the access token.
-   *  Review wave 13 BUG_0001 / ANALYSIS_0007. */
+   *  multi-team scan does NOT outlive the access token. */
   getAccessToken?: () => Promise<string>;
   userDataDir: string;
   bridge: FigmaBridgeHooks;
@@ -322,7 +322,7 @@ export async function syncFigma(ctx: {
   const state = await loadState(ctx.userDataDir);
   let teamIds = ctx.teamIds ?? state.teamIds;
   if (teamIds.length === 0) {
-    // Mirror the wave-16 Jira/Confluence fix: route this initial
+    // Mirror the Jira/Confluence pattern: route this initial
     // team-discovery call through the same JIT-refresh chokepoint
     // (`resolveAccessToken`) as every per-file fetch later in the
     // function, instead of bypassing it via the static
@@ -336,7 +336,6 @@ export async function syncFigma(ctx: {
     // the `no-teams` early-return below would fire, and the user
     // would see "no team membership" in the UI when the actual
     // problem is a refreshable token expiry.
-    // 17 BUG_0001.
     const teams = await listTeams(await resolveAccessToken(ctx));
     teamIds = teams.map((t) => t.id);
   }
@@ -366,7 +365,8 @@ export async function syncFigma(ctx: {
   // try/finally block so an unlikely `bridge.listSources()` throw at
   // the top of the sync is still caught by the saveState +
   // writeManifest cleanup path (matches the defense-in-depth contract
-  // exercised by the wave-7 ANALYSIS_0004 regression test). See
+  // exercised by the listSources-throw regression test in
+  // `connectorsSync.test.ts`).
   let sourceIndex!: SourcePathIndex;
 
   let added = 0;
@@ -377,10 +377,9 @@ export async function syncFigma(ctx: {
   // that the user no longer has access to). The previous shape
   // declared this `const removed = 0` and never incremented it,
   // leaving Figma's renderer-facing sync result silently mis-counting
-  // upstream deletions — the asymmetry vs OneDrive/Confluence
-  // surfaced by The same cascade
-  // logic now exists in `notion.ts` and `jira.ts` so all six
-  // providers agree on what `removed` means in the IPC payload.
+  // upstream deletions — an asymmetry vs OneDrive/Confluence that
+  // is now resolved here, in `notion.ts`, and in `jira.ts` so all
+  // six providers agree on what `removed` means in the IPC payload.
   let removed = 0;
   // The previous-sync watermark is read-only during this run and used
   // solely to decide which files to skip. The new watermark we will
@@ -411,9 +410,9 @@ export async function syncFigma(ctx: {
   // from this set as we observe them (either successfully synced or
   // confirmed-gone via 404). Anything that remains at end-of-pass
   // gets re-recorded as a failure by the post-loop sweep below so
-  // the retry queue carries it forward — see ANALYSIS_0006 in that
-  // sweep for why the legacy "mark survivors as succeeded" default
-  // was unsafe.
+  // the retry queue carries it forward — see the post-loop sweep
+  // for why the legacy "mark survivors as succeeded" default was
+  // unsafe.
   const pendingRetries = new Set(state.failedRetries.map((e) => e.remoteId));
 
   /**
@@ -608,8 +607,8 @@ export async function syncFigma(ctx: {
           // comparing — see `parseWatermarkIso` in `syncDir.ts`. The
           // previous lexicographic compare on raw ISO strings would
           // produce wrong results if Figma ever mixes timezone
-          // suffixes (it currently does not, but the hardening was
-          // flagged by
+          // suffixes (it currently does not, but the hardening
+          // closes that hypothetical mismatch).
           if (
             compareWatermark &&
             !isAfterWatermark(summary.last_modified, compareWatermark)
@@ -617,7 +616,8 @@ export async function syncFigma(ctx: {
             continue;
           }
           // O(1) dedup via the parallel Set; the legacy O(n) linear
-          // scan was flagged by
+          // `failedThisPass.some(...)` made the outer loop quadratic
+          // on accounts with noisy Phase 1 retries.
           if (succeededIds.has(summary.key) || failedThisPassIds.has(summary.key)) {
             // Already handled in Phase 1; skip the duplicate fetch.
             continue;

@@ -1,8 +1,10 @@
 /**
  * Unit tests for the cross-connector failed-retry queue helper in
  * `ipc/connectors/syncDir.ts`. This helper is the building block for
- * the Notion / Jira / Figma fix to the wave-5
- * about watermark advancement past transiently-failed items.
+ * the Notion / Jira / Figma carry-forward fix: when a sync transiently
+ * fails on a single item, the watermark must not advance past it
+ * silently, or the item would never be retried until upstream edited
+ * it again.
  *
  * The behavior we care about:
  *   1. A failed item enters the queue with `failureCount: 1`.
