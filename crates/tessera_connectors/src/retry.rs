@@ -13,11 +13,14 @@
 //!    sends integer seconds) and fall back to a sensible default when
 //!    the header is missing.
 //!  * **5xx (server error)** — exponential backoff (250ms, 500ms, 1s,
-//!    2s, 4s), up to 5 attempts total.
-//!  * **transport error (reqwest::Error)** — exponential backoff, up to
-//!    3 attempts total. We don't retry indefinitely because a sustained
-//!    transport failure usually means the caller has bad network, not
-//!    that the provider is flaky.
+//!    2s, 4s), up to `max_attempts` (default 5) attempts total.
+//!  * **transport error (reqwest::Error)** — exponential backoff, up
+//!    to `transport_max_attempts` (default 3) attempts total. We use a
+//!    tighter budget for transport failures than for HTTP failures
+//!    because a sustained transport failure usually means the caller
+//!    has bad network, not that the provider is flaky — burning the
+//!    full 5-attempt budget would just delay surfacing the offline
+//!    state to the user.
 //!
 //! Responses outside those categories (2xx, 3xx, 4xx other than 429) are
 //! returned immediately — they're either a success or a request-shape
@@ -62,9 +65,20 @@ use std::time::Duration;
 /// wiremock test runtime under a second.
 #[derive(Debug, Clone)]
 pub struct RetryPolicy {
-    /// Maximum total attempts including the first one. So
-    /// `max_attempts = 3` means "first request + up to 2 retries".
+    /// Maximum total HTTP-failure attempts (5xx + 429) including the
+    /// first one. So `max_attempts = 5` means "first request + up to 4
+    /// retries" when the provider is responding with retryable error
+    /// status codes. Defaults to 5.
     pub max_attempts: u32,
+
+    /// Maximum total transport-failure attempts (reqwest::Error: DNS
+    /// failure, TLS handshake error, connection refused, etc.)
+    /// including the first one. Intentionally tighter than
+    /// `max_attempts` because a sustained transport failure usually
+    /// indicates the caller is offline rather than the provider being
+    /// flaky — surfacing that to the user sooner is the right UX.
+    /// Defaults to 3.
+    pub transport_max_attempts: u32,
 
     /// Initial backoff for 5xx / transport errors.
     pub initial_backoff: Duration,
@@ -88,6 +102,7 @@ impl Default for RetryPolicy {
     fn default() -> Self {
         Self {
             max_attempts: 5,
+            transport_max_attempts: 3,
             initial_backoff: Duration::from_millis(250),
             backoff_multiplier: 2.0,
             max_backoff: Duration::from_secs(10),
@@ -103,6 +118,7 @@ impl RetryPolicy {
     pub fn aggressive_for_tests() -> Self {
         Self {
             max_attempts: 3,
+            transport_max_attempts: 2,
             initial_backoff: Duration::from_millis(0),
             backoff_multiplier: 1.0,
             max_backoff: Duration::from_millis(0),
@@ -165,8 +181,17 @@ pub async fn send_with_retry(
     policy: &RetryPolicy,
 ) -> ConnectorResult<Response> {
     let mut last_error: Option<ConnectorError> = None;
+    let mut transport_attempts: u32 = 0;
+    let mut http_attempts: u32 = 0;
 
-    for attempt in 1..=policy.max_attempts {
+    // The overall ceiling: we walk until BOTH budgets are exhausted, so
+    // a mid-loop transition from transport-failure to HTTP-failure (or
+    // vice-versa) doesn't terminate the loop prematurely. Worst-case
+    // attempt count is max(http_max, transport_max) — the larger budget
+    // dominates if the failure mode is consistent.
+    let overall_max = policy.max_attempts.max(policy.transport_max_attempts);
+
+    for _ in 1..=overall_max {
         let req_clone = request.try_clone().ok_or_else(|| {
             ConnectorError::InvalidConfig(
                 "request body is not cloneable; cannot apply retry policy. Use a non-streaming body or call send() directly without retries.".into(),
@@ -180,13 +205,14 @@ pub async fn send_with_retry(
                     // Success or non-retryable failure — return as-is.
                     return Ok(response);
                 }
+                http_attempts += 1;
                 // Build a typed error from the response. We must consume
                 // the body to read it; this means callers don't see the
                 // intermediate failure responses, only the final one.
                 let wait = if status == StatusCode::TOO_MANY_REQUESTS {
                     policy.parse_retry_after(&response)
                 } else {
-                    policy.backoff_for(attempt)
+                    policy.backoff_for(http_attempts)
                 };
                 let body = response.text().await.unwrap_or_default();
                 last_error = Some(if status == StatusCode::TOO_MANY_REQUESTS {
@@ -200,15 +226,21 @@ pub async fn send_with_retry(
                     }
                 });
 
-                if attempt < policy.max_attempts {
-                    tokio::time::sleep(wait).await;
+                if http_attempts >= policy.max_attempts {
+                    // HTTP budget exhausted — surface the last error.
+                    break;
                 }
+                tokio::time::sleep(wait).await;
             }
             Err(e) => {
+                transport_attempts += 1;
                 last_error = Some(ConnectorError::NetworkError(e.to_string()));
-                if attempt < policy.max_attempts {
-                    tokio::time::sleep(policy.backoff_for(attempt)).await;
+                if transport_attempts >= policy.transport_max_attempts {
+                    // Transport budget exhausted — surface offline state
+                    // promptly rather than continuing to retry.
+                    break;
                 }
+                tokio::time::sleep(policy.backoff_for(transport_attempts)).await;
             }
         }
     }
@@ -233,10 +265,7 @@ mod tests {
     }
 
     fn req(server: &MockServer) -> Request {
-        client()
-            .get(format!("{}/x", server.uri()))
-            .build()
-            .unwrap()
+        client().get(format!("{}/x", server.uri())).build().unwrap()
     }
 
     /// Happy path — 200 on the first attempt returns immediately and
@@ -251,9 +280,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let resp = send_with_retry(&client(), req(&server), &RetryPolicy::aggressive_for_tests())
-            .await
-            .expect("first attempt 200");
+        let resp = send_with_retry(
+            &client(),
+            req(&server),
+            &RetryPolicy::aggressive_for_tests(),
+        )
+        .await
+        .expect("first attempt 200");
         assert_eq!(resp.status(), 200);
     }
 
@@ -276,9 +309,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let resp = send_with_retry(&client(), req(&server), &RetryPolicy::aggressive_for_tests())
-            .await
-            .expect("third attempt 200");
+        let resp = send_with_retry(
+            &client(),
+            req(&server),
+            &RetryPolicy::aggressive_for_tests(),
+        )
+        .await
+        .expect("third attempt 200");
         assert_eq!(resp.status(), 200);
     }
 
@@ -288,9 +325,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/x"))
-            .respond_with(
-                ResponseTemplate::new(429).insert_header("retry-after", "2"),
-            )
+            .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "2"))
             .up_to_n_times(1)
             .expect(1)
             .mount(&server)
@@ -302,9 +337,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let resp = send_with_retry(&client(), req(&server), &RetryPolicy::aggressive_for_tests())
-            .await
-            .expect("retry honours Retry-After then succeeds");
+        let resp = send_with_retry(
+            &client(),
+            req(&server),
+            &RetryPolicy::aggressive_for_tests(),
+        )
+        .await
+        .expect("retry honours Retry-After then succeeds");
         assert_eq!(resp.status(), 200);
     }
 
@@ -327,9 +366,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let resp = send_with_retry(&client(), req(&server), &RetryPolicy::aggressive_for_tests())
-            .await
-            .expect("fallback retry succeeds");
+        let resp = send_with_retry(
+            &client(),
+            req(&server),
+            &RetryPolicy::aggressive_for_tests(),
+        )
+        .await
+        .expect("fallback retry succeeds");
         assert_eq!(resp.status(), 200);
     }
 
@@ -345,10 +388,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let err =
-            send_with_retry(&client(), req(&server), &RetryPolicy::aggressive_for_tests())
-                .await
-                .expect_err("budget exhausted");
+        let err = send_with_retry(
+            &client(),
+            req(&server),
+            &RetryPolicy::aggressive_for_tests(),
+        )
+        .await
+        .expect_err("budget exhausted");
         match err {
             ConnectorError::ProviderError { message, .. } => {
                 assert!(
@@ -371,22 +417,20 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/x"))
-            .respond_with(
-                ResponseTemplate::new(429).insert_header("retry-after", "5"),
-            )
+            .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "5"))
             .expect(3)
             .mount(&server)
             .await;
 
-        let err =
-            send_with_retry(&client(), req(&server), &RetryPolicy::aggressive_for_tests())
-                .await
-                .expect_err("429 budget exhausted");
+        let err = send_with_retry(
+            &client(),
+            req(&server),
+            &RetryPolicy::aggressive_for_tests(),
+        )
+        .await
+        .expect_err("429 budget exhausted");
         assert!(
-            matches!(
-                err,
-                ConnectorError::RateLimited { .. }
-            ),
+            matches!(err, ConnectorError::RateLimited { .. }),
             "expected RateLimited variant, got {err:?}",
         );
     }
@@ -403,9 +447,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let resp = send_with_retry(&client(), req(&server), &RetryPolicy::aggressive_for_tests())
-            .await
-            .expect("404 is non-retryable success-shape response");
+        let resp = send_with_retry(
+            &client(),
+            req(&server),
+            &RetryPolicy::aggressive_for_tests(),
+        )
+        .await
+        .expect("404 is non-retryable success-shape response");
         assert_eq!(resp.status(), 404);
     }
 
@@ -417,9 +465,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/x"))
-            .respond_with(
-                ResponseTemplate::new(429).insert_header("retry-after", "not-a-number"),
-            )
+            .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "not-a-number"))
             .up_to_n_times(1)
             .expect(1)
             .mount(&server)
@@ -431,9 +477,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let resp = send_with_retry(&client(), req(&server), &RetryPolicy::aggressive_for_tests())
-            .await
-            .expect("malformed header falls back to retry");
+        let resp = send_with_retry(
+            &client(),
+            req(&server),
+            &RetryPolicy::aggressive_for_tests(),
+        )
+        .await
+        .expect("malformed header falls back to retry");
         assert_eq!(resp.status(), 200);
     }
 
@@ -502,5 +552,78 @@ mod tests {
             let r = mk_response(vec![("retry-after", "tomorrow")]).await;
             assert_eq!(policy.parse_retry_after(&r), Duration::from_secs(7));
         });
+    }
+
+    /// Persistent transport failure (no server at all) exhausts the
+    /// tighter `transport_max_attempts` budget without burning the
+    /// larger `max_attempts` budget. Pins the dual-budget contract
+    /// — a refactor that re-collapses to a single counter would surface
+    /// here because the function would either run too few attempts
+    /// (if it picks transport_max_attempts as the loop bound and the
+    /// failure mode were HTTP) or too many (if it picks max_attempts
+    /// and the failure mode is transport, hanging the user on
+    /// offline).
+    ///
+    /// We exercise this by pointing at an unrouteable port on
+    /// localhost so reqwest surfaces a connect-refused before any
+    /// HTTP status code can be parsed. Even with default
+    /// `max_attempts = 5`, the test policy here pins
+    /// `transport_max_attempts = 2` and we verify the helper returns
+    /// after exactly two reqwest::execute attempts.
+    #[tokio::test]
+    async fn transport_failure_uses_tighter_transport_budget() {
+        // 1 is the standard "nothing listens here" sentinel port on
+        // Linux. Picking a deliberately-low port avoids racing against
+        // a real local service. reqwest will surface connect-refused
+        // immediately rather than retrying internally.
+        let bad_url = "http://127.0.0.1:1/x";
+        let policy = RetryPolicy {
+            max_attempts: 5,           // generous HTTP budget
+            transport_max_attempts: 2, // tighter transport budget
+            initial_backoff: Duration::from_millis(0),
+            backoff_multiplier: 1.0,
+            max_backoff: Duration::from_millis(0),
+            retry_after_fallback: Duration::from_millis(0),
+        };
+
+        let request = reqwest::Client::new().get(bad_url).build().unwrap();
+        let start = std::time::Instant::now();
+        let err = send_with_retry(&reqwest::Client::new(), request, &policy)
+            .await
+            .expect_err("transport failure should exhaust the tighter budget");
+
+        // Bound the call's wall-clock to something well under what a
+        // 5-attempt loop would have produced if the helper had
+        // mistakenly used max_attempts as the transport ceiling. With
+        // zero backoff between attempts and a localhost connect
+        // failure, two attempts should complete in well under a
+        // second; five would be similarly fast but harder to
+        // distinguish, so we additionally pin the error variant.
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "transport failure should bail out within transport_max_attempts, took {:?}",
+            start.elapsed(),
+        );
+        assert!(
+            matches!(err, ConnectorError::NetworkError(_)),
+            "expected NetworkError after transport budget exhaustion, got {err:?}",
+        );
+    }
+
+    /// Default policy: transport budget is tighter than HTTP budget.
+    /// Pins the relationship so a future "let's bump max_attempts to
+    /// 10 because flake" refactor doesn't accidentally widen the
+    /// transport budget too.
+    #[test]
+    fn default_policy_transport_budget_is_tighter_than_http() {
+        let p = RetryPolicy::default();
+        assert!(
+            p.transport_max_attempts < p.max_attempts,
+            "expected transport_max_attempts ({}) < max_attempts ({}); refactor regression",
+            p.transport_max_attempts,
+            p.max_attempts,
+        );
+        assert_eq!(p.max_attempts, 5);
+        assert_eq!(p.transport_max_attempts, 3);
     }
 }

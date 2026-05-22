@@ -75,14 +75,23 @@ mod tests {
             ConnectorError::AuthenticationFailed("bad creds".into()).to_string(),
             "Authentication failed: bad creds",
         );
-        assert_eq!(ConnectorError::TokenExpired.to_string(), "OAuth token has expired");
-        assert_eq!(ConnectorError::TokenRevoked.to_string(), "OAuth token has been revoked");
+        assert_eq!(
+            ConnectorError::TokenExpired.to_string(),
+            "OAuth token has expired"
+        );
+        assert_eq!(
+            ConnectorError::TokenRevoked.to_string(),
+            "OAuth token has been revoked"
+        );
         assert_eq!(
             ConnectorError::NetworkError("timeout".into()).to_string(),
             "Network error: timeout",
         );
         assert_eq!(
-            ConnectorError::RateLimited { retry_after_secs: 30 }.to_string(),
+            ConnectorError::RateLimited {
+                retry_after_secs: 30
+            }
+            .to_string(),
             "Rate limited, retry after 30s",
         );
         assert_eq!(
@@ -139,11 +148,9 @@ mod tests {
     /// `Io` variant. Callers that log structured error chains rely on this.
     #[test]
     fn io_error_source_chain_is_preserved() {
-        let inner =
-            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied by sandbox");
+        let inner = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied by sandbox");
         let err = ConnectorError::Io(inner);
-        let src = std::error::Error::source(&err)
-            .expect("Io variant has a source");
+        let src = std::error::Error::source(&err).expect("Io variant has a source");
         assert!(src.to_string().contains("denied by sandbox"));
     }
 
