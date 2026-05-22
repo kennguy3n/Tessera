@@ -125,27 +125,55 @@ export function generateDbKey(): string {
   return crypto.randomBytes(KEY_BYTES).toString("hex");
 }
 
+/** Matches `tessera_core::db::validate_hex_key`. */
+const HEX_KEY_REGEX = /^[0-9a-fA-F]{64}$/;
+
 /**
  * Return the SQLCipher key for this install, creating and persisting
  * one on first launch.
  *
+ * The check ordering is significant. We probe the on-disk `db.key`
+ * file *before* asking `safeStorage` whether encryption is
+ * available, because the presence of `db.key` is itself the signal
+ * that the user previously had encryption working. If the file is
+ * there but the keyring isn't reachable any more (gnome-keyring
+ * uninstalled, user moved to a TTY without a session bus, etc.) the
+ * data on disk is encrypted ciphertext that we cannot recover — the
+ * correct response is to fail loudly so the caller refuses to bring
+ * up the bridge, NOT to fall back to an unencrypted open that would
+ * either crash at the first `CREATE TABLE` or, in the corner case
+ * where `tessera.db` was deleted but `db.key` survived, silently
+ * regress to plaintext storage. Only when both `db.key` is absent
+ * AND the keyring is unavailable do we throw the recoverable
+ * {@link EncryptionUnavailableError} that authorises
+ * `appState.ts` to fall through to an unencrypted bridge.
+ *
  * Distinct failure modes:
- * - Throws {@link EncryptionUnavailableError} when
- *   `safeStorage.isEncryptionAvailable()` is false (e.g. Linux
- *   without a keyring daemon). The caller in `appState.ts` catches
- *   THIS specific class and falls through to an unencrypted bridge.
- * - Throws a plain `Error` for any other failure (zero-byte key
- *   file, wrong decrypted length, underlying decrypt error). These
- *   indicate the user previously had encryption working and the key
- *   is now lost / corrupted, so the on-disk DB is almost certainly
- *   encrypted — the caller must NOT fall back to unencrypted mode.
+ * - Throws {@link EncryptionUnavailableError} only when `db.key`
+ *   does NOT exist on disk AND `safeStorage.isEncryptionAvailable()`
+ *   is false. This is the fresh-install-on-keyringless-platform
+ *   case where falling back to unencrypted is safe because no
+ *   prior encrypted state exists.
+ * - Throws a plain `Error` for every other failure: zero-byte key
+ *   file, decrypt failure (including keyring suddenly unavailable
+ *   with an existing key on disk), wrong decrypted length, or
+ *   wrong decrypted content (non-hex). These indicate the user
+ *   previously had encryption working and the key is now lost or
+ *   corrupted, so the on-disk DB is almost certainly encrypted —
+ *   the caller must NOT fall back to unencrypted mode.
  */
 export function getOrCreateDbKey(): string {
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new EncryptionUnavailableError(encryptionUnavailableReason());
-  }
   const fp = keyPath();
   if (fs.existsSync(fp)) {
+    // Existing-key path. We must NEVER fall through to the
+    // "generate a new key" branch from here — even if the keyring
+    // is unavailable, the on-disk DB is wrapped with the key in
+    // this file and we either decrypt it or fail loudly.
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error(
+        `Database key file at ${fp} exists but the OS keyring is unavailable, so the key cannot be decrypted. The encrypted database cannot be opened on this platform. Restore keyring access (e.g. install gnome-keyring / kwallet5 on Linux), restore from backup, or delete both ${fp} and the database file to start fresh (data loss).`,
+      );
+    }
     const blob = fs.readFileSync(fp);
     if (blob.length === 0) {
       // A zero-byte key file is almost certainly a half-written
@@ -162,7 +190,24 @@ export function getOrCreateDbKey(): string {
         `Decrypted database key has unexpected length ${hex.length} (expected ${DB_KEY_HEX_LEN}). The key file may be corrupted.`,
       );
     }
+    if (!HEX_KEY_REGEX.test(hex)) {
+      // Length matches but content isn't hex. Catch it here with
+      // an actionable message rather than letting the Rust bridge
+      // reject with the opaque "db key must be ASCII hex digits
+      // only" error — same outcome, much better diagnostic at the
+      // source layer where the user can correlate it with `db.key`.
+      throw new Error(
+        `Decrypted database key has length ${DB_KEY_HEX_LEN} but contains non-hex characters. The key file is corrupted.`,
+      );
+    }
     return hex;
+  }
+  // No `db.key` on disk — fresh install (or the user deleted it
+  // intentionally). Only here is it safe to surface an
+  // `EncryptionUnavailableError` so the caller can degrade to an
+  // unencrypted bridge, because there is no encrypted state to lose.
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new EncryptionUnavailableError(encryptionUnavailableReason());
   }
   // First launch — generate, wrap, persist.
   const hex = generateDbKey();

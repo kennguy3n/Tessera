@@ -155,6 +155,46 @@ describe("dbKey", () => {
     expect(() => getOrCreateDbKey()).not.toThrow(EncryptionUnavailableError);
   });
 
+  it("getOrCreateDbKey throws plain Error (not EncryptionUnavailableError) when db.key exists AND safeStorage is unavailable", () => {
+    // Real-world scenario: user installed Tessera with gnome-keyring
+    // running, db.key got persisted; later the user uninstalled
+    // gnome-keyring or moved to a TTY without a session bus. The
+    // on-disk tessera.db is encrypted with the key in db.key, so
+    // we MUST NOT pretend "encryption unavailable" — that would
+    // tell appState.ts it's safe to fall through to unencrypted
+    // mode and silently create a fresh plaintext DB alongside
+    // the encrypted one (or, if tessera.db was deleted, regress
+    // to plaintext storage entirely). Refuse to bring up the
+    // bridge with an actionable error.
+    fs.writeFileSync(
+      path.join(hoisted.userData.value, "db.key"),
+      Buffer.from("enc:" + "a".repeat(64)),
+    );
+    safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
+    expect(() => getOrCreateDbKey()).toThrow(/keyring is unavailable/);
+    expect(() => getOrCreateDbKey()).not.toThrow(EncryptionUnavailableError);
+    // And we never attempted to decrypt — the keyring guard ran first.
+    expect(safeStorageMock.decryptString).not.toHaveBeenCalled();
+  });
+
+  it("getOrCreateDbKey throws plain Error on decrypted-key with non-hex content", () => {
+    // Defense-in-depth: even if decryptString returns a 64-char
+    // string somehow, it must be ASCII hex to be a valid
+    // SQLCipher raw key. Catch it at the JS layer with an
+    // actionable message rather than letting the Rust bridge
+    // reject with the opaque "db key must be ASCII hex digits
+    // only" error.
+    safeStorageMock.decryptString.mockReturnValue(
+      "Z".repeat(64), // 64 chars, but 'Z' is not a hex digit
+    );
+    fs.writeFileSync(
+      path.join(hoisted.userData.value, "db.key"),
+      Buffer.from("anything-the-mock-decrypts"),
+    );
+    expect(() => getOrCreateDbKey()).toThrow(/non-hex characters/);
+    expect(() => getOrCreateDbKey()).not.toThrow(EncryptionUnavailableError);
+  });
+
   it("getOrCreateDbKey surfaces underlying decrypt errors (not as EncryptionUnavailableError)", () => {
     // E.g. user copied userData to a different machine — DPAPI /
     // Keychain on the new machine can't decrypt the blob. This is
