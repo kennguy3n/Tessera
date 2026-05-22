@@ -126,6 +126,11 @@ const ExternalProviderConfigOnDiskSchema = z
     timeoutSecs: z.number().int().min(1).max(600).catch(60),
     maxRetries: z.number().int().min(0).max(10).catch(2),
   })
+  // `.loose()` (zod 4's rename of `.passthrough()`) preserves unknown
+  // keys instead of stripping them. See the comment on `AppConfigSchema`
+  // below for the rationale — same forward-compat policy for the
+  // nested externalProvider block.
+  .loose()
   .catch(() => ({ ...DEFAULT_EXTERNAL_PROVIDER }));
 
 const AppConfigSchema = z
@@ -156,6 +161,18 @@ const AppConfigSchema = z
     externalProvider: ExternalProviderConfigOnDiskSchema,
     autoUpdate: z.boolean().catch(true),
   })
+  // `.loose()` (zod 4's rename of `.passthrough()`) preserves unknown
+  // top-level keys instead of stripping them on a load → save round
+  // trip. Without this, downgrading from a future Tessera version that
+  // wrote a new field would silently drop the user's value on the
+  // first `updateConfig()` call — because `loadConfig` does
+  // `{ ...DEFAULT_CONFIG, ...healed }` and the stripped output of
+  // `parse()` no longer contains the unknown key. Keeping the IPC
+  // `SettingsUpdateSchema` strict (default `.strip()`) and the on-disk
+  // schema loose is deliberate: renderer payloads must conform to the
+  // documented shape, but the on-disk file is a user-controlled
+  // artifact that should survive cross-version round-trips.
+  .loose()
   .catch(() => ({
     ...DEFAULT_CONFIG,
     externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },

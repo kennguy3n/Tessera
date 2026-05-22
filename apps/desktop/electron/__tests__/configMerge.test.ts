@@ -239,4 +239,40 @@ describe("loadConfig defensive normalisation", () => {
     const cfg = loadConfig();
     expect(cfg.externalProvider.providerType).toBe("openai_compatible");
   });
+
+  // Forward-compat: a future Tessera version may add new config fields.
+  // The on-disk schema uses `.loose()` so a downgrade to the current
+  // version doesn't silently strip those unknown keys on the next
+  // `updateConfig()` write. The IPC `SettingsUpdateSchema` stays strict
+  // (default `.strip()`) because renderer payloads must conform to the
+  // documented shape.
+  it("preserves unknown top-level fields through a load round-trip", () => {
+    writeConfig({
+      theme: "dark",
+      // A field that doesn't exist in today's AppConfig schema. A future
+      // version might add e.g. `experimentalFeatures: { ... }` and we
+      // shouldn't lose the user's setting on downgrade.
+      experimentalFeatures: { fooEnabled: true, bar: 42 },
+      anotherFutureField: "preserve-me",
+    });
+    const cfg = loadConfig() as Record<string, unknown>;
+    expect(cfg.theme).toBe("dark");
+    expect(cfg.experimentalFeatures).toEqual({ fooEnabled: true, bar: 42 });
+    expect(cfg.anotherFutureField).toBe("preserve-me");
+  });
+
+  it("preserves unknown nested fields in externalProvider", () => {
+    writeConfig({
+      externalProvider: {
+        ...DEFAULT_EXTERNAL_PROVIDER,
+        modelName: "kept-by-user",
+        // hypothetical future field e.g. for a streaming-mode toggle
+        streamingMode: "sse-v2",
+      },
+    });
+    const cfg = loadConfig();
+    const provider = cfg.externalProvider as Record<string, unknown>;
+    expect(provider.modelName).toBe("kept-by-user");
+    expect(provider.streamingMode).toBe("sse-v2");
+  });
 });
