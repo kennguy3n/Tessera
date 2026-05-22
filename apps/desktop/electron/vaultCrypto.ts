@@ -102,7 +102,7 @@ export function encryptForVault(plaintext: string): Buffer {
  * vault tolerate a mixed-format directory — e.g. a user who first
  * launched with a keyring and later lost it has both formats on disk.
  *
- * The four cases:
+ * The five cases:
  *
  *   1. `TSPV` blob + active password vault → decrypt with cached key.
  *   2. `TSPV` blob + no active password vault, safeStorage AVAILABLE

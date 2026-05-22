@@ -113,6 +113,36 @@ describe("passwordVault — derivation and caching", () => {
     await expect(deriveAndCacheKey("")).rejects.toThrow(/cannot be empty/);
   });
 
+  it("deriveAndCacheKey returns a copy, not a reference to the cached buffer", async () => {
+    // Contract: clearing the cached key MUST NOT zero a buffer the
+    // caller is holding. If `deriveAndCacheKey` returned the same
+    // `Buffer` reference it stores in `cachedKey`, then a caller
+    // that retained the buffer would find its bytes wiped after
+    // `clearPasswordVaultKey()`, silently corrupting any downstream
+    // use of "their" key.
+    const returned = await deriveAndCacheKey("hunter2");
+    const snapshot = Buffer.from(returned);
+    expect(returned.equals(snapshot)).toBe(true);
+    clearPasswordVaultKey();
+    // The returned buffer must still contain the original key bytes
+    // — i.e. the in-place `cachedKey.fill(0)` did not touch it.
+    expect(returned.equals(snapshot)).toBe(true);
+    expect(returned.every((b) => b === 0)).toBe(false);
+  });
+
+  it("mutating the returned buffer does not corrupt the cached key", async () => {
+    // Contract: a caller that mutates the returned buffer must NOT
+    // affect subsequent encrypt/decrypt operations that use the
+    // cached key. If the returned buffer aliased `cachedKey`,
+    // `returned[0] = 0xFF` would silently corrupt the cache.
+    const returned = await deriveAndCacheKey("hunter2");
+    const blob = encryptWithPasswordKey("payload");
+    // Tamper with the returned copy.
+    returned.fill(0xFF);
+    // Cache must be untouched: round-trip still works.
+    expect(decryptWithPasswordKey(blob)).toBe("payload");
+  });
+
   it("passwordVaultActive() reflects derivation state", async () => {
     expect(passwordVaultActive()).toBe(false);
     await deriveAndCacheKey("hunter2");
@@ -344,6 +374,36 @@ describe("passwordVault — prompt HTML contract", () => {
     // appears in `</p>`, `<input>`, etc. — so we slice the body.)
     const inBody = html.split("<body>")[1]?.split("</body>")[0] ?? "";
     expect(inBody).not.toMatch(/a&b<c>d"e'f/);
+  });
+
+  it("prompt HTML renders a Cancel button wired to bridge.cancel()", () => {
+    // The cancel IPC channel exists end-to-end (preload exposes
+    // `bridge.cancel()`, main registers a listener on
+    // `PASSWORD_PROMPT_CANCEL_CHANNEL`), so the UI must expose a way
+    // for the user to invoke it. Closing the window via its title-bar
+    // X button works as a fallback path, but on Linux WMs without
+    // title bars (kiosk mode, certain tiling WMs) the X button is
+    // unavailable — the explicit Cancel button is the only reliable
+    // user-initiated cancel.
+    const html = _renderPromptHtmlForTests({
+      message: "hello",
+      confirmRequired: false,
+    });
+    expect(html).toContain('id="cancel"');
+    expect(html).toMatch(/bridge\.cancel\(\)/);
+    // And it must be a real button, not a div-styled-as-button.
+    expect(html).toMatch(/<button id="cancel"/);
+  });
+
+  it("prompt HTML maps Escape key to cancel on both password fields", () => {
+    // Symmetric to "Enter submits" — Escape is the universal
+    // cancel/dismiss affordance. Bound to both `#pw` and `#confirm`
+    // so the user doesn't have to click the field that holds focus.
+    const html = _renderPromptHtmlForTests({
+      message: "hello",
+      confirmRequired: true,
+    });
+    expect(html).toMatch(/e\.key === 'Escape'\) cancel\(\)/);
   });
 
   it("prompt HTML renders the confirm-password field only when requested", () => {

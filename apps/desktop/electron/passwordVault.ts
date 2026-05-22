@@ -181,7 +181,7 @@ export function passwordVaultSaltExists(): boolean {
 
 /**
  * Run PBKDF2 against the supplied password, cache the derived key,
- * and return it.
+ * and return an independent copy of it.
  *
  * Async because PBKDF2 with 600k iterations takes ~1–2 seconds and
  * `crypto.pbkdf2Sync` blocks the main process event loop for the
@@ -194,6 +194,16 @@ export function passwordVaultSaltExists(): boolean {
  * `passwordVaultActive()` after `initPasswordVaultIfNeeded` has
  * awaited the derivation. So the sync vault APIs still see a
  * synchronously-readable cached key.
+ *
+ * The returned `Buffer` is a COPY of the cached key, not a reference
+ * to the module-level `cachedKey` buffer. This matters because
+ * `clearPasswordVaultKey()` zero-fills the cached buffer in place —
+ * a caller that held a reference to the underlying buffer would
+ * find its data wiped from under them. Most production callers
+ * discard the return value (only tests inspect it), but the copy
+ * preserves the invariant that "external buffers are mine, internal
+ * buffer is the vault's" so a future caller can't accidentally
+ * step on the cache or have their own buffer zeroed.
  */
 export async function deriveAndCacheKey(password: string): Promise<Buffer> {
   if (password.length === 0) {
@@ -209,7 +219,7 @@ export async function deriveAndCacheKey(password: string): Promise<Buffer> {
   );
   clearPasswordVaultKey();
   cachedKey = key;
-  return key;
+  return Buffer.from(key);
 }
 
 /**
@@ -488,8 +498,12 @@ function renderPromptHtml(opts: {
   p { line-height: 1.4; font-size: 13px; }
   label { display: block; margin-top: 12px; font-size: 12px; font-weight: 600; }
   input { width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 14px; box-sizing: border-box; }
-  button { margin-top: 16px; padding: 8px 16px; background: #2563eb; color: white; border: 0; border-radius: 4px; font-size: 14px; cursor: pointer; }
-  button:hover { background: #1d4ed8; }
+  .actions { margin-top: 16px; display: flex; gap: 8px; }
+  button { padding: 8px 16px; border: 0; border-radius: 4px; font-size: 14px; cursor: pointer; }
+  button#ok { background: #2563eb; color: white; }
+  button#ok:hover { background: #1d4ed8; }
+  button#cancel { background: transparent; color: #4b5563; border: 1px solid #d1d5db; }
+  button#cancel:hover { background: #f3f4f6; }
   #err { color: #b91c1c; font-size: 12px; margin-top: 8px; min-height: 16px; }
 </style></head>
 <body>
@@ -498,7 +512,10 @@ function renderPromptHtml(opts: {
   <input id="pw" type="password" autocomplete="${opts.confirmRequired ? "new" : "current"}-password" autofocus />
   ${confirmField}
   <div id="err"></div>
-  <button id="ok">Unlock vault</button>
+  <div class="actions">
+    <button id="ok">Unlock vault</button>
+    <button id="cancel" type="button">Cancel</button>
+  </div>
   <script>
     // \`window.tesseraPasswordPrompt\` is exposed by
     // \`passwordPromptPreload.ts\`. \`require\` and \`ipcRenderer\`
@@ -513,10 +530,25 @@ function renderPromptHtml(opts: {
       ${submitJs}
       bridge.submit(p);
     }
+    function cancel() {
+      // Defer to the main process's cancel handler. The handler
+      // closes the window and rejects the outer promise with a
+      // "cancelled by user" error — distinguishable from the
+      // "closed without entering a password" error that fires when
+      // the user dismisses the window via its title-bar close button.
+      bridge.cancel();
+    }
     document.getElementById('ok').addEventListener('click', submit);
-    document.getElementById('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    document.getElementById('cancel').addEventListener('click', cancel);
+    document.getElementById('pw').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submit();
+      else if (e.key === 'Escape') cancel();
+    });
     const c = document.getElementById('confirm');
-    if (c) c.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    if (c) c.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submit();
+      else if (e.key === 'Escape') cancel();
+    });
   </script>
 </body></html>`;
 }
