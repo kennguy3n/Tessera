@@ -202,12 +202,19 @@ describe("tokenVault fallback — refusal cases", () => {
   // time on a recovery route that won't work.
   //
   // Pin that the Case-5 error message:
-  //   1. DOES say "Restore keyring access" (the correct recovery
-  //      surface for safeStorage blobs).
+  //   1. DOES say "To restore keyring access:" (the correct recovery
+  //      surface for safeStorage blobs, with a colon connector that
+  //      separates the diagnosis from the imperative).
   //   2. DOES mention the recovery directory ("delete the vault
-  //      directory") as the actionable second recovery.
+  //      directory") as the actionable second recovery, prefixed by
+  //      "Alternatively, " connector.
   //   3. DOES NOT include the password-vault hint ("vault password
   //      when prompted") that would mislead the user.
+  //   4. DOES NOT have the awkward sentence-within-parenthetical
+  //      structure that the previous wording produced (the diagnosis
+  //      preamble "Encryption not available — no OS keyring daemon
+  //      detected." inside parens after "Restore keyring access (...)"
+  //      with nested parens like "(GNOME / Ubuntu)").
   it("does not include misleading password-vault hint in Case-5 error", () => {
     hoisted.encryptionAvailable.value = true;
     storeTokens("google", SAMPLE);
@@ -221,14 +228,30 @@ describe("tokenVault fallback — refusal cases", () => {
     }
     expect(thrown).toBeInstanceOf(Error);
     const msg = (thrown as Error).message;
-    expect(msg).toMatch(/Restore keyring access/);
+    // Correct recovery surface — new "To restore keyring access:"
+    // wording (lowercase r) with colon separator.
+    expect(msg).toMatch(/To restore keyring access:/);
     expect(msg).toMatch(/delete the vault directory/);
+    expect(msg).toMatch(/Alternatively, delete the vault directory/);
     // The misleading hint must NOT appear. A user reading
     // "restart Tessera and enter a vault password when prompted"
     // would do exactly that and still hit this same error, because
     // the password vault cannot decrypt safeStorage blobs.
     expect(msg).not.toMatch(/vault password when prompted/);
     expect(msg).not.toMatch(/restart Tessera and enter a/);
+    // The previous wording had an awkward sentence-within-parens
+    // structure: "Restore keyring access (Encryption not available —
+    // no OS keyring daemon detected. ...)". Pin that we no longer
+    // emit that pattern by checking the diagnosis preamble doesn't
+    // appear AFTER "keyring is no longer available" — Case 5 already
+    // established the diagnosis, so repeating it is awkward.
+    expect(msg).not.toMatch(
+      /keyring is no longer available\.[\s\S]*Encryption not available/,
+    );
+    // No doubled "or or delete" or "Alternatively, or delete" artefacts
+    // from the previous label-with-leading-"or" wording.
+    expect(msg).not.toMatch(/Alternatively, or /);
+    expect(msg).not.toMatch(/ or or /);
   });
 });
 

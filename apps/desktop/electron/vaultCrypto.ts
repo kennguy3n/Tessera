@@ -29,14 +29,14 @@ import {
 } from "./passwordVault";
 
 /**
- * Platform-specific sentence explaining WHY the OS keyring is unavailable
- * and how to re-enable it. Does NOT mention the password-vault fallback.
+ * Platform-specific imperative for restoring keyring access. Returns ONLY
+ * the "how to fix" instruction — does NOT include the "Encryption not
+ * available — ..." diagnosis preamble.
  *
- * Exported separately from `encryptionUnavailableReason` so callers that
- * already know the password vault cannot help (e.g. decrypting an
- * existing safeStorage-encrypted blob — the password vault cannot
- * decrypt it because the key was never derived) can build a message
- * without misleading the user.
+ * Use this when the caller has already established the keyring is
+ * unavailable (e.g. by saying "the keyring is no longer available" in
+ * the surrounding message) and wants to avoid the redundant
+ * "Encryption not available" repetition.
  *
  * On Linux this commonly means the user is on a minimal or headless desktop
  * with no Secret Service-compatible daemon running (e.g. `gnome-keyring` /
@@ -46,16 +46,34 @@ import {
  * On macOS this would mean Keychain is locked or sandboxed away (very rare);
  * on Windows it would mean DPAPI is unavailable (also very rare).
  */
-export function keyringUnavailableSentence(): string {
+export function keyringRecoveryInstructions(): string {
   switch (process.platform) {
     case "linux":
       return (
-        "Encryption not available — no OS keyring daemon detected. " +
         "Install and start one of: gnome-keyring-daemon (GNOME / Ubuntu), " +
         "kwallet5-daemon (KDE), or pass an X session manager that exposes the " +
         "Secret Service D-Bus API. The Debian/Ubuntu packages are " +
         "`gnome-keyring` and `libsecret-1-0`."
       );
+    case "darwin":
+      return "Unlock the Keychain via Keychain Access.app and re-launch Tessera.";
+    case "win32":
+      return "Verify DPAPI is enabled for this user account and re-launch Tessera.";
+    default:
+      return "Run Tessera on Linux (with Secret Service), macOS, or Windows.";
+  }
+}
+
+/**
+ * The diagnosis half — "Encryption not available — <reason>." — without
+ * the recovery imperative. Used internally by
+ * `keyringUnavailableSentence()`; exported in case a caller wants to
+ * render diagnosis + custom recovery hint separately.
+ */
+export function keyringDiagnosis(): string {
+  switch (process.platform) {
+    case "linux":
+      return "Encryption not available — no OS keyring daemon detected.";
     case "darwin":
       return "Encryption not available — Keychain is locked or inaccessible.";
     case "win32":
@@ -63,6 +81,27 @@ export function keyringUnavailableSentence(): string {
     default:
       return "Encryption not available — unsupported platform.";
   }
+}
+
+/**
+ * Platform-specific full sentence explaining WHY the OS keyring is
+ * unavailable AND how to re-enable it. Composes
+ * `keyringDiagnosis()` + ` ` + `keyringRecoveryInstructions()`.
+ *
+ * Does NOT mention the password-vault fallback — callers that want
+ * to surface that recovery route should append
+ * `PASSWORD_VAULT_RECOVERY_HINT` themselves (or use
+ * `encryptionUnavailableReason()` which composes both).
+ *
+ * Use this for self-contained error messages that need to surface
+ * both the diagnosis and the actionable next step (e.g. `loadDbKey`,
+ * `encryptForVault`, `decryptFromVault` Case 3). For messages that
+ * already establish the keyring is unavailable (e.g. Case 5) use
+ * `keyringRecoveryInstructions()` directly to avoid restating the
+ * diagnosis.
+ */
+export function keyringUnavailableSentence(): string {
+  return `${keyringDiagnosis()} ${keyringRecoveryInstructions()}`;
 }
 
 /**
@@ -114,22 +153,25 @@ export function encryptionUnavailableReason(): string {
 
 /**
  * Per-vault wording used to make error messages name-appropriate for
- * the caller's domain. `noun` is shown verbatim in error messages,
- * `recoveryDirectoryHint` is appended to the keyring-lost recovery
- * message so the user knows exactly which directory to delete to
- * start fresh.
+ * the caller's domain. `noun` is shown verbatim in error messages;
+ * `recoveryDirectoryImperative` is appended after a connector word
+ * like "Alternatively, " so the caller controls the sentence flow.
  */
 export interface VaultLabel {
   /** "Vault" | "Secret" — the human-readable noun for blobs from this caller. */
   noun: string;
   /**
-   * The actionable suffix to append to the keyring-lost error.
-   * tokenVault: "or delete the vault directory to re-authenticate from
+   * Verb-first, lowercase imperative for the "start over" recovery path.
+   * Must begin with a lowercase verb so callers can prefix a sentence
+   * connector ("Alternatively, " / "To start over, " / etc.) without
+   * doubled words or capital-letter-mid-sentence artefacts.
+   *
+   * tokenVault: "delete the vault directory to re-authenticate from
    *   scratch (you will need to re-enter API keys and re-authorize
    *   OAuth providers)."
-   * secretsVault: "or delete the secret-vault directory to re-enter API keys."
+   * secretsVault: "delete the secret-vault directory to re-enter API keys."
    */
-  recoveryDirectoryHint: string;
+  recoveryDirectoryImperative: string;
 }
 
 /**
@@ -194,7 +236,8 @@ export function decryptFromVault(blob: Buffer, label: VaultLabel): string {
         throw new Error(
           `${label.noun} blob is password-vault encrypted (TSPV format) but the password vault is not active in this session. ` +
             `The OS keyring is available, so the startup prompt was skipped — but these blobs were written when the keyring ` +
-            `was unavailable and they need the original vault password to decrypt. ${label.recoveryDirectoryHint}`,
+            `was unavailable and they need the original vault password to decrypt. ` +
+            `To start over, ${label.recoveryDirectoryImperative}`,
         );
       }
       // Case 3: user dismissed the prompt (or it never fired).
@@ -217,12 +260,19 @@ export function decryptFromVault(blob: Buffer, label: VaultLabel): string {
   // PBKDF2-derived AES-256-GCM key, not safeStorage's OS-managed key.
   // Restarting + entering a vault password will NOT decrypt this blob.
   // The two valid recoveries are (a) restore keyring access
-  // (`keyringUnavailableSentence` tells the user how) or (b) delete
-  // the vault directory and re-authenticate from scratch
-  // (`label.recoveryDirectoryHint`).
+  // (`keyringRecoveryInstructions` tells the user how) or (b)
+  // `label.recoveryDirectoryImperative` (the "start over" path).
+  //
+  // Use `keyringRecoveryInstructions()` (the imperative half), NOT the
+  // full `keyringUnavailableSentence()` — the surrounding message
+  // already establishes "the keyring is no longer available", so
+  // appending the redundant "Encryption not available — no OS keyring
+  // daemon detected." preamble in a parenthetical (which itself contains
+  // nested parens like `(GNOME / Ubuntu)`) reads awkwardly.
   throw new Error(
     `${label.noun} file is encrypted with the OS keyring but the keyring is no longer available. ` +
-      `Restore keyring access (${keyringUnavailableSentence()}) ${label.recoveryDirectoryHint}`,
+      `To restore keyring access: ${keyringRecoveryInstructions()} ` +
+      `Alternatively, ${label.recoveryDirectoryImperative}`,
   );
 }
 
@@ -232,12 +282,12 @@ export function decryptFromVault(blob: Buffer, label: VaultLabel): string {
  */
 export const TOKEN_VAULT_LABEL: VaultLabel = {
   noun: "Vault",
-  recoveryDirectoryHint:
-    "or delete the vault directory to re-authenticate from scratch (you will need to re-enter API keys and re-authorize OAuth providers).",
+  recoveryDirectoryImperative:
+    "delete the vault directory to re-authenticate from scratch (you will need to re-enter API keys and re-authorize OAuth providers).",
 };
 
 export const SECRETS_VAULT_LABEL: VaultLabel = {
   noun: "Secret",
-  recoveryDirectoryHint:
-    "or delete the secret-vault directory to re-enter API keys.",
+  recoveryDirectoryImperative:
+    "delete the secret-vault directory to re-enter API keys.",
 };
