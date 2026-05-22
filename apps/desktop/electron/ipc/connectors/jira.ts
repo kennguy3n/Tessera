@@ -283,7 +283,20 @@ export async function syncJira(ctx: {
   const state = await loadJiraState(ctx.userDataDir);
   let cloudId = ctx.cloudId ?? state.cloudId;
   if (!cloudId) {
-    const resources = await listAccessibleResources(ctx.accessToken);
+    // Resolve via the JIT refresh hook (when present) instead of the
+    // static `ctx.accessToken`. The wave-13 BUG_0001 fix added
+    // `resolveAccessToken` for hot-loop API calls; the
+    // accessible-resources lookup happens early enough that it usually
+    // hits the static field, but routing it through the same chokepoint
+    // means a long-deferred sync (e.g. the connector was queued while
+    // the OS was suspended and now runs hours later) still picks up a
+    // refreshed token rather than 401-ing on the very first request.
+    // Cheap, defensive, and removes the only remaining caller in this
+    // file that bypasses the standard token-resolution path. See Devin
+    // Review wave 16 ANALYSIS_0005.
+    const resources = await listAccessibleResources(
+      await resolveAccessToken(ctx),
+    );
     // Use the first resource that grants Jira scopes; in practice
     // each Atlassian Cloud site is its own resource entry.
     const resource =

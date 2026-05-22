@@ -382,9 +382,11 @@ export async function syncFigma(ctx: {
   };
   // File keys still owed a retry after this pass. Items get removed
   // from this set as we observe them (either successfully synced or
-  // confirmed-gone via 404); whatever remains is treated as
-  // "succeeded" only for queue-removal purposes so we don't keep
-  // pinging files that no longer exist or were moved out of scope.
+  // confirmed-gone via 404). Anything that remains at end-of-pass
+  // gets re-recorded as a failure by the post-loop sweep below so
+  // the retry queue carries it forward — see ANALYSIS_0006 in that
+  // sweep for why the legacy "mark survivors as succeeded" default
+  // was unsafe.
   const pendingRetries = new Set(state.failedRetries.map((e) => e.remoteId));
 
   /**
@@ -566,28 +568,49 @@ export async function syncFigma(ctx: {
       }
     }
 
-    // Anything still in `pendingRetries` AND not in `failedThisPass`
-    // is a retry entry whose file we never observed this pass (e.g.
-    // the file was moved out of an accessible project, or the project
-    // listing failed) — count it as "succeeded" only for queue-removal
-    // purposes so we don't keep pinging it forever.
+    // Post-loop sweep over any retry key that survived both phases
+    // without being explicitly succeeded or failed. By construction
+    // this should be the empty set: Phase 1 iterates every entry in
+    // `state.failedRetries` via `syncFileByKey`, which routes to
+    // exactly one of three terminal paths per call —
     //
-    // The `!failedThisPass.some(...)` guard is critical: without it, a
-    // key that fails again in Phase 1 (e.g. `getFile` throws a 500)
-    // gets added to BOTH `failedThisPass` AND `succeededIds`.
-    // `nextFailedRetryQueue` would then delete the previous entry (with
-    // its accumulated `failureCount`) via the succeeded step, then
-    // create a fresh entry with `failureCount: 1` via the failed step
-    // — silently resetting the give-up counter on every pass and
-    // making `FAILED_RETRY_MAX_ATTEMPTS` unreachable. This matches the
-    // existing Jira cleanup pattern at `jira.ts` and was missing here.
-    // See Devin Review wave 7 BUG_0001 (figma.ts:503-505).
+    //   (a) success → `succeededIds.add` + `pendingRetries.delete`,
+    //   (b) 404/410 cascade → `succeededIds.add` + `pendingRetries.delete`,
+    //   (c) `recordFailure(...)` → `failedThisPassIds.add`.
+    //
+    // Phase 2 likewise either succeeds (path a) or records a
+    // failure (path c) for every file it touches. So under the
+    // current code shape, no key reaches this loop without being in
+    // one of the two sets.
+    //
+    // The previous shape exploited this and *unconditionally* added
+    // orphan keys to `succeededIds` ("file moved out of accessible
+    // project, stop retrying it"). The hidden assumption that the
+    // loop body is dead made it a foot-gun for the next maintainer:
+    // any new error path that left a retry key un-recorded — a
+    // `resolveAccessToken` throw inside a future Promise.all batch,
+    // an early `return` added to `syncFileByKey`, a team-listProjects
+    // failure that silently skips files — would clear the entries
+    // from the retry queue without ever calling the upstream API.
+    // The user would never see the retry counter advance toward
+    // `FAILED_RETRY_MAX_ATTEMPTS`; they'd just notice files quietly
+    // dropping out of sync.
+    //
+    // Flip the default to *preserve* instead of *drop*: any orphan
+    // key gets re-recorded as a failure so `nextFailedRetryQueue`
+    // carries it forward with one increment to `failureCount`,
+    // matching the conservative semantics every other connector
+    // already uses for unhandled error paths. Production behaviour
+    // is unchanged whenever the invariant holds; the only
+    // observable difference is that an as-yet-unwritten bug in this
+    // file would now show up as "retry counter creeps up on a file
+    // we never actually fetched" instead of "file silently vanished
+    // from the retry queue", which is the strictly better failure
+    // mode. See Devin Review wave 16 ANALYSIS_0006.
     for (const key of pendingRetries) {
-      // Same O(1) replacement as the Phase-2 dedup above — see
-      // ANALYSIS_0006. Semantics unchanged.
-      if (!failedThisPassIds.has(key)) {
-        succeededIds.add(key);
-      }
+      if (succeededIds.has(key) || failedThisPassIds.has(key)) continue;
+      const prior = state.failedRetries.find((e) => e.remoteId === key);
+      recordFailure(key, prior?.remoteModifiedAt ?? null);
     }
   } finally {
     // Persist progress in a nested try/catch so a state-write error

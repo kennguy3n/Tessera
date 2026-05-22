@@ -480,6 +480,21 @@ export async function syncNotion(ctx: {
     // page whose `last_edited_time` is newer than the persisted
     // watermark) are de-duplicated by id so we don't fetch their
     // blocks twice.
+    //
+    // We deliberately DO NOT pre-filter Phase 2 against
+    // `failedThisPass` (the way `figma.ts:560` does for its own
+    // retry queue). The asymmetry is intentional: Phase 1 here
+    // calls `fetchPageById`, but Phase 2 calls `fetchPageText` via
+    // the watermark search — they exercise different Notion
+    // endpoints (`/v1/pages/:id` vs `/v1/search` + `/v1/blocks/:id`)
+    // and the latter routinely succeeds when the former 5xx'd on the
+    // same page in the same minute. Pre-filtering would forfeit
+    // that same-sync recovery and force the user to wait a whole
+    // sync interval for a transient Phase-1 502 to clear. The cost
+    // is the post-loop reconciliation below; the benefit is documented
+    // in the wave-7C regression test
+    // (`connectorsSync.test.ts:644-747`) and re-asserted by Devin
+    // Review wave 16 ANALYSIS_0003 — NOT a bug, by design.
     const scanned = await listAllPages(ctx, watermark.lastSyncIso);
     const seenIds = new Set<string>(retryPages.map((p) => p.id));
     const allPages: NotionPage[] = [...retryPages];
@@ -598,6 +613,16 @@ export async function syncNotion(ctx: {
     // than designed. Keep the most recent `remoteModifiedAt` (later
     // entries reflect the freshest server-side timestamp). See Devin
     // Review wave 11 ANALYSIS_0001 (notion.ts:517).
+    //
+    // The asymmetry vs `figma.ts` (which pre-filters Phase 2 against
+    // failed-this-pass) is intentional and re-confirmed by Devin
+    // Review wave 16 ANALYSIS_0003: Notion's Phase-1 and Phase-2
+    // paths hit different endpoints (`/v1/pages/:id` vs `/v1/search` +
+    // `/v1/blocks/:id`), so Phase 2 can rescue a transient Phase-1
+    // 5xx within the same sync — a recovery property the wave-7C
+    // regression test at `connectorsSync.test.ts:644-747` locks in.
+    // Figma's Phase 1 and Phase 2 both call `getFile`, so pre-filter
+    // there is correct.
     const dedupedFailures = new Map<string, { remoteId: string; remoteModifiedAt: string | null }>();
     for (const entry of failedThisPass) {
       dedupedFailures.set(entry.remoteId, entry);

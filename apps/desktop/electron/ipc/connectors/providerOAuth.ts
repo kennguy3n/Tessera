@@ -54,14 +54,34 @@ import * as crypto from "crypto";
 import * as http from "http";
 
 import { generateState } from "../../oauth";
+import type { KnownProvider } from "../validate";
 
-export type ProviderId =
-  | "google_drive"
-  | "onedrive"
-  | "notion"
-  | "jira"
-  | "confluence"
-  | "figma";
+/**
+ * Canonical connector identifier — a single source of truth.
+ *
+ * Both this OAuth layer (`PROVIDER_OAUTH_CONFIGS`, every connector's
+ * sync impl, the redirect-server flow) and the IPC validator
+ * (`assertProvider`, the `KNOWN_PROVIDERS` allowlist in
+ * `../validate.ts`) need to enumerate the exact same set of providers.
+ * Previously each side defined its own union — `ProviderId` here as an
+ * explicit `"google_drive" | "onedrive" | ...` and `KnownProvider` in
+ * `validate.ts` derived from the runtime allowlist — and adding a new
+ * connector required updating both. TypeScript would catch the
+ * mismatch lazily (at the `runSync` switch's exhaustiveness check or
+ * at the `provider as ProviderId` cast in `ipc.ts`), not eagerly, and
+ * a maintainer wiring up a 7th connector could plausibly miss one of
+ * the two files until runtime.
+ *
+ * The fix derives `ProviderId` from `KNOWN_PROVIDERS` so the runtime
+ * allowlist used by the IPC validator IS the type the OAuth layer
+ * indexes by. Adding a connector is now a single edit (the
+ * `KNOWN_PROVIDERS` tuple in `validate.ts`); every consumer —
+ * `PROVIDER_OAUTH_CONFIGS`, `runSync`, `assertProvider`, the bridge
+ * cast — fails to compile in the right places at the right time until
+ * the new provider is wired all the way through. See Devin Review
+ * wave 16 ANALYSIS_0004.
+ */
+export type ProviderId = KnownProvider;
 
 export interface ProviderOAuthConfig {
   /** Stable provider id used by tokenVault and the connector registry. */

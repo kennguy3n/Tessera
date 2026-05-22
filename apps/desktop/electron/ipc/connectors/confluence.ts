@@ -321,7 +321,16 @@ export async function syncConfluence(ctx: {
   const state = await loadState(ctx.userDataDir);
   let cloudId = ctx.cloudId ?? state.cloudId;
   if (!cloudId) {
-    const resources = await listAccessibleResources(ctx.accessToken);
+    // Mirror the Jira fix: route accessible-resources through the
+    // same JIT refresh chokepoint as the rest of the connector
+    // instead of bypassing it via `ctx.accessToken`. The Confluence
+    // sync was the only remaining caller in this file using the
+    // static token, which made it the lone exception to the pattern
+    // every other API call follows. See Devin Review wave 16
+    // ANALYSIS_0005.
+    const resources = await listAccessibleResources(
+      await resolveAccessToken(ctx),
+    );
     const resource =
       resources.find((r) => r.scopes.some((s) => s.includes("confluence"))) ??
       resources[0];

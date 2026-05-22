@@ -80,12 +80,17 @@ function getConnectorContext(): ReturnType<typeof createDefaultContext> {
  * non-expiring-token short-circuit. Previously there were two
  * independent copies of this logic (one in `oauthServer.ts`, one in
  * `handlers.ts`) and they could silently drift.
+ *
+ * The parameter is typed as `ProviderId` rather than `string` so the
+ * compiler refuses any caller that doesn't already have a validated
+ * provider id in scope. With `ProviderId` now derived from the
+ * `KNOWN_PROVIDERS` runtime allowlist (wave 16 ANALYSIS_0004), the
+ * legacy `as ProviderId` cast here is no longer necessary — the only
+ * call site below passes the string literal `"google_drive"`, which
+ * TypeScript narrows to `ProviderId` automatically.
  */
-async function getValidAccessToken(provider: string): Promise<string> {
-  return getValidAccessTokenForProvider(
-    getConnectorContext(),
-    provider as ProviderId,
-  );
+async function getValidAccessToken(provider: ProviderId): Promise<string> {
+  return getValidAccessTokenForProvider(getConnectorContext(), provider);
 }
 
 /**
@@ -1151,6 +1156,39 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     "connectors:gdrive:listFiles",
     async (_event, folderId?: string, pageToken?: string) => {
+      // Resolve a fresh access token *before* consuming the
+      // rate-limit budget. Order matters: a disconnected user, an
+      // expired token, or a network glitch must surface as
+      // `NotConnectedError` / soft-offline without ever debiting the
+      // 10-per-second listFiles bucket. If the rate-limit consume
+      // ran first, ten user-driven retries against a stale auth
+      // state would exhaust the budget and the renderer would see
+      // "rate-limited" messaging stacked on top of the real
+      // (auth/network) error — exactly the pattern the wave-15
+      // ANALYSIS_0005 fix corrected in `runConnectorSync`
+      // (`handlers.ts:434-457`). See wave 16 ANALYSIS_0002.
+      let accessToken: string;
+      try {
+        accessToken = await getValidAccessToken("google_drive");
+      } catch (err) {
+        // A refresh-token exchange that fails because the host has
+        // no network must surface as soft-offline (same contract as
+        // `runConnectorSync`'s offline branch) rather than throwing
+        // a raw `fetch failed` that the picker would render as
+        // "Auth expired". Non-network refresh errors (4xx from
+        // Google, missing credentials, NotConnectedError) still
+        // propagate so the renderer prompts re-auth. See Devin
+        // Review wave 15 ANALYSIS_0007.
+        if (isNetworkError(err)) {
+          getLogger().warn(
+            "gdrive listFiles token refresh hit network failure",
+            { error: (err as Error).message },
+          );
+          return { nextPageToken: null, files: [], offline: true };
+        }
+        throw err;
+      }
+
       // Defence-in-depth rate limit on Drive file-listing calls. The
       // renderer's `DriveFilePicker` debounces user input, but a
       // buggy effect loop or a misbehaving renderer-side test could
@@ -1175,28 +1213,6 @@ export function registerIpcHandlers(): void {
               err.retryAfterMs / 1000,
             )}s and try again.`,
           );
-        }
-        throw err;
-      }
-
-      let accessToken: string;
-      try {
-        accessToken = await getValidAccessToken("google_drive");
-      } catch (err) {
-        // A refresh-token exchange that fails because the host has
-        // no network must surface as soft-offline (same contract as
-        // `runConnectorSync`'s offline branch) rather than throwing
-        // a raw `fetch failed` that the picker would render as
-        // "Auth expired". Non-network refresh errors (4xx from
-        // Google, missing credentials, NotConnectedError) still
-        // propagate so the renderer prompts re-auth. See Devin
-        // Review wave 15 ANALYSIS_0007.
-        if (isNetworkError(err)) {
-          getLogger().warn(
-            "gdrive listFiles token refresh hit network failure",
-            { error: (err as Error).message },
-          );
-          return { nextPageToken: null, files: [], offline: true };
         }
         throw err;
       }
