@@ -32,6 +32,7 @@ import {
   readManifest,
   resolveAccessToken,
   sanitiseRemoteId,
+  SourcePathIndex,
   syncDirFor,
   writeManifest,
   type SyncManifestEntry,
@@ -251,6 +252,21 @@ export async function syncOneDrive(
   let removed = 0;
   let deltaLink: string | null = null;
 
+  // Source-by-path index, materialised inside the try block below so
+  // an unlikely `bridge.listSources()` throw is still caught by the
+  // saveDeltaState + writeManifest cleanup path (defense-in-depth
+  // mirrored from the other five connectors; the `!` definite-
+  // assignment assertion is safe because every read of `sourceIndex`
+  // is inside the try block, after assignment). The cache lets the
+  // hot loop's existence check be O(1) instead of the previous
+  // `bridge.listSources().find(...)` per-item scan
+  // (O(deltaItems × sources)). Brings OneDrive into parity with
+  // notion.ts/jira.ts/confluence.ts/figma.ts/gdrive.ts which all
+  // received this treatment in wave 20 — OneDrive was missed in that
+  // pass and is the wave-21 follow-up. See Devin Review wave 21
+  // BUG_0001 / ANALYSIS_0001 (onedrive.ts:283-285, 310-312).
+  let sourceIndex!: SourcePathIndex;
+
   // Wrap the pagination loop in try/finally so progress is *always*
   // persisted before the function returns or rethrows. Without this, a
   // transient error on page N of M (HTTP 500, network drop, JSON parse
@@ -269,6 +285,11 @@ export async function syncOneDrive(
   // be silently no-op'd on the retry rather than re-added as
   // duplicates.
   try {
+    // Materialise the source-by-path index inside the try block so an
+    // unlikely `bridge.listSources()` throw is still caught by the
+    // saveDeltaState + writeManifest cleanup below.
+    sourceIndex = SourcePathIndex.fromBridge(ctx.bridge);
+
     for (let safety = 0; safety < 500; safety += 1) {
       // Refresh-on-demand at the top of every page. OneDrive uses
       // server-driven pagination via `@odata.nextLink`; a workspace
@@ -280,15 +301,14 @@ export async function syncOneDrive(
         if (item.deleted) {
           const prior = entriesById.get(item.id);
           if (prior) {
-            const existingSource = ctx.bridge
-              .listSources()
-              .find((s) => s.path === prior.localPath);
+            const existingSource = sourceIndex.get(prior.localPath);
             if (existingSource) {
               try {
                 ctx.bridge.removeSource(existingSource.id);
               } catch {
                 // best-effort
               }
+              sourceIndex.remove(prior.localPath);
             }
             try {
               await fsp.unlink(prior.localPath);
@@ -307,9 +327,7 @@ export async function syncOneDrive(
         const ok = await downloadItem(item, accessToken, localPath);
         if (!ok) continue;
 
-        const existingSource = ctx.bridge
-          .listSources()
-          .find((s) => s.path === localPath);
+        const existingSource = sourceIndex.get(localPath);
         if (existingSource) {
           try {
             ctx.bridge.reindexSource(existingSource.id);
@@ -318,11 +336,13 @@ export async function syncOneDrive(
           }
           modified += 1;
         } else {
+          let registered: { id: string; path: string };
           try {
-            ctx.bridge.addLocalFile(localPath);
+            registered = ctx.bridge.addLocalFile(localPath);
           } catch {
             continue;
           }
+          sourceIndex.add(registered);
           added += 1;
         }
         entriesById.set(item.id, {

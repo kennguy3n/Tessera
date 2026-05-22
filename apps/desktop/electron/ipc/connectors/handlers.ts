@@ -270,6 +270,23 @@ async function runSync(
       return syncConfluence({ accessToken, getAccessToken, userDataDir, bridge });
     case "figma":
       return syncFigma({ accessToken, getAccessToken, userDataDir, bridge });
+    default: {
+      // Exhaustiveness assertion. `ProviderId` is derived from the
+      // `KNOWN_PROVIDERS` tuple in `validate.ts` (wave-16 fix), so a
+      // future 7th provider added to that tuple without a matching
+      // `case` in this switch fails the compile here — the `never`
+      // assignment is the only place TypeScript will narrow `provider`
+      // to a non-empty type if the switch is non-exhaustive. The
+      // runtime `throw` is dead code today but is the only safe
+      // behaviour if a downstream caller ever circumvents the validator
+      // and routes an unknown provider id through to this function.
+      // Without this branch a non-exhaustive switch returns `undefined`
+      // at runtime and the IPC layer surfaces an opaque
+      // "Cannot read properties of undefined (reading 'then')". See
+      // Devin Review wave 21 ANALYSIS_0004.
+      const _exhaustive: never = provider;
+      throw new Error(`runSync: unknown provider ${String(_exhaustive)}`);
+    }
   }
 }
 

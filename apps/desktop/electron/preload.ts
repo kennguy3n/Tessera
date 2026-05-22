@@ -557,6 +557,75 @@ export interface SaveDialogResult {
   filePath?: string;
 }
 
+/**
+ * Typed subscription helper for the renderer-facing IPC event channels
+ * (`model:token`, `runtime:downloadProgress`, `updates:status`, …).
+ *
+ * Electron's `ipcRenderer.on(channel, listener)` typings declare the
+ * listener as `(event: IpcRendererEvent, ...args: any[]) => void`. Our
+ * preload bridges want a *typed* payload callback (e.g.
+ * `(progress: ModelDownloadProgress) => void`), so the previous code
+ * wrote per-channel listener wrappers and reached for `as never` to
+ * launder the type mismatch:
+ *
+ * ```ts
+ * const listener = (_event: unknown, payload: SomeType) => callback(payload);
+ * ipcRenderer.on(channel, listener as never);
+ * ipcRenderer.removeListener(channel, listener as never);
+ * ```
+ *
+ * That pattern had three downsides:
+ *
+ *   1. `as never` is the maximally-permissive escape hatch — once it
+ *      compiles, drift in either Electron's signature or our typed
+ *      payload would silently slip through.
+ *   2. The cast was duplicated at every listener registration, which
+ *      meant a future bug fix (e.g. logging the raw `IpcRendererEvent`)
+ *      would have to be applied N times.
+ *   3. The disposer closure had to be re-implemented per channel,
+ *      including remembering to use the SAME function reference for
+ *      `removeListener` (otherwise the listener leaks for the lifetime
+ *      of the renderer process).
+ *
+ * The helper below contains the one cast in one place, behind a
+ * generic `<T>` payload type. Callers stay strongly typed:
+ *
+ * ```ts
+ * onStatus: (cb: (s: UpdateStatusInfo) => void) =>
+ *   subscribeIpc<UpdateStatusInfo>("updates:status", cb),
+ * ```
+ *
+ * The `IpcEventListener` alias exists purely so the cast site below
+ * has a name to point at instead of inlining the full Electron
+ * signature. See Devin Review wave 21 ANALYSIS_0006 (preload.ts:
+ * 737-739) for the original finding.
+ */
+type IpcEventListener = (
+  event: Electron.IpcRendererEvent,
+  // Electron's own type uses `...args: any[]`; we use `unknown[]` here
+  // because the cast at the assignment site is the single point where
+  // the dispatcher converts between the helper's typed `payload: T`
+  // and Electron's variadic `...args: any[]` shape.
+  ...args: unknown[]
+) => void;
+
+function subscribeIpc<T>(
+  channel: string,
+  callback: (payload: T) => void,
+): () => void {
+  // Capture the same function reference for both `on` and
+  // `removeListener` so the disposer actually removes the listener
+  // we registered (passing a fresh closure to `removeListener` would
+  // silently leak the listener until the renderer is destroyed).
+  const listener: IpcEventListener = (_event, ...args) => {
+    callback(args[0] as T);
+  };
+  ipcRenderer.on(channel, listener);
+  return () => {
+    ipcRenderer.removeListener(channel, listener);
+  };
+}
+
 const api: TesseraApi = {
   sources: {
     addLocalFolder: (folderPath: string) =>
@@ -653,11 +722,8 @@ const api: TesseraApi = {
     stop: () => ipcRenderer.invoke("model:stop"),
     generate: (request: unknown) => ipcRenderer.invoke("model:generate", request),
     cancelJob: () => ipcRenderer.invoke("model:cancelJob"),
-    onToken: (callback: (chunk: unknown) => void) => {
-      const listener = (_event: unknown, chunk: unknown) => callback(chunk);
-      ipcRenderer.on("model:token", listener as never);
-      return () => { ipcRenderer.removeListener("model:token", listener as never); };
-    },
+    onToken: (callback: (chunk: unknown) => void) =>
+      subscribeIpc<unknown>("model:token", callback),
   },
   runtime: {
     detectPlatform: () => ipcRenderer.invoke("runtime:detectPlatform"),
@@ -672,13 +738,8 @@ const api: TesseraApi = {
     downloadModel: (modelId: string) =>
       ipcRenderer.invoke("runtime:downloadModel", modelId),
     deleteModel: () => ipcRenderer.invoke("runtime:deleteModel"),
-    onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) => {
-      const listener = (_event: unknown, p: ModelDownloadProgress) => callback(p);
-      ipcRenderer.on("runtime:downloadProgress", listener as never);
-      return () => {
-        ipcRenderer.removeListener("runtime:downloadProgress", listener as never);
-      };
-    },
+    onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) =>
+      subscribeIpc<ModelDownloadProgress>("runtime:downloadProgress", callback),
   },
   connectors: {
     authenticate: (provider: string, clientId: string, clientSecret: string) =>
@@ -729,16 +790,8 @@ const api: TesseraApi = {
       ipcRenderer.invoke("updates:getAutoUpdateEnabled"),
     setAutoUpdateEnabled: (enabled: boolean) =>
       ipcRenderer.invoke("updates:setAutoUpdateEnabled", enabled),
-    onStatus: (cb: (s: UpdateStatusInfo) => void) => {
-      const listener = (
-        _event: Electron.IpcRendererEvent,
-        status: UpdateStatusInfo,
-      ) => cb(status);
-      ipcRenderer.on("updates:status", listener as never);
-      return () => {
-        ipcRenderer.removeListener("updates:status", listener as never);
-      };
-    },
+    onStatus: (cb: (s: UpdateStatusInfo) => void) =>
+      subscribeIpc<UpdateStatusInfo>("updates:status", cb),
   },
 };
 
