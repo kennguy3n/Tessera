@@ -1,8 +1,14 @@
 import * as fs from "fs";
 import * as path from "path";
 import { app } from "electron";
+import type { ExternalProviderType } from "../shared/types";
 
-export type ExternalProviderType = "openai_compatible" | "anthropic" | "custom";
+// Re-export so call sites that already pull `ExternalProviderType` from
+// `./config` keep working without churn. The canonical declaration lives
+// in `apps/desktop/shared/types.ts` so the IPC wire shape
+// (`ExternalProviderConfigInput`) and the on-disk config shape
+// (`ExternalProviderConfig`) cannot drift apart.
+export type { ExternalProviderType };
 
 export interface ExternalProviderConfig {
   enabled: boolean;

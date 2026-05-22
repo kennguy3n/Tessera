@@ -8,11 +8,16 @@
     "skipLibCheck": true,
     "strict": true,
     "outDir": "dist-electron",
-    "rootDir": "electron",
+    // `rootDir` is set to "." so the compiler treats both `electron/`
+    // and `shared/` as sibling source roots. The resulting layout
+    // mirrors the source tree: `dist-electron/electron/main.js` and
+    // `dist-electron/shared/types.js`. The package.json `main` field
+    // points at the new path so Electron still loads the right entry.
+    "rootDir": ".",
     "resolveJsonModule": true,
     "declaration": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["electron"],
+  "include": ["electron", "shared"],
   "exclude": ["electron/__tests__/**"]
 }

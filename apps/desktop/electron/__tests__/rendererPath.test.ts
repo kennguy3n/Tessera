@@ -32,7 +32,9 @@ describe("packaged Electron renderer wiring", () => {
       path.join(DESKTOP_ROOT, "vite.config.ts"),
       "utf-8",
     );
-    expect(viteConfig).toMatch(/outDir:\s*path\.resolve\(__dirname,\s*"renderer-dist"\)/);
+    expect(viteConfig).toMatch(
+      /outDir:\s*path\.resolve\(__dirname,\s*"renderer-dist"\)/,
+    );
   });
 
   it("vite.config.ts sets base to './' so assets resolve under file://", () => {
@@ -43,15 +45,19 @@ describe("packaged Electron renderer wiring", () => {
     expect(viteConfig).toMatch(/base:\s*"\.\/"/);
   });
 
-  it("electron/main.ts production branch loads ../renderer-dist/index.html", () => {
+  it("electron/main.ts production branch loads ../../renderer-dist/index.html", () => {
     const mainTs = readFileSync(
       path.join(DESKTOP_ROOT, "electron", "main.ts"),
       "utf-8",
     );
+    // The Electron main bundle is emitted to
+    // `dist-electron/electron/main.js` (Workstream 1 sibling-rooted
+    // layout — see `tsconfig.electron.json`), so the renderer
+    // entrypoint lives two levels up from `__dirname` instead of one.
     // Tolerate prettier wrapping the call across multiple lines (and a
     // trailing comma on the inner argument).
     expect(mainTs).toMatch(
-      /loadFile\(\s*path\.join\(\s*__dirname,\s*"\.\.\/renderer-dist\/index\.html"\s*,?\s*\)\s*,?\s*\)/,
+      /loadFile\(\s*path\.join\(\s*__dirname,\s*"\.\.\/\.\.\/renderer-dist\/index\.html"\s*,?\s*\)\s*,?\s*\)/,
     );
     expect(mainTs).not.toMatch(/"\.\.\/dist\/index\.html"/);
   });
@@ -71,8 +77,10 @@ describe("packaged Electron renderer wiring", () => {
       expect(body, `${rel} missing dist-electron glob`).toContain(
         "apps/desktop/dist-electron/**/*",
       );
-      expect(body, `${rel} still references stale apps/desktop/dist glob`).not
-        .toMatch(/apps\/desktop\/dist\/\*/);
+      expect(
+        body,
+        `${rel} still references stale apps/desktop/dist glob`,
+      ).not.toMatch(/apps\/desktop\/dist\/\*/);
     }
   });
 });

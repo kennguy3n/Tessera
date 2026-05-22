@@ -31,12 +31,12 @@
  *     (Devin Review BUG finding 3270889925.)
  */
 
-export interface ExtractedItem {
-  itemType: "task" | "decision";
-  text: string;
-  sourceCitation: string;
-  confidence: number;
-}
+import type { ExtractedItem } from "../shared/types";
+
+// Re-export so existing callers that import `ExtractedItem` from this
+// module keep working. The canonical declaration lives in
+// `apps/desktop/shared/types.ts`.
+export type { ExtractedItem };
 
 /**
  * `console.warn`-shaped sink. Tests inject a recording fake so we can
