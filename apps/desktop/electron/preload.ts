@@ -1,561 +1,90 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type {
+  AddCitationRequest,
+  ExternalProviderConfigInput,
+  ModelDownloadProgress,
+  ReplaceCitationRequest,
+  SaveDialogOptions,
+  SettingsData,
+  TesseraApi,
+  UpdateStatusInfo,
+} from "../shared/types";
 
-export interface SourceInfo {
-  id: string;
-  sourceType: string;
-  path: string;
-  status: string;
-  createdAt: string;
-  lastIndexed: string | null;
-  fileCount: number;
-}
-
-export interface IndexingProgressInfo {
-  status: "idle" | "running" | "done" | "failed";
-  scanned: number;
-  indexed: number;
-  unchanged: number;
-  skipped: number;
-  errors: number;
-  totalFiles: number;
-  currentPath: string | null;
-  lastError: string | null;
-}
-
-export interface IndexedFileInfo {
-  path: string;
-  hash: string;
-  lastModified: string;
-  chunkCount: number;
-}
-
-export interface SourceDetailInfo {
-  source: SourceInfo;
-  files: IndexedFileInfo[];
-}
-
-export interface SearchHit {
-  sourcePath: string;
-  sourceId: string;
-  chunkHash: string;
-  chunkContent: string;
-  relevanceScore: number;
-  excerpt: string;
-}
-
-export interface ArtifactInfo {
-  id: string;
-  title: string;
-  artifactType: string;
-  templateId: string | null;
-  content: string;
-  citationCount: number;
-  createdAt: string;
-  updatedAt: string;
-  version: number;
-}
-
-export interface TemplateInfo {
-  id: string;
-  name: string;
-  artifactType: string;
-  description: string;
-  sectionCount: number;
-  exportFormats: string[];
-}
-
-export interface CitationInfo {
-  citationId: string;
-  sourceId: string;
-  sourceType: string;
-  sourceTitle: string;
-  sourceUri: string;
-  chunkHash: string;
-  page: number | null;
-  confidence: number;
-  usedFor: string;
-  createdAt: string;
-}
-
-export interface AddCitationRequest {
-  artifactId: string;
-  sourceId: string;
-  sourceType: string;
-  sourceTitle: string;
-  sourceUri: string;
-  chunkHash: string;
-  page: number | null;
-  confidence: number;
-  usedFor: string;
-}
-
-export type CitationFreshness = "fresh" | "changed" | "source_missing";
-
-export interface ReplaceCitationRequest {
-  artifactId: string;
-  citationId: string;
-  sourceId: string;
-  sourceType: string;
-  sourceTitle: string;
-  sourceUri: string;
-  /** Required by the Rust N-API `ReplaceCitationRequest`; omitting
-   *  it causes deserialization to fail at the bridge call site. */
-  chunkHash: string;
-  page: number | null;
-  confidence: number;
-}
-
-export interface ReplaceCitationResult {
-  citation: CitationInfo;
-  previousSourceUri: string;
-}
-
-export interface SettingsData {
-  theme: string;
-  defaultExportFormat: string;
-  ignorePatterns: string[];
-  watchPatterns: string[];
-}
-
-export type ExternalProviderType =
-  | "openai_compatible"
-  | "anthropic"
-  | "custom";
-
-/** Payload accepted by `externalProvider.set` from the renderer. */
-export interface ExternalProviderConfigInput {
-  enabled: boolean;
-  providerType: ExternalProviderType;
-  apiUrl: string;
-  apiKeyRef: string;
-  modelName: string;
-  maxTokens: number;
-  temperature: number;
-  timeoutSecs: number;
-  maxRetries: number;
-}
-
-/** Payload returned by `externalProvider.get` / `.set`. Includes the
- *  derived `hasApiKey` so the renderer can hide the password field
- *  when the keychain already has a value. */
-export interface ExternalProviderConfigView extends ExternalProviderConfigInput {
-  hasApiKey: boolean;
-}
-
-export type ExternalProviderTestResult =
-  | { ok: true; latencyMs: number }
-  | { ok: false; error: string };
-
-// Mirrors `ExtractedItem` in apps/desktop/renderer/src/types/ipc.ts and
-// the local copy in apps/desktop/electron/ipc.ts. We duplicate the shape
-// here so the preload's `extractTasksDecisions` signature is sound across
-// the contextBridge without forcing preload (main-side, Electron) to
-// import from the renderer module (which would pull React-aware build
-// settings into the main process). Any change to the schema must be made
-// in all three locations.
-export interface ExtractedItem {
-  itemType: "task" | "decision";
-  text: string;
-  sourceCitation: string;
-  confidence: number;
-}
-
-export interface ModelStatus {
-  available: boolean;
-  modelName: string | null;
-  status: string;
-}
-
-export type ModelPlatform =
-  | "macos-apple-silicon"
-  | "macos-intel"
-  | "windows-x64"
-  | "linux-x64"
-  | "linux-arm64";
-
-export type ModelFormat = "gguf" | "mlx";
-export type ComputeBackend = "cpu" | "cuda" | "vulkan" | "metal" | "rocm";
-export type DeviceTier = "low" | "medium" | "high";
-
-export interface PlatformInfo {
-  platform: ModelPlatform;
-  platformLabel: string;
-  totalRamGb: number;
-  tier: DeviceTier;
-  tierLabel: string;
-  computeBackends: ComputeBackend[];
-  preferredFormat: ModelFormat;
-}
-
-export interface ResolvedModel {
-  id: string;
-  name: string;
-  parameters: string;
-  format: ModelFormat;
-  formatLabel: string;
-  quantization: string;
-  platform: ModelPlatform;
-  tier: DeviceTier;
-  computeBackends: ComputeBackend[];
-  downloadSizeMb: number;
-  diskSizeMb: number;
-  requiredRamGb: number;
-  contextLength: number;
-  filename: string;
-  url: string;
-  sha256: string | null;
-}
-
-export interface InstalledModelRecord {
-  modelId: string;
-  format: ModelFormat;
-  filename: string;
-  path: string;
-  downloadSizeMb: number;
-  // Records persisted before `diskSizeMb` was added (or by an older
-  // build) won't have this field — read via `effectiveDiskSizeMb`
-  // from `modelManagement.ts` to fall back to `downloadSizeMb`.
-  // Kept optional here so the type matches the on-disk wire shape
-  // and the canonical declaration in `modelManagement.ts`.
-  diskSizeMb?: number;
-  sha256: string | null;
-  downloadedAt: string;
-}
-
-export type DownloadPlan =
-  | { kind: "already-installed"; modelId: string }
-  | {
-      kind: "direct-download";
-      modelId: string;
-      filename: string;
-      downloadSizeMb: number;
-      message: string;
-    }
-  | {
-      kind: "swap";
-      evictModelId: string;
-      evictFilename: string;
-      evictSizeMb: number;
-      installModelId: string;
-      installFilename: string;
-      installSizeMb: number;
-      netDiskDeltaMb: number;
-      message: string;
-    };
-
-export interface ModelDownloadProgress {
-  modelId: string;
-  format: ModelFormat;
-  filename: string;
-  downloadedMb: number;
-  totalMb: number;
-  percent: number;
-}
-
-export interface ExportResult {
-  content: string;
-  format: string;
-}
-
-export interface ArtifactVersionInfo {
-  version: number;
-  content: string;
-  createdAt: string;
-}
-
-export interface ConnectorFileInfo {
-  id: string;
-  name: string;
-  mimeType: string;
-  size: number;
-  modifiedTime: string | null;
-  isFolder: boolean;
-  parentId: string | null;
-}
-
-export interface ConnectorStatusInfo {
-  provider: string;
-  connected: boolean;
-  status: string;
-}
-
-export interface TesseraApi {
-  sources: {
-    addLocalFolder: (path: string) => Promise<SourceInfo>;
-    addLocalFile: (path: string) => Promise<SourceInfo>;
-    listSources: () => Promise<SourceInfo[]>;
-    removeSource: (id: string) => Promise<void>;
-    searchSources: (query: string, limit: number) => Promise<SearchHit[]>;
-    getDetail: (id: string) => Promise<SourceDetailInfo>;
-    reindex: (id: string) => Promise<SourceInfo>;
-    getIndexingProgress: (id: string) => Promise<IndexingProgressInfo>;
-  };
-  artifacts: {
-    create: (
-      title: string,
-      artifactType: string,
-      templateId?: string,
-    ) => Promise<ArtifactInfo>;
-    update: (id: string, content: string) => Promise<ArtifactInfo>;
-    list: () => Promise<ArtifactInfo[]>;
-    get: (id: string) => Promise<ArtifactInfo>;
-    remove: (id: string) => Promise<void>;
-    exportArtifact: (
-      id: string,
-      format: string,
-      contentOverride?: string | null,
-    ) => Promise<ExportResult>;
-    exportToFile: (
-      id: string,
-      format: string,
-      filePath: string,
-      contentOverride?: string | null,
-    ) => Promise<string | null>;
-    listVersions: (id: string) => Promise<ArtifactVersionInfo[]>;
-    restoreVersion: (id: string, versionNumber: number) => Promise<ArtifactInfo>;
-    generateFromTemplate: (templateId: string, sourceIds: string[]) => Promise<ArtifactInfo>;
-    extractTasksDecisions: (sourceId: string) => Promise<ExtractedItem[]>;
-    compareSources: (sourceIdA: string, sourceIdB: string) => Promise<ArtifactInfo>;
-    exportEvidencePack: (artifactId: string, outputPath: string) => Promise<string>;
-    exportMarp: (req: {
-      markdown: string;
-      format: "pdf" | "pptx" | "html";
-      outputPath: string;
-      theme?: string;
-      includeNotes?: boolean;
-      allowHtml?: boolean;
-    }) => Promise<string | null>;
-    exportTypst: (req: {
-      markup: string;
-      format: "pdf" | "svg";
-      outputPath?: string;
-    }) => Promise<{ outputPath: string; bytes: number }>;
-  };
-  templates: {
-    list: () => Promise<TemplateInfo[]>;
-    get: (id: string) => Promise<TemplateInfo | null>;
-  };
-  citations: {
-    list: (artifactId: string) => Promise<CitationInfo[]>;
-    add: (req: AddCitationRequest) => Promise<CitationInfo>;
-    remove: (artifactId: string, citationId: string) => Promise<void>;
-    checkChanged: (citationId: string) => Promise<boolean>;
-    checkFreshness: (citationId: string) => Promise<CitationFreshness>;
-    replace: (req: ReplaceCitationRequest) => Promise<ReplaceCitationResult>;
-  };
-  settings: {
-    get: () => Promise<SettingsData>;
-    update: (settings: Partial<SettingsData>) => Promise<SettingsData>;
-  };
-  externalProvider: {
-    get: () => Promise<ExternalProviderConfigView>;
-    set: (
-      provider: ExternalProviderConfigInput,
-      apiKey: string | null,
-    ) => Promise<ExternalProviderConfigView>;
-    test: () => Promise<ExternalProviderTestResult>;
-  };
-  model: {
-    status: () => Promise<ModelStatus>;
-    start: (modelPath: string) => Promise<void>;
-    stop: () => Promise<void>;
-    generate: (request: unknown) => Promise<void>;
-    cancelJob: () => Promise<void>;
-    onToken: (callback: (chunk: unknown) => void) => () => void;
-  };
-  runtime: {
-    detectPlatform: () => Promise<PlatformInfo>;
-    recommendModel: () => Promise<ResolvedModel | null>;
-    listModels: () => Promise<ResolvedModel[]>;
-    getCurrentModel: () => Promise<InstalledModelRecord | null>;
-    planDownload: (modelId: string) => Promise<DownloadPlan>;
-    downloadModel: (modelId: string) => Promise<InstalledModelRecord>;
-    deleteModel: () => Promise<void>;
-    onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) => () => void;
-  };
-  connectors: {
-    authenticate: (provider: string, clientId: string, clientSecret: string) => Promise<ConnectorStatusInfo>;
-    disconnect: (provider: string) => Promise<ConnectorStatusInfo>;
-    status: (provider: string) => Promise<ConnectorStatusInfo>;
-    listDriveFiles: (folderId?: string, pageToken?: string) => Promise<{ nextPageToken: string | null; files: ConnectorFileInfo[] }>;
-    selectItems: (items: Array<{ id: string; name: string; mimeType: string }>) => Promise<Array<{ id: string; name: string; mimeType: string; selected: boolean }>>;
-    syncDrive: (selectedFileIds?: string[]) => Promise<{ added: number; modified: number; removed: number; status: string }>;
-    /**
-     * Trigger an incremental sync for the given provider. Works for
-     * every provider — OneDrive, Notion, Jira, Confluence, Figma, and
-     * (when no `selectedFileIds` is supplied) Google Drive. The Drive
-     * picker-driven sync still goes through `syncDrive` because it
-     * accepts an explicit selection.
-     */
-    sync: (provider: string) => Promise<{ added: number; modified: number; removed: number; status: string }>;
-    /**
-     * Fetch the loopback redirect URI the user must register in the
-     * provider's developer console. Sourced from the OAuth config
-     * (`providerOAuth.ts`) so the value displayed in the UI cannot
-     * drift from the value sent on the authorize request.
-     */
-    getRedirectUri: (provider: string) => Promise<string>;
-    /**
-     * Bulk-fetch the canonical redirect URI for every known provider
-     * in a single IPC round-trip. The renderer's `ConnectorsList`
-     * uses this at mount time to replace the previously-hardcoded
-     * fallback values with the authoritative set computed from
-     * `providerOAuth.ts > PROVIDER_OAUTH_CONFIGS`.
-     */
-    getAllRedirectUris: () => Promise<Record<string, string>>;
-  };
-  tasks: {
-    create: (req: CreateTaskRequest) => Promise<TaskInfo>;
-    list: () => Promise<TaskInfo[]>;
-    get: (id: string) => Promise<TaskInfo | null>;
-    update: (id: string, req: UpdateTaskRequest) => Promise<TaskInfo>;
-    remove: (id: string) => Promise<boolean>;
-    reorder: (status: string, ids: string[]) => Promise<void>;
-  };
-  automations: {
-    create: (req: CreateAutomationRequest) => Promise<AutomationInfo>;
-    list: () => Promise<AutomationInfo[]>;
-    get: (id: string) => Promise<AutomationInfo | null>;
-    setEnabled: (id: string, enabled: boolean) => Promise<void>;
-    remove: (id: string) => Promise<boolean>;
-    schedulerStatus: () => Promise<SchedulerStatusInfo>;
-    runNow: () => Promise<SchedulerStatusInfo>;
-  };
-  dialog: {
-    showSaveDialog: (options: SaveDialogOptions) => Promise<SaveDialogResult>;
-  };
-  /**
-   * Auto-update integration (Phase 10). The renderer never talks to
-   * `electron-updater` directly — every interaction goes through
-   * these IPC channels so the main process can validate state, run
-   * the updater out of the sandboxed renderer, and apply a single
-   * configuration source of truth (Settings -> Auto-update toggle).
-   */
-  updates: {
-    /** Last known update status. Useful for the Settings card. */
-    status: () => Promise<UpdateStatusInfo>;
-    /** Force-check the release feed now. */
-    check: () => Promise<UpdateStatusInfo>;
-    /** Install a downloaded update (quits + relaunches). */
-    install: () => Promise<{ ok: boolean; message?: string }>;
-    getAutoUpdateEnabled: () => Promise<boolean>;
-    setAutoUpdateEnabled: (enabled: boolean) => Promise<boolean>;
-    /** Subscribe to streaming update events. Returns an unsubscribe. */
-    onStatus: (cb: (s: UpdateStatusInfo) => void) => () => void;
-  };
-}
-
-export interface UpdateStatusInfo {
-  status:
-    | "idle"
-    | "checking"
-    | "available"
-    | "not-available"
-    | "downloading"
-    | "downloaded"
-    | "error";
-  message?: string;
-  percent?: number;
-  bytesPerSecond?: number;
-  newVersion?: string;
-}
-
-export interface TaskInfo {
-  id: string;
-  title: string;
-  description: string;
-  status: string;
-  priority: string;
-  position: number;
-  assignee: string | null;
-  dueDate: string | null;
-  sourceId: string | null;
-  extractedItemId: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CreateTaskRequest {
-  title: string;
-  description?: string;
-  status?: string;
-  priority?: string;
-  assignee?: string | null;
-  dueDate?: string | null;
-  sourceId?: string | null;
-  extractedItemId?: string | null;
-}
-
-export interface UpdateTaskRequest {
-  title?: string;
-  description?: string;
-  status?: string;
-  priority?: string;
-  position?: number;
-  /**
-   * Tri-state field. `undefined` (key omitted) leaves the value
-   * unchanged. `null` explicitly clears the assignee. A string sets it.
-   * The bridge enforces this via `Option<Option<String>>` — see
-   * tessera_bridge::tasks::UpdateTaskRequest.
-   */
-  assignee?: string | null;
-  /** Same tri-state semantics as `assignee`. The bridge surfaces a
-   *  parse error if a non-empty string isn't valid RFC 3339 — see
-   *  the `update_task_with_invalid_due_date_does_not_clear_existing`
-   *  regression test. */
-  dueDate?: string | null;
-}
-
-export type AutomationTrigger =
-  | { kind: "schedule"; interval_seconds: number }
-  | { kind: "on_generate"; template_id: string };
-
-export type AutomationAction =
-  | { kind: "reindex_source"; source_id: string }
-  | {
-      kind: "generate_from_template";
-      template_id: string;
-      source_ids: string[];
-    };
-
-export interface AutomationInfo {
-  id: string;
-  name: string;
-  triggerJson: string;
-  actionJson: string;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
-  lastRunAt: string | null;
-  lastRunStatus: string | null;
-  nextScheduledAt: string | null;
-}
-
-export interface CreateAutomationRequest {
-  name: string;
-  trigger: AutomationTrigger;
-  action: AutomationAction;
-  enabled?: boolean;
-}
-
-export interface SchedulerStatusInfo {
-  running: boolean;
-  lastTickAt: string | null;
-  lastTickError: string | null;
-  inFlight: boolean;
-}
-
-export interface SaveDialogOptions {
-  title?: string;
-  defaultPath?: string;
-  buttonLabel?: string;
-  filters?: Array<{ name: string; extensions: string[] }>;
-}
-
-export interface SaveDialogResult {
-  canceled: boolean;
-  filePath?: string;
-}
+// Re-export the shared IPC types so existing call sites that import
+// from "./preload" keep working. The canonical declarations live in
+// `apps/desktop/shared/types.ts` so there is exactly one definition
+// per wire type — see Workstream 1 of the production hardening plan.
+export type {
+  AddCitationRequest,
+  ArtifactInfo,
+  ArtifactVersionInfo,
+  AutomationAction,
+  AutomationApi,
+  AutomationInfo,
+  AutomationTrigger,
+  CitationApi,
+  CitationFreshness,
+  CitationInfo,
+  ComputeBackend,
+  ConnectorApi,
+  ConnectorFileInfo,
+  ConnectorStatusInfo,
+  CreateAutomationRequest,
+  CreateTaskRequest,
+  DeviceTier,
+  DialogApi,
+  DownloadPlan,
+  DriveFileListResult,
+  DrivePickerItem,
+  DrivePickerSelection,
+  DriveSyncResult,
+  ExportResult,
+  ExternalProviderApi,
+  ExternalProviderConfigInput,
+  ExternalProviderConfigView,
+  ExternalProviderTestResult,
+  ExternalProviderType,
+  ExtractedItem,
+  GenerateChunk,
+  GenerateRequest,
+  IndexedFileInfo,
+  IndexingProgressInfo,
+  InstalledModelRecord,
+  MarpExportRequest,
+  ModelApi,
+  ModelDownloadProgress,
+  ModelFormat,
+  ModelPlatform,
+  ModelStatus,
+  PlatformInfo,
+  ReplaceCitationRequest,
+  ReplaceCitationResult,
+  ResolvedModel,
+  RuntimeApi,
+  SaveDialogOptions,
+  SaveDialogResult,
+  SchedulerStatus,
+  SchedulerStatusInfo,
+  SearchHit,
+  SearchHitInfo,
+  SettingsApi,
+  SettingsData,
+  SourceApi,
+  SourceDetailInfo,
+  SourceInfo,
+  TaskApi,
+  TaskInfo,
+  TaskPriority,
+  TaskStatus,
+  TemplateApi,
+  TemplateInfo,
+  TesseraApi,
+  TypstExportRequest,
+  TypstExportResult,
+  UpdatesApi,
+  UpdateStatusInfo,
+  UpdateTaskRequest,
+} from "../shared/types";
 
 /**
  * Typed subscription helper for the renderer-facing IPC event channels
@@ -588,17 +117,11 @@ export interface SaveDialogResult {
  *      of the renderer process).
  *
  * The helper below contains the one cast in one place, behind a
- * generic `<T>` payload type. Callers stay strongly typed:
- *
- * ```ts
- * onStatus: (cb: (s: UpdateStatusInfo) => void) =>
- *   subscribeIpc<UpdateStatusInfo>("updates:status", cb),
- * ```
+ * generic `<T>` payload type. Callers stay strongly typed.
  *
  * The `IpcEventListener` alias exists purely so the cast site below
  * has a name to point at instead of inlining the full Electron
- * signature. See Devin Review wave 21 ANALYSIS_0006 (preload.ts:
- * 737-739) for the original finding.
+ * signature.
  */
 type IpcEventListener = (
   event: Electron.IpcRendererEvent,
@@ -678,13 +201,21 @@ const api: TesseraApi = {
     restoreVersion: (id: string, versionNumber: number) =>
       ipcRenderer.invoke("artifacts:restoreVersion", id, versionNumber),
     generateFromTemplate: (templateId: string, sourceIds: string[]) =>
-      ipcRenderer.invoke("artifacts:generateFromTemplate", templateId, sourceIds),
+      ipcRenderer.invoke(
+        "artifacts:generateFromTemplate",
+        templateId,
+        sourceIds,
+      ),
     extractTasksDecisions: (sourceId: string) =>
       ipcRenderer.invoke("artifacts:extractTasksDecisions", sourceId),
     compareSources: (sourceIdA: string, sourceIdB: string) =>
       ipcRenderer.invoke("artifacts:compareSources", sourceIdA, sourceIdB),
     exportEvidencePack: (artifactId: string, outputPath: string) =>
-      ipcRenderer.invoke("artifacts:exportEvidencePack", artifactId, outputPath),
+      ipcRenderer.invoke(
+        "artifacts:exportEvidencePack",
+        artifactId,
+        outputPath,
+      ),
     exportMarp: (req) => ipcRenderer.invoke("artifacts:exportMarp", req),
     exportTypst: (req) => ipcRenderer.invoke("artifacts:exportTypst", req),
   },
@@ -720,10 +251,9 @@ const api: TesseraApi = {
     status: () => ipcRenderer.invoke("model:status"),
     start: (modelPath: string) => ipcRenderer.invoke("model:start", modelPath),
     stop: () => ipcRenderer.invoke("model:stop"),
-    generate: (request: unknown) => ipcRenderer.invoke("model:generate", request),
+    generate: (request) => ipcRenderer.invoke("model:generate", request),
     cancelJob: () => ipcRenderer.invoke("model:cancelJob"),
-    onToken: (callback: (chunk: unknown) => void) =>
-      subscribeIpc<unknown>("model:token", callback),
+    onToken: (callback) => subscribeIpc("model:token", callback),
   },
   runtime: {
     detectPlatform: () => ipcRenderer.invoke("runtime:detectPlatform"),
@@ -733,8 +263,7 @@ const api: TesseraApi = {
     planDownload: (modelId: string) =>
       ipcRenderer.invoke("runtime:planDownload", modelId),
     // `downloadModel` handles both fresh-install and swap (delete-then-
-    // fetch). There is intentionally no separate `swapModel` channel —
-    // see Devin Review finding 3270524691.
+    // fetch). There is intentionally no separate `swapModel` channel.
     downloadModel: (modelId: string) =>
       ipcRenderer.invoke("runtime:downloadModel", modelId),
     deleteModel: () => ipcRenderer.invoke("runtime:deleteModel"),
@@ -743,14 +272,19 @@ const api: TesseraApi = {
   },
   connectors: {
     authenticate: (provider: string, clientId: string, clientSecret: string) =>
-      ipcRenderer.invoke("connectors:authenticate", provider, clientId, clientSecret),
+      ipcRenderer.invoke(
+        "connectors:authenticate",
+        provider,
+        clientId,
+        clientSecret,
+      ),
     disconnect: (provider: string) =>
       ipcRenderer.invoke("connectors:disconnect", provider),
     status: (provider: string) =>
       ipcRenderer.invoke("connectors:status", provider),
     listDriveFiles: (folderId?: string, pageToken?: string) =>
       ipcRenderer.invoke("connectors:gdrive:listFiles", folderId, pageToken),
-    selectItems: (items: Array<{ id: string; name: string; mimeType: string }>) =>
+    selectItems: (items) =>
       ipcRenderer.invoke("connectors:gdrive:selectItems", items),
     syncDrive: (selectedFileIds?: string[]) =>
       ipcRenderer.invoke("connectors:gdrive:sync", selectedFileIds),

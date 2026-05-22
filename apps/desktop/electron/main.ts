@@ -72,19 +72,21 @@ function createWindow(): void {
   if (isDev) {
     mainWindow.loadURL("http://localhost:5173");
   } else {
-    // The Electron main bundle is emitted to `apps/desktop/dist-electron/`
-    // (see `tsconfig.electron.json` `outDir`) and the renderer bundle is
+    // The Electron main bundle is emitted to
+    // `apps/desktop/dist-electron/electron/` (see `tsconfig.electron.json`
+    // — `rootDir: "."` + `include: ["electron", "shared"]` gives the
+    // compiler a sibling-rooted layout) and the renderer bundle is
     // emitted to `apps/desktop/renderer-dist/` (see `vite.config.ts`
     // `build.outDir`). At runtime `__dirname` resolves to the directory
-    // containing the running `main.js`, i.e. `…/dist-electron/`, so the
-    // renderer entrypoint is one level up at `../renderer-dist/index.html`.
+    // containing the running `main.js`, i.e. `…/dist-electron/electron/`,
+    // so the renderer entrypoint is two levels up at
+    // `../../renderer-dist/index.html`.
     // The four `packaging/**/electron-builder*.yml` configs ship both
-    // directories under those exact names, so this path is correct both
-    // when running `electron .` against a local `npm run build` and inside
-    // the packaged AppImage / .deb / .rpm / .dmg / .exe artifacts.
-    mainWindow.loadFile(
-      path.join(__dirname, "../renderer-dist/index.html"),
-    );
+    // `dist-electron/**/*` and `renderer-dist/**/*`, so this path is
+    // correct both when running `electron .` against a local
+    // `npm run build` and inside the packaged AppImage / .deb / .rpm /
+    // .dmg / .exe artifacts.
+    mainWindow.loadFile(path.join(__dirname, "../../renderer-dist/index.html"));
   }
 
   mainWindow.on("close", () => {

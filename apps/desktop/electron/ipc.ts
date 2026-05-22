@@ -15,7 +15,7 @@ import {
   runNow as schedulerRunNow,
 } from "./scheduler";
 import { isSafeExportPath } from "./exportPathSafety";
-import type { SettingsData, ModelStatus } from "./preload";
+import type { SettingsData, ModelStatus } from "../shared/types";
 import * as tokenVault from "./tokenVault";
 import * as secretsVault from "./secretsVault";
 import {
@@ -63,10 +63,14 @@ export type { ExtractedItem };
 // userData directory so both paths share the SAME OAuth refresh logic
 // — see `getValidAccessToken` below. Captured lazily on first use so
 // `app.getPath('userData')` is only invoked after `ready`.
-let sharedConnectorContext: ReturnType<typeof createDefaultContext> | null = null;
+let sharedConnectorContext: ReturnType<typeof createDefaultContext> | null =
+  null;
 function getConnectorContext(): ReturnType<typeof createDefaultContext> {
   if (!sharedConnectorContext) {
-    sharedConnectorContext = createDefaultContext(getLogger(), defaultRateLimiter);
+    sharedConnectorContext = createDefaultContext(
+      getLogger(),
+      defaultRateLimiter,
+    );
   }
   return sharedConnectorContext;
 }
@@ -285,16 +289,13 @@ export function registerIpcHandlers(): void {
     throw new Error("Native bridge not available");
   });
 
-  ipcMain.handle(
-    "sources:getIndexingProgress",
-    async (_event, id: string) => {
-      const bridge = getBridge();
-      if (bridge) {
-        return bridge.bridgeGetIndexingProgress(id);
-      }
-      throw new Error("Native bridge not available");
-    },
-  );
+  ipcMain.handle("sources:getIndexingProgress", async (_event, id: string) => {
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeGetIndexingProgress(id);
+    }
+    throw new Error("Native bridge not available");
+  });
 
   // --- Artifacts ---
 
@@ -408,7 +409,10 @@ export function registerIpcHandlers(): void {
         resolvedPath = filePath;
       } else {
         const downloads = app.getPath("downloads");
-        const suggested = path.join(downloads, filePath || `artifact.${format}`);
+        const suggested = path.join(
+          downloads,
+          filePath || `artifact.${format}`,
+        );
         const win = BrowserWindow.fromWebContents(event.sender) ?? undefined;
         const result = await (win
           ? dialog.showSaveDialog(win, {
@@ -692,11 +696,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "externalProvider:set",
-    async (
-      _event,
-      provider: ExternalProviderConfig,
-      apiKey: string | null,
-    ) => {
+    async (_event, provider: ExternalProviderConfig, apiKey: string | null) => {
       // Merge with defaults so a partial payload from a renderer of an
       // earlier release still ends up with all required fields.
       const merged: ExternalProviderConfig = {
@@ -805,110 +805,119 @@ export function registerIpcHandlers(): void {
 
   let activeGenerationController: AbortController | null = null;
 
-  ipcMain.handle("model:generate", async (event, request: {
-    prompt: string;
-    maxTokens?: number;
-    temperature?: number;
-  }) => {
-    const sidecar = getModelSidecar();
-    if (!sidecar || !sidecar.isRunning) {
-      throw new Error("Model runtime not running — start a model first");
-    }
-    sidecar.markGenerationActive();
-    const endpoint = sidecar.endpoint;
-    const body = {
-      prompt: request.prompt,
-      n_predict: request.maxTokens ?? 2048,
-      temperature: request.temperature ?? 0.7,
-      stream: true,
-    };
-
-    // Abort any in-flight generation before starting a new one
-    if (activeGenerationController) {
-      activeGenerationController.abort();
-    }
-    const controller = new AbortController();
-    activeGenerationController = controller;
-
-    // Bind a destroyed-window-safe sender for the token channel. This is
-    // the same defense pattern used by `progressEmitter` for the download
-    // progress channel: if the user closes the window mid-generation,
-    // `webContents.send` would otherwise throw "Object has been
-    // destroyed", which propagates through the SSE read loop and out of
-    // the IPC handler. The renderer is already gone so the rejection is
-    // dropped, but the throw also short-circuits the `finally` cleanup
-    // (idle marking + controller reset) on the way out. Routing every
-    // `model:token` send through `safeRendererSender` makes the channel
-    // best-effort and keeps cleanup deterministic regardless of renderer
-    // state. (Devin Review BUG finding 3271137685.)
-    const sendToken = safeRendererSender<{ token: string; done: boolean }>(
+  ipcMain.handle(
+    "model:generate",
+    async (
       event,
-      "model:token",
-    );
-    let sentDone = false;
-
-    try {
-      const resp = await fetch(`${endpoint}/completion`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-
-      if (!resp.ok) {
-        const text = await resp.text();
-        throw new Error(`Generation failed: HTTP ${resp.status} — ${text}`);
+      request: {
+        prompt: string;
+        maxTokens?: number;
+        temperature?: number;
+      },
+    ) => {
+      const sidecar = getModelSidecar();
+      if (!sidecar || !sidecar.isRunning) {
+        throw new Error("Model runtime not running — start a model first");
       }
+      sidecar.markGenerationActive();
+      const endpoint = sidecar.endpoint;
+      const body = {
+        prompt: request.prompt,
+        n_predict: request.maxTokens ?? 2048,
+        temperature: request.temperature ?? 0.7,
+        stream: true,
+      };
 
-      const reader = resp.body?.getReader();
-      if (!reader) throw new Error("No response body");
+      // Abort any in-flight generation before starting a new one
+      if (activeGenerationController) {
+        activeGenerationController.abort();
+      }
+      const controller = new AbortController();
+      activeGenerationController = controller;
 
-      const decoder = new TextDecoder();
-      let lineBuffer = "";
-      let streamDone = false;
+      // Bind a destroyed-window-safe sender for the token channel. This is
+      // the same defense pattern used by `progressEmitter` for the download
+      // progress channel: if the user closes the window mid-generation,
+      // `webContents.send` would otherwise throw "Object has been
+      // destroyed", which propagates through the SSE read loop and out of
+      // the IPC handler. The renderer is already gone so the rejection is
+      // dropped, but the throw also short-circuits the `finally` cleanup
+      // (idle marking + controller reset) on the way out. Routing every
+      // `model:token` send through `safeRendererSender` makes the channel
+      // best-effort and keeps cleanup deterministic regardless of renderer
+      // state. (Devin Review BUG finding 3271137685.)
+      const sendToken = safeRendererSender<{ token: string; done: boolean }>(
+        event,
+        "model:token",
+      );
+      let sentDone = false;
 
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done || streamDone) break;
-        sidecar.recordActivity();
-        lineBuffer += decoder.decode(value, { stream: true });
-        const lines = lineBuffer.split("\n");
-        lineBuffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6);
-          if (data === "[DONE]") {
-            sendToken({ token: "", done: true });
-            sentDone = true;
-            streamDone = true;
-            break;
-          }
-          try {
-            const parsed = JSON.parse(data) as { content?: string; stop?: boolean };
-            sendToken({
-              token: parsed.content ?? "",
-              done: parsed.stop ?? false,
-            });
-            if (parsed.stop) {
+      try {
+        const resp = await fetch(`${endpoint}/completion`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+
+        if (!resp.ok) {
+          const text = await resp.text();
+          throw new Error(`Generation failed: HTTP ${resp.status} — ${text}`);
+        }
+
+        const reader = resp.body?.getReader();
+        if (!reader) throw new Error("No response body");
+
+        const decoder = new TextDecoder();
+        let lineBuffer = "";
+        let streamDone = false;
+
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done || streamDone) break;
+          sidecar.recordActivity();
+          lineBuffer += decoder.decode(value, { stream: true });
+          const lines = lineBuffer.split("\n");
+          lineBuffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const data = line.slice(6);
+            if (data === "[DONE]") {
+              sendToken({ token: "", done: true });
               sentDone = true;
               streamDone = true;
               break;
             }
-          } catch {
-            // skip unparseable SSE lines
+            try {
+              const parsed = JSON.parse(data) as {
+                content?: string;
+                stop?: boolean;
+              };
+              sendToken({
+                token: parsed.content ?? "",
+                done: parsed.stop ?? false,
+              });
+              if (parsed.stop) {
+                sentDone = true;
+                streamDone = true;
+                break;
+              }
+            } catch {
+              // skip unparseable SSE lines
+            }
           }
         }
+      } finally {
+        sidecar.markGenerationIdle();
+        if (activeGenerationController === controller) {
+          activeGenerationController = null;
+        }
+        if (!sentDone) {
+          sendToken({ token: "", done: true });
+        }
       }
-    } finally {
-      sidecar.markGenerationIdle();
-      if (activeGenerationController === controller) {
-        activeGenerationController = null;
-      }
-      if (!sentDone) {
-        sendToken({ token: "", done: true });
-      }
-    }
-  });
+    },
+  );
 
   ipcMain.handle("model:cancelJob", async () => {
     if (activeGenerationController) {
@@ -1071,7 +1080,10 @@ export function registerIpcHandlers(): void {
   }
 
   function progressEmitter(event: Electron.IpcMainInvokeEvent) {
-    return safeRendererSender<DownloadProgress>(event, "runtime:downloadProgress");
+    return safeRendererSender<DownloadProgress>(
+      event,
+      "runtime:downloadProgress",
+    );
   }
 
   ipcMain.handle("runtime:downloadModel", async (event, modelId: string) => {
@@ -1268,11 +1280,14 @@ export function registerIpcHandlers(): void {
         throw err;
       }
 
-      const sanitizedFolderId = (folderId ?? "root").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      const sanitizedFolderId = (folderId ?? "root")
+        .replace(/\\/g, "\\\\")
+        .replace(/'/g, "\\'");
       const query = `'${sanitizedFolderId}' in parents and trashed = false`;
       const params = new URLSearchParams({
         q: query,
-        fields: "nextPageToken,files(id,name,mimeType,size,modifiedTime,parents)",
+        fields:
+          "nextPageToken,files(id,name,mimeType,size,modifiedTime,parents)",
         pageSize: "100",
         orderBy: "folder,name",
       });
@@ -1377,11 +1392,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     "artifacts:generateFromTemplate",
-    async (
-      _event,
-      templateId: string,
-      sourceIds: string[],
-    ) => {
+    async (_event, templateId: string, sourceIds: string[]) => {
       const bridge = getBridge();
       if (!bridge) throw new Error("Native bridge not available");
       const artifact = bridge.bridgeGenerateFromTemplate(templateId, sourceIds);
@@ -1575,14 +1586,11 @@ export function registerIpcHandlers(): void {
     return bridge.bridgeListAutomations();
   });
 
-  ipcMain.handle(
-    "automations:get",
-    async (_event, automationId: string) => {
-      const bridge = getBridge();
-      if (!bridge) throw new Error("Native bridge not available");
-      return bridge.bridgeGetAutomation(automationId);
-    },
-  );
+  ipcMain.handle("automations:get", async (_event, automationId: string) => {
+    const bridge = getBridge();
+    if (!bridge) throw new Error("Native bridge not available");
+    return bridge.bridgeGetAutomation(automationId);
+  });
 
   ipcMain.handle(
     "automations:setEnabled",
@@ -1593,14 +1601,11 @@ export function registerIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle(
-    "automations:delete",
-    async (_event, automationId: string) => {
-      const bridge = getBridge();
-      if (!bridge) throw new Error("Native bridge not available");
-      return bridge.bridgeDeleteAutomation(automationId);
-    },
-  );
+  ipcMain.handle("automations:delete", async (_event, automationId: string) => {
+    const bridge = getBridge();
+    if (!bridge) throw new Error("Native bridge not available");
+    return bridge.bridgeDeleteAutomation(automationId);
+  });
 
   // Scheduler control surface used by the AutomationsPage UI: status
   // (running? in-flight? last error?) + manual "tick now" trigger so

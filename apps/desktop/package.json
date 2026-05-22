@@ -4,7 +4,7 @@
   "private": true,
   "description": "Tessera desktop application — Electron + React",
   "license": "MIT",
-  "main": "dist-electron/main.js",
+  "main": "dist-electron/electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.node.json && vite build && tsc -p tsconfig.electron.json",

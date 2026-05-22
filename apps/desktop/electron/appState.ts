@@ -2,6 +2,43 @@ import { app } from "electron";
 import * as path from "path";
 import * as fs from "fs";
 import { ModelSidecar } from "./sidecar";
+import type {
+  AddCitationRequest,
+  ArtifactInfo,
+  ArtifactVersionInfo,
+  AutomationInfo,
+  CitationInfo,
+  ExportResult,
+  IndexingProgressInfo,
+  ReplaceCitationRequest,
+  ReplaceCitationResult,
+  SearchHitInfo,
+  SourceDetailInfo,
+  SourceInfo,
+  TaskInfo,
+  TemplateInfo,
+} from "../shared/types";
+
+// Re-export the canonical shared types so existing call sites that
+// import them from "./appState" keep working. The single source of
+// truth is `apps/desktop/shared/types.ts`.
+export type {
+  AddCitationRequest,
+  ArtifactInfo,
+  ArtifactVersionInfo,
+  AutomationInfo,
+  CitationInfo,
+  IndexedFileInfo,
+  IndexingProgressInfo,
+  ReplaceCitationRequest,
+  ReplaceCitationResult,
+  SearchHit,
+  SearchHitInfo,
+  SourceDetailInfo,
+  SourceInfo,
+  TaskInfo,
+  TemplateInfo,
+} from "../shared/types";
 
 export interface NativeBridge {
   initBridge(dbPath: string, templateDir: string): void;
@@ -29,7 +66,7 @@ export interface NativeBridge {
     artifactId: string,
     format: string,
     contentOverride?: string | null,
-  ): { content: string; format: string };
+  ): ExportResult;
   bridgeExportArtifactToFile(
     artifactId: string,
     format: string,
@@ -46,7 +83,10 @@ export interface NativeBridge {
   bridgeReplaceCitation(req: ReplaceCitationRequest): ReplaceCitationResult;
   bridgeListVersions(artifactId: string): ArtifactVersionInfo[];
   bridgeRestoreVersion(artifactId: string, versionNumber: number): ArtifactInfo;
-  bridgeGenerateFromTemplate(templateId: string, sourceIds: string[]): ArtifactInfo;
+  bridgeGenerateFromTemplate(
+    templateId: string,
+    sourceIds: string[],
+  ): ArtifactInfo;
   bridgeExtractTasksDecisions(sourceId: string): string;
   bridgeCompareSources(sourceIdA: string, sourceIdB: string): ArtifactInfo;
   bridgeExportEvidencePack(artifactId: string, outputPath: string): string;
@@ -76,152 +116,6 @@ export interface NativeBridge {
   bridgeMatchingOnGenerateAutomations(templateId: string): AutomationInfo[];
   /** Persist a run result. `status` is rendered verbatim by the UI. */
   bridgeRecordAutomationRun(automationId: string, status: string): void;
-}
-
-export interface TaskInfo {
-  id: string;
-  title: string;
-  description: string;
-  status: string;
-  priority: string;
-  position: number;
-  assignee: string | null;
-  dueDate: string | null;
-  sourceId: string | null;
-  extractedItemId: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface AutomationInfo {
-  id: string;
-  name: string;
-  /** Tagged-enum JSON: `{ "kind": "schedule", "interval_seconds": N }` or
-   *  `{ "kind": "on_generate", "template_id": "..." }`. */
-  triggerJson: string;
-  /** Tagged-enum JSON: `{ "kind": "reindex_source", "source_id": "..." }`
-   *  or `{ "kind": "generate_from_template", "template_id": "...",
-   *  "source_ids": [...] }`. */
-  actionJson: string;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
-  lastRunAt: string | null;
-  lastRunStatus: string | null;
-  nextScheduledAt: string | null;
-}
-
-export interface ArtifactVersionInfo {
-  version: number;
-  content: string;
-  createdAt: string;
-}
-
-export interface SourceInfo {
-  id: string;
-  sourceType: string;
-  path: string;
-  status: string;
-  createdAt: string;
-  lastIndexed: string | null;
-  fileCount: number;
-}
-
-export interface IndexingProgressInfo {
-  status: "idle" | "running" | "done" | "failed";
-  scanned: number;
-  indexed: number;
-  unchanged: number;
-  skipped: number;
-  errors: number;
-  totalFiles: number;
-  currentPath: string | null;
-  lastError: string | null;
-}
-
-export interface SearchHitInfo {
-  content: string;
-  excerpt: string;
-  sourcePath: string;
-  sourceId: string;
-  chunkHash: string;
-  chunkIndex: number;
-  relevance: number;
-}
-
-export interface IndexedFileInfo {
-  path: string;
-  hash: string;
-  lastModified: string;
-  chunkCount: number;
-}
-
-export interface SourceDetailInfo {
-  source: SourceInfo;
-  files: IndexedFileInfo[];
-}
-
-export interface ArtifactInfo {
-  id: string;
-  title: string;
-  artifactType: string;
-  templateId: string | null;
-  content: string;
-  citationCount: number;
-  createdAt: string;
-  updatedAt: string;
-  version: number;
-}
-
-export interface TemplateInfo {
-  id: string;
-  name: string;
-  artifactType: string;
-  description: string;
-  sectionCount: number;
-  exportFormats: string[];
-}
-
-export interface CitationInfo {
-  citationId: string;
-  sourceId: string;
-  sourceType: string;
-  sourceTitle: string;
-  sourceUri: string;
-  chunkHash: string;
-  page: number | null;
-  confidence: number;
-  usedFor: string;
-  createdAt: string;
-}
-
-export interface AddCitationRequest {
-  artifactId: string;
-  sourceId: string;
-  sourceType: string;
-  sourceTitle: string;
-  sourceUri: string;
-  chunkHash: string;
-  page: number | null;
-  confidence: number;
-  usedFor: string;
-}
-
-export interface ReplaceCitationRequest {
-  artifactId: string;
-  citationId: string;
-  sourceId: string;
-  sourceType: string;
-  sourceTitle: string;
-  sourceUri: string;
-  chunkHash: string;
-  page: number | null;
-  confidence: number;
-}
-
-export interface ReplaceCitationResult {
-  citation: CitationInfo;
-  previousSourceUri: string;
 }
 
 let bridge: NativeBridge | null = null;
@@ -287,7 +181,8 @@ function resolveSidecarBinary(): string {
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
     .resourcesPath;
   const possiblePaths = [
-    resourcesPath && path.join(resourcesPath, "sidecars", "llama-server", binaryName),
+    resourcesPath &&
+      path.join(resourcesPath, "sidecars", "llama-server", binaryName),
     path.join(app.getAppPath(), "sidecars", "llama-server", binaryName),
     path.join(app.getAppPath(), "..", "sidecars", "llama-server", binaryName),
     path.join(__dirname, "..", "sidecars", "llama-server", binaryName),
