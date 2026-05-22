@@ -45,6 +45,19 @@ impl SourceStore {
             .expect("connection mutex poisoned")
             .execute_batch(
                 "
+            -- Enable referential integrity on this connection. SQLite
+            -- ships with `foreign_keys = OFF` for legacy compatibility,
+            -- which silently turns every `FOREIGN KEY ... ON DELETE
+            -- CASCADE` clause into a no-op. The `chunk_embeddings` table
+            -- below depends on the cascade firing when a parent chunk
+            -- is deleted; the `chunks_ad_embeddings` trigger acts as
+            -- belt-and-suspenders so cleanup still happens if a future
+            -- caller opens a connection without this pragma, but the
+            -- pragma is the primary mechanism. SQLite scopes this
+            -- pragma per-connection (not per-database), so it must be
+            -- set on every connection that opens the file.
+            PRAGMA foreign_keys = ON;
+
             CREATE TABLE IF NOT EXISTS sources (
                 id TEXT PRIMARY KEY,
                 source_type TEXT NOT NULL,
@@ -733,6 +746,7 @@ pub struct IndexedFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn store_add_and_list_sources() {
@@ -863,5 +877,91 @@ mod tests {
         let sources = b.list_sources().unwrap();
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].path, "/tmp/shared");
+    }
+
+    #[test]
+    fn pragma_foreign_keys_is_enabled_on_store_connection() {
+        // Regression for the original finding that `chunk_embeddings`
+        // had `ON DELETE CASCADE` but SQLite's default
+        // `foreign_keys = OFF` silently turned the cascade into a
+        // no-op. We now `PRAGMA foreign_keys = ON` in `init_schema()`
+        // so the cascade actually fires. Pin that pragma stays ON
+        // for the rest of the connection's lifetime — pragmas are
+        // per-connection and could be silently flipped by any later
+        // `execute_batch` that runs on the same connection.
+        let store = SourceStore::open_in_memory().unwrap();
+        let conn = store.conn.lock().expect("connection mutex poisoned");
+        let fk_on: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            fk_on, 1,
+            "PRAGMA foreign_keys must be ON for chunk_embeddings cascade to fire"
+        );
+    }
+
+    #[test]
+    fn chunk_embeddings_cascade_fires_when_parent_chunk_is_deleted() {
+        // Defence-in-depth regression test for ANALYSIS_0003: with
+        // foreign_keys=ON, deleting a chunk must remove its
+        // associated `chunk_embeddings` row via either the trigger
+        // (belt) or the CASCADE clause (suspenders). We assert the
+        // chunk_embeddings row disappears after the parent delete.
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/cascade-test".to_string());
+        store.add_source(&source).unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("doc.txt"),
+            "alpha bravo charlie delta echo foxtrot golf",
+        )
+        .unwrap();
+
+        // Index with an embedder so chunk_embeddings rows get populated.
+        let embedder: Arc<dyn crate::embedding::EmbeddingProvider> =
+            Arc::new(crate::embedding::HashTrickEmbedding::default_config());
+        let indexer = crate::indexer::Indexer::default().with_embedder(Arc::clone(&embedder));
+        indexer
+            .index_folder(&source.id, dir.path(), &store)
+            .unwrap();
+
+        let embedding_count_before: i64 = {
+            let conn = store.conn.lock().expect("connection mutex poisoned");
+            conn.query_row("SELECT COUNT(*) FROM chunk_embeddings", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert!(
+            embedding_count_before > 0,
+            "expected the embedder to have populated chunk_embeddings"
+        );
+
+        // Delete a single chunk directly (not via remove_source, which
+        // already deletes embeddings explicitly). The trigger +
+        // CASCADE pair must remove the matching chunk_embeddings row.
+        let chunk_id: i64 = {
+            let conn = store.conn.lock().expect("connection mutex poisoned");
+            conn.query_row("SELECT id FROM chunks LIMIT 1", [], |r| r.get(0))
+                .unwrap()
+        };
+        {
+            let conn = store.conn.lock().expect("connection mutex poisoned");
+            conn.execute("DELETE FROM chunks WHERE id = ?1", params![chunk_id])
+                .unwrap();
+        }
+
+        let leftover: i64 = {
+            let conn = store.conn.lock().expect("connection mutex poisoned");
+            conn.query_row(
+                "SELECT COUNT(*) FROM chunk_embeddings WHERE chunk_id = ?1",
+                params![chunk_id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            leftover, 0,
+            "deleting a chunk must cascade-remove its chunk_embeddings rows"
+        );
     }
 }

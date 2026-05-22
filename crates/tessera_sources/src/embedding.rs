@@ -54,8 +54,21 @@ use tessera_core::error::Result;
 pub trait EmbeddingProvider: Send + Sync {
     /// Stable identifier for this provider. Used to tag stored
     /// embeddings so the retrieval pipeline can detect mismatches
-    /// (e.g. after a model swap).
-    fn model_id(&self) -> &'static str;
+    /// (e.g. after a model swap, or after a config change that
+    /// produces vectors in an incompatible hash space).
+    ///
+    /// Implementations MUST include in this string every parameter
+    /// that, if changed, would produce vectors that are no longer
+    /// comparable (via cosine similarity) to previously-stored ones.
+    /// `HashTrickEmbedding`, for example, includes `dim`, `n_min`,
+    /// and `n_max` because changing any of those scrambles which
+    /// bucket a given n-gram lands in. Without this, two instances
+    /// of the same provider type with different configs would be
+    /// silently mixed at query time and produce meaningless scores.
+    ///
+    /// Returns a borrowed `&str` rather than `&'static str` so the
+    /// id can be computed at construction time from runtime config.
+    fn model_id(&self) -> &str;
 
     /// Dimensionality of the output vector. MUST be constant for
     /// the lifetime of this provider; changing it would invalidate
@@ -72,9 +85,14 @@ pub trait EmbeddingProvider: Send + Sync {
 /// Cosine similarity between two equal-length vectors.
 ///
 /// Returns 0.0 for zero vectors (rather than NaN). The result is in
-/// `[-1.0, 1.0]` for non-zero vectors; for the non-negative
-/// embeddings produced by `HashTrickEmbedding` the result is in
-/// `[0.0, 1.0]`.
+/// `[-1.0, 1.0]` for non-zero vectors. `HashTrickEmbedding` uses
+/// **signed** feature hashing (Weinberger et al. 2009) so its
+/// vectors contain both positive and negative components — the
+/// pairwise cosine therefore lives in the full `[-1.0, 1.0]` range
+/// just like a transformer-backed embedder. (Earlier revisions of
+/// this doc-comment incorrectly claimed the HashTrick output was
+/// non-negative; the `hash_trick_signed_hashing_can_produce_negative_buckets`
+/// regression test pins the opposite.)
 ///
 /// # Panics
 ///
@@ -162,6 +180,17 @@ pub struct HashTrickEmbedding {
     dim: usize,
     n_min: usize,
     n_max: usize,
+    /// Computed at construction time from `dim`, `n_min`, `n_max`.
+    /// Exposed via `model_id()` so the retrieval pipeline can detect
+    /// when two HashTrick instances with the same `dim` but different
+    /// n-gram ranges have populated the same SQLite table — without
+    /// this, vectors from `(dim=256, n_min=2, n_max=4)` would be
+    /// cosine-compared against `(dim=256, n_min=3, n_max=5)` and the
+    /// scores would be meaningless because the two n-gram spaces are
+    /// incompatible. The `v1` prefix is bumped manually when the
+    /// algorithm (sign-hash salt, FNV variant, normalisation order)
+    /// changes in a way that invalidates existing vectors.
+    model_id: String,
 }
 
 impl HashTrickEmbedding {
@@ -169,23 +198,31 @@ impl HashTrickEmbedding {
         assert!(dim > 0, "HashTrickEmbedding: dim must be > 0");
         assert!(n_min > 0, "HashTrickEmbedding: n_min must be > 0");
         assert!(n_max >= n_min, "HashTrickEmbedding: n_max must be >= n_min");
-        Self { dim, n_min, n_max }
+        let model_id = format!("hash-trick-v1-{dim}d-char{n_min}-{n_max}");
+        Self {
+            dim,
+            n_min,
+            n_max,
+            model_id,
+        }
     }
 
     /// Default config: 256 dimensions, char 3..=5-grams. Matches
     /// sklearn's HashingVectorizer defaults for text classification.
+    /// Produces `model_id() == "hash-trick-v1-256d-char3-5"`.
     pub fn default_config() -> Self {
         Self::new(256, 3, 5)
     }
 }
 
 impl EmbeddingProvider for HashTrickEmbedding {
-    fn model_id(&self) -> &'static str {
-        // Bumping this string is the canonical way to invalidate every
-        // existing embedding row in the corpus. The retrieval pipeline
-        // filters by `model_id` at query time so stale vectors from a
-        // prior version simply stop contributing.
-        "hash-trick-v1-256d-char3-5"
+    fn model_id(&self) -> &str {
+        // Computed at construction so it reflects the actual
+        // (dim, n_min, n_max) instead of a hardcoded string —
+        // otherwise two instances with different n-gram ranges but
+        // matching dimensions would silently share an embeddings
+        // table and produce nonsense cosines.
+        &self.model_id
     }
 
     fn dim(&self) -> usize {
@@ -198,13 +235,20 @@ impl EmbeddingProvider for HashTrickEmbedding {
             return Ok(v);
         }
 
-        // Lowercase + collapse whitespace into single spaces. This
-        // normalisation matches what FTS5's `unicode61` tokenizer
-        // does so the two signals are computing similarity over the
-        // same surface text.
+        // Lowercase + collapse whitespace into single spaces. We use
+        // full Unicode case folding via `char::to_lowercase()` (NOT
+        // `to_ascii_lowercase()`) so the normalisation matches what
+        // FTS5's `unicode61` tokenizer does for non-ASCII input —
+        // e.g. 'Ü' → 'ü', 'Σ' → 'σ', 'İ' → 'i\u{307}'. Without this,
+        // the embedding signal and the BM25 signal would tokenise
+        // non-English text differently and the hybrid score would
+        // double-count or miss n-gram overlaps in the same query.
+        // `to_lowercase()` is locale-independent (Unicode default
+        // case folding), which matches FTS5's `unicode61` default —
+        // both use the Unicode data tables, not a host locale.
         let lowered: String = text
             .chars()
-            .map(|c| c.to_ascii_lowercase())
+            .flat_map(char::to_lowercase)
             .collect::<String>()
             .split_whitespace()
             .collect::<Vec<_>>()
@@ -478,5 +522,64 @@ mod tests {
             unique_rate > 0.5,
             "collision rate too high: unique={unique_rate}"
         );
+    }
+
+    #[test]
+    fn hash_trick_model_id_reflects_config_not_hardcoded() {
+        // Regression for the original BUG where `model_id()` returned
+        // a hardcoded `"hash-trick-v1-256d-char3-5"` regardless of
+        // the actual `dim`/`n_min`/`n_max`. Two instances with the
+        // same `dim` but different n-gram ranges produce vectors in
+        // incompatible hash spaces, so they MUST have distinct
+        // model_ids — otherwise the retrieval pipeline silently
+        // cosine-compares them and returns meaningless scores.
+        let default = HashTrickEmbedding::default_config();
+        let same_dim_different_ngrams = HashTrickEmbedding::new(256, 2, 4);
+        let larger_dim = HashTrickEmbedding::new(512, 3, 5);
+        assert_eq!(default.model_id(), "hash-trick-v1-256d-char3-5");
+        assert_eq!(
+            same_dim_different_ngrams.model_id(),
+            "hash-trick-v1-256d-char2-4"
+        );
+        assert_eq!(larger_dim.model_id(), "hash-trick-v1-512d-char3-5");
+        // The crucial pair: matching dim, mismatching n-gram range
+        // must NOT collide on model_id.
+        assert_ne!(default.model_id(), same_dim_different_ngrams.model_id());
+    }
+
+    #[test]
+    fn hash_trick_unicode_lowercase_matches_unicode61_for_non_ascii() {
+        // Regression: previously `to_ascii_lowercase()` was used,
+        // which only case-folds A-Z and leaves Latin Extended,
+        // Greek, Cyrillic etc. untouched. FTS5's `unicode61`
+        // tokenizer applies full Unicode case folding, so the
+        // embedding signal and BM25 signal were normalising
+        // non-English text differently. Now we use
+        // `char::to_lowercase()` so both sides agree.
+        //
+        // Pin the change by embedding upper- and lower-case
+        // variants of the same non-ASCII word and asserting that
+        // the cosine is 1.0 (bit-identical vectors).
+        let e = HashTrickEmbedding::default_config();
+        let pairs = [
+            ("ÜBERMENSCH", "übermensch"),
+            ("ΣΟΦΙΑ", "σοφια"),
+            ("KÖLN", "köln"),
+        ];
+        for (upper, lower) in pairs {
+            let v_upper = e.embed(upper).unwrap();
+            let v_lower = e.embed(lower).unwrap();
+            let cos = cosine_similarity(&v_upper, &v_lower);
+            assert!(
+                (cos - 1.0).abs() < 1e-5,
+                "expected identical vectors after case-fold for ({upper}, {lower}): cos={cos}"
+            );
+        }
+        // Counter-check: ASCII case folding was already correct
+        // under the old impl and must remain correct under the new
+        // one.
+        let v_upper = e.embed("HELLO WORLD").unwrap();
+        let v_lower = e.embed("hello world").unwrap();
+        assert!((cosine_similarity(&v_upper, &v_lower) - 1.0).abs() < 1e-5);
     }
 }

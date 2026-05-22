@@ -224,22 +224,49 @@ impl Indexer {
         let model_id = embedder.model_id().to_string();
         let dim = embedder.dim();
         let mut total = 0usize;
+        // Guard against an infinite loop when `embedder.embed()`
+        // returns `Err` for the same chunks on every iteration (e.g.
+        // a network-backed provider whose backend is down, or a
+        // chunk whose contents trip a deterministic parser bug in
+        // the embedder). Without progress accounting, the
+        // `chunks_missing_embedding` query would return the same
+        // failing chunks each pass and `backfill_embeddings` would
+        // never return. `HashTrickEmbedding` cannot hit this path
+        // (pure math, infallible), but the trait is explicitly
+        // designed for pluggable providers including network ones
+        // (see the module-level comment in `embedding.rs`).
         loop {
             let batch = store.chunks_missing_embedding(&model_id, batch_size)?;
             if batch.is_empty() {
                 break;
             }
+            let mut batch_progress = 0usize;
             for (id, content) in &batch {
                 match embedder.embed(content) {
                     Ok(vec) => {
                         let bytes = encode_vec(&vec);
                         store.upsert_chunk_embedding(*id, &model_id, dim, &bytes)?;
                         total += 1;
+                        batch_progress += 1;
                     }
                     Err(e) => {
                         eprintln!("[tessera_sources] backfill embed failed for chunk {id}: {e}");
                     }
                 }
+            }
+            if batch_progress == 0 {
+                // Every chunk in this batch failed. Re-querying
+                // would return the exact same chunk IDs (the
+                // failure path doesn't insert an embedding row) and
+                // we'd loop forever. Bail out and let the caller
+                // surface the failure — the chunks stay flagged
+                // as missing, so a subsequent backfill call (after
+                // the embedder is restored) will pick them up.
+                eprintln!(
+                    "[tessera_sources] backfill stalled: {} chunks failed to embed in a single batch, aborting to avoid infinite loop",
+                    batch.len()
+                );
+                break;
             }
             if batch.len() < batch_size {
                 break;
@@ -365,5 +392,159 @@ mod tests {
 
         let results = store.search_fts("Single file content", 10).unwrap();
         assert!(!results.is_empty());
+    }
+
+    /// Embedding provider that fails on every call. Used to verify
+    /// `backfill_embeddings` terminates instead of looping forever
+    /// when every chunk in a batch fails.
+    struct AlwaysFailEmbedder {
+        model_id: String,
+        dim: usize,
+        calls: Arc<Mutex<usize>>,
+    }
+
+    impl AlwaysFailEmbedder {
+        fn new() -> Self {
+            Self {
+                model_id: "always-fail-v1-8d".to_string(),
+                dim: 8,
+                calls: Arc::new(Mutex::new(0)),
+            }
+        }
+    }
+
+    impl crate::embedding::EmbeddingProvider for AlwaysFailEmbedder {
+        fn model_id(&self) -> &str {
+            &self.model_id
+        }
+        fn dim(&self) -> usize {
+            self.dim
+        }
+        fn embed(&self, _text: &str) -> tessera_core::error::Result<Vec<f32>> {
+            *self.calls.lock().unwrap() += 1;
+            Err(tessera_core::error::Error::Database(
+                "synthetic embed failure (test fixture)".to_string(),
+            ))
+        }
+    }
+
+    #[test]
+    fn backfill_terminates_when_every_chunk_in_batch_fails() {
+        // Regression for the original BUG where `backfill_embeddings`
+        // would loop forever if every chunk in a batch failed to
+        // embed — the inner failure path never inserts an embedding
+        // row, so `chunks_missing_embedding` returned the same chunks
+        // on every iteration and the outer loop never terminated.
+        //
+        // Construct: index a folder with multiple chunks WITHOUT an
+        // embedder attached, then run backfill with an embedder that
+        // returns Err every time. The fix should cap the embed-call
+        // count at exactly the batch size (one full failing pass)
+        // and return Ok(0) rather than spinning.
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..5 {
+            std::fs::write(
+                dir.path().join(format!("file_{i}.txt")),
+                format!("content for file {i}"),
+            )
+            .unwrap();
+        }
+
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder(dir.path().to_string_lossy().to_string());
+        store.add_source(&source).unwrap();
+
+        // Index without an embedder so chunks land but `chunk_embeddings` stays empty.
+        Indexer::default()
+            .index_folder(&source.id, dir.path(), &store)
+            .unwrap();
+
+        // Attach the always-failing embedder and try to backfill.
+        let embedder = Arc::new(AlwaysFailEmbedder::new());
+        let calls = Arc::clone(&embedder.calls);
+        let indexer = Indexer::default().with_embedder(embedder);
+
+        let total = indexer.backfill_embeddings(&store, 3).expect(
+            "backfill should return Ok with the chunks-stalled diagnostic, not loop forever",
+        );
+        assert_eq!(total, 0, "no chunks should have been embedded");
+
+        // The embedder should have been invoked exactly `batch_size`
+        // times (one full pass before the stall detector fires) —
+        // NOT thousands of times (which would indicate the loop was
+        // still spinning before some other guard kicked in).
+        let n_calls = *calls.lock().unwrap();
+        assert!(
+            n_calls <= 3,
+            "backfill should call embed at most once per chunk in the first failing batch (batch_size=3); got {n_calls} calls — the stall detector likely failed"
+        );
+        assert!(
+            n_calls > 0,
+            "backfill should have attempted at least one embed before bailing; got {n_calls}"
+        );
+    }
+
+    #[test]
+    fn backfill_makes_progress_when_only_some_chunks_fail() {
+        // Counterpart to the stall test: as long as SOME chunks
+        // succeed in a batch, the loop must keep going and embed
+        // every remaining chunk. The stall detector must not fire
+        // on partial-failure batches.
+        struct FailEvenOddEmbedder {
+            model_id: String,
+            dim: usize,
+            calls: Arc<Mutex<usize>>,
+        }
+        impl crate::embedding::EmbeddingProvider for FailEvenOddEmbedder {
+            fn model_id(&self) -> &str {
+                &self.model_id
+            }
+            fn dim(&self) -> usize {
+                self.dim
+            }
+            fn embed(&self, _text: &str) -> tessera_core::error::Result<Vec<f32>> {
+                let mut c = self.calls.lock().unwrap();
+                *c += 1;
+                if (*c).is_multiple_of(2) {
+                    Err(tessera_core::error::Error::Database(
+                        "flaky failure".to_string(),
+                    ))
+                } else {
+                    Ok(vec![0.1f32; 8])
+                }
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..6 {
+            std::fs::write(
+                dir.path().join(format!("file_{i}.txt")),
+                format!("content for file {i}"),
+            )
+            .unwrap();
+        }
+
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder(dir.path().to_string_lossy().to_string());
+        store.add_source(&source).unwrap();
+        Indexer::default()
+            .index_folder(&source.id, dir.path(), &store)
+            .unwrap();
+
+        let embedder = Arc::new(FailEvenOddEmbedder {
+            model_id: "flaky-v1-8d".to_string(),
+            dim: 8,
+            calls: Arc::new(Mutex::new(0)),
+        });
+        let indexer = Indexer::default().with_embedder(embedder);
+        let total = indexer.backfill_embeddings(&store, 3).unwrap();
+        // 6 chunks, every other call fails. The successful calls
+        // persist embeddings, so subsequent iterations see fewer
+        // missing chunks. The loop should make at least *some*
+        // progress, not stall at zero.
+        assert!(
+            total > 0,
+            "backfill should embed at least one chunk on flaky failures; got total={total}"
+        );
     }
 }
