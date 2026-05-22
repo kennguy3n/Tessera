@@ -375,10 +375,22 @@ export async function promptForVaultPassword(opts: {
 
     const onSubmit = (
       e: Electron.IpcMainEvent,
-      payload: { password: string },
+      payload: unknown,
     ): void => {
       if (settled) return;
       if (!isFromPromptWindow(e)) return;
+      // Runtime validation: the TS annotation is compile-time only;
+      // ipcMain.on receives arbitrary deserialized data from the
+      // renderer. A compromised sandboxed prompt could send
+      // `{ password: 123 }` or `undefined`.
+      if (
+        !payload ||
+        typeof payload !== "object" ||
+        typeof (payload as Record<string, unknown>).password !== "string"
+      ) {
+        return;
+      }
+      const password = (payload as { password: string }).password;
       settled = true;
       cleanup();
       // Defer close so the renderer's ipcRenderer.send flush has a
@@ -386,7 +398,7 @@ export async function promptForVaultPassword(opts: {
       setImmediate(() => {
         if (!win.isDestroyed()) win.close();
       });
-      resolve(payload.password);
+      resolve(password);
     };
 
     const onCancel = (e: Electron.IpcMainEvent): void => {

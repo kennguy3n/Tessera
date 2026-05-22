@@ -151,7 +151,7 @@ describe("tokenVault fallback — refusal cases", () => {
     expect(fs.existsSync(fp)).toBe(false);
   });
 
-  it("refuses to read a TSPV blob when password vault is locked", () => {
+  it("refuses to read a TSPV blob when password vault is locked (no keyring)", () => {
     // Write with password vault, then lose the cache.
     hoisted.encryptionAvailable.value = false;
     _setCachedKeyForTests(Buffer.from(FIXED_TEST_KEY));
@@ -159,6 +159,28 @@ describe("tokenVault fallback — refusal cases", () => {
     clearPasswordVaultKey();
     expect(() => getTokens("notion")).toThrow(
       /password-encrypted but no password is cached/,
+    );
+  });
+
+  it("refuses to read a TSPV blob when keyring was restored (TSPV-stranded)", () => {
+    // Session 1: no keyring → write via password vault.
+    hoisted.encryptionAvailable.value = false;
+    _setCachedKeyForTests(Buffer.from(FIXED_TEST_KEY));
+    storeTokens("notion", SAMPLE);
+    // Session 2: user installed gnome-keyring → safeStorage now
+    // available. maybeInitPasswordVault short-circuits, password
+    // vault never initialized → cached key is gone.
+    clearPasswordVaultKey();
+    hoisted.encryptionAvailable.value = true;
+    // Reading the old TSPV blob must NOT say "Encryption not available
+    // — install gnome-keyring" (the keyring IS available). It must say
+    // the blob needs the original vault password.
+    expect(() => getTokens("notion")).toThrow(
+      /password-vault encrypted.*TSPV format.*password vault is not active/,
+    );
+    // Negative check: the old misleading message must NOT appear.
+    expect(() => getTokens("notion")).not.toThrow(
+      /Encryption not available/,
     );
   });
 

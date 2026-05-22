@@ -102,16 +102,48 @@ export function encryptForVault(plaintext: string): Buffer {
  * vault tolerate a mixed-format directory — e.g. a user who first
  * launched with a keyring and later lost it has both formats on disk.
  *
- * - `TSPV` blob + active password vault → decrypt with cached key.
- * - `TSPV` blob + no active password vault → throw (we cannot decrypt).
- * - non-`TSPV` blob + safeStorage available → decrypt via safeStorage.
- * - non-`TSPV` blob + no safeStorage → throw with the actionable
- *   recovery message (different for token vs secret callers; see
- *   `VaultLabel`).
+ * The four cases:
+ *
+ *   1. `TSPV` blob + active password vault → decrypt with cached key.
+ *   2. `TSPV` blob + no active password vault, safeStorage AVAILABLE
+ *      → throw the "TSPV-stranded" error. This is the "user installed
+ *      a keyring AFTER creating TSPV blobs" path: `maybeInitPasswordVault`
+ *      short-circuits on startup because safeStorage is now available,
+ *      so the cached password key is never derived. The stranded blobs
+ *      cannot be decrypted without prompting for the old password —
+ *      which we don't do today. The error tells the user exactly what
+ *      to do: delete the old vault directory (and re-authenticate), or
+ *      restore by transiently removing the keyring so the prompt fires.
+ *      Telling them "encryption unavailable" here would be a lie — it
+ *      IS available, but it can't decrypt blobs that weren't encrypted
+ *      with it.
+ *   3. `TSPV` blob + no active password vault, safeStorage UNAVAILABLE
+ *      → throw the "no password cached" error. This is the normal
+ *      "user closed the prompt without typing a password" path; the
+ *      `encryptionUnavailableReason` suffix is accurate here.
+ *   4. non-`TSPV` blob + safeStorage available → decrypt via safeStorage.
+ *   5. non-`TSPV` blob + no safeStorage → throw the "keyring-lost"
+ *      error (different per `VaultLabel`).
+ *
+ * Cases 2 and 3 must be distinguishable because they have different
+ * recovery paths: case 2 = "delete or restore the keyring temporarily",
+ * case 3 = "set up a keyring or restart the app to retry the prompt".
  */
 export function decryptFromVault(blob: Buffer, label: VaultLabel): string {
   if (isPasswordVaultBlob(blob)) {
     if (!passwordVaultActive()) {
+      if (safeStorage.isEncryptionAvailable()) {
+        // Case 2: TSPV-stranded. User had no keyring when these were
+        // written, gained one since, and the startup flow now skips the
+        // password prompt. The keyring IS available — but it can't
+        // decrypt blobs encrypted by the password vault.
+        throw new Error(
+          `${label.noun} blob is password-vault encrypted (TSPV format) but the password vault is not active in this session. ` +
+            `The OS keyring is available, so the startup prompt was skipped — but these blobs were written when the keyring ` +
+            `was unavailable and they need the original vault password to decrypt. ${label.recoveryDirectoryHint}`,
+        );
+      }
+      // Case 3: user dismissed the prompt (or it never fired).
       throw new Error(
         `${label.noun} blob is password-encrypted but no password is cached. ${encryptionUnavailableReason()}`,
       );
@@ -121,11 +153,10 @@ export function decryptFromVault(blob: Buffer, label: VaultLabel): string {
   if (safeStorage.isEncryptionAvailable()) {
     return safeStorage.decryptString(blob);
   }
-  // Mixed-format hazard: the file is a safeStorage blob from a
-  // previous session, but the user's keyring is no longer available.
-  // We CANNOT migrate it to password format on the fly because we
-  // can't decrypt it without the keyring. Surface the actionable
-  // recovery instructions rather than failing silently.
+  // Case 5: safeStorage blob + keyring lost. We CANNOT migrate it to
+  // password format on the fly because we can't decrypt it without the
+  // keyring. Surface the actionable recovery instructions rather than
+  // failing silently.
   throw new Error(
     `${label.noun} file is encrypted with the OS keyring but the keyring is no longer available. Restore keyring access (${encryptionUnavailableReason()}) ${label.recoveryDirectoryHint}`,
   );
