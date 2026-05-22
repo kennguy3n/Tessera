@@ -2,6 +2,7 @@ import { app } from "electron";
 import * as path from "path";
 import * as fs from "fs";
 import { ModelSidecar } from "./sidecar";
+import { getOrCreateDbKey } from "./dbKey";
 import type {
   AddCitationRequest,
   ArtifactInfo,
@@ -41,7 +42,17 @@ export type {
 } from "../shared/types";
 
 export interface NativeBridge {
-  initBridge(dbPath: string, templateDir: string): void;
+  /**
+   * Initialise the Rust-side workspace.
+   *
+   * `dbKey`, when provided, is the 64-character hex SQLCipher key
+   * derived by `electron/dbKey.ts`. The Rust side issues
+   * `PRAGMA key = "x'<hex>'"` on the connection and, on first launch
+   * against a pre-encryption plaintext DB, transparently migrates
+   * via `sqlcipher_export`. Pass `null` or omit to open the DB
+   * unencrypted (only used in fallback / test paths).
+   */
+  initBridge(dbPath: string, templateDir: string, dbKey?: string | null): void;
   bridgeAddLocalFolder(path: string): SourceInfo;
   bridgeAddLocalFile(path: string): SourceInfo;
   bridgeListSources(): SourceInfo[];
@@ -167,9 +178,28 @@ export function initAppState(): boolean {
   const dbPath = path.join(userData, "tessera.db");
   const templateDir = path.join(app.getAppPath(), "templates");
 
+  // Derive the SQLCipher key. On platforms where Electron's
+  // safeStorage is unavailable (typically Linux headless without
+  // gnome-keyring/kwallet) `getOrCreateDbKey` throws; we fall
+  // through to an unencrypted bridge so the app still launches.
+  // WS10 replaces that fallback with an interactive password prompt.
+  let dbKey: string | null = null;
   try {
-    bridge.initBridge(dbPath, templateDir);
-    console.log("[Tessera] Native bridge initialized:", dbPath);
+    dbKey = getOrCreateDbKey();
+  } catch (keyErr) {
+    console.warn(
+      "[Tessera] Database encryption unavailable — running in unencrypted mode.",
+      keyErr,
+    );
+  }
+
+  try {
+    bridge.initBridge(dbPath, templateDir, dbKey);
+    console.log(
+      "[Tessera] Native bridge initialized:",
+      dbPath,
+      dbKey ? "(encrypted)" : "(UNENCRYPTED — keyring unavailable)",
+    );
   } catch (err) {
     console.error("[Tessera] Failed to initialize native bridge:", err);
     bridge = null;
