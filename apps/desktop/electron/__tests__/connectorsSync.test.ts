@@ -528,6 +528,224 @@ describe("Notion sync", () => {
       expect(watermark.failedRetries[0].failureCount).toBe(2);
     },
   );
+
+  it(
+    "records a writeFile failure in the retry queue instead of " +
+      "silently advancing the watermark past the page " +
+      "(regression: wave 7C BUG_0001)",
+    async () => {
+      // Fetch two pages in one pass. The first succeeds end-to-end;
+      // the second fetches successfully from the API but disk
+      // `writeFile` throws ENOSPC. Before the fix, the exception
+      // propagated to the outer try/finally and killed the iteration:
+      // `failedThisPass` never received page-bad, so the retry queue
+      // came back empty AND the watermark had already advanced to
+      // page-good's later timestamp. The next sync would never see
+      // page-bad again.
+      fetchMock
+        // POST /v1/search → both pages
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "page-good",
+                last_edited_time: "2024-07-01T00:00:00Z",
+                archived: false,
+                properties: {
+                  title: { type: "title", title: [{ plain_text: "Good" }] },
+                },
+              },
+              {
+                id: "page-bad",
+                last_edited_time: "2024-06-15T00:00:00Z",
+                archived: false,
+                properties: {
+                  title: { type: "title", title: [{ plain_text: "Bad" }] },
+                },
+              },
+            ],
+            has_more: false,
+            next_cursor: null,
+          }),
+        })
+        // GET /v1/blocks/page-good/children
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "g-1",
+                type: "paragraph",
+                paragraph: { rich_text: [{ plain_text: "Good content" }] },
+              },
+            ],
+            has_more: false,
+            next_cursor: null,
+          }),
+        })
+        // GET /v1/blocks/page-bad/children
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "b-1",
+                type: "paragraph",
+                paragraph: { rich_text: [{ plain_text: "Bad content" }] },
+              },
+            ],
+            has_more: false,
+            next_cursor: null,
+          }),
+        });
+
+      // Force a real I/O failure on the page-bad writeFile call by
+      // pre-creating its target path as a *directory*. Node's
+      // `fsp.writeFile(p, …)` then throws EISDIR. This is a real
+      // failure path (no monkey-patching of `fs/promises`, which is
+      // non-configurable in ESM) and exercises the catch block end
+      // to end.
+      const syncDir = path.join(dir, "notion-sync");
+      await fsp.mkdir(syncDir, { recursive: true });
+      await fsp.mkdir(path.join(syncDir, "page-bad.md"), { recursive: true });
+
+      const r = await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      // page-good was indexed; page-bad was not.
+      expect(r.added).toBe(1);
+      expect(bridge.added.map((s) => path.basename(s.path))).toEqual([
+        "page-good.md",
+      ]);
+
+      // The watermark file MUST exist (try/finally guaranteed) and
+      // page-bad MUST be in the retry queue with failureCount=1 —
+      // not silently lost.
+      const watermarkRaw = await fsp.readFile(
+        path.join(dir, "notion-sync", "watermark.json"),
+        "utf8",
+      );
+      const watermark = JSON.parse(watermarkRaw) as {
+        lastSyncIso: string | null;
+        failedRetries: Array<{
+          remoteId: string;
+          remoteModifiedAt: string | null;
+          failureCount: number;
+        }>;
+      };
+      expect(watermark.failedRetries).toHaveLength(1);
+      expect(watermark.failedRetries[0].remoteId).toBe("page-bad");
+      expect(watermark.failedRetries[0].failureCount).toBe(1);
+      expect(watermark.failedRetries[0].remoteModifiedAt).toBe(
+        "2024-06-15T00:00:00Z",
+      );
+    },
+  );
+
+  it(
+    "drops Phase-1 fetchPageById failures from the retry queue " +
+      "when the same page is re-synced successfully via the Phase-2 " +
+      "watermark scan (regression: wave 7C ANALYSIS_0001)",
+    async () => {
+      // Pre-seed a retry queue containing one entry. Phase 1's
+      // fetchPageById against that entry returns 502 (transient
+      // failure). Phase 2's search lists the same page id with a
+      // last_edited_time newer than the watermark; processing it
+      // (fetchPageText + writeFile + addLocalFile) succeeds.
+      //
+      // Before the call-site reconciliation, the page ended up in
+      // both `failedThisPass` (from Phase 1) and `succeededIds`
+      // (from Phase 2). `nextFailedRetryQueue`'s conservative
+      // semantics — documented and tested in
+      // `failedRetryQueue.test.ts:124-142` — treats failed as
+      // authoritative when the same id appears in both sets,
+      // re-inserting it with failureCount=1. The next sync would
+      // then waste one API call re-fetching a page we already have.
+      //
+      // After the reconciliation at the notion.ts call site, the
+      // Phase-1 failure is dropped because the Phase-2 success
+      // covered the same id within the same pass. The retry queue
+      // ends up empty.
+      const stateDir = path.join(dir, "notion-sync");
+      await fsp.mkdir(stateDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(stateDir, "watermark.json"),
+        JSON.stringify({
+          lastSyncIso: "2024-06-01T00:00:00Z",
+          failedRetries: [
+            {
+              remoteId: "shared-page",
+              remoteModifiedAt: "2024-05-15T00:00:00Z",
+              failureCount: 1,
+            },
+          ],
+        }),
+        "utf8",
+      );
+
+      fetchMock
+        // Phase 1: GET /v1/pages/shared-page → 502 (transient).
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 502,
+          text: async () => "Bad Gateway",
+        })
+        // Phase 2: POST /v1/search → same page with newer
+        // last_edited_time (i.e. the user touched it between the
+        // failed Phase-1 attempt and this Phase-2 scan).
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "shared-page",
+                last_edited_time: "2024-07-01T00:00:00Z",
+                archived: false,
+                properties: {
+                  title: { type: "title", title: [{ plain_text: "Shared" }] },
+                },
+              },
+            ],
+            has_more: false,
+            next_cursor: null,
+          }),
+        })
+        // GET /v1/blocks/shared-page/children → real content.
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [
+              {
+                id: "blk",
+                type: "paragraph",
+                paragraph: { rich_text: [{ plain_text: "Recovered" }] },
+              },
+            ],
+            has_more: false,
+            next_cursor: null,
+          }),
+        });
+
+      const r = await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      expect(r.added).toBe(1);
+
+      // The retry queue must be empty: the Phase-2 success covers
+      // the Phase-1 failure for the same id within the same pass.
+      const watermarkRaw = await fsp.readFile(
+        path.join(stateDir, "watermark.json"),
+        "utf8",
+      );
+      const watermark = JSON.parse(watermarkRaw) as {
+        lastSyncIso: string | null;
+        failedRetries: Array<{
+          remoteId: string;
+          failureCount: number;
+        }>;
+      };
+      expect(watermark.failedRetries).toEqual([]);
+      // Watermark advanced to the page's new last_edited_time.
+      expect(watermark.lastSyncIso).toBe("2024-07-01T00:00:00Z");
+    },
+  );
 });
 
 describe("Jira sync", () => {

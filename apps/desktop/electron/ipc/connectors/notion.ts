@@ -446,7 +446,25 @@ export async function syncNotion(ctx: {
       }
 
       const localPath = path.join(dir, `${sanitiseRemoteId(page.id)}.md`);
-      await fsp.writeFile(localPath, text, "utf8");
+      try {
+        await fsp.writeFile(localPath, text, "utf8");
+      } catch {
+        // Disk write failed (ENOSPC, permission denied, quota,
+        // antivirus interception, …). Record the failure so the next
+        // sync's Phase 1 picks it up by id rather than silently
+        // skipping it forever. Without this, the watermark may have
+        // already advanced past this page on this pass (driven by
+        // other successful pages), and the next pass would never
+        // re-fetch the failed page until the user edits it again in
+        // Notion. This matches the defensive pattern in
+        // `jira.ts` / `confluence.ts` / `figma.ts`. See Devin Review
+        // wave 7C BUG_0001 (notion.ts:449).
+        failedThisPass.push({
+          remoteId: page.id,
+          remoteModifiedAt: page.last_edited_time,
+        });
+        continue;
+      }
 
       const existing = ctx.bridge.listSources().find((s) => s.path === localPath);
       if (existing) {
@@ -483,11 +501,27 @@ export async function syncNotion(ctx: {
       succeededIds.add(page.id);
     }
   } finally {
+    // Reconcile Phase-1 fetchPageById failures against the Phase-2
+    // watermark scan: a page that failed by-id in Phase 1 but then
+    // succeeded via the watermark scan in Phase 2 should NOT be
+    // carried forward to the retry queue — it was effectively
+    // re-synced in this pass. Without this reconciliation the
+    // conservative semantics of `nextFailedRetryQueue` (failed wins
+    // over succeeded for the same pass — see
+    // `failedRetryQueue.test.ts:124-142`) would waste one API call
+    // per sync re-fetching it. We deliberately keep the generic
+    // helper's conservative semantics untouched (other connectors
+    // benefit from the over-retry default) and do the same-pass
+    // reconciliation here at the Notion-specific call site instead.
+    // See Devin Review wave 7C ANALYSIS_0001 (notion.ts:416-423).
+    const reconciledFailures = failedThisPass.filter(
+      (entry) => !succeededIds.has(entry.remoteId),
+    );
     await saveWatermark(ctx.userDataDir, {
       lastSyncIso: newWatermark,
       failedRetries: nextFailedRetryQueue(watermark.failedRetries, {
         succeeded: succeededIds,
-        failed: failedThisPass,
+        failed: reconciledFailures,
       }),
     });
     await writeManifest(ctx.userDataDir, {
