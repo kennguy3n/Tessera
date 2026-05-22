@@ -421,6 +421,113 @@ describe("Notion sync", () => {
       expect(watermark.failedRetries).toEqual([]);
     },
   );
+
+  it(
+    "bumps failureCount and ultimately gives up when a Notion " +
+      "Phase-1 retry keeps failing with a non-404 error " +
+      "(regression: Devin Review wave 7 BUG_0001 — silently dropped retry " +
+      "would have looped forever)",
+    async () => {
+      // Pre-seed state with a failedRetries entry already at the
+      // configured `FAILED_RETRY_MAX_ATTEMPTS - 1` failure count so
+      // one more non-404 error during Phase 1 should push it over
+      // the cliff and remove it from the queue (rather than carrying
+      // it forward unchanged the way the buggy code did).
+      const stateDir = path.join(dir, "notion-sync");
+      await fsp.mkdir(stateDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(stateDir, "watermark.json"),
+        JSON.stringify({
+          lastSyncIso: "2024-06-01T00:00:00Z",
+          failedRetries: [
+            {
+              remoteId: "perma-broken",
+              remoteModifiedAt: "2024-05-01T00:00:00Z",
+              failureCount: 5,
+            },
+          ],
+        }),
+        "utf8",
+      );
+
+      fetchMock
+        // GET /v1/pages/perma-broken → 500 (non-404 transport error)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: async () => "Internal Server Error",
+        })
+        // POST /v1/search → no new pages
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [],
+            has_more: false,
+            next_cursor: null,
+          }),
+        });
+
+      const r = await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      expect(r.added).toBe(0);
+      const watermark = JSON.parse(
+        await fsp.readFile(path.join(dir, "notion-sync", "watermark.json"), "utf8"),
+      ) as { failedRetries: Array<{ remoteId: string; failureCount: number }> };
+      // The entry should have been dropped because the new failure
+      // count (5 + 1 = 6) exceeds FAILED_RETRY_MAX_ATTEMPTS (5). The
+      // pre-fix behaviour would have left it in the queue forever
+      // with failureCount stuck at 5.
+      expect(watermark.failedRetries).toEqual([]);
+    },
+  );
+
+  it(
+    "bumps failureCount by exactly one on a single non-404 Phase-1 failure " +
+      "(regression: Devin Review wave 7 BUG_0001 — the catch used to " +
+      "swallow the error without recording it)",
+    async () => {
+      const stateDir = path.join(dir, "notion-sync");
+      await fsp.mkdir(stateDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(stateDir, "watermark.json"),
+        JSON.stringify({
+          lastSyncIso: "2024-06-01T00:00:00Z",
+          failedRetries: [
+            {
+              remoteId: "transiently-broken",
+              remoteModifiedAt: "2024-05-01T00:00:00Z",
+              failureCount: 1,
+            },
+          ],
+        }),
+        "utf8",
+      );
+
+      fetchMock
+        // GET /v1/pages/transiently-broken → 502
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 502,
+          text: async () => "Bad Gateway",
+        })
+        // POST /v1/search → no new pages
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [],
+            has_more: false,
+            next_cursor: null,
+          }),
+        });
+
+      await syncNotion({ accessToken: "AT", userDataDir: dir, bridge });
+      const watermark = JSON.parse(
+        await fsp.readFile(path.join(dir, "notion-sync", "watermark.json"), "utf8"),
+      ) as { failedRetries: Array<{ remoteId: string; failureCount: number }> };
+      expect(watermark.failedRetries).toHaveLength(1);
+      expect(watermark.failedRetries[0].remoteId).toBe("transiently-broken");
+      expect(watermark.failedRetries[0].failureCount).toBe(2);
+    },
+  );
 });
 
 describe("Jira sync", () => {

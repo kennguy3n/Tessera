@@ -147,6 +147,69 @@ export interface FailedRetryEntry {
 export const FAILED_RETRY_MAX_ATTEMPTS = 5;
 
 /**
+ * Parse an ISO-8601 timestamp into a UTC epoch-millis value suitable
+ * for `<` / `>` / `<=` comparison between syncs.
+ *
+ * The connectors used to rely on lexicographic string comparison of
+ * `last_modified` / `last_edited_time` against the persisted
+ * watermark. That works *only* if every value the provider returns
+ * uses the identical timezone suffix and the identical sub-second
+ * precision — e.g. `2024-06-01T12:00:00Z` is lexicographically less
+ * than `2024-06-01T12:00:00.001Z` but greater than
+ * `2024-06-01T12:00:00+00:00`. Figma and Notion currently happen to
+ * return a stable shape, but the comparison is a footgun for any
+ * future provider (Atlassian already mixes both forms in different
+ * endpoints) and a Devin Review wave 7 finding flagged it as fragile.
+ *
+ * Returning `null` (rather than throwing) for unparsable input lets
+ * callers fall back to the same behaviour they had before this fix:
+ * the watermark scan skips the unparsable value, the unfiltered
+ * scan keeps it.
+ */
+export function parseWatermarkIso(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
+ * `true` iff `candidate` is *strictly* newer than `watermark`. A
+ * `null`/unparsable `watermark` means "no previous sync, accept
+ * everything"; a `null`/unparsable `candidate` is treated as
+ * permanently skippable.
+ */
+export function isAfterWatermark(
+  candidate: string | null | undefined,
+  watermark: string | null | undefined,
+): boolean {
+  const c = parseWatermarkIso(candidate);
+  if (c === null) return false;
+  const w = parseWatermarkIso(watermark);
+  if (w === null) return true;
+  return c > w;
+}
+
+/**
+ * Return whichever of `a` / `b` is the later timestamp. `null` /
+ * unparsable inputs are treated as `-Infinity`. The return value is
+ * the original ISO-8601 string (not the epoch ms) so the watermark
+ * we persist preserves whatever precision/timezone the provider gave
+ * us — important for diagnostics and for verbatim "last sync" UI
+ * surfaces.
+ */
+export function maxWatermark(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): string | null {
+  const am = parseWatermarkIso(a);
+  const bm = parseWatermarkIso(b);
+  if (am === null && bm === null) return null;
+  if (am === null) return b ?? null;
+  if (bm === null) return a ?? null;
+  return am >= bm ? (a ?? null) : (b ?? null);
+}
+
+/**
  * Compute the next-sync retry queue from the previous queue plus the
  * outcome of this sync pass:
  *   - `attempted`  — items the previous queue asked us to retry.

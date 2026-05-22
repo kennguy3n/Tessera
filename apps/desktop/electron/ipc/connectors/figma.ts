@@ -27,6 +27,8 @@ import * as fsp from "fs/promises";
 import * as path from "path";
 
 import {
+  isAfterWatermark,
+  maxWatermark,
   nextFailedRetryQueue,
   purgeSyncDir,
   readManifest,
@@ -429,12 +431,11 @@ export async function syncFigma(ctx: {
       remoteId: fileKey,
       remoteModifiedAt,
     });
-    if (
-      remoteModifiedAt &&
-      (!nextWatermark || remoteModifiedAt > nextWatermark)
-    ) {
-      nextWatermark = remoteModifiedAt;
-    }
+    // Use epoch-ms comparison via `maxWatermark` rather than the
+    // string compare we used to do — see `parseWatermarkIso` in
+    // `syncDir.ts` for the failure mode (mixed `Z` / `+00:00` /
+    // millisecond-precision suffixes producing wrong-order results).
+    nextWatermark = maxWatermark(nextWatermark, remoteModifiedAt);
     pendingRetries.delete(fileKey);
     succeededIds.add(fileKey);
   };
@@ -472,9 +473,15 @@ export async function syncFigma(ctx: {
           continue;
         }
         for (const summary of files) {
+          // `isAfterWatermark` parses both sides to epoch ms before
+          // comparing — see `parseWatermarkIso` in `syncDir.ts`. The
+          // previous lexicographic compare on raw ISO strings would
+          // produce wrong results if Figma ever mixes timezone
+          // suffixes (it currently does not, but the hardening was
+          // flagged by Devin Review wave 7).
           if (
             compareWatermark &&
-            summary.last_modified <= compareWatermark
+            !isAfterWatermark(summary.last_modified, compareWatermark)
           ) {
             continue;
           }
