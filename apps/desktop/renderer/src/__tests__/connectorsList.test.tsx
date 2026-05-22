@@ -129,6 +129,34 @@ describe("ConnectorsList", () => {
   });
 
   it(
+    "omits providers listed in `excludeProviders` " +
+      "(regression: Google Drive rendered twice on SourcesPage)",
+    async () => {
+      // `SourcesPage` keeps a dedicated `ConnectorStatus` card for
+      // Google Drive (its file-picker flow lives there) and renders
+      // `<ConnectorsList excludeProviders={["google_drive"]} />` to
+      // avoid showing the Drive card a second time. This test asserts
+      // the prop actually filters the list.
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "x",
+        connected: false,
+        status: "disconnected",
+      });
+      await act(async () => {
+        render(<ConnectorsList excludeProviders={["google_drive"]} />);
+      });
+      // Every non-excluded provider must still appear.
+      for (const d of CONNECTOR_DESCRIPTORS) {
+        if (d.provider === "google_drive") continue;
+        expect(await screen.findByText(d.label)).toBeInTheDocument();
+      }
+      // And Google Drive must NOT be present.
+      expect(screen.queryByLabelText("Connect Google Drive")).toBeNull();
+      expect(screen.queryByText("Google Drive")).toBeNull();
+    },
+  );
+
+  it(
     "shows the Google Drive redirect URI as `localhost:9876` (matches " +
       "OAuth config; regression for redirect_uri_mismatch bug)",
     async () => {

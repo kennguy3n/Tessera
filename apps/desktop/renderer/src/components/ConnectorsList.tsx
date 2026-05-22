@@ -11,7 +11,7 @@
  * all six providers — only the labelled help text differs by
  * provider (e.g. "Microsoft Entra ID" vs "Google Cloud Console").
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ConnectorStatusInfo } from "../types/ipc";
 import Button from "./Button";
 import Modal from "./Modal";
@@ -93,9 +93,32 @@ export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
 
 interface ConnectorsListProps {
   onChange?: () => void;
+  /**
+   * Provider ids to omit from the list. The `SourcesPage` keeps a
+   * dedicated `ConnectorStatus` card for Google Drive (because its
+   * file-picker flow lives on that page) so it passes
+   * `excludeProviders={["google_drive"]}` here to avoid rendering
+   * the Drive card twice.
+   */
+  excludeProviders?: ReadonlyArray<string>;
 }
 
-export default function ConnectorsList({ onChange }: ConnectorsListProps) {
+export default function ConnectorsList({
+  onChange,
+  excludeProviders,
+}: ConnectorsListProps) {
+  // Stable identity for the exclude set: callers usually pass a
+  // literal `["google_drive"]` which is a new array every render.
+  // Memoising on a sorted-joined string lets us deduplicate cheaply
+  // without forcing parent components to also memo.
+  const excludeKey = (excludeProviders ?? []).slice().sort().join("|");
+  const descriptors = useMemo(
+    () => {
+      const excluded = new Set(excludeKey ? excludeKey.split("|") : []);
+      return CONNECTOR_DESCRIPTORS.filter((d) => !excluded.has(d.provider));
+    },
+    [excludeKey],
+  );
   const [statuses, setStatuses] = useState<Record<string, ConnectorStatusInfo>>(
     {},
   );
@@ -118,7 +141,7 @@ export default function ConnectorsList({ onChange }: ConnectorsListProps) {
     (async () => {
       const next: Record<string, string> = {};
       await Promise.all(
-        CONNECTOR_DESCRIPTORS.map(async (d) => {
+        descriptors.map(async (d) => {
           try {
             next[d.provider] = await api.connectors.getRedirectUri(d.provider);
           } catch {
@@ -136,14 +159,14 @@ export default function ConnectorsList({ onChange }: ConnectorsListProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [descriptors]);
 
   const pollAll = useCallback(async () => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
     if (!api) return;
     const next: Record<string, ConnectorStatusInfo> = {};
     await Promise.all(
-      CONNECTOR_DESCRIPTORS.map(async (d) => {
+      descriptors.map(async (d) => {
         try {
           next[d.provider] = await api.connectors.status(d.provider);
         } catch {
@@ -156,14 +179,14 @@ export default function ConnectorsList({ onChange }: ConnectorsListProps) {
       }),
     );
     setStatuses(next);
-  }, []);
+  }, [descriptors]);
 
   useEffect(() => {
     pollAll();
   }, [pollAll]);
 
   const descriptor = authOpenFor
-    ? CONNECTOR_DESCRIPTORS.find((d) => d.provider === authOpenFor)
+    ? descriptors.find((d) => d.provider === authOpenFor)
     : null;
 
   const handleAuthenticate = async () => {
@@ -203,7 +226,7 @@ export default function ConnectorsList({ onChange }: ConnectorsListProps) {
       style={{ display: "grid", gap: "var(--spacing-sm)" }}
       aria-label="Remote connectors"
     >
-      {CONNECTOR_DESCRIPTORS.map((d) => {
+      {descriptors.map((d) => {
         const status = statuses[d.provider];
         const connected = status?.connected ?? false;
         if (connected) {

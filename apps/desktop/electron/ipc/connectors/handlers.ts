@@ -83,8 +83,70 @@ function bridgeHooks(ctx: IpcContext): BridgeHooks {
   };
 }
 
-function isNetworkError(err: unknown): boolean {
+/**
+ * Distinguished error class connectors throw when they have *direct*
+ * evidence the host is offline (DNS resolution failed, TCP refused,
+ * `fetch` rejected without a status, etc.). Preferring this class over
+ * string-matching is the only fully-correct way to classify network
+ * errors — the message-based heuristic below is a fallback for
+ * third-party libraries that throw plain `Error` objects.
+ */
+export class NetworkError extends Error {
+  /** Branded so duck-type checks survive cross-realm boundaries. */
+  readonly isNetworkError = true as const;
+  /** Underlying cause (e.g. the original `fetch` rejection). */
+  readonly cause?: unknown;
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = "NetworkError";
+    if (options && "cause" in options) {
+      this.cause = options.cause;
+    }
+  }
+}
+
+/**
+ * Distinguished error class for *authentication-state* failures —
+ * the user is not connected, or their access/refresh token has
+ * expired and must be re-issued. These are explicitly NOT network
+ * errors: the renderer needs to prompt the user to re-authenticate,
+ * not show an "Offline" badge. Carrying this as a distinguished class
+ * is what stops `isNetworkError` from confusing "not connected" (auth
+ * state) with "connection refused" (transport).
+ */
+export class NotConnectedError extends Error {
+  readonly isNotConnectedError = true as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "NotConnectedError";
+  }
+}
+
+// Word-boundary patterns for the message-only fallback. We
+// deliberately avoid the bare token `connect`: that substring also
+// matches "not connected" / "disconnect failed" / "reconnect", which
+// are auth/state errors — not transport failures. The patterns below
+// only match phrases the Node/undici/Electron fetch stack actually
+// produces for genuine offline conditions.
+const NETWORK_MESSAGE_PATTERNS = [
+  /\bfetch failed\b/,
+  /\bnetwork\s+(error|unreachable|down|failure|is\s+offline)\b/,
+  /\bconnection\s+(refused|reset|timed\s*out|timeout|aborted|closed)\b/,
+  /\bdns\s+(lookup|resolution)\s+failed\b/,
+  /\bgetaddrinfo\b/,
+  /\bsocket\s+hang\s+up\b/,
+] as const;
+
+export function isNetworkError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
+  // Auth-prerequisite errors must NEVER be reported as "offline" —
+  // doing so makes the failure impossible to diagnose from the UI
+  // (user clicks Sync, sees Offline badge, retries forever, never
+  // realises the actual problem is that they need to re-authenticate).
+  if ((err as { isNotConnectedError?: boolean }).isNotConnectedError === true) {
+    return false;
+  }
+  if ((err as { isNetworkError?: boolean }).isNetworkError === true) return true;
   const e = err as { code?: string; message?: string; cause?: { code?: string } };
   const code = e.code ?? e.cause?.code ?? "";
   if (
@@ -100,8 +162,9 @@ function isNetworkError(err: unknown): boolean {
   ) {
     return true;
   }
+  if (code !== "") return false;
   const msg = (e.message ?? "").toLowerCase();
-  return /fetch failed|network|connect/i.test(msg) && code === "";
+  return NETWORK_MESSAGE_PATTERNS.some((re) => re.test(msg));
 }
 
 /**
@@ -114,19 +177,25 @@ async function getValidAccessToken(
   provider: ProviderId,
 ): Promise<string> {
   const stored = ctx.tokenVault.getTokens(provider);
-  if (!stored) throw new Error(`${provider} is not connected — authenticate first`);
+  if (!stored) {
+    throw new NotConnectedError(
+      `${provider} is not connected — authenticate first`,
+    );
+  }
   if (Date.now() < stored.expiresAt - 60_000) return stored.accessToken;
 
   const config = getProviderOAuthConfig(provider);
   if (!config.supportsRefresh || !stored.refreshToken) {
     ctx.tokenVault.deleteTokens(provider);
-    throw new Error(
+    throw new NotConnectedError(
       `${provider} access token expired and refresh is not available — re-authenticate`,
     );
   }
   if (!stored.clientId || !stored.clientSecret) {
     ctx.tokenVault.deleteTokens(provider);
-    throw new Error(`${provider} client credentials missing — re-authenticate`);
+    throw new NotConnectedError(
+      `${provider} client credentials missing — re-authenticate`,
+    );
   }
   const refreshed = await refreshProviderToken(config, {
     refreshToken: stored.refreshToken,

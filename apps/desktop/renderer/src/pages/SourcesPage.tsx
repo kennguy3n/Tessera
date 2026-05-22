@@ -12,6 +12,10 @@ import DriveFilePicker from "../components/DriveFilePicker";
 import { useSourceList, useAddSource, useRemoveSource } from "../hooks/useSources";
 import type { ConnectorFileInfo, ConnectorStatusInfo } from "../types/ipc";
 
+// Stable reference so `ConnectorsList`'s dep-equality memo doesn't
+// invalidate on every render of `SourcesPage`.
+const EXCLUDED_FROM_LIST: ReadonlyArray<string> = ["google_drive"];
+
 export default function SourcesPage() {
   const navigate = useNavigate();
   const { sources, loading, refresh } = useSourceList();
@@ -265,8 +269,11 @@ export default function SourcesPage() {
         {/* Phase 10 — the rest of the connectors (OneDrive / Notion /
             Jira / Confluence / Figma) share the same multi-provider
             list. Connecting one of these triggers the OAuth flow and
-            adds its synced files to the index. */}
-        <ConnectorsList onChange={refresh} />
+            adds its synced files to the index. Google Drive is
+            excluded here because the dedicated `ConnectorStatus`
+            above already renders it (and owns the Drive file-picker
+            flow attached to this page). */}
+        <ConnectorsList onChange={refresh} excludeProviders={EXCLUDED_FROM_LIST} />
       </div>
 
       {compareError && (
