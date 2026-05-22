@@ -86,6 +86,35 @@ function keyPath(): string {
 }
 
 /**
+ * Signals that the current platform / environment cannot back the
+ * database key chain because `safeStorage.isEncryptionAvailable()`
+ * returned false (e.g. Linux without gnome-keyring / kwallet5).
+ *
+ * Callers in `appState.ts` use this distinct type to decide whether
+ * to fall through to an unencrypted bridge: ONLY this error means
+ * the platform itself lacks encryption support. Any other error
+ * thrown by {@link getOrCreateDbKey} (zero-byte key file, wrong
+ * decrypted length, underlying decrypt failure) indicates the user
+ * previously had encryption working and the key is now lost or
+ * corrupted — in those cases the on-disk database is almost
+ * certainly encrypted, and proceeding with `dbKey = null` would
+ * either fail noisily at the next `CREATE TABLE` or, worse, write
+ * fresh unencrypted bytes alongside an encrypted file. Both
+ * outcomes are wrong; let those errors bubble up and refuse to
+ * bring up the bridge instead.
+ */
+export class EncryptionUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EncryptionUnavailableError";
+    // Pin the prototype so `instanceof EncryptionUnavailableError`
+    // works even when this module is transpiled to ES5-style
+    // constructor inheritance.
+    Object.setPrototypeOf(this, EncryptionUnavailableError.prototype);
+  }
+}
+
+/**
  * Generate a fresh 256-bit key and return its hex encoding.
  *
  * Exposed for tests; production code should always go through
@@ -100,14 +129,20 @@ export function generateDbKey(): string {
  * Return the SQLCipher key for this install, creating and persisting
  * one on first launch.
  *
- * Throws if `safeStorage.isEncryptionAvailable()` is false (Linux
- * without a keyring daemon, etc.). The caller in `appState.ts`
- * catches this and decides whether to fall through to an
- * unencrypted bridge.
+ * Distinct failure modes:
+ * - Throws {@link EncryptionUnavailableError} when
+ *   `safeStorage.isEncryptionAvailable()` is false (e.g. Linux
+ *   without a keyring daemon). The caller in `appState.ts` catches
+ *   THIS specific class and falls through to an unencrypted bridge.
+ * - Throws a plain `Error` for any other failure (zero-byte key
+ *   file, wrong decrypted length, underlying decrypt error). These
+ *   indicate the user previously had encryption working and the key
+ *   is now lost / corrupted, so the on-disk DB is almost certainly
+ *   encrypted — the caller must NOT fall back to unencrypted mode.
  */
 export function getOrCreateDbKey(): string {
   if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error(encryptionUnavailableReason());
+    throw new EncryptionUnavailableError(encryptionUnavailableReason());
   }
   const fp = keyPath();
   if (fs.existsSync(fp)) {

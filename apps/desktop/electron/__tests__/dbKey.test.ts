@@ -36,6 +36,7 @@ import {
   getOrCreateDbKey,
   generateDbKey,
   DB_KEY_HEX_LEN,
+  EncryptionUnavailableError,
   _deleteDbKeyForTests,
 } from "../dbKey";
 
@@ -102,24 +103,45 @@ describe("dbKey", () => {
     expect(safeStorageMock.decryptString).toHaveBeenCalledTimes(1);
   });
 
-  it("getOrCreateDbKey throws when safeStorage is unavailable", () => {
+  it("getOrCreateDbKey throws EncryptionUnavailableError when safeStorage is unavailable", () => {
     safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
+    // Pin both the class identity (so appState.ts can distinguish
+    // it from data-corruption errors via `instanceof`) and the
+    // human-readable message.
+    expect(() => getOrCreateDbKey()).toThrow(EncryptionUnavailableError);
     expect(() => getOrCreateDbKey()).toThrow(/Encryption not available/);
     // And we did not write a key file on the failure path.
     expect(fs.existsSync(path.join(hoisted.userData.value, "db.key"))).toBe(false);
   });
 
-  it("getOrCreateDbKey throws on zero-byte key file", () => {
+  it("EncryptionUnavailableError is distinct from plain Error", () => {
+    // Critical for appState.ts's two-tier catch: the
+    // `instanceof EncryptionUnavailableError` check decides
+    // whether to silently fall through to an unencrypted bridge
+    // or to refuse to bring it up.
+    safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
+    try {
+      getOrCreateDbKey();
+      expect.fail("expected getOrCreateDbKey to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(EncryptionUnavailableError);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).name).toBe("EncryptionUnavailableError");
+    }
+  });
+
+  it("getOrCreateDbKey throws plain Error (not EncryptionUnavailableError) on zero-byte key file", () => {
     // Half-written first launch — the temp-and-rename path makes
     // this unlikely in practice, but a corrupted FS could still
     // produce one. We must NOT silently regenerate because that
     // would render the matching tessera.db permanently unreadable.
     fs.writeFileSync(path.join(hoisted.userData.value, "db.key"), Buffer.alloc(0));
     expect(() => getOrCreateDbKey()).toThrow(/empty/);
+    expect(() => getOrCreateDbKey()).not.toThrow(EncryptionUnavailableError);
     expect(safeStorageMock.decryptString).not.toHaveBeenCalled();
   });
 
-  it("getOrCreateDbKey throws on key file that decrypts to wrong length", () => {
+  it("getOrCreateDbKey throws plain Error (not EncryptionUnavailableError) on wrong-length decrypted key", () => {
     // safeStorage decrypts to a non-64-char string — could happen
     // if the user's userData dir was copied from a different version
     // that used a different key format. Better to fail loud than
@@ -130,11 +152,16 @@ describe("dbKey", () => {
       Buffer.from("anything"),
     );
     expect(() => getOrCreateDbKey()).toThrow(/unexpected length/);
+    expect(() => getOrCreateDbKey()).not.toThrow(EncryptionUnavailableError);
   });
 
-  it("getOrCreateDbKey surfaces underlying decrypt errors", () => {
+  it("getOrCreateDbKey surfaces underlying decrypt errors (not as EncryptionUnavailableError)", () => {
     // E.g. user copied userData to a different machine — DPAPI /
-    // Keychain on the new machine can't decrypt the blob.
+    // Keychain on the new machine can't decrypt the blob. This is
+    // semantically a corrupted-key scenario, NOT an
+    // encryption-unavailable scenario, so it must bubble up as a
+    // plain Error and appState.ts must refuse the unencrypted
+    // fallback.
     safeStorageMock.decryptString.mockImplementation(() => {
       throw new Error("Decryption failed: invalid key");
     });
@@ -143,6 +170,7 @@ describe("dbKey", () => {
       Buffer.from("wrapped-but-wrong-machine"),
     );
     expect(() => getOrCreateDbKey()).toThrow(/Decryption failed/);
+    expect(() => getOrCreateDbKey()).not.toThrow(EncryptionUnavailableError);
   });
 
   it("write is atomic: no .tmp file is left behind on the success path", () => {
