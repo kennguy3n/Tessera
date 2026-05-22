@@ -934,6 +934,210 @@ describe("Figma sync", () => {
       expect(bridge.added).toHaveLength(3);
     },
   );
+
+  it(
+    "persists state + manifest even when getComments rejects mid-pass " +
+      "(regression: BUG_0001 — uncaught fetch rejection aborted whole sync)",
+    async () => {
+      // Two files, both /v1/files/{key} return OK, but the SECOND
+      // file's /v1/files/{key}/comments call rejects with a transport
+      // error (DNS / socket reset) — the kind of failure that escapes
+      // an un-try/catched `await getComments(...)`. The fix wraps the
+      // call in try/catch AND wraps both sync phases in try/finally
+      // so saveState + writeManifest run regardless.
+      fetchMock
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ teams: [{ id: "t1", name: "T" }] }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: "T",
+            projects: [{ id: "p1", name: "Proj" }],
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: "Proj",
+            files: [
+              { key: "f1", name: "File 1", last_modified: "2024-06-01T10:00:00Z" },
+              { key: "f2", name: "File 2", last_modified: "2024-06-01T11:00:00Z" },
+            ],
+          }),
+        })
+        // f1 body OK + comments OK
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: "File 1",
+            lastModified: "2024-06-01T10:00:00Z",
+            document: { id: "0:0", children: [{ id: "1:1", type: "TEXT", characters: "Body 1" }] },
+          }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ comments: [] }) })
+        // f2 body OK + comments REJECTS (transport-level)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            name: "File 2",
+            lastModified: "2024-06-01T11:00:00Z",
+            document: { id: "0:0", children: [{ id: "1:1", type: "TEXT", characters: "Body 2" }] },
+          }),
+        })
+        .mockRejectedValueOnce(new Error("getaddrinfo ENOTFOUND api.figma.com"));
+
+      const r = await syncFigma({ accessToken: "AT", userDataDir: dir, bridge });
+      // Both files were indexed — the comments failure on f2 fell back to "".
+      expect(r.added).toBe(2);
+      expect(bridge.added).toHaveLength(2);
+
+      // The watermark MUST have been persisted (highest seen timestamp).
+      const stateRaw = await fsp.readFile(
+        path.join(dir, "figma-sync", "state.json"),
+        "utf8",
+      );
+      const state = JSON.parse(stateRaw);
+      expect(state.lastSyncIso).toBe("2024-06-01T11:00:00Z");
+
+      // The manifest must exist with both entries.
+      const manifest = JSON.parse(
+        await fsp.readFile(
+          path.join(dir, "figma-sync", "manifest.json"),
+          "utf8",
+        ),
+      );
+      expect(manifest.entries).toHaveLength(2);
+      expect(manifest.entries.map((e: { remoteId: string }) => e.remoteId).sort()).toEqual([
+        "f1",
+        "f2",
+      ]);
+    },
+  );
+});
+
+describe("Jira sync — JQL watermark sanitisation", () => {
+  const original = globalThis.fetch;
+  let fetchMock: ReturnType<typeof makeFetchMock>;
+  let dir: string;
+  let bridge: FakeBridge;
+
+  beforeEach(async () => {
+    fetchMock = makeFetchMock();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    dir = await tmpDir("jira-jql");
+    bridge = new FakeBridge();
+  });
+  afterEach(async () => {
+    globalThis.fetch = original;
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it(
+    "drops a malformed watermark from state.json instead of interpolating " +
+      "it into JQL (regression: ANALYSIS_0004 — JQL injection vector)",
+    async () => {
+      // Pre-seed state.json with a malformed watermark containing a `"`
+      // — the kind of value that would otherwise close the JQL string
+      // literal and inject syntax. The fix: strict-ISO-8601 validation
+      // drops the clause entirely, degrading to a full re-scan.
+      const syncDir = path.join(dir, "jira-sync");
+      await fsp.mkdir(syncDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(syncDir, "state.json"),
+        JSON.stringify({
+          lastSyncIso: '2024-06-01" OR 1=1 OR updated >= "2024-06-01',
+          cloudId: "cloud-1",
+          failedRetries: [],
+        }),
+        "utf8",
+      );
+
+      // /rest/api/3/search response — single issue.
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          issues: [
+            {
+              id: "10001",
+              key: "PROJ-1",
+              fields: {
+                summary: "Hello",
+                description: null,
+                status: { name: "To Do" },
+                project: { key: "PROJ", name: "Project" },
+                updated: "2024-06-02T00:00:00.000+0000",
+              },
+            },
+          ],
+          startAt: 0,
+          maxResults: 100,
+          total: 1,
+        }),
+      });
+
+      await syncJira({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+        cloudId: "cloud-1",
+      });
+
+      // The first fetch call must NOT contain the injected JQL fragment.
+      const calls = fetchMock.mock.calls;
+      const searchCall = calls.find((c) =>
+        String(c[0]).includes("/rest/api/3/search"),
+      );
+      expect(searchCall).toBeDefined();
+      const url = String(searchCall![0]);
+      expect(url).not.toContain("OR 1=1");
+      // The malformed watermark must have been dropped — JQL should be
+      // a bare ORDER BY (no `updated >= "..."` clause).
+      const jqlParam = new URL(url).searchParams.get("jql");
+      expect(jqlParam).toBe("ORDER BY updated DESC");
+    },
+  );
+
+  it(
+    "accepts a well-formed ISO-8601 watermark verbatim and includes it " +
+      "in the updated-since JQL clause",
+    async () => {
+      const syncDir = path.join(dir, "jira-sync");
+      await fsp.mkdir(syncDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(syncDir, "state.json"),
+        JSON.stringify({
+          lastSyncIso: "2024-06-01T10:00:00.000+0000",
+          cloudId: "cloud-1",
+          failedRetries: [],
+        }),
+        "utf8",
+      );
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          issues: [],
+          startAt: 0,
+          maxResults: 100,
+          total: 0,
+        }),
+      });
+
+      await syncJira({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+        cloudId: "cloud-1",
+      });
+
+      const url = String(fetchMock.mock.calls[0][0]);
+      const jql = new URL(url).searchParams.get("jql");
+      expect(jql).toBe(
+        'updated >= "2024-06-01T10:00:00.000+0000" ORDER BY updated DESC',
+      );
+    },
+  );
 });
 
 describe("Google Drive sync — manifest cleanup", () => {

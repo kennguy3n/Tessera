@@ -149,8 +149,14 @@ export function isNetworkError(err: unknown): boolean {
   if ((err as { isNetworkError?: boolean }).isNetworkError === true) return true;
   const e = err as { code?: string; message?: string; cause?: { code?: string } };
   const code = e.code ?? e.cause?.code ?? "";
+  // Network failure codes from libc / Node net / undici. Keep this
+  // list in sync with new transport-level error codes as the runtime
+  // evolves — anything not in the allowlist falls through to the
+  // message-pattern heuristic below, which is a strictly weaker
+  // classifier (false positives are easier than with a code allowlist).
   if (
     [
+      // libc / Node
       "EAI_AGAIN",
       "ENOTFOUND",
       "ETIMEDOUT",
@@ -158,6 +164,28 @@ export function isNetworkError(err: unknown): boolean {
       "ECONNRESET",
       "ENETUNREACH",
       "EHOSTUNREACH",
+      "EPIPE",
+      // undici (Node 18+ fetch)
+      "UND_ERR_SOCKET",
+      "UND_ERR_CONNECT_TIMEOUT",
+      "UND_ERR_HEADERS_TIMEOUT",
+      "UND_ERR_BODY_TIMEOUT",
+      "UND_ERR_REQ_RETRY",
+      // Node fetch / Electron
+      "ERR_NETWORK",
+      "ERR_NETWORK_CHANGED",
+      "ERR_NETWORK_IO_SUSPENDED",
+      "ERR_INTERNET_DISCONNECTED",
+      "ERR_NAME_NOT_RESOLVED",
+      "ERR_CONNECTION_REFUSED",
+      "ERR_CONNECTION_RESET",
+      "ERR_CONNECTION_ABORTED",
+      "ERR_CONNECTION_CLOSED",
+      "ERR_CONNECTION_TIMED_OUT",
+      "ERR_CONNECTION_FAILED",
+      "ERR_SOCKET_CONNECTION_TIMEOUT",
+      "ERR_SOCKET_NOT_CONNECTED",
+      "ERR_TIMED_OUT",
     ].includes(code)
   ) {
     return true;
@@ -305,6 +333,16 @@ export async function runConnectorSync(
   provider: ProviderId,
   options?: { selectedFileIds?: string[] },
 ): Promise<ConnectorSyncResult> {
+  // Resolve the access token BEFORE consuming the rate-limit budget.
+  // The token check is local (vault lookup + optional refresh-token
+  // exchange) and short-circuits with `NotConnectedError` when the
+  // user simply isn't authenticated — spending the 1/30s budget on
+  // that case would mask the real "please re-authenticate" error
+  // behind a generic "rate-limited" message on the next click.
+  // The rate-limit is still consumed before any expensive per-
+  // provider sync work (the actual API calls in `runSync`), which is
+  // where defence-in-depth against a runaway renderer matters.
+  const token = await getValidAccessToken(ctx, provider);
   try {
     ctx.rateLimiter.consume(`connectors:sync:${provider}`, {
       tokensPerInterval: 1,
@@ -321,7 +359,6 @@ export async function runConnectorSync(
     throw err;
   }
   try {
-    const token = await getValidAccessToken(ctx, provider);
     return await runSync(ctx, provider, token, ctx.userDataDir(), options);
   } catch (err) {
     if (isNetworkError(err)) {

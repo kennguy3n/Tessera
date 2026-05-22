@@ -229,6 +229,29 @@ function jqlEscapeKey(key: string): string {
   return key.replace(/[^A-Za-z0-9_-]/g, "");
 }
 
+/**
+ * Strict ISO-8601 watermark validator. The watermark we persist is
+ * always the value Jira's API returned for `issue.fields.updated`
+ * (e.g. `2024-06-01T10:00:00.000+0000`). A corrupted or tampered
+ * state.json file containing a `"` could otherwise break out of the
+ * JQL string literal at `updated >= "<watermark>"` and inject JQL
+ * syntax. The risk is low (local file, written by us), but defending
+ * here matches the same posture we already apply to `jqlEscapeKey`
+ * and removes any future surprise if upstream `updated` formatting
+ * changes.
+ *
+ * Accepted: `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, `YYYY-MM-DD HH:mm`,
+ * and the same with optional `:ss(.SSS)?` and an optional timezone
+ * suffix (`Z`, `+0000`, `+00:00`).
+ */
+const JIRA_WATERMARK_PATTERN =
+  /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+
+function sanitiseJqlWatermark(value: string | null): string | null {
+  if (!value) return null;
+  return JIRA_WATERMARK_PATTERN.test(value) ? value : null;
+}
+
 export async function syncJira(ctx: {
   accessToken: string;
   userDataDir: string;
@@ -273,7 +296,15 @@ export async function syncJira(ctx: {
   const retryKeys = state.failedRetries
     .map((e) => jqlEscapeKey(e.remoteId))
     .filter((k) => k.length > 0);
-  const watermarkClause = watermark ? `updated >= "${watermark}"` : null;
+  // Strict-validate the watermark before interpolating into JQL.
+  // `sanitiseJqlWatermark` returns null on anything that isn't a
+  // well-formed ISO-8601 timestamp, which causes the watermark
+  // clause below to be dropped entirely — the sync degrades to a
+  // full re-scan rather than risking JQL injection from a corrupted
+  // state.json. The watermark is always re-derived from issue
+  // updates within the same pass, so the next save will restore it.
+  const safeWatermark = sanitiseJqlWatermark(watermark);
+  const watermarkClause = safeWatermark ? `updated >= "${safeWatermark}"` : null;
   const retryClause =
     retryKeys.length > 0
       ? `key in (${retryKeys.join(",")})`

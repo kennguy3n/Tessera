@@ -177,6 +177,27 @@ export function initAutoUpdater(): void {
  * same lifecycle as every other IPC surface).
  */
 export function registerAutoUpdaterIpc(): void {
+  // Idempotent registration. ipcMain.handle throws if a channel is
+  // already registered, which would crash on the second call (e.g.
+  // a test that mounts the IPC layer twice, or a hot-reload path).
+  // Removing first makes registration safe regardless of prior state
+  // and removes any reliance on a test-only `_resetForTests` helper
+  // to keep things in sync.
+  const channels = [
+    "updates:status",
+    "updates:check",
+    "updates:install",
+    "updates:getAutoUpdateEnabled",
+    "updates:setAutoUpdateEnabled",
+  ];
+  for (const ch of channels) {
+    try {
+      ipcMain.removeHandler(ch);
+    } catch {
+      // Channel wasn't registered yet; ignore.
+    }
+  }
+
   ipcMain.handle("updates:status", async () => lastStatus);
 
   ipcMain.handle("updates:check", async () => {
@@ -240,7 +261,13 @@ export function registerAutoUpdaterIpc(): void {
   );
 }
 
-// Exported for unit testing — lets us reset state between runs.
+/**
+ * Exported for unit testing — lets us reset state between runs.
+ * Tests should call this from `beforeEach`; the IPC handler
+ * registration itself is now idempotent (see `registerAutoUpdaterIpc`)
+ * so forgetting to call this won't crash subsequent registration
+ * attempts, only leak event listeners on the cached updater module.
+ */
 export function _resetForTests(): void {
   registered = false;
   cachedUpdater = null;

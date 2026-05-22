@@ -22,6 +22,7 @@
  */
 
 import * as path from "path";
+import { constants as fsConstants } from "fs";
 import * as fsp from "fs/promises";
 import { isSafeExportPath } from "../exportPathSafety";
 
@@ -194,7 +195,7 @@ export async function assertDirectoryWritable(
 ): Promise<void> {
   try {
     await fsp.mkdir(dir, { recursive: true });
-    await fsp.access(dir, (await import("fs")).constants.W_OK);
+    await fsp.access(dir, fsConstants.W_OK);
   } catch (e) {
     throw new Error(`${name} is not writable: ${dir} (${(e as Error).message})`);
   }

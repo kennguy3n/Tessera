@@ -49,6 +49,7 @@ describe("isNetworkError", () => {
   });
 
   it.each([
+    // libc / Node
     ["EAI_AGAIN"],
     ["ENOTFOUND"],
     ["ETIMEDOUT"],
@@ -56,6 +57,28 @@ describe("isNetworkError", () => {
     ["ECONNRESET"],
     ["ENETUNREACH"],
     ["EHOSTUNREACH"],
+    ["EPIPE"],
+    // undici (Node 18+ fetch) — ANALYSIS_0008
+    ["UND_ERR_SOCKET"],
+    ["UND_ERR_CONNECT_TIMEOUT"],
+    ["UND_ERR_HEADERS_TIMEOUT"],
+    ["UND_ERR_BODY_TIMEOUT"],
+    ["UND_ERR_REQ_RETRY"],
+    // Node fetch / Electron — ANALYSIS_0008
+    ["ERR_NETWORK"],
+    ["ERR_NETWORK_CHANGED"],
+    ["ERR_NETWORK_IO_SUSPENDED"],
+    ["ERR_INTERNET_DISCONNECTED"],
+    ["ERR_NAME_NOT_RESOLVED"],
+    ["ERR_CONNECTION_REFUSED"],
+    ["ERR_CONNECTION_RESET"],
+    ["ERR_CONNECTION_ABORTED"],
+    ["ERR_CONNECTION_CLOSED"],
+    ["ERR_CONNECTION_TIMED_OUT"],
+    ["ERR_CONNECTION_FAILED"],
+    ["ERR_SOCKET_CONNECTION_TIMEOUT"],
+    ["ERR_SOCKET_NOT_CONNECTED"],
+    ["ERR_TIMED_OUT"],
   ])("returns true for syscall code %s", (code) => {
     const err = Object.assign(new Error("something"), { code });
     expect(isNetworkError(err)).toBe(true);

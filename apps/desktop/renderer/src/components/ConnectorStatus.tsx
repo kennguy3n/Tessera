@@ -69,8 +69,24 @@ export default function ConnectorStatus({
       }
       setLastSyncTime(new Date().toLocaleTimeString());
       onSync?.();
-    } catch {
-      // sync error handled by polling status
+    } catch (err) {
+      // Sync threw (rate limit, NotConnectedError, validation error,
+      // etc.). The Offline badge specifically signals "network is
+      // unreachable" — keeping a stale Offline state from a previous
+      // run after the connector now fails for a different reason
+      // misleads the user into thinking the network is still down
+      // when in fact they should re-authenticate or wait for a rate
+      // limit to clear. Inspect the error message for the network
+      // signature the main process wraps offline conditions with
+      // (`{ status: "offline" }` becomes a plain throw only in
+      // non-wrapped legacy paths); otherwise clear the badge.
+      const message =
+        err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+      const looksLikeNetwork =
+        /\b(offline|network|fetch failed|dns|getaddrinfo|connection (refused|reset|timed|aborted)|socket hang up)\b/.test(
+          message,
+        );
+      setOffline(looksLikeNetwork);
     } finally {
       setSyncing(false);
       pollStatus();

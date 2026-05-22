@@ -132,6 +132,112 @@ describe("ConnectorStatus", () => {
       expect(screen.getByText("Disconnected")).toBeInTheDocument();
     });
   });
+
+  it(
+    "shows Offline badge when sync returns status === 'offline'",
+    async () => {
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "notion",
+        connected: true,
+        status: "connected",
+      });
+      mockApi.connectors.sync.mockResolvedValue({
+        added: 0,
+        modified: 0,
+        removed: 0,
+        status: "offline",
+      });
+
+      render(<ConnectorStatus provider="notion" />);
+      await waitFor(() => {
+        expect(screen.getByText("Sync Now")).toBeInTheDocument();
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText("Sync Now"));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Offline")).toBeInTheDocument();
+      });
+    },
+  );
+
+  it(
+    "clears the Offline badge on subsequent NON-network errors " +
+      "(regression: ANALYSIS_0003 — badge previously persisted)",
+    async () => {
+      // First sync returns "offline" → badge lights up.
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "notion",
+        connected: true,
+        status: "connected",
+      });
+      mockApi.connectors.sync
+        .mockResolvedValueOnce({
+          added: 0,
+          modified: 0,
+          removed: 0,
+          status: "offline",
+        })
+        // Second sync throws a NON-network error (e.g. NotConnectedError
+        // after the user revoked access in the provider UI).
+        .mockRejectedValueOnce(
+          new Error("notion is not connected — authenticate first"),
+        );
+
+      render(<ConnectorStatus provider="notion" />);
+      await waitFor(() => {
+        expect(screen.getByText("Sync Now")).toBeInTheDocument();
+      });
+
+      // First click → Offline.
+      await act(async () => {
+        fireEvent.click(screen.getByText("Sync Now"));
+      });
+      await waitFor(() => {
+        expect(screen.getByText("Offline")).toBeInTheDocument();
+      });
+
+      // Second click → throws a non-network error. Badge must clear
+      // back to "Connected" (or whatever the connected state shows),
+      // NOT stay on "Offline".
+      await act(async () => {
+        fireEvent.click(screen.getByText("Sync Now"));
+      });
+      await waitFor(() => {
+        expect(screen.queryByText("Offline")).not.toBeInTheDocument();
+        expect(screen.getByText("Connected")).toBeInTheDocument();
+      });
+    },
+  );
+
+  it(
+    "keeps the Offline badge when sync throws a network-shaped error",
+    async () => {
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "notion",
+        connected: true,
+        status: "connected",
+      });
+      mockApi.connectors.sync.mockRejectedValue(
+        new Error("getaddrinfo ENOTFOUND api.notion.com"),
+      );
+
+      render(<ConnectorStatus provider="notion" />);
+      await waitFor(() => {
+        expect(screen.getByText("Sync Now")).toBeInTheDocument();
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText("Sync Now"));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Offline")).toBeInTheDocument();
+      });
+    },
+  );
 });
 
 describe("DriveFilePicker", () => {
