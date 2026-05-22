@@ -168,13 +168,31 @@ function createWindow(): void {
 async function maybeInitPasswordVault(): Promise<void> {
   if (safeStorage.isEncryptionAvailable()) return;
   try {
-    await initPasswordVaultIfNeeded({
+    // Inspect the `{ active, reason? }` result rather than treating
+    // any non-throw as success. The outer `safeStorage.isEncryptionAvailable()`
+    // guard above makes the `active=false` branch unreachable in
+    // practice (the inner check at passwordVault.ts:608 would only
+    // short-circuit if keyring availability flipped between the two
+    // checks), but pinning the result-shape here keeps this caller
+    // self-documenting and future-proof against either: (a) the
+    // outer guard being removed, (b) `initPasswordVaultIfNeeded`
+    // adding a new "skipped because <reason>" path. The success log
+    // now only fires when the vault is actually unlocked.
+    const result = await initPasswordVaultIfNeeded({
       isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
       existingVault: passwordVaultSaltExists(),
     });
-    console.log(
-      "[Tessera] Password vault unlocked — OAuth tokens and secrets will be encrypted with the user-supplied password.",
-    );
+    if (result.active) {
+      console.log(
+        "[Tessera] Password vault unlocked — OAuth tokens and secrets will be encrypted with the user-supplied password.",
+      );
+    } else {
+      console.warn(
+        "[Tessera] Password vault prompt completed without activating the vault" +
+          (result.reason ? ` (${result.reason})` : "") +
+          " — token / secret writes will fail until the vault is unlocked or the OS keyring becomes available.",
+      );
+    }
   } catch (err) {
     console.warn(
       "[Tessera] Password vault prompt declined or failed — token / secret writes will fail until the vault is unlocked or the OS keyring becomes available.",

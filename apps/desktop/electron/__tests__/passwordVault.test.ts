@@ -30,6 +30,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { fileURLToPath } from "node:url";
+
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 // Stub electron BEFORE importing the module under test. We only need
 // the `app.getPath` shape for the salt-file location; `BrowserWindow`
@@ -429,5 +432,60 @@ describe("passwordVault — prompt HTML contract", () => {
     // the other, the prompt window submit goes nowhere.
     expect(PASSWORD_PROMPT_SUBMIT_CHANNEL).toBe("password-vault:submit");
     expect(PASSWORD_PROMPT_CANCEL_CHANNEL).toBe("password-vault:cancel");
+  });
+});
+
+describe("passwordVault — IPC-boundary defense in depth", () => {
+  // Source-text regression test for the empty-string rejection in
+  // `onSubmit`. Exercising the real IPC handler would require
+  // booting a sandboxed BrowserWindow with a preload, which is too
+  // heavy for unit tests (the prompt HTML / channel-name tests
+  // above use `_renderPromptHtmlForTests` for the same reason).
+  //
+  // The fix is to reject `password === ""` at the IPC boundary
+  // before the PBKDF2 round-trip, even though three other layers
+  // already prevent the empty string from breaking correctness:
+  //
+  //   1. The renderer-side `if (!p) return;` in the inline submit
+  //      handler (a UX nicety, easily bypassed by a compromised
+  //      sandbox).
+  //   2. `deriveAndCacheKey` itself throws "Vault password cannot
+  //      be empty." — covered by the test at line 112.
+  //   3. The thrown error propagates through
+  //      `initPasswordVaultIfNeeded` to `maybeInitPasswordVault`'s
+  //      catch block.
+  //
+  // The IPC-boundary check is defense-in-depth: avoids a 600k-
+  // iteration async PBKDF2 destined to throw, and means future
+  // callers that send a stray "" get a clean no-op instead of a
+  // confusing post-PBKDF2 reject.
+  it("onSubmit handler rejects empty-string passwords at the IPC boundary", () => {
+    const source = fs
+      .readFileSync(path.join(TEST_DIR, "..", "passwordVault.ts"), "utf-8")
+      .replace(/\r\n/g, "\n");
+    // Find the onSubmit handler body.
+    const onSubmitMatch = source.match(
+      /const onSubmit\s*=\s*\([\s\S]*?\n {4}\};/,
+    );
+    expect(onSubmitMatch, "could not locate onSubmit handler in passwordVault.ts").toBeTruthy();
+    if (!onSubmitMatch) return;
+    const body = onSubmitMatch[0];
+    // The body must contain a strict empty-string check that
+    // returns BEFORE the settled = true / cleanup() / deriveAndCacheKey
+    // sequence. Match the literal check.
+    expect(
+      body,
+      "onSubmit handler must reject empty-string passwords with `if (password === \"\")` (defense-in-depth against compromised renderer)",
+    ).toMatch(/if\s*\(\s*password\s*===\s*""\s*\)\s*\{[\s\S]*?return\s*;/);
+    // And the empty-string check must occur BEFORE settled = true
+    // and before any reference to deriveAndCacheKey or pbkdf2.
+    const emptyIdx = body.search(/if\s*\(\s*password\s*===\s*""\s*\)/);
+    const settledIdx = body.search(/settled\s*=\s*true/);
+    expect(emptyIdx).toBeGreaterThan(-1);
+    expect(settledIdx).toBeGreaterThan(-1);
+    expect(
+      emptyIdx,
+      "empty-password rejection must occur before settling the promise (otherwise it does not skip PBKDF2)",
+    ).toBeLessThan(settledIdx);
   });
 });

@@ -422,6 +422,28 @@ export async function promptForVaultPassword(opts: {
         return;
       }
       const password = (payload as { password: string }).password;
+      // Empty-string rejection at the IPC boundary. The renderer's
+      // inline submit handler already gates on `if (!p) return;`
+      // (see `renderPromptHtml`), and `deriveAndCacheKey` itself
+      // throws "Vault password cannot be empty." which propagates
+      // back through `initPasswordVaultIfNeeded` to
+      // `maybeInitPasswordVault`'s `catch` block. So an empty string
+      // sent from a compromised prompt would not break correctness.
+      //
+      // Rejecting here is defense-in-depth: it (a) avoids a 600k-
+      // iteration PBKDF2 round-trip that's destined to throw, (b)
+      // keeps the renderer-side validation as a UX nicety rather
+      // than the actual enforcement boundary, and (c) means a
+      // future caller that sends a stray `""` (e.g. a unit test
+      // mocking the prompt) gets a clean no-op instead of a
+      // confusing post-PBKDF2 reject.
+      //
+      // Same `return` as the type-check branch above so the listener
+      // stays unsettled; the renderer can resubmit with a real
+      // password, or close via Cancel/X.
+      if (password === "") {
+        return;
+      }
       settled = true;
       cleanup();
       // Defer close so the renderer's `ipcRenderer.send` flush has a
