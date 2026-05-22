@@ -747,4 +747,55 @@ mod tests {
         assert!(c.access_token.is_none());
         assert_eq!(c.file_count(), 0);
     }
+
+    #[test]
+    fn build_auth_url_percent_encodes_drive_inputs() {
+        // Drive client IDs end in `.apps.googleusercontent.com`, redirect
+        // URIs carry `://`, `/`, and `?`, and the scope value is a
+        // space-separated list of URLs. All of those characters must be
+        // percent-encoded so the resulting query string remains a single
+        // well-formed URL — the previous hand-rolled `urlencoding` module
+        // was the only place this contract was exercised, so when we
+        // switched to the `urlencoding` crate we keep the contract under
+        // test by exercising the actual call site.
+        let config = AuthConfig {
+            client_id: "123-abc.apps.googleusercontent.com".into(),
+            client_secret: "GOCSPX-secret".into(),
+            redirect_uri: "http://localhost:9876/callback".into(),
+            scopes: vec![
+                "https://www.googleapis.com/auth/drive.readonly".into(),
+                "https://www.googleapis.com/auth/userinfo.email".into(),
+            ],
+            auth_code: None,
+            access_token: None,
+            refresh_token: None,
+            token_expiry: None,
+        };
+
+        let url = GoogleDriveConnector::build_auth_url(&config);
+
+        // `://`, `/`, `?`, `:`, and ` ` (space joining scopes) must all be
+        // percent-encoded so the URL parses as a single query string. The
+        // `redirect_uri` value is the most fragile site since OAuth
+        // providers reject any mismatch with the registered URI, so we
+        // assert its encoded form explicitly.
+        assert!(
+            url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A9876%2Fcallback"),
+            "redirect_uri not properly percent-encoded in: {url}",
+        );
+        // Scope-list space separator must become `%20`, not `+`, since
+        // Google's OAuth endpoint treats `+` literally inside scope names.
+        assert!(
+            url.contains("auth%2Fdrive.readonly%20https"),
+            "scope-separator space not percent-encoded as %20 in: {url}",
+        );
+        // Client ID must round-trip unchanged through the encoder for the
+        // characters Google actually uses (`-`, `.`).
+        assert!(
+            url.contains("client_id=123-abc.apps.googleusercontent.com"),
+            "client_id encoding lost dots/hyphens in: {url}",
+        );
+        // The whole result must remain a valid absolute URL.
+        assert!(url.starts_with("https://accounts.google.com/o/oauth2/v2/auth?"));
+    }
 }
