@@ -321,7 +321,22 @@ export async function syncFigma(ctx: {
   const state = await loadState(ctx.userDataDir);
   let teamIds = ctx.teamIds ?? state.teamIds;
   if (teamIds.length === 0) {
-    const teams = await listTeams(ctx.accessToken);
+    // Mirror the wave-16 Jira/Confluence fix: route this initial
+    // team-discovery call through the same JIT-refresh chokepoint
+    // (`resolveAccessToken`) as every per-file fetch later in the
+    // function, instead of bypassing it via the static
+    // `ctx.accessToken`. Figma was the only remaining caller in this
+    // file using the static token, making it the lone exception to
+    // the pattern the rest of the file follows. The risk this closes
+    // matches Jira/Confluence exactly: a long-deferred sync (e.g. the
+    // Electron app was suspended by the OS and resumed hours later)
+    // would hit this call with an expired access token, `listTeams`
+    // would silently return `[]` (its 401 → `return []` fallback),
+    // the `no-teams` early-return below would fire, and the user
+    // would see "no team membership" in the UI when the actual
+    // problem is a refreshable token expiry. See Devin Review wave
+    // 17 BUG_0001.
+    const teams = await listTeams(await resolveAccessToken(ctx));
     teamIds = teams.map((t) => t.id);
   }
   if (teamIds.length === 0) {
