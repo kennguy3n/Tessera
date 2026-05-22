@@ -117,8 +117,8 @@ function getConfigPath(): string {
 // `cachedPath` is stored alongside `cachedConfig` so a `getConfigPath()`
 // change (the test suite swaps `app.getPath('userData')` between
 // tempdirs per-test) auto-invalidates the cache without the test
-// needing to call `clearConfigCache()` explicitly. In production the
-// path is fixed at first launch so this never triggers.
+// needing to call `_clearConfigCacheForTests()` explicitly. In
+// production the path is fixed at first launch so this never triggers.
 //
 // The cached value is deep-frozen before being stored (see
 // `freezeConfig` below). The pre-cache code returned a fresh
@@ -179,8 +179,14 @@ function freezeConfig(config: AppConfig): AppConfig {
  * re-reads from disk. Production callers should never need this — the
  * cache is kept consistent via `saveConfig` / `updateConfig`'s
  * write-through paths.
+ *
+ * Prefixed with an underscore and suffixed `…ForTests` to match the
+ * codebase convention for non-production seams (see
+ * `electron/autoUpdater.ts`'s `_resetForTests` for the precedent),
+ * so a `grep` for `_*ForTests` finds every test-only export across
+ * the project.
  */
-export function clearConfigCache(): void {
+export function _clearConfigCacheForTests(): void {
   cachedConfig = null;
   cachedPath = null;
 }

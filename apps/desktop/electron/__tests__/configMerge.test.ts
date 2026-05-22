@@ -14,7 +14,7 @@ vi.mock("electron", () => ({
 
 import {
   DEFAULT_EXTERNAL_PROVIDER,
-  clearConfigCache,
+  _clearConfigCacheForTests,
   loadConfig,
   updateConfig,
 } from "../config";
@@ -26,12 +26,12 @@ describe("updateConfig", () => {
     // fresh `userDataDir` already invalidates it, but we drop it
     // explicitly anyway so a future refactor of the keying strategy
     // doesn't silently start sharing state across tests in this file.
-    clearConfigCache();
+    _clearConfigCacheForTests();
   });
 
   afterEach(() => {
     fs.rmSync(userDataDir, { recursive: true, force: true });
-    clearConfigCache();
+    _clearConfigCacheForTests();
   });
 
   it("returns defaults when no config exists yet", () => {

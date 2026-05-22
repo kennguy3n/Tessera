@@ -5,7 +5,7 @@
  * The cache is keyed by the resolved config path so each test (which
  * swaps `app.getPath('userData')` to a fresh tempdir) starts with an
  * effectively empty cache without needing to call
- * `clearConfigCache()` explicitly. The explicit reset is still
+ * `_clearConfigCacheForTests()` explicitly. The explicit reset is still
  * exercised in one test so a future refactor that drops it fails
  * loudly here.
  */
@@ -30,7 +30,7 @@ vi.mock("electron", () => ({
 
 import {
   DEFAULT_EXTERNAL_PROVIDER,
-  clearConfigCache,
+  _clearConfigCacheForTests,
   loadConfig,
   saveConfig,
   updateConfig,
@@ -45,14 +45,14 @@ describe("config cache", () => {
     userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "tessera-cfg-cache-"));
     // `userDataDir` is fresh per test so the cache (keyed by the
     // resolved config path) auto-invalidates. We still call
-    // `clearConfigCache` so a future refactor that changes the keying
+    // `_clearConfigCacheForTests` so a future refactor that changes the keying
     // strategy doesn't silently start sharing state across tests.
-    clearConfigCache();
+    _clearConfigCacheForTests();
   });
 
   afterEach(() => {
     fs.rmSync(userDataDir, { recursive: true, force: true });
-    clearConfigCache();
+    _clearConfigCacheForTests();
   });
 
   it("first load reads from disk, subsequent loads return cached value", () => {
@@ -114,13 +114,13 @@ describe("config cache", () => {
     expect(fromCache.autoUpdate).toBe(false);
 
     // Disk read to confirm the write-through landed.
-    clearConfigCache();
+    _clearConfigCacheForTests();
     const fromDisk = loadConfig();
     expect(fromDisk.theme).toBe("dark");
     expect(fromDisk.autoUpdate).toBe(false);
   });
 
-  it("clearConfigCache forces a re-read from disk", () => {
+  it("_clearConfigCacheForTests forces a re-read from disk", () => {
     const initial = loadConfig();
     expect(initial.theme).toBe("light"); // default
 
@@ -129,7 +129,7 @@ describe("config cache", () => {
       configPath(),
       JSON.stringify({ ...initial, theme: "dark" }),
     );
-    clearConfigCache();
+    _clearConfigCacheForTests();
 
     const reloaded = loadConfig();
     expect(reloaded.theme).toBe("dark");
@@ -170,7 +170,7 @@ describe("config cache", () => {
     expect(cached.autoUpdate).toBe(false);
 
     // Disk side-by-side check: the file should reflect the same shape.
-    clearConfigCache();
+    _clearConfigCacheForTests();
     const onDisk = loadConfig();
     expect(onDisk.theme).toBe("dark");
     expect(onDisk.defaultExportFormat).toBe("pdf");
