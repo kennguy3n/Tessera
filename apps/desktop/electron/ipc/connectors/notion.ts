@@ -26,6 +26,7 @@ import {
   readManifest,
   resolveAccessToken,
   sanitiseRemoteId,
+  SourcePathIndex,
   syncDirFor,
   writeManifest,
   type AccessTokenSource,
@@ -381,6 +382,17 @@ export async function syncNotion(ctx: {
   const entriesById = new Map<string, SyncManifestEntry>();
   for (const e of manifest.entries) entriesById.set(e.remoteId, e);
 
+  // Source-by-path index, materialised inside the try block below so
+  // a `bridge.listSources()` throw is caught by the saveWatermark +
+  // writeManifest cleanup path (defense-in-depth mirrored from
+  // figma.ts; the `!` definite-assignment assertion is safe because
+  // every read of `sourceIndex` is inside the try block, after
+  // assignment). The cache lets the hot loop's existence check be
+  // O(1) instead of the previous `bridge.listSources().find(...)`
+  // per-page scan (O(pages × sources)). See Devin Review wave 20
+  // ANALYSIS.
+  let sourceIndex!: SourcePathIndex;
+
   const watermark = await loadWatermark(ctx.userDataDir);
 
   // Per-pass success / failure trackers — declared *before* Phase 1
@@ -423,6 +435,11 @@ export async function syncNotion(ctx: {
   // defense-in-depth pattern in figma.ts. See Devin Review wave 7
   // ANALYSIS_0004 (architectural consistency).
   try {
+    // Materialise the source-by-path index inside the try block so an
+    // unlikely `bridge.listSources()` throw is still caught by the
+    // saveWatermark + writeManifest cleanup below.
+    sourceIndex = SourcePathIndex.fromBridge(ctx.bridge);
+
     // Phase 1 — explicitly re-fetch every page that the *previous*
     // pass attempted but failed on. The watermark search below would
     // miss them if any successful page from this pass advances the
@@ -455,9 +472,7 @@ export async function syncNotion(ctx: {
           // ANALYSIS_0001.
           const prior = entriesById.get(entry.remoteId);
           if (prior) {
-            const existingSource = ctx.bridge
-              .listSources()
-              .find((s) => s.path === prior.localPath);
+            const existingSource = sourceIndex.get(prior.localPath);
             if (existingSource) {
               try {
                 ctx.bridge.removeSource(existingSource.id);
@@ -465,6 +480,7 @@ export async function syncNotion(ctx: {
                 // best-effort — a bridge crash here MUST NOT mask
                 // the upstream 404 we are reacting to.
               }
+              sourceIndex.remove(prior.localPath);
             }
             try {
               await fsp.unlink(prior.localPath);
@@ -584,7 +600,7 @@ export async function syncNotion(ctx: {
         continue;
       }
 
-      const existing = ctx.bridge.listSources().find((s) => s.path === localPath);
+      const existing = sourceIndex.get(localPath);
       if (existing) {
         try {
           ctx.bridge.reindexSource(existing.id);
@@ -593,8 +609,9 @@ export async function syncNotion(ctx: {
         }
         modified += 1;
       } else {
+        let registered: { id: string; path: string };
         try {
-          ctx.bridge.addLocalFile(localPath);
+          registered = ctx.bridge.addLocalFile(localPath);
         } catch {
           // Index registration failed — treat as a failure so the next
           // sync retries.
@@ -604,6 +621,7 @@ export async function syncNotion(ctx: {
           });
           continue;
         }
+        sourceIndex.add(registered);
         added += 1;
       }
       entriesById.set(page.id, {

@@ -26,6 +26,7 @@ import {
   readManifest,
   resolveAccessToken,
   sanitiseRemoteId,
+  SourcePathIndex,
   syncDirFor,
   writeManifest,
   type FailedRetryEntry,
@@ -312,6 +313,17 @@ export async function syncJira(ctx: {
   const entriesById = new Map<string, SyncManifestEntry>();
   for (const e of manifest.entries) entriesById.set(e.remoteId, e);
 
+  // Source-by-path index, materialised inside the try block below so
+  // an unlikely `bridge.listSources()` throw is caught by the
+  // saveState + writeManifest cleanup path (defense-in-depth mirrored
+  // from figma.ts; the `!` definite-assignment assertion is safe
+  // because every read of `sourceIndex` is inside the try block,
+  // after assignment). The cache lets the hot loop's existence
+  // check be O(1) instead of the previous
+  // `bridge.listSources().find(...)` per-issue scan
+  // (O(issues × sources)). See Devin Review wave 20 ANALYSIS.
+  let sourceIndex!: SourcePathIndex;
+
   let added = 0;
   let modified = 0;
   // Cascading-deletion counter: incremented in the post-loop pass
@@ -427,6 +439,10 @@ export async function syncJira(ctx: {
   // This mirrors the defense-in-depth pattern in figma.ts. See
   // Devin Review wave 7 ANALYSIS_0004 (architectural consistency).
   try {
+    // Materialise the source-by-path index inside the try block so an
+    // unlikely `bridge.listSources()` throw is still caught by the
+    // saveState + writeManifest cleanup below.
+    sourceIndex = SourcePathIndex.fromBridge(ctx.bridge);
     let startAt = 0;
     for (let safety = 0; safety < 1000; safety += 1) {
       // Refresh-on-demand at the top of every JQL page. A wide
@@ -455,7 +471,7 @@ export async function syncJira(ctx: {
           continue;
         }
 
-        const existing = ctx.bridge.listSources().find((s) => s.path === localPath);
+        const existing = sourceIndex.get(localPath);
         if (existing) {
           try {
             ctx.bridge.reindexSource(existing.id);
@@ -464,12 +480,14 @@ export async function syncJira(ctx: {
           }
           modified += 1;
         } else {
+          let registered: { id: string; path: string };
           try {
-            ctx.bridge.addLocalFile(localPath);
+            registered = ctx.bridge.addLocalFile(localPath);
           } catch {
             recordFailure(issue.key, updated);
             continue;
           }
+          sourceIndex.add(registered);
           added += 1;
         }
         entriesById.set(issue.key, {
@@ -505,9 +523,7 @@ export async function syncJira(ctx: {
       if (succeededIds.has(key) || failedThisPassIds.has(key)) continue;
       const prior = entriesById.get(key);
       if (prior) {
-        const existingSource = ctx.bridge
-          .listSources()
-          .find((s) => s.path === prior.localPath);
+        const existingSource = sourceIndex.get(prior.localPath);
         if (existingSource) {
           try {
             ctx.bridge.removeSource(existingSource.id);
@@ -515,6 +531,7 @@ export async function syncJira(ctx: {
             // best-effort — a bridge crash here MUST NOT mask the
             // upstream deletion-detection we are reacting to.
           }
+          sourceIndex.remove(prior.localPath);
         }
         try {
           await fsp.unlink(prior.localPath);

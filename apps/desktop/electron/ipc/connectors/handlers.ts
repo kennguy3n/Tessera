@@ -39,6 +39,7 @@ import {
   generatePkcePair,
   getProviderOAuthConfig,
   getRedirectUri,
+  getRedirectUriMap,
   refreshProviderToken,
   revokeProviderToken,
   runRedirectServer,
@@ -400,6 +401,7 @@ const CONNECTOR_IPC_CHANNELS = [
   "connectors:disconnect",
   "connectors:status",
   "connectors:getRedirectUri",
+  "connectors:getAllRedirectUris",
   "connectors:sync",
 ] as const;
 
@@ -539,6 +541,13 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
       const provider = assertProvider(providerRaw, "provider");
       const config = getProviderOAuthConfig(provider);
       return getRedirectUri(config);
+    },
+  );
+
+  ipcMain.handle(
+    "connectors:getAllRedirectUris",
+    async (): Promise<Record<string, string>> => {
+      return getRedirectUriMap();
     },
   );
 

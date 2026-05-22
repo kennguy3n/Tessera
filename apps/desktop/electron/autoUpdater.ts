@@ -56,10 +56,33 @@ function broadcast(status: UpdateStatusEvent): void {
   }
 }
 
+/**
+ * Minimal logger shape `electron-updater` expects when consumers
+ * override `autoUpdater.logger`. Declared explicitly so we can drop
+ * a structured-logger adapter onto the updater without the previous
+ * `as never` cast, which bypassed type checking entirely and would
+ * have silently broken if `electron-updater` ever added a required
+ * method (e.g. `verbose`). The shape mirrors `electron-log`'s public
+ * `LogFunctions` interface (which `electron-updater`'s own
+ * `electron-updater/out/Logger.d.ts` recommends as the canonical
+ * reference type). All non-`debug` methods are required; `debug` is
+ * optional because production loggers commonly drop debug output
+ * for cost reasons and `electron-updater` calls it best-effort.
+ *
+ * See Devin Review wave 20 ANALYSIS: "autoUpdater.ts uses `as never`
+ * type assertion to bypass logger type mismatch".
+ */
+export interface AutoUpdaterLogger {
+  info(message?: unknown): void;
+  warn(message?: unknown): void;
+  error(message?: unknown): void;
+  debug?(message?: unknown): void;
+}
+
 interface AutoUpdaterModule {
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
-  logger: unknown;
+  logger: AutoUpdaterLogger | null;
   on(event: string, cb: (...args: unknown[]) => void): void;
   checkForUpdates(): Promise<unknown>;
   quitAndInstall(): void;
@@ -86,15 +109,19 @@ function getUpdater(): AutoUpdaterModule | null {
     // electron-updater logs to a hard-coded console by default.
     // Redirect to our structured logger so update events end up in the
     // same file the user can ship for diagnostics.
-    updater.logger = {
+    const adapter: AutoUpdaterLogger = {
       info: (m: unknown) => getLogger().info("autoUpdater", { msg: String(m) }),
       warn: (m: unknown) => getLogger().warn("autoUpdater", { msg: String(m) }),
       error: (m: unknown) =>
         getLogger().error("autoUpdater", { msg: String(m) }),
       debug: () => {
-        /* drop */
+        /* drop — we forward warn/error/info; debug-level chatter is
+           intentionally suppressed because electron-updater logs every
+           HTTP redirect at debug, which would dwarf user-actionable
+           events in `~/.tessera/logs/tessera.log`. */
       },
-    } as never;
+    };
+    updater.logger = adapter;
     updater.autoDownload = true;
     updater.autoInstallOnAppQuit = false;
     cachedUpdater = updater;

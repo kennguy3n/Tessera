@@ -246,6 +246,30 @@ export function getRedirectUri(config: ProviderOAuthConfig): string {
   return `http://${host}:${config.redirectPort}/callback`;
 }
 
+/**
+ * Return the full redirect-URI map for every known provider.
+ *
+ * The renderer's `ConnectorsList` used to hardcode a per-provider
+ * fallback URI that had to match the `redirectPort` / `redirectHost`
+ * declared here — a maintenance trap where updating a port in one
+ * place but not the other silently broke OAuth for that provider.
+ * Exposing the canonical map via a single IPC call at mount time
+ * (`connectors:getAllRedirectUris`) lets the renderer derive the
+ * value from this single source of truth and eliminate the duplicate
+ * constants entirely.
+ *
+ * See Devin Review wave 20 ANALYSIS: "ConnectorsList hardcodes
+ * fallback redirectUri values that must sync with providerOAuth.ts
+ * config".
+ */
+export function getRedirectUriMap(): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const [provider, config] of Object.entries(PROVIDER_OAUTH_CONFIGS)) {
+    map[provider] = getRedirectUri(config);
+  }
+  return map;
+}
+
 /** Build the provider authorize URL. */
 export function buildAuthorizeUrl(
   config: ProviderOAuthConfig,
@@ -551,10 +575,29 @@ export async function exchangeAuthorizationCode(
 /**
  * Exchange a refresh token for a new access token.
  *
- * Atlassian returns a new refresh token on every refresh; Google
- * sometimes does. Microsoft Graph returns one on every refresh.
- * Figma classic OAuth does not support refresh — callers should
- * check `config.supportsRefresh` before calling this.
+ * Refresh-token behaviour per provider:
+ *   - Atlassian (Jira + Confluence): returns a new refresh token on
+ *     every refresh.
+ *   - Microsoft Graph (OneDrive): returns a new refresh token on
+ *     every refresh.
+ *   - Google (Drive): sometimes returns a new refresh token; callers
+ *     persist the new one when present, fall through to the previous
+ *     one when absent.
+ *   - Notion: does not support refresh tokens at all
+ *     (`supportsRefresh: false` in the config) — when the access
+ *     token expires the user must re-authenticate.
+ *   - Figma: the modern OAuth v2 flow at
+ *     `api.figma.com/v1/oauth/token` returns and accepts refresh
+ *     tokens (`supportsRefresh: true`). The early-2024 "classic"
+ *     endpoint that did not support refresh has been retired; the
+ *     wave-20 doc-comment update brings this comment back in line
+ *     with the live config. See Devin Review wave 20 ANALYSIS:
+ *     "providerOAuth.ts refreshProviderToken doc says Figma does not
+ *     support refresh, but config sets supportsRefresh: true".
+ *
+ * Callers must check `config.supportsRefresh` before invoking this;
+ * the early `if (!config.supportsRefresh) throw` below is a guard,
+ * not an error path that callers should rely on.
  */
 export async function refreshProviderToken(
   config: ProviderOAuthConfig,

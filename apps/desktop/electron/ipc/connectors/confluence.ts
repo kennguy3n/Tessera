@@ -30,6 +30,7 @@ import {
   readManifest,
   resolveAccessToken,
   sanitiseRemoteId,
+  SourcePathIndex,
   syncDirFor,
   writeManifest,
   type SyncManifestEntry,
@@ -346,6 +347,22 @@ export async function syncConfluence(ctx: {
   const entriesById = new Map<string, SyncManifestEntry>();
   for (const e of manifest.entries) entriesById.set(e.remoteId, e);
 
+  // Materialise the bridge's source-by-path index ONCE per sync pass
+  // instead of paying `O(pages × sources)` for the per-iteration
+  // `bridge.listSources().find(...)` check. The cache stays coherent
+  // with the bridge as we add (via `addLocalFile`) and remove (via
+  // the deletion-cascade) sources during the pass. See Devin Review
+  // wave 20 ANALYSIS: "Confluence per-page loop calls
+  // bridge.listSources() on every iteration".
+  //
+  // Declared `let` and assigned inside the try block below so a
+  // `bridge.listSources()` throw at the top of the sync is still
+  // caught by the saveState + writeManifest cleanup path (defense-
+  // in-depth contract mirrored from figma.ts; the `!` definite-
+  // assignment assertion is safe because every code path that reads
+  // `sourceIndex` is inside the try block, after the assignment).
+  let sourceIndex!: SourcePathIndex;
+
   let added = 0;
   let modified = 0;
   let removed = 0;
@@ -387,6 +404,11 @@ export async function syncConfluence(ctx: {
   // required because there is no "watermark advances past failed
   // item" failure mode here. See Devin Review wave 7 ANALYSIS_0002.
   try {
+    // Materialise the source-by-path index inside the try block so an
+    // unlikely `bridge.listSources()` throw is still caught by the
+    // saveState + writeManifest cleanup below (wave-7 ANALYSIS_0004
+    // defense-in-depth contract).
+    sourceIndex = SourcePathIndex.fromBridge(ctx.bridge);
     for (const space of spaces) {
       let pages: ConfluencePage[];
       try {
@@ -453,9 +475,7 @@ export async function syncConfluence(ctx: {
           continue;
         }
 
-        const existing = ctx.bridge
-          .listSources()
-          .find((s) => s.path === localPath);
+        const existing = sourceIndex.get(localPath);
         if (existing) {
           try {
             ctx.bridge.reindexSource(existing.id);
@@ -464,13 +484,21 @@ export async function syncConfluence(ctx: {
           }
           modified += 1;
         } else {
+          let registered: { id: string; path: string };
           try {
-            ctx.bridge.addLocalFile(localPath);
+            registered = ctx.bridge.addLocalFile(localPath);
           } catch {
             // Same reasoning as the writeFile catch above — leave
             // `nextVersions[page.id]` unset so we retry naturally.
             continue;
           }
+          // Keep the path index coherent so a (future) duplicate page
+          // arriving later in the same pass would be detected as
+          // already-registered. Page ids are unique today so the
+          // collision is structurally impossible, but recording the
+          // add is the only thing that lets the index stay a single
+          // source of truth across iterations.
+          sourceIndex.add(registered);
           added += 1;
         }
         entriesById.set(page.id, {
@@ -518,15 +546,14 @@ export async function syncConfluence(ctx: {
         //      Devin Review wave 11 ANALYSIS_0005 (🚩, confluence.ts:336).
         const manifestEntry = entriesById.get(pageId);
         if (manifestEntry) {
-          const existingSource = ctx.bridge
-            .listSources()
-            .find((s) => s.path === manifestEntry.localPath);
+          const existingSource = sourceIndex.get(manifestEntry.localPath);
           if (existingSource) {
             try {
               ctx.bridge.removeSource(existingSource.id);
             } catch {
               // best-effort
             }
+            sourceIndex.remove(manifestEntry.localPath);
           }
           try {
             await fsp.unlink(manifestEntry.localPath);

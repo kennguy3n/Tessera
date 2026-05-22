@@ -34,6 +34,7 @@ import {
   readManifest,
   resolveAccessToken,
   sanitiseRemoteId,
+  SourcePathIndex,
   syncDirFor,
   writeManifest,
   type FailedRetryEntry,
@@ -358,6 +359,18 @@ export async function syncFigma(ctx: {
   const entriesById = new Map<string, SyncManifestEntry>();
   for (const e of manifest.entries) entriesById.set(e.remoteId, e);
 
+  // Source-by-path index, materialised ONCE per sync pass inside the
+  // try block below so the hot loop's existence check is O(1)
+  // instead of the previous `bridge.listSources().find(...)` per-file
+  // scan (O(files × sources)). Declared here as a `let` so the
+  // `syncFileByKey` closure can reference it; assigned inside the
+  // try/finally block so an unlikely `bridge.listSources()` throw at
+  // the top of the sync is still caught by the saveState +
+  // writeManifest cleanup path (matches the defense-in-depth contract
+  // exercised by the wave-7 ANALYSIS_0004 regression test). See
+  // Devin Review wave 20 ANALYSIS: O(n²) listSources() pattern.
+  let sourceIndex!: SourcePathIndex;
+
   let added = 0;
   let modified = 0;
   // Cascading-deletion counter: incremented in `syncFileByKey` when
@@ -451,9 +464,7 @@ export async function syncFigma(ctx: {
         // See Devin Review wave 13 ANALYSIS_0001.
         const prior = entriesById.get(fileKey);
         if (prior) {
-          const existingSource = ctx.bridge
-            .listSources()
-            .find((s) => s.path === prior.localPath);
+          const existingSource = sourceIndex.get(prior.localPath);
           if (existingSource) {
             try {
               ctx.bridge.removeSource(existingSource.id);
@@ -461,6 +472,7 @@ export async function syncFigma(ctx: {
               // best-effort — a bridge crash here MUST NOT mask the
               // upstream 404 we are reacting to.
             }
+            sourceIndex.remove(prior.localPath);
           }
           try {
             await fsp.unlink(prior.localPath);
@@ -501,7 +513,7 @@ export async function syncFigma(ctx: {
       return;
     }
 
-    const existing = ctx.bridge.listSources().find((s) => s.path === localPath);
+    const existing = sourceIndex.get(localPath);
     if (existing) {
       try {
         ctx.bridge.reindexSource(existing.id);
@@ -510,12 +522,14 @@ export async function syncFigma(ctx: {
       }
       modified += 1;
     } else {
+      let registered: { id: string; path: string };
       try {
-        ctx.bridge.addLocalFile(localPath);
+        registered = ctx.bridge.addLocalFile(localPath);
       } catch {
         recordFailure(fileKey, remoteModifiedAt);
         return;
       }
+      sourceIndex.add(registered);
       added += 1;
     }
     entriesById.set(fileKey, {
@@ -541,6 +555,14 @@ export async function syncFigma(ctx: {
   // in this pass invisible to the next sync and forcing redundant
   // re-fetching.
   try {
+    // Materialise the source-by-path index inside the try block so an
+    // unlikely `bridge.listSources()` throw is still caught by the
+    // saveState + writeManifest cleanup below (matches the wave-7
+    // ANALYSIS_0004 defense-in-depth contract — see the regression
+    // test "persists the watermark + manifest even when the iteration
+    // throws an unexpected error" in `connectorsSync.test.ts`).
+    sourceIndex = SourcePathIndex.fromBridge(ctx.bridge);
+
     // Phase 1 — explicitly retry every file the previous pass failed
     // on. We have no `last_modified` for retries at this point, so we
     // pass through `null` and let the watermark advance only when the

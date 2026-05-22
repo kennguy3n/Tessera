@@ -357,3 +357,96 @@ export function nextFailedRetryQueue(
   if (entries.length <= FAILED_RETRY_QUEUE_MAX) return entries;
   return entries.slice(entries.length - FAILED_RETRY_QUEUE_MAX);
 }
+
+/**
+ * Path-keyed index of the bridge's known sources, used to translate
+ * each connector's hot loop from `bridge.listSources().find(...)`
+ * (O(pages × sources)) to `index.get(localPath)` (O(1)).
+ *
+ * The bridge surfaces source metadata as a flat array; we paid that
+ * cost once per *iteration* in the original implementation, which
+ * meant a Confluence tenant with N pages and M existing sources did
+ * N × M comparisons just to figure out which pages were already
+ * registered. For modest tenants (N=100, M=100) that's 10 000
+ * comparisons; for enterprise tenants (N=10 000, M=5 000) it climbs
+ * to 50 million. None of those comparisons are wasted — every page
+ * still needs the existence check — but they're all redundant: the
+ * bridge's source list is stable across a single sync pass except
+ * for the entries WE add via `addLocalFile`, which we know about.
+ *
+ * `SourcePathIndex` materialises the list once and then keeps itself
+ * coherent as the connector mutates the source set:
+ *   - `index.get(path)` returns the cached entry, or `undefined`.
+ *   - `index.add(entry)` records a freshly-added source so subsequent
+ *     iterations in the same sync pass see it as existing (matches
+ *     the previous `listSources().find()` behaviour exactly).
+ *   - `index.remove(path)` records a deletion-cascade so the same
+ *     pass doesn't try to re-register the path under a stale id.
+ *
+ * Coherence is important: the deletion-cascade blocks in Confluence
+ * and Jira walk dropped pages AFTER the main loop and then call
+ * `bridge.removeSource`. If a later iteration in a future refactor
+ * tried to re-add the same path, the cached entry would be stale.
+ * Calling `index.remove(path)` after each `removeSource` keeps the
+ * cache in sync with the bridge.
+ *
+ * See Devin Review wave 20 ANALYSIS: "Confluence per-page loop calls
+ * bridge.listSources() on every iteration — O(n²) for large spaces".
+ */
+export interface SourceMeta {
+  id: string;
+  path: string;
+}
+
+export class SourcePathIndex {
+  private readonly byPath: Map<string, SourceMeta>;
+
+  private constructor(initial: ReadonlyArray<SourceMeta>) {
+    this.byPath = new Map();
+    for (const entry of initial) {
+      // The bridge can in theory surface duplicate paths if the user
+      // hand-edited the catalog; keep the *first* observed id to
+      // preserve the previous `Array.prototype.find` semantics
+      // (`find` returns the first match).
+      if (!this.byPath.has(entry.path)) this.byPath.set(entry.path, entry);
+    }
+  }
+
+  /**
+   * Construct an index from the bridge's current source list.
+   * Materialise this at the top of the sync function, **once per
+   * sync pass**, then thread it through the hot loop instead of
+   * re-calling `bridge.listSources()` per iteration.
+   */
+  static fromBridge(bridge: {
+    listSources(): ReadonlyArray<SourceMeta>;
+  }): SourcePathIndex {
+    return new SourcePathIndex(bridge.listSources());
+  }
+
+  get(localPath: string): SourceMeta | undefined {
+    return this.byPath.get(localPath);
+  }
+
+  /**
+   * Record a source that was just registered via
+   * `bridge.addLocalFile()` so the next iteration in the same sync
+   * pass sees it as existing. This matches the previous
+   * `listSources().find()` semantics where a freshly-added source was
+   * immediately visible (the bridge updates its source list
+   * synchronously during `addLocalFile`).
+   */
+  add(entry: SourceMeta): void {
+    this.byPath.set(entry.path, entry);
+  }
+
+  /**
+   * Record a source that was just dropped via
+   * `bridge.removeSource()`. Used by the deletion-cascade blocks in
+   * Confluence/Jira/Notion/Figma to keep the cache coherent with the
+   * bridge's current view of registered sources.
+   */
+  remove(localPath: string): void {
+    this.byPath.delete(localPath);
+  }
+}

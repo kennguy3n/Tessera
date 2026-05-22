@@ -1531,9 +1531,13 @@ describe("Figma sync", () => {
   );
 
   it(
-    "persists the watermark + manifest even when the iteration throws " +
-      "an unexpected error (regression: Devin Review wave 7 ANALYSIS_0004 " +
-      "— try/finally defense-in-depth around saveState + writeManifest)",
+    "persists the watermark + manifest even when bridge.listSources " +
+      "throws at the top of the sync — try/finally wraps the source-by-" +
+      "path index construction (wave 20 ANALYSIS: O(n²) listSources() " +
+      "collapse) so an unexpected bridge crash at the very start of " +
+      "iteration still triggers the saveState + writeManifest cleanup " +
+      "(regression: Devin Review wave 7 ANALYSIS_0004 — try/finally " +
+      "defense-in-depth around saveState + writeManifest)",
     async () => {
       // Seed teamIds so we get past the early "no-teams" return.
       const stateDir = path.join(dir, "figma-sync");
@@ -1541,102 +1545,57 @@ describe("Figma sync", () => {
       await fsp.writeFile(
         path.join(stateDir, "state.json"),
         JSON.stringify({
-          lastSyncIso: null,
+          lastSyncIso: "2024-05-01T00:00:00Z",
           teamIds: ["t1"],
-          failedRetries: [],
+          failedRetries: [{ remoteId: "f-prev", remoteModifiedAt: null, failureCount: 1 }],
         }),
         "utf8",
       );
 
-      // p1 has TWO files; f1 succeeds normally, then bridge.listSources
-      // throws on the SECOND call (when f2 is being processed) — this
-      // is exactly the failure mode try/finally exists to tolerate
-      // (an unexpected error escaping the per-file inner code path
-      // would otherwise skip saveState + writeManifest entirely).
-      fetchMock
-        // GET /v1/teams/t1/projects
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            name: "Team A",
-            projects: [{ id: "p1", name: "Proj 1" }],
-          }),
-        })
-        // GET /v1/projects/p1/files → two files
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            name: "Proj 1",
-            files: [
-              { key: "f1", name: "F1", last_modified: "2024-06-01T10:00:00Z" },
-              { key: "f2", name: "F2", last_modified: "2024-06-01T11:00:00Z" },
-            ],
-          }),
-        })
-        // GET /v1/files/f1 (Phase 2 — first file)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            name: "F1",
-            lastModified: "2024-06-01T10:00:00Z",
-            document: {
-              id: "0:0",
-              children: [{ id: "1", type: "TEXT", characters: "captured" }],
-            },
-          }),
-        })
-        // GET /v1/files/f1/comments → empty
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ comments: [] }),
-        })
-        // GET /v1/files/f2 — succeeds; the throw happens AFTER this in
-        // syncFileByKey when listSources gets called for the second
-        // time.
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({
-            name: "F2",
-            lastModified: "2024-06-01T11:00:00Z",
-            document: { id: "0:0", children: [] },
-          }),
-        })
-        // GET /v1/files/f2/comments → empty
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ comments: [] }),
-        });
-
-      // Throw on the 2nd `listSources` call only, so f1 completes
-      // cleanly before the bridge "crashes" mid-iteration.
-      let listCallCount = 0;
-      const origList = bridge.listSources.bind(bridge);
+      // Throw on the 1st (and only) `bridge.listSources` call. Wave 20
+      // moved the call inside the outer try block so this crash MUST
+      // still trigger the saveState + writeManifest cleanup — the
+      // property under test. Before the fix, the call lived above
+      // the try block and a listSources crash would skip cleanup
+      // entirely, losing the seeded state in `state.failedRetries`
+      // and leaving the manifest file in whatever state the previous
+      // sync left it.
       bridge.listSources = () => {
-        listCallCount += 1;
-        if (listCallCount > 1) {
-          throw new Error("Simulated bridge crash mid-sync");
-        }
-        return origList();
+        throw new Error("Simulated bridge crash mid-sync");
       };
 
       await expect(
         syncFigma({ accessToken: "AT", userDataDir: dir, bridge }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/Simulated bridge crash/);
 
-      // Despite the throw, the state + manifest MUST be persisted with
-      // the watermark advanced for f1.
+      // Despite the throw, the state + manifest MUST have been
+      // persisted by the finally block. The watermark is preserved
+      // from the seeded state (no iteration happened, so nothing
+      // advanced it), and the failedRetries queue is carried forward
+      // unchanged (no opportunity to mark success or new failure).
       const state = JSON.parse(
         await fsp.readFile(path.join(dir, "figma-sync", "state.json"), "utf8"),
-      ) as { lastSyncIso: string | null };
-      expect(state.lastSyncIso).toBe("2024-06-01T10:00:00Z");
+      ) as {
+        lastSyncIso: string | null;
+        teamIds: string[];
+        failedRetries: Array<{ remoteId: string; remoteModifiedAt: string | null }>;
+      };
+      expect(state.lastSyncIso).toBe("2024-05-01T00:00:00Z");
+      expect(state.teamIds).toEqual(["t1"]);
+      // failedRetries entries with no observation this pass are carried
+      // forward by `nextFailedRetryQueue`.
+      expect(state.failedRetries.map((e) => e.remoteId)).toContain("f-prev");
 
+      // The manifest file MUST exist (cleanup ran). Its `entries`
+      // remain whatever was on disk before — empty in this fresh
+      // test directory.
       const manifest = JSON.parse(
         await fsp.readFile(
           path.join(dir, "figma-sync", "manifest.json"),
           "utf8",
         ),
       ) as { entries: Array<{ remoteId: string }> };
-      expect(manifest.entries.map((e) => e.remoteId)).toContain("f1");
+      expect(Array.isArray(manifest.entries)).toBe(true);
     },
   );
 

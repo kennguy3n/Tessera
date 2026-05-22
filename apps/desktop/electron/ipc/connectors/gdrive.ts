@@ -20,7 +20,7 @@
 import * as fsp from "fs/promises";
 import * as path from "path";
 
-import { resolveAccessToken, syncDirFor } from "./syncDir";
+import { resolveAccessToken, SourcePathIndex, syncDirFor } from "./syncDir";
 
 export interface GdriveBridgeHooks {
   addLocalFile(localPath: string): { id: string; path: string };
@@ -118,6 +118,17 @@ export async function syncGoogleDrive(ctx: {
   const syncDir = syncDirFor(ctx.userDataDir, "gdrive");
   await fsp.mkdir(syncDir, { recursive: true });
 
+  // Source-by-path index, materialised inside the try block below so
+  // an unlikely `bridge.listSources()` throw is still caught by the
+  // writeManifest cleanup path (defense-in-depth mirrored from
+  // figma.ts; the `!` definite-assignment assertion is safe because
+  // every read of `sourceIndex` is inside the try block, after
+  // assignment). The cache lets the per-file existence check be O(1)
+  // instead of the previous `bridge.listSources().find(...)`
+  // per-iteration scan (O(files × sources)). Same pattern as the
+  // other five connectors; see Devin Review wave 20 ANALYSIS.
+  let sourceIndex!: SourcePathIndex;
+
   // Wrap the iteration + manifest persistence in try/finally so partial
   // progress is *always* committed before the function returns or
   // rethrows. Without this, a transport-level `fetch` rejection
@@ -130,6 +141,10 @@ export async function syncGoogleDrive(ctx: {
   // built with this defense-in-depth pattern from the start. See
   // Devin Review wave 12 ANALYSIS_0001 (gdrive.ts:111-169).
   try {
+    // Materialise the source-by-path index inside the try block so an
+    // unlikely `bridge.listSources()` throw is still caught by the
+    // writeManifest cleanup below.
+    sourceIndex = SourcePathIndex.fromBridge(ctx.bridge);
     for (const fileId of resolvedFileIds) {
       // Refresh-on-demand at the top of every iteration. A Drive
       // sync of a large account can easily exceed the access
@@ -204,13 +219,13 @@ export async function syncGoogleDrive(ctx: {
       await fsp.writeFile(localPath, Buffer.from(contentBytes));
 
       try {
-        const sources = ctx.bridge.listSources();
-        const existing = sources.find((s) => s.path === localPath);
+        const existing = sourceIndex.get(localPath);
         if (existing) {
           ctx.bridge.reindexSource(existing.id);
           modified += 1;
         } else {
-          ctx.bridge.addLocalFile(localPath);
+          const registered = ctx.bridge.addLocalFile(localPath);
+          sourceIndex.add(registered);
           added += 1;
         }
         syncedPaths.push(localPath);
@@ -228,15 +243,14 @@ export async function syncGoogleDrive(ctx: {
             const entryId = fileIdFromLocalPath(entry);
             if (entryId === failedId) {
               const localPath = path.join(syncDir, entry);
-              const src = ctx.bridge
-                .listSources()
-                .find((s) => s.path === localPath);
+              const src = sourceIndex.get(localPath);
               if (src) {
                 try {
                   ctx.bridge.removeSource(src.id);
                 } catch {
                   // best effort
                 }
+                sourceIndex.remove(localPath);
               }
               await fsp.unlink(localPath).catch(() => undefined);
               removed += 1;

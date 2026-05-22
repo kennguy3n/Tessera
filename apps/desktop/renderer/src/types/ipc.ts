@@ -294,6 +294,15 @@ export interface ConnectorApi {
    * cannot drift from the one the authorize request actually sends.
    */
   getRedirectUri: (provider: string) => Promise<string>;
+  /**
+   * Bulk-fetch the canonical redirect URI for every known provider
+   * in a single IPC round-trip. Used by `ConnectorsList` at mount
+   * time so the modal renders the authoritative value without
+   * carrying any per-provider hardcoded fallback. See Devin Review
+   * wave 20 ANALYSIS: "ConnectorsList hardcodes fallback redirectUri
+   * values that must sync with providerOAuth.ts config".
+   */
+  getAllRedirectUris: () => Promise<Record<string, string>>;
 }
 
 export interface DialogApi {

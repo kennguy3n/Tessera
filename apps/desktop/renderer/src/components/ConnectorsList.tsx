@@ -24,29 +24,30 @@ export interface ConnectorDescriptor {
   consoleUrl: string;
   /** Help text shown in the connect modal. */
   help: string;
-  /**
-   * Fallback loopback redirect URI shown before the live value is
-   * resolved from the main process. The authoritative value comes
-   * from `connectors.getRedirectUri()` so the UI cannot drift from
-   * the actual OAuth config — this is just the initial render value
-   * for the case where the IPC has not yet responded.
-   */
-  redirectUri: string;
   /** Some providers (Notion) accept no secret in the public model. */
   secretRequired?: boolean;
 }
 
+/**
+ * Connector metadata used by the renderer. The redirect URI is
+ * intentionally NOT stored here — it is fetched from the main
+ * process at mount time via `api.connectors.getAllRedirectUris()`
+ * so that `providerOAuth.ts > PROVIDER_OAUTH_CONFIGS` remains the
+ * single source of truth. Hardcoded fallbacks were removed in wave 20
+ * because they introduced a drift surface: a port-number change in
+ * the OAuth config would silently work in the OAuth flow but show
+ * a stale URI in the modal, leaving the user with
+ * `redirect_uri_mismatch` errors that took several support cycles to
+ * diagnose. See Devin Review wave 20 ANALYSIS: "ConnectorsList
+ * hardcodes fallback redirectUri values that must sync with
+ * providerOAuth.ts config".
+ */
 export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
   {
     provider: "google_drive",
     label: "Google Drive",
     consoleUrl: "https://console.cloud.google.com/apis/credentials",
     help: "Create an OAuth 2.0 Client ID of type 'Desktop app' in Google Cloud Console and add the redirect URI below.",
-    // Google Drive is pinned to `localhost` (not `127.0.0.1`) for
-    // backward compatibility with the redirect URI users have already
-    // registered in pre-Phase-10 installs. See
-    // `electron/ipc/connectors/providerOAuth.ts > google_drive`.
-    redirectUri: "http://localhost:9876/callback",
     secretRequired: true,
   },
   {
@@ -54,7 +55,6 @@ export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
     label: "OneDrive",
     consoleUrl: "https://entra.microsoft.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
     help: "Register an app in Microsoft Entra ID with the redirect URI below and request Files.Read.All + offline_access.",
-    redirectUri: "http://127.0.0.1:9877/callback",
     secretRequired: true,
   },
   {
@@ -62,7 +62,6 @@ export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
     label: "Notion",
     consoleUrl: "https://www.notion.so/my-integrations",
     help: "Create a Public integration in Notion and add the redirect URI below.",
-    redirectUri: "http://127.0.0.1:9878/callback",
     secretRequired: true,
   },
   {
@@ -70,7 +69,6 @@ export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
     label: "Jira (Atlassian)",
     consoleUrl: "https://developer.atlassian.com/console/myapps/",
     help: "Create an OAuth 2.0 (3LO) integration with read:jira-work + offline_access scopes and add the redirect URI below.",
-    redirectUri: "http://127.0.0.1:9879/callback",
     secretRequired: true,
   },
   {
@@ -78,7 +76,6 @@ export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
     label: "Confluence (Atlassian)",
     consoleUrl: "https://developer.atlassian.com/console/myapps/",
     help: "Create an OAuth 2.0 (3LO) integration with read:confluence-content.* + offline_access scopes and add the redirect URI below.",
-    redirectUri: "http://127.0.0.1:9880/callback",
     secretRequired: true,
   },
   {
@@ -86,7 +83,6 @@ export const CONNECTOR_DESCRIPTORS: ConnectorDescriptor[] = [
     label: "Figma",
     consoleUrl: "https://www.figma.com/developers/apps",
     help: "Create a Figma OAuth app, request files:read, and add the redirect URI below.",
-    redirectUri: "http://127.0.0.1:9881/callback",
     secretRequired: true,
   },
 ];
@@ -127,34 +123,34 @@ export default function ConnectorsList({
   const [clientSecret, setClientSecret] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
-  // Live redirect URIs sourced from the OAuth config in the main
-  // process. The static `redirectUri` on each descriptor is only used
-  // as the initial render value before this resolves.
-  const [liveRedirectUris, setLiveRedirectUris] = useState<
-    Record<string, string>
-  >({});
+  // Authoritative redirect URI map sourced from the OAuth config in
+  // the main process. Materialised in one IPC round-trip at mount
+  // (and re-fetched if the descriptor set changes) instead of the
+  // previous N parallel `getRedirectUri(provider)` calls + hardcoded
+  // fallbacks. Until the map resolves, the modal's URI block shows a
+  // “Loading…” placeholder — we deliberately do NOT render a guessed
+  // value, because the most common reason for that guessed value to
+  // be wrong is exactly the case the user is about to act on
+  // (registering a redirect URI in the provider's developer console).
+  // See Devin Review wave 20 ANALYSIS.
+  const [redirectUris, setRedirectUris] = useState<
+    Record<string, string> | null
+  >(null);
 
   useEffect(() => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
     if (!api) return;
     let cancelled = false;
     (async () => {
-      const next: Record<string, string> = {};
-      await Promise.all(
-        descriptors.map(async (d) => {
-          try {
-            next[d.provider] = await api.connectors.getRedirectUri(d.provider);
-          } catch {
-            // Fall back to the descriptor's static value on error so
-            // the modal still renders a URI; the OAuth flow itself
-            // sources from the same config so connecting will fail
-            // loudly with a real error rather than silently mis-
-            // instructing the user.
-            next[d.provider] = d.redirectUri;
-          }
-        }),
-      );
-      if (!cancelled) setLiveRedirectUris(next);
+      try {
+        const next = await api.connectors.getAllRedirectUris();
+        if (!cancelled) setRedirectUris(next);
+      } catch {
+        // Leave the URI block as “Loading…”. The OAuth flow itself
+        // sources from the same config, so an actual connect attempt
+        // will fail loudly with a real error instead of the modal
+        // silently mis-instructing the user.
+      }
     })();
     return () => {
       cancelled = true;
@@ -325,7 +321,7 @@ export default function ConnectorsList({
             >
               Redirect URI:{" "}
               <code>
-                {liveRedirectUris[descriptor.provider] ?? descriptor.redirectUri}
+                {redirectUris?.[descriptor.provider] ?? "Loading…"}
               </code>
             </p>
             <input

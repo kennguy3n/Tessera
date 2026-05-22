@@ -395,6 +395,14 @@ export interface TesseraApi {
      * drift from the value sent on the authorize request.
      */
     getRedirectUri: (provider: string) => Promise<string>;
+    /**
+     * Bulk-fetch the canonical redirect URI for every known provider
+     * in a single IPC round-trip. The renderer's `ConnectorsList`
+     * uses this at mount time to replace the previously-hardcoded
+     * fallback values with the authoritative set computed from
+     * `providerOAuth.ts > PROVIDER_OAUTH_CONFIGS`.
+     */
+    getAllRedirectUris: () => Promise<Record<string, string>>;
   };
   tasks: {
     create: (req: CreateTaskRequest) => Promise<TaskInfo>;
@@ -688,6 +696,8 @@ const api: TesseraApi = {
     sync: (provider: string) => ipcRenderer.invoke("connectors:sync", provider),
     getRedirectUri: (provider: string) =>
       ipcRenderer.invoke("connectors:getRedirectUri", provider),
+    getAllRedirectUris: () =>
+      ipcRenderer.invoke("connectors:getAllRedirectUris"),
   },
   tasks: {
     create: (req) => ipcRenderer.invoke("tasks:create", req),

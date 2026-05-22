@@ -11,9 +11,11 @@ const mockApi = {
     selectItems: vi.fn(),
     authenticate: vi.fn(),
     sync: vi.fn(),
-    // Default to returning the descriptor's static value so existing
-    // assertions about per-provider redirect URIs continue to match.
-    // Individual tests override this for the regression case.
+    // Per-provider single-shot URI fetch (legacy IPC; still part of
+    // the API surface for callers that need it but no longer used by
+    // `ConnectorsList` after wave 20). Default returns the wave-20
+    // canonical URI so any code that still exercises this path keeps
+    // matching the OAuth-config single-source-of-truth.
     getRedirectUri: vi.fn(async (provider: string) => {
       const map: Record<string, string> = {
         google_drive: "http://localhost:9876/callback",
@@ -25,6 +27,19 @@ const mockApi = {
       };
       return map[provider];
     }),
+    // Bulk URI fetch — the canonical path used by `ConnectorsList`
+    // since wave 20 (one IPC round-trip at mount time, no per-
+    // provider hardcoded fallback in the renderer). The values
+    // mirror `providerOAuth.ts > PROVIDER_OAUTH_CONFIGS` so the test
+    // surface stays in sync with production.
+    getAllRedirectUris: vi.fn(async () => ({
+      google_drive: "http://localhost:9876/callback",
+      onedrive: "http://127.0.0.1:9877/callback",
+      notion: "http://127.0.0.1:9878/callback",
+      jira: "http://127.0.0.1:9879/callback",
+      confluence: "http://127.0.0.1:9880/callback",
+      figma: "http://127.0.0.1:9881/callback",
+    })),
   },
 };
 
@@ -123,8 +138,13 @@ describe("ConnectorsList", () => {
     });
     const figma = await screen.findByLabelText("Connect Figma");
     fireEvent.click(figma);
+    // Wave 20 removed the hardcoded fallback from the descriptor —
+    // the modal shows "Loading…" until `getAllRedirectUris` resolves,
+    // then displays the canonical value from `providerOAuth.ts >
+    // PROVIDER_OAUTH_CONFIGS`. Wait for the resolved URI rather than
+    // asserting synchronously against the fallback.
     expect(
-      screen.getByText(/127\.0\.0\.1:9881/),
+      await screen.findByText(/127\.0\.0\.1:9881/),
     ).toBeInTheDocument();
   });
 
@@ -178,14 +198,15 @@ describe("ConnectorsList", () => {
       await act(async () => {
         fireEvent.click(drive);
       });
-      // Wait until the live URI resolves and replaces the static
-      // fallback (the descriptor already carries `localhost:9876` so
-      // either way the assertion holds, but we want to confirm the
-      // IPC was actually consulted).
+      // Wait until the bulk redirect-URI map resolves — wave 20
+      // collapsed the per-provider `getRedirectUri(provider)` fan-out
+      // into a single `getAllRedirectUris()` call at mount and
+      // removed the renderer's hardcoded fallback values, so the
+      // modal's URI block now renders "Loading…" until this IPC
+      // resolves and then the canonical value from
+      // `providerOAuth.ts > PROVIDER_OAUTH_CONFIGS`.
       await waitFor(() =>
-        expect(mockApi.connectors.getRedirectUri).toHaveBeenCalledWith(
-          "google_drive",
-        ),
+        expect(mockApi.connectors.getAllRedirectUris).toHaveBeenCalled(),
       );
       const localhostNode = await screen.findByText(
         /localhost:9876\/callback/,
