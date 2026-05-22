@@ -248,6 +248,17 @@ export interface ConfluenceBridgeHooks {
   listSources(): Array<{ id: string; path: string }>;
 }
 
+/**
+ * Reverse lookup from page id to the space it lives in, persisted
+ * across syncs. Required so the next sync's carry-forward logic can
+ * decide — for any previously-seen page that was *not* observed this
+ * pass — whether it should be dropped (its space listed successfully
+ * and the page is gone) or kept (its space failed to list and we have
+ * no information about the page's current state). See Devin Review
+ * wave 9 ANALYSIS_0004.
+ */
+type PageSpaceMap = Record<string, string>;
+
 interface ConfluenceState {
   cloudId: string | null;
   /**
@@ -255,6 +266,15 @@ interface ConfluenceState {
    * current `version.number` matches the recorded value are skipped.
    */
   pageVersions: PageVersionMap;
+  /**
+   * Per-page space id, used for the carry-forward decision when a
+   * space's pages listing fails on the current pass. Legacy state
+   * files (pre-wave-9) lack this field; loaded entries without a
+   * recorded space id are treated as "unknown" and always carried
+   * forward, which is the safe default while the state self-heals
+   * over subsequent successful syncs.
+   */
+  pageSpaces: PageSpaceMap;
 }
 
 function statePath(userDataDir: string): string {
@@ -272,9 +292,10 @@ async function loadState(userDataDir: string): Promise<ConfluenceState> {
     return {
       cloudId: parsed.cloudId ?? null,
       pageVersions: parsed.pageVersions ?? {},
+      pageSpaces: parsed.pageSpaces ?? {},
     };
   } catch {
-    return { cloudId: null, pageVersions: {} };
+    return { cloudId: null, pageVersions: {}, pageSpaces: {} };
   }
 }
 
@@ -313,14 +334,22 @@ export async function syncConfluence(ctx: {
   let added = 0;
   let modified = 0;
   const removed = 0;
-  // Start from the previous sync's per-page version snapshot and copy
-  // it forward as we observe each page. We intentionally do not mutate
-  // the loaded map in place — if a page's id disappears from
-  // Confluence (page deleted/moved out of a visible space) we want the
-  // entry to drop out of the persisted state so a re-add picks up a
-  // fresh sync, instead of being permanently "caught up" against a
-  // dangling version.
+  // Tracks the pages and spaces actually observed during this pass.
+  // After the iteration completes the finally block consults these
+  // sets to decide — for each entry already in `state.pageVersions`
+  // that we did NOT see this pass — whether to drop it (its space
+  // listed successfully, page is gone) or carry it forward (its space
+  // failed to list, we know nothing new about the page).
+  //
+  // We intentionally do NOT seed `nextVersions` from `state.pageVersions`
+  // up front: that would prevent us from distinguishing "saw and
+  // still alive" from "didn't see at all", and would re-introduce the
+  // dangling-version concern noted in wave 7. The carry-forward step
+  // runs in the finally block, AFTER iteration, with the explicit
+  // success/observation context. See Devin Review wave 9 ANALYSIS_0004.
   const nextVersions: PageVersionMap = {};
+  const nextPageSpaces: PageSpaceMap = {};
+  const successfullyListedSpaceIds = new Set<string>();
 
   // Wrap the iteration + save in try/finally so progress is *always*
   // persisted before the function returns or rethrows. Without this,
@@ -350,8 +379,17 @@ export async function syncConfluence(ctx: {
       } catch {
         // Failed to list pages in this space — skip it. The next sync
         // will re-list. Other spaces still process normally.
+        // Crucially we do NOT mark this space as successfully listed,
+        // so the post-loop carry-forward in the finally block keeps
+        // every previously-known page in this space alive in state.
+        // Without that, the next sync would re-fetch and re-render
+        // every page in the affected space from scratch — expensive
+        // for large workspaces and unnecessary because the page
+        // contents haven't actually changed. See Devin Review wave 9
+        // ANALYSIS_0004.
         continue;
       }
+      successfullyListedSpaceIds.add(space.id);
       for (const page of pages) {
         const currentVersion = page.version?.number ?? 0;
         const previousVersion = state.pageVersions[page.id] ?? 0;
@@ -365,6 +403,7 @@ export async function syncConfluence(ctx: {
           entriesById.has(page.id)
         ) {
           nextVersions[page.id] = currentVersion;
+          nextPageSpaces[page.id] = space.id;
           continue;
         }
 
@@ -409,10 +448,34 @@ export async function syncConfluence(ctx: {
           remoteModifiedAt: currentVersion > 0 ? String(currentVersion) : null,
         });
         nextVersions[page.id] = currentVersion;
+        nextPageSpaces[page.id] = space.id;
       }
     }
   } finally {
-    await saveState(ctx.userDataDir, { cloudId, pageVersions: nextVersions });
+    // Carry forward previously-known pages whose space did NOT list
+    // successfully this pass. For pages whose space listed but were
+    // not returned (genuine deletions) we leave the entry out so
+    // state self-prunes. Pages whose recorded space is unknown
+    // (legacy state pre-wave-9, or pages whose space we never had
+    // a record for) are carried forward as a safe default — they
+    // will self-heal as soon as their space lists successfully and
+    // we either re-observe them (setting nextPageSpaces) or confirm
+    // their deletion. See Devin Review wave 9 ANALYSIS_0004.
+    for (const [pageId, prevVersion] of Object.entries(state.pageVersions)) {
+      if (pageId in nextVersions) continue;
+      const recordedSpace = state.pageSpaces[pageId];
+      if (recordedSpace && successfullyListedSpaceIds.has(recordedSpace)) {
+        // Space listed cleanly, page not in results — deleted. Drop.
+        continue;
+      }
+      nextVersions[pageId] = prevVersion;
+      if (recordedSpace) nextPageSpaces[pageId] = recordedSpace;
+    }
+    await saveState(ctx.userDataDir, {
+      cloudId,
+      pageVersions: nextVersions,
+      pageSpaces: nextPageSpaces,
+    });
     await writeManifest(ctx.userDataDir, {
       version: 1,
       provider: "confluence",

@@ -65,9 +65,17 @@ export default function ConnectorStatus({
           provider === "google_drive"
             ? await api.connectors.syncDrive()
             : await api.connectors.sync(provider);
-        setOffline(result.status === "offline");
+        const isOffline = result.status === "offline";
+        setOffline(isOffline);
+        // Only stamp "Last sync" when the sync actually transferred —
+        // surfacing "Last sync: 3:45 PM" alongside the Offline badge
+        // (which means *this* attempt failed at the network layer)
+        // tells the user the data is fresher than it really is. The
+        // last successful timestamp from a *previous* run remains
+        // unchanged; the next successful sync overwrites it. See
+        // Devin Review wave 9 ANALYSIS_0003.
+        if (!isOffline) setLastSyncTime(new Date().toLocaleTimeString());
       }
-      setLastSyncTime(new Date().toLocaleTimeString());
       onSync?.();
     } catch (err) {
       // Sync threw (rate limit, NotConnectedError, validation error,

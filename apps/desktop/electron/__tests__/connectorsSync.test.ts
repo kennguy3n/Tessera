@@ -1630,6 +1630,441 @@ describe("Jira sync — JQL watermark sanitisation", () => {
   );
 });
 
+describe("Jira sync — retry-queue load-time validation", () => {
+  const original = globalThis.fetch;
+  let fetchMock: ReturnType<typeof makeFetchMock>;
+  let dir: string;
+  let bridge: FakeBridge;
+
+  beforeEach(async () => {
+    fetchMock = makeFetchMock();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    dir = await tmpDir("jira-retry");
+    bridge = new FakeBridge();
+  });
+  afterEach(async () => {
+    globalThis.fetch = original;
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it(
+    "drops a corrupted failedRetries entry whose remoteId is not a " +
+      "JQL-safe identifier (regression: wave 9 ANALYSIS_0001 — escaped " +
+      "vs raw key asymmetry)",
+    async () => {
+      // Pre-seed state.json with one legit retry key plus one corrupted
+      // entry whose remoteId would be MUTATED by jqlEscapeKey (a quote
+      // injection attempt). The fix: filter at load time so the
+      // corrupted entry never makes it into the JQL OR the cleanup
+      // loop's comparison set, AND the next save doesn't propagate it.
+      const syncDir = path.join(dir, "jira-sync");
+      await fsp.mkdir(syncDir, { recursive: true });
+      await fsp.writeFile(
+        path.join(syncDir, "state.json"),
+        JSON.stringify({
+          cloudId: "cloud-1",
+          lastSyncIso: null,
+          failedRetries: [
+            // Legit — should survive and appear in the JQL.
+            { remoteId: "ABC-1", remoteModifiedAt: null, failureCount: 1 },
+            // Corrupted — must be dropped at load time. Without the fix
+            // the cleanup loop iterates over the *escaped* form
+            // (`ABC2DROP`), which would never match the raw API
+            // issue.key (`ABC-2`), permanently stranding the entry.
+            {
+              remoteId: 'ABC-2"; DROP',
+              remoteModifiedAt: null,
+              failureCount: 1,
+            },
+            // Empty after escape — also dropped.
+            { remoteId: '"""', remoteModifiedAt: null, failureCount: 1 },
+            // Non-string — dropped.
+            { remoteId: 42, remoteModifiedAt: null, failureCount: 1 },
+          ],
+        }),
+        "utf8",
+      );
+
+      // The single search call returns the legit issue so it transitions
+      // from failedRetries → succeededIds and is dropped from the queue.
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          startAt: 0,
+          maxResults: 50,
+          total: 1,
+          issues: [
+            {
+              id: "10001",
+              key: "ABC-1",
+              fields: {
+                summary: "x",
+                project: { key: "ABC", name: "P" },
+                updated: "2024-06-01T10:00:00.000+0000",
+              },
+            },
+          ],
+        }),
+      });
+
+      await syncJira({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+        cloudId: "cloud-1",
+      });
+
+      // 1. The JQL must reference only ABC-1 — not the corrupted ids
+      //    in any form (raw, escaped, or partial).
+      const searchCall = fetchMock.mock.calls.find((c) =>
+        String(c[0]).includes("/rest/api/3/search"),
+      );
+      expect(searchCall).toBeDefined();
+      const jql = new URL(String(searchCall![0])).searchParams.get("jql") ?? "";
+      expect(jql).toContain("ABC-1");
+      // Corrupted ids must not appear in any escape variant.
+      expect(jql).not.toContain("DROP");
+      expect(jql).not.toContain('"');
+      expect(jql).not.toContain("42");
+
+      // 2. The persisted state must drop all corrupted entries — only
+      //    a self-healed (empty or single-entry) queue should remain.
+      //    ABC-1 was just succeeded so it leaves the queue. The two
+      //    corrupted entries must NOT be carried forward.
+      const finalState = JSON.parse(
+        await fsp.readFile(
+          path.join(dir, "jira-sync", "state.json"),
+          "utf8",
+        ),
+      ) as { failedRetries: Array<{ remoteId: string }> };
+      expect(finalState.failedRetries).toEqual([]);
+    },
+  );
+});
+
+describe(
+  "Confluence sync — carry-forward when a space's listing fails",
+  () => {
+    const original = globalThis.fetch;
+    let fetchMock: ReturnType<typeof makeFetchMock>;
+    let dir: string;
+    let bridge: FakeBridge;
+
+    beforeEach(async () => {
+      fetchMock = makeFetchMock();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      dir = await tmpDir("conf-carry");
+      bridge = new FakeBridge();
+    });
+    afterEach(async () => {
+      globalThis.fetch = original;
+      await fsp.rm(dir, { recursive: true, force: true });
+    });
+
+    it(
+      "preserves per-page versions for pages in a space whose listing " +
+        "threw, so the next sync does not re-process every page from " +
+        "scratch (regression: wave 9 ANALYSIS_0004)",
+      async () => {
+        // ---- First sync: two spaces, four pages, all listed successfully ----
+        fetchMock
+          // /oauth/token/accessible-resources
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => [
+              {
+                id: "cloud-1",
+                url: "https://x",
+                name: "site",
+                scopes: ["read:confluence-content.summary"],
+              },
+            ],
+          })
+          // /wiki/api/v2/spaces
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({
+              results: [
+                { id: "s1", key: "ONE", name: "Space One" },
+                { id: "s2", key: "TWO", name: "Space Two" },
+              ],
+            }),
+          })
+          // /wiki/api/v2/pages?space-id=s1
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({
+              results: [
+                {
+                  id: "p1a",
+                  title: "P1A",
+                  spaceId: "s1",
+                  version: { number: 1 },
+                  body: { storage: { value: "<p>v1</p>" } },
+                },
+                {
+                  id: "p1b",
+                  title: "P1B",
+                  spaceId: "s1",
+                  version: { number: 1 },
+                  body: { storage: { value: "<p>v1</p>" } },
+                },
+              ],
+            }),
+          })
+          // /wiki/api/v2/pages?space-id=s2
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({
+              results: [
+                {
+                  id: "p2a",
+                  title: "P2A",
+                  spaceId: "s2",
+                  version: { number: 1 },
+                  body: { storage: { value: "<p>v1</p>" } },
+                },
+                {
+                  id: "p2b",
+                  title: "P2B",
+                  spaceId: "s2",
+                  version: { number: 1 },
+                  body: { storage: { value: "<p>v1</p>" } },
+                },
+              ],
+            }),
+          });
+
+        const r1 = await syncConfluence({
+          accessToken: "AT",
+          userDataDir: dir,
+          bridge,
+        });
+        expect(r1.added).toBe(4);
+        expect(r1.modified).toBe(0);
+
+        // After first sync, state must record both pageVersions AND
+        // pageSpaces — the wave-9 schema enrichment.
+        const state1 = JSON.parse(
+          await fsp.readFile(
+            path.join(dir, "confluence-sync", "state.json"),
+            "utf8",
+          ),
+        ) as {
+          pageVersions: Record<string, number>;
+          pageSpaces: Record<string, string>;
+        };
+        expect(state1.pageVersions).toEqual({
+          p1a: 1,
+          p1b: 1,
+          p2a: 1,
+          p2b: 1,
+        });
+        expect(state1.pageSpaces).toEqual({
+          p1a: "s1",
+          p1b: "s1",
+          p2a: "s2",
+          p2b: "s2",
+        });
+
+        // ---- Second sync: s1 lists fine, s2 throws on listing ----
+        // The expected behaviour: s1's pages remain in state (their
+        // listings confirm they still exist at version 1). s2's pages
+        // also remain in state (carry-forward because we know nothing
+        // new about them). The previous behaviour dropped p2a/p2b from
+        // state, which would have caused a full re-fetch + re-render
+        // on the *third* sync once s2's listing recovers — wasting an
+        // API call + disk write per page even though the content
+        // didn't change.
+        fetchMock
+          // spaces — same payload (note: cloudId is persisted from
+          // first sync, so accessible-resources is NOT called again).
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({
+              results: [
+                { id: "s1", key: "ONE", name: "Space One" },
+                { id: "s2", key: "TWO", name: "Space Two" },
+              ],
+            }),
+          })
+          // /wiki/api/v2/pages?space-id=s1 — same versions, unchanged.
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({
+              results: [
+                {
+                  id: "p1a",
+                  title: "P1A",
+                  spaceId: "s1",
+                  version: { number: 1 },
+                  body: { storage: { value: "<p>v1</p>" } },
+                },
+                {
+                  id: "p1b",
+                  title: "P1B",
+                  spaceId: "s1",
+                  version: { number: 1 },
+                  body: { storage: { value: "<p>v1</p>" } },
+                },
+              ],
+            }),
+          })
+          // /wiki/api/v2/pages?space-id=s2 — throws.
+          .mockRejectedValueOnce(
+            new Error("ECONNRESET — Atlassian API blip"),
+          );
+
+        const r2 = await syncConfluence({
+          accessToken: "AT",
+          userDataDir: dir,
+          bridge,
+        });
+        // s1 pages skip the body-render path because they're unchanged
+        // (version === previousVersion). s2 pages are not observed at
+        // all. Nothing should be added or modified this pass.
+        expect(r2.added).toBe(0);
+        expect(r2.modified).toBe(0);
+
+        const state2 = JSON.parse(
+          await fsp.readFile(
+            path.join(dir, "confluence-sync", "state.json"),
+            "utf8",
+          ),
+        ) as {
+          pageVersions: Record<string, number>;
+          pageSpaces: Record<string, string>;
+        };
+        // All four pages remain in state with their previous versions —
+        // s1's by direct observation, s2's by carry-forward.
+        expect(state2.pageVersions).toEqual({
+          p1a: 1,
+          p1b: 1,
+          p2a: 1,
+          p2b: 1,
+        });
+        expect(state2.pageSpaces).toEqual({
+          p1a: "s1",
+          p1b: "s1",
+          p2a: "s2",
+          p2b: "s2",
+        });
+      },
+    );
+
+    it(
+      "drops pages whose space listed successfully but no longer " +
+        "contains them (page actually deleted upstream)",
+      async () => {
+        // Pre-seed state as if a previous sync recorded two pages in s1.
+        const syncDir = path.join(dir, "confluence-sync");
+        await fsp.mkdir(syncDir, { recursive: true });
+        await fsp.writeFile(
+          path.join(syncDir, "state.json"),
+          JSON.stringify({
+            cloudId: "cloud-1",
+            pageVersions: { p1a: 1, p1b: 1 },
+            pageSpaces: { p1a: "s1", p1b: "s1" },
+          }),
+          "utf8",
+        );
+
+        fetchMock
+          // spaces
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({
+              results: [{ id: "s1", key: "ONE", name: "Space One" }],
+            }),
+          })
+          // pages — only p1a remains; p1b is gone (deleted upstream).
+          .mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({
+              results: [
+                {
+                  id: "p1a",
+                  title: "P1A",
+                  spaceId: "s1",
+                  version: { number: 1 },
+                  body: { storage: { value: "<p>v1</p>" } },
+                },
+              ],
+            }),
+          });
+
+        await syncConfluence({
+          accessToken: "AT",
+          userDataDir: dir,
+          bridge,
+        });
+
+        const state = JSON.parse(
+          await fsp.readFile(
+            path.join(dir, "confluence-sync", "state.json"),
+            "utf8",
+          ),
+        ) as {
+          pageVersions: Record<string, number>;
+          pageSpaces: Record<string, string>;
+        };
+        // p1b's space listed cleanly but p1b wasn't returned → drop.
+        expect(state.pageVersions).toEqual({ p1a: 1 });
+        expect(state.pageSpaces).toEqual({ p1a: "s1" });
+      },
+    );
+
+    it(
+      "carries forward legacy state entries that lack a recorded " +
+        "space id (pre-wave-9 state.json migration)",
+      async () => {
+        // Legacy state: pageVersions populated, pageSpaces missing.
+        // The carry-forward must default to "unknown" → keep the entry
+        // alive while the state self-heals on the next successful
+        // listing.
+        const syncDir = path.join(dir, "confluence-sync");
+        await fsp.mkdir(syncDir, { recursive: true });
+        await fsp.writeFile(
+          path.join(syncDir, "state.json"),
+          JSON.stringify({
+            cloudId: "cloud-1",
+            pageVersions: { p_legacy: 7 },
+            // pageSpaces deliberately omitted (legacy schema).
+          }),
+          "utf8",
+        );
+
+        // No spaces, no pages this sync (e.g. user lost access
+        // temporarily). The legacy entry must NOT be dropped.
+        fetchMock.mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ results: [] }),
+        });
+
+        await syncConfluence({
+          accessToken: "AT",
+          userDataDir: dir,
+          bridge,
+        });
+
+        const state = JSON.parse(
+          await fsp.readFile(
+            path.join(dir, "confluence-sync", "state.json"),
+            "utf8",
+          ),
+        ) as {
+          pageVersions: Record<string, number>;
+          pageSpaces: Record<string, string>;
+        };
+        expect(state.pageVersions).toEqual({ p_legacy: 7 });
+        // pageSpaces remains empty for the legacy entry — it will
+        // populate on the next sync if/when the page is observed.
+        expect(state.pageSpaces).toEqual({});
+      },
+    );
+  },
+);
+
 describe("Google Drive sync — manifest cleanup", () => {
   const original = globalThis.fetch;
   let fetchMock: ReturnType<typeof makeFetchMock>;

@@ -213,6 +213,74 @@ describe("ConnectorStatus", () => {
   );
 
   it(
+    "does NOT stamp 'Last sync' timestamp when the sync returned offline " +
+      "(regression: wave 9 ANALYSIS_0003 — misleading freshness)",
+    async () => {
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "notion",
+        connected: true,
+        status: "connected",
+      });
+      mockApi.connectors.sync.mockResolvedValue({
+        added: 0,
+        modified: 0,
+        removed: 0,
+        status: "offline",
+      });
+
+      render(<ConnectorStatus provider="notion" />);
+      await waitFor(() => {
+        expect(screen.getByText("Sync Now")).toBeInTheDocument();
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText("Sync Now"));
+      });
+
+      // Offline badge must light up …
+      await waitFor(() => {
+        expect(screen.getByText("Offline")).toBeInTheDocument();
+      });
+      // … but the misleading "Last sync: ..." line must NOT appear,
+      // because the attempt never actually transferred. The previous
+      // (buggy) code unconditionally stamped the timestamp regardless
+      // of result.status, telling the user the data was fresh when in
+      // fact this attempt failed at the network layer.
+      expect(screen.queryByText(/^Last sync:/)).not.toBeInTheDocument();
+    },
+  );
+
+  it(
+    "stamps 'Last sync' timestamp on a successful (non-offline) sync",
+    async () => {
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "notion",
+        connected: true,
+        status: "connected",
+      });
+      mockApi.connectors.sync.mockResolvedValue({
+        added: 1,
+        modified: 0,
+        removed: 0,
+        status: "synced",
+      });
+
+      render(<ConnectorStatus provider="notion" />);
+      await waitFor(() => {
+        expect(screen.getByText("Sync Now")).toBeInTheDocument();
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText("Sync Now"));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText(/^Last sync:/)).toBeInTheDocument();
+      });
+    },
+  );
+
+  it(
     "keeps the Offline badge when sync throws a network-shaped error",
     async () => {
       mockApi.connectors.status.mockResolvedValue({

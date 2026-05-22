@@ -206,8 +206,21 @@ async function loadJiraState(userDataDir: string): Promise<JiraState> {
     return {
       cloudId: parsed.cloudId ?? null,
       lastSyncIso: parsed.lastSyncIso ?? null,
+      // Filter out any retry entries whose remoteId is not a JQL-safe
+      // identifier (i.e. would be mutated by `jqlEscapeKey`). Such
+      // entries can only come from state.json corruption or a future
+      // schema change — they are unsafe to interpolate into JQL and
+      // also unsafe to use as raw API keys (the escape would silently
+      // resolve to a *different* issue). Dropping at load time lets
+      // the queue self-heal on the next sync without any special-case
+      // logic downstream. See Devin Review wave 9 ANALYSIS_0001.
       failedRetries: Array.isArray(parsed.failedRetries)
-        ? parsed.failedRetries
+        ? parsed.failedRetries.filter(
+            (e): e is FailedRetryEntry =>
+              typeof e?.remoteId === "string" &&
+              e.remoteId.length > 0 &&
+              jqlEscapeKey(e.remoteId) === e.remoteId,
+          )
         : [],
     };
   } catch {
@@ -294,9 +307,14 @@ export async function syncJira(ctx: {
   // updated-since scan. Without this, an item that errored mid-sync
   // would be skipped forever (the watermark would advance past its
   // `updated` timestamp on later passes).
-  const retryKeys = state.failedRetries
-    .map((e) => jqlEscapeKey(e.remoteId))
-    .filter((k) => k.length > 0);
+  //
+  // `loadJiraState` already filters out entries whose remoteId is not
+  // JQL-safe (would be mutated by `jqlEscapeKey`), so the raw value
+  // here is guaranteed to be both safe to interpolate into JQL *and*
+  // identity-equal to the raw `issue.key` values we observe from the
+  // API. That symmetry is what the cleanup loop below relies on —
+  // see Devin Review wave 9 ANALYSIS_0001 for the prior asymmetry.
+  const retryKeys = state.failedRetries.map((e) => e.remoteId);
   // Strict-validate the watermark before interpolating into JQL.
   // `sanitiseJqlWatermark` returns null on anything that isn't a
   // well-formed ISO-8601 timestamp, which causes the watermark

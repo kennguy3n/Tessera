@@ -16,7 +16,6 @@ import {
 } from "./scheduler";
 import { isSafeExportPath } from "./exportPathSafety";
 import type { SettingsData, ModelStatus } from "./preload";
-import { exchangeCodeForTokens } from "./oauthServer";
 import * as tokenVault from "./tokenVault";
 import * as secretsVault from "./secretsVault";
 import {
