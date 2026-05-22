@@ -8,6 +8,10 @@ import {
   DEFAULT_EXTERNAL_PROVIDER,
   type ExternalProviderConfig,
 } from "./config";
+import {
+  streamExternalProvider,
+  type ExternalProviderStreamChunk,
+} from "./externalProviderStream";
 import { getBridge, getModelSidecar } from "./appState";
 import {
   dispatchOnGenerate,
@@ -815,18 +819,23 @@ export function registerIpcHandlers(): void {
         temperature?: number;
       },
     ) => {
-      const sidecar = getModelSidecar();
-      if (!sidecar || !sidecar.isRunning) {
-        throw new Error("Model runtime not running — start a model first");
-      }
-      sidecar.markGenerationActive();
-      const endpoint = sidecar.endpoint;
-      const body = {
-        prompt: request.prompt,
-        n_predict: request.maxTokens ?? 2048,
-        temperature: request.temperature ?? 0.7,
-        stream: true,
-      };
+      // Dispatch decision:
+      //
+      //   1. If the External Provider is enabled, configured and has a
+      //      keychain-resident API key, route generation there and stream
+      //      tokens via `model:token` using the shared SSE parser in
+      //      `externalProviderStream.ts`.
+      //   2. Otherwise fall back to the local llama-server sidecar (the
+      //      original behaviour). The renderer doesn't need to know which
+      //      adapter served the call — the `model:token` channel shape is
+      //      identical.
+      //
+      // The two paths share the same destroyed-window-safe sender, the
+      // same `activeGenerationController` AbortController slot (so a
+      // single in-flight generation cancels cleanly on switch), and the
+      // same `sentDone` finality bookkeeping. The local-sidecar fetch is
+      // unchanged from before this PR; only the dispatch lookup at the
+      // top of the handler is new.
 
       // Abort any in-flight generation before starting a new one
       if (activeGenerationController) {
@@ -851,6 +860,54 @@ export function registerIpcHandlers(): void {
         "model:token",
       );
       let sentDone = false;
+
+      const adapter = resolveGenerationAdapter();
+
+      if (adapter.kind === "external") {
+        try {
+          await streamExternalProvider(
+            {
+              provider: adapter.provider,
+              apiKey: adapter.apiKey,
+              prompt: request.prompt,
+              maxTokens: request.maxTokens,
+              temperature: request.temperature,
+              signal: controller.signal,
+            },
+            (chunk: ExternalProviderStreamChunk) => {
+              if (chunk.content.length > 0) {
+                sendToken({ token: chunk.content, done: false });
+              }
+            },
+          );
+        } finally {
+          if (activeGenerationController === controller) {
+            activeGenerationController = null;
+          }
+          if (!sentDone) {
+            sendToken({ token: "", done: true });
+            sentDone = true;
+          }
+        }
+        return;
+      }
+
+      const sidecar = getModelSidecar();
+      if (!sidecar || !sidecar.isRunning) {
+        if (activeGenerationController === controller) {
+          activeGenerationController = null;
+        }
+        sendToken({ token: "", done: true });
+        throw new Error("Model runtime not running — start a model first");
+      }
+      sidecar.markGenerationActive();
+      const endpoint = sidecar.endpoint;
+      const body = {
+        prompt: request.prompt,
+        n_predict: request.maxTokens ?? 2048,
+        temperature: request.temperature ?? 0.7,
+        stream: true,
+      };
 
       try {
         const resp = await fetch(`${endpoint}/completion`, {
@@ -1058,6 +1115,54 @@ export function registerIpcHandlers(): void {
    *
    *
    */
+  /** Pick the adapter to use for the next `model:generate` call.
+   *
+   *  External provider wins iff: enabled, all required fields are
+   *  populated, AND a non-empty API key exists in the OS keychain
+   *  under `apiKeyRef`. The presence-of-key check happens here so
+   *  the handler can fall back to local before opening a network
+   *  socket — a missing keychain entry would otherwise produce a
+   *  cryptic 401 from the provider after the renderer already
+   *  thought streaming had started.
+   *
+   *  All three failure modes (disabled, missing config field,
+   *  missing key) collapse to `kind: "local"`. This mirrors how
+   *  `crates/tessera_runtime::adapters::plan_chain` treats the
+   *  External step — both layers agree on the same fallback policy. */
+  function resolveGenerationAdapter():
+    | { kind: "local" }
+    | { kind: "external"; provider: ExternalProviderConfig; apiKey: string } {
+    const cfg = loadConfig();
+    const provider = cfg.externalProvider;
+    if (
+      !provider ||
+      !provider.enabled ||
+      !provider.apiUrl.trim() ||
+      !provider.modelName.trim() ||
+      !provider.apiKeyRef.trim()
+    ) {
+      return { kind: "local" };
+    }
+    let apiKey: string | null = null;
+    try {
+      apiKey = secretsVault.getSecret(provider.apiKeyRef);
+    } catch (err) {
+      // A keychain read failure (e.g. user revoked Tessera's access
+      // to the OS keychain) should fall back to local rather than
+      // surfacing a confusing "secretsVault read failed" to the
+      // renderer mid-generation. The Settings page already has its
+      // own diagnostic surface for this.
+      console.warn(
+        `[tessera] external provider secret read failed; falling back to local: ${(err as Error).message}`,
+      );
+      return { kind: "local" };
+    }
+    if (!apiKey || apiKey.length === 0) {
+      return { kind: "local" };
+    }
+    return { kind: "external", provider, apiKey };
+  }
+
   function safeRendererSender<T>(
     event: Electron.IpcMainInvokeEvent,
     channel: string,
