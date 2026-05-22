@@ -466,23 +466,55 @@ export async function streamExternalProvider(
   const decoder = new TextDecoder("utf-8");
   const state = newSseParserState();
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    const text = decoder.decode(value, { stream: true });
-    if (text.length > 0) {
-      if (feedSse(text, state, inputs.provider.providerType, emit)) {
-        // Stop sentinel observed — drain any final buffered text
-        // through the decoder and break the read loop.
+  // The reader holds a lock on `res.body` for the lifetime of this
+  // function, and the underlying TCP connection stays open until the
+  // stream is either drained (loop exits with `done: true`),
+  // cancelled, or garbage-collected. We must explicitly cancel on
+  // every exit path that is NOT a natural `done: true` — early-break
+  // on stop sentinel, thrown exceptions, AbortSignal cancellation —
+  // otherwise the connection can linger for the entire idle lifetime
+  // of the Electron renderer, holding a slot in the provider's
+  // concurrent-request quota. `cancel()` aborts the producer side,
+  // signals the upstream that we don't need any more bytes, and
+  // releases the reader lock so the body can be GC'd.
+  let drainedNaturally = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        drainedNaturally = true;
         break;
       }
+      const text = decoder.decode(value, { stream: true });
+      if (text.length > 0) {
+        if (feedSse(text, state, inputs.provider.providerType, emit)) {
+          // Stop sentinel observed — drain any final buffered text
+          // through the decoder and break the read loop. The
+          // `finally` block below cancels the reader so the
+          // underlying connection closes promptly.
+          break;
+        }
+      }
+    }
+
+    // Flush any tail-end UTF-8 bytes the streaming decoder buffered.
+    const tail = decoder.decode();
+    if (tail.length > 0) {
+      feedSse(tail, state, inputs.provider.providerType, emit);
+    }
+    flushSse(state, inputs.provider.providerType, emit);
+  } finally {
+    if (!drainedNaturally) {
+      // `reader.cancel()` returns a promise that may reject if the
+      // stream is already errored (e.g. the AbortSignal fired and
+      // pushed the reader into an errored state before we got here).
+      // Swallow — we're in cleanup and the caller has already moved
+      // on. We do NOT swallow at the level of `await` itself because
+      // an unhandled rejection from a finally-block awaited promise
+      // would surface as a process warning in Electron's main.
+      await reader.cancel().catch(() => {
+        // Stream was already closed / errored; nothing to clean up.
+      });
     }
   }
-
-  // Flush any tail-end UTF-8 bytes the streaming decoder buffered.
-  const tail = decoder.decode();
-  if (tail.length > 0) {
-    feedSse(tail, state, inputs.provider.providerType, emit);
-  }
-  flushSse(state, inputs.provider.providerType, emit);
 }

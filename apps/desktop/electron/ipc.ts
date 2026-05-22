@@ -1088,33 +1088,6 @@ export function registerIpcHandlers(): void {
     return planDownload(current, requested);
   });
 
-  /**
-   * Bind a destroyed-window-safe sender for an IPC channel.
-   *
-   * Captures the `BrowserWindow` for `event.sender` at IPC entry and
-   * returns a closure that pushes payloads on `channel` to that window.
-   * The returned function:
-   *
-   *   - Skips the send if the window has been destroyed (user closed it,
-   *     renderer crashed, etc.). `BrowserWindow.fromWebContents` returned
-   *     a truthy JS handle whose native backing Electron has since freed,
-   *     so optional-chaining `win?.webContents` does NOT short-circuit
-   *     — we need an explicit `isDestroyed()` check.
-   *   - try/catches the `.send()` call so a transient IPC failure (queue
-   *     overflow, renderer crash mid-stream) cannot propagate up and
-   *     short-circuit the caller's outer `try { ... } finally { ... }`
-   *     cleanup.
-   *
-   * This is the long-term-correct shape — every IPC handler that streams
-   * results back to the renderer should route its sends through this
-   * helper instead of reimplementing the guard pattern. Channels that
-   * use it today:
-   *
-   *   - `runtime:downloadProgress` (the download-progress emitter)
-   *   - `model:token` (the `model:generate` SSE stream)
-   *
-   *
-   */
   /** Pick the adapter to use for the next `model:generate` call.
    *
    *  External provider wins iff: enabled, all required fields are
@@ -1180,6 +1153,31 @@ export function registerIpcHandlers(): void {
     return { kind: "external", provider, apiKey };
   }
 
+  /**
+   * Bind a destroyed-window-safe sender for an IPC channel.
+   *
+   * Captures the `BrowserWindow` for `event.sender` at IPC entry and
+   * returns a closure that pushes payloads on `channel` to that window.
+   * The returned function:
+   *
+   *   - Skips the send if the window has been destroyed (user closed it,
+   *     renderer crashed, etc.). `BrowserWindow.fromWebContents` returned
+   *     a truthy JS handle whose native backing Electron has since freed,
+   *     so optional-chaining `win?.webContents` does NOT short-circuit
+   *     — we need an explicit `isDestroyed()` check.
+   *   - try/catches the `.send()` call so a transient IPC failure (queue
+   *     overflow, renderer crash mid-stream) cannot propagate up and
+   *     short-circuit the caller's outer `try { ... } finally { ... }`
+   *     cleanup.
+   *
+   * This is the long-term-correct shape — every IPC handler that streams
+   * results back to the renderer should route its sends through this
+   * helper instead of reimplementing the guard pattern. Channels that
+   * use it today:
+   *
+   *   - `runtime:downloadProgress` (the download-progress emitter)
+   *   - `model:token` (the `model:generate` SSE stream)
+   */
   function safeRendererSender<T>(
     event: Electron.IpcMainInvokeEvent,
     channel: string,

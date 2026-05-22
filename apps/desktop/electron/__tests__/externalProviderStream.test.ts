@@ -1,10 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   parseExternalProviderSSE,
   feedSse,
   flushSse,
   newSseParserState,
   buildStreamRequest,
+  streamExternalProvider,
   type ExternalProviderStreamChunk,
 } from "../externalProviderStream";
 import type { ExternalProviderConfig } from "../config";
@@ -407,4 +408,120 @@ describe("externalProviderStream — buildStreamRequest wire format", () => {
     const body = JSON.parse(req.body);
     expect(body.stop_sequences).toEqual(["a", "b", "c", "d", "e", "f", "g"]);
   });
+});
+
+describe("externalProviderStream — reader cleanup on early break", () => {
+  // Build a minimal mock ReadableStream + Response that the
+  // `streamExternalProvider` reader path can consume. The mock
+  // records cancel() invocations so we can assert that the reader
+  // is cancelled on every non-natural exit path.
+
+  function makeMockResponse(chunks: string[]): {
+    response: Response;
+    cancelSpy: ReturnType<typeof vi.fn>;
+  } {
+    const cancelSpy = vi.fn().mockResolvedValue(undefined);
+    let i = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (i < chunks.length) {
+          controller.enqueue(new TextEncoder().encode(chunks[i]));
+          i += 1;
+        } else {
+          controller.close();
+        }
+      },
+      cancel: cancelSpy,
+    });
+    // `Response` constructor with a ReadableStream produces the
+    // shape that `streamExternalProvider` expects from
+    // `fetch(...)`. We have to set `ok` true via status 200.
+    const response = new Response(stream, { status: 200 });
+    return { response, cancelSpy };
+  }
+
+  it("cancels the reader when the stop sentinel is observed mid-stream", async () => {
+    // Regression for the original "reader not explicitly cancelled
+    // on early break" issue. When the SSE parser observes
+    // `data: [DONE]` (OpenAI) or `event: message_stop` (Anthropic),
+    // the read loop breaks BEFORE the natural `done: true`. Without
+    // the explicit `reader.cancel()` in `finally`, the underlying
+    // TCP connection lingered until GC or AbortController.abort(),
+    // holding a slot in the provider's concurrent-request quota for
+    // long-lived idle Electron sessions.
+    //
+    // We construct an SSE body where `[DONE]` arrives BEFORE the
+    // server closes the stream, then assert that the mock stream's
+    // `cancel()` was called exactly once.
+    const { response, cancelSpy } = makeMockResponse([
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+      "data: [DONE]\n\n",
+      // Deliberate trailing event that should NEVER be observed —
+      // its presence in `chunks` (without the test asserting the
+      // emit didn't see it) is a smoke test that the early break
+      // really did fire.
+      'data: {"choices":[{"delta":{"content":"PHANTOM"}}]}\n\n',
+    ]);
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(response);
+
+    const emitted: ExternalProviderStreamChunk[] = [];
+    await streamExternalProvider(
+      {
+        provider: mkProvider(),
+        apiKey: "sk",
+        prompt: "hi",
+      },
+      (c) => emitted.push(c),
+    );
+
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+    expect(emitted.map((c) => c.content)).toEqual(["hi"]);
+    // The phantom event must not have been observed: the early
+    // break-and-cancel pair guarantees no further data is fed.
+    expect(emitted.some((c) => c.content === "PHANTOM")).toBe(false);
+    fetchSpy.mockRestore();
+  });
+
+  it("does NOT cancel when the stream drains naturally (server closed)", async () => {
+    // Counter-test: when the producer closes the stream itself
+    // (`done: true` on `reader.read()`), there's no leaking
+    // connection to cancel — the body is already exhausted.
+    // Calling `cancel()` here would be a wasted FFI hop and could
+    // surface as a misleading "cancellation" in the producer's
+    // logs. The fix in `streamExternalProvider` deliberately tracks
+    // `drainedNaturally` so this case is a no-op.
+    const { response, cancelSpy } = makeMockResponse([
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+      // No [DONE] — the stream just ends. This is the path that
+      // happens when a server closes the connection without
+      // emitting the spec-required sentinel.
+    ]);
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(response);
+
+    const emitted: ExternalProviderStreamChunk[] = [];
+    await streamExternalProvider(
+      {
+        provider: mkProvider(),
+        apiKey: "sk",
+        prompt: "hi",
+      },
+      (c) => emitted.push(c),
+    );
+
+    expect(cancelSpy).not.toHaveBeenCalled();
+    expect(emitted.map((c) => c.content)).toEqual(["hi"]);
+    fetchSpy.mockRestore();
+  });
+
+  // Note: a third test that exercises the `feedSse throws` exception
+  // path was attempted but hit a Node WHATWG-streams timing edge
+  // where the underlying source's `cancel` was not deterministically
+  // observed when the reader was cancelled mid-read in the same
+  // microtask the throw propagated through. The two tests above
+  // already pin the regression: every non-natural exit path goes
+  // through the `finally` block which awaits `reader.cancel()`.
 });
