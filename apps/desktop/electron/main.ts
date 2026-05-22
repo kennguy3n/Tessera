@@ -29,27 +29,38 @@ process.on("unhandledRejection", (reason) => {
   });
 });
 
-function createWindow(): void {
-  const config = loadConfig();
-
-  mainWindow = new BrowserWindow({
-    width: config.windowWidth,
-    height: config.windowHeight,
-    x: config.windowX,
-    y: config.windowY,
-    minWidth: 900,
-    minHeight: 600,
-    title: "Tessera",
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-
+/**
+ * Install the session-level Content-Security-Policy handler. Called
+ * exactly once from `app.whenReady` — NOT from `createWindow()`.
+ *
+ * The CSP is registered on `session.defaultSession.webRequest`, which
+ * is a process-wide singleton: a single registration applies to every
+ * `BrowserWindow` created against the default session, including the
+ * password-prompt window opened by `maybeInitPasswordVault` BEFORE
+ * the main window exists, and any future re-creation of the main
+ * window via the `app.on("activate")` macOS path.
+ *
+ * Previously this was registered inside `createWindow()`. Each call
+ * to `onHeadersReceived` replaces the previous handler (it's not
+ * additive) so duplication was harmless, but the per-window
+ * registration created two subtle smells:
+ *
+ *   1. The password-prompt window (opened before `createWindow()`)
+ *      had no CSP applied to its requests at all. The prompt loads
+ *      a `data:` URL which Electron's `webRequest` does not fire
+ *      `onHeadersReceived` for, so the practical effect was zero —
+ *      but a future change to file:// or http:// loading for the
+ *      prompt would have silently bypassed the policy.
+ *   2. On macOS, `app.on("activate")` re-runs `createWindow()` when
+ *      the user clicks the dock icon after closing every window.
+ *      The per-call re-registration was redundant work.
+ *
+ * Hoisting to `app.whenReady` is the structurally correct fix: the
+ * CSP is now a session-level invariant established before any
+ * BrowserWindow is constructed.
+ */
+function installContentSecurityPolicy(): void {
   const isDev = !app.isPackaged;
-
   const connectSrc = isDev
     ? "connect-src 'self' ws://localhost:5173 http://localhost:5173"
     : "connect-src 'self'";
@@ -73,6 +84,28 @@ function createWindow(): void {
       },
     });
   });
+}
+
+function createWindow(): void {
+  const config = loadConfig();
+
+  mainWindow = new BrowserWindow({
+    width: config.windowWidth,
+    height: config.windowHeight,
+    x: config.windowX,
+    y: config.windowY,
+    minWidth: 900,
+    minHeight: 600,
+    title: "Tessera",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  const isDev = !app.isPackaged;
   if (isDev) {
     mainWindow.loadURL("http://localhost:5173");
   } else {
@@ -180,6 +213,11 @@ let appInitComplete = false;
 
 app.whenReady().then(async () => {
   initAppState();
+  // Install the session-level CSP BEFORE any window (including the
+  // password prompt) is created, so the policy is in effect for
+  // every page load — not just for windows created after the main
+  // app shell. See `installContentSecurityPolicy` for rationale.
+  installContentSecurityPolicy();
   await maybeInitPasswordVault();
   registerIpcHandlers();
   // Start the automations scheduler. Runs in the main process and
