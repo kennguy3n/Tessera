@@ -431,6 +431,27 @@ describe("GdriveSelectedItemsSchema", () => {
       GdriveSelectedItemsSchema.parse([{ name: "a", mimeType: "x" }]),
     ).toThrow();
   });
+
+  // Empty `id` is its own failure mode: the field is present (so the
+  // "missing id" path above doesn't catch it) but a downstream Drive
+  // API call with `fileId=""` produces a 404 the user can't act on.
+  // The schema enforces `NonEmptyString` at the IPC boundary so the
+  // renderer's drive picker bug surfaces here, not 2 hops downstream.
+  it("rejects items with an empty-string id", () => {
+    expect(() =>
+      GdriveSelectedItemsSchema.parse([
+        { id: "", name: "a", mimeType: "text/plain" },
+      ]),
+    ).toThrow();
+  });
+
+  it("rejects items with an over-long id", () => {
+    expect(() =>
+      GdriveSelectedItemsSchema.parse([
+        { id: "x".repeat(513), name: "a", mimeType: "text/plain" },
+      ]),
+    ).toThrow();
+  });
 });
 
 describe("SaveDialogOptionsSchema", () => {

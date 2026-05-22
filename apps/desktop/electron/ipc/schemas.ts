@@ -235,11 +235,17 @@ export const MarpExportSchema = z.object({
 export type MarpExportInput = z.infer<typeof MarpExportSchema>;
 
 // --- Drive picker ---
-
+//
+// `id` uses `NonEmptyString` because every downstream consumer
+// (`connectors:gdriveImportSelected` -> `bridge.gdriveImportSelected`)
+// treats it as the canonical Google Drive file ID and would emit a
+// confusing 404 from the Drive API if it were empty. `name` and
+// `mimeType` keep the looser `string` because Drive permits unicode
+// names and the bridge sanitises them downstream.
 export const GdriveSelectedItemsSchema = z
   .array(
     z.object({
-      id: z.string().max(512),
+      id: NonEmptyString.max(512),
       name: z.string().max(2048),
       mimeType: z.string().max(256),
     }),
