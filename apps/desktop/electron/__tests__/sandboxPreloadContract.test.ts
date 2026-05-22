@@ -46,7 +46,9 @@ const CHANNELS_TS = path.join(ELECTRON_ROOT, "passwordPromptChannels.ts");
 const MAIN_TS = path.join(ELECTRON_ROOT, "main.ts");
 
 describe("sandboxed preload contract: passwordPromptChannels.ts", () => {
-  const source = readFileSync(CHANNELS_TS, "utf-8");
+  // Normalise to LF so regex anchors and `\n}` patterns work the same on
+  // Windows runners (which check out the repo with native CRLF endings).
+  const source = readFileSync(CHANNELS_TS, "utf-8").replace(/\r\n/g, "\n");
 
   it("contains no `import` statements (sandbox preload safety)", () => {
     // A bare `import { X } from "Y"` or `import "Y"` would compile to
@@ -89,7 +91,7 @@ describe("sandboxed preload contract: passwordPromptChannels.ts", () => {
 });
 
 describe("CSP session handler hoist: main.ts", () => {
-  const source = readFileSync(MAIN_TS, "utf-8");
+  const source = readFileSync(MAIN_TS, "utf-8").replace(/\r\n/g, "\n");
 
   it("defines `installContentSecurityPolicy` as a module-level function", () => {
     expect(source).toMatch(/function\s+installContentSecurityPolicy\s*\(\s*\)\s*:\s*void/);
@@ -130,6 +132,12 @@ describe("CSP session handler hoist: main.ts", () => {
     // Pin the hoist: regressing this back into createWindow() would
     // re-introduce the per-call re-registration. Match the body of
     // createWindow() and assert the call is not inside it.
+    //
+    // The closing brace is matched with `\r?\n\}` (CRLF-tolerant)
+    // because Windows runners check out the repo with native line
+    // endings — a naive `\n\}` here would fail on Windows CI.
+    // Normalise to LF for the body extraction so the test is
+    // platform-independent.
     const createWindowBody = source.match(/function\s+createWindow\s*\(\s*\)\s*:\s*void\s*\{[\s\S]*?\n\}\n/);
     expect(createWindowBody, "could not find createWindow body").toBeTruthy();
     if (!createWindowBody) return;
