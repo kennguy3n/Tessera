@@ -202,6 +202,75 @@ async function maybeInitPasswordVault(): Promise<void> {
 }
 
 /**
+ * Listen on every WebContents created in the app and surface CSP
+ * violations to the main-process stderr as `[Tessera CSP]` warnings.
+ *
+ * Background: when the user pastes an arbitrary image URL into a
+ * Base record (`apps/desktop/renderer/src/editors/baseviews/GalleryView.tsx`
+ * renders it from a configured `url` field), or when a future feature
+ * loads a third-party asset, the CSP narrowing in `cspImageSources.ts`
+ * may block it. Chromium emits `Refused to load the … because it
+ * violates the following Content Security Policy directive: …` to the
+ * renderer's devtools console — which is invisible to users who never
+ * open devtools. A user filing a "broken image" bug would have no
+ * obvious cause.
+ *
+ * This listener re-emits those CSP errors with a structured
+ * `[Tessera CSP]` prefix on the main-process log, so:
+ *
+ *   1. The bug is observable in `tessera.log` / electron-builder
+ *      packaging logs without devtools.
+ *   2. The `Refused to load` URL is captured, telling the maintainer
+ *      exactly which CDN host needs to be added to `cspImageSources.ts`.
+ *   3. We don't have to inject a `securitypolicyviolation` listener
+ *      into every page (which would require a preload contract); the
+ *      `console-message` event sees every CSP log Chromium emits.
+ *
+ * Performance: `console-message` is debounced to bursts of identical
+ * messages so a runaway page that triggers thousands of CSP blocks
+ * doesn't flood the log. We cache the last 50 unique CSP messages and
+ * drop duplicates.
+ */
+const cspLogSeen = new Set<string>();
+const CSP_LOG_DEDUP_LIMIT = 50;
+function installCSPDevtoolsLogger(): void {
+  app.on("web-contents-created", (_event, contents) => {
+    // WebContents emits `console-message` with positional args:
+    //   (event, level, message, line, sourceId)
+    // (NOT the Event2 MessageDetails shape used by ServiceWorkers in
+    // newer Electron — different overload entirely.) `level` is
+    // numeric: 0=verbose, 1=info, 2=warning, 3=error.
+    contents.on("console-message", (_emEvent, level, message) => {
+      // Match warning (2) and error (3) — Chromium logs CSP
+      // violations at one of these levels. Match the modern
+      // "Refused to load" prefix OR the literal "Content Security
+      // Policy" phrase to be defensive against Chromium upstream
+      // rewording.
+      if (level < 2) return;
+      if (
+        !message.includes("Content Security Policy") &&
+        !message.startsWith("Refused to")
+      ) {
+        return;
+      }
+      // Dedup so a thrashing page doesn't flood the log. The set is
+      // capped to avoid unbounded memory growth on a long-running app.
+      if (cspLogSeen.has(message)) return;
+      if (cspLogSeen.size >= CSP_LOG_DEDUP_LIMIT) {
+        // FIFO: drop the oldest by clearing entirely. The set isn't
+        // ordered in V8, so we can't drop a specific entry without
+        // tracking insertion order separately; full clear is the
+        // simplest correct behaviour and means the next 50 unique
+        // violations get logged after a flush.
+        cspLogSeen.clear();
+      }
+      cspLogSeen.add(message);
+      console.warn(`[Tessera CSP] ${message}`);
+    });
+  });
+}
+
+/**
  * Whether the app's main window has been created at least once.
  *
  * Guard for the `window-all-closed` handler. Before this flag flips
@@ -236,6 +305,12 @@ app.whenReady().then(async () => {
   // every page load — not just for windows created after the main
   // app shell. See `installContentSecurityPolicy` for rationale.
   installContentSecurityPolicy();
+  // Surface CSP violations to the main-process log so users who
+  // never open devtools can still discover why their pasted image
+  // URL was blocked. See `installCSPDevtoolsLogger` for rationale.
+  // Installed AFTER the CSP header so the listener is in place
+  // before any WebContents starts loading.
+  installCSPDevtoolsLogger();
   await maybeInitPasswordVault();
   registerIpcHandlers();
   // Start the automations scheduler. Runs in the main process and
