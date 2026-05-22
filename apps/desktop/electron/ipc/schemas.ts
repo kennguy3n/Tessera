@@ -20,6 +20,7 @@
 import { z } from "zod";
 import {
   EXPORT_FORMATS,
+  EXTERNAL_PROVIDER_TYPES,
   TASK_PRIORITIES,
   TASK_STATUSES,
   THEMES,
@@ -168,7 +169,10 @@ export type SettingsUpdateInput = z.infer<typeof SettingsUpdateSchema>;
 // Matches `ExternalProviderConfigInput` in `apps/desktop/shared/types.ts`
 // and the on-disk `ExternalProviderConfig` in `electron/config.ts`.
 
-const ExternalProviderType = z.enum(["openai_compatible", "anthropic", "custom"]);
+// Pulls from the same `EXTERNAL_PROVIDER_TYPES` tuple `shared/types.ts`
+// uses for the `ExternalProviderType` compile-time union — adding a
+// provider in `shared/types.ts` automatically extends this enum.
+const ExternalProviderType = z.enum(EXTERNAL_PROVIDER_TYPES);
 
 export const ExternalProviderConfigSchema = z.object({
   enabled: z.boolean(),

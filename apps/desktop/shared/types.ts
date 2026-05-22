@@ -234,7 +234,18 @@ export interface SettingsData {
 // External provider configuration
 // -----------------------------------------------------------------
 
-export type ExternalProviderType = "openai_compatible" | "anthropic" | "custom";
+// `EXTERNAL_PROVIDER_TYPES` is the single source of truth for which
+// remote inference providers Tessera supports. The const tuple feeds
+// both the zod runtime validators (IPC `ExternalProviderConfigSchema`
+// + on-disk `ExternalProviderConfigOnDiskSchema`) and the
+// `ExternalProviderType` compile-time union — adding a new provider
+// only requires extending this list.
+export const EXTERNAL_PROVIDER_TYPES = [
+  "openai_compatible",
+  "anthropic",
+  "custom",
+] as const;
+export type ExternalProviderType = (typeof EXTERNAL_PROVIDER_TYPES)[number];
 
 /** Payload accepted by `externalProvider.set` from the renderer. */
 export interface ExternalProviderConfigInput {

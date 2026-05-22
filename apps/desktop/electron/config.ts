@@ -4,6 +4,7 @@ import { app } from "electron";
 import { z } from "zod";
 import {
   EXPORT_FORMATS,
+  EXTERNAL_PROVIDER_TYPES,
   THEMES,
   type ExportFormat,
   type ExternalProviderType,
@@ -59,71 +60,6 @@ export const DEFAULT_EXTERNAL_PROVIDER: ExternalProviderConfig = {
   maxRetries: 2,
 };
 
-// --- On-disk config validation ----------------------------------------
-//
-// `AppConfigSchema` runs every loaded config through zod with per-field
-// `.catch()` fallbacks. Anything that fails validation (a stray
-// `"theme": "neon"` from a manual edit, a `maxRetries: 15` written by a
-// future version that widened the range, a number masquerading as a
-// string after a corrupted upgrade) is silently replaced with the
-// documented default — the same defence-in-depth strategy
-// `ExternalProviderConfigSchema` provides for new writes, applied to
-// reads as well so the in-memory `AppConfig` always satisfies its
-// narrowed types.
-//
-// The IPC `SettingsUpdateSchema` and `ExternalProviderConfigSchema`
-// stay strict (no `.catch()`) because *new* values coming from the
-// renderer must be valid — silently rewriting them would mask renderer
-// bugs. Recovery is only sensible for already-on-disk data we cannot
-// regenerate.
-const ExternalProviderConfigOnDiskSchema = z
-  .object({
-    enabled: z.boolean().catch(false),
-    providerType: z
-      .enum(["openai_compatible", "anthropic", "custom"])
-      .catch("openai_compatible"),
-    apiUrl: z.string().max(2048).catch(""),
-    apiKeyRef: z
-      .string()
-      .min(1)
-      .max(1_000_000)
-      .catch("tessera.external_provider.primary"),
-    modelName: z.string().max(512).catch(""),
-    maxTokens: z.number().int().min(1).max(1_000_000).catch(1024),
-    temperature: z.number().min(0).max(2).catch(0.7),
-    timeoutSecs: z.number().int().min(1).max(600).catch(60),
-    maxRetries: z.number().int().min(0).max(10).catch(2),
-  })
-  .catch(() => ({ ...DEFAULT_EXTERNAL_PROVIDER }));
-
-const AppConfigSchema = z
-  .object({
-    windowX: z.number().optional(),
-    windowY: z.number().optional(),
-    windowWidth: z.number().int().min(320).max(32_768).catch(1280),
-    windowHeight: z.number().int().min(240).max(32_768).catch(800),
-    theme: z.enum(THEMES).catch("light"),
-    defaultExportFormat: z.enum(EXPORT_FORMATS).catch("markdown"),
-    ignorePatterns: z.array(z.string().max(1024)).max(10_000).catch([]),
-    watchPatterns: z.array(z.string().max(1024)).max(10_000).catch([]),
-    lastOpenedArtifacts: z.array(z.string().max(1024)).max(1024).catch([]),
-    sourcePaths: z.array(z.string().max(4096)).max(10_000).catch([]),
-    externalProvider: ExternalProviderConfigOnDiskSchema,
-    autoUpdate: z.boolean().catch(true),
-  })
-  .catch(() => ({
-    windowWidth: 1280,
-    windowHeight: 800,
-    theme: "light" as Theme,
-    defaultExportFormat: "markdown" as ExportFormat,
-    ignorePatterns: [],
-    watchPatterns: [],
-    lastOpenedArtifacts: [],
-    sourcePaths: [],
-    externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
-    autoUpdate: true,
-  }));
-
 const DEFAULT_CONFIG: AppConfig = {
   windowWidth: 1280,
   windowHeight: 800,
@@ -144,6 +80,86 @@ const DEFAULT_CONFIG: AppConfig = {
   externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
   autoUpdate: true,
 };
+
+// --- On-disk config validation ----------------------------------------
+//
+// `AppConfigSchema` runs every loaded config through zod with per-field
+// `.catch()` fallbacks. Anything that fails validation (a stray
+// `"theme": "neon"` from a manual edit, a `maxRetries: 15` written by a
+// future version that widened the range, a number masquerading as a
+// string after a corrupted upgrade) is silently replaced with the
+// documented default — the same defence-in-depth strategy
+// `ExternalProviderConfigSchema` provides for new writes, applied to
+// reads as well so the in-memory `AppConfig` always satisfies its
+// narrowed types.
+//
+// `.catch()` fallbacks for array fields restore the populated entries
+// from `DEFAULT_CONFIG` (e.g. `[".git", "node_modules", ...]` for
+// `ignorePatterns`) rather than `[]`, because `loadConfig()` does
+// `{ ...DEFAULT_CONFIG, ...healed }` — spreading a healed `[]` would
+// otherwise *override* the populated default and silently strip the
+// built-in ignore list when a corrupted field is the only thing wrong.
+//
+// The IPC `SettingsUpdateSchema` and `ExternalProviderConfigSchema`
+// stay strict (no `.catch()`) because *new* values coming from the
+// renderer must be valid — silently rewriting them would mask renderer
+// bugs. Recovery is only sensible for already-on-disk data we cannot
+// regenerate.
+const ExternalProviderConfigOnDiskSchema = z
+  .object({
+    enabled: z.boolean().catch(false),
+    // `EXTERNAL_PROVIDER_TYPES` is the same const tuple `shared/types.ts`
+    // uses for the compile-time `ExternalProviderType` union and the
+    // IPC `ExternalProviderConfigSchema` uses for write validation.
+    // Adding a provider in `shared/types.ts` automatically extends
+    // this enum, the IPC enum, and the type union in lockstep.
+    providerType: z.enum(EXTERNAL_PROVIDER_TYPES).catch("openai_compatible"),
+    apiUrl: z.string().max(2048).catch(""),
+    apiKeyRef: z
+      .string()
+      .min(1)
+      .max(1_000_000)
+      .catch("tessera.external_provider.primary"),
+    modelName: z.string().max(512).catch(""),
+    maxTokens: z.number().int().min(1).max(1_000_000).catch(1024),
+    temperature: z.number().min(0).max(2).catch(0.7),
+    timeoutSecs: z.number().int().min(1).max(600).catch(60),
+    maxRetries: z.number().int().min(0).max(10).catch(2),
+  })
+  .catch(() => ({ ...DEFAULT_EXTERNAL_PROVIDER }));
+
+const AppConfigSchema = z
+  .object({
+    // `windowX` and `windowY` need their own `.catch(undefined)` (even
+    // though they're optional) because `z.number().optional()` only
+    // accepts `number | undefined` — a corrupted `"windowX": "bad"`
+    // would otherwise bubble up to the top-level `.catch()` and wipe
+    // every other field. Healing them to `undefined` means a new
+    // window position is computed on launch and unrelated settings
+    // (theme, externalProvider, ignorePatterns, …) survive intact.
+    windowX: z.number().optional().catch(undefined),
+    windowY: z.number().optional().catch(undefined),
+    windowWidth: z.number().int().min(320).max(32_768).catch(1280),
+    windowHeight: z.number().int().min(240).max(32_768).catch(800),
+    theme: z.enum(THEMES).catch("light"),
+    defaultExportFormat: z.enum(EXPORT_FORMATS).catch("markdown"),
+    ignorePatterns: z
+      .array(z.string().max(1024))
+      .max(10_000)
+      .catch(() => [...DEFAULT_CONFIG.ignorePatterns]),
+    watchPatterns: z
+      .array(z.string().max(1024))
+      .max(10_000)
+      .catch(() => [...DEFAULT_CONFIG.watchPatterns]),
+    lastOpenedArtifacts: z.array(z.string().max(1024)).max(1024).catch([]),
+    sourcePaths: z.array(z.string().max(4096)).max(10_000).catch([]),
+    externalProvider: ExternalProviderConfigOnDiskSchema,
+    autoUpdate: z.boolean().catch(true),
+  })
+  .catch(() => ({
+    ...DEFAULT_CONFIG,
+    externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
+  }));
 
 function getConfigPath(): string {
   try {

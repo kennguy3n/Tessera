@@ -180,4 +180,63 @@ describe("loadConfig defensive normalisation", () => {
     expect(cfg.defaultExportFormat).toBe("csv");
     expect(cfg.autoUpdate).toBe(false);
   });
+
+  // A corrupted `windowX` (or `windowY`) used to bubble past the field
+  // schema and hit the object-level `.catch()`, wiping every other
+  // valid field. The per-field `.catch(undefined)` keeps the rest of
+  // the config intact and just lets a fresh window position be
+  // computed on launch.
+  it("does not wipe unrelated fields when windowX is corrupted", () => {
+    writeConfig({
+      windowX: "not a number",
+      theme: "dark",
+      autoUpdate: false,
+      externalProvider: {
+        ...DEFAULT_EXTERNAL_PROVIDER,
+        modelName: "user-set-model",
+      },
+    });
+    const cfg = loadConfig();
+    expect(cfg.windowX).toBeUndefined();
+    expect(cfg.theme).toBe("dark");
+    expect(cfg.autoUpdate).toBe(false);
+    expect(cfg.externalProvider.modelName).toBe("user-set-model");
+  });
+
+  // A corrupted `ignorePatterns` (or `watchPatterns`) used to heal to
+  // `[]`, which then overrode the populated `DEFAULT_CONFIG.ignorePatterns`
+  // in the `{ ...DEFAULT_CONFIG, ...healed }` spread. The per-field
+  // catch now restores the documented defaults so the built-in ignore
+  // list survives a corrupted field.
+  it("restores populated ignorePatterns defaults when the field is corrupted", () => {
+    writeConfig({ ignorePatterns: "not an array" });
+    const cfg = loadConfig();
+    expect(cfg.ignorePatterns).toContain(".git");
+    expect(cfg.ignorePatterns).toContain("node_modules");
+    expect(cfg.ignorePatterns.length).toBeGreaterThan(0);
+  });
+
+  it("restores populated watchPatterns defaults when the field is corrupted", () => {
+    writeConfig({ watchPatterns: 12345 });
+    const cfg = loadConfig();
+    expect(cfg.watchPatterns).toContain("**/*.md");
+    expect(cfg.watchPatterns.length).toBeGreaterThan(0);
+  });
+
+  // Distinct from the corruption test: a user *deliberately* writing
+  // an empty array (e.g. via `updateConfig({ ignorePatterns: [] })`)
+  // must be respected. The catch only fires when validation fails.
+  it("preserves an explicitly empty ignorePatterns array", () => {
+    writeConfig({ ignorePatterns: [] });
+    const cfg = loadConfig();
+    expect(cfg.ignorePatterns).toEqual([]);
+  });
+
+  it("heals an unknown externalProvider.providerType to openai_compatible", () => {
+    writeConfig({
+      externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER, providerType: "bogus" },
+    });
+    const cfg = loadConfig();
+    expect(cfg.externalProvider.providerType).toBe("openai_compatible");
+  });
 });
