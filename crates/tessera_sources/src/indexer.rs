@@ -5,6 +5,7 @@ use tessera_core::{SourceId, SourceStatus};
 use walkdir::WalkDir;
 
 use crate::chunker::{chunk_text, ChunkerConfig};
+use crate::embedding::{encode_vec, EmbeddingProvider};
 use crate::extractor::{extract_text, is_supported_extension};
 use crate::ignore::IgnoreRules;
 use crate::progress::{self, ProgressSnapshot};
@@ -13,6 +14,12 @@ use crate::store::SourceStore;
 pub struct Indexer {
     chunker_config: ChunkerConfig,
     ignore_rules: IgnoreRules,
+    /// Optional embedding provider. When set, every newly indexed
+    /// chunk is immediately embedded and the vector stored in
+    /// `chunk_embeddings` so hybrid retrieval can score it. When
+    /// `None`, the table stays empty and retrieval falls back to
+    /// BM25 + recency only.
+    embedder: Option<Arc<dyn EmbeddingProvider>>,
 }
 
 impl Indexer {
@@ -25,11 +32,20 @@ impl Indexer {
         Self {
             chunker_config: ChunkerConfig::default(),
             ignore_rules,
+            embedder: None,
         }
     }
 
     pub fn with_chunker_config(mut self, config: ChunkerConfig) -> Self {
         self.chunker_config = config;
+        self
+    }
+
+    /// Attach an embedding provider to the indexer. Subsequent calls
+    /// to `index_file` / `index_folder` will compute and persist a
+    /// vector for every newly inserted chunk.
+    pub fn with_embedder(mut self, embedder: Arc<dyn EmbeddingProvider>) -> Self {
+        self.embedder = Some(embedder);
         self
     }
 
@@ -160,10 +176,76 @@ impl Indexer {
         let chunks = chunk_text(&path_str, &text, &self.chunker_config);
 
         if !chunks.is_empty() {
-            store.insert_chunks(file_id, &chunks)?;
+            let ids = store.insert_chunks_returning_ids(file_id, &chunks)?;
+            if let Some(embedder) = &self.embedder {
+                let model_id = embedder.model_id().to_string();
+                let dim = embedder.dim();
+                for (id, chunk) in ids.iter().zip(chunks.iter()) {
+                    // Embedding failure on a single chunk should not
+                    // tank the whole indexing pass — log internally
+                    // and continue. The retrieval pipeline already
+                    // handles missing-embedding rows by falling back
+                    // to BM25 + recency for that chunk.
+                    match embedder.embed(&chunk.content) {
+                        Ok(vec) => {
+                            let bytes = encode_vec(&vec);
+                            if let Err(e) =
+                                store.upsert_chunk_embedding(*id, &model_id, dim, &bytes)
+                            {
+                                eprintln!(
+                                    "[tessera_sources] failed to persist embedding for chunk {id}: {e}"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("[tessera_sources] embedding failed for chunk {id}: {e}")
+                        }
+                    }
+                }
+            }
         }
 
         Ok(true)
+    }
+
+    /// Compute and persist embeddings for chunks that don't yet have
+    /// one for the current model. Returns the number of chunks
+    /// processed. Safe to call repeatedly — idempotent.
+    ///
+    /// Used to back-fill embeddings after the user enables hybrid
+    /// retrieval on a corpus that was indexed before the embedder
+    /// was attached, or after switching to a different embedding
+    /// model (chunks with stale `model_id` rows are NOT touched;
+    /// callers must explicitly clear them first).
+    pub fn backfill_embeddings(&self, store: &SourceStore, batch_size: usize) -> Result<usize> {
+        let Some(embedder) = &self.embedder else {
+            return Ok(0);
+        };
+        let model_id = embedder.model_id().to_string();
+        let dim = embedder.dim();
+        let mut total = 0usize;
+        loop {
+            let batch = store.chunks_missing_embedding(&model_id, batch_size)?;
+            if batch.is_empty() {
+                break;
+            }
+            for (id, content) in &batch {
+                match embedder.embed(content) {
+                    Ok(vec) => {
+                        let bytes = encode_vec(&vec);
+                        store.upsert_chunk_embedding(*id, &model_id, dim, &bytes)?;
+                        total += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("[tessera_sources] backfill embed failed for chunk {id}: {e}")
+                    }
+                }
+            }
+            if batch.len() < batch_size {
+                break;
+            }
+        }
+        Ok(total)
     }
 }
 

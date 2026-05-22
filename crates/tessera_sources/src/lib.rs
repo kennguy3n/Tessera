@@ -1,5 +1,7 @@
 pub mod chunker;
+pub mod embedding;
 pub mod extractor;
+pub mod hybrid;
 pub mod ignore;
 pub mod image_metadata;
 pub mod indexer;

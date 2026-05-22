@@ -93,6 +93,22 @@ impl SourceStore {
                 INSERT INTO chunks_fts(chunks_fts, rowid, content) VALUES('delete', old.id, old.content);
                 INSERT INTO chunks_fts(rowid, content) VALUES (new.id, new.content);
             END;
+
+            CREATE TABLE IF NOT EXISTS chunk_embeddings (
+                chunk_id INTEGER NOT NULL,
+                model_id TEXT NOT NULL,
+                dim INTEGER NOT NULL,
+                vec BLOB NOT NULL,
+                PRIMARY KEY (chunk_id, model_id),
+                FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model
+                ON chunk_embeddings(model_id);
+
+            CREATE TRIGGER IF NOT EXISTS chunks_ad_embeddings BEFORE DELETE ON chunks BEGIN
+                DELETE FROM chunk_embeddings WHERE chunk_id = old.id;
+            END;
             ",
             )
             .map_err(|e| Error::Database(e.to_string()))?;
@@ -322,7 +338,21 @@ impl SourceStore {
     }
 
     pub fn insert_chunks(&self, indexed_file_id: i64, chunks: &[Chunk]) -> Result<()> {
+        self.insert_chunks_returning_ids(indexed_file_id, chunks)
+            .map(|_| ())
+    }
+
+    /// Insert chunks and return the `(chunk_index, chunk_id)` pairs
+    /// in the same order as the input slice. Used by the indexer to
+    /// hand newly-created chunks off to the embedding pipeline
+    /// without a follow-up SELECT.
+    pub fn insert_chunks_returning_ids(
+        &self,
+        indexed_file_id: i64,
+        chunks: &[Chunk],
+    ) -> Result<Vec<i64>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut ids = Vec::with_capacity(chunks.len());
         {
             let mut stmt = conn
                 .prepare(
@@ -340,6 +370,7 @@ impl SourceStore {
                     chunk.hash,
                 ])
                 .map_err(|e| Error::Database(e.to_string()))?;
+                ids.push(conn.last_insert_rowid());
             }
         }
 
@@ -349,7 +380,7 @@ impl SourceStore {
         )
         .map_err(|e| Error::Database(e.to_string()))?;
 
-        Ok(())
+        Ok(ids)
     }
 
     pub fn get_file_hash(&self, path: &str) -> Result<Option<String>> {
@@ -388,7 +419,7 @@ impl SourceStore {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
             .prepare(
-                "SELECT c.content, c.hash, c.chunk_index, c.byte_offset, f.path,
+                "SELECT c.id, c.content, c.hash, c.chunk_index, c.byte_offset, f.path,
                         f.source_id, rank
                  FROM chunks_fts fts
                  JOIN chunks c ON c.id = fts.rowid
@@ -402,13 +433,14 @@ impl SourceStore {
         let results = stmt
             .query_map(params![query, limit as i64], |row| {
                 Ok(SearchHit {
-                    content: row.get(0)?,
-                    hash: row.get(1)?,
-                    chunk_index: row.get::<_, i64>(2)? as usize,
-                    byte_offset: row.get::<_, i64>(3)? as usize,
-                    source_path: row.get(4)?,
-                    source_id: row.get(5)?,
-                    relevance: -row.get::<_, f64>(6)?,
+                    chunk_id: row.get::<_, i64>(0)?,
+                    content: row.get(1)?,
+                    hash: row.get(2)?,
+                    chunk_index: row.get::<_, i64>(3)? as usize,
+                    byte_offset: row.get::<_, i64>(4)? as usize,
+                    source_path: row.get(5)?,
+                    source_id: row.get(6)?,
+                    relevance: -row.get::<_, f64>(7)?,
                 })
             })
             .map_err(|e| Error::Database(e.to_string()))?
@@ -416,6 +448,180 @@ impl SourceStore {
             .collect();
 
         Ok(results)
+    }
+
+    /// Look up the contents of a set of chunks by id, preserving the
+    /// input order. Used by the hybrid retrieval pipeline to hydrate
+    /// the final ranked list with chunk text + source metadata after
+    /// fusion has determined the order.
+    pub fn fetch_chunks_by_ids(&self, ids: &[i64]) -> Result<Vec<SearchHit>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let placeholders = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT c.id, c.content, c.hash, c.chunk_index, c.byte_offset, f.path, f.source_id
+             FROM chunks c
+             JOIN indexed_files f ON f.id = c.indexed_file_id
+             WHERE c.id IN ({placeholders})"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let id_params: Vec<rusqlite::types::Value> = ids
+            .iter()
+            .map(|&i| rusqlite::types::Value::Integer(i))
+            .collect();
+        let rows: Vec<SearchHit> = stmt
+            .query_map(rusqlite::params_from_iter(id_params.iter()), |row| {
+                Ok(SearchHit {
+                    chunk_id: row.get::<_, i64>(0)?,
+                    content: row.get(1)?,
+                    hash: row.get(2)?,
+                    chunk_index: row.get::<_, i64>(3)? as usize,
+                    byte_offset: row.get::<_, i64>(4)? as usize,
+                    source_path: row.get(5)?,
+                    source_id: row.get(6)?,
+                    // relevance is filled in by the caller based on the
+                    // hybrid-fusion score; we set 0.0 here as a sentinel.
+                    relevance: 0.0,
+                })
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+
+        // Reorder to match the requested id sequence.
+        let mut by_id: std::collections::HashMap<i64, SearchHit> =
+            rows.into_iter().map(|h| (h.chunk_id, h)).collect();
+        let ordered: Vec<SearchHit> = ids.iter().filter_map(|id| by_id.remove(id)).collect();
+        Ok(ordered)
+    }
+
+    /// Upsert an embedding for a chunk. Replaces any existing row with
+    /// the same `(chunk_id, model_id)` pair so re-embedding the same
+    /// chunk doesn't accumulate duplicates.
+    pub fn upsert_chunk_embedding(
+        &self,
+        chunk_id: i64,
+        model_id: &str,
+        dim: usize,
+        vec_bytes: &[u8],
+    ) -> Result<()> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        conn.execute(
+            "INSERT INTO chunk_embeddings (chunk_id, model_id, dim, vec)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(chunk_id, model_id) DO UPDATE SET
+                dim = excluded.dim,
+                vec = excluded.vec",
+            params![chunk_id, model_id, dim as i64, vec_bytes],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Load every embedding stored for a given model. Used by hybrid
+    /// retrieval to scan for cosine similarity. For corpora large
+    /// enough that an in-memory scan is slow (~100K+ chunks), this
+    /// can be replaced with an sqlite-vec / sqlite-vss native index;
+    /// the trait surface stays the same.
+    pub fn load_embeddings_for_model(&self, model_id: &str) -> Result<Vec<ChunkEmbeddingRow>> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
+            .prepare("SELECT chunk_id, model_id, vec FROM chunk_embeddings WHERE model_id = ?1")
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![model_id], |row| {
+                let chunk_id: i64 = row.get(0)?;
+                let model_id: String = row.get(1)?;
+                let bytes: Vec<u8> = row.get(2)?;
+                let vector = crate::embedding::decode_vec(&bytes).unwrap_or_default();
+                Ok(ChunkEmbeddingRow {
+                    chunk_id,
+                    model_id,
+                    vector,
+                })
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .filter(|r| !r.vector.is_empty())
+            .collect();
+        Ok(rows)
+    }
+
+    /// Find chunks that don't yet have an embedding for the given
+    /// model. The indexer uses this to incrementally back-fill
+    /// embeddings without re-processing every chunk on every run.
+    pub fn chunks_missing_embedding(
+        &self,
+        model_id: &str,
+        limit: usize,
+    ) -> Result<Vec<(i64, String)>> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT c.id, c.content
+                 FROM chunks c
+                 LEFT JOIN chunk_embeddings e
+                    ON e.chunk_id = c.id AND e.model_id = ?1
+                 WHERE e.chunk_id IS NULL
+                 LIMIT ?2",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![model_id, limit as i64], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+        Ok(rows)
+    }
+
+    /// Look up `last_modified` ages in seconds (relative to `now`)
+    /// for a list of chunk ids. Chunks whose `last_modified` cannot
+    /// be parsed get age 0 (treated as fresh) — defensive choice so
+    /// a malformed timestamp doesn't tank a result's ranking.
+    pub fn ages_secs_for_chunks(&self, ids: &[i64]) -> Result<std::collections::HashMap<i64, f64>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let placeholders = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT c.id, f.last_modified
+             FROM chunks c
+             JOIN indexed_files f ON f.id = c.indexed_file_id
+             WHERE c.id IN ({placeholders})"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let id_params: Vec<rusqlite::types::Value> = ids
+            .iter()
+            .map(|&i| rusqlite::types::Value::Integer(i))
+            .collect();
+        let now = chrono::Utc::now();
+        let mut ages = std::collections::HashMap::new();
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(id_params.iter()), |row| {
+                let id: i64 = row.get(0)?;
+                let last_mod: String = row.get(1)?;
+                Ok((id, last_mod))
+            })
+            .map_err(|e| Error::Database(e.to_string()))?;
+        for r in rows.flatten() {
+            let age_secs =
+                parse_datetime_opt(&r.1).map_or(0.0, |dt| (now - dt).num_seconds().max(0) as f64);
+            ages.insert(r.0, age_secs);
+        }
+        Ok(ages)
     }
 
     pub fn file_count_for_source(&self, source_id: &SourceId) -> Result<u64> {
@@ -499,6 +705,7 @@ impl SourceStore {
 
 #[derive(Debug, Clone)]
 pub struct SearchHit {
+    pub chunk_id: i64,
     pub content: String,
     pub hash: String,
     pub chunk_index: usize,
@@ -506,6 +713,13 @@ pub struct SearchHit {
     pub source_path: String,
     pub source_id: String,
     pub relevance: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChunkEmbeddingRow {
+    pub chunk_id: i64,
+    pub model_id: String,
+    pub vector: Vec<f32>,
 }
 
 #[derive(Debug, Clone)]

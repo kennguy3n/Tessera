@@ -3,6 +3,8 @@ use std::sync::Arc;
 use tessera_core::error::{Error, Result};
 use tessera_core::{SharedConnection, SourceId};
 
+use crate::embedding::{EmbeddingProvider, HashTrickEmbedding};
+use crate::hybrid::HybridSearchConfig;
 use crate::indexer::Indexer;
 use crate::progress::{ProgressSnapshot, ProgressTracker};
 use crate::search::{SearchEngine, SearchResult};
@@ -13,26 +15,32 @@ pub struct SourceManager {
     store: SourceStore,
     indexer: Indexer,
     progress: Arc<ProgressTracker>,
+    embedder: Option<Arc<dyn EmbeddingProvider>>,
+    hybrid_config: HybridSearchConfig,
 }
 
 impl SourceManager {
     pub fn new(db_path: &str, ignore_patterns: &[String]) -> Result<Self> {
         let store = SourceStore::open(db_path)?;
-        let indexer = Indexer::new(ignore_patterns);
+        let (indexer, embedder, hybrid_config) = build_default_hybrid_pipeline(ignore_patterns);
         Ok(Self {
             store,
             indexer,
             progress: Arc::new(ProgressTracker::new()),
+            embedder,
+            hybrid_config,
         })
     }
 
     pub fn new_in_memory(ignore_patterns: &[String]) -> Result<Self> {
         let store = SourceStore::open_in_memory()?;
-        let indexer = Indexer::new(ignore_patterns);
+        let (indexer, embedder, hybrid_config) = build_default_hybrid_pipeline(ignore_patterns);
         Ok(Self {
             store,
             indexer,
             progress: Arc::new(ProgressTracker::new()),
+            embedder,
+            hybrid_config,
         })
     }
 
@@ -40,12 +48,22 @@ impl SourceManager {
     /// used by other stores. Used by the napi bridge.
     pub fn with_shared_conn(conn: SharedConnection, ignore_patterns: &[String]) -> Result<Self> {
         let store = SourceStore::with_shared_conn(conn)?;
-        let indexer = Indexer::new(ignore_patterns);
+        let (indexer, embedder, hybrid_config) = build_default_hybrid_pipeline(ignore_patterns);
         Ok(Self {
             store,
             indexer,
             progress: Arc::new(ProgressTracker::new()),
+            embedder,
+            hybrid_config,
         })
+    }
+
+    /// Backfill embeddings for every chunk that doesn't yet have one
+    /// for the current embedder. Idempotent. The bridge layer
+    /// invokes this after attaching a new embedder so existing
+    /// corpora benefit from hybrid retrieval without a full reindex.
+    pub fn backfill_embeddings(&self, batch_size: usize) -> Result<usize> {
+        self.indexer.backfill_embeddings(&self.store, batch_size)
     }
 
     /// Returns the latest indexing progress snapshot for a source.
@@ -102,12 +120,20 @@ impl SourceManager {
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-        let engine = SearchEngine::new(&self.store);
+        let engine = SearchEngine::hybrid(
+            &self.store,
+            self.embedder.as_deref(),
+            self.hybrid_config.clone(),
+        );
         engine.search(query, limit)
     }
 
     pub fn search_broad(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-        let engine = SearchEngine::new(&self.store);
+        let engine = SearchEngine::hybrid(
+            &self.store,
+            self.embedder.as_deref(),
+            self.hybrid_config.clone(),
+        );
         engine.search_broad(query, limit)
     }
 
@@ -164,6 +190,36 @@ impl SourceManager {
         }
         outcome
     }
+}
+
+/// Construct the default hybrid retrieval pipeline used by every
+/// `SourceManager` constructor.
+///
+/// The default uses [`HashTrickEmbedding::default_config()`] as the
+/// embedder. This is the offline, zero-dependency option: it doesn't
+/// need a running model server, doesn't make network calls, and
+/// produces a meaningful vector signal for short queries / typos /
+/// substring matches over the BM25 baseline.
+///
+/// Production deployments that want transformer-quality embeddings
+/// can build their own `SourceManager` with `SourceStore` + `Indexer`
+/// directly and pass in a different `EmbeddingProvider` (e.g. one
+/// that calls llama-server's `/embedding` endpoint, or an external
+/// API). The trait surface is stable across providers — the only
+/// migration cost is re-embedding existing chunks because each
+/// provider's `model_id` is distinct and cross-model cosines are
+/// filtered out at query time.
+fn build_default_hybrid_pipeline(
+    ignore_patterns: &[String],
+) -> (
+    Indexer,
+    Option<Arc<dyn EmbeddingProvider>>,
+    HybridSearchConfig,
+) {
+    let embedder: Arc<dyn EmbeddingProvider> = Arc::new(HashTrickEmbedding::default_config());
+    let indexer = Indexer::new(ignore_patterns).with_embedder(Arc::clone(&embedder));
+    let hybrid_config = HybridSearchConfig::default();
+    (indexer, Some(embedder), hybrid_config)
 }
 
 #[cfg(test)]
@@ -234,6 +290,91 @@ mod tests {
 
         let sources = manager.list_sources().unwrap();
         assert_eq!(sources.len(), 2);
+    }
+
+    #[test]
+    fn manager_hybrid_populates_embeddings_on_index() {
+        // After indexing a folder via the default constructor, every
+        // chunk should have an embedding stored — hybrid retrieval
+        // is on by default and the indexer is wired to populate
+        // `chunk_embeddings` inline with chunk insertion.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("readme.txt"),
+            "Tessera uses SQLite FTS5 with hybrid retrieval for full-text search.",
+        )
+        .unwrap();
+
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager
+            .add_local_folder(dir.path().to_str().unwrap())
+            .unwrap();
+
+        // The default embedder model id is hash-trick-v1; load every
+        // embedding and verify the chunk got persisted.
+        let rows = manager
+            .store
+            .load_embeddings_for_model("hash-trick-v1-256d-char3-5")
+            .unwrap();
+        assert!(
+            !rows.is_empty(),
+            "embeddings should be populated by default after indexing"
+        );
+        assert_eq!(
+            rows[0].vector.len(),
+            256,
+            "vector dim should match embedder"
+        );
+    }
+
+    #[test]
+    fn manager_backfill_embeddings_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "alpha bravo charlie").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "delta echo foxtrot").unwrap();
+
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager
+            .add_local_folder(dir.path().to_str().unwrap())
+            .unwrap();
+
+        // First backfill should find nothing missing (indexer already
+        // embedded inline), but the call must succeed.
+        let first = manager.backfill_embeddings(100).unwrap();
+        assert_eq!(first, 0, "no missing embeddings after fresh indexing");
+
+        // Second backfill is a no-op.
+        let second = manager.backfill_embeddings(100).unwrap();
+        assert_eq!(second, 0);
+    }
+
+    #[test]
+    fn manager_hybrid_search_returns_results_for_typo_query() {
+        // Hybrid retrieval should be more forgiving of typos than
+        // BM25 alone because the hash-trick embedding shares
+        // character n-grams between the typo'd query and the
+        // correctly-spelled chunk content. We probe this by indexing
+        // a chunk and querying with a one-character substitution.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("doc.txt"),
+            "Tessera implements hybrid retrieval combining BM25, vector cosine, and recency decay.",
+        )
+        .unwrap();
+
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager
+            .add_local_folder(dir.path().to_str().unwrap())
+            .unwrap();
+
+        // Multi-word query so BM25 has terms to anchor on; the
+        // "Tesserae" typo is the failure case that pure BM25 misses
+        // (no exact match). Hybrid finds it via the embedding signal.
+        let results = manager.search("Tesserae hybrid retrieval", 5).unwrap();
+        assert!(
+            !results.is_empty(),
+            "hybrid search should find typo'd query"
+        );
     }
 
     #[test]
