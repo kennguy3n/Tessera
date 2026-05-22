@@ -1,20 +1,17 @@
-import { safeStorage } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { app } from "electron";
-import { encryptionUnavailableReason } from "./tokenVault";
 import {
-  decryptWithPasswordKey,
-  encryptWithPasswordKey,
-  isPasswordVaultBlob,
-  passwordVaultActive,
-} from "./passwordVault";
+  SECRETS_VAULT_LABEL,
+  decryptFromVault as sharedDecryptFromVault,
+  encryptForVault as sharedEncryptForVault,
+} from "./vaultCrypto";
 
 // Vault for arbitrary named secrets (e.g. external LLM provider
 // API keys). Stored alongside the OAuth `token-vault` but in a
 // distinct directory so a provider OAuth blob can never collide
 // with a free-form secret key. Both directories use the same
-// encryption fallback chain:
+// encryption fallback chain — implemented once in `vaultCrypto.ts`:
 //   1. `safeStorage` (OS keyring) when available
 //      - macOS Keychain (`darwin`)
 //      - Windows DPAPI (`win32`)
@@ -52,40 +49,21 @@ function ensureSecretDir(): void {
 }
 
 /**
- * Encrypt with safeStorage if available, else with the password-derived
- * vault (set up by `initPasswordVaultIfNeeded` at app startup). Refuses
- * to write secrets when no encryption mode is available — refusing the
- * write is preferable to dropping plaintext API keys on disk.
+ * Encrypt `plaintext` for the secrets vault. Thin wrapper around the
+ * shared dispatch in `vaultCrypto.ts`.
  */
 function encryptSecret(plaintext: string): Buffer {
-  if (safeStorage.isEncryptionAvailable()) {
-    return safeStorage.encryptString(plaintext);
-  }
-  if (passwordVaultActive()) {
-    return encryptWithPasswordKey(plaintext);
-  }
-  throw new Error(encryptionUnavailableReason());
+  return sharedEncryptForVault(plaintext);
 }
 
 /**
- * Decrypt by sniffing the blob format. See `tokenVault.decryptFromVault`
- * for the full reasoning — the same dispatch rules apply here.
+ * Decrypt a secrets-vault blob. Thin wrapper around the shared
+ * dispatch in `vaultCrypto.ts` — passes the `SECRETS_VAULT_LABEL` so
+ * recovery-error wording references "Secret" and the right directory
+ * to delete on a keyring-lost recovery path.
  */
 function decryptSecret(blob: Buffer): string {
-  if (isPasswordVaultBlob(blob)) {
-    if (!passwordVaultActive()) {
-      throw new Error(
-        `Secret blob is password-encrypted but no password is cached. ${encryptionUnavailableReason()}`,
-      );
-    }
-    return decryptWithPasswordKey(blob);
-  }
-  if (safeStorage.isEncryptionAvailable()) {
-    return safeStorage.decryptString(blob);
-  }
-  throw new Error(
-    `Secret file is encrypted with the OS keyring but the keyring is no longer available. Restore keyring access (${encryptionUnavailableReason()}) or delete the secret-vault directory to re-enter API keys.`,
-  );
+  return sharedDecryptFromVault(blob, SECRETS_VAULT_LABEL);
 }
 
 export function storeSecret(key: string, value: string): void {

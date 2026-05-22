@@ -29,8 +29,10 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 
-export const PASSWORD_PROMPT_SUBMIT_CHANNEL = "password-vault:submit";
-export const PASSWORD_PROMPT_CANCEL_CHANNEL = "password-vault:cancel";
+import {
+  PASSWORD_PROMPT_CANCEL_CHANNEL,
+  PASSWORD_PROMPT_SUBMIT_CHANNEL,
+} from "./passwordPromptChannels";
 
 contextBridge.exposeInMainWorld("tesseraPasswordPrompt", {
   submit(password: string): void {

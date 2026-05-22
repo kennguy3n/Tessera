@@ -58,17 +58,25 @@ import * as fs from "fs";
 import * as path from "path";
 import { promisify } from "util";
 
+import {
+  PASSWORD_PROMPT_CANCEL_CHANNEL,
+  PASSWORD_PROMPT_SUBMIT_CHANNEL,
+} from "./passwordPromptChannels";
+
 const pbkdf2Async = promisify(crypto.pbkdf2);
 
 /**
- * IPC channel names shared between this module and
- * `passwordPromptPreload.ts`. Kept as fixed constants (not
- * interpolated with `win.id`) because at most one prompt window can
- * be open at a time — `promptForVaultPassword` awaits the promise
- * before any other call site can reach this code path.
+ * Re-export the channel constants from this module too, so existing
+ * callers / tests (e.g. `passwordVault.test.ts`) can import them
+ * from `./passwordVault` without knowing about the underlying split.
+ * The single source of truth lives in `passwordPromptChannels.ts` —
+ * both this file and the preload script import from there to prevent
+ * drift.
  */
-export const PASSWORD_PROMPT_SUBMIT_CHANNEL = "password-vault:submit";
-export const PASSWORD_PROMPT_CANCEL_CHANNEL = "password-vault:cancel";
+export {
+  PASSWORD_PROMPT_CANCEL_CHANNEL,
+  PASSWORD_PROMPT_SUBMIT_CHANNEL,
+} from "./passwordPromptChannels";
 
 const PBKDF2_ITERATIONS = 600_000;
 const PBKDF2_KEY_LEN = 32;
@@ -348,11 +356,29 @@ export async function promptForVaultPassword(opts: {
       ipcMain.removeListener(PASSWORD_PROMPT_CANCEL_CHANNEL, onCancel);
     };
 
+    /**
+     * Defence-in-depth: only accept messages whose `sender` is the
+     * prompt window we just created. The fixed channel names mean a
+     * second renderer (e.g. the main app window, if it had somehow
+     * been opened before this listener was unregistered) could also
+     * post to `password-vault:submit` / `password-vault:cancel`.
+     * Today the prompt is the ONLY window when this listener is
+     * active (it runs before `createWindow()`), but if the prompt is
+     * ever re-shown later in the lifecycle (e.g. wrong-password
+     * retry), other renderers will exist and this check stops them
+     * from injecting a password or forging a cancel.
+     */
+    const isFromPromptWindow = (e: Electron.IpcMainEvent): boolean => {
+      if (win.isDestroyed()) return false;
+      return e.sender === win.webContents;
+    };
+
     const onSubmit = (
-      _e: Electron.IpcMainEvent,
+      e: Electron.IpcMainEvent,
       payload: { password: string },
     ): void => {
       if (settled) return;
+      if (!isFromPromptWindow(e)) return;
       settled = true;
       cleanup();
       // Defer close so the renderer's ipcRenderer.send flush has a
@@ -363,8 +389,9 @@ export async function promptForVaultPassword(opts: {
       resolve(payload.password);
     };
 
-    const onCancel = (): void => {
+    const onCancel = (e: Electron.IpcMainEvent): void => {
       if (settled) return;
+      if (!isFromPromptWindow(e)) return;
       settled = true;
       cleanup();
       setImmediate(() => {
