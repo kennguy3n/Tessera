@@ -552,3 +552,48 @@ describe("passwordVault — TOCTOU sentinel contract", () => {
     );
   });
 });
+
+// Regression: passwordVault.ts module docstring used to say "At app
+// startup, `appState.ts` calls `initPasswordVaultIfNeeded`
+// asynchronously." but `appState.ts` does NOT reference
+// `initPasswordVaultIfNeeded` — the actual caller is
+// `maybeInitPasswordVault` in `main.ts`. Pin the correct attribution
+// so a future refactor doesn't reintroduce the wrong file name.
+describe("passwordVault — docstring caller attribution", () => {
+  const PASSWORD_VAULT_SRC = fs
+    .readFileSync(path.join(TEST_DIR, "..", "passwordVault.ts"), "utf-8")
+    .replace(/\r\n/g, "\n");
+  // The module docstring lives in the first JSDoc block; isolate it
+  // to avoid catching the words "appState" or "main.ts" elsewhere
+  // in the file (e.g. inside function-level docs).
+  const moduleDocEnd = PASSWORD_VAULT_SRC.indexOf("*/");
+  const moduleDoc = PASSWORD_VAULT_SRC.slice(0, moduleDocEnd);
+
+  it("module docstring attributes the startup call to main.ts, not appState.ts", () => {
+    // The correct caller name must appear in the architecture
+    // bullet list.
+    expect(moduleDoc).toMatch(/main\.ts/);
+    // The wrong caller name (a leftover from an earlier draft) must
+    // NOT appear in the module docstring.
+    expect(moduleDoc).not.toMatch(/appState\.ts/);
+  });
+
+  it("appState.ts does not import initPasswordVaultIfNeeded (justifies the docstring fix)", () => {
+    const appStateSrc = fs
+      .readFileSync(path.join(TEST_DIR, "..", "appState.ts"), "utf-8")
+      .replace(/\r\n/g, "\n");
+    // appState.ts must not import the function — if a future refactor
+    // wires it through appState, both this test AND the docstring
+    // need to be updated together. The test failure is the
+    // forcing function.
+    expect(appStateSrc).not.toMatch(/initPasswordVaultIfNeeded/);
+  });
+
+  it("main.ts is the actual caller of initPasswordVaultIfNeeded", () => {
+    const mainSource = fs
+      .readFileSync(path.join(TEST_DIR, "..", "main.ts"), "utf-8")
+      .replace(/\r\n/g, "\n");
+    expect(mainSource).toMatch(/initPasswordVaultIfNeeded/);
+    expect(mainSource).toMatch(/maybeInitPasswordVault/);
+  });
+});

@@ -5,10 +5,11 @@
  *
  * Architecture:
  *
- *   1. At app startup, `appState.ts` calls `initPasswordVaultIfNeeded`
- *      asynchronously. If `safeStorage.isEncryptionAvailable()` is
- *      true, this is a no-op — the existing `safeStorage`-based path
- *      stays in effect.
+ *   1. At app startup, `main.ts`'s `maybeInitPasswordVault` wrapper
+ *      awaits `initPasswordVaultIfNeeded` before `createWindow()`
+ *      runs. If `safeStorage.isEncryptionAvailable()` is true, this is
+ *      a no-op — the existing `safeStorage`-based path stays in
+ *      effect and the password prompt is never shown.
  *   2. If `safeStorage` is unavailable, `initPasswordVaultIfNeeded`
  *      opens a modal `BrowserWindow` and prompts the user for a
  *      password. The password is run through PBKDF2-SHA256 (600k
