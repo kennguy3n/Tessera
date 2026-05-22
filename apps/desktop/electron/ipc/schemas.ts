@@ -189,6 +189,27 @@ export type ExternalProviderConfigInput = z.infer<
   typeof ExternalProviderConfigSchema
 >;
 
+// The `externalProvider:set` handler accepts a second argument carrying
+// the raw API key, separate from the `ExternalProviderConfigInput`
+// payload (the config stores only an `apiKeyRef`; the secret itself
+// lives in the OS keychain via `secretsVault`). Tri-state semantics:
+//
+//   string (non-empty)  -> store this secret under `apiKeyRef`
+//   ""                  -> explicitly forget the stored secret
+//   null                -> leave whatever is in the keychain alone
+//
+// Bounded at `MAX_STRING_LEN` so a compromised renderer cannot push
+// arbitrarily large payloads into the OS keychain (which has its own
+// platform-dependent size limits and would either reject or silently
+// truncate without validation).
+export const ExternalProviderApiKeySchema = z
+  .string()
+  .max(MAX_STRING_LEN)
+  .nullable();
+export type ExternalProviderApiKeyInput = z.infer<
+  typeof ExternalProviderApiKeySchema
+>;
+
 // --- Model generation ---
 //
 // Mirrors the canonical `GenerateRequest` in `shared/types.ts`. The

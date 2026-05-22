@@ -17,6 +17,7 @@ import {
 import * as secretsVault from "../secretsVault";
 import type { SettingsData } from "../../shared/types";
 import {
+  ExternalProviderApiKeySchema,
   ExternalProviderConfigSchema,
   SettingsUpdateSchema,
 } from "./schemas";
@@ -111,17 +112,20 @@ export function registerSettingsHandlers(): void {
 
   idempotentHandle("settings:update", async (_event, settings: unknown) => {
     const parsed = SettingsUpdateSchema.parse(settings);
-    const config = loadConfig();
-    const updated = {
-      ...config,
-      ...parsed,
-    };
+    // Return value is read from `loadConfig()` *after* the write so the
+    // payload the renderer receives reflects what is actually on disk
+    // (including any `.catch()` healing or `.loose()` passthrough that
+    // happened on the read leg). Returning the pre-write `{...config,
+    // ...parsed}` snapshot would diverge from the persisted state if a
+    // field had been healed, and would be racy against any concurrent
+    // writer.
     updateConfig(parsed);
+    const persisted = loadConfig();
     return {
-      theme: updated.theme,
-      defaultExportFormat: updated.defaultExportFormat,
-      ignorePatterns: updated.ignorePatterns,
-      watchPatterns: updated.watchPatterns,
+      theme: persisted.theme,
+      defaultExportFormat: persisted.defaultExportFormat,
+      ignorePatterns: persisted.ignorePatterns,
+      watchPatterns: persisted.watchPatterns,
     } as SettingsData;
   });
 
@@ -142,11 +146,13 @@ export function registerSettingsHandlers(): void {
     "externalProvider:set",
     async (_event, provider: unknown, apiKey: unknown) => {
       const parsed = ExternalProviderConfigSchema.parse(provider);
-      if (apiKey !== null && typeof apiKey !== "string") {
-        throw new Error(
-          `apiKey must be a string or null (got ${typeof apiKey})`,
-        );
-      }
+      // `apiKey` is validated separately from the provider config
+      // because the secret itself lives in the OS keychain, not in the
+      // on-disk JSON. The schema bounds the string length so a
+      // compromised renderer cannot push an arbitrarily large blob into
+      // `secretsVault.storeSecret` below. Tri-state semantics (string /
+      // empty-string / null) are documented on the schema definition.
+      const parsedApiKey = ExternalProviderApiKeySchema.parse(apiKey);
       // `ExternalProviderConfigSchema` requires every field, so `parsed`
       // is already complete; the default-spread below is defence in
       // depth — if a future schema version makes a field optional, the
@@ -160,13 +166,13 @@ export function registerSettingsHandlers(): void {
       };
       updateConfig({ externalProvider: merged });
 
-      if (apiKey === null) {
+      if (parsedApiKey === null) {
         // null = leave whatever's in the keychain alone.
-      } else if (apiKey === "") {
+      } else if (parsedApiKey === "") {
         // empty string = explicitly forget the key.
         secretsVault.deleteSecret(merged.apiKeyRef);
       } else {
-        secretsVault.storeSecret(merged.apiKeyRef, apiKey);
+        secretsVault.storeSecret(merged.apiKeyRef, parsedApiKey);
       }
 
       return {

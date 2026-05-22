@@ -18,6 +18,7 @@ import {
   UpdateTaskSchema,
   CreateAutomationSchema,
   SettingsUpdateSchema,
+  ExternalProviderApiKeySchema,
   ExternalProviderConfigSchema,
   GenerateRequestSchema,
   TypstExportSchema,
@@ -354,6 +355,36 @@ describe("ExternalProviderConfigSchema", () => {
         ...VALID_PROVIDER,
         timeoutSecs: 0,
       }),
+    ).toThrow();
+  });
+});
+
+describe("ExternalProviderApiKeySchema", () => {
+  it("accepts a normal API key string", () => {
+    expect(ExternalProviderApiKeySchema.parse("sk-abc123")).toBe("sk-abc123");
+  });
+
+  // The tri-state semantics live on the schema's doc comment; pin them
+  // here so a future refactor that switches to NonEmptyString or drops
+  // `.nullable()` trips a test instead of silently breaking the
+  // "forget this key" / "don't touch the keychain" flows.
+  it("accepts an empty string (explicit forget signal)", () => {
+    expect(ExternalProviderApiKeySchema.parse("")).toBe("");
+  });
+
+  it("accepts null (leave keychain unchanged signal)", () => {
+    expect(ExternalProviderApiKeySchema.parse(null)).toBeNull();
+  });
+
+  it("rejects a non-string, non-null value", () => {
+    expect(() => ExternalProviderApiKeySchema.parse(42)).toThrow();
+    expect(() => ExternalProviderApiKeySchema.parse(undefined)).toThrow();
+    expect(() => ExternalProviderApiKeySchema.parse({})).toThrow();
+  });
+
+  it("rejects an over-long key (defence against renderer-side blob)", () => {
+    expect(() =>
+      ExternalProviderApiKeySchema.parse("x".repeat(1_000_001)),
     ).toThrow();
   });
 });
