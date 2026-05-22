@@ -281,13 +281,28 @@ describe("ConnectorStatus", () => {
   );
 
   it(
-    "keeps the Offline badge when sync throws a network-shaped error",
+    "clears the Offline badge on every thrown sync error, regardless " +
+      "of message shape, because `runConnectorSync` (electron side) " +
+      "is the single owner of network-error classification and " +
+      "converts every NetworkError to a `{ status: 'offline' }` " +
+      "return — anything that still throws to the renderer is by " +
+      "definition not a network error (rate limit, NotConnectedError, " +
+      "bridge fault). Previously the renderer reimplemented a weaker " +
+      "regex copy of `isNetworkError` here, which created a drift " +
+      "surface between renderer and main-process classifiers " +
+      "(wave 18 ANALYSIS_0005).",
     async () => {
       mockApi.connectors.status.mockResolvedValue({
         provider: "notion",
         connected: true,
         status: "connected",
       });
+      // A network-shaped message reaching the renderer would be a bug
+      // in `runConnectorSync`, not in the renderer. We assert the
+      // renderer no longer guesses at it: the badge clears, the next
+      // poll surfaces whatever the real connector status is, and the
+      // user gets an accurate signal instead of a stale "Offline" left
+      // over from heuristics.
       mockApi.connectors.sync.mockRejectedValue(
         new Error("getaddrinfo ENOTFOUND api.notion.com"),
       );
@@ -301,8 +316,13 @@ describe("ConnectorStatus", () => {
         fireEvent.click(screen.getByText("Sync Now"));
       });
 
+      // The badge must NOT light up from a thrown error: the contract
+      // is that offline state lives entirely on the structured
+      // `result.status === 'offline'` field returned by the main
+      // process. Asserting `queryByText` returns null guards against
+      // any future re-introduction of an in-renderer message classifier.
       await waitFor(() => {
-        expect(screen.getByText("Offline")).toBeInTheDocument();
+        expect(screen.queryByText("Offline")).not.toBeInTheDocument();
       });
     },
   );

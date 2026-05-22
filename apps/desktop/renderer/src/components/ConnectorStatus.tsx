@@ -98,24 +98,24 @@ export default function ConnectorStatus({
         if (!isOffline) setLastSyncTime(new Date().toLocaleTimeString());
       }
       onSync?.();
-    } catch (err) {
-      // Sync threw (rate limit, NotConnectedError, validation error,
-      // etc.). The Offline badge specifically signals "network is
-      // unreachable" — keeping a stale Offline state from a previous
-      // run after the connector now fails for a different reason
-      // misleads the user into thinking the network is still down
-      // when in fact they should re-authenticate or wait for a rate
-      // limit to clear. Inspect the error message for the network
-      // signature the main process wraps offline conditions with
-      // (`{ status: "offline" }` becomes a plain throw only in
-      // non-wrapped legacy paths); otherwise clear the badge.
-      const message =
-        err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
-      const looksLikeNetwork =
-        /\b(offline|network|fetch failed|dns|getaddrinfo|connection (refused|reset|timed|aborted)|socket hang up)\b/.test(
-          message,
-        );
-      setOffline(looksLikeNetwork);
+    } catch {
+      // Wave 18 ANALYSIS_0005: a thrown error here is never a network
+      // error. Both the unified `api.connectors.sync(provider)` channel
+      // and the legacy `api.connectors.syncDrive()` channel are backed
+      // by `runConnectorSync` (`handlers.ts:434-474` and `ipc.ts:1339`
+      // respectively), which catches every `NetworkError` —
+      // `fetch failed`, DNS failures, socket resets, EAI_AGAIN, and so
+      // on — and turns it into a `{ status: "offline" }` return value.
+      // What still throws is rate-limit exhaustion, `NotConnectedError`,
+      // validation errors, and bridge faults: none of those should
+      // light up the Offline badge. The previous code re-implemented
+      // a weaker regex copy of the main-process `isNetworkError`
+      // classifier (`handlers.ts:157-223`) here, creating a drift
+      // surface between renderer heuristics and the canonical
+      // classifier; deleting it removes that drift risk without
+      // weakening the badge, because the offline state already lives
+      // entirely on the structured `result.status` field above.
+      setOffline(false);
     } finally {
       setSyncing(false);
       pollStatus();

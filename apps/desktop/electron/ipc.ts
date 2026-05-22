@@ -1153,6 +1153,26 @@ export function registerIpcHandlers(): void {
   // same in-memory bucket.
   registerConnectorHandlers(getConnectorContext());
 
+  // Wave 18 ANALYSIS_0002: mirror the idempotent-registration guard
+  // that `registerConnectorHandlers` uses for its own channels.
+  // `registerIpcHandlers()` is called once per main-process startup
+  // today, but the test harness re-imports this module repeatedly and
+  // a future hot-reload path (or a contributor extracting these
+  // picker handlers into their own registrar — Block C Task 17 plans
+  // exactly that) would otherwise crash with
+  // `Attempted to register a second handler for 'connectors:gdrive:listFiles'`.
+  // Other inline handlers in this file lack the guard for historical
+  // reasons; defending the three gdrive picker channels here matches
+  // the pattern established by the new multi-provider dispatcher
+  // without churning the rest of the monolith ahead of Task 17.
+  for (const channel of [
+    "connectors:gdrive:listFiles",
+    "connectors:gdrive:selectItems",
+    "connectors:gdrive:sync",
+  ] as const) {
+    ipcMain.removeHandler(channel);
+  }
+
   ipcMain.handle(
     "connectors:gdrive:listFiles",
     async (_event, folderId?: string, pageToken?: string) => {
