@@ -387,8 +387,6 @@ const KNOWN_COMPUTE_BACKENDS: ReadonlySet<ComputeBackend> = new Set([
  * `===` check where they would always miss with a confusing
  * "no variant for this platform" error that's indistinguishable from a
  * missing-entry bug.
- *
- *
  */
 export function parsePlatform(s: string): Platform | null {
   return (KNOWN_PLATFORMS as ReadonlySet<string>).has(s)

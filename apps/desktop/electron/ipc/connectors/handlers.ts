@@ -556,10 +556,9 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
       // this via IPC so the URI it tells the user to register in the
       // provider's developer console cannot drift from the one the
       // OAuth flow actually sends in the authorize request. Drift
-      // here caused a previous
-      // users to register `http://127.0.0.1:9876/callback` for
-      // Google Drive while the OAuth flow sent
-      // `http://localhost:9876/callback`, producing
+      // here caused a bug where the UI told users to register
+      // `http://127.0.0.1:9876/callback` for Google Drive while the
+      // OAuth flow sent `http://localhost:9876/callback`, producing
       // `redirect_uri_mismatch` on every connect attempt.
       const provider = assertProvider(providerRaw, "provider");
       const config = getProviderOAuthConfig(provider);

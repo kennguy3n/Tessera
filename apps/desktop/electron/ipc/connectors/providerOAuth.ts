@@ -256,9 +256,6 @@ export function getRedirectUri(config: ProviderOAuthConfig): string {
  * (`connectors:getAllRedirectUris`) lets the renderer derive the
  * value from this single source of truth and eliminate the duplicate
  * constants entirely.
- *
- * fallback redirectUri values that must sync with providerOAuth.ts
- * config".
  */
 export function getRedirectUriMap(): Record<string, string> {
   const map: Record<string, string> = {};

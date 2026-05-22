@@ -68,8 +68,6 @@ function broadcast(status: UpdateStatusEvent): void {
  * reference type). All non-`debug` methods are required; `debug` is
  * optional because production loggers commonly drop debug output
  * for cost reasons and `electron-updater` calls it best-effort.
- *
- * type assertion to bypass logger type mismatch".
  */
 export interface AutoUpdaterLogger {
   info(message?: unknown): void;

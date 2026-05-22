@@ -244,7 +244,7 @@ export const FAILED_RETRY_MAX_ATTEMPTS = 5;
  * `2024-06-01T12:00:00+00:00`. Figma and Notion currently happen to
  * return a stable shape, but the comparison is a footgun for any
  * future provider (Atlassian already mixes both forms in different
- * endpoints) and a
+ * endpoints), so we normalise to epoch-ms once and compare numbers.
  *
  * Returning `null` (rather than throwing) for unparsable input lets
  * callers fall back to the same behaviour they had before this fix:
