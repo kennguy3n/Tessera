@@ -306,6 +306,86 @@ describe("ConnectorStatus", () => {
       });
     },
   );
+
+  it(
+    "clears stale Offline badge on disconnect so a reconnect cycle " +
+      "does not show Offline when the network is healthy " +
+      "(regression: wave 14 BUG_0001)",
+    async () => {
+      // Phase 1: connected + offline (sync failed due to network).
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "google_drive",
+        connected: true,
+        status: "connected",
+      });
+      mockApi.connectors.syncDrive.mockResolvedValue({
+        added: 0,
+        modified: 0,
+        removed: 0,
+        status: "offline",
+      });
+
+      render(<ConnectorStatus provider="google_drive" />);
+      await waitFor(() => {
+        expect(screen.getByText("Sync Now")).toBeInTheDocument();
+      });
+
+      // Sync → Offline badge appears.
+      await act(async () => {
+        fireEvent.click(screen.getByText("Sync Now"));
+      });
+      await waitFor(() => {
+        expect(screen.getByText("Offline")).toBeInTheDocument();
+      });
+
+      // Phase 2: user clicks Disconnect. After the call, pollStatus
+      // returns `connected: false` (the connector was torn down).
+      mockApi.connectors.disconnect.mockResolvedValue({
+        provider: "google_drive",
+        connected: false,
+        status: "disconnected",
+      });
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "google_drive",
+        connected: false,
+        status: "disconnected",
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByText("Disconnect"));
+      });
+
+      // The badge text must now be "Disconnected" — NOT "Offline".
+      // Before the fix, `offline` was still `true` in React state,
+      // but with `connected: false` the ternary renders
+      // "Disconnected" anyway. The real bug manifests when `connected`
+      // flips back to `true` (reconnect) below.
+      await waitFor(() => {
+        expect(screen.getByText("Disconnected")).toBeInTheDocument();
+      });
+
+      // Phase 3: user reconnects (OAuth). Status now returns
+      // `connected: true` again. A stale `offline = true` would make
+      // the ternary evaluate to "Offline" even though the brand-new
+      // OAuth flow proves the network is healthy.
+      mockApi.connectors.status.mockResolvedValue({
+        provider: "google_drive",
+        connected: true,
+        status: "connected",
+      });
+
+      // Trigger a re-poll by advancing the fake timer past the 10s
+      // interval. Use `act` to let React process state updates.
+      await act(async () => {
+        vi.advanceTimersByTime(11_000);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("Connected")).toBeInTheDocument();
+        expect(screen.queryByText("Offline")).not.toBeInTheDocument();
+      });
+    },
+  );
 });
 
 describe("DriveFilePicker", () => {

@@ -1709,6 +1709,73 @@ describe("Jira sync — JQL watermark sanitisation", () => {
       );
     },
   );
+
+  it(
+    "corrupted watermark + non-empty retries degrades to a full scan " +
+      "(not a retry-only JQL) so newly-updated issues are not missed " +
+      "(regression: wave 14 ANALYSIS_0004)",
+    async () => {
+      const syncDir = path.join(dir, "jira-sync");
+      await fsp.mkdir(syncDir, { recursive: true });
+      // State has a *malformed* watermark (would be rejected by
+      // sanitiseJqlWatermark) AND carry-forward retries. Before the
+      // fix, the JQL would become `key in (OLD-1) ORDER BY updated
+      // DESC` — fetching ONLY the retry key and silently skipping
+      // every other recently-updated issue for one full pass.
+      await fsp.writeFile(
+        path.join(syncDir, "state.json"),
+        JSON.stringify({
+          lastSyncIso: "corrupted-value",
+          cloudId: "cloud-1",
+          failedRetries: [
+            { remoteId: "OLD-1", remoteModifiedAt: "2024-01-01T00:00:00.000+0000" },
+          ],
+        }),
+        "utf8",
+      );
+
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          issues: [
+            {
+              id: "20001",
+              key: "NEW-99",
+              fields: {
+                summary: "Fresh issue",
+                description: null,
+                status: { name: "Open" },
+                project: { key: "NEW", name: "New Project" },
+                updated: "2024-07-01T00:00:00.000+0000",
+              },
+            },
+          ],
+          startAt: 0,
+          maxResults: 100,
+          total: 1,
+        }),
+      });
+
+      await syncJira({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+        cloudId: "cloud-1",
+      });
+
+      const searchCall = fetchMock.mock.calls.find((c) =>
+        String(c[0]).includes("/rest/api/3/search"),
+      );
+      expect(searchCall).toBeDefined();
+      const jqlParam = new URL(String(searchCall![0])).searchParams.get("jql");
+      // The corrupted watermark must have been dropped AND the retries
+      // must NOT have produced a retry-only query. The JQL must be a
+      // bare full-scan `ORDER BY updated DESC`.
+      expect(jqlParam).toBe("ORDER BY updated DESC");
+      // The fresh issue must have been synced (full scan picked it up).
+      expect(bridge.added.length).toBeGreaterThanOrEqual(1);
+    },
+  );
 });
 
 describe("Jira sync — retry-queue load-time validation", () => {
@@ -2287,8 +2354,8 @@ describe("Google Drive sync — manifest cleanup", () => {
 
       // Both metadata fetches 404 → both ids land in failedFileIds.
       fetchMock
-        .mockResolvedValueOnce({ ok: false, status: 404 })
-        .mockResolvedValueOnce({ ok: false, status: 404 });
+        .mockResolvedValueOnce({ ok: false, status: 404, text: async () => "not found" })
+        .mockResolvedValueOnce({ ok: false, status: 404, text: async () => "not found" });
 
       const r = await syncGoogleDrive({
         accessToken: "AT",
@@ -2713,7 +2780,11 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
 
       // Phase 1 fetchPageById → 404. Phase 2 /search → empty.
       fetchMock
-        .mockResolvedValueOnce({ ok: false, status: 404 })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          text: async () => "not found",
+        })
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({

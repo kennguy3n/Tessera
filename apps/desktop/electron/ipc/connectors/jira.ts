@@ -352,14 +352,44 @@ export async function syncJira(ctx: {
     retryKeys.length > 0
       ? `key in (${retryKeys.join(",")})`
       : null;
+  // JQL composition. The four cases:
+  //
+  // 1. Valid watermark + retries → `(updated >= W) OR (key in K)`,
+  //    so newly-updated issues AND carry-forward retry keys are both
+  //    fetched in a single pass.
+  // 2. Valid watermark, no retries → `updated >= W ORDER BY …`.
+  // 3. No watermark + retries (first sync with pre-existing
+  //    retries) → `key in (K) ORDER BY …`. The retries are
+  //    re-fetched explicitly; there is no watermark to widen with.
+  // 4. No watermark, no retries → bare full scan.
+  //
+  // The interesting *edge* case is "watermark was present but
+  // rejected by `sanitiseJqlWatermark`" AND retries exist.
+  // Previously this took path (3), which emitted `key in (K)`
+  // alone — silently skipping every issue updated between the
+  // corrupt-state sync and the next pass (one-pass-late visibility
+  // on every other edit). The correct degraded behaviour: when the
+  // watermark was *rejected* (non-null input, null output), degrade
+  // to a full scan even when retries exist — retries naturally
+  // surface via `ORDER BY updated DESC` because their `updated` is
+  // bounded above by the prior pass's watermark. See Devin Review
+  // wave 14 ANALYSIS_0004.
+  const watermarkWasRejected = watermark !== null && safeWatermark === null;
   let jql: string;
   if (watermarkClause && retryClause) {
     jql = `(${watermarkClause}) OR (${retryClause}) ORDER BY updated DESC`;
   } else if (watermarkClause) {
     jql = `${watermarkClause} ORDER BY updated DESC`;
-  } else if (retryClause) {
+  } else if (retryClause && !watermarkWasRejected) {
+    // No watermark ever existed (first sync) but retries are
+    // present — fetch them explicitly. This path is NOT taken when
+    // the watermark was rejected because the full scan below
+    // handles that case more safely.
     jql = `${retryClause} ORDER BY updated DESC`;
   } else {
+    // Either (a) no watermark + no retries → first-ever full scan,
+    // or (b) watermark was rejected → degraded full scan that self-
+    // heals the watermark from the first issue's `updated`.
     jql = `ORDER BY updated DESC`;
   }
 

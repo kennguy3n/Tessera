@@ -41,9 +41,30 @@ export default function ConnectorStatus({
       const api = window.tessera;
       if (!api) return;
       const result = await api.connectors.status(provider);
+      // Reset the Offline badge whenever we observe the connector
+      // transition into a non-connected state (i.e. disconnected, or
+      // re-authenticating). The renderer keeps `ConnectorStatus`
+      // mounted across disconnect/reconnect cycles for `google_drive`
+      // (see SourcesPage.tsx) so without this gate the Offline flag
+      // from an earlier failed sync would survive the disconnect →
+      // OAuth → reconnect flow and re-appear the instant `connected`
+      // flips back to true, even though the brand-new OAuth handshake
+      // proves the network is healthy. Clearing here closes that
+      // window; the next successful `handleSync` will write the badge
+      // back if the new connection is itself offline. See Devin Review
+      // wave 14 BUG_0001.
+      if (!result.connected) {
+        setOffline(false);
+      }
       setStatus(result);
     } catch {
       setStatus({ provider, connected: false, status: "error" });
+      // Same reasoning as above — a status-poll exception means we
+      // cannot prove the connector is offline, only that the status
+      // probe itself failed (which the renderer will retry every 10s).
+      // Holding onto a stale Offline badge from a prior sync would
+      // misrepresent the connector's actual state.
+      setOffline(false);
     }
   }, [provider]);
 
@@ -111,6 +132,16 @@ export default function ConnectorStatus({
     } catch {
       // error handled by polling
     }
+    // Clear the Offline badge synchronously on disconnect — the
+    // pollStatus below will also clear it once it observes
+    // `connected: false`, but the explicit reset here removes the
+    // race window between disconnect succeeding and the next status
+    // poll completing. Without this, a user who saw "Offline" and
+    // chose to Disconnect would see the badge briefly persist after
+    // the connector was already gone. See Devin Review wave 14
+    // BUG_0001.
+    setOffline(false);
+    setLastSyncTime(null);
     pollStatus();
   };
 

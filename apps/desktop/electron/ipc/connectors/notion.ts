@@ -191,7 +191,21 @@ async function fetchPageById(
   const resp = await fetch(`${NOTION_API}/pages/${pageId}`, {
     headers: notionHeaders(accessToken),
   });
-  if (resp.status === 404 || resp.status === 410) return null;
+  if (resp.status === 404 || resp.status === 410) {
+    // Drain the response body before returning so undici (Node's
+    // built-in fetch impl) is free to release the underlying socket
+    // back to the keep-alive pool immediately. Without this, an
+    // unconsumed body keeps the socket pinned until GC reaps the
+    // Response — not catastrophic, but under high retry-queue churn
+    // (many deleted pages in one pass) it can temporarily exhaust
+    // the connection pool and force the next page-fetch to wait on
+    // a fresh TLS handshake. The `.catch(() => {})` swallows any
+    // read error — we already know the page is gone, so a body-read
+    // failure here would be noise. See Devin Review wave 14
+    // ANALYSIS_0003.
+    await resp.text().catch(() => undefined);
+    return null;
+  }
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(

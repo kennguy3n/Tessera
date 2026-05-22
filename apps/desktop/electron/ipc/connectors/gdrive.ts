@@ -150,6 +150,14 @@ export async function syncGoogleDrive(ctx: {
         if (metaResp.status === 404 || metaResp.status === 410) {
           failedFileIds.push(fileId);
         }
+        // Drain the response body so undici can return the underlying
+        // socket to the keep-alive pool immediately. Without this, an
+        // unconsumed body keeps the socket pinned until GC reaps the
+        // Response — noticeable when many files in a single sync are
+        // 404/410/5xx (e.g. a large carry-forward retry queue). See
+        // Devin Review wave 14 ANALYSIS_0003 (notion variant; applied
+        // here for architectural symmetry).
+        await metaResp.text().catch(() => undefined);
         continue;
       }
       const meta = (await metaResp.json()) as DriveMeta;
@@ -164,14 +172,23 @@ export async function syncGoogleDrive(ctx: {
           `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`,
           { headers: { Authorization: `Bearer ${accessToken}` } },
         );
-        if (!exportResp.ok) continue;
+        if (!exportResp.ok) {
+          // Drain body before skipping so the underlying socket is
+          // returned to the pool immediately. See Devin Review wave
+          // 14 ANALYSIS_0003.
+          await exportResp.text().catch(() => undefined);
+          continue;
+        }
         contentBytes = await exportResp.arrayBuffer();
       } else {
         const dlResp = await fetch(
           `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
           { headers: { Authorization: `Bearer ${accessToken}` } },
         );
-        if (!dlResp.ok) continue;
+        if (!dlResp.ok) {
+          await dlResp.text().catch(() => undefined);
+          continue;
+        }
         contentBytes = await dlResp.arrayBuffer();
       }
 
