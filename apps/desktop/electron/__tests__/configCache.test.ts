@@ -176,6 +176,87 @@ describe("config cache", () => {
     expect(onDisk.autoUpdate).toBe(false);
   });
 
+  it("rejects direct mutation of a top-level cached field", () => {
+    // Deep-freeze contract: a caller doing `cfg.theme = 'x'` on the
+    // cached object would silently corrupt every other reader's view
+    // of the config without the disk being touched. The cache freezes
+    // the returned object so this surfaces as a TypeError at the
+    // mutation site instead of as a much-harder-to-debug
+    // "cache disagrees with disk" symptom downstream.
+    const cfg = loadConfig();
+    expect(() => {
+      // The cast is the same cast a buggy caller would have to write
+      // to bypass TypeScript's `Readonly` if we ever add that — we're
+      // testing the runtime guard, not the type system.
+      (cfg as { theme: string }).theme = "dark";
+    }).toThrow(TypeError);
+    // And the cache is unchanged after the failed mutation.
+    expect(loadConfig().theme).toBe(cfg.theme);
+  });
+
+  it("rejects mutation of a nested array on the cached config", () => {
+    // `Object.freeze` is shallow; the cache uses a deep-freeze helper
+    // so nested arrays (`ignorePatterns`, `watchPatterns`,
+    // `lastOpenedArtifacts`, `sourcePaths`) are also frozen. A buggy
+    // caller doing `cfg.ignorePatterns.push('node_modules')` would
+    // otherwise corrupt the shared array reference without going
+    // through `updateConfig`.
+    const cfg = loadConfig();
+    expect(() => {
+      (cfg.ignorePatterns as string[]).push(".cache");
+    }).toThrow(TypeError);
+    expect(() => {
+      (cfg.watchPatterns as string[]).push("**/*.foo");
+    }).toThrow(TypeError);
+  });
+
+  it("rejects mutation of the nested externalProvider object", () => {
+    const cfg = loadConfig();
+    expect(() => {
+      (cfg.externalProvider as { enabled: boolean }).enabled = true;
+    }).toThrow(TypeError);
+    expect(() => {
+      (cfg.externalProvider as { modelName: string }).modelName = "claude-3";
+    }).toThrow(TypeError);
+  });
+
+  it("permits the spread-to-mutable-draft idiom that callers should use", () => {
+    // The escape hatch for a caller that wants a mutable copy is to
+    // spread the frozen result: `const draft = { ...loadConfig() }`.
+    // That produces a fresh, unfrozen object whose nested fields are
+    // still the frozen originals (shallow copy is enough for any
+    // top-level field replacement; if a caller wants a mutable
+    // `ignorePatterns` they spread that array too).
+    const draft = { ...loadConfig() };
+    expect(Object.isFrozen(draft)).toBe(false);
+    draft.theme = "dark"; // would throw if `draft` were frozen
+    expect(draft.theme).toBe("dark");
+
+    // The original cache is untouched.
+    expect(loadConfig().theme).toBe("light");
+  });
+
+  it("updateConfig still works after the previous cached value was frozen", () => {
+    // Sanity check: `updateConfig` internally calls `loadConfig`
+    // (returns frozen), spreads it into a new object literal, mutates
+    // that, and passes to `saveConfig`. Spreading a frozen object
+    // into a new literal produces an unfrozen new object, so the
+    // sequence is legal — but a future refactor that does `const next
+    // = loadConfig(); next.foo = x` instead would suddenly throw.
+    // This test pins the working flow.
+    updateConfig({ theme: "dark" });
+    expect(loadConfig().theme).toBe("dark");
+
+    updateConfig({ defaultExportFormat: "pdf" });
+    expect(loadConfig().theme).toBe("dark");
+    expect(loadConfig().defaultExportFormat).toBe("pdf");
+
+    // Including the nested-provider merge path, which builds a new
+    // `mergedProvider` from the previously-frozen one.
+    updateConfig({ externalProvider: { enabled: true } });
+    expect(loadConfig().externalProvider.enabled).toBe(true);
+  });
+
   it("survives 100 reads when the config file disappears mid-flight", () => {
     // The point of the cache: a renderer that polls
     // `updates:getAutoUpdateEnabled` repeatedly hits memory, not disk.

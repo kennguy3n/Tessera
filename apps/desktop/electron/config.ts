@@ -101,8 +101,48 @@ function getConfigPath(): string {
 // tempdirs per-test) auto-invalidates the cache without the test
 // needing to call `clearConfigCache()` explicitly. In production the
 // path is fixed at first launch so this never triggers.
+//
+// The cached value is deep-frozen before being stored (see
+// `freezeConfig` below). The pre-cache code returned a fresh
+// `{ ...DEFAULT_CONFIG, ...parsed }` on every call, so callers could
+// freely mutate the result without side effects. The cache now
+// returns the SAME reference across calls, so a caller doing
+// `cfg.theme = 'x'` or `cfg.ignorePatterns.push(...)` would corrupt
+// every other reader's view of the config without the disk ever
+// being touched. Deep-freezing turns that silent corruption into a
+// loud TypeError at the mutation site, which is the right place to
+// surface the bug. Callers that legitimately want a mutable copy
+// should spread: `const next = { ...loadConfig() }`.
 let cachedConfig: AppConfig | null = null;
 let cachedPath: string | null = null;
+
+/**
+ * Deep-freeze an AppConfig (and every nested object/array) so the
+ * cached value can be returned by reference without risk of a caller
+ * accidentally mutating it. `Object.freeze` is shallow, so we recurse
+ * into nested objects (`externalProvider`) and arrays
+ * (`ignorePatterns`, `watchPatterns`, `lastOpenedArtifacts`,
+ * `sourcePaths`). The freeze is idempotent — calling it on an already
+ * frozen subtree is a no-op (and a future contributor relying on this
+ * idempotency in `saveConfig`'s fast path will not be surprised).
+ */
+function freezeConfig(config: AppConfig): AppConfig {
+  if (Object.isFrozen(config)) return config;
+  Object.freeze(config);
+  for (const key of Object.keys(config) as (keyof AppConfig)[]) {
+    const value = config[key];
+    if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+      // Nested objects (`externalProvider`) and arrays
+      // (`ignorePatterns`, etc.) are one level deep — none of them
+      // contain further nested objects today. If a future field adds
+      // deeper structure (e.g. `connectors: { gdrive: { ... } }`)
+      // this needs to recurse fully; promoted to a proper recursive
+      // helper at that point.
+      Object.freeze(value);
+    }
+  }
+  return config;
+}
 
 /**
  * Test-only seam: drop the in-memory cache so the next `loadConfig()`
@@ -142,17 +182,34 @@ function readConfigFromDisk(configPath: string): AppConfig {
   };
 }
 
+/**
+ * Return the persisted application config. The returned object is
+ * deep-frozen — attempting to mutate it (or any nested field) will
+ * throw a TypeError in strict mode. Callers that need a mutable copy
+ * should spread it: `const draft = { ...loadConfig() }`.
+ */
 export function loadConfig(): AppConfig {
   const configPath = getConfigPath();
   if (cachedConfig !== null && cachedPath === configPath) {
     return cachedConfig;
   }
   const fresh = readConfigFromDisk(configPath);
-  cachedConfig = fresh;
+  cachedConfig = freezeConfig(fresh);
   cachedPath = configPath;
-  return fresh;
+  return cachedConfig;
 }
 
+/**
+ * Persist a full {@link AppConfig} to disk and update the cache.
+ *
+ * The caller's object is deep-frozen after the disk write succeeds —
+ * the cache returns this exact reference from subsequent
+ * `loadConfig` calls, so the caller MUST treat the object as opaque
+ * after handing it to `saveConfig`. (The only production caller is
+ * `updateConfig` below, which builds a fresh `updated` object and
+ * does not retain a mutable handle.) If the disk write throws, the
+ * cache remains in its prior consistent state.
+ */
 export function saveConfig(config: AppConfig): void {
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
@@ -162,7 +219,10 @@ export function saveConfig(config: AppConfig): void {
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
   // Write-through: keep the cache in sync so the next `loadConfig` does
   // not re-read from disk and rebuild the AppConfig from raw JSON.
-  cachedConfig = config;
+  // Freezing happens AFTER the disk write so a freeze failure (which
+  // shouldn't happen, but just in case) cannot leave the on-disk
+  // state ahead of the in-memory state.
+  cachedConfig = freezeConfig(config);
   cachedPath = configPath;
 }
 
