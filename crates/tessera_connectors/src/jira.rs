@@ -449,33 +449,46 @@ impl JiraConnector {
         Ok(format_issue_markdown(&issue).into_bytes())
     }
 
-    // TODO(WS5-followup, jira-deletion-detection): The body below only
-    // classifies issues into `added` / `modified` from the JQL
-    // `updated >= since` page. Issues that the user closes or deletes
-    // in Jira are NOT surfaced into `result.removed` today, so
-    // `apply_to_file_count` is observationally equivalent to
-    // `saturating_add(added)` on the Jira path until this TODO is
-    // resolved.
-    //
-    // Two viable implementations:
-    //   1. Full-walk diff: when `change_token` is None or older than
-    //      a configurable threshold, run a paginated `project = X`
-    //      JQL with no `updated` filter and diff the live id-set
-    //      against `known_file_ids`; populate the difference into
-    //      `result.removed`. This is the path Confluence/Figma
-    //      already use. Cost: one extra paginated read per sync,
-    //      bounded by Jira's REST page size.
-    //   2. Changelog scan: pass `expand=changelog` on the JQL search
-    //      and look for status transitions to `Deleted`/`Closed`-as-
-    //      tombstone. Cost: per-issue field bloat, simpler control
-    //      flow but heavier per-page payload.
-    //
-    // The full-walk approach (1) is preferred because it also catches
-    // issues whose `updated` timestamp was rewritten by an admin
-    // (which the changelog path would miss) and because it shares the
-    // same pattern as the other connectors. Tracked separately to
-    // keep WS5 reviewable; this PR centralises the arithmetic so
-    // the future PR is a one-file change to populate `removed`.
+    /// Incremental sync of Jira issues since the last successful
+    /// poll, keyed by RFC 3339 `change_token`.
+    ///
+    /// **Current scope.** This method classifies discovered issues
+    /// into [`SyncResult::added`] (when the issue's id is not in
+    /// `known_file_ids`) or [`SyncResult::modified`] (when it is).
+    /// It does NOT populate [`SyncResult::removed`]: issues that the
+    /// user closes or deletes in Jira are not detected by JQL
+    /// `updated >= since` paging alone, so a Jira-side delete is
+    /// invisible to this code path. As a consequence,
+    /// [`SyncResult::apply_to_file_count`] is observationally
+    /// equivalent to `current.saturating_add(added.len())` on the
+    /// Jira path until deletion detection is added.
+    ///
+    /// **Future extension.** Two implementations are viable:
+    ///
+    ///   1. *Full-walk diff.* When `change_token` is `None` or older
+    ///      than a configurable threshold, run a paginated
+    ///      `project = X` JQL with no `updated` filter and diff the
+    ///      live id-set against `known_file_ids`; push the
+    ///      difference into `result.removed`. This is the path
+    ///      [`crate::confluence`] and [`crate::figma`] already use.
+    ///      Cost: one extra paginated read per sync, bounded by
+    ///      Jira's REST page size.
+    ///
+    ///   2. *Changelog scan.* Pass `expand=changelog` on the JQL
+    ///      search and look for status transitions to
+    ///      `Deleted`/`Closed`-as-tombstone. Cost: per-issue field
+    ///      bloat, simpler control flow but heavier per-page
+    ///      payload.
+    ///
+    /// The full-walk approach (1) is preferred because it also
+    /// catches issues whose `updated` timestamp was rewritten by an
+    /// admin (which the changelog path would miss) and because it
+    /// matches the pattern already established by the other
+    /// full-walk connectors. WS5 centralises the file-count
+    /// arithmetic via [`SyncResult::apply_to_file_count`] so a
+    /// future Jira-deletion-detection change is scoped to populating
+    /// `result.removed` here — the accounting path then propagates
+    /// the decrement without any further edit.
     pub async fn sync_changes(
         &mut self,
         change_token: Option<&str>,
@@ -526,22 +539,13 @@ impl JiraConnector {
 
         self.last_sync = Some(Utc::now());
         // NET file-count via the shared `SyncResult::apply_to_file_count`
-        // helper. Today this loop only classifies issues as `added` or
-        // `modified` from the JQL `updated >= since` page — it does NOT
-        // populate `result.removed`, because surfacing deleted Jira
-        // issues requires either a separate `expand=changelog` pass or
-        // a full-walk diff against `known_file_ids` (Confluence/Figma
-        // already do that; Jira will follow). So `removed.len()` is
-        // always 0 here and `apply_to_file_count` reduces to the same
-        // `saturating_add(added)` arithmetic the old code did.
-        //
-        // The reason the change still lands now: when Jira deletion
-        // detection is added (see TODO at the top of `sync_changes`),
-        // it'll write into `result.removed` and the NET formula will
-        // start decrementing file_count without any further edit to
-        // this call site. All six connectors then converge on the
-        // same accounting path, eliminating the previous Jira-specific
-        // monotonic-add-only drift that existed before WS5.
+        // helper. See the method-level rustdoc on `sync_changes` for
+        // why `result.removed` is always empty on the Jira path today
+        // and how deletion detection will eventually populate it
+        // without any further change to this call site. All six
+        // connectors converge on this one accounting helper,
+        // eliminating the Jira-specific monotonic-add-only drift that
+        // existed before WS5.
         self.file_count = result.apply_to_file_count(self.file_count);
         self.status = ConnectorStatus::Connected;
         Ok(result)
