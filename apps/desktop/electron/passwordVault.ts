@@ -56,6 +56,19 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
+import { promisify } from "util";
+
+const pbkdf2Async = promisify(crypto.pbkdf2);
+
+/**
+ * IPC channel names shared between this module and
+ * `passwordPromptPreload.ts`. Kept as fixed constants (not
+ * interpolated with `win.id`) because at most one prompt window can
+ * be open at a time — `promptForVaultPassword` awaits the promise
+ * before any other call site can reach this code path.
+ */
+export const PASSWORD_PROMPT_SUBMIT_CHANNEL = "password-vault:submit";
+export const PASSWORD_PROMPT_CANCEL_CHANNEL = "password-vault:cancel";
 
 const PBKDF2_ITERATIONS = 600_000;
 const PBKDF2_KEY_LEN = 32;
@@ -160,16 +173,26 @@ export function passwordVaultSaltExists(): boolean {
 
 /**
  * Run PBKDF2 against the supplied password, cache the derived key,
- * and return it. Synchronous because `BrowserWindow.show()` is async
- * but the call sites (vault sync APIs) need a sync handle once the
- * key is cached.
+ * and return it.
+ *
+ * Async because PBKDF2 with 600k iterations takes ~1–2 seconds and
+ * `crypto.pbkdf2Sync` blocks the main process event loop for the
+ * full duration — which delays the post-prompt window open and any
+ * concurrent app.whenReady setup. The async variant runs PBKDF2 on
+ * libuv's thread pool, keeping the main thread responsive.
+ *
+ * Call sites in the vault sync APIs (`tokenVault` / `secretsVault`)
+ * do NOT call this function directly — they consult
+ * `passwordVaultActive()` after `initPasswordVaultIfNeeded` has
+ * awaited the derivation. So the sync vault APIs still see a
+ * synchronously-readable cached key.
  */
-export function deriveAndCacheKey(password: string): Buffer {
+export async function deriveAndCacheKey(password: string): Promise<Buffer> {
   if (password.length === 0) {
     throw new Error("Vault password cannot be empty.");
   }
   const salt = getOrCreateSalt();
-  const key = crypto.pbkdf2Sync(
+  const key = await pbkdf2Async(
     password,
     salt,
     PBKDF2_ITERATIONS,
@@ -305,6 +328,12 @@ export async function promptForVaultPassword(opts: {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // Loads the bridge that exposes
+      // `window.tesseraPasswordPrompt.{submit,cancel}` to the page.
+      // Without this preload, the renderer cannot reach `ipcRenderer`
+      // (sandboxed + nodeIntegration disabled), and `require()` is
+      // undefined — the submit button would be inert.
+      preload: path.join(__dirname, "passwordPromptPreload.js"),
     },
   });
   await win.loadURL(
@@ -312,24 +341,49 @@ export async function promptForVaultPassword(opts: {
   );
 
   return new Promise<string>((resolve, reject) => {
-    const channel = `password-vault:submit:${win.id}`;
-    let resolved = false;
+    let settled = false;
 
-    const handler = (
+    const cleanup = (): void => {
+      ipcMain.removeListener(PASSWORD_PROMPT_SUBMIT_CHANNEL, onSubmit);
+      ipcMain.removeListener(PASSWORD_PROMPT_CANCEL_CHANNEL, onCancel);
+    };
+
+    const onSubmit = (
       _e: Electron.IpcMainEvent,
       payload: { password: string },
     ): void => {
-      if (resolved) return;
-      resolved = true;
-      ipcMain.removeListener(channel, handler);
-      win.close();
+      if (settled) return;
+      settled = true;
+      cleanup();
+      // Defer close so the renderer's ipcRenderer.send flush has a
+      // tick to complete before its host process is torn down.
+      setImmediate(() => {
+        if (!win.isDestroyed()) win.close();
+      });
       resolve(payload.password);
     };
-    ipcMain.on(channel, handler);
+
+    const onCancel = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      setImmediate(() => {
+        if (!win.isDestroyed()) win.close();
+      });
+      reject(
+        new Error(
+          "Vault password prompt was cancelled by the user.",
+        ),
+      );
+    };
+
+    ipcMain.on(PASSWORD_PROMPT_SUBMIT_CHANNEL, onSubmit);
+    ipcMain.on(PASSWORD_PROMPT_CANCEL_CHANNEL, onCancel);
 
     win.on("closed", () => {
-      ipcMain.removeListener(channel, handler);
-      if (!resolved) {
+      cleanup();
+      if (!settled) {
+        settled = true;
         reject(
           new Error(
             "Vault password prompt was closed without a password being entered.",
@@ -340,10 +394,44 @@ export async function promptForVaultPassword(opts: {
   });
 }
 
+/**
+ * Minimal HTML escape for the prompt message. The message is
+ * currently always a hardcoded literal, but interpolating it
+ * un-escaped is a future-XSS footgun the moment a caller wants to
+ * include something dynamic (e.g. a provider name) in the prompt.
+ */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Render the prompt HTML. Exported (with an underscore prefix to
+ * signal test-only) so the test suite can assert structural
+ * properties without spinning up Electron — see
+ * `__tests__/passwordVault.test.ts` for the renderer-side regression
+ * coverage that complements the unit tests below.
+ *
+ * The submit/cancel calls go through `window.tesseraPasswordPrompt`,
+ * which is populated by `passwordPromptPreload.ts`. The page itself
+ * has no Node access — `require` and `process` are both undefined.
+ */
+export function _renderPromptHtmlForTests(opts: {
+  message: string;
+  confirmRequired: boolean;
+}): string {
+  return renderPromptHtml(opts);
+}
+
 function renderPromptHtml(opts: {
   message: string;
   confirmRequired: boolean;
 }): string {
+  const safeMessage = escapeHtml(opts.message);
   const confirmField = opts.confirmRequired
     ? `<label for="confirm">Confirm password</label>
        <input id="confirm" type="password" autocomplete="new-password" />`
@@ -366,15 +454,17 @@ function renderPromptHtml(opts: {
   #err { color: #b91c1c; font-size: 12px; margin-top: 8px; min-height: 16px; }
 </style></head>
 <body>
-  <p>${opts.message}</p>
+  <p>${safeMessage}</p>
   <label for="pw">Password</label>
   <input id="pw" type="password" autocomplete="${opts.confirmRequired ? "new" : "current"}-password" autofocus />
   ${confirmField}
   <div id="err"></div>
   <button id="ok">Unlock vault</button>
   <script>
-    const ipc = require('electron').ipcRenderer;
-    const id = parseInt(new URLSearchParams(location.search).get('windowId') || '0');
+    // \`window.tesseraPasswordPrompt\` is exposed by
+    // \`passwordPromptPreload.ts\`. \`require\` and \`ipcRenderer\`
+    // are NOT available here — the page runs sandboxed.
+    const bridge = window.tesseraPasswordPrompt;
     function submit() {
       const p = document.getElementById('pw').value;
       if (!p) {
@@ -382,7 +472,7 @@ function renderPromptHtml(opts: {
         return;
       }
       ${submitJs}
-      ipc.send('password-vault:submit:' + id, { password: p });
+      bridge.submit(p);
     }
     document.getElementById('ok').addEventListener('click', submit);
     document.getElementById('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
@@ -415,6 +505,6 @@ export async function initPasswordVaultIfNeeded(opts: {
     parent: opts.parent,
     confirmRequired: !opts.existingVault,
   });
-  deriveAndCacheKey(password);
+  await deriveAndCacheKey(password);
   return { active: true };
 }

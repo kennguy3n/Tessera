@@ -29,8 +29,7 @@
  * |                        | `https://*.notion-static.com`               | S3-backed user uploads (`secure.notion-static.com`) |
  * | Atlassian              | `https://*.atlassian.net`                   | Jira/Confluence avatars, attachment thumbnails |
  * |                        | `https://*.atlassian.com`                   | Marketplace avatars, account avatars |
- * | Figma                  | `https://*.figma.com`                       | File thumbnails |
- * |                        | `https://s3-alpha-sig.figma.com`            | Pre-signed asset URLs from REST API |
+ * | Figma                  | `https://*.figma.com`                       | File thumbnails AND pre-signed `s3-alpha-sig.figma.com` REST asset URLs (covered by the wildcard, no separate entry needed). |
  *
  * The `data:` scheme is appended separately in `main.ts` because it's a
  * special CSP keyword, not an origin.
@@ -55,5 +54,4 @@ export const cspImageSources: readonly string[] = Object.freeze([
 
   // Figma
   "https://*.figma.com",
-  "https://s3-alpha-sig.figma.com",
 ]);

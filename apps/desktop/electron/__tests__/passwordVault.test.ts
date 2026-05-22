@@ -16,6 +16,14 @@
  *   to drive end-to-end. Mocked away.
  * - `initPasswordVaultIfNeeded` — composes the prompt + derivation;
  *   covered indirectly.
+ *
+ * Covered here for the prompt path:
+ * - `_renderPromptHtmlForTests`: the prompt HTML is a static template
+ *   so we assert its structural invariants directly (no `require`,
+ *   no `data:` URL window-ID interpolation, uses
+ *   `window.tesseraPasswordPrompt` from the preload, escapes the
+ *   `message` to prevent XSS). These tests pin the contract between
+ *   `passwordVault.ts` and `passwordPromptPreload.ts`.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -46,7 +54,10 @@ vi.mock("electron", () => ({
 }));
 
 import {
+  PASSWORD_PROMPT_CANCEL_CHANNEL,
+  PASSWORD_PROMPT_SUBMIT_CHANNEL,
   WrongVaultPasswordError,
+  _renderPromptHtmlForTests,
   _setCachedKeyForTests,
   _setSaltPathForTests,
   clearPasswordVaultKey,
@@ -74,46 +85,46 @@ afterEach(() => {
 });
 
 describe("passwordVault — derivation and caching", () => {
-  it("deriveAndCacheKey creates the salt file on first call", () => {
+  it("deriveAndCacheKey creates the salt file on first call", async () => {
     expect(passwordVaultSaltExists()).toBe(false);
-    deriveAndCacheKey("hunter2");
+    await deriveAndCacheKey("hunter2");
     expect(passwordVaultSaltExists()).toBe(true);
     const salt = fs.readFileSync(path.join(tmpDir, "vault-salt.bin"));
     expect(salt.length).toBe(16);
   });
 
-  it("deriveAndCacheKey is deterministic for the same password + salt", () => {
-    const k1 = deriveAndCacheKey("hunter2");
+  it("deriveAndCacheKey is deterministic for the same password + salt", async () => {
+    const k1 = await deriveAndCacheKey("hunter2");
     const captured = Buffer.from(k1);
     clearPasswordVaultKey();
-    const k2 = deriveAndCacheKey("hunter2");
+    const k2 = await deriveAndCacheKey("hunter2");
     expect(k2.equals(captured)).toBe(true);
   });
 
-  it("different passwords produce different keys", () => {
-    const k1 = deriveAndCacheKey("aaa");
+  it("different passwords produce different keys", async () => {
+    const k1 = await deriveAndCacheKey("aaa");
     const c1 = Buffer.from(k1);
     clearPasswordVaultKey();
-    const k2 = deriveAndCacheKey("bbb");
+    const k2 = await deriveAndCacheKey("bbb");
     expect(k2.equals(c1)).toBe(false);
   });
 
-  it("empty password is rejected", () => {
-    expect(() => deriveAndCacheKey("")).toThrow(/cannot be empty/);
+  it("empty password is rejected", async () => {
+    await expect(deriveAndCacheKey("")).rejects.toThrow(/cannot be empty/);
   });
 
-  it("passwordVaultActive() reflects derivation state", () => {
+  it("passwordVaultActive() reflects derivation state", async () => {
     expect(passwordVaultActive()).toBe(false);
-    deriveAndCacheKey("hunter2");
+    await deriveAndCacheKey("hunter2");
     expect(passwordVaultActive()).toBe(true);
     clearPasswordVaultKey();
     expect(passwordVaultActive()).toBe(false);
   });
 
-  it("clearPasswordVaultKey overwrites cached key bytes (memory zero)", () => {
+  it("clearPasswordVaultKey overwrites cached key bytes (memory zero)", async () => {
     // We can't directly inspect the cached buffer, but if zero-fill
     // ran the next operation should require a fresh derivation.
-    deriveAndCacheKey("hunter2");
+    await deriveAndCacheKey("hunter2");
     expect(passwordVaultActive()).toBe(true);
     clearPasswordVaultKey();
     expect(() => encryptWithPasswordKey("anything")).toThrow(
@@ -121,25 +132,25 @@ describe("passwordVault — derivation and caching", () => {
     );
   });
 
-  it("rejects a salt file of unexpected length", () => {
+  it("rejects a salt file of unexpected length", async () => {
     // Plant a malformed salt file.
     fs.mkdirSync(tmpDir, { recursive: true });
     fs.writeFileSync(path.join(tmpDir, "vault-salt.bin"), Buffer.alloc(8));
-    expect(() => deriveAndCacheKey("hunter2")).toThrow(
+    await expect(deriveAndCacheKey("hunter2")).rejects.toThrow(
       /unexpected length 8/,
     );
   });
 });
 
 describe("passwordVault — encryption round-trip", () => {
-  it("encrypts and decrypts a string round-trip", () => {
-    deriveAndCacheKey("hunter2");
+  it("encrypts and decrypts a string round-trip", async () => {
+    await deriveAndCacheKey("hunter2");
     const blob = encryptWithPasswordKey("secret-payload");
     expect(decryptWithPasswordKey(blob)).toBe("secret-payload");
   });
 
-  it("each encryption uses a fresh IV (output differs for same plaintext)", () => {
-    deriveAndCacheKey("hunter2");
+  it("each encryption uses a fresh IV (output differs for same plaintext)", async () => {
+    await deriveAndCacheKey("hunter2");
     const a = encryptWithPasswordKey("hello");
     const b = encryptWithPasswordKey("hello");
     expect(a.equals(b)).toBe(false);
@@ -147,37 +158,37 @@ describe("passwordVault — encryption round-trip", () => {
     expect(decryptWithPasswordKey(b)).toBe("hello");
   });
 
-  it("encrypt produces blob with TSPV magic + version byte", () => {
-    deriveAndCacheKey("hunter2");
+  it("encrypt produces blob with TSPV magic + version byte", async () => {
+    await deriveAndCacheKey("hunter2");
     const blob = encryptWithPasswordKey("x");
     expect(blob.subarray(0, 4).toString("ascii")).toBe("TSPV");
     expect(blob[4]).toBe(1); // version
   });
 
-  it("encrypt blob layout: magic(4) + version(1) + iv(12) + ciphertext + tag(16)", () => {
-    deriveAndCacheKey("hunter2");
+  it("encrypt blob layout: magic(4) + version(1) + iv(12) + ciphertext + tag(16)", async () => {
+    await deriveAndCacheKey("hunter2");
     const plaintext = "abc";
     const blob = encryptWithPasswordKey(plaintext);
     // 4 magic + 1 version + 12 iv + 3 ciphertext + 16 tag = 36
     expect(blob.length).toBe(36);
   });
 
-  it("decrypting a wrong-password blob throws WrongVaultPasswordError", () => {
-    deriveAndCacheKey("correct-password");
+  it("decrypting a wrong-password blob throws WrongVaultPasswordError", async () => {
+    await deriveAndCacheKey("correct-password");
     const blob = encryptWithPasswordKey("secret");
     clearPasswordVaultKey();
     // Different password derives a different key. The salt is the
     // same (already on disk), so the new key is deterministic but
     // wrong.
-    deriveAndCacheKey("wrong-password");
+    await deriveAndCacheKey("wrong-password");
     expect(() => decryptWithPasswordKey(blob)).toThrow(WrongVaultPasswordError);
   });
 
-  it("WrongVaultPasswordError is instanceof-distinguishable from plain Error", () => {
-    deriveAndCacheKey("correct");
+  it("WrongVaultPasswordError is instanceof-distinguishable from plain Error", async () => {
+    await deriveAndCacheKey("correct");
     const blob = encryptWithPasswordKey("x");
     clearPasswordVaultKey();
-    deriveAndCacheKey("wrong");
+    await deriveAndCacheKey("wrong");
     try {
       decryptWithPasswordKey(blob);
       throw new Error("should have thrown");
@@ -188,8 +199,8 @@ describe("passwordVault — encryption round-trip", () => {
     }
   });
 
-  it("decrypting a structurally invalid blob throws plain Error (not WrongVaultPasswordError)", () => {
-    deriveAndCacheKey("hunter2");
+  it("decrypting a structurally invalid blob throws plain Error (not WrongVaultPasswordError)", async () => {
+    await deriveAndCacheKey("hunter2");
     const bogus = Buffer.from("garbage-not-a-tspv-blob-but-long-enough-to-pass-the-length-gate", "utf-8");
     try {
       decryptWithPasswordKey(bogus);
@@ -201,15 +212,15 @@ describe("passwordVault — encryption round-trip", () => {
     }
   });
 
-  it("decrypting a too-short blob throws plain Error", () => {
-    deriveAndCacheKey("hunter2");
+  it("decrypting a too-short blob throws plain Error", async () => {
+    await deriveAndCacheKey("hunter2");
     const tooShort = Buffer.from("TSPV", "ascii");
     expect(() => decryptWithPasswordKey(tooShort)).toThrow(/too short/);
   });
 
-  it("decrypt requires active vault", () => {
+  it("decrypt requires active vault", async () => {
     // Generate blob with one cached key, then clear and try to decrypt
-    deriveAndCacheKey("hunter2");
+    await deriveAndCacheKey("hunter2");
     const blob = encryptWithPasswordKey("x");
     clearPasswordVaultKey();
     expect(() => decryptWithPasswordKey(blob)).toThrow(
@@ -226,8 +237,8 @@ describe("passwordVault — encryption round-trip", () => {
 });
 
 describe("passwordVault — blob sniffing", () => {
-  it("isPasswordVaultBlob true for blobs we created", () => {
-    deriveAndCacheKey("hunter2");
+  it("isPasswordVaultBlob true for blobs we created", async () => {
+    await deriveAndCacheKey("hunter2");
     const blob = encryptWithPasswordKey("x");
     expect(isPasswordVaultBlob(blob)).toBe(true);
   });
@@ -262,5 +273,101 @@ describe("passwordVault — direct key override (test-only)", () => {
     expect(passwordVaultActive()).toBe(true);
     _setCachedKeyForTests(null);
     expect(passwordVaultActive()).toBe(false);
+  });
+});
+
+describe("passwordVault — prompt HTML contract", () => {
+  // These tests pin the structural contract between
+  // `renderPromptHtml` and `passwordPromptPreload.ts`. Two prior
+  // bugs would have been caught here:
+  //
+  // 1. The script previously used `require('electron').ipcRenderer`
+  //    inside a sandboxed renderer with no preload — `require` is
+  //    undefined in that context, so the submit button was inert.
+  //
+  // 2. The script previously read `windowId` from `location.search`
+  //    of a `data:` URL — but `data:` URLs have no query string, so
+  //    the win-id always resolved to 0 and main listened on
+  //    `password-vault:submit:${realId}` (≥1) — IPC never landed.
+  //
+  // The fix is to: (a) load a preload that exposes
+  // `window.tesseraPasswordPrompt.{submit,cancel}`, and (b) use fixed
+  // channel names (no win-id interpolation). We assert that both
+  // shapes hold.
+  it("prompt HTML does not call require()", () => {
+    const html = _renderPromptHtmlForTests({
+      message: "hello",
+      confirmRequired: false,
+    });
+    expect(html).not.toMatch(/require\s*\(/);
+  });
+
+  it("prompt HTML does not interpolate window id into a channel name", () => {
+    const html = _renderPromptHtmlForTests({
+      message: "hello",
+      confirmRequired: false,
+    });
+    expect(html).not.toMatch(/URLSearchParams/);
+    expect(html).not.toMatch(/location\.search/);
+    expect(html).not.toMatch(/password-vault:submit:/);
+  });
+
+  it("prompt HTML uses the preload-exposed bridge", () => {
+    const html = _renderPromptHtmlForTests({
+      message: "hello",
+      confirmRequired: false,
+    });
+    expect(html).toContain("window.tesseraPasswordPrompt");
+    expect(html).toMatch(/bridge\.submit\(/);
+  });
+
+  it("prompt HTML escapes the message to defeat XSS-in-prompt", () => {
+    const html = _renderPromptHtmlForTests({
+      message: "<script>alert('pwn')</script>",
+      confirmRequired: false,
+    });
+    expect(html).not.toContain("<script>alert(");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("&#39;pwn&#39;");
+  });
+
+  it("prompt HTML escapes &, <, >, \", ' in the message", () => {
+    const html = _renderPromptHtmlForTests({
+      message: "a&b<c>d\"e'f",
+      confirmRequired: false,
+    });
+    // The escaped form must appear verbatim inside the message
+    // paragraph.
+    expect(html).toContain("a&amp;b&lt;c&gt;d&quot;e&#39;f");
+    // The unescaped raw characters must NOT appear in the message
+    // paragraph. (We can't grep the whole HTML — `>` legitimately
+    // appears in `</p>`, `<input>`, etc. — so we slice the body.)
+    const inBody = html.split("<body>")[1]?.split("</body>")[0] ?? "";
+    expect(inBody).not.toMatch(/a&b<c>d"e'f/);
+  });
+
+  it("prompt HTML renders the confirm-password field only when requested", () => {
+    const withConfirm = _renderPromptHtmlForTests({
+      message: "first run",
+      confirmRequired: true,
+    });
+    expect(withConfirm).toContain("Confirm password");
+    expect(withConfirm).toContain('id="confirm"');
+    expect(withConfirm).toMatch(/p !== document\.getElementById\('confirm'\)/);
+
+    const withoutConfirm = _renderPromptHtmlForTests({
+      message: "subsequent run",
+      confirmRequired: false,
+    });
+    expect(withoutConfirm).not.toContain("Confirm password");
+    expect(withoutConfirm).not.toMatch(/p !== document\.getElementById\('confirm'\)/);
+  });
+
+  it("exports the fixed channel names the preload binds to", () => {
+    // Sanity: these MUST match the strings hardcoded in
+    // `passwordPromptPreload.ts`. If you rename one without renaming
+    // the other, the prompt window submit goes nowhere.
+    expect(PASSWORD_PROMPT_SUBMIT_CHANNEL).toBe("password-vault:submit");
+    expect(PASSWORD_PROMPT_CANCEL_CHANNEL).toBe("password-vault:cancel");
   });
 });

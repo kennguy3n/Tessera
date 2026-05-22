@@ -53,7 +53,6 @@ import {
   _setCachedKeyForTests,
   _setSaltPathForTests,
   clearPasswordVaultKey,
-  deriveAndCacheKey,
 } from "../passwordVault";
 import {
   deleteTokens,
@@ -103,10 +102,19 @@ describe("tokenVault fallback — safeStorage path (baseline)", () => {
   });
 });
 
+// All tests in this file simulate "password vault unlocked" by
+// injecting a fixed 32-byte key directly via `_setCachedKeyForTests`,
+// bypassing the real (async) PBKDF2 derivation. End-to-end PBKDF2
+// behavior is exercised by `passwordVault.test.ts`; this file only
+// cares about dispatch behavior between safeStorage and the password
+// vault, so a synthetic key is sufficient and 1–2 seconds faster
+// per test.
+const FIXED_TEST_KEY = Buffer.alloc(32, 0xCD);
+
 describe("tokenVault fallback — password-vault path", () => {
   beforeEach(() => {
     hoisted.encryptionAvailable.value = false;
-    deriveAndCacheKey("test-password");
+    _setCachedKeyForTests(Buffer.from(FIXED_TEST_KEY));
   });
 
   it("writes via password vault when safeStorage is unavailable", () => {
@@ -123,10 +131,10 @@ describe("tokenVault fallback — password-vault path", () => {
     expect(getTokens("notion")).toEqual(SAMPLE);
   });
 
-  it("survives derivation cache cycle (clear + re-derive same password)", () => {
+  it("survives derivation cache cycle (clear + re-inject same key)", () => {
     storeTokens("notion", SAMPLE);
     clearPasswordVaultKey();
-    deriveAndCacheKey("test-password");
+    _setCachedKeyForTests(Buffer.from(FIXED_TEST_KEY));
     expect(getTokens("notion")).toEqual(SAMPLE);
   });
 });
@@ -146,7 +154,7 @@ describe("tokenVault fallback — refusal cases", () => {
   it("refuses to read a TSPV blob when password vault is locked", () => {
     // Write with password vault, then lose the cache.
     hoisted.encryptionAvailable.value = false;
-    deriveAndCacheKey("test-password");
+    _setCachedKeyForTests(Buffer.from(FIXED_TEST_KEY));
     storeTokens("notion", SAMPLE);
     clearPasswordVaultKey();
     expect(() => getTokens("notion")).toThrow(
@@ -168,7 +176,7 @@ describe("tokenVault fallback — refusal cases", () => {
 describe("tokenVault fallback — utility methods", () => {
   it("hasTokens and deleteTokens work in either mode", () => {
     hoisted.encryptionAvailable.value = false;
-    deriveAndCacheKey("test-password");
+    _setCachedKeyForTests(Buffer.from(FIXED_TEST_KEY));
     expect(hasTokens("notion")).toBe(false);
     storeTokens("notion", SAMPLE);
     expect(hasTokens("notion")).toBe(true);
@@ -185,7 +193,7 @@ describe("tokenVault fallback — mixed-format directory", () => {
     // Second session: keyring lost, user enters password, writes
     // Notion tokens. Both files now live in the same directory.
     hoisted.encryptionAvailable.value = false;
-    deriveAndCacheKey("test-password");
+    _setCachedKeyForTests(Buffer.from(FIXED_TEST_KEY));
     storeTokens("notion", { ...SAMPLE, accessToken: "different" });
 
     // Notion (TSPV) decrypts via password vault.
