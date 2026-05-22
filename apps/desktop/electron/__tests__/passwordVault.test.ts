@@ -578,6 +578,54 @@ describe("passwordVault — docstring caller attribution", () => {
     expect(moduleDoc).not.toMatch(/appState\.ts/);
   });
 
+  // First-round fix only caught the module-level docstring. A second
+  // stale block lived above `initPasswordVaultIfNeeded` and was
+  // ALSO orphaned (sitting above the next const, not the function
+  // it described). Pin the entire file so no docstring anywhere
+  // references the wrong file — `appState.ts` / `appState.initAppState`
+  // must not appear at all in passwordVault.ts, in ANY comment or
+  // identifier.
+  it("no docstring anywhere in passwordVault.ts references appState.ts or appState.initAppState", () => {
+    expect(PASSWORD_VAULT_SRC).not.toMatch(/appState\.ts/);
+    expect(PASSWORD_VAULT_SRC).not.toMatch(/appState\.initAppState/);
+    // Specifically the canonical wrong phrase from the earlier draft.
+    expect(PASSWORD_VAULT_SRC).not.toMatch(
+      /called from\s+`appState/,
+    );
+  });
+
+  // JSDoc orphan detection: a `/** ... */` block must immediately
+  // precede an `export ` / `function ` / `class ` / `const ` / `let ` /
+  // `interface ` / `type ` declaration (optionally preceded by an
+  // `async ` keyword). If a JSDoc block is followed by another JSDoc
+  // block — i.e. two `/** ... */` comments stacked with only
+  // whitespace between them — the first one is documenting nothing
+  // (the second JSDoc takes precedence for any symbol below it).
+  //
+  // This is what regressed: the stale `initPasswordVaultIfNeeded`
+  // docstring sat between the closing `}` of `renderPromptHtml` and
+  // the JSDoc for the `VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE` constant,
+  // documenting NOTHING. Pin the structural invariant so a future
+  // refactor that copies+pastes a docstring (without deleting the
+  // old copy) fails this test.
+  it("no JSDoc block is immediately followed by another JSDoc block (orphan detection)", () => {
+    // Match: `*/` followed by whitespace (incl. newlines) then `/**`.
+    // The orphan pattern. Allowed: `*/` then anything other than `/**`.
+    const orphanPattern = /\*\/\s*\n\s*\/\*\*/;
+    const matches = PASSWORD_VAULT_SRC.match(orphanPattern);
+    expect(
+      matches,
+      matches
+        ? `Orphaned JSDoc detected: a /** ... */ block is immediately followed by another /** ... */, meaning the first one documents nothing. Found near:\n${PASSWORD_VAULT_SRC
+            .slice(
+              Math.max(0, (matches.index ?? 0) - 80),
+              (matches.index ?? 0) + 120,
+            )
+            .trim()}`
+        : undefined,
+    ).toBeNull();
+  });
+
   it("appState.ts does not import initPasswordVaultIfNeeded (justifies the docstring fix)", () => {
     const appStateSrc = fs
       .readFileSync(path.join(TEST_DIR, "..", "appState.ts"), "utf-8")

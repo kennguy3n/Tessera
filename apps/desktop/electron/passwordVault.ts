@@ -639,17 +639,6 @@ function renderPromptHtml(opts: {
 }
 
 /**
- * Top-level initialiser called from `appState.initAppState`. If
- * safeStorage is available, no-op. If not, prompt the user for a
- * password and cache the derived key.
- *
- * `existingVault` distinguishes:
- *   - first launch on a keyringless platform → ask for new password
- *     + confirmation, generate salt
- *   - subsequent launch where vault files already exist → ask for
- *     existing password, verify by decrypting a witness blob if any
- */
-/**
  * Sentinel `reason` returned from `initPasswordVaultIfNeeded` when the
  * outer `safeStorage.isEncryptionAvailable()` returned false but the
  * inner re-check inside `initPasswordVaultIfNeeded` returned true —
@@ -670,6 +659,29 @@ function renderPromptHtml(opts: {
 export const VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE =
   "safeStorage is available";
 
+/**
+ * Top-level initialiser called from `main.ts`'s `maybeInitPasswordVault`
+ * wrapper (which `app.whenReady` awaits before `createWindow()` runs).
+ * If safeStorage is available, this is a no-op and returns
+ * `{ active: false, reason: VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE }`
+ * — caller treats that as success. If safeStorage is unavailable,
+ * prompts the user for a password and caches the derived key, then
+ * returns `{ active: true }`.
+ *
+ * `existingVault` distinguishes:
+ *   - first launch on a keyringless platform → ask for new password
+ *     + confirmation, generate salt
+ *   - subsequent launch where vault files already exist → ask for
+ *     existing password, verify by decrypting a witness blob if any
+ *
+ * Returns the discriminated shape `{ active: boolean, reason?: string }`
+ * rather than throwing on the "not active" branch because
+ * `safeStorage.isEncryptionAvailable() === true` is not an error — it's
+ * the common production path where the vault is genuinely not needed.
+ * The sentinel reason lets `maybeInitPasswordVault` distinguish
+ * "deliberately skipped" from "prompt failed" without resorting to
+ * string matching.
+ */
 export async function initPasswordVaultIfNeeded(opts: {
   isEncryptionAvailable: () => boolean;
   existingVault: boolean;
