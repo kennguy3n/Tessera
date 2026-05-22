@@ -115,6 +115,16 @@ impl SyncResult {
     ///   - Net positive (added >= removed): grows by `added - removed`.
     ///   - Net negative (added < removed): shrinks by `removed - added`,
     ///     bottoming out at 0 (never underflows).
+    ///
+    /// **Saturation boundary edge-case (unreachable in practice).** At
+    /// `current + added >= u64::MAX`, the chained form differs from a
+    /// `net = added - removed` shortcut: chained gives `MAX - removed`
+    /// (saturates, then subtracts), shortcut gives `MAX` (net is
+    /// smaller, saturation never triggers). The chained form is the
+    /// honest one — we observed `added` adds and `removed` removes,
+    /// the bookkeeping reflects both — but it requires `current` to
+    /// be within `removed` of `u64::MAX` to differ, which means the
+    /// connector is tracking ~18 quintillion files. Not reachable.
     pub fn apply_to_file_count(&self, current: u64) -> u64 {
         let added = self.added.len() as u64;
         let removed = self.removed.len() as u64;
