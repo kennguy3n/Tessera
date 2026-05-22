@@ -150,6 +150,34 @@ async function maybeInitPasswordVault(): Promise<void> {
   }
 }
 
+/**
+ * Whether the app's main window has been created at least once.
+ *
+ * Guard for the `window-all-closed` handler. Before this flag flips
+ * true, the only BrowserWindow that may exist is the modal password
+ * prompt opened by `maybeInitPasswordVault`. If the user dismisses
+ * that prompt via the OS title-bar X button BEFORE `createWindow()`
+ * runs, the `closed` event on the prompt window synchronously triggers
+ * `window-all-closed` (because the prompt was the only window in
+ * existence). Without this guard, `app.quit()` fires and tears down
+ * the app before the rejection microtask chain from
+ * `maybeInitPasswordVault` can return control to `createWindow()` —
+ * the documented "log warning, continue" recovery path becomes
+ * unreachable on non-macOS platforms.
+ *
+ * The Cancel button path happened to survive prior to this fix
+ * because `onCancel` defers `win.close()` via `setImmediate`, giving
+ * the main process time to schedule `createWindow()` before the
+ * window count hits zero. But that survival was incidental — the
+ * `setImmediate` was there to flush the IPC `send` to the renderer,
+ * not to defer `window-all-closed`. The X-button close path is
+ * synchronous and would always kill the app.
+ *
+ * Setting `appInitComplete = true` only after `createWindow()` runs
+ * makes the recovery path bullet-proof for both close routes.
+ */
+let appInitComplete = false;
+
 app.whenReady().then(async () => {
   initAppState();
   await maybeInitPasswordVault();
@@ -160,6 +188,7 @@ app.whenReady().then(async () => {
   // renderer). See `scheduler.ts` for the run-control protocol.
   startScheduler();
   createWindow();
+  appInitComplete = true;
   // Kick off the auto-update check. No-op in dev (app.isPackaged ==
   // false) and silently disabled when the user has unchecked
   // "Automatically check for updates" in Settings.
@@ -199,10 +228,44 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
+  // Suppress the quit if the main window hasn't been opened yet. See
+  // the `appInitComplete` docstring above for the full scenario —
+  // tldr: dismissing the modal password prompt fires
+  // `window-all-closed` before `createWindow()` ever runs, and we
+  // want the rest of startup to continue so the user sees the main
+  // window with a clear "vault unavailable" state instead of the
+  // app silently dying.
+  if (!appInitComplete) return;
   if (process.platform !== "darwin") {
     app.quit();
   }
 });
+
+/**
+ * Test-only: reset the init flag so unit tests can simulate fresh
+ * app startup. Kept in the production bundle (not gated by NODE_ENV)
+ * for the same reason as `_resetForTests` in `autoUpdater.ts` — it's
+ * a single-purpose, side-effect-free internal hook with no
+ * security implications.
+ */
+export function _resetAppInitForTests(): void {
+  appInitComplete = false;
+}
+
+/**
+ * Test-only: mark startup as complete without running it. Lets the
+ * `window-all-closed` regression test exercise the "post-init" path.
+ */
+export function _markAppInitCompleteForTests(): void {
+  appInitComplete = true;
+}
+
+/**
+ * Test-only: read the init flag.
+ */
+export function _appInitCompleteForTests(): boolean {
+  return appInitComplete;
+}
 
 // Guard against the deferred-quit dance re-entering: when we call
 // `app.quit()` from inside the `will-quit` handler, Electron re-emits

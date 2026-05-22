@@ -29,7 +29,8 @@ import {
 } from "./passwordVault";
 
 /**
- * Build a human-readable error explaining why the OS keyring is unavailable.
+ * Build a human-readable error explaining why the OS keyring is unavailable
+ * AND what alternative recovery paths the user has.
  *
  * On Linux this commonly means the user is on a minimal or headless desktop
  * with no Secret Service-compatible daemon running (e.g. `gnome-keyring` /
@@ -38,8 +39,25 @@ import {
  *
  * On macOS this would mean Keychain is locked or sandboxed away (very rare);
  * on Windows it would mean DPAPI is unavailable (also very rare).
+ *
+ * Recovery routes the message surfaces:
+ *
+ *   1. **Install a keyring daemon** — the "preferred" recovery, since
+ *      the OS keyring is the most ergonomic UX. Mentioned first on
+ *      Linux; not applicable on macOS/Windows (their native keystores
+ *      are always present unless the OS itself is misconfigured).
+ *   2. **Restart and enter a vault password** — every platform supports
+ *      this fallback. After WS10 the app prompts for a password on
+ *      startup when safeStorage is unavailable; the password-derived
+ *      key unlocks the same encrypt/decrypt operations safeStorage
+ *      would have done. If the user dismissed the prompt this session,
+ *      restarting gives them another shot.
  */
 export function encryptionUnavailableReason(): string {
+  const passwordVaultHint =
+    "If you cannot install a keyring daemon, restart Tessera and enter a " +
+    "vault password when prompted — the app will derive an encryption " +
+    "key from your password and use it in place of the OS keyring.";
   switch (process.platform) {
     case "linux":
       return (
@@ -47,14 +65,24 @@ export function encryptionUnavailableReason(): string {
         "Install and start one of: gnome-keyring-daemon (GNOME / Ubuntu), " +
         "kwallet5-daemon (KDE), or pass an X session manager that exposes the " +
         "Secret Service D-Bus API. The Debian/Ubuntu packages are " +
-        "`gnome-keyring` and `libsecret-1-0`."
+        "`gnome-keyring` and `libsecret-1-0`. " +
+        passwordVaultHint
       );
     case "darwin":
-      return "Encryption not available — Keychain is locked or inaccessible.";
+      return (
+        "Encryption not available — Keychain is locked or inaccessible. " +
+        passwordVaultHint
+      );
     case "win32":
-      return "Encryption not available — Windows DPAPI is unavailable.";
+      return (
+        "Encryption not available — Windows DPAPI is unavailable. " +
+        passwordVaultHint
+      );
     default:
-      return "Encryption not available — unsupported platform.";
+      return (
+        "Encryption not available — unsupported platform. " +
+        passwordVaultHint
+      );
   }
 }
 

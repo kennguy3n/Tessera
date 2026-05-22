@@ -84,6 +84,27 @@ const PBKDF2_DIGEST = "sha256";
 const SALT_LEN = 16;
 const IV_LEN = 12;
 const TAG_LEN = 16;
+/**
+ * Magic bytes prefixed to every password-vault blob.
+ *
+ * `Buffer` is mutable — any code with a reference could `.fill(0)`
+ * this constant and silently break all future encrypt/decrypt
+ * dispatch (decrypted blobs would no longer match, and freshly
+ * encrypted blobs would carry the zeroed prefix). `Object.freeze`
+ * cannot prevent `TypedArray.prototype.fill` from clobbering the
+ * underlying bytes (freeze only locks property descriptors, not the
+ * backing storage of typed-array views), so there's no idiomatic
+ * "make this Buffer immutable" path in Node.
+ *
+ * The defence is structural: `MAGIC` is NOT exported, and within
+ * this module it is only ever consumed by read-only operations
+ * (`subarray`, `equals`, `toString`, `Buffer.concat` — which copies
+ * the bytes into a new buffer rather than mutating its sources).
+ * No reachable code path mutates `MAGIC`, so the theoretical mutability
+ * is gated entirely by "do not export, do not pass to APIs that
+ * mutate their arguments". Both invariants are enforced at the
+ * module boundary.
+ */
 const MAGIC = Buffer.from("TSPV", "ascii");
 const VERSION = 1;
 
@@ -403,8 +424,20 @@ export async function promptForVaultPassword(opts: {
       const password = (payload as { password: string }).password;
       settled = true;
       cleanup();
-      // Defer close so the renderer's ipcRenderer.send flush has a
-      // tick to complete before its host process is torn down.
+      // Defer close so the renderer's `ipcRenderer.send` flush has a
+      // tick to complete before its host process is torn down. The
+      // submit IPC has already arrived (we're in its handler), but the
+      // renderer-side script may have additional teardown to do
+      // before the WebContents is destroyed.
+      //
+      // Note: this `setImmediate` does NOT defend against the
+      // `window-all-closed` → `app.quit()` race that affects the
+      // X-button close path before `createWindow()` has run. That
+      // race is fixed structurally in `main.ts` via the
+      // `appInitComplete` flag; deferring close here is purely about
+      // IPC-flush hygiene. The OS title-bar X button closes the
+      // window synchronously and would still race without the
+      // `appInitComplete` guard.
       setImmediate(() => {
         if (!win.isDestroyed()) win.close();
       });
@@ -416,6 +449,9 @@ export async function promptForVaultPassword(opts: {
       if (!isFromPromptWindow(e)) return;
       settled = true;
       cleanup();
+      // See onSubmit comment above — same IPC-flush rationale, same
+      // note about not relying on this to defer
+      // `window-all-closed`.
       setImmediate(() => {
         if (!win.isDestroyed()) win.close();
       });
