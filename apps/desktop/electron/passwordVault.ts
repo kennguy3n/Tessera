@@ -648,13 +648,37 @@ function renderPromptHtml(opts: {
  *   - subsequent launch where vault files already exist → ask for
  *     existing password, verify by decrypting a witness blob if any
  */
+/**
+ * Sentinel `reason` returned from `initPasswordVaultIfNeeded` when the
+ * outer `safeStorage.isEncryptionAvailable()` returned false but the
+ * inner re-check inside `initPasswordVaultIfNeeded` returned true —
+ * i.e. the OS keyring daemon became available in the (vanishingly small)
+ * window between the two checks.
+ *
+ * This is a TOCTOU race, NOT a vault failure: the keyring is now
+ * available, so the safeStorage path will be used and the password
+ * vault is not needed. Callers should treat this as success, NOT log
+ * a "vault writes will fail" warning.
+ *
+ * Exported as a constant rather than a magic string so the comparison
+ * in `main.ts::maybeInitPasswordVault` is a typed contract between
+ * the two files. If we ever add other `active=false` reasons (e.g.
+ * "prompt suppressed by policy") they will have distinct sentinels
+ * and the main.ts side can decide per-reason whether to warn.
+ */
+export const VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE =
+  "safeStorage is available";
+
 export async function initPasswordVaultIfNeeded(opts: {
   isEncryptionAvailable: () => boolean;
   existingVault: boolean;
   parent?: BrowserWindow;
 }): Promise<{ active: boolean; reason?: string }> {
   if (opts.isEncryptionAvailable()) {
-    return { active: false, reason: "safeStorage is available" };
+    return {
+      active: false,
+      reason: VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE,
+    };
   }
   const password = await promptForVaultPassword({
     parent: opts.parent,

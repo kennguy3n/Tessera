@@ -8,7 +8,11 @@ import { startScheduler, stopScheduler } from "./scheduler";
 import { getLogger } from "./logger";
 import { initAutoUpdater } from "./autoUpdater";
 import { cspImageSources } from "./cspImageSources";
-import { initPasswordVaultIfNeeded, passwordVaultSaltExists } from "./passwordVault";
+import {
+  initPasswordVaultIfNeeded,
+  passwordVaultSaltExists,
+  VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE,
+} from "./passwordVault";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -186,7 +190,27 @@ async function maybeInitPasswordVault(): Promise<void> {
       console.log(
         "[Tessera] Password vault unlocked — OAuth tokens and secrets will be encrypted with the user-supplied password.",
       );
+    } else if (result.reason === VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE) {
+      // TOCTOU race: the OS keyring daemon became available between
+      // the outer `safeStorage.isEncryptionAvailable()` check on line
+      // 169 and the inner re-check inside `initPasswordVaultIfNeeded`.
+      // This is NOT a vault failure — safeStorage is now available so
+      // the existing OS-keyring path takes over; the password vault
+      // is simply not needed. The previous unconditional warning
+      // ("token / secret writes will fail until the vault is unlocked
+      // or the OS keyring becomes available") was actively misleading
+      // here because the keyring IS available.
+      console.log(
+        "[Tessera] OS keyring became available during startup — " +
+          "using safeStorage; password vault not needed.",
+      );
     } else {
+      // Other `active=false` reasons (today none exist, but the type
+      // signature accommodates future ones e.g. "prompt suppressed by
+      // policy") still warrant the "writes will fail" warning because
+      // safeStorage was unavailable AND the password vault did not
+      // unlock. The `result.reason` (if any) is included to aid
+      // debugging.
       console.warn(
         "[Tessera] Password vault prompt completed without activating the vault" +
           (result.reason ? ` (${result.reason})` : "") +

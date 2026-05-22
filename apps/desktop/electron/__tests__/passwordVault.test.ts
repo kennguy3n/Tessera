@@ -59,6 +59,7 @@ vi.mock("electron", () => ({
 import {
   PASSWORD_PROMPT_CANCEL_CHANNEL,
   PASSWORD_PROMPT_SUBMIT_CHANNEL,
+  VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE,
   WrongVaultPasswordError,
   _renderPromptHtmlForTests,
   _setCachedKeyForTests,
@@ -67,6 +68,7 @@ import {
   decryptWithPasswordKey,
   deriveAndCacheKey,
   encryptWithPasswordKey,
+  initPasswordVaultIfNeeded,
   isPasswordVaultBlob,
   passwordVaultActive,
   passwordVaultSaltExists,
@@ -487,5 +489,66 @@ describe("passwordVault — IPC-boundary defense in depth", () => {
       emptyIdx,
       "empty-password rejection must occur before settling the promise (otherwise it does not skip PBKDF2)",
     ).toBeLessThan(settledIdx);
+  });
+});
+
+// Regression: TOCTOU between maybeInitPasswordVault's outer
+// safeStorage.isEncryptionAvailable() guard and
+// initPasswordVaultIfNeeded's inner re-check used to surface as a
+// misleading warning ("token / secret writes will fail until the vault
+// is unlocked or the OS keyring becomes available") even though the
+// keyring WAS available. The fix is two-part: (a) export a typed
+// sentinel constant from passwordVault.ts so main.ts can discriminate
+// on the reason, (b) treat the TOCTOU race as success (informational
+// log only), not a vault failure.
+//
+// Pin BOTH halves so a refactor of either file doesn't silently lose
+// the fix.
+describe("passwordVault — TOCTOU sentinel contract", () => {
+  it("VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE is a stable exported string", () => {
+    expect(VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE).toBe(
+      "safeStorage is available",
+    );
+  });
+
+  // The inner `if (opts.isEncryptionAvailable())` check returns
+  // { active: false, reason: <sentinel> } — not { active: false,
+  // reason: undefined } or { active: true }. The sentinel must be
+  // the exported constant, not an inline literal, so future refactors
+  // of either side stay in sync.
+  it("initPasswordVaultIfNeeded returns the sentinel reason when keyring flips available between checks", async () => {
+    const result = await initPasswordVaultIfNeeded({
+      isEncryptionAvailable: () => true,
+      existingVault: false,
+    });
+    expect(result.active).toBe(false);
+    expect(result.reason).toBe(VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE);
+  });
+
+  // The main-process consumer of the sentinel (maybeInitPasswordVault
+  // in main.ts) MUST import the constant rather than comparing to an
+  // inline string literal. If the sentinel value drifts (a future
+  // refactor adding new active=false reasons), the magic-string
+  // approach would silently miss the discriminator and emit the
+  // wrong warning.
+  it("main.ts imports VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE and discriminates on it", () => {
+    const mainSource = fs
+      .readFileSync(path.join(TEST_DIR, "..", "main.ts"), "utf-8")
+      .replace(/\r\n/g, "\n");
+    // Import must reference the constant by name.
+    expect(mainSource).toMatch(
+      /import\s*\{[\s\S]*?VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE[\s\S]*?\}\s*from\s*"\.\/passwordVault"/,
+    );
+    // The discriminator branch must compare result.reason to the
+    // constant, NOT to an inline string literal "safeStorage is
+    // available".
+    expect(mainSource).toMatch(
+      /result\.reason\s*===\s*VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE/,
+    );
+    // And there must be NO inline literal comparison anywhere — the
+    // anti-pattern this regression test guards against.
+    expect(mainSource).not.toMatch(
+      /===\s*"safeStorage is available"/,
+    );
   });
 });
