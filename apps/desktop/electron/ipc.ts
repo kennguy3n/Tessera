@@ -16,10 +16,14 @@ import {
 } from "./scheduler";
 import { isSafeExportPath } from "./exportPathSafety";
 import type { SettingsData, ModelStatus } from "./preload";
-import { exchangeCodeForTokens, refreshAccessToken } from "./oauthServer";
+import { exchangeCodeForTokens } from "./oauthServer";
 import * as tokenVault from "./tokenVault";
 import * as secretsVault from "./secretsVault";
-import { registerConnectorHandlers } from "./ipc/connectors/handlers";
+import {
+  getValidAccessTokenForProvider,
+  registerConnectorHandlers,
+} from "./ipc/connectors/handlers";
+import type { ProviderId } from "./ipc/connectors/providerOAuth";
 import { syncGoogleDrive } from "./ipc/connectors/gdrive";
 import { createDefaultContext } from "./ipc/context";
 import { defaultRateLimiter } from "./ipc/rateLimiter";
@@ -50,36 +54,38 @@ import {
 // unit-tested without Electron.
 export type { ExtractedItem };
 
+// Shared `IpcContext` used by both `registerConnectorHandlers` (the
+// unified multi-provider connector dispatcher in
+// `ipc/connectors/handlers.ts`) and the Drive-only legacy handlers
+// below (`connectors:gdrive:listFiles`, `connectors:gdrive:sync`). The
+// context exposes `tokenVault`, the rate-limiter, the logger, and the
+// userData directory so both paths share the SAME OAuth refresh logic
+// — see `getValidAccessToken` below. Captured lazily on first use so
+// `app.getPath('userData')` is only invoked after `ready`.
+let sharedConnectorContext: ReturnType<typeof createDefaultContext> | null = null;
+function getConnectorContext(): ReturnType<typeof createDefaultContext> {
+  if (!sharedConnectorContext) {
+    sharedConnectorContext = createDefaultContext(getLogger(), defaultRateLimiter);
+  }
+  return sharedConnectorContext;
+}
+
+/**
+ * Resolve a fresh access token for an OAuth provider, refreshing via
+ * the stored refresh token if needed. Delegates to the unified
+ * `getValidAccessTokenForProvider` helper in
+ * `ipc/connectors/handlers.ts` so the legacy `connectors:gdrive:*`
+ * channels and the new `connectors:authenticate / sync / disconnect`
+ * channels share a single source of truth for token refresh + the
+ * non-expiring-token short-circuit. Previously there were two
+ * independent copies of this logic (one in `oauthServer.ts`, one in
+ * `handlers.ts`) and they could silently drift.
+ */
 async function getValidAccessToken(provider: string): Promise<string> {
-  const stored = tokenVault.getTokens(provider);
-  if (!stored) throw new Error(`${provider} not connected`);
-
-  if (Date.now() < stored.expiresAt - 60_000) {
-    return stored.accessToken;
-  }
-
-  if (!stored.refreshToken) {
-    tokenVault.deleteTokens(provider);
-    throw new Error(`${provider} token expired and no refresh token available — re-authenticate`);
-  }
-
-  const clientId = stored.clientId;
-  const clientSecret = stored.clientSecret;
-  if (!clientId || !clientSecret) {
-    tokenVault.deleteTokens(provider);
-    throw new Error("OAuth credentials missing from token store — re-authenticate");
-  }
-
-  const refreshed = await refreshAccessToken(clientId, clientSecret, stored.refreshToken);
-  tokenVault.storeTokens(provider, {
-    accessToken: refreshed.access_token,
-    refreshToken: refreshed.refresh_token ?? stored.refreshToken,
-    expiresAt: Date.now() + refreshed.expires_in * 1000,
-    scopes: stored.scopes,
-    clientId,
-    clientSecret,
-  });
-  return refreshed.access_token;
+  return getValidAccessTokenForProvider(
+    getConnectorContext(),
+    provider as ProviderId,
+  );
 }
 
 /**
@@ -1134,7 +1140,13 @@ export function registerIpcHandlers(): void {
   // `connectors:gdrive:listFiles` are still defined inline below
   // because they expose Drive-specific concepts (Drive folder ids,
   // export MIME types) that don't generalise to the other providers.
-  registerConnectorHandlers(createDefaultContext(getLogger(), defaultRateLimiter));
+  // Use the *same* `IpcContext` the legacy `connectors:gdrive:*`
+  // handlers below use for `getValidAccessToken` — see
+  // `getConnectorContext()` near the top of this file. Sharing one
+  // context guarantees both code paths read/write the same
+  // `tokenVault`, log to the same logger, and rate-limit against the
+  // same in-memory bucket.
+  registerConnectorHandlers(getConnectorContext());
 
   ipcMain.handle(
     "connectors:gdrive:listFiles",

@@ -249,6 +249,59 @@ describe("exchangeAuthorizationCode", () => {
     ).rejects.toThrow(/no access_token/);
   });
 
+  it("uses a multi-year `expiresIn` default for non-refreshable providers when the response omits `expires_in` (Notion regression)", async () => {
+    // Notion's token-exchange response is documented to omit
+    // `expires_in` entirely because its integration tokens are
+    // non-expiring. The previous code defaulted to 3600s, making
+    // every stored Notion token *look* expired after one hour and
+    // triggering the auth-state cleanup path. The fix uses a very
+    // large default for providers whose config says
+    // `supportsRefresh = false`, so the stored `expiresAt` reads as
+    // effectively-non-expiring on inspection.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        access_token: "AT",
+        token_type: "Bearer",
+        workspace_id: "WS",
+      }),
+    });
+    const tokens = await exchangeAuthorizationCode(
+      getProviderOAuthConfig("notion"),
+      {
+        code: "CODE",
+        clientId: "ID",
+        clientSecret: "SECRET",
+      },
+    );
+    // 10 years in seconds.
+    expect(tokens.expiresIn).toBe(10 * 365 * 24 * 3600);
+  });
+
+  it("keeps the 1-hour default for *refreshable* providers when `expires_in` is missing", async () => {
+    // Defensive: Google Drive ought to always return `expires_in`,
+    // but if a buggy upstream omits it, the 1-hour default is still
+    // the right call for refreshable providers — we'd just refresh
+    // an hour from now using the stored refresh token.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        access_token: "AT",
+        token_type: "Bearer",
+        // No `expires_in`.
+      }),
+    });
+    const tokens = await exchangeAuthorizationCode(
+      getProviderOAuthConfig("google_drive"),
+      {
+        code: "CODE",
+        clientId: "ID",
+        clientSecret: "SECRET",
+      },
+    );
+    expect(tokens.expiresIn).toBe(3600);
+  });
+
   it("preserves provider extras on the TokenResponse", async () => {
     fetchMock.mockResolvedValue({
       ok: true,

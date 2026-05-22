@@ -461,7 +461,22 @@ export async function exchangeAuthorizationCode(
   return {
     accessToken: access_token,
     refreshToken: refresh_token ?? null,
-    expiresIn: typeof expires_in === "number" ? expires_in : 3600,
+    // Providers that document their access tokens as non-expiring (e.g.
+    // Notion's integration tokens) typically omit `expires_in` entirely
+    // from the token-exchange response. Defaulting to a normal 1-hour
+    // lifetime there would make every stored token look "expired" after
+    // an hour and trigger the auth-state cleanup path (see the
+    // non-refreshable guard in `handlers.getValidAccessToken`). For
+    // those providers we store an effectively-non-expiring value so
+    // inspection / debugging surfaces a sensible `expiresAt`. The
+    // expiry check still short-circuits for them, so this is
+    // defense-in-depth, not the load-bearing fix.
+    expiresIn:
+      typeof expires_in === "number"
+        ? expires_in
+        : config.supportsRefresh
+          ? 3600
+          : 10 * 365 * 24 * 3600,
     tokenType: token_type ?? "Bearer",
     extra,
   };
@@ -538,7 +553,15 @@ export async function refreshProviderToken(
   return {
     accessToken: access_token,
     refreshToken: refresh_token ?? params.refreshToken,
-    expiresIn: typeof expires_in === "number" ? expires_in : 3600,
+    // Same rationale as `exchangeAuthorizationCode`: non-refreshable
+    // providers may return no `expires_in`; defaulting to one hour
+    // would silently sign the user out.
+    expiresIn:
+      typeof expires_in === "number"
+        ? expires_in
+        : config.supportsRefresh
+          ? 3600
+          : 10 * 365 * 24 * 3600,
     tokenType: token_type ?? "Bearer",
     extra,
   };

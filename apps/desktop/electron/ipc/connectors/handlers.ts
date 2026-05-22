@@ -182,9 +182,28 @@ async function getValidAccessToken(
       `${provider} is not connected — authenticate first`,
     );
   }
+  const config = getProviderOAuthConfig(provider);
+
+  // Non-refreshable providers (currently only Notion's integration
+  // tokens, which the docs describe as non-expiring) give us no way
+  // to refresh, AND their token-exchange responses typically omit
+  // `expires_in` — which would otherwise fall through to the 3600s
+  // default in `exchangeAuthorizationCode` and make every stored
+  // token look "expired" after exactly one hour. Proactively deleting
+  // a token we *believe* expired is strictly worse than letting the
+  // upstream API tell us via a 401 if the token is actually invalid,
+  // because:
+  //   (a) we have no way to recover (no refresh token),
+  //   (b) the only consequence of our guess being wrong is to forcibly
+  //       sign the user out of a working integration.
+  // So for non-refreshable providers we skip the expiry check entirely
+  // and return the stored access token verbatim.
+  if (!config.supportsRefresh && !stored.refreshToken) {
+    return stored.accessToken;
+  }
+
   if (Date.now() < stored.expiresAt - 60_000) return stored.accessToken;
 
-  const config = getProviderOAuthConfig(provider);
   if (!config.supportsRefresh || !stored.refreshToken) {
     ctx.tokenVault.deleteTokens(provider);
     throw new NotConnectedError(
