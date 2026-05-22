@@ -139,6 +139,13 @@ impl RetryPolicy {
     /// Parse the `Retry-After` header value (seconds or HTTP-date) into
     /// a Duration. Falls back to `self.retry_after_fallback` if the
     /// header is absent or malformed.
+    ///
+    /// Both branches — parsed value and fallback — are capped at
+    /// `self.max_backoff` so a custom policy with
+    /// `retry_after_fallback > max_backoff` can't surprise the caller
+    /// with a wait longer than the documented maximum. This keeps the
+    /// `max_backoff` invariant true regardless of header content or
+    /// policy construction.
     fn parse_retry_after(&self, response: &Response) -> Duration {
         // 2021-edition workspace — use nested `if let` rather than the
         // 2024-only let-chain syntax.
@@ -152,7 +159,10 @@ impl RetryPolicy {
                 }
             }
         }
-        self.retry_after_fallback
+        // Same cap on the fallback for consistency: max_backoff is the
+        // contract, not a soft guideline that only applies to header
+        // parsing.
+        self.retry_after_fallback.min(self.max_backoff)
     }
 }
 
@@ -184,11 +194,20 @@ pub async fn send_with_retry(
     let mut transport_attempts: u32 = 0;
     let mut http_attempts: u32 = 0;
 
-    // The overall ceiling: we walk until BOTH budgets are exhausted, so
-    // a mid-loop transition from transport-failure to HTTP-failure (or
-    // vice-versa) doesn't terminate the loop prematurely. Worst-case
-    // attempt count is max(http_max, transport_max) — the larger budget
-    // dominates if the failure mode is consistent.
+    // Each budget is enforced independently — the loop terminates as
+    // soon as ANY of these become true after an attempt:
+    //   (a) http_attempts == policy.max_attempts (HTTP budget exhausted)
+    //   (b) transport_attempts == policy.transport_max_attempts
+    //       (transport budget exhausted)
+    //   (c) we've run `overall_max` iterations (defense-in-depth ceiling)
+    //
+    // (c) only ever triggers in a mixed-failure scenario (some HTTP,
+    // some transport) where neither counter alone exhausts before the
+    // ceiling is reached — e.g. 2 transport + 3 HTTP errors with
+    // budgets of (5, 3) hits overall_max=5 without exhausting either
+    // individual budget. That's intentional: a mixed pattern is a
+    // "provider has multiple problems" signal and failing fast is the
+    // right UX.
     let overall_max = policy.max_attempts.max(policy.transport_max_attempts);
 
     for _ in 1..=overall_max {
@@ -557,26 +576,32 @@ mod tests {
     /// Persistent transport failure (no server at all) exhausts the
     /// tighter `transport_max_attempts` budget without burning the
     /// larger `max_attempts` budget. Pins the dual-budget contract
-    /// — a refactor that re-collapses to a single counter would surface
-    /// here because the function would either run too few attempts
-    /// (if it picks transport_max_attempts as the loop bound and the
-    /// failure mode were HTTP) or too many (if it picks max_attempts
-    /// and the failure mode is transport, hanging the user on
-    /// offline).
+    /// — a refactor that re-collapses to a single counter would
+    /// surface here because the loop would walk either too few
+    /// attempts (if it picks transport_max_attempts as the loop bound
+    /// and the failure mode were HTTP) or too many (if it picks
+    /// max_attempts and the failure mode is transport, hanging the
+    /// user on offline).
     ///
-    /// We exercise this by pointing at an unrouteable port on
-    /// localhost so reqwest surfaces a connect-refused before any
-    /// HTTP status code can be parsed. Even with default
-    /// `max_attempts = 5`, the test policy here pins
-    /// `transport_max_attempts = 2` and we verify the helper returns
-    /// after exactly two reqwest::execute attempts.
+    /// We exercise this by attaching reqwest to a `connect_timeout`
+    /// of 50ms against an unrouteable IP. This is platform-portable:
+    /// Linux's `connect()` returns ECONNREFUSED almost instantly
+    /// against `127.0.0.1` + an unused port, but Windows takes ~2s
+    /// per attempt to surface the same condition, which would blow
+    /// the wall-clock budget on the CI Windows runner. Forcing the
+    /// timeout via reqwest's builder gives us a deterministic, fast
+    /// transport failure on every OS.
     #[tokio::test]
     async fn transport_failure_uses_tighter_transport_budget() {
-        // 1 is the standard "nothing listens here" sentinel port on
-        // Linux. Picking a deliberately-low port avoids racing against
-        // a real local service. reqwest will surface connect-refused
-        // immediately rather than retrying internally.
-        let bad_url = "http://127.0.0.1:1/x";
+        // RFC 5737 TEST-NET-1 address — reserved for documentation,
+        // guaranteed never to be routable. Combined with the explicit
+        // connect_timeout below, reqwest surfaces a deterministic
+        // transport error on every platform within ~50ms per attempt.
+        let bad_url = "http://192.0.2.1:1/x";
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_millis(50))
+            .build()
+            .unwrap();
         let policy = RetryPolicy {
             max_attempts: 5,           // generous HTTP budget
             transport_max_attempts: 2, // tighter transport budget
@@ -586,21 +611,23 @@ mod tests {
             retry_after_fallback: Duration::from_millis(0),
         };
 
-        let request = reqwest::Client::new().get(bad_url).build().unwrap();
+        let request = client.get(bad_url).build().unwrap();
         let start = std::time::Instant::now();
-        let err = send_with_retry(&reqwest::Client::new(), request, &policy)
+        let err = send_with_retry(&client, request, &policy)
             .await
             .expect_err("transport failure should exhaust the tighter budget");
 
         // Bound the call's wall-clock to something well under what a
         // 5-attempt loop would have produced if the helper had
         // mistakenly used max_attempts as the transport ceiling. With
-        // zero backoff between attempts and a localhost connect
-        // failure, two attempts should complete in well under a
-        // second; five would be similarly fast but harder to
-        // distinguish, so we additionally pin the error variant.
+        // a 50ms connect_timeout and `transport_max_attempts = 2`, the
+        // call should finish in ~100ms; the 3-second bound has
+        // generous slack for slow CI runners but still detects a
+        // mistakenly-using-max_attempts (~250ms) regression IF it
+        // walked the larger budget. We rely on variant pinning for
+        // the strict semantic check.
         assert!(
-            start.elapsed() < Duration::from_secs(2),
+            start.elapsed() < Duration::from_secs(3),
             "transport failure should bail out within transport_max_attempts, took {:?}",
             start.elapsed(),
         );

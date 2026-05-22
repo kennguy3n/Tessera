@@ -8,9 +8,19 @@ use thiserror::Error;
 /// provider-specific detail belongs in [`ConnectorError::ProviderError`]'s
 /// `message` field, not as a new variant.
 ///
-/// The `#[from]` annotations let `?` lift `std::io::Error` / `reqwest::Error`
-/// into the right variant automatically — call sites in every connector
-/// rely on this implicit lift.
+/// Two `From` impls let `?` lift transport-layer errors into the right
+/// variant automatically; call sites in every connector rely on this
+/// implicit lift:
+///
+///   * `std::io::Error` — wired via `#[from]` on the [`Io`] variant.
+///     The full error (kind + message + source chain) is preserved.
+///   * `reqwest::Error` — wired via a manual `impl From` (below) into
+///     `NetworkError(String)`. We deliberately flatten reqwest's error
+///     chain rather than wrapping it because the connector-side caller
+///     only needs the formatted message; the underlying URL / kind /
+///     status detail isn't useful to surface to the IPC layer.
+///
+/// [`Io`]: ConnectorError::Io
 #[derive(Debug, Error)]
 pub enum ConnectorError {
     #[error("Authentication failed: {0}")]
