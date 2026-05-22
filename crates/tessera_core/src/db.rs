@@ -131,10 +131,33 @@ pub fn open_shared(path: &str) -> Result<SharedConnection> {
 ///
 /// When `key` is `None`, the function falls back to a plain
 /// `Connection::open` with no PRAGMA key — used by per-store seeding
-/// helpers and by tests that don't exercise encryption.
+/// helpers and by tests that don't exercise encryption. The same
+/// `SELECT count(*) FROM sqlite_master` probe runs in this branch:
+/// for a plaintext DB it succeeds harmlessly (returning the table
+/// count); for a brand-new / empty file it succeeds returning 0;
+/// for an *encrypted* DB opened without a key it fails with
+/// `NotADatabase`, which we surface here with a clearer
+/// "encrypted-DB-opened-without-key" diagnostic than the deferred
+/// `CREATE TABLE` failure the caller would otherwise see. The
+/// narrow scenario where this triggers (user manually deleted
+/// `db.key` while keeping the encrypted `tessera.db`, and keyring
+/// is unavailable so the Electron side surfaces
+/// `EncryptionUnavailableError`) is rare in practice but worth
+/// catching early at init time.
 pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConnection> {
     let Some(key) = key else {
         let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
+        // Probe the file matches the no-key expectation: either
+        // plaintext SQLite or empty. An encrypted DB opened without
+        // a PRAGMA key will fail this probe with `NotADatabase` and
+        // we should fail loudly rather than let the first
+        // `CREATE TABLE` produce an opaque error.
+        conn.query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
+            .map_err(|e| {
+                Error::Database(format!(
+                    "opening db without an encryption key failed; the file at {path} may be SQLCipher-encrypted (restore `db.key` from backup, or delete the database to start fresh — data loss): {e}"
+                ))
+            })?;
         return Ok(Arc::new(Mutex::new(conn)));
     };
     validate_hex_key(key)?;
@@ -438,7 +461,10 @@ mod tests {
     #[test]
     fn encrypted_db_with_no_key_fails() {
         // Inverse of the previous test: a DB created with a key
-        // cannot be opened without one.
+        // cannot be opened without one. The `None` path probes
+        // `sqlite_master` immediately, so we expect
+        // `open_shared_with_key` itself to fail rather than the
+        // failure being deferred to the first query.
         let tmp = tempfile::tempdir().expect("tempdir");
         let db_path = tmp.path().join("no-key.db");
         let db_path_str = db_path.to_str().unwrap();
@@ -447,16 +473,49 @@ mod tests {
             let conn = db.lock().unwrap();
             conn.execute("CREATE TABLE t (id INTEGER)", []).unwrap();
         }
-        // Open with key=None: the connection succeeds but the first
-        // query will fail because the file is encrypted.
-        let db = open_shared_with_key(db_path_str, None).expect("open without key");
-        let conn = db.lock().unwrap();
-        let result =
-            conn.query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| r.get(0));
+        let result = open_shared_with_key(db_path_str, None);
         assert!(
             result.is_err(),
-            "expected encrypted DB to fail without key, got {result:?}"
+            "expected encrypted DB to fail when opened without key, got {result:?}"
         );
+        // Diagnostic message points the user at the recovery path
+        // (restore db.key or accept data loss).
+        match result.unwrap_err() {
+            crate::error::Error::Database(msg) => {
+                assert!(
+                    msg.contains("SQLCipher-encrypted") || msg.contains("db.key"),
+                    "diagnostic should mention SQLCipher / db.key, got: {msg}"
+                );
+            }
+            other => panic!("expected Database error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_key_open_succeeds_for_plaintext_and_empty() {
+        // Pin that the probe on the `None` path is harmless for the
+        // legitimate plaintext / empty cases — per-store seeding
+        // helpers and tests that don't exercise encryption depend
+        // on this.
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        // Case 1: empty file (Connection::open creates it on first use).
+        let fresh = tmp.path().join("fresh.db");
+        let fresh_str = fresh.to_str().unwrap();
+        let db = open_shared_with_key(fresh_str, None).expect("open fresh db without key");
+        {
+            let conn = db.lock().unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER)", []).unwrap();
+        }
+        drop(db);
+
+        // Case 2: plaintext DB with existing data.
+        let db = open_shared_with_key(fresh_str, None).expect("reopen plaintext");
+        let conn = db.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
+            .expect("plaintext probe should succeed");
+        assert!(count >= 1, "expected sqlite_master to have at least one row");
     }
 
     #[test]
