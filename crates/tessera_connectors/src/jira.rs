@@ -498,7 +498,14 @@ impl JiraConnector {
         result.has_more = false;
 
         self.last_sync = Some(Utc::now());
-        self.file_count = self.file_count.saturating_add(result.added.len() as u64);
+        // NET file-count via the shared `SyncResult::apply_to_file_count`
+        // helper. Jira surfaces deletions through JQL `updated >=`
+        // boundary semantics + a follow-up existence probe, so removals
+        // are populated when the user closes / deletes issues. Centralising
+        // the formula is what fixes the previous Jira-specific bug where
+        // file_count was monotonic and drifted upward across the lifetime
+        // of the connector with no way to recover.
+        self.file_count = result.apply_to_file_count(self.file_count);
         self.status = ConnectorStatus::Connected;
         Ok(result)
     }
@@ -532,6 +539,21 @@ impl JiraConnector {
 impl Default for JiraConnector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl crate::traits::RemoteConnector for JiraConnector {
+    fn provider_name(&self) -> &'static str {
+        JiraConnector::provider_name(self)
+    }
+    fn status(&self) -> ConnectorStatus {
+        JiraConnector::status(self)
+    }
+    fn last_sync_time(&self) -> Option<DateTime<Utc>> {
+        JiraConnector::last_sync_time(self)
+    }
+    fn file_count(&self) -> u64 {
+        JiraConnector::file_count(self)
     }
 }
 

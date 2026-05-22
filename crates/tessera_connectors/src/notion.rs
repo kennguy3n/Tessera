@@ -573,7 +573,13 @@ impl NotionConnector {
         result.has_more = false;
 
         self.last_sync = Some(Utc::now());
-        self.file_count = self.file_count.saturating_add(result.added.len() as u64);
+        // NET file-count via the shared `SyncResult::apply_to_file_count`
+        // helper. `result.removed` is empty for the incremental path
+        // (deletions only surface on the full walk), so this is a
+        // monotonic increment in practice — but using the helper means
+        // a future refactor that adds deletion detection here doesn't
+        // need to remember to subtract.
+        self.file_count = result.apply_to_file_count(self.file_count);
         self.status = ConnectorStatus::Connected;
         Ok(result)
     }
@@ -693,12 +699,11 @@ impl NotionConnector {
         result.has_more = false;
 
         self.last_sync = Some(Utc::now());
-        let added = result.added.len() as u64;
-        let removed = result.removed.len() as u64;
-        self.file_count = self
-            .file_count
-            .saturating_add(added)
-            .saturating_sub(removed);
+        // NET file-count via the shared `SyncResult::apply_to_file_count`
+        // helper. The full-walk path surfaces deletions via the
+        // `known_file_ids` set-diff, so this is the codepath where the
+        // saturating-sub component is actually exercised.
+        self.file_count = result.apply_to_file_count(self.file_count);
         // Reset the counter so the next `sync_changes` call can take
         // the fast path until we hit the threshold again; also mark
         // that this instance has now performed a full walk so future
@@ -742,6 +747,21 @@ impl NotionConnector {
 impl Default for NotionConnector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl crate::traits::RemoteConnector for NotionConnector {
+    fn provider_name(&self) -> &'static str {
+        NotionConnector::provider_name(self)
+    }
+    fn status(&self) -> ConnectorStatus {
+        NotionConnector::status(self)
+    }
+    fn last_sync_time(&self) -> Option<DateTime<Utc>> {
+        NotionConnector::last_sync_time(self)
+    }
+    fn file_count(&self) -> u64 {
+        NotionConnector::file_count(self)
     }
 }
 

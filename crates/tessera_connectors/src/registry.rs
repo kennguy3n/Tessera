@@ -7,6 +7,7 @@ use crate::gdrive::GoogleDriveConnector;
 use crate::jira::JiraConnector;
 use crate::notion::NotionConnector;
 use crate::onedrive::OneDriveConnector;
+use crate::traits::RemoteConnector;
 use crate::types::{ConnectorInfo, ConnectorStatus};
 
 /// Manages multiple connector instances, keyed by provider name.
@@ -32,55 +33,45 @@ enum ConnectorEntry {
 }
 
 impl ConnectorEntry {
-    fn status(&self) -> ConnectorStatus {
+    /// Return a `&dyn RemoteConnector` view of whichever variant we are.
+    ///
+    /// Why this exists: every method on `ConnectorEntry` that operates
+    /// over the *common* (read-only) surface of every connector used to
+    /// be its own 6-arm match. Routing through `RemoteConnector` means
+    /// adding a 7th connector requires:
+    ///
+    ///   1. Adding a variant to this enum.
+    ///   2. Adding the variant's match arm HERE (once).
+    ///   3. Adding `impl RemoteConnector for NewConnector` on the new
+    ///      type (which the `traits::tests::every_connector_implements_remote_connector`
+    ///      test enforces).
+    ///
+    /// — instead of touching N methods on this enum for the same data.
+    /// The typed `get_X` / `get_X_mut` accessors remain for callers that
+    /// need provider-specific affordances (e.g. `cloud_id()`) which the
+    /// trait deliberately doesn't model — see `traits.rs` module docs.
+    fn as_summary(&self) -> &dyn RemoteConnector {
         match self {
-            Self::GoogleDrive(c) => c.status(),
-            Self::OneDrive(c) => c.status(),
-            Self::Notion(c) => c.status(),
-            Self::Jira(c) => c.status(),
-            Self::Confluence(c) => c.status(),
-            Self::Figma(c) => c.status(),
+            Self::GoogleDrive(c) => c,
+            Self::OneDrive(c) => c,
+            Self::Notion(c) => c,
+            Self::Jira(c) => c,
+            Self::Confluence(c) => c,
+            Self::Figma(c) => c,
         }
     }
 
+    fn status(&self) -> ConnectorStatus {
+        self.as_summary().status()
+    }
+
     fn info(&self) -> ConnectorInfo {
-        let (provider, last_sync, file_count) = match self {
-            Self::GoogleDrive(c) => (
-                c.provider_name().to_string(),
-                c.last_sync_time(),
-                c.file_count(),
-            ),
-            Self::OneDrive(c) => (
-                c.provider_name().to_string(),
-                c.last_sync_time(),
-                c.file_count(),
-            ),
-            Self::Notion(c) => (
-                c.provider_name().to_string(),
-                c.last_sync_time(),
-                c.file_count(),
-            ),
-            Self::Jira(c) => (
-                c.provider_name().to_string(),
-                c.last_sync_time(),
-                c.file_count(),
-            ),
-            Self::Confluence(c) => (
-                c.provider_name().to_string(),
-                c.last_sync_time(),
-                c.file_count(),
-            ),
-            Self::Figma(c) => (
-                c.provider_name().to_string(),
-                c.last_sync_time(),
-                c.file_count(),
-            ),
-        };
+        let s = self.as_summary();
         ConnectorInfo {
-            provider,
-            status: self.status(),
-            last_sync,
-            file_count,
+            provider: s.provider_name().to_string(),
+            status: s.status(),
+            last_sync: s.last_sync_time(),
+            file_count: s.file_count(),
             error_message: None,
             connected_at: None,
         }

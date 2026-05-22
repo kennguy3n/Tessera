@@ -90,6 +90,36 @@ impl SyncResult {
     pub fn total_changes(&self) -> usize {
         self.added.len() + self.modified.len() + self.removed.len()
     }
+
+    /// Apply this result's added/removed counts to a running `file_count`
+    /// using the NET accounting model documented on `RemoteConnector::file_count`.
+    ///
+    /// Why centralised: all six connectors used to inline this formula,
+    /// half with `if/else` branches and half with chained `saturating_*`,
+    /// and at least two diverged into monotonic-add-only (Jira, Notion's
+    /// incremental path) — which meant their file_count counters drifted
+    /// upward indefinitely. Centralising the formula here:
+    ///
+    ///   1. Guarantees every connector has identical accounting.
+    ///   2. Gives us one testable function (`apply_to_file_count_net_semantics`)
+    ///      instead of six.
+    ///   3. Makes a future contract change (e.g. count `modified` too) a
+    ///      one-line edit, not a six-file edit.
+    ///
+    /// The saturating ops on `u64` are intentional — `added` and `removed`
+    /// can each be billions in pathological cases (provider returning a
+    /// huge delta after a long offline period), and a plain `+`/`-` would
+    /// panic on overflow / underflow. The chained `saturating_add` then
+    /// `saturating_sub` semantics:
+    ///
+    ///   - Net positive (added >= removed): grows by `added - removed`.
+    ///   - Net negative (added < removed): shrinks by `removed - added`,
+    ///     bottoming out at 0 (never underflows).
+    pub fn apply_to_file_count(&self, current: u64) -> u64 {
+        let added = self.added.len() as u64;
+        let removed = self.removed.len() as u64;
+        current.saturating_add(added).saturating_sub(removed)
+    }
 }
 
 /// Status of a connector instance.
@@ -176,6 +206,72 @@ mod tests {
         let result = SyncResult::empty();
         assert_eq!(result.total_changes(), 0);
         assert!(!result.has_more);
+    }
+
+    fn mk_remote(id: &str) -> RemoteFile {
+        RemoteFile {
+            id: id.into(),
+            name: id.into(),
+            mime_type: "text/plain".into(),
+            size_bytes: 0,
+            modified_time: Utc::now(),
+            created_time: None,
+            parent_id: None,
+            web_view_link: None,
+            is_folder: false,
+            md5_checksum: None,
+            permissions: vec![],
+        }
+    }
+
+    /// Pin the NET semantics — adds bump up, removes bump down, modifies
+    /// do nothing.
+    #[test]
+    fn apply_to_file_count_net_semantics_positive_delta() {
+        let mut result = SyncResult::empty();
+        result.added.push(mk_remote("a"));
+        result.added.push(mk_remote("b"));
+        result.added.push(mk_remote("c"));
+        result.removed.push("d".into());
+        // current = 5, +3 adds -1 remove -> 7
+        assert_eq!(result.apply_to_file_count(5), 7);
+    }
+
+    #[test]
+    fn apply_to_file_count_net_semantics_negative_delta_does_not_underflow() {
+        let mut result = SyncResult::empty();
+        result.added.push(mk_remote("a"));
+        result.removed.push("b".into());
+        result.removed.push("c".into());
+        result.removed.push("d".into());
+        // current = 1, +1 -3 -> 0 (saturating, not negative)
+        assert_eq!(result.apply_to_file_count(1), 0);
+    }
+
+    #[test]
+    fn apply_to_file_count_modified_does_not_change_count() {
+        let mut result = SyncResult::empty();
+        result.modified.push(mk_remote("a"));
+        result.modified.push(mk_remote("b"));
+        result.modified.push(mk_remote("c"));
+        // No adds, no removes — modifications don't move the count.
+        assert_eq!(result.apply_to_file_count(42), 42);
+    }
+
+    #[test]
+    fn apply_to_file_count_handles_saturating_add_at_u64_max() {
+        let mut result = SyncResult::empty();
+        result.added.push(mk_remote("a"));
+        // (u64::MAX, +1, -0) -> saturates at u64::MAX (no panic).
+        assert_eq!(result.apply_to_file_count(u64::MAX), u64::MAX);
+    }
+
+    #[test]
+    fn apply_to_file_count_empty_result_is_identity() {
+        let result = SyncResult::empty();
+        for cur in &[0u64, 1, 100, u64::MAX] {
+            assert_eq!(result.apply_to_file_count(*cur), *cur);
+        }
     }
 
     #[test]
