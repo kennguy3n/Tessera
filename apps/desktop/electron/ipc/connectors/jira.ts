@@ -24,6 +24,7 @@ import {
   nextFailedRetryQueue,
   purgeSyncDir,
   readManifest,
+  resolveAccessToken,
   sanitiseRemoteId,
   syncDirFor,
   writeManifest,
@@ -268,6 +269,9 @@ function sanitiseJqlWatermark(value: string | null): string | null {
 
 export async function syncJira(ctx: {
   accessToken: string;
+  /** Just-in-time refresh hook — called per JQL page. See Devin
+   *  Review wave 13 BUG_0001 / ANALYSIS_0007. */
+  getAccessToken?: () => Promise<string>;
   userDataDir: string;
   bridge: JiraBridgeHooks;
   /** Optional override — when null, we re-resolve from accessible-resources. */
@@ -297,10 +301,30 @@ export async function syncJira(ctx: {
 
   let added = 0;
   let modified = 0;
-  const removed = 0;
+  // Cascading-deletion counter: incremented in the post-loop pass
+  // below when a retry key we asked for via the `key in (…)` JQL
+  // clause does NOT come back in the search response *and* the
+  // issue used to be tracked in the manifest. Jira does not expose a
+  // per-key 404 endpoint, so the absence-of-result signal is the
+  // best-available deletion detection. The previous shape declared
+  // this `const removed = 0` and never incremented it, leaving
+  // Jira's sync result silently mis-counting upstream deletions vs
+  // OneDrive/Confluence. See Devin Review wave 13 ANALYSIS_0001.
+  let removed = 0;
   let watermark = state.lastSyncIso;
   const succeededIds = new Set<string>();
   const failedThisPass: Array<{ remoteId: string; remoteModifiedAt: string | null }> = [];
+  // Parallel index over `failedThisPass.remoteId` so the post-loop
+  // dedup check is O(1) instead of O(n) per retry key. See Devin
+  // Review wave 13 ANALYSIS_0006 (figma variant, applied here for
+  // architectural symmetry). INVARIANT: every push to
+  // `failedThisPass` MUST also add to this set — the `recordFailure`
+  // helper below is the only call site.
+  const failedThisPassIds = new Set<string>();
+  const recordFailure = (remoteId: string, remoteModifiedAt: string | null): void => {
+    failedThisPass.push({ remoteId, remoteModifiedAt });
+    failedThisPassIds.add(remoteId);
+  };
 
   // Fold any carry-forward retry keys into the JQL so the previous
   // pass's failures get re-fetched alongside the normal
@@ -352,14 +376,19 @@ export async function syncJira(ctx: {
   try {
     let startAt = 0;
     for (let safety = 0; safety < 1000; safety += 1) {
-      const page = await searchIssues(cloudId, ctx.accessToken, jql, startAt);
+      // Refresh-on-demand at the top of every JQL page. A wide
+      // updated-since scan on a large Jira project can paginate for
+      // far longer than the access token's 1h lifetime. See Devin
+      // Review wave 13 BUG_0001.
+      const accessToken = await resolveAccessToken(ctx);
+      const page = await searchIssues(cloudId, accessToken, jql, startAt);
       for (const issue of page.issues) {
         const updated = issue.fields.updated ?? null;
         let body: string;
         try {
           body = renderIssue(issue);
         } catch {
-          failedThisPass.push({ remoteId: issue.key, remoteModifiedAt: updated });
+          recordFailure(issue.key, updated);
           continue;
         }
         const localPath = path.join(
@@ -369,7 +398,7 @@ export async function syncJira(ctx: {
         try {
           await fsp.writeFile(localPath, body, "utf8");
         } catch {
-          failedThisPass.push({ remoteId: issue.key, remoteModifiedAt: updated });
+          recordFailure(issue.key, updated);
           continue;
         }
 
@@ -385,7 +414,7 @@ export async function syncJira(ctx: {
           try {
             ctx.bridge.addLocalFile(localPath);
           } catch {
-            failedThisPass.push({ remoteId: issue.key, remoteModifiedAt: updated });
+            recordFailure(issue.key, updated);
             continue;
           }
           added += 1;
@@ -407,13 +436,42 @@ export async function syncJira(ctx: {
     }
 
     // Any retry key that the search response did not return at all
-    // (e.g. the issue was deleted) counts as "succeeded" for the
+    // (e.g. the issue was deleted in Jira, or moved to a project the
+    // OAuth scope no longer includes) counts as "succeeded" for the
     // queue's purpose — it's been resolved one way or another and we
-    // should stop pinging it every sync.
+    // should stop pinging it every sync. When the key was also
+    // present in the prior manifest, cascade the deletion to the
+    // local sync dir and the bridge source so the user's index does
+    // not keep stale copies of issues they no longer have access to.
+    // See Devin Review wave 13 ANALYSIS_0001.
+    //
+    // The dedup check is O(1) via the `failedThisPassIds` parallel
+    // Set rather than the legacy O(n) `failedThisPass.some(…)`. See
+    // ANALYSIS_0006 for the same change in figma.ts.
     for (const key of retryKeys) {
-      if (!succeededIds.has(key) && !failedThisPass.some((f) => f.remoteId === key)) {
-        succeededIds.add(key);
+      if (succeededIds.has(key) || failedThisPassIds.has(key)) continue;
+      const prior = entriesById.get(key);
+      if (prior) {
+        const existingSource = ctx.bridge
+          .listSources()
+          .find((s) => s.path === prior.localPath);
+        if (existingSource) {
+          try {
+            ctx.bridge.removeSource(existingSource.id);
+          } catch {
+            // best-effort — a bridge crash here MUST NOT mask the
+            // upstream deletion-detection we are reacting to.
+          }
+        }
+        try {
+          await fsp.unlink(prior.localPath);
+        } catch {
+          // already gone on disk — desired end state.
+        }
+        entriesById.delete(key);
+        removed += 1;
       }
+      succeededIds.add(key);
     }
   } finally {
     // Persist progress in a nested try/catch so a state-write error

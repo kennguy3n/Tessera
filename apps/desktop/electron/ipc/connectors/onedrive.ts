@@ -30,6 +30,7 @@ import {
   manifestPathFor,
   purgeSyncDir,
   readManifest,
+  resolveAccessToken,
   sanitiseRemoteId,
   syncDirFor,
   writeManifest,
@@ -223,6 +224,10 @@ export interface OneDriveBridgeHooks {
 export async function syncOneDrive(
   ctx: {
     accessToken: string;
+    /** Just-in-time refresh hook — called per delta page so a long
+     *  sync does NOT outlive the access token's lifetime. See Devin
+     *  Review wave 13 BUG_0001 / ANALYSIS_0007. */
+    getAccessToken?: () => Promise<string>;
     userDataDir: string;
     bridge: OneDriveBridgeHooks;
   },
@@ -265,7 +270,12 @@ export async function syncOneDrive(
   // duplicates.
   try {
     for (let safety = 0; safety < 500; safety += 1) {
-      const page = await pullDeltaPage(url, ctx.accessToken);
+      // Refresh-on-demand at the top of every page. OneDrive uses
+      // server-driven pagination via `@odata.nextLink`; a workspace
+      // with deep history can paginate for tens of minutes. See
+      // Devin Review wave 13 BUG_0001 (gdrive.ts:123-126).
+      const accessToken = await resolveAccessToken(ctx);
+      const page = await pullDeltaPage(url, accessToken);
       for (const item of page.items) {
         if (item.deleted) {
           const prior = entriesById.get(item.id);
@@ -294,7 +304,7 @@ export async function syncOneDrive(
 
         const ext = extensionFor(item);
         const localPath = path.join(dir, `${sanitiseRemoteId(item.id)}${ext}`);
-        const ok = await downloadItem(item, ctx.accessToken, localPath);
+        const ok = await downloadItem(item, accessToken, localPath);
         if (!ok) continue;
 
         const existingSource = ctx.bridge

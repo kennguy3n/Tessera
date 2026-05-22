@@ -32,6 +32,7 @@ import {
   nextFailedRetryQueue,
   purgeSyncDir,
   readManifest,
+  resolveAccessToken,
   sanitiseRemoteId,
   syncDirFor,
   writeManifest,
@@ -305,6 +306,10 @@ async function saveState(userDataDir: string, s: FigmaState): Promise<void> {
 
 export async function syncFigma(ctx: {
   accessToken: string;
+  /** Just-in-time refresh hook — called per team/project/file so a
+   *  multi-team scan does NOT outlive the access token. See Devin
+   *  Review wave 13 BUG_0001 / ANALYSIS_0007. */
+  getAccessToken?: () => Promise<string>;
   userDataDir: string;
   bridge: FigmaBridgeHooks;
   /** Optional override — when null, we re-resolve from /v1/me. */
@@ -339,7 +344,17 @@ export async function syncFigma(ctx: {
 
   let added = 0;
   let modified = 0;
-  const removed = 0;
+  // Cascading-deletion counter: incremented in `syncFileByKey` when
+  // `getFile` returns 404/410 *and* the file used to be tracked in
+  // the manifest (i.e. we cleaned up a local file + bridge source
+  // that the user no longer has access to). The previous shape
+  // declared this `const removed = 0` and never incremented it,
+  // leaving Figma's renderer-facing sync result silently mis-counting
+  // upstream deletions — the asymmetry vs OneDrive/Confluence
+  // surfaced by Devin Review wave 13 ANALYSIS_0001. The same cascade
+  // logic now exists in `notion.ts` and `jira.ts` so all six
+  // providers agree on what `removed` means in the IPC payload.
+  let removed = 0;
   // The previous-sync watermark is read-only during this run and used
   // solely to decide which files to skip. The new watermark we will
   // persist is tracked separately. Conflating the two caused the bug
@@ -353,6 +368,18 @@ export async function syncFigma(ctx: {
 
   const succeededIds = new Set<string>();
   const failedThisPass: Array<{ remoteId: string; remoteModifiedAt: string | null }> = [];
+  // Parallel index over `failedThisPass.remoteId` so the Phase-2
+  // dedup check is O(1) instead of O(n) per file. For a Figma
+  // account with many teams and a noisy Phase 1 (transient 5xx on
+  // dozens of files), the legacy `failedThisPass.some(…)` made the
+  // outer loop quadratic. See Devin Review wave 13 ANALYSIS_0006.
+  // INVARIANT: every push to `failedThisPass` MUST also add to this
+  // set — the `recordFailure` helper below is the only call site.
+  const failedThisPassIds = new Set<string>();
+  const recordFailure = (remoteId: string, remoteModifiedAt: string | null): void => {
+    failedThisPass.push({ remoteId, remoteModifiedAt });
+    failedThisPassIds.add(remoteId);
+  };
   // File keys still owed a retry after this pass. Items get removed
   // from this set as we observe them (either successfully synced or
   // confirmed-gone via 404); whatever remains is treated as
@@ -371,18 +398,52 @@ export async function syncFigma(ctx: {
     fileKey: string,
     remoteModifiedAt: string | null,
   ): Promise<void> => {
+    // Refresh-on-demand at the top of every file. The retry queue
+    // and watermark scan both call into here, and each file fetches
+    // both metadata and comments — so the token may expire mid-pass
+    // on a large account. See Devin Review wave 13 BUG_0001.
+    const accessToken = await resolveAccessToken(ctx);
     let file: FigmaFile;
     try {
-      file = await getFile(fileKey, ctx.accessToken);
+      file = await getFile(fileKey, accessToken);
     } catch (err) {
       const status = (err as { status?: number }).status;
       if (status === 404 || status === 410) {
-        // File was deleted or unshared — stop retrying.
+        // File was deleted or unshared — cascade the deletion to
+        // the local sync dir and the bridge source registry so the
+        // user's index does not keep stale copies of files they no
+        // longer have access to. Previously this branch only
+        // stopped retrying and silently kept the local file +
+        // source entry, which surfaced as an inconsistency vs
+        // OneDrive (`onedrive.ts` deleted-item branch) and
+        // Confluence (`confluence.ts` post-loop carry-forward).
+        // See Devin Review wave 13 ANALYSIS_0001.
+        const prior = entriesById.get(fileKey);
+        if (prior) {
+          const existingSource = ctx.bridge
+            .listSources()
+            .find((s) => s.path === prior.localPath);
+          if (existingSource) {
+            try {
+              ctx.bridge.removeSource(existingSource.id);
+            } catch {
+              // best-effort — a bridge crash here MUST NOT mask the
+              // upstream 404 we are reacting to.
+            }
+          }
+          try {
+            await fsp.unlink(prior.localPath);
+          } catch {
+            // already gone on disk — desired end state.
+          }
+          entriesById.delete(fileKey);
+          removed += 1;
+        }
         pendingRetries.delete(fileKey);
         succeededIds.add(fileKey);
         return;
       }
-      failedThisPass.push({ remoteId: fileKey, remoteModifiedAt });
+      recordFailure(fileKey, remoteModifiedAt);
       return;
     }
     // Comments are a best-effort enrichment, not the indexable
@@ -395,7 +456,7 @@ export async function syncFigma(ctx: {
     // `syncFigma` — losing every successful file in the same pass.
     let comments: FigmaComment[];
     try {
-      comments = await getComments(fileKey, ctx.accessToken);
+      comments = await getComments(fileKey, accessToken);
     } catch {
       comments = [];
     }
@@ -405,7 +466,7 @@ export async function syncFigma(ctx: {
     try {
       await fsp.writeFile(localPath, body, "utf8");
     } catch {
-      failedThisPass.push({ remoteId: fileKey, remoteModifiedAt });
+      recordFailure(fileKey, remoteModifiedAt);
       return;
     }
 
@@ -421,7 +482,7 @@ export async function syncFigma(ctx: {
       try {
         ctx.bridge.addLocalFile(localPath);
       } catch {
-        failedThisPass.push({ remoteId: fileKey, remoteModifiedAt });
+        recordFailure(fileKey, remoteModifiedAt);
         return;
       }
       added += 1;
@@ -461,14 +522,23 @@ export async function syncFigma(ctx: {
     for (const teamId of teamIds) {
       let projects: FigmaProject[];
       try {
-        projects = await listProjects(teamId, ctx.accessToken);
+        // Refresh-on-demand per team. Multi-team accounts can
+        // outlive a 1h access token here. See Devin Review wave 13
+        // BUG_0001 (gdrive.ts:123-126).
+        const accessToken = await resolveAccessToken(ctx);
+        projects = await listProjects(teamId, accessToken);
       } catch {
         continue;
       }
       for (const project of projects) {
         let files: FigmaFileSummary[];
         try {
-          files = await listProjectFiles(project.id, ctx.accessToken);
+          // Refresh per project too — listProjectFiles is a single
+          // call but the loop body below can take a while (one
+          // getFile + one getComments per file). Keeps the refresh
+          // footprint tight.
+          const accessToken = await resolveAccessToken(ctx);
+          files = await listProjectFiles(project.id, accessToken);
         } catch {
           continue;
         }
@@ -485,7 +555,9 @@ export async function syncFigma(ctx: {
           ) {
             continue;
           }
-          if (succeededIds.has(summary.key) || failedThisPass.some((f) => f.remoteId === summary.key)) {
+          // O(1) dedup via the parallel Set; the legacy O(n) linear
+          // scan was flagged by Devin Review wave 13 ANALYSIS_0006.
+          if (succeededIds.has(summary.key) || failedThisPassIds.has(summary.key)) {
             // Already handled in Phase 1; skip the duplicate fetch.
             continue;
           }
@@ -511,7 +583,9 @@ export async function syncFigma(ctx: {
     // existing Jira cleanup pattern at `jira.ts` and was missing here.
     // See Devin Review wave 7 BUG_0001 (figma.ts:503-505).
     for (const key of pendingRetries) {
-      if (!failedThisPass.some((f) => f.remoteId === key)) {
+      // Same O(1) replacement as the Phase-2 dedup above — see
+      // ANALYSIS_0006. Semantics unchanged.
+      if (!failedThisPassIds.has(key)) {
         succeededIds.add(key);
       }
     }

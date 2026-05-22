@@ -2414,3 +2414,390 @@ describe("Google Drive sync — manifest cleanup", () => {
     },
   );
 });
+
+// =================================================================
+// Wave 13 — token refresh + cascading-deletion regression tests
+// =================================================================
+//
+// These cover the four real bugs flagged by Devin Review on
+// commit 707f9f7:
+//
+//   BUG_0001 + ANALYSIS_0007 — the connector's hot loop used a
+//   single pre-resolved access token, so any sync that ran longer
+//   than the OAuth token's remaining lifetime (Google issues 1h
+//   tokens with a 60s buffer) failed every fetch after the
+//   60-minute mark with HTTP 401. Fix: `getAccessToken: () =>
+//   Promise<string>` callback threaded through every connector;
+//   each iteration calls `resolveAccessToken(ctx)` to pull a fresh
+//   token. Tests below mock the callback to return a different
+//   value on each call and assert all expected calls happened.
+//
+//   ANALYSIS_0001 — `removed` was declared `const removed = 0`
+//   and never incremented in notion.ts, jira.ts, figma.ts. Unlike
+//   OneDrive/Confluence which cascade upstream deletions, these
+//   three connectors silently left local files + bridge sources
+//   intact when the upstream item was deleted (Notion 404, Figma
+//   404/410, Jira: retry key not returned by the JQL search).
+//   Fix: cascade the deletion to `bridge.removeSource`, unlink
+//   the local file, decrement the manifest entry, increment
+//   `removed`. Tests below verify all three.
+//
+
+describe("Wave 13 — token refresh + cascading deletions", () => {
+  const original = globalThis.fetch;
+  let fetchMock: ReturnType<typeof makeFetchMock>;
+  let dir: string;
+  let bridge: FakeBridge;
+
+  beforeEach(async () => {
+    fetchMock = makeFetchMock();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    dir = await tmpDir("wave13");
+    bridge = new FakeBridge();
+  });
+  afterEach(async () => {
+    globalThis.fetch = original;
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  // ---------------------------------------------------------------
+  // BUG_0001 — gdrive must call `getAccessToken` BEFORE every file
+  // iteration so a token expiring mid-sync transparently refreshes.
+  // Test: supply a getAccessToken that returns a fresh token on each
+  // call, verify it was called at least once per file id, and verify
+  // every Drive Authorization header used the fresh token.
+  // ---------------------------------------------------------------
+  it(
+    "gdrive calls getAccessToken per-iteration so mid-sync token " +
+      "refresh transparently kicks in (regression: wave 13 BUG_0001)",
+    async () => {
+      const tokens = ["T1", "T2", "T3", "T4"];
+      let callCount = 0;
+      const getAccessToken = vi.fn(async () => {
+        const t = tokens[Math.min(callCount, tokens.length - 1)];
+        callCount += 1;
+        return t;
+      });
+
+      // Two files; each consumes one meta + one media fetch.
+      fetchMock
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            id: "a",
+            name: "a.txt",
+            mimeType: "text/plain",
+            size: "1",
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: async () => new TextEncoder().encode("a").buffer,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            id: "b",
+            name: "b.txt",
+            mimeType: "text/plain",
+            size: "1",
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: async () => new TextEncoder().encode("b").buffer,
+        });
+
+      await syncGoogleDrive({
+        accessToken: "static-initial",
+        getAccessToken,
+        userDataDir: dir,
+        bridge,
+        selectedFileIds: ["a", "b"],
+      });
+
+      // One refresh per file iteration. The static `accessToken`
+      // must NEVER appear in any request header — the callback
+      // takes precedence whenever present.
+      expect(getAccessToken).toHaveBeenCalledTimes(2);
+      const calls = fetchMock.mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(4);
+      for (const call of calls) {
+        const headers = call[1]?.headers as Record<string, string>;
+        const auth = headers?.Authorization ?? "";
+        expect(auth).not.toContain("static-initial");
+        // First two calls should use T1, second two T2.
+      }
+      // Specific assertion: file `a` saw token T1 in both meta + media;
+      // file `b` saw T2.
+      expect(
+        (calls[0][1]?.headers as Record<string, string>).Authorization,
+      ).toBe("Bearer T1");
+      expect(
+        (calls[1][1]?.headers as Record<string, string>).Authorization,
+      ).toBe("Bearer T1");
+      expect(
+        (calls[2][1]?.headers as Record<string, string>).Authorization,
+      ).toBe("Bearer T2");
+      expect(
+        (calls[3][1]?.headers as Record<string, string>).Authorization,
+      ).toBe("Bearer T2");
+    },
+  );
+
+  // ---------------------------------------------------------------
+  // BUG_0001 (cross-cutting ANALYSIS_0007) — onedrive's pagination
+  // loop must also refresh per page. Single delta page + finalLink.
+  // ---------------------------------------------------------------
+  it(
+    "onedrive calls getAccessToken per delta page (regression: wave 13 " +
+      "BUG_0001 cross-cutting variant)",
+    async () => {
+      const { syncOneDrive } = await import("../ipc/connectors/onedrive");
+      const getAccessToken = vi.fn(async () => "REFRESHED");
+
+      fetchMock
+        // Page 1
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            value: [],
+            "@odata.deltaLink": "https://graph.example/delta-final",
+          }),
+        });
+
+      await syncOneDrive({
+        accessToken: "static-initial",
+        getAccessToken,
+        userDataDir: dir,
+        bridge,
+      });
+
+      expect(getAccessToken).toHaveBeenCalled();
+      const calls = fetchMock.mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(1);
+      // The first request (delta pull) must use the refreshed token,
+      // not the initial static one.
+      expect(
+        (calls[0][1]?.headers as Record<string, string>).Authorization,
+      ).toBe("Bearer REFRESHED");
+    },
+  );
+
+  // ---------------------------------------------------------------
+  // ANALYSIS_0001 (Figma) — when the upstream file returns 404 and
+  // the file was previously tracked in the manifest, the connector
+  // must cascade: removeSource on the bridge, unlink the local
+  // markdown file, decrement entriesById, and increment `removed`.
+  // Previously this branch silently kept the local file + source.
+  // ---------------------------------------------------------------
+  it(
+    "figma cascades upstream-deletion 404 to local file + bridge " +
+      "source (regression: wave 13 ANALYSIS_0001)",
+    async () => {
+      // Pre-seed manifest + bridge so we have something to delete.
+      const figmaDir = path.join(dir, "figma-sync");
+      await fsp.mkdir(figmaDir, { recursive: true });
+      const localFile = path.join(figmaDir, "abc.md");
+      await fsp.writeFile(localFile, "stale figma export", "utf8");
+      const manifest = {
+        version: 1,
+        provider: "figma",
+        entries: [
+          {
+            localPath: localFile,
+            remoteId: "abc",
+            remoteModifiedAt: "2024-01-01T00:00:00Z",
+          },
+        ],
+      };
+      await fsp.writeFile(
+        path.join(figmaDir, "manifest.json"),
+        JSON.stringify(manifest),
+        "utf8",
+      );
+      // Pre-seed the bridge so `removeSource` has something to remove.
+      const seeded = bridge.addLocalFile(localFile);
+      bridge.added = []; // reset assertion counter
+      // Seed state.json so the retry queue picks up `abc`.
+      await fsp.writeFile(
+        path.join(figmaDir, "state.json"),
+        JSON.stringify({
+          lastSyncIso: null,
+          teamIds: ["team-1"],
+          failedRetries: [
+            {
+              remoteId: "abc",
+              remoteModifiedAt: "2024-01-01T00:00:00Z",
+              failureCount: 1,
+            },
+          ],
+        }),
+        "utf8",
+      );
+
+      // Phase 1: getFile("abc") → 404. Then Phase 2 lists projects
+      // and finds nothing new.
+      fetchMock
+        // getFile abc → 404
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          text: async () => "not found",
+        })
+        // listProjects(team-1) → empty
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ name: "team-1", projects: [] }),
+        });
+
+      const r = await syncFigma({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+
+      expect(r.removed).toBe(1);
+      // Bridge must have removed the seeded source.
+      expect(bridge.removed).toContain(seeded.id);
+      // Local file must be gone from disk.
+      await expect(fsp.access(localFile)).rejects.toThrow();
+    },
+  );
+
+  // ---------------------------------------------------------------
+  // ANALYSIS_0001 (Notion) — when fetchPageById returns null
+  // (HTTP 404/410) for an entry that exists in the prior manifest,
+  // the connector must cascade: removeSource, unlink, entriesById
+  // delete, increment removed.
+  // ---------------------------------------------------------------
+  it(
+    "notion cascades upstream-deletion 404 to local file + bridge " +
+      "source (regression: wave 13 ANALYSIS_0001)",
+    async () => {
+      const notionDir = path.join(dir, "notion-sync");
+      await fsp.mkdir(notionDir, { recursive: true });
+      const localFile = path.join(notionDir, "page-dead.md");
+      await fsp.writeFile(localFile, "stale notion export", "utf8");
+      await fsp.writeFile(
+        path.join(notionDir, "manifest.json"),
+        JSON.stringify({
+          version: 1,
+          provider: "notion",
+          entries: [
+            {
+              localPath: localFile,
+              remoteId: "page-dead",
+              remoteModifiedAt: "2024-01-01T00:00:00Z",
+            },
+          ],
+        }),
+        "utf8",
+      );
+      const seeded = bridge.addLocalFile(localFile);
+      bridge.added = [];
+      await fsp.writeFile(
+        path.join(notionDir, "watermark.json"),
+        JSON.stringify({
+          lastSyncIso: null,
+          failedRetries: [
+            {
+              remoteId: "page-dead",
+              remoteModifiedAt: "2024-01-01T00:00:00Z",
+              failureCount: 1,
+            },
+          ],
+        }),
+        "utf8",
+      );
+
+      // Phase 1 fetchPageById → 404. Phase 2 /search → empty.
+      fetchMock
+        .mockResolvedValueOnce({ ok: false, status: 404 })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            results: [],
+            has_more: false,
+            next_cursor: null,
+          }),
+        });
+
+      const r = await syncNotion({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+
+      expect(r.removed).toBe(1);
+      expect(bridge.removed).toContain(seeded.id);
+      await expect(fsp.access(localFile)).rejects.toThrow();
+    },
+  );
+
+  // ---------------------------------------------------------------
+  // ANALYSIS_0001 (Jira) — when a retry key is asked for via the JQL
+  // `key in (...)` clause but the search response never returns it
+  // (issue was deleted in Jira), and the key existed in the prior
+  // manifest, the connector must cascade.
+  // ---------------------------------------------------------------
+  it(
+    "jira cascades absent-retry-key to local file + bridge source " +
+      "(regression: wave 13 ANALYSIS_0001)",
+    async () => {
+      const jiraDir = path.join(dir, "jira-sync");
+      await fsp.mkdir(jiraDir, { recursive: true });
+      const localFile = path.join(jiraDir, "PROJ-1.md");
+      await fsp.writeFile(localFile, "stale jira export", "utf8");
+      await fsp.writeFile(
+        path.join(jiraDir, "manifest.json"),
+        JSON.stringify({
+          version: 1,
+          provider: "jira",
+          entries: [
+            {
+              localPath: localFile,
+              remoteId: "PROJ-1",
+              remoteModifiedAt: "2024-01-01T00:00:00Z",
+            },
+          ],
+        }),
+        "utf8",
+      );
+      const seeded = bridge.addLocalFile(localFile);
+      bridge.added = [];
+      // state.json: cloudId pre-resolved, PROJ-1 in retry queue.
+      await fsp.writeFile(
+        path.join(jiraDir, "state.json"),
+        JSON.stringify({
+          cloudId: "cloud-1",
+          lastSyncIso: null,
+          failedRetries: [
+            {
+              remoteId: "PROJ-1",
+              remoteModifiedAt: "2024-01-01T00:00:00Z",
+              failureCount: 1,
+            },
+          ],
+        }),
+        "utf8",
+      );
+
+      // Search response: empty (PROJ-1 not returned → deleted).
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ issues: [], startAt: 0, total: 0, maxResults: 50 }),
+      });
+
+      const r = await syncJira({
+        accessToken: "AT",
+        userDataDir: dir,
+        bridge,
+      });
+
+      expect(r.removed).toBe(1);
+      expect(bridge.removed).toContain(seeded.id);
+      await expect(fsp.access(localFile)).rejects.toThrow();
+    },
+  );
+});

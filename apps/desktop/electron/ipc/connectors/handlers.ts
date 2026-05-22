@@ -128,13 +128,22 @@ export class NotConnectedError extends Error {
 // are auth/state errors — not transport failures. The patterns below
 // only match phrases the Node/undici/Electron fetch stack actually
 // produces for genuine offline conditions.
+// The `/i` flag is defense-in-depth: the only call site below
+// already lowercases via `e.message.toLowerCase()` before testing,
+// so the lowercase-only patterns would match in practice. But the
+// renderer-side mirror at `ConnectorStatus.tsx:93-96` is a separate
+// implementation that must stay in sync, and a future caller that
+// forgets to lowercase would silently stop matching uppercase error
+// messages. Making the patterns self-contained (case-insensitive)
+// removes that latent footgun without affecting today's behaviour.
+// See Devin Review wave 13 ANALYSIS_0002.
 const NETWORK_MESSAGE_PATTERNS = [
-  /\bfetch failed\b/,
-  /\bnetwork\s+(error|unreachable|down|failure|is\s+offline)\b/,
-  /\bconnection\s+(refused|reset|timed\s*out|timeout|aborted|closed)\b/,
-  /\bdns\s+(lookup|resolution)\s+failed\b/,
-  /\bgetaddrinfo\b/,
-  /\bsocket\s+hang\s+up\b/,
+  /\bfetch failed\b/i,
+  /\bnetwork\s+(error|unreachable|down|failure|is\s+offline)\b/i,
+  /\bconnection\s+(refused|reset|timed\s*out|timeout|aborted|closed)\b/i,
+  /\bdns\s+(lookup|resolution)\s+failed\b/i,
+  /\bgetaddrinfo\b/i,
+  /\bsocket\s+hang\s+up\b/i,
 ] as const;
 
 export function isNetworkError(err: unknown): boolean {
@@ -343,24 +352,36 @@ async function runSync(
   options?: { selectedFileIds?: string[] },
 ): Promise<ConnectorSyncResult> {
   const bridge = bridgeHooks(ctx);
+  // Production refresh hook: each connector's hot loop calls this
+  // per iteration so a long-running sync (>1h, the default OAuth
+  // access-token lifetime for Google / Microsoft / Atlassian /
+  // Notion / Figma) transparently refreshes via the stored refresh
+  // token. `getValidAccessToken` already returns the cached value
+  // when there's >60s left and only hits the network when truly
+  // expired, so the per-iteration cost is a vault read + a
+  // millisecond comparison in the common case. See Devin Review
+  // wave 13 BUG_0001 (gdrive.ts:123-126) and the cross-cutting
+  // ANALYSIS_0007 (handlers.ts:338-365).
+  const getAccessToken = (): Promise<string> => getValidAccessToken(ctx, provider);
   switch (provider) {
     case "google_drive":
       return syncGoogleDrive({
         accessToken,
+        getAccessToken,
         userDataDir,
         bridge,
         selectedFileIds: options?.selectedFileIds,
       });
     case "onedrive":
-      return syncOneDrive({ accessToken, userDataDir, bridge });
+      return syncOneDrive({ accessToken, getAccessToken, userDataDir, bridge });
     case "notion":
-      return syncNotion({ accessToken, userDataDir, bridge });
+      return syncNotion({ accessToken, getAccessToken, userDataDir, bridge });
     case "jira":
-      return syncJira({ accessToken, userDataDir, bridge });
+      return syncJira({ accessToken, getAccessToken, userDataDir, bridge });
     case "confluence":
-      return syncConfluence({ accessToken, userDataDir, bridge });
+      return syncConfluence({ accessToken, getAccessToken, userDataDir, bridge });
     case "figma":
-      return syncFigma({ accessToken, userDataDir, bridge });
+      return syncFigma({ accessToken, getAccessToken, userDataDir, bridge });
   }
 }
 

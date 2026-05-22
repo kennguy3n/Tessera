@@ -28,6 +28,7 @@ import * as path from "path";
 import {
   purgeSyncDir,
   readManifest,
+  resolveAccessToken,
   sanitiseRemoteId,
   syncDirFor,
   writeManifest,
@@ -306,6 +307,10 @@ async function saveState(userDataDir: string, s: ConfluenceState): Promise<void>
 
 export async function syncConfluence(ctx: {
   accessToken: string;
+  /** Just-in-time refresh hook — called per space and per page so a
+   *  large-tenant scan does NOT outlive the access token. See Devin
+   *  Review wave 13 BUG_0001 / ANALYSIS_0007. */
+  getAccessToken?: () => Promise<string>;
   userDataDir: string;
   bridge: ConfluenceBridgeHooks;
   cloudId?: string | null;
@@ -326,7 +331,7 @@ export async function syncConfluence(ctx: {
     cloudId = resource.id;
   }
 
-  const spaces = await listAllSpaces(cloudId, ctx.accessToken);
+  const spaces = await listAllSpaces(cloudId, await resolveAccessToken(ctx));
   const manifest = await readManifest(ctx.userDataDir, "confluence");
   const entriesById = new Map<string, SyncManifestEntry>();
   for (const e of manifest.entries) entriesById.set(e.remoteId, e);
@@ -375,7 +380,12 @@ export async function syncConfluence(ctx: {
     for (const space of spaces) {
       let pages: ConfluencePage[];
       try {
-        pages = await listPagesInSpace(cloudId, ctx.accessToken, space.id);
+        // Refresh-on-demand per space. A tenant with hundreds of
+        // spaces can take tens of minutes to walk; without this, all
+        // calls after the access token expires fail with 401. See
+        // Devin Review wave 13 BUG_0001.
+        const accessToken = await resolveAccessToken(ctx);
+        pages = await listPagesInSpace(cloudId, accessToken, space.id);
       } catch {
         // Failed to list pages in this space — skip it. The next sync
         // will re-list. Other spaces still process normally.

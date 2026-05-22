@@ -38,6 +38,60 @@ export function syncDirFor(userDataDir: string, provider: string): string {
   return path.join(userDataDir, `${provider}-sync`);
 }
 
+/**
+ * Shape of the access-token source every connector accepts in its
+ * sync context. The static `accessToken` field is the initial value
+ * resolved by `runConnectorSync` *before* the rate-limit budget is
+ * spent (so a `NotConnectedError` short-circuits without burning the
+ * 30s budget); the optional `getAccessToken` callback is the
+ * just-in-time refresh hook the production wiring threads through
+ * from `handlers.ts > getValidAccessToken`. Test code that doesn't
+ * care about mid-sync refresh can omit the callback entirely and the
+ * helper below falls back to the static value — see
+ * `resolveAccessToken` for the precedence rule.
+ *
+ * The reason for accepting BOTH instead of only the callback is twofold:
+ *
+ *   1. The very first fetch in each connector (the `listAccessibleResources`,
+ *      `me`, `/v1/me`, etc.) happens before we have any reason to
+ *      believe the cached token will expire. Forcing every test to
+ *      construct a callback for that single fetch adds a lot of
+ *      ceremony for zero correctness benefit.
+ *   2. The bug surface this refactor closes (BUG_pr-review-job-66735207854d49d5be917283fdba2dc0_0001:
+ *      gdrive 401s after 1h syncs) only manifests inside the
+ *      per-item hot loop. That's where `resolveAccessToken` is
+ *      called, and that's where the callback path is exercised.
+ *
+ * See Devin Review wave 13 BUG_0001 (gdrive.ts:123-126) and the
+ * cross-cutting ANALYSIS_0007 (handlers.ts:338-365).
+ */
+export interface AccessTokenSource {
+  /** Static initial token, used by the first few setup fetches and
+   *  by tests that don't supply `getAccessToken`. */
+  accessToken: string;
+  /** Just-in-time refresh hook called from inside hot loops so a
+   *  long-running sync (>1h) does NOT outlive the OAuth token's
+   *  remaining lifetime. Production wiring passes a closure over
+   *  `getValidAccessToken(ctx, provider)` which transparently
+   *  refreshes via the refresh token when within 60s of expiry. */
+  getAccessToken?: () => Promise<string>;
+}
+
+/**
+ * Returns the most up-to-date access token for the next API call.
+ * Prefers the just-in-time refresh callback when present (production
+ * code path), falls back to the static field when omitted (test code
+ * path). This is the single chokepoint every connector's hot loop
+ * calls per iteration so mid-sync token expiry is recoverable rather
+ * than fatal. See `AccessTokenSource` for the rationale.
+ */
+export async function resolveAccessToken(
+  ctx: AccessTokenSource,
+): Promise<string> {
+  if (ctx.getAccessToken) return await ctx.getAccessToken();
+  return ctx.accessToken;
+}
+
 export function manifestPathFor(userDataDir: string, provider: string): string {
   return path.join(syncDirFor(userDataDir, provider), "manifest.json");
 }

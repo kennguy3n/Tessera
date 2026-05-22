@@ -24,9 +24,11 @@ import {
   nextFailedRetryQueue,
   purgeSyncDir,
   readManifest,
+  resolveAccessToken,
   sanitiseRemoteId,
   syncDirFor,
   writeManifest,
+  type AccessTokenSource,
   type FailedRetryEntry,
   type SyncManifestEntry,
 } from "./syncDir";
@@ -241,7 +243,7 @@ async function fetchPageText(
  * over a marginal API saving.
  */
 async function listAllPages(
-  accessToken: string,
+  tokenSource: AccessTokenSource,
   lastSyncIso: string | null,
 ): Promise<NotionPage[]> {
   const pages: NotionPage[] = [];
@@ -253,6 +255,10 @@ async function listAllPages(
       sort: { direction: "descending", timestamp: "last_edited_time" },
     };
     if (cursor) body.start_cursor = cursor;
+    // Refresh-on-demand per page — a workspace-wide search of a
+    // large Notion account can paginate for many minutes. See Devin
+    // Review wave 13 BUG_0001 / ANALYSIS_0007.
+    const accessToken = await resolveAccessToken(tokenSource);
     const resp = await fetch(`${NOTION_API}/search`, {
       method: "POST",
       headers: notionHeaders(accessToken),
@@ -332,6 +338,10 @@ async function saveWatermark(
 
 export async function syncNotion(ctx: {
   accessToken: string;
+  /** Just-in-time refresh hook — called at every loop boundary so a
+   *  large-workspace sync does NOT outlive the access token. See
+   *  Devin Review wave 13 BUG_0001 / ANALYSIS_0007. */
+  getAccessToken?: () => Promise<string>;
   userDataDir: string;
   bridge: NotionBridgeHooks;
 }): Promise<NotionSyncResult> {
@@ -359,7 +369,18 @@ export async function syncNotion(ctx: {
 
   let added = 0;
   let modified = 0;
-  const removed = 0;
+  // Cascading-deletion counter: incremented in the Phase-1 branch
+  // below when `fetchPageById` returns null (HTTP 404/410 — the
+  // page was deleted in Notion or moved out of the integration's
+  // visible scope) *and* the page used to be tracked in the
+  // manifest. The previous shape declared this `const removed = 0`
+  // and never incremented it, leaving Notion's sync result silently
+  // mis-counting upstream deletions vs OneDrive/Confluence. See
+  // Devin Review wave 13 ANALYSIS_0001. The cascade also unlinks
+  // the local markdown file and detaches the bridge source so the
+  // user's index does not keep stale copies of pages they no
+  // longer have access to.
+  let removed = 0;
   let newWatermark = watermark.lastSyncIso;
 
   // Wrap the iteration + save in try/finally so progress is *always*
@@ -385,13 +406,45 @@ export async function syncNotion(ctx: {
     const retryPages: NotionPage[] = [];
     for (const entry of watermark.failedRetries) {
       try {
-        const page = await fetchPageById(entry.remoteId, ctx.accessToken);
+        // Refresh-on-demand at the top of every Phase-1 retry. The
+        // retry queue can carry thousands of permanently-failing ids
+        // on accounts with revoked-then-restored integration scopes,
+        // so the loop alone can outlive a 1h access token. See Devin
+        // Review wave 13 BUG_0001.
+        const accessToken = await resolveAccessToken(ctx);
+        const page = await fetchPageById(entry.remoteId, accessToken);
         if (page === null) {
           // Notion returned 404/410 — the page was deleted or moved
-          // out of the integration's visible scope. Drop it from the
-          // retry queue (counted as "succeeded" only for queue-removal
-          // purposes; the manifest entry will be pruned naturally on
-          // the next disconnect pass).
+          // out of the integration's visible scope. Cascade the
+          // deletion to the local sync dir and the bridge source
+          // registry so the user's index does not keep stale copies
+          // of pages they no longer have access to. Previously this
+          // branch only dropped from the retry queue and silently
+          // kept the local file + source entry, which surfaced as
+          // an inconsistency with OneDrive/Confluence which DO
+          // cascade upstream deletions. See Devin Review wave 13
+          // ANALYSIS_0001.
+          const prior = entriesById.get(entry.remoteId);
+          if (prior) {
+            const existingSource = ctx.bridge
+              .listSources()
+              .find((s) => s.path === prior.localPath);
+            if (existingSource) {
+              try {
+                ctx.bridge.removeSource(existingSource.id);
+              } catch {
+                // best-effort — a bridge crash here MUST NOT mask
+                // the upstream 404 we are reacting to.
+              }
+            }
+            try {
+              await fsp.unlink(prior.localPath);
+            } catch {
+              // already gone on disk — desired end state.
+            }
+            entriesById.delete(entry.remoteId);
+            removed += 1;
+          }
           succeededIds.add(entry.remoteId);
           continue;
         }
@@ -413,7 +466,7 @@ export async function syncNotion(ctx: {
     // page whose `last_edited_time` is newer than the persisted
     // watermark) are de-duplicated by id so we don't fetch their
     // blocks twice.
-    const scanned = await listAllPages(ctx.accessToken, watermark.lastSyncIso);
+    const scanned = await listAllPages(ctx, watermark.lastSyncIso);
     const seenIds = new Set<string>(retryPages.map((p) => p.id));
     const allPages: NotionPage[] = [...retryPages];
     for (const p of scanned) {
@@ -425,7 +478,12 @@ export async function syncNotion(ctx: {
     for (const page of allPages) {
       let text: string;
       try {
-        text = await fetchPageText(page, ctx.accessToken);
+        // Refresh-on-demand at the top of every Phase-2 page. The
+        // page-text fetch chases child blocks recursively, so each
+        // iteration can issue dozens of API calls against the
+        // freshly resolved token. See Devin Review wave 13 BUG_0001.
+        const accessToken = await resolveAccessToken(ctx);
+        text = await fetchPageText(page, accessToken);
       } catch {
         // Record the failure so the *next* sync's Phase 1 picks it up
         // and retries by id. The watermark may legitimately advance

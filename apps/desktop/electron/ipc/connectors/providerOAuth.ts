@@ -375,6 +375,17 @@ export async function runRedirectServer(
     });
 
     server.on("error", (err) => {
+      // Belt-and-braces: `server.close()` is a no-op when the
+      // socket was never successfully bound (the EADDRINUSE /
+      // EACCES `listen` failure case, which is by far the
+      // dominant cause of 'error' events on Node HTTP servers).
+      // But an 'error' event CAN also fire after a successful
+      // `listen` for connection-level failures, in which case the
+      // listener is still bound to the port — calling close() here
+      // releases it deterministically rather than relying on GC.
+      // Cheap insurance against the rare post-listen error path.
+      // See Devin Review wave 13 ANALYSIS_0004.
+      server.close();
       cleanup();
       reject(
         new Error(

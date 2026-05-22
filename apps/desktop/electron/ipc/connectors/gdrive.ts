@@ -20,7 +20,7 @@
 import * as fsp from "fs/promises";
 import * as path from "path";
 
-import { syncDirFor } from "./syncDir";
+import { resolveAccessToken, syncDirFor } from "./syncDir";
 
 export interface GdriveBridgeHooks {
   addLocalFile(localPath: string): { id: string; path: string };
@@ -83,6 +83,16 @@ function fileIdFromLocalPath(p: string): string {
 
 export async function syncGoogleDrive(ctx: {
   accessToken: string;
+  /**
+   * Just-in-time refresh hook. When set (production wiring from
+   * `handlers.ts > runConnectorSync`), it is called at the top of
+   * each iteration so a sync that outlives the access token's
+   * remaining lifetime can transparently refresh via the stored
+   * refresh token. When omitted (tests), the static `accessToken`
+   * field is used verbatim. See Devin Review wave 13 BUG_0001
+   * (gdrive.ts:123-126).
+   */
+  getAccessToken?: () => Promise<string>;
   userDataDir: string;
   bridge: GdriveBridgeHooks;
   selectedFileIds?: string[];
@@ -121,9 +131,20 @@ export async function syncGoogleDrive(ctx: {
   // Devin Review wave 12 ANALYSIS_0001 (gdrive.ts:111-169).
   try {
     for (const fileId of resolvedFileIds) {
+      // Refresh-on-demand at the top of every iteration. A Drive
+      // sync of a large account can easily exceed the access
+      // token's ~1h lifetime; without this, all fetches after the
+      // 60-minute mark return HTTP 401 and the rest of the sync is
+      // lost until the user clicks Sync Now again. The callback
+      // (production wiring) hits the in-process cache + only
+      // exchanges the refresh token when within 60s of expiry, so
+      // the overhead per iteration is a single map lookup and a
+      // millisecond-precision comparison. See Devin Review wave 13
+      // BUG_0001 (gdrive.ts:123-126).
+      const accessToken = await resolveAccessToken(ctx);
       const metaResp = await fetch(
         `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,modifiedTime`,
-        { headers: { Authorization: `Bearer ${ctx.accessToken}` } },
+        { headers: { Authorization: `Bearer ${accessToken}` } },
       );
       if (!metaResp.ok) {
         if (metaResp.status === 404 || metaResp.status === 410) {
@@ -141,14 +162,14 @@ export async function syncGoogleDrive(ctx: {
       if (exportMime) {
         const exportResp = await fetch(
           `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`,
-          { headers: { Authorization: `Bearer ${ctx.accessToken}` } },
+          { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         if (!exportResp.ok) continue;
         contentBytes = await exportResp.arrayBuffer();
       } else {
         const dlResp = await fetch(
           `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
-          { headers: { Authorization: `Bearer ${ctx.accessToken}` } },
+          { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         if (!dlResp.ok) continue;
         contentBytes = await dlResp.arrayBuffer();
