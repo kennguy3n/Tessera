@@ -85,8 +85,37 @@ function getConfigPath(): string {
   }
 }
 
-export function loadConfig(): AppConfig {
-  const configPath = getConfigPath();
+// In-memory cache of the on-disk config.
+//
+// Before this layer, every `loadConfig()` call did a synchronous
+// `fs.existsSync` + `fs.readFileSync` + `JSON.parse` on the Electron
+// main thread. The renderer hits `loadConfig` from a half-dozen IPC
+// handlers (`settings:get`, `updates:getAutoUpdateEnabled`,
+// `externalProvider:get`, …), some on a hot path — e.g. the auto-update
+// poll at `electron/autoUpdater.ts:277` reads `loadConfig().autoUpdate`
+// on every renderer ping. Reading from memory on the second hit makes
+// those calls effectively free.
+//
+// `cachedPath` is stored alongside `cachedConfig` so a `getConfigPath()`
+// change (the test suite swaps `app.getPath('userData')` between
+// tempdirs per-test) auto-invalidates the cache without the test
+// needing to call `clearConfigCache()` explicitly. In production the
+// path is fixed at first launch so this never triggers.
+let cachedConfig: AppConfig | null = null;
+let cachedPath: string | null = null;
+
+/**
+ * Test-only seam: drop the in-memory cache so the next `loadConfig()`
+ * re-reads from disk. Production callers should never need this — the
+ * cache is kept consistent via `saveConfig` / `updateConfig`'s
+ * write-through paths.
+ */
+export function clearConfigCache(): void {
+  cachedConfig = null;
+  cachedPath = null;
+}
+
+function readConfigFromDisk(configPath: string): AppConfig {
   try {
     if (fs.existsSync(configPath)) {
       const raw = fs.readFileSync(configPath, "utf-8");
@@ -113,6 +142,17 @@ export function loadConfig(): AppConfig {
   };
 }
 
+export function loadConfig(): AppConfig {
+  const configPath = getConfigPath();
+  if (cachedConfig !== null && cachedPath === configPath) {
+    return cachedConfig;
+  }
+  const fresh = readConfigFromDisk(configPath);
+  cachedConfig = fresh;
+  cachedPath = configPath;
+  return fresh;
+}
+
 export function saveConfig(config: AppConfig): void {
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
@@ -120,6 +160,10 @@ export function saveConfig(config: AppConfig): void {
     fs.mkdirSync(dir, { recursive: true });
   }
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+  // Write-through: keep the cache in sync so the next `loadConfig` does
+  // not re-read from disk and rebuild the AppConfig from raw JSON.
+  cachedConfig = config;
+  cachedPath = configPath;
 }
 
 /**
