@@ -114,8 +114,9 @@ describe("manifest loading", () => {
   });
 
   it("MLX entries report a post-extract diskSizeMb larger than the compressed downloadSizeMb", () => {
-    // archives, so the on-disk extracted directory is bigger than the
-    // compressed download. Before this fix the manifest had
+    // MLX models ship as `.tar.gz` archives, so the on-disk extracted
+    // directory is bigger than the compressed download. Before this fix
+    // the manifest had
     // `diskSizeMb == downloadSizeMb` for every MLX entry, which made the
     // swap planner under-account for disk usage (the user "saves N MB"
     // calculation used the compressed size rather than the actual
@@ -247,9 +248,10 @@ describe("single-model enforcement", () => {
   });
 
   it("getInstalledModel returns null when the referenced file is missing on disk", async () => {
-    // using getCurrentModel directly, so a stale active-model.json record
-    // pointing at a manually-deleted file caused the planner to return
-    // already-installed, hiding the Download button in Settings.
+    // planDownload used to call getCurrentModel directly, so a stale
+    // active-model.json record pointing at a manually-deleted file caused
+    // the planner to return already-installed, hiding the Download button
+    // in Settings.
     const ghost: InstalledModelRecord = {
       modelId: "ternary-bonsai-1.7b-gguf",
       format: "gguf",
@@ -355,9 +357,10 @@ describe("single-model enforcement", () => {
   });
 
   it("planDownload swap uses diskSizeMb (post-extract footprint), not downloadSizeMb", () => {
-    // describes disk-space accounting; for any model whose archive expands
-    // after extraction (future MLX), diskSizeMb diverges from
-    // downloadSizeMb and the swap UI/CLI must show the on-disk numbers.
+    // The swap decision describes disk-space accounting; for any model
+    // whose archive expands after extraction (future MLX), diskSizeMb
+    // diverges from downloadSizeMb and the swap UI/CLI must show the
+    // on-disk numbers.
     const installed: InstalledModelRecord = {
       modelId: "installed-archive",
       format: "mlx",
@@ -393,10 +396,11 @@ describe("single-model enforcement", () => {
   });
 
   it("effectiveDiskSizeMb falls back to downloadSizeMb for legacy records (missing field, 0, NaN)", () => {
-    // active-model.json directly into InstalledModelRecord and assumed
-    // diskSizeMb was always populated. Records persisted before that
-    // field was introduced won't have it; the planner must mirror the
-    // Rust effective_disk_size_mb() fallback or netDelta becomes NaN.
+    // The TS side used to parse active-model.json directly into
+    // InstalledModelRecord and assume diskSizeMb was always populated.
+    // Records persisted before that field was introduced won't have it;
+    // the planner must mirror the Rust `effective_disk_size_mb()`
+    // fallback or netDelta becomes NaN.
     const legacy: InstalledModelRecord = {
       modelId: "legacy",
       format: "gguf",
@@ -512,8 +516,9 @@ describe("single-model enforcement", () => {
   });
 
   it("downloadModel re-downloads when active-model.json claims installed but file is missing on disk", async () => {
-    // disk error) removed the model file out from under Tessera, the fast
-    // path used to incorrectly return the stale record without
+    // If something outside Tessera (user `rm`, anti-virus quarantine,
+    // disk error) removed the model file out from under Tessera, the
+    // fast path used to incorrectly return the stale record without
     // re-downloading. The sidecar would then fail to start because its
     // model path no longer existed. Now we verify file existence before
     // taking the fast path.
@@ -661,9 +666,10 @@ describe("single-model enforcement", () => {
   });
 
   it("downloadModel extracts MLX .tar.gz archives, removes the archive, and stores the extract dir", async () => {
-    // tar.gz archives. The download path must extract them so the runtime
-    // adapter sees a directory (the MLX-native artifact), and the archive
-    // must be removed so the single-model invariant holds.
+    // MLX models in the manifest ship as `.tar.gz` archives. The download
+    // path must extract them so the runtime adapter sees a directory (the
+    // MLX-native artifact), and the archive must be removed so the
+    // single-model invariant holds.
     const requested = makeResolved({
       id: "ternary-bonsai-1.7b-mlx",
       format: "mlx",
@@ -751,11 +757,12 @@ describe("single-model enforcement", () => {
   });
 
   it("deleteCurrentModel defensively sweeps stray .tar.gz archives next to the extracted dir", async () => {
-    // download's post-extract archive unlink failed (Windows EPERM/EBUSY,
-    // crash mid-cleanup, etc.), the source `.tar.gz` could survive next
-    // to the extracted directory. The next deleteCurrentModel call must
-    // sweep it up so the user doesn't have to manually clean the cache
-    // directory to restore the single-model-on-disk invariant.
+    // If a previous download's post-extract archive unlink failed
+    // (Windows EPERM/EBUSY, crash mid-cleanup, etc.), the source `.tar.gz`
+    // could survive next to the extracted directory. The next
+    // deleteCurrentModel call must sweep it up so the user doesn't have
+    // to manually clean the cache directory to restore the
+    // single-model-on-disk invariant.
     const dir = modelsDir(workdir);
     await fsp.mkdir(dir, { recursive: true });
     const extractedDir = path.join(dir, "ternary-bonsai-1.7b-2bit.mlx");
@@ -1315,8 +1322,7 @@ describe("downloadModel survives throwing onProgress", () => {
   });
 
   it("never aborts the on-disk write when the progress callback throws", async () => {
-    // This is the headline of
-    // BrowserWindow gets destroyed mid-download, its
+    // If a BrowserWindow gets destroyed mid-download, its
     // `webContents.send` throws "Object has been destroyed", and
     // without the boundary wrap that exception would bubble back
     // through the fetcher's read loop into downloadModelLocked's

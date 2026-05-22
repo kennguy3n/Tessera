@@ -756,14 +756,14 @@ mod tests {
 
     #[test]
     fn mlx_disk_size_exceeds_download_size_for_archives() {
-        // archives, so the on-disk extracted footprint is necessarily
-        // larger than the compressed download. Before the fix the Rust
-        // hardcoded fallback registry had `disk_size_mb ==
-        // download_size_mb` for every MLX entry, which made the swap
-        // planner under-account for disk usage on the Rust side of the
-        // bridge (the renderer-side TypeScript registry had the same
-        // bug, fixed in sidecars/models.json). The invariant we lock
-        // in: for every `.tar.gz`/`.tgz` MLX entry, disk_size_mb >
+        // MLX models ship as `.tar.gz` archives, so the on-disk extracted
+        // footprint is necessarily larger than the compressed download.
+        // Before the fix the Rust hardcoded fallback registry had
+        // `disk_size_mb == download_size_mb` for every MLX entry, which
+        // made the swap planner under-account for disk usage on the Rust
+        // side of the bridge (the renderer-side TypeScript registry had
+        // the same bug, fixed in sidecars/models.json). The invariant we
+        // lock in: for every `.tar.gz`/`.tgz` MLX entry, disk_size_mb >
         // download_size_mb; for non-archive formats, disk_size_mb >=
         // download_size_mb.
         for m in full_model_registry() {
