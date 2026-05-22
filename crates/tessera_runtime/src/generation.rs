@@ -41,6 +41,15 @@ impl GenerateRequest {
         self.stream = false;
         self
     }
+
+    /// Attach a list of stop sequences. Empty input is treated the
+    /// same as not calling this at all (the inner Option stays
+    /// `None`) so the OpenAI body builder doesn't emit a
+    /// zero-length `stop: []` array that the API rejects.
+    pub fn with_stop(mut self, stop: Vec<String>) -> Self {
+        self.stop = if stop.is_empty() { None } else { Some(stop) };
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

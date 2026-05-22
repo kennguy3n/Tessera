@@ -79,8 +79,14 @@ export interface ExternalProviderStreamInputs {
   /** Override for `provider.temperature` when the caller wants a
    *  per-request value. */
   temperature?: number;
-  /** Optional stop sequences (max 4 for OpenAI, any count for
-   *  Anthropic). */
+  /** Optional stop sequences. OpenAI-compatible providers (OpenAI,
+   *  Ollama, vLLM, LM Studio, llama-server OpenAI shim, "Custom")
+   *  reject more than 4 entries, so the array is truncated to 4 by
+   *  `buildStreamRequest` for those providers. Anthropic has no
+   *  documented hard cap on `stop_sequences`, so the full array is
+   *  forwarded for `providerType === "anthropic"`. Caller-side
+   *  validation should still keep this list short — Anthropic
+   *  rejects oversized requests at the API gateway with a 400. */
   stop?: string[];
   /** AbortSignal so the caller can cancel an in-flight stream when
    *  the renderer issues another generation or the window closes. */
@@ -133,6 +139,17 @@ export function feedSse(
   providerType: ExternalProviderConfig["providerType"],
   emit: (chunk: ExternalProviderStreamChunk) => void,
 ): boolean {
+  // Once the stop sentinel has been observed, the caller is
+  // contractually done — but TextDecoder.decode() may still flush a
+  // post-sentinel tail when a multi-byte UTF-8 codepoint is split
+  // exactly across the TCP chunk that contained `[DONE]` /
+  // `message_stop`. Without this guard the tail would be processed
+  // and could emit a phantom content chunk to the renderer after
+  // the stream was supposed to have ended. The Rust impl avoids
+  // this naturally because it breaks the outer read loop the moment
+  // the inner loop sets `saw_stop_sentinel`.
+  if (state.sawStopSentinel) return true;
+
   state.lineBuffer += text;
 
   for (;;) {
@@ -177,14 +194,50 @@ export function feedSse(
  *  certain Anthropic reverse-proxies and older Ollama builds) close
  *  the connection without flushing the spec-required `\n\n`
  *  terminator after the last event; this drains the remaining
- *  buffered event so the consumer doesn't lose its last token. */
+ *  buffered event so the consumer doesn't lose its last token.
+ *
+ *  Two recoverable shapes are handled:
+ *
+ *    1. A complete event whose `eventData` was assembled but never
+ *       saw its blank-line terminator (most common).
+ *    2. A trailing line in `lineBuffer` that was never terminated
+ *       by `\n` at all (rare — only seen from misbehaving proxies
+ *       that flush the buffer right before close without the
+ *       spec-required line break). The line is processed as if a
+ *       newline had arrived, then the resulting event is
+ *       dispatched. */
 export function flushSse(
   state: SseParserState,
   providerType: ExternalProviderConfig["providerType"],
   emit: (chunk: ExternalProviderStreamChunk) => void,
 ): void {
-  if (state.eventData.length > 0 && !state.sawStopSentinel) {
-    dispatchEvent(state.eventName, state.eventData, providerType, emit);
+  if (state.sawStopSentinel) return;
+
+  // (2) Pull any unterminated trailing line into the event
+  // accumulators so it has a chance to dispatch.
+  if (state.lineBuffer.length > 0) {
+    let line = state.lineBuffer;
+    state.lineBuffer = "";
+    if (line.endsWith("\r")) line = line.slice(0, -1);
+    if (line.length > 0 && !line.startsWith(":")) {
+      if (line.startsWith("event:")) {
+        state.eventName = line.slice("event:".length).trimStart();
+      } else if (line.startsWith("data:")) {
+        let data = line.slice("data:".length);
+        if (data.startsWith(" ")) data = data.slice(1);
+        if (state.eventData.length > 0) state.eventData += "\n";
+        state.eventData += data;
+      }
+    }
+  }
+
+  // (1) Now dispatch whatever event we accumulated.
+  if (state.eventData.length > 0) {
+    if (dispatchEvent(state.eventName, state.eventData, providerType, emit)) {
+      state.sawStopSentinel = true;
+    }
+    state.eventName = "";
+    state.eventData = "";
   }
 }
 
@@ -307,7 +360,18 @@ export function buildStreamRequest(
   const { provider, apiKey, prompt } = inputs;
   const maxTokens = inputs.maxTokens ?? provider.maxTokens;
   const temperature = inputs.temperature ?? provider.temperature;
-  const stop = inputs.stop && inputs.stop.length > 0 ? inputs.stop.slice(0, 4) : undefined;
+  // OpenAI-compatible providers reject more than 4 stop sequences
+  // with HTTP 400 ("too many stop sequences"). Anthropic has no
+  // documented hard cap and accepts arbitrary-length
+  // `stop_sequences` arrays, so we only truncate for the OpenAI
+  // shape. This mirrors `openai_body` / `anthropic_body` in the
+  // Rust impl byte-for-byte.
+  const stop =
+    inputs.stop && inputs.stop.length > 0
+      ? provider.providerType === "anthropic"
+        ? inputs.stop.slice()
+        : inputs.stop.slice(0, 4)
+      : undefined;
 
   const apiUrl = provider.apiUrl.replace(/\/+$/, "");
 

@@ -127,6 +127,44 @@ describe("externalProviderStream — OpenAI-compatible SSE parser", () => {
     const chunks = parseExternalProviderSSE(sse, "openai_compatible");
     expect(contentChunks(chunks)).toEqual(["tail"]);
   });
+
+  it("flushes a final event closed without ANY trailing newline (hostile proxy)", () => {
+    // Some misbehaving proxies close the TCP connection right after
+    // the last byte of `data:` without ever sending the `\n` that
+    // terminates the line, let alone the `\n\n` that terminates the
+    // event. Before the fix the line sat unprocessed in lineBuffer
+    // and was lost. After the fix flushSse promotes it.
+    const sse = 'data: {"choices":[{"delta":{"content":"truncated"}}]}';
+    const chunks = parseExternalProviderSSE(sse, "openai_compatible");
+    expect(contentChunks(chunks)).toEqual(["truncated"]);
+  });
+
+  it("does not emit content from bytes that arrive AFTER the stop sentinel", () => {
+    // Reproduces the BUG_pr-review-job-..._0001 scenario: a multi-
+    // byte UTF-8 codepoint split across TCP chunks at the exact
+    // boundary that contains `[DONE]`. The decoder flushes the
+    // post-sentinel tail into feedSse; the early-return guard MUST
+    // discard it instead of emitting a phantom token.
+    const state = newSseParserState();
+    const emitted: ExternalProviderStreamChunk[] = [];
+    feedSse(
+      'data: {"choices":[{"delta":{"content":"before"}}]}\n\n' + "data: [DONE]\n\n",
+      state,
+      "openai_compatible",
+      (c) => emitted.push(c),
+    );
+    expect(state.sawStopSentinel).toBe(true);
+
+    // Simulate the TextDecoder tail flush — a complete-looking event
+    // arriving after the sentinel was already observed.
+    feedSse(
+      'data: {"choices":[{"delta":{"content":"phantom"}}]}\n\n',
+      state,
+      "openai_compatible",
+      (c) => emitted.push(c),
+    );
+    expect(emitted.map((c) => c.content)).toEqual(["before"]);
+  });
 });
 
 describe("externalProviderStream — Anthropic SSE parser", () => {
@@ -352,5 +390,21 @@ describe("externalProviderStream — buildStreamRequest wire format", () => {
     const body = JSON.parse(req.body);
     expect(body.stop_sequences).toEqual(["a", "b"]);
     expect(body.stop).toBeUndefined();
+  });
+
+  it("does NOT cap Anthropic stop_sequences at 4 (no documented hard limit)", () => {
+    // Anthropic's `stop_sequences` field accepts arbitrary-length
+    // arrays — capping here would silently drop user-supplied
+    // sequences. Only the OpenAI `stop` field has the 4-entry hard
+    // limit. This test guards against regressing to the previous
+    // copy-paste-from-OpenAI behaviour.
+    const req = buildStreamRequest({
+      provider: mkProvider({ providerType: "anthropic" }),
+      apiKey: "sk",
+      prompt: "x",
+      stop: ["a", "b", "c", "d", "e", "f", "g"],
+    });
+    const body = JSON.parse(req.body);
+    expect(body.stop_sequences).toEqual(["a", "b", "c", "d", "e", "f", "g"]);
   });
 });

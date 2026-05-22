@@ -223,13 +223,14 @@ mod http_impl {
     }
 
     pub(super) fn anthropic_body(inputs: &ExternalGenerateInputs<'_>) -> serde_json::Value {
-        let mut stop: Vec<String> = inputs.request.stop.clone().unwrap_or_default();
-        let stop = if stop.is_empty() {
-            None
-        } else {
-            stop.truncate(4);
-            Some(stop)
-        };
+        let stop: Vec<String> = inputs.request.stop.clone().unwrap_or_default();
+        // Anthropic's `stop_sequences` field has no documented hard
+        // cap (unlike OpenAI's `stop` which rejects more than 4),
+        // so we forward the caller's list verbatim. Anthropic still
+        // rejects oversized requests at the API gateway, but the
+        // ceiling is much higher than 4 — capping here would
+        // silently drop legitimate user-supplied stop sequences.
+        let stop = if stop.is_empty() { None } else { Some(stop) };
         let mut body = json!({
             "model": inputs.config.model_name,
             "messages": [
@@ -505,17 +506,46 @@ mod http_impl {
             }
         }
 
-        // Drain anything left in the buffer as a final event without
-        // its terminating blank line. Some providers (notably some
-        // Anthropic proxies) close the connection without flushing
-        // the spec-required `\n\n` terminator after the last event.
-        if !event_data.is_empty() && !saw_stop_sentinel {
-            dispatch_sse_event(
-                &event_name,
-                &event_data,
-                inputs.config.provider_type,
-                &mut emit,
-            );
+        // End-of-stream drain. Some providers (notably some
+        // Anthropic reverse-proxies and older Ollama builds) close
+        // the connection without flushing the spec-required `\n\n`
+        // terminator after the last event — and a smaller set close
+        // mid-line without even the trailing `\n`. Recover both
+        // shapes so the consumer doesn't lose the final token.
+        if !saw_stop_sentinel {
+            // (a) Promote any unterminated trailing line in the byte
+            // buffer into the event accumulators as if a newline
+            // had arrived. Strip an optional CR for CRLF tolerance.
+            if !byte_buf.is_empty() {
+                let mut end = byte_buf.len();
+                if end >= 1 && byte_buf[end - 1] == b'\r' {
+                    end -= 1;
+                }
+                if let Ok(line) = std::str::from_utf8(&byte_buf[..end]) {
+                    if !line.is_empty() && !line.starts_with(':') {
+                        if let Some(name) = line.strip_prefix("event:") {
+                            event_name = name.trim_start().to_string();
+                        } else if let Some(data) = line.strip_prefix("data:") {
+                            let data = data.strip_prefix(' ').unwrap_or(data);
+                            if !event_data.is_empty() {
+                                event_data.push('\n');
+                            }
+                            event_data.push_str(data);
+                        }
+                    }
+                }
+                byte_buf.clear();
+            }
+
+            // (b) Dispatch whatever event we accumulated.
+            if !event_data.is_empty() {
+                dispatch_sse_event(
+                    &event_name,
+                    &event_data,
+                    inputs.config.provider_type,
+                    &mut emit,
+                );
+            }
         }
 
         // Always emit a final stop chunk so consumers can rely on
@@ -1238,6 +1268,94 @@ mod http_tests {
             .map(|c| c.content.as_str())
             .collect();
         assert_eq!(content, vec!["after-ping"]);
+    }
+
+    #[tokio::test]
+    async fn anthropic_body_does_not_cap_stop_sequences_at_four() {
+        // Anthropic's `stop_sequences` field has no documented hard
+        // cap; the previous copy-paste-from-OpenAI behaviour would
+        // silently drop legitimate user-supplied sequences past
+        // index 3. This test guards against regressing.
+        let cfg = cfg_for("https://example.invalid", ExternalProviderType::Anthropic);
+        let req = GenerateRequest::new("hi".to_string()).with_stop(vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+            "e".to_string(),
+            "f".to_string(),
+            "g".to_string(),
+        ]);
+        let inputs = ExternalGenerateInputs {
+            config: &cfg,
+            api_key: "s",
+            request: &req,
+        };
+        let body = http_impl::anthropic_body(&inputs);
+        let stops = body
+            .get("stop_sequences")
+            .and_then(|v| v.as_array())
+            .expect("stop_sequences must be present");
+        assert_eq!(stops.len(), 7, "anthropic must accept >4 stop sequences");
+    }
+
+    #[tokio::test]
+    async fn openai_body_caps_stop_sequences_at_four() {
+        // OpenAI's `stop` field is documented to reject more than 4
+        // entries with HTTP 400 — the truncation is required.
+        let cfg = cfg_for(
+            "https://example.invalid",
+            ExternalProviderType::OpenAICompatible,
+        );
+        let req = GenerateRequest::new("hi".to_string()).with_stop(vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+            "e".to_string(),
+        ]);
+        let inputs = ExternalGenerateInputs {
+            config: &cfg,
+            api_key: "s",
+            request: &req,
+        };
+        let body = http_impl::openai_body(&inputs);
+        let stops = body
+            .get("stop")
+            .and_then(|v| v.as_array())
+            .expect("stop must be present");
+        assert_eq!(stops.len(), 4, "openai must cap stop sequences at 4");
+    }
+
+    #[tokio::test]
+    async fn stream_recovers_event_closed_without_any_trailing_newline() {
+        // A hostile / misbehaving proxy closes the TCP connection
+        // mid-line — no `\n` terminator at all, never mind the
+        // spec-required `\n\n`. The Rust drain must still promote
+        // the unterminated line into the final event so the
+        // renderer doesn't lose the last token.
+        let server = MockServer::start().await;
+        let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"truncated\"}}]}";
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(sse_response(sse))
+            .mount(&server)
+            .await;
+
+        let chunks = collect_stream_chunks(&server, ExternalProviderType::OpenAICompatible, "s")
+            .await
+            .unwrap();
+        let content: Vec<&str> = chunks
+            .iter()
+            .filter(|c| !c.content.is_empty())
+            .map(|c| c.content.as_str())
+            .collect();
+        assert_eq!(
+            content,
+            vec!["truncated"],
+            "final unterminated line must be drained on close"
+        );
+        assert!(chunks.last().unwrap().stop);
     }
 
     #[tokio::test]

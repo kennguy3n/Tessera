@@ -1134,13 +1134,27 @@ export function registerIpcHandlers(): void {
     | { kind: "external"; provider: ExternalProviderConfig; apiKey: string } {
     const cfg = loadConfig();
     const provider = cfg.externalProvider;
-    if (
-      !provider ||
-      !provider.enabled ||
-      !provider.apiUrl.trim() ||
-      !provider.modelName.trim() ||
-      !provider.apiKeyRef.trim()
-    ) {
+    if (!provider) {
+      return { kind: "local" };
+    }
+    // Surface each fallback reason at `info` level so post-mortem
+    // debugging from a packaged build doesn't require reproducing
+    // the misconfiguration. The default Electron log destination
+    // (`<userData>/logs/main.log`) preserves these without exposing
+    // them to the renderer or telemetry. We deliberately do NOT
+    // include the API URL or model name verbatim — those can leak
+    // private endpoints.
+    if (!provider.enabled) {
+      return { kind: "local" };
+    }
+    const missing: string[] = [];
+    if (!provider.apiUrl.trim()) missing.push("apiUrl");
+    if (!provider.modelName.trim()) missing.push("modelName");
+    if (!provider.apiKeyRef.trim()) missing.push("apiKeyRef");
+    if (missing.length > 0) {
+      console.info(
+        `[tessera] external provider enabled but config incomplete (missing: ${missing.join(", ")}); falling back to local sidecar`,
+      );
       return { kind: "local" };
     }
     let apiKey: string | null = null;
@@ -1158,6 +1172,9 @@ export function registerIpcHandlers(): void {
       return { kind: "local" };
     }
     if (!apiKey || apiKey.length === 0) {
+      console.info(
+        `[tessera] external provider enabled but no API key stored under '${provider.apiKeyRef}'; falling back to local sidecar`,
+      );
       return { kind: "local" };
     }
     return { kind: "external", provider, apiKey };
