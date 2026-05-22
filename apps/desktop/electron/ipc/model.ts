@@ -54,6 +54,53 @@ export function safeRendererSender<T>(
   };
 }
 
+/**
+ * Active `model:generate` controller, lifted to module scope so the
+ * matching `model:cancelJob` handler always targets the live
+ * generation regardless of how many times `registerModelHandlers()`
+ * has been called.
+ *
+ * Why this lives outside `registerModelHandlers()`:
+ *
+ *   The previous declaration was a `let` inside `registerModelHandlers`.
+ *   That works fine for the production path (the function is invoked
+ *   exactly once at startup), but a test harness — or a future
+ *   electron-forge hot-reload — that re-invokes the registrar produces
+ *   a NEW closure binding `model:cancelJob` to a NEW
+ *   `activeGenerationController`, while an in-flight generation from
+ *   the previous invocation still references the OLD one. The
+ *   re-registered `model:cancelJob` would then be unable to abort that
+ *   in-flight stream, because the variable it captures is `null`.
+ *
+ *   Hoisting to module scope means there is exactly one
+ *   `activeGenerationController` per module load. Every call to
+ *   `registerModelHandlers()` writes the SAME slot. `idempotentHandle`
+ *   already drops the old IPC channel registration, so the previous
+ *   handler's JS closure is now unreachable from outside — but if it
+ *   is still mid-await on `reader.read()`, its `controller.abort()`
+ *   call in the `finally` block still works because `controller` is
+ *   captured by value in the local scope. The shared module-scope
+ *   slot is only used for the cancel path, which always finds the
+ *   current writer.
+ *
+ *   Concretely: the only way a re-registration can leave a generation
+ *   uncancellable is if the new `model:cancelJob` handler looks at a
+ *   different slot than the in-flight `model:generate` wrote to. By
+ *   collapsing both handlers' references to one module-scope slot,
+ *   that class of issue is structurally impossible.
+ */
+let activeGenerationController: AbortController | null = null;
+
+/**
+ * Exported for tests: reset the shared controller slot between cases
+ * so a leaked one from a prior test cannot fail a re-registration
+ * assertion. Production code never calls this — the controller resets
+ * itself in `model:generate`'s `finally` block.
+ */
+export function _resetActiveGenerationControllerForTests(): void {
+  activeGenerationController = null;
+}
+
 export function registerModelHandlers(): void {
   idempotentHandle("model:status", async () => {
     const sidecar = getModelSidecar();
@@ -87,8 +134,6 @@ export function registerModelHandlers(): void {
       await sidecar.stop();
     }
   });
-
-  let activeGenerationController: AbortController | null = null;
 
   idempotentHandle("model:generate", async (event, request: unknown) => {
     const parsed = GenerateRequestSchema.parse(request);
