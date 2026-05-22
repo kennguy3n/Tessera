@@ -9,7 +9,7 @@
  *      modules in turn need to call `isNetworkError(err)` in their
  *      per-iteration `catch` blocks so a token-refresh `NetworkError`
  *      propagates out instead of being silently swallowed alongside
- *      benign API errors (the bug Devin Review wave 19 ANALYSIS_0001
+ *      benign API errors (the bug
  *      flagged). If the classifier lived in `handlers.ts`, those
  *      imports would form a cycle.
  *
@@ -43,7 +43,6 @@ export class NetworkError extends Error {
     // form is the only spec-compliant way to set `Error.cause` and
     // it gives us the same `err.cause` read access the previous code
     // already relied on (e.g. `isNetworkError` reading `e.cause?.code`).
-    // See Devin Review wave 15 ANALYSIS_0003.
     super(message, options);
     this.name = "NetworkError";
   }
@@ -80,7 +79,6 @@ export class NotConnectedError extends Error {
 // forgets to lowercase would silently stop matching uppercase error
 // messages. Making the patterns self-contained (case-insensitive)
 // removes that latent footgun without affecting today's behaviour.
-// See Devin Review wave 13 ANALYSIS_0002.
 const NETWORK_MESSAGE_PATTERNS: readonly RegExp[] = [
   /\bfetch failed\b/i,
   /\bnetwork\s+(error|unreachable|down|failure|is\s+offline)\b/i,
@@ -96,9 +94,7 @@ const NETWORK_MESSAGE_PATTERNS: readonly RegExp[] = [
 // per-invocation allocation. The previous shape was an array literal
 // constructed inside `isNetworkError` and scanned with `.includes()`,
 // which allocated ~25 entries on every error classification and
-// scanned linearly — both flagged by Devin Review wave 19
-// ANALYSIS_0008. The `Set` form is the canonical fix for both.
-//
+// scanned linearly. The `Set` form is the canonical fix for both.
 // Maintenance: keep this list in sync with new transport-level error
 // codes as the runtime evolves — anything not in the allowlist falls
 // through to the message-pattern heuristic above, which is a strictly
@@ -119,7 +115,7 @@ const NETWORK_CODES: ReadonlySet<string> = new Set([
   // most user-visible presentations, but the code-level allowlist
   // is the strictly stronger signal and we list the Chromium
   // variant — listing the libc variant here is the cheap completion
-  // of the pair. See Devin Review wave 12 ANALYSIS_0003.
+  // of the pair.
   "ECONNABORTED",
   "ENETUNREACH",
   "EHOSTUNREACH",

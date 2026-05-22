@@ -269,7 +269,6 @@ describe("CreatePage", () => {
   });
 
   it("workflow shortcut keeps its workflow description after the underlying template async-loads", async () => {
-    // Regression for Devin Review BUG finding on commit 3f885a8:
     // workflow shortcuts ("Summarize sources", "Generate report")
     // share `report-v1` as their underlying template. Without
     // workflow-aware precedence, once `templates.get('report-v1')`
@@ -310,8 +309,6 @@ describe("CreatePage", () => {
 
 describe("SourcesPage", () => {
   it("prunes selectedIds when a selected source is removed (Compare counter drops from 2/2 to 1/2)", async () => {
-    // Regression for Devin Review BUG finding eb2bc4d4.
-    //
     // Before the fix: selecting two sources, then removing one via the
     // confirm-Remove modal, left the removed source's id in
     // `selectedIds`. `refresh()` re-fetched the list (now showing one
@@ -319,7 +316,6 @@ describe("SourcesPage", () => {
     // stayed enabled — clicking it dispatched
     // `artifacts:compareSources(stale-id, kept-id)`, which the
     // backend would reject.
-    //
     // After the fix: a `useEffect` watches `sources` and prunes any
     // id in `selectedIds` that's not present in the current list.
     // This test installs two sources, selects both, removes one,

@@ -78,8 +78,7 @@ import type { KnownProvider } from "../validate";
  * `KNOWN_PROVIDERS` tuple in `validate.ts`); every consumer —
  * `PROVIDER_OAUTH_CONFIGS`, `runSync`, `assertProvider`, the bridge
  * cast — fails to compile in the right places at the right time until
- * the new provider is wired all the way through. See Devin Review
- * wave 16 ANALYSIS_0004.
+ * the new provider is wired all the way through.
  */
 export type ProviderId = KnownProvider;
 
@@ -258,7 +257,6 @@ export function getRedirectUri(config: ProviderOAuthConfig): string {
  * value from this single source of truth and eliminate the duplicate
  * constants entirely.
  *
- * See Devin Review wave 20 ANALYSIS: "ConnectorsList hardcodes
  * fallback redirectUri values that must sync with providerOAuth.ts
  * config".
  */
@@ -355,8 +353,7 @@ export async function runRedirectServer(
     // and walked the cleanup branch twice. Making the guard
     // explicit removes the silent reliance on N layers of
     // idempotency and gives a single place to add future invariants
-    // (e.g. event-bus emit, structured-log write). See Devin Review
-    // wave 15 ANALYSIS_0006.
+    // (e.g. event-bus emit, structured-log write).
     let settled = false;
     const settleOnce = (fn: () => void): void => {
       if (settled) return;
@@ -455,7 +452,6 @@ export async function runRedirectServer(
       // listener is still bound to the port — calling close() here
       // releases it deterministically rather than relying on GC.
       // Cheap insurance against the rare post-listen error path.
-      // See Devin Review wave 13 ANALYSIS_0004.
       settleOnce(() =>
         reject(
           new Error(
@@ -591,7 +587,7 @@ export async function exchangeAuthorizationCode(
  *     tokens (`supportsRefresh: true`). The early-2024 "classic"
  *     endpoint that did not support refresh has been retired; the
  *     wave-20 doc-comment update brings this comment back in line
- *     with the live config. See Devin Review wave 20 ANALYSIS:
+ *     with the live config.
  *     "providerOAuth.ts refreshProviderToken doc says Figma does not
  *     support refresh, but config sets supportsRefresh: true".
  *

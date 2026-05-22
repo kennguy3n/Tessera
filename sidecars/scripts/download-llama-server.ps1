@@ -3,7 +3,6 @@
 # matching the local GPU. AVX2 is the CPU baseline and AVX-VNNI / AVX-512 VNNI
 # are picked up automatically at runtime, so the CPU build is correct for every
 # CPU-only Windows machine.
-#
 # Usage:
 #   ./download-llama-server.ps1 -Compute cpu|cuda|vulkan [-Version <release-tag>]
 [CmdletBinding()]
@@ -83,8 +82,6 @@ if (-not $ResolvedUrl) {
     # practice and silently misled anyone who cleared the manifest during
     # development. Fail loudly instead with a pointer to the manifest
     # entry that needs populating.
-    #
-    # (Devin Review finding 3270628605.)
     Write-Error "No URL configured in $ModelsJson for variant: $VariantKey. Populate llama_server.variants[].url for platform=$Platform, compute=$Compute with a real PrismML llama.cpp release asset before running this script."
     exit 1
 }

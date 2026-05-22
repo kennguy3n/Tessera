@@ -571,7 +571,7 @@ function escapeHtml(s: string): string {
  * line-based export formats (PDF, DOCX). Equivalent of the
  * `buildInfographicPrintableText` companion in `InfographicEditor.tsx` —
  * see that file for the design rationale. Same regression target:
- * BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0001 (PDF export of
+ * review-job-5a49c7d7ef804edda4f280500e2b1ff0_0001 (PDF export of
  * a visual artifact must not dump raw JSON through the line-based PDF
  * builder).
  *

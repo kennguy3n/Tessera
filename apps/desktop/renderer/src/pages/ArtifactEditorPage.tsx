@@ -215,7 +215,7 @@ export default function ArtifactEditorPage() {
         //   the dedicated *PrintableText helpers (`# Title`, `## Heading`,
         //   blank-line-separated paragraphs) so the printed export
         //   matches the visible page top-to-bottom. Regression for
-        //   BUG_pr-review-job-5a49c7d7ef804edda4f280500e2b1ff0_0001.
+        //   review-job-5a49c7d7ef804edda4f280500e2b1ff0_0001.
         //
         // If the parser throws (e.g. corrupted JSON), we deliberately
         // leave `contentOverride` null and let the Rust side fall back to

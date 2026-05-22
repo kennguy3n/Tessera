@@ -62,7 +62,6 @@ export function syncDirFor(userDataDir: string, provider: string): string {
  *      per-item hot loop. That's where `resolveAccessToken` is
  *      called, and that's where the callback path is exercised.
  *
- * See Devin Review wave 13 BUG_0001 (gdrive.ts:123-126) and the
  * cross-cutting ANALYSIS_0007 (handlers.ts:338-365).
  */
 export interface AccessTokenSource {
@@ -165,7 +164,7 @@ export async function purgeSyncDir(
  * append a short content-addressed suffix when the substitution
  * actually changed the input — i.e. only when the input contained an
  * unsafe character. For every id current providers emit, the output
- * is bit-identical to the pre-suffix behaviour. See Devin Review
+ * is bit-identical to the pre-suffix behaviour.
  * wave 7B ANALYSIS_0007 (syncDir.ts:99-101).
  */
 const COLLISION_HASH_LEN = 8;
@@ -209,7 +208,6 @@ export const FAILED_RETRY_QUEUE_MAX = 200;
  * to fetch so the next sync can retry them — otherwise the watermark
  * silently moves past the failed item's modification time and the
  * item is never retried until the user edits it again. (See the
- * Devin Review wave 5 finding on `notion.ts:304-341`.) The
  * `failureCount` lets us cap retries: an item that fails too many
  * passes in a row is almost certainly permanently gone (deleted,
  * permissions revoked, OAuth scope changed) and continuing to ping it
@@ -249,7 +247,7 @@ export const FAILED_RETRY_MAX_ATTEMPTS = 5;
  * `2024-06-01T12:00:00+00:00`. Figma and Notion currently happen to
  * return a stable shape, but the comparison is a footgun for any
  * future provider (Atlassian already mixes both forms in different
- * endpoints) and a Devin Review wave 7 finding flagged it as fragile.
+ * endpoints) and a
  *
  * Returning `null` (rather than throwing) for unparsable input lets
  * callers fall back to the same behaviour they had before this fix:
@@ -390,7 +388,6 @@ export function nextFailedRetryQueue(
  * Calling `index.remove(path)` after each `removeSource` keeps the
  * cache in sync with the bridge.
  *
- * See Devin Review wave 20 ANALYSIS: "Confluence per-page loop calls
  * bridge.listSources() on every iteration — O(n²) for large spaces".
  */
 export interface SourceMeta {

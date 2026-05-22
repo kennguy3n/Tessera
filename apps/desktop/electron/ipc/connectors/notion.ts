@@ -164,8 +164,7 @@ async function fetchAllBlocks(
       // completed), and the per-iteration catches in this file rely
       // on `isNetworkError` returning false for these errors so they
       // record a per-page failure rather than bubbling up to
-      // `runConnectorSync`'s offline path. See Devin Review wave 19
-      // ANALYSIS_0001 follow-up.
+      // `runConnectorSync`'s offline path.
       throw new Error(
         `Notion blocks API returned HTTP ${resp.status} — ${text.slice(0, 500)}`,
       );
@@ -214,8 +213,7 @@ async function fetchPageById(
     // the connection pool and force the next page-fetch to wait on
     // a fresh TLS handshake. The `.catch(() => {})` swallows any
     // read error — we already know the page is gone, so a body-read
-    // failure here would be noise. See Devin Review wave 14
-    // ANALYSIS_0003.
+    // failure here would be noise.
     await resp.text().catch(() => undefined);
     return null;
   }
@@ -286,8 +284,7 @@ async function listAllPages(
     };
     if (cursor) body.start_cursor = cursor;
     // Refresh-on-demand per page — a workspace-wide search of a
-    // large Notion account can paginate for many minutes. See Devin
-    // Review wave 13 BUG_0001 / ANALYSIS_0007.
+    // large Notion account can paginate for many minutes.
     const accessToken = await resolveAccessToken(tokenSource);
     const resp = await fetch(`${NOTION_API}/search`, {
       method: "POST",
@@ -310,7 +307,7 @@ async function listAllPages(
       // comparing — the previous lexicographic compare was a
       // footgun if Notion ever returns a mix of `Z` / `+00:00` /
       // millisecond-precision suffixes for `last_edited_time` (see
-      // `parseWatermarkIso` in `syncDir.ts` and the Devin Review
+      // `parseWatermarkIso` in `syncDir.ts` and the
       // wave 7 finding).
       if (lastSyncIso && !isAfterWatermark(p.last_edited_time, lastSyncIso)) continue;
       pages.push(p);
@@ -369,8 +366,7 @@ async function saveWatermark(
 export async function syncNotion(ctx: {
   accessToken: string;
   /** Just-in-time refresh hook — called at every loop boundary so a
-   *  large-workspace sync does NOT outlive the access token. See
-   *  Devin Review wave 13 BUG_0001 / ANALYSIS_0007. */
+   *  large-workspace sync does NOT outlive the access token. */
   getAccessToken?: () => Promise<string>;
   userDataDir: string;
   bridge: NotionBridgeHooks;
@@ -389,8 +385,7 @@ export async function syncNotion(ctx: {
   // every read of `sourceIndex` is inside the try block, after
   // assignment). The cache lets the hot loop's existence check be
   // O(1) instead of the previous `bridge.listSources().find(...)`
-  // per-page scan (O(pages × sources)). See Devin Review wave 20
-  // ANALYSIS.
+  // per-page scan (O(pages × sources)).
   let sourceIndex!: SourcePathIndex;
 
   const watermark = await loadWatermark(ctx.userDataDir);
@@ -404,7 +399,7 @@ export async function syncNotion(ctx: {
   // with the *original* `failureCount` and never reaching
   // `FAILED_RETRY_MAX_ATTEMPTS`. Result: a permanently failing page
   // (e.g. permissions revoked, OAuth scope changed) wasted one API
-  // call per sync forever. See Devin Review wave 7 BUG_0001.
+  // call per sync forever.
   const succeededIds = new Set<string>();
   const failedThisPass: Array<{ remoteId: string; remoteModifiedAt: string | null }> = [];
 
@@ -417,7 +412,6 @@ export async function syncNotion(ctx: {
   // manifest. The previous shape declared this `const removed = 0`
   // and never incremented it, leaving Notion's sync result silently
   // mis-counting upstream deletions vs OneDrive/Confluence. See
-  // Devin Review wave 13 ANALYSIS_0001. The cascade also unlinks
   // the local markdown file and detaches the bridge source so the
   // user's index does not keep stale copies of pages they no
   // longer have access to.
@@ -432,8 +426,7 @@ export async function syncNotion(ctx: {
   // `saveWatermark` and `writeManifest` entirely — making every
   // page successfully fetched in this pass invisible to the next
   // sync and forcing redundant re-fetching. This mirrors the
-  // defense-in-depth pattern in figma.ts. See Devin Review wave 7
-  // ANALYSIS_0004 (architectural consistency).
+  // defense-in-depth pattern in figma.ts.
   try {
     // Materialise the source-by-path index inside the try block so an
     // unlikely `bridge.listSources()` throw is still caught by the
@@ -448,15 +441,14 @@ export async function syncNotion(ctx: {
     // first and a transient failure usually fires on a single page
     // while other newer pages succeed). Without this phase those
     // failed pages would never be retried until the user edited them
-    // again — see the wave-5 Devin Review finding on this file.
+    // again — see the wave-5
     const retryPages: NotionPage[] = [];
     for (const entry of watermark.failedRetries) {
       try {
         // Refresh-on-demand at the top of every Phase-1 retry. The
         // retry queue can carry thousands of permanently-failing ids
         // on accounts with revoked-then-restored integration scopes,
-        // so the loop alone can outlive a 1h access token. See Devin
-        // Review wave 13 BUG_0001.
+        // so the loop alone can outlive a 1h access token.
         const accessToken = await resolveAccessToken(ctx);
         const page = await fetchPageById(entry.remoteId, accessToken);
         if (page === null) {
@@ -468,8 +460,7 @@ export async function syncNotion(ctx: {
           // branch only dropped from the retry queue and silently
           // kept the local file + source entry, which surfaced as
           // an inconsistency with OneDrive/Confluence which DO
-          // cascade upstream deletions. See Devin Review wave 13
-          // ANALYSIS_0001.
+          // cascade upstream deletions.
           const prior = entriesById.get(entry.remoteId);
           if (prior) {
             const existingSource = sourceIndex.get(prior.localPath);
@@ -503,7 +494,7 @@ export async function syncNotion(ctx: {
         // record of a page we still owe a retry on). Bubble the
         // NetworkError up so `runConnectorSync` surfaces
         // `{ status: 'offline' }` and the retry queue is preserved
-        // verbatim for the next sync attempt. See Devin Review wave
+        // verbatim for the next sync attempt.
         // 19 ANALYSIS_0001.
         if (isNetworkError(err)) throw err;
         // Fetch failed *again* — record the failure so
@@ -522,7 +513,6 @@ export async function syncNotion(ctx: {
     // page whose `last_edited_time` is newer than the persisted
     // watermark) are de-duplicated by id so we don't fetch their
     // blocks twice.
-    //
     // We deliberately DO NOT pre-filter Phase 2 against
     // `failedThisPass` (the way `figma.ts:560` does for its own
     // retry queue). The asymmetry is intentional: Phase 1 here
@@ -535,8 +525,7 @@ export async function syncNotion(ctx: {
     // sync interval for a transient Phase-1 502 to clear. The cost
     // is the post-loop reconciliation below; the benefit is documented
     // in the wave-7C regression test
-    // (`connectorsSync.test.ts:644-747`) and re-asserted by Devin
-    // Review wave 16 ANALYSIS_0003 — NOT a bug, by design.
+    // (`connectorsSync.test.ts:644-747`) and re-asserted
     const scanned = await listAllPages(ctx, watermark.lastSyncIso);
     const seenIds = new Set<string>(retryPages.map((p) => p.id));
     const allPages: NotionPage[] = [...retryPages];
@@ -552,14 +541,13 @@ export async function syncNotion(ctx: {
         // Refresh-on-demand at the top of every Phase-2 page. The
         // page-text fetch chases child blocks recursively, so each
         // iteration can issue dozens of API calls against the
-        // freshly resolved token. See Devin Review wave 13 BUG_0001.
+        // freshly resolved token.
         const accessToken = await resolveAccessToken(ctx);
         text = await fetchPageText(page, accessToken);
       } catch (err) {
         // NetworkError bubbles up — same rationale as the Phase 1
         // catch above. Offline syncs must not advance per-page
         // `failureCount` toward `FAILED_RETRY_MAX_ATTEMPTS`. See
-        // Devin Review wave 19 ANALYSIS_0001.
         if (isNetworkError(err)) throw err;
         // Record the failure so the *next* sync's Phase 1 picks it up
         // and retries by id. The watermark may legitimately advance
@@ -591,7 +579,7 @@ export async function syncNotion(ctx: {
         // other successful pages), and the next pass would never
         // re-fetch the failed page until the user edits it again in
         // Notion. This matches the defensive pattern in
-        // `jira.ts` / `confluence.ts` / `figma.ts`. See Devin Review
+        // `jira.ts` / `confluence.ts` / `figma.ts`.
         // wave 7C BUG_0001 (notion.ts:449).
         failedThisPass.push({
           remoteId: page.id,
@@ -649,7 +637,6 @@ export async function syncNotion(ctx: {
     // helper's conservative semantics untouched (other connectors
     // benefit from the over-retry default) and do the same-pass
     // reconciliation here at the Notion-specific call site instead.
-    // See Devin Review wave 7C ANALYSIS_0001 (notion.ts:416-423).
     // Dedupe by remoteId first. A page CAN appear twice in
     // `failedThisPass` in one pathological case: it was already in the
     // retry queue → Phase 1 `fetchPageById` threw with non-404 →
@@ -660,12 +647,9 @@ export async function syncNotion(ctx: {
     // with the same id, bumps `failureCount` by +2 instead of +1, and
     // the page hits `FAILED_RETRY_MAX_ATTEMPTS` one pass earlier
     // than designed. Keep the most recent `remoteModifiedAt` (later
-    // entries reflect the freshest server-side timestamp). See Devin
-    // Review wave 11 ANALYSIS_0001 (notion.ts:517).
-    //
+    // entries reflect the freshest server-side timestamp).
     // The asymmetry vs `figma.ts` (which pre-filters Phase 2 against
-    // failed-this-pass) is intentional and re-confirmed by Devin
-    // Review wave 16 ANALYSIS_0003: Notion's Phase-1 and Phase-2
+    // failed-this-pass) is intentional and re-confirmed
     // paths hit different endpoints (`/v1/pages/:id` vs `/v1/search` +
     // `/v1/blocks/:id`), so Phase 2 can rescue a transient Phase-1
     // 5xx within the same sync — a recovery property the wave-7C
@@ -681,7 +665,7 @@ export async function syncNotion(ctx: {
     );
     // Persist progress in a nested try/catch so a state-write error
     // (e.g. disk full) doesn't shadow the original upstream error the
-    // try block raised. See Devin Review wave 12 ANALYSIS_0004
+    // try block raised.
     // (confluence.ts variant; cross-cutting fix applied to all 5
     // connectors).
     try {

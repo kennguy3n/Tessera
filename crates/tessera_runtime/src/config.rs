@@ -326,9 +326,7 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             // `diskSizeMb` here MUST be the post-extract footprint so
             // swap-planning accounting ("this swap saves X MB") is
             // correct — the user evicts the on-disk size, not the
-            // compressed download size. (Devin Review finding
-            // 3271137805; the manifest at sidecars/models.json carries
-            // the same values.)
+            // compressed download size.
             download_size_mb: 248,
             disk_size_mb: 275,
             context_length: 2048,
@@ -758,7 +756,6 @@ mod tests {
 
     #[test]
     fn mlx_disk_size_exceeds_download_size_for_archives() {
-        // Devin Review finding 3271137805: MLX models ship as `.tar.gz`
         // archives, so the on-disk extracted footprint is necessarily
         // larger than the compressed download. Before the fix the Rust
         // hardcoded fallback registry had `disk_size_mb ==
@@ -935,7 +932,6 @@ mod tests {
 
     // ---------------------------------------------------------------
     // Manifest ↔ hardcoded registry cross-check
-    //
     // `sidecars/models.json` is the single source of truth used by the
     // Electron download path (it carries the HuggingFace URLs and the
     // expected SHA-256 checksums). The Rust `full_model_registry()`
@@ -943,21 +939,18 @@ mod tests {
     // "what's the best model for this device tier?" without parsing
     // JSON at every startup AND can fall back gracefully if the
     // manifest is ever missing on disk.
-    //
     // The risk is silent drift: a future bump to a model size in the
     // manifest (because we re-quantized, retrained, or HF mirror
     // returned a different file) could leave the Rust copy stale.
     // The swap-planner uses `disk_size_mb` to tell the user "swapping
     // saves X MB / costs X MB", so drift here directly mis-informs
     // the user.
-    //
     // This test loads the manifest at test time and asserts that
     // every field shared between the two representations matches
     // EXACTLY (no tolerance — these are bytes-on-disk numbers, not
     // measurements; if they don't match one of them is wrong). When
     // it fires the failure message names the model id and the
     // diverging field so the fix is mechanical.
-    // (Devin Review INFO finding e1f55a44.)
     // ---------------------------------------------------------------
 
     #[derive(serde::Deserialize)]

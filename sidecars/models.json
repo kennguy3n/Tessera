@@ -1,6 +1,6 @@
 {
   "format_version": 1,
-  "note": "Ternary-Bonsai 1.58-bit models. Only ONE model is installed per device at any time. On macOS Apple Silicon Tessera uses the MLX 2-bit weight; on every other platform it uses the GGUF Q1_0_g128 ternary repack from the PrismML llama.cpp fork. MLX entries ship as `.tar.gz` archives that expand on disk — their `diskSizeMb` is the post-extract footprint (compressed binary weights + metadata expand ~8-12%, see Devin Review finding 3271137805). GGUF entries are single files so `downloadSizeMb == diskSizeMb`.",
+  "note": "Ternary-Bonsai 1.58-bit models. Only ONE model is installed per device at any time. On macOS Apple Silicon Tessera uses the MLX 2-bit weight; on every other platform it uses the GGUF Q1_0_g128 ternary repack from the PrismML llama.cpp fork. MLX entries ship as `.tar.gz` archives that expand on disk — their `diskSizeMb` is the post-extract footprint (compressed binary weights + metadata expand ~8-12%). GGUF entries are single files so `downloadSizeMb == diskSizeMb`.",
   "models": [
     {
       "id": "ternary-bonsai-1.7b-mlx",

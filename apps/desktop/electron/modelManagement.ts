@@ -256,7 +256,7 @@ export function hasVulkan(): boolean {
   // every multiarch path that ships the loader from a packaged distro:
   // both `/usr/lib/...` (Debian/Ubuntu standard) AND `/lib/...` (some
   // older / minimal distros and merged-/usr systems where /lib is the
-  // primary). (Devin Review finding from round 17.)
+  // primary).
   const candidates =
     process.platform === "linux"
       ? [
@@ -309,8 +309,7 @@ export function detectComputeBackends(): ComputeBackend[] {
   // mutates the result today (it flows into `PlatformInfo` which is
   // structured-cloned to the renderer over IPC), but the asymmetry was
   // an invariant violation waiting to bite a future maintainer who
-  // adds a `.push("…")` to the returned value. (Devin Review finding
-  // 3270926992.)
+  // adds a `.push("…")` to the returned value.
   return cachedComputeBackends.slice();
 }
 
@@ -389,9 +388,7 @@ const KNOWN_COMPUTE_BACKENDS: ReadonlySet<ComputeBackend> = new Set([
  * "no variant for this platform" error that's indistinguishable from a
  * missing-entry bug.
  *
- * (Devin Review INFO finding 3271329037 — the
- * `ManifestLlamaServerVariant.platform` field is typed as `Platform`
- * but the JSON it comes from is untrusted at runtime.)
+ *
  */
 export function parsePlatform(s: string): Platform | null {
   return (KNOWN_PLATFORMS as ReadonlySet<string>).has(s)
@@ -417,7 +414,7 @@ export class ManifestValidationError extends Error {
  * enum-typed fields on the `llama_server` variants — those go through
  * a `===` lookup against `Platform` / `ComputeBackend` literals and
  * would silently return `null` on an unknown value, which is the
- * type-safety gap finding 3271329037 calls out. Returns the manifest
+ * type-safety gap this validator closes. Returns the manifest
  * unchanged on success; throws `ManifestValidationError` on failure so
  * the caller's `loadManifest` propagates a clear error instead of
  * caching a half-valid object.
@@ -470,7 +467,7 @@ function validateManifest(manifest: ModelManifest): ModelManifest {
       }
     }
   }
-  // Validate `models[]` entries (Devin Review INFO finding 3271382651):
+  // Validate `models[]` entries :
   // an unknown `format` is mitigated downstream by `listModelsForPlatform`'s
   // `m.format !== preferred` filter, but an unknown `tier` would silently
   // drop the model from `recommendModel` results and an unknown `platform`
@@ -655,9 +652,7 @@ export function activeModelPath(userDataDir: string): string {
  * Used by:
  *   - `runtime:planDownload` IPC, so a stale `active-model.json`
  *     pointing at a manually-deleted file no longer makes the planner
- *     return `already-installed` (Devin Review BUG finding
- *     3270859596 — the Settings card was showing "Installed" for a
- *     model whose file had been removed out from under Tessera).
+ *     return `already-installed` .
  *   - `isModelInstalled(modelId)` below, which is a thin model-id
  *     filter over this.
  *
@@ -681,8 +676,7 @@ export async function getInstalledModel(
  * Single source of truth for "is `modelId` specifically the model that's
  * actually installed and usable right now?". Composes on top of
  * `getInstalledModel` so the file-exists definition can only live in
- * one place. (Devin Review ANALYSIS finding 3270826130, BUG finding
- * 3270859596.)
+ * one place.
  *
  * Used by both the IPC fast-path (`runtime:downloadModel` — skip
  * sidecar restart when no download is needed) and by
@@ -799,12 +793,7 @@ async function writeCurrentModel(
  * instance, a power loss between `fsync` and `rename`, which can leave
  * the temp file behind but never produces a partially-written target.
  *
- * (Devin Review INFO finding 3270976513 — the prior `fsp.writeFile`
- * direct-write was exposed to truncated-JSON corruption if the process
- * crashed mid-write, and while the read side already recovered from
- * that, eliminating the corruption window entirely is the
- * architecturally-correct fix rather than relying purely on read-time
- * quarantine.)
+ *
  */
 async function atomicWriteJson(
   targetPath: string,
@@ -834,9 +823,9 @@ async function atomicWriteJson(
     // The caller's primary failure is the rename error, which we
     // re-throw, but secondary unlink failures are surfaced as warnings
     // (rather than silently swallowed) so they show up in the main-
-    // process log if the temp file accumulates. See Devin Review
-    // finding 3271010216 — silent .catch(() => {}) on filesystem
-    // mutations is an invariant-violation surface we don't want.
+    // process log if the temp file accumulates.
+    // Silently swallowing filesystem-mutation errors hides invariant
+    // violations that bite later — surface them as warnings instead.
     await fsp.unlink(tempPath).catch((unlinkErr: unknown) => {
       console.warn(
         `[atomicWriteJson] failed to remove temp file ${tempPath} after rename error:`,
@@ -926,7 +915,7 @@ export interface DownloadDeps {
    * leading to a user-confusing "my just-downloaded model got
    * deleted" sequence. With the hook inside the lock the entire
    * (stop → mutate → commit) sequence is atomic per `userDataDir`.
-   * (Devin Review INFO finding f37a3c45.)
+   *
    */
   beforeMutation?: () => Promise<void>;
 }
@@ -954,8 +943,7 @@ const defaultFetcher: NonNullable<DownloadDeps["fetcher"]> = async (
     // sockets until the next GC cycle. We `.catch(() => {})` because
     // cancel() can throw if the body has already been consumed or the
     // connection is already closed, and we don't want a secondary
-    // failure to mask the original HTTP-status error. (Devin Review
-    // INFO finding 3271382571.)
+    // failure to mask the original HTTP-status error.
     await resp.body?.cancel().catch(() => undefined);
     throw new Error(`Download failed: HTTP ${resp.status}`);
   }
@@ -972,7 +960,7 @@ const defaultFetcher: NonNullable<DownloadDeps["fetcher"]> = async (
   // order means a failed file-open simply aborts before any reader
   // exists, and the response body is consumed (and the connection
   // released back to the pool) on the next event-loop turn via the
-  // usual GC path. (Devin Review INFO finding 3270976469.)
+  // usual GC path.
   const tmpHandle = await fsp.open(destPath, "w");
   let downloaded = 0;
   // Nested try/finally so the file handle is closed even if the very
@@ -983,7 +971,7 @@ const defaultFetcher: NonNullable<DownloadDeps["fetcher"]> = async (
   // and eliminates the theoretical leak window entirely. Combined with
   // the inner reader.cancel() in `finally`, the function now has no
   // resource paths that can leak on either expected or surprise
-  // failures. (Devin Review INFO finding 3271010216.)
+  // failures.
   try {
     const reader = resp.body.getReader();
     try {
@@ -996,8 +984,7 @@ const defaultFetcher: NonNullable<DownloadDeps["fetcher"]> = async (
           // `onProgress` is wrapped at the `downloadModel` boundary
           // (see `wrapProgressNoThrow`) so even a destroyed-BrowserWindow
           // throw or a buggy custom callback cannot abort the byte
-          // pump. We just call it normally here. (Devin Review BUG
-          // finding 3270950107.)
+          // pump. We just call it normally here.
           onProgress(downloaded, total);
         }
       }
@@ -1056,8 +1043,7 @@ async function deleteCurrentModelUnlocked(userDataDir: string): Promise<void> {
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
-  // Defensive stray-archive sweep (Devin Review finding 3271010216):
-  //
+  // Defensive stray-archive sweep :
   // For MLX models, the install record's `filename` is the original
   // `.tar.gz`/`.tgz` archive while `path` points at the extracted
   // directory. The post-extract unlink in `downloadModelLocked` is
@@ -1123,7 +1109,6 @@ export async function deleteCurrentModel(
 }
 
 // --- Concurrency guard ---------------------------------------------------
-//
 // `downloadModel` mutates shared on-disk state: it reads `active-model.json`,
 // optionally deletes the existing model file, downloads to a `.partial`
 // sibling, verifies the checksum, and atomically renames it into place.
@@ -1132,7 +1117,6 @@ export async function deleteCurrentModel(
 // `current.modelId === requested.id` check, both call `deleteCurrentModel`,
 // and both fight over the same destination filename — leaving the on-disk
 // state inconsistent with `active-model.json`.
-//
 // We serialize per Electron main process. Hardware downloads are slow
 // (hundreds of MB), so a single in-flight Promise chain is the simplest
 // correct primitive — every new caller awaits the tail of the chain and
@@ -1180,7 +1164,7 @@ function withDownloadLock<T>(
  * source, but enforcing the invariant here too means every future
  * caller (other IPC handlers, CLI harness, integration tests) gets the
  * same protection without having to remember to wrap their own
- * callback. (Devin Review BUG finding 3270950107.)
+ * callback.
  */
 function wrapProgressNoThrow(
   onProgress: (p: DownloadProgress) => void,
@@ -1231,7 +1215,6 @@ async function downloadModelLocked(
   // still on disk. `isModelInstalled` is the single source of truth for
   // that definition — the IPC fast-path in apps/desktop/electron/ipc.ts
   // calls the same helper, so the two checks can no longer drift.
-  // (Devin Review findings 3270586440, 3270826130.)
   const alreadyInstalled = await isModelInstalled(userDataDir, requested.id);
   if (alreadyInstalled) {
     return alreadyInstalled;
@@ -1243,7 +1226,6 @@ async function downloadModelLocked(
   // `userDataDir`. Skipped on the already-installed fast path above,
   // and called BEFORE the eviction branch so callers can rely on
   // "no filesystem mutation has happened yet" when the hook fires.
-  // (Devin Review INFO finding f37a3c45.)
   if (deps.beforeMutation) {
     await deps.beforeMutation();
   }
@@ -1318,7 +1300,6 @@ async function downloadModelLocked(
     // Make sure no `.partial` artifact survives a failed download/verify.
     // Surface secondary unlink failures (e.g. Windows EBUSY) as warnings
     // so an accumulating .partial pile shows up in operator logs. See
-    // Devin Review finding 3271010216.
     await fsp.unlink(partial).catch((unlinkErr: unknown) => {
       console.warn(
         `[downloadModel] failed to remove .partial ${partial} after download error:`,
@@ -1331,7 +1312,6 @@ async function downloadModelLocked(
   // MLX models ship as `.tar.gz` archives that expand into a directory
   // (config.json, weights/, tokenizer, etc.) consumed by the MLX adapter.
   // GGUF models are a single file already usable by llama-server.
-  //
   // Extracting at download time — instead of on every runtime start —
   // preserves the single-model-on-disk invariant (the archive is removed
   // after a successful extract, so we don't keep both the .tar.gz and the
@@ -1354,7 +1334,6 @@ async function downloadModelLocked(
       // Surface secondary unlink failures as warnings — the primary
       // error (extraction) is re-thrown below, but a silently leaked
       // archive would violate the single-model-on-disk invariant. See
-      // Devin Review finding 3271010216.
       await fsp.unlink(dest).catch((unlinkErr: unknown) => {
         console.warn(
           `[downloadModel] failed to remove archive ${dest} after extraction error:`,
@@ -1366,7 +1345,6 @@ async function downloadModelLocked(
     // Delete the source archive: the extracted directory is the
     // canonical on-disk representation from this point forward, and the
     // manifest's `diskSizeMb` is the post-extract footprint.
-    //
     // If this unlink fails (transient Windows EPERM/EBUSY, a virus
     // scanner holding the file, etc.) we DON'T fail the install — the
     // model is already on disk and usable — but we DO log a warning
@@ -1374,7 +1352,7 @@ async function downloadModelLocked(
     // next `deleteCurrentModel` call will sweep the stray archive via
     // the defensive cleanup in `deleteCurrentModelUnlocked`, so the
     // single-model invariant is eventually restored without user
-    // action. See Devin Review finding 3271010216.
+    // action.
     await fsp.unlink(dest).catch((unlinkErr: unknown) => {
       console.warn(
         `[downloadModel] failed to remove source archive ${dest} after successful extraction; stray archive will be reaped on next deleteCurrentModel:`,

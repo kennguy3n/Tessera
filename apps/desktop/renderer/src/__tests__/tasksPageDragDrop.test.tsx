@@ -53,7 +53,6 @@ const TASKS: TaskInfo[] = [
   },
   // … and one card in `in_progress` whose position deliberately
   // collides with the todo column to expose stale-position ordering
-  // bugs (BUG_0001).
   {
     id: "t-prog",
     title: "Progress 1",
@@ -155,10 +154,10 @@ describe("TasksPage drag-and-drop", () => {
     expect(window.tessera.tasks.reorder).not.toHaveBeenCalled();
   });
 
-  // ANALYSIS_0002 regression: a failed `update` or `reorder` must be
-  // surfaced to the user instead of bubbling as an unhandled promise
-  // rejection. We force the cross-column path to fail and assert the
-  // error alert appears.
+  // Regression: a failed `update` or `reorder` must be surfaced to
+  // the user instead of bubbling as an unhandled promise rejection.
+  // We force the cross-column path to fail and assert the error alert
+  // appears.
   it("surfaces a visible error when the bridge throws during a cross-column drop", async () => {
     window.tessera.tasks.update = vi
       .fn()

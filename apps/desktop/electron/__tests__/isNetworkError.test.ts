@@ -5,7 +5,7 @@
  * should be surfaced as an "Offline" status (and silently swallowed)
  * vs. propagated as a hard error the renderer must show to the user.
  *
- * The bug this test prevents (Devin Review wave 3, finding BUG_0001):
+ * The bug this test prevents :
  * the previous regex `/fetch failed|network|connect/i` matched the
  * bare token `connect`, which also appears inside the auth-state
  * error message `"${provider} is not connected — authenticate first"`.
@@ -50,7 +50,7 @@ describe("isNetworkError", () => {
 
   it(
     "stores `cause` on the standard ES2022 Error.cause slot (not a " +
-      "class-owned shadow field) (regression: wave 15 ANALYSIS_0003)",
+      "class-owned shadow field) (regression: )",
     () => {
       // The original `NetworkError` declared its own `readonly cause`
       // field and assigned it in the constructor body. That set the
@@ -84,7 +84,7 @@ describe("isNetworkError", () => {
 
   it(
     "omits `cause` entirely when no options bag is provided " +
-      "(regression: wave 15 ANALYSIS_0003)",
+      "(regression: )",
     () => {
       // Calling `new NetworkError("msg")` with no options must NOT
       // install a `cause: undefined` own property — the previous
@@ -115,7 +115,7 @@ describe("isNetworkError", () => {
     ["ETIMEDOUT"],
     ["ECONNREFUSED"],
     ["ECONNRESET"],
-    // ANALYSIS_0003 (wave 12) — ECONNABORTED is the libc/Node pair
+    // ECONNABORTED is the libc/Node pair
     // for Chromium's ERR_CONNECTION_ABORTED. Surfaces from SO_LINGER
     // timeouts and undici-level AbortError teardowns.
     ["ECONNABORTED"],

@@ -119,8 +119,7 @@ function isIndexable(item: DriveItem): boolean {
   // extension regex below, a remote-item shortcut named `report.docx`
   // would pass the allowlist and the downloader would issue a content
   // request that the API rejects. Gate on the `file` facet so only
-  // genuine drive files are even considered for download. See Devin
-  // Review wave 11 ANALYSIS_0003.
+  // genuine drive files are even considered for download.
   if (!item.file) return false;
   if ((item.size ?? 0) > MAX_BYTES_PER_FILE) return false;
   const mime = item.file?.mimeType ?? "";
@@ -227,7 +226,7 @@ export async function syncOneDrive(
   ctx: {
     accessToken: string;
     /** Just-in-time refresh hook — called per delta page so a long
-     *  sync does NOT outlive the access token's lifetime. See Devin
+     *  sync does NOT outlive the access token's lifetime.
      *  Review wave 13 BUG_0001 / ANALYSIS_0007. */
     getAccessToken?: () => Promise<string>;
     userDataDir: string;
@@ -264,8 +263,7 @@ export async function syncOneDrive(
   // (O(deltaItems × sources)). Brings OneDrive into parity with
   // notion.ts/jira.ts/confluence.ts/figma.ts/gdrive.ts which all
   // received this treatment in wave 20 — OneDrive was missed in that
-  // pass and is the wave-21 follow-up. See Devin Review wave 21
-  // BUG_0001 / ANALYSIS_0001 (onedrive.ts:283-285, 310-312).
+  // pass and is the wave-21 follow-up.
   let sourceIndex!: SourcePathIndex;
 
   // Wrap the pagination loop in try/finally so progress is *always*
@@ -276,8 +274,7 @@ export async function syncOneDrive(
   // would never run — the next sync would start over from the
   // initial delta URL, re-downloading the entire drive. Mirrors the
   // same defense-in-depth applied in notion.ts, jira.ts, figma.ts, and
-  // confluence.ts. See Devin Review wave 10 BUG_0001.
-  //
+  // confluence.ts.
   // Why save partial state on error is safe: the Microsoft Graph
   // delta endpoint is monotonic — re-requesting the same `deltaLink`
   // is idempotent. The upsert logic in this same loop is also
@@ -295,7 +292,6 @@ export async function syncOneDrive(
       // Refresh-on-demand at the top of every page. OneDrive uses
       // server-driven pagination via `@odata.nextLink`; a workspace
       // with deep history can paginate for tens of minutes. See
-      // Devin Review wave 13 BUG_0001 (gdrive.ts:123-126).
       const accessToken = await resolveAccessToken(ctx);
       const page = await pullDeltaPage(url, accessToken);
       for (const item of page.items) {
@@ -337,7 +333,6 @@ export async function syncOneDrive(
         // (because we never reach the page's `deltaLink` checkpoint),
         // forcing the next sync to re-walk from the initial delta URL.
         // That's a real cost on large workspaces.
-        //
         // Re-throwing on `isNetworkError(err)` preserves the offline
         // detection contract owned by `runConnectorSync`'s outer catch
         // at `handlers.ts:476` — same posture every other connector
@@ -348,7 +343,7 @@ export async function syncOneDrive(
         // and continue. The next sync's delta token will re-surface
         // any item whose contents the upstream still considers
         // changed, so a transient ENOSPC doesn't permanently shadow
-        // the file. See Devin Review wave 23 ANALYSIS_0004
+        // the file.
         // (onedrive.ts:166-185).
         let ok: boolean;
         try {
@@ -405,8 +400,7 @@ export async function syncOneDrive(
     // the start, which re-walks (but does not duplicate) any items
     // already in the manifest. The whole block is wrapped in a nested
     // try/catch so a state-write error (e.g. disk full) doesn't shadow
-    // the original upstream error the try block raised. See Devin
-    // Review wave 12 ANALYSIS_0004.
+    // the original upstream error the try block raised.
     try {
       await saveDeltaState(ctx.userDataDir, { deltaLink });
       await writeManifest(ctx.userDataDir, {

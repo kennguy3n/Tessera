@@ -119,8 +119,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
   // same pair at the same cadence). Without this, a sidecar crash or an
   // out-of-band model deletion shows up in the sidebar within ~5s but
   // requires the user to navigate away and back to refresh the Settings
-  // card — a confusing asymmetry. (Devin Review INFO finding 3271328917.)
-  //
+  // card — a confusing asymmetry.
   // We deliberately do NOT re-poll the EXPENSIVE values
   // (`detectPlatform`, `listModels`, `recommendModel`): hardware
   // detection can take up to ~3s on a cold Electron process because of
@@ -147,8 +146,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
           // the still-on-disk model and "resurrect" it in the UI for
           // up to 5s. The functional setState reads `s.busyModelId` at
           // commit time, so the gate is race-free against `setState`
-          // calls from the user-action handlers. (Devin Review INFO
-          // finding 3271382737.)
+          // calls from the user-action handlers.
           if (s.busyModelId !== null) return s;
           return { ...s, status, current };
         });
@@ -203,9 +201,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
         // fails — there is no terminal "failed" event — so without this
         // the last in-flight snapshot (e.g. "42 / 1000 MB (4%)") would
         // remain in state and the renderer would show both the error
-        // banner AND a frozen progress bar. (Devin Review BUG finding
-        // 8f14f796.)
-        //
+        // banner AND a frozen progress bar.
         // Re-fetch the live current-model record AND sidecar status
         // here. A failed SWAP is the dangerous case: the main process's
         // `downloadModelLocked` evicts the previously-installed model
@@ -218,7 +214,6 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
         // already overwrites `state.current` with the download result;
         // mirroring that on failure restores the invariant
         // `state.current` == on-disk-truth on every settled boundary.
-        // (Devin Review BUG finding 3271328763.)
         const [liveCurrent, liveStatus] = await Promise.all([
           tessera.runtime.getCurrentModel().catch(() => null),
           tessera.model.status().catch(() => null),
@@ -275,8 +270,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
     // still-on-disk record and "resurrects" the deleted model in the
     // UI for up to 5s. The same gate already guards `performDownload`;
     // the comment at the poll-tick gate (~line 152) explicitly names
-    // delete as a case that must be covered. (Devin Review BUG finding
-    // 3271435390.)
+    // delete as a case that must be covered.
     const deletingId = state.current.modelId;
     setState((s) => ({ ...s, busyModelId: deletingId, error: null }));
     try {
@@ -300,8 +294,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
       // truth on the main-process side after `deleteModel` is
       // unambiguously "no model installed, nothing to run". Re-pulling
       // `model.status()` keeps the UI honest instead of leaving a stale
-      // indicator next to the empty "no model" panel. (Devin Review
-      // finding 3271137928.)
+      // indicator next to the empty "no model" panel.
       const status = await tessera.model.status().catch(() => null);
       setState((s) => ({
         ...s,
@@ -322,8 +315,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
       // unlikely, but the asymmetry between the download and delete
       // error paths is the kind of latent footgun that bites during
       // future refactors. The success path already re-fetches; this
-      // mirrors that for symmetry. (Devin Review ANALYSIS finding
-      // 3271435467.)
+      // mirrors that for symmetry.
       const [liveCurrent, liveStatus] = await Promise.all([
         tessera.runtime.getCurrentModel().catch(() => null),
         tessera.model.status().catch(() => null),
@@ -441,8 +433,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
           terminal state (success / failure / cancel), the UI cannot show a
           frozen bar next to an idle card. The catch blocks above still
           null `progress` explicitly so a subsequent `busyModelId` flip
-          doesn't briefly resurrect a stale snapshot. (Devin Review BUG
-          finding 8f14f796 + structural fix.) */}
+          doesn't briefly resurrect a stale snapshot. */}
       {state.busyModelId && state.progress && (
         <div
           style={{ marginBottom: "var(--spacing-md)" }}

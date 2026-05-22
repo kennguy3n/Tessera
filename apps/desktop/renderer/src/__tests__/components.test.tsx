@@ -258,7 +258,6 @@ describe("Modal", () => {
 });
 
 describe("ModelRuntimeCard delete-from-non-running flow", () => {
-  // Regression for Devin Review finding 3271137928: handleDelete used to
   // only refresh `model.status()` on the branch where the runtime was
   // running before delete. If the user clicked Delete while the runtime
   // was in any other state ("stopped", "error", a stale "running" whose
@@ -361,7 +360,6 @@ describe("ModelRuntimeCard delete-from-non-running flow", () => {
 });
 
 describe("ModelRuntimeCard download-progress lifecycle", () => {
-  // Regression for Devin Review BUG finding 8f14f796:
   // `performDownload` used to leave `state.progress` populated after a
   // failed download because the catch block only cleared `busyModelId`
   // and `error`. The subscriber `onDownloadProgress` keeps writing
@@ -518,7 +516,6 @@ describe("ModelRuntimeCard download-progress lifecycle", () => {
 });
 
 describe("ModelRuntimeCard failed-swap re-fetches current model", () => {
-  // Regression for Devin Review BUG finding 3271328763:
   // `performDownload` on the swap path used to leave `state.current`
   // holding the pre-swap record after a failed download. The main
   // process's `downloadModelLocked` evicts the previously-installed
@@ -664,7 +661,6 @@ describe("ModelRuntimeCard failed-swap re-fetches current model", () => {
 });
 
 describe("ModelRuntimeCard 5s poll respects busyModelId gate", () => {
-  // Regression for Devin Review INFO finding 3271382737:
   // The 5-second status/getCurrentModel poll could overwrite optimistic
   // state set by `performDownload`/`handleDelete` if a poll tick landed
   // in the window where the renderer had already nulled `current` but
@@ -789,7 +785,6 @@ describe("ModelRuntimeCard 5s poll respects busyModelId gate", () => {
     vi.useRealTimers();
   });
 
-  // Regression for Devin Review BUG finding 3271435390:
   // `handleDelete` previously never set `busyModelId`, so the 5s poll's
   // `busyModelId !== null` gate had no effect during delete. A poll
   // tick landing between the main-process unlink and the renderer's
@@ -899,7 +894,6 @@ describe("ModelRuntimeCard 5s poll respects busyModelId gate", () => {
 });
 
 describe("ModelRuntimeCard handleDelete error path re-fetches state", () => {
-  // Regression for Devin Review ANALYSIS finding 3271435467:
   // `handleDelete`'s catch block used to only set `state.error` without
   // re-fetching `current` or `status`. In an asymmetric failure (e.g.
   // `deleteCurrentModel` unlinks the file but throws before clearing

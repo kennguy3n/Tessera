@@ -42,7 +42,7 @@ export default function SourceDetailPage() {
     // section's guard is `extractError || extracted`). Showing stale
     // task/decision items next to an error is misleading because the
     // user can't tell that those items are NOT the result of the call
-    // they just made. See Devin Review finding 3270586359.
+    // they just made.
     setExtractError(null);
     setExtracted(null);
     setExtracting(true);

@@ -258,7 +258,7 @@ describe("OneDrive sync", () => {
   });
 
   // ---------------------------------------------------------------
-  // Wave 10 BUG_0001: state must persist even if pagination throws
+  // state must persist even if pagination throws
   // mid-iteration. Without the try/finally wrapping the loop, every
   // item already downloaded from earlier pages would be silently
   // discarded from the manifest and the next sync would re-walk the
@@ -315,7 +315,7 @@ describe("OneDrive sync", () => {
   });
 
   // ---------------------------------------------------------------
-  // Wave 10 ANALYSIS_0005: the module-level doc comment promises that
+  // the module-level doc comment promises that
   // EPUB / RTF / OneNote files are indexed, but the original regex
   // only matched the Office/Markdown/PDF set. Verify the extension
   // matcher now matches the documented types and that the MIME-type
@@ -389,7 +389,7 @@ describe("OneDrive sync", () => {
   });
 
   // ---------------------------------------------------------------
-  // Wave 11 ANALYSIS_0003: Microsoft Graph can return drive items
+  // Microsoft Graph can return drive items
   // that are neither files nor folders — remote-item shortcuts,
   // packages, or OneNote sections without a `file` facet. If any
   // such item had a name matching the extension regex (e.g.

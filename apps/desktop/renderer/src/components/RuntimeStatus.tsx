@@ -50,8 +50,7 @@ export default function RuntimeStatus({ compact = true }: RuntimeStatusProps) {
   // thread for the lifetime of the page. We fetch it exactly once on
   // mount and then poll only the cheap `status` + `getCurrentModel`
   // values.
-  //
-  // POLLING DESIGN (Devin Review finding 3270889984): we deliberately
+  // POLLING DESIGN : we deliberately
   // poll `getCurrentModel` (one fsp.readFile of <1 KB JSON, cached in
   // the OS page cache between polls) rather than wiring an event-driven
   // `runtime:modelChanged` broadcast. The per-call cost is sub-ms on

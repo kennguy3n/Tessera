@@ -111,7 +111,6 @@ describe("iconResolver", () => {
     });
 
     it("falls back to currentColor when the color value fails CSS-color validation", () => {
-      // Regression for Devin Review ANALYSIS_pr-review-job-c259353b…_0001
       // (iconResolver color consistency). We share the same sanitizer as
       // InfographicEditor / LandingPageEditor so an injection payload in
       // the color slot cannot ride through to the inlined SVG attribute.

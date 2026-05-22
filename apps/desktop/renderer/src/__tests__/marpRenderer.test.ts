@@ -93,7 +93,6 @@ describe("marpRenderer", () => {
     });
 
     it("flattens newlines in user-supplied scalars to neutralise directive injection", () => {
-      // Regression for Devin Review ANALYSIS_pr-review-job-...-0002. A user
       // who edits the JSON could otherwise set theme to "gaia\nclass: lead"
       // and gain an unintended directive.
       const fm = buildMarpFrontmatter({ theme: "gaia\nclass: lead-injected" });

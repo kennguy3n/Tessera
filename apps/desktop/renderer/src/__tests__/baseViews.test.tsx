@@ -167,8 +167,7 @@ describe("KanbanView", () => {
   });
 
   it("dropping a legacy-bucketed card on the Other column preserves its original value", async () => {
-    // Regression for Devin Review BUG finding
-    // BUG_pr-review-job-c6936a0b5b8e426798d47bfdc62111c0_0001:
+    // review-job-c6936a0b5b8e426798d47bfdc62111c0_0001:
     // Card C carries `Status: "Archived"`, a value no longer present
     // in the field's `options`. The Kanban view buckets it into the
     // "Other" catch-all so it stays visible. The bug was that re-

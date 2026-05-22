@@ -275,8 +275,7 @@ interface FigmaState {
    * the regular `/files/{key}` endpoint) before applying the
    * watermark filter — otherwise the watermark would advance past
    * the failed file's `last_modified` and the file would never be
-   * retried until the user edited it again. See the wave-5 Devin
-   * Review finding and `nextFailedRetryQueue` for details.
+   * retried until the user edited it again. See
    */
   failedRetries: FailedRetryEntry[];
 }
@@ -309,7 +308,7 @@ async function saveState(userDataDir: string, s: FigmaState): Promise<void> {
 export async function syncFigma(ctx: {
   accessToken: string;
   /** Just-in-time refresh hook — called per team/project/file so a
-   *  multi-team scan does NOT outlive the access token. See Devin
+   *  multi-team scan does NOT outlive the access token.
    *  Review wave 13 BUG_0001 / ANALYSIS_0007. */
   getAccessToken?: () => Promise<string>;
   userDataDir: string;
@@ -336,7 +335,7 @@ export async function syncFigma(ctx: {
     // would silently return `[]` (its 401 → `return []` fallback),
     // the `no-teams` early-return below would fire, and the user
     // would see "no team membership" in the UI when the actual
-    // problem is a refreshable token expiry. See Devin Review wave
+    // problem is a refreshable token expiry.
     // 17 BUG_0001.
     const teams = await listTeams(await resolveAccessToken(ctx));
     teamIds = teams.map((t) => t.id);
@@ -368,7 +367,6 @@ export async function syncFigma(ctx: {
   // the top of the sync is still caught by the saveState +
   // writeManifest cleanup path (matches the defense-in-depth contract
   // exercised by the wave-7 ANALYSIS_0004 regression test). See
-  // Devin Review wave 20 ANALYSIS: O(n²) listSources() pattern.
   let sourceIndex!: SourcePathIndex;
 
   let added = 0;
@@ -380,7 +378,7 @@ export async function syncFigma(ctx: {
   // declared this `const removed = 0` and never incremented it,
   // leaving Figma's renderer-facing sync result silently mis-counting
   // upstream deletions — the asymmetry vs OneDrive/Confluence
-  // surfaced by Devin Review wave 13 ANALYSIS_0001. The same cascade
+  // surfaced by The same cascade
   // logic now exists in `notion.ts` and `jira.ts` so all six
   // providers agree on what `removed` means in the IPC payload.
   let removed = 0;
@@ -401,7 +399,7 @@ export async function syncFigma(ctx: {
   // dedup check is O(1) instead of O(n) per file. For a Figma
   // account with many teams and a noisy Phase 1 (transient 5xx on
   // dozens of files), the legacy `failedThisPass.some(…)` made the
-  // outer loop quadratic. See Devin Review wave 13 ANALYSIS_0006.
+  // outer loop quadratic.
   // INVARIANT: every push to `failedThisPass` MUST also add to this
   // set — the `recordFailure` helper below is the only call site.
   const failedThisPassIds = new Set<string>();
@@ -432,7 +430,7 @@ export async function syncFigma(ctx: {
     // Refresh-on-demand at the top of every file. The retry queue
     // and watermark scan both call into here, and each file fetches
     // both metadata and comments — so the token may expire mid-pass
-    // on a large account. See Devin Review wave 13 BUG_0001.
+    // on a large account.
     const accessToken = await resolveAccessToken(ctx);
     let file: FigmaFile;
     try {
@@ -448,8 +446,7 @@ export async function syncFigma(ctx: {
       // Bubble it up so `runConnectorSync` (`handlers.ts:476`) turns
       // the whole pass into `{ status: 'offline' }`. The 404/410
       // cascade and the generic `recordFailure` branch below remain
-      // for actual API-level errors. See Devin Review wave 19
-      // ANALYSIS_0001.
+      // for actual API-level errors.
       if (isNetworkError(err)) throw err;
       const status = (err as { status?: number }).status;
       if (status === 404 || status === 410) {
@@ -461,7 +458,6 @@ export async function syncFigma(ctx: {
         // source entry, which surfaced as an inconsistency vs
         // OneDrive (`onedrive.ts` deleted-item branch) and
         // Confluence (`confluence.ts` post-loop carry-forward).
-        // See Devin Review wave 13 ANALYSIS_0001.
         const prior = entriesById.get(fileKey);
         if (prior) {
           const existingSource = sourceIndex.get(prior.localPath);
@@ -557,10 +553,9 @@ export async function syncFigma(ctx: {
   try {
     // Materialise the source-by-path index inside the try block so an
     // unlikely `bridge.listSources()` throw is still caught by the
-    // saveState + writeManifest cleanup below (matches the wave-7
-    // ANALYSIS_0004 defense-in-depth contract — see the regression
+    // saveState + writeManifest cleanup below — see the regression
     // test "persists the watermark + manifest even when the iteration
-    // throws an unexpected error" in `connectorsSync.test.ts`).
+    // throws an unexpected error" in `connectorsSync.test.ts`.
     sourceIndex = SourcePathIndex.fromBridge(ctx.bridge);
 
     // Phase 1 — explicitly retry every file the previous pass failed
@@ -576,8 +571,7 @@ export async function syncFigma(ctx: {
       let projects: FigmaProject[];
       try {
         // Refresh-on-demand per team. Multi-team accounts can
-        // outlive a 1h access token here. See Devin Review wave 13
-        // BUG_0001 (gdrive.ts:123-126).
+        // outlive a 1h access token here.
         const accessToken = await resolveAccessToken(ctx);
         projects = await listProjects(teamId, accessToken);
       } catch (err) {
@@ -589,8 +583,7 @@ export async function syncFigma(ctx: {
         // that silently turns into `{ status: 'synced', added: 0 }`.
         // Non-network errors (API-level 5xx for a single team, perm
         // revoked since accessible-resources was called, etc.) keep
-        // the per-team skip behaviour. See Devin Review wave 19
-        // ANALYSIS_0001.
+        // the per-team skip behaviour.
         if (isNetworkError(err)) throw err;
         continue;
       }
@@ -606,7 +599,7 @@ export async function syncFigma(ctx: {
         } catch (err) {
           // Same rationale as the per-team catch above: NetworkError
           // means offline and must bubble up; API-level errors stay
-          // per-project. See Devin Review wave 19 ANALYSIS_0001.
+          // per-project.
           if (isNetworkError(err)) throw err;
           continue;
         }
@@ -616,7 +609,7 @@ export async function syncFigma(ctx: {
           // previous lexicographic compare on raw ISO strings would
           // produce wrong results if Figma ever mixes timezone
           // suffixes (it currently does not, but the hardening was
-          // flagged by Devin Review wave 7).
+          // flagged by
           if (
             compareWatermark &&
             !isAfterWatermark(summary.last_modified, compareWatermark)
@@ -624,7 +617,7 @@ export async function syncFigma(ctx: {
             continue;
           }
           // O(1) dedup via the parallel Set; the legacy O(n) linear
-          // scan was flagged by Devin Review wave 13 ANALYSIS_0006.
+          // scan was flagged by
           if (succeededIds.has(summary.key) || failedThisPassIds.has(summary.key)) {
             // Already handled in Phase 1; skip the duplicate fetch.
             continue;
@@ -639,16 +632,13 @@ export async function syncFigma(ctx: {
     // this should be the empty set: Phase 1 iterates every entry in
     // `state.failedRetries` via `syncFileByKey`, which routes to
     // exactly one of three terminal paths per call —
-    //
     //   (a) success → `succeededIds.add` + `pendingRetries.delete`,
     //   (b) 404/410 cascade → `succeededIds.add` + `pendingRetries.delete`,
     //   (c) `recordFailure(...)` → `failedThisPassIds.add`.
-    //
     // Phase 2 likewise either succeeds (path a) or records a
     // failure (path c) for every file it touches. So under the
     // current code shape, no key reaches this loop without being in
     // one of the two sets.
-    //
     // The previous shape exploited this and *unconditionally* added
     // orphan keys to `succeededIds` ("file moved out of accessible
     // project, stop retrying it"). The hidden assumption that the
@@ -661,7 +651,6 @@ export async function syncFigma(ctx: {
     // The user would never see the retry counter advance toward
     // `FAILED_RETRY_MAX_ATTEMPTS`; they'd just notice files quietly
     // dropping out of sync.
-    //
     // Flip the default to *preserve* instead of *drop*: any orphan
     // key gets re-recorded as a failure so `nextFailedRetryQueue`
     // carries it forward with one increment to `failureCount`,
@@ -672,7 +661,7 @@ export async function syncFigma(ctx: {
     // file would now show up as "retry counter creeps up on a file
     // we never actually fetched" instead of "file silently vanished
     // from the retry queue", which is the strictly better failure
-    // mode. See Devin Review wave 16 ANALYSIS_0006.
+    // mode.
     for (const key of pendingRetries) {
       if (succeededIds.has(key) || failedThisPassIds.has(key)) continue;
       const prior = state.failedRetries.find((e) => e.remoteId === key);
@@ -681,7 +670,7 @@ export async function syncFigma(ctx: {
   } finally {
     // Persist progress in a nested try/catch so a state-write error
     // (e.g. disk full) doesn't shadow the original upstream error the
-    // try block raised. See Devin Review wave 12 ANALYSIS_0004.
+    // try block raised.
     try {
       await saveState(ctx.userDataDir, {
         lastSyncIso: nextWatermark,

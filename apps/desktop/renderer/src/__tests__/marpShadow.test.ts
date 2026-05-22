@@ -48,12 +48,10 @@ describe("applyMarpToShadow", () => {
   );
 
   it("escapes `</style` in the fallback path using a valid CSS hex escape", () => {
-    // Regression for Devin Review ANALYSIS_pr-review-job-...-0006. We
     // previously emitted `<\/style` (JS-style backslash escape) which is
     // silently dropped by the CSS parser. The fix is to use the canonical
     // CSS hex escape `\3c ` so the surrounding rule remains well-formed
     // while still preventing the HTML tokenizer from recognising `</style`.
-    //
     // Force the fallback code path by hiding `adoptedStyleSheets` on the
     // shadow root and removing `replaceSync` from the prototype lookup
     // chain via a Proxy.

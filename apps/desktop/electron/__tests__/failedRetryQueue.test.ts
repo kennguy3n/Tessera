@@ -1,7 +1,7 @@
 /**
  * Unit tests for the cross-connector failed-retry queue helper in
  * `ipc/connectors/syncDir.ts`. This helper is the building block for
- * the Notion / Jira / Figma fix to the wave-5 Devin Review finding
+ * the Notion / Jira / Figma fix to the wave-5
  * about watermark advancement past transiently-failed items.
  *
  * The behavior we care about:
@@ -161,7 +161,7 @@ describe("parseWatermarkIso", () => {
   });
 
   it("returns the same epoch ms for equivalent `Z` and `+00:00` " +
-    "suffixes (regression: Devin Review wave 7 ANALYSIS_0001 — " +
+    "suffixes (regression: " +
     "lexicographic compare used to give the wrong answer here)", () => {
     const z = parseWatermarkIso("2024-06-01T12:00:00Z");
     const plusZero = parseWatermarkIso("2024-06-01T12:00:00+00:00");
@@ -197,7 +197,7 @@ describe("isAfterWatermark", () => {
 
   it(
     "agrees regardless of timezone suffix mixing (regression: " +
-      "Devin Review wave 7 ANALYSIS_0001 — lexicographic compare " +
+      "lexicographic compare " +
       "of `Z` vs `+00:00` used to produce the wrong order)",
     () => {
       // The two values represent the *same instant* — `isAfterWatermark`

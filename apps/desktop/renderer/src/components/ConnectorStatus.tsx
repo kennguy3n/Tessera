@@ -51,8 +51,7 @@ export default function ConnectorStatus({
       // flips back to true, even though the brand-new OAuth handshake
       // proves the network is healthy. Clearing here closes that
       // window; the next successful `handleSync` will write the badge
-      // back if the new connection is itself offline. See Devin Review
-      // wave 14 BUG_0001.
+      // back if the new connection is itself offline.
       if (!result.connected) {
         setOffline(false);
       }
@@ -94,12 +93,11 @@ export default function ConnectorStatus({
         // tells the user the data is fresher than it really is. The
         // last successful timestamp from a *previous* run remains
         // unchanged; the next successful sync overwrites it. See
-        // Devin Review wave 9 ANALYSIS_0003.
         if (!isOffline) setLastSyncTime(new Date().toLocaleTimeString());
       }
       onSync?.();
     } catch {
-      // Wave 18 ANALYSIS_0005: a thrown error here is never a network
+      // a thrown error here is never a network
       // error. Both the unified `api.connectors.sync(provider)` channel
       // and the legacy `api.connectors.syncDrive()` channel are backed
       // by `runConnectorSync` (`handlers.ts:434-474` and `ipc.ts:1339`
@@ -138,8 +136,7 @@ export default function ConnectorStatus({
     // race window between disconnect succeeding and the next status
     // poll completing. Without this, a user who saw "Offline" and
     // chose to Disconnect would see the badge briefly persist after
-    // the connector was already gone. See Devin Review wave 14
-    // BUG_0001.
+    // the connector was already gone.
     setOffline(false);
     setLastSyncTime(null);
     pollStatus();

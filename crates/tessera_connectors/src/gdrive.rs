@@ -636,28 +636,6 @@ fn google_file_to_remote(gf: &GoogleDriveFile) -> RemoteFile {
     }
 }
 
-// Module-level URL-encoding helper to avoid pulling in the full `url` crate
-// just for query-parameter encoding (the `url` dep is workspace-available but
-// this keeps the Google-specific code self-contained).
-mod urlencoding {
-    use std::fmt::Write;
-    pub fn encode(input: &str) -> String {
-        let mut encoded = String::with_capacity(input.len());
-        for byte in input.bytes() {
-            match byte {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                    encoded.push(byte as char);
-                }
-                _ => {
-                    encoded.push('%');
-                    let _ = write!(encoded, "{byte:02X}");
-                }
-            }
-        }
-        encoded
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -740,13 +718,6 @@ mod tests {
         assert_eq!(remote.md5_checksum.as_deref(), Some("abc123"));
         assert_eq!(remote.permissions.len(), 1);
         assert_eq!(remote.permissions[0].role, "reader");
-    }
-
-    #[test]
-    fn urlencoding_basic() {
-        assert_eq!(urlencoding::encode("hello"), "hello");
-        assert_eq!(urlencoding::encode("a b"), "a%20b");
-        assert_eq!(urlencoding::encode("a@b.com"), "a%40b.com");
     }
 
     #[test]

@@ -237,7 +237,7 @@ describe("Notion sync", () => {
   it(
     "retries a transiently-failed page on the next sync via direct GET, " +
       "even when the watermark has advanced past the failed page's edit time " +
-      "(regression: wave-5 Devin Review finding on watermark-based incremental sync)",
+      "(regression: watermark-based incremental sync used to skip transiently-failed pages)",
     async () => {
       // Pass 1: search returns page-fail (older) and page-ok (newer).
       // page-fail's blocks fetch errors out; page-ok succeeds and
@@ -310,7 +310,6 @@ describe("Notion sync", () => {
       // watermark). The retry queue must force a direct GET of
       // page-fail's page object, then (after the normal search runs)
       // the unified for-loop re-fetches its blocks and indexes it.
-      //
       // Mock order MUST mirror the actual fetch sequence in
       // `syncNotion`:
       //   (1) Phase 1: `fetchPageById('page-fail')`
@@ -425,7 +424,7 @@ describe("Notion sync", () => {
   it(
     "bumps failureCount and ultimately gives up when a Notion " +
       "Phase-1 retry keeps failing with a non-404 error " +
-      "(regression: Devin Review wave 7 BUG_0001 — silently dropped retry " +
+      "(regression: silently dropped retry " +
       "would have looped forever)",
     async () => {
       // Pre-seed state with a failedRetries entry already at the
@@ -482,7 +481,7 @@ describe("Notion sync", () => {
 
   it(
     "bumps failureCount by exactly one on a single non-404 Phase-1 failure " +
-      "(regression: Devin Review wave 7 BUG_0001 — the catch used to " +
+      "(regression: the catch used to " +
       "swallow the error without recording it)",
     async () => {
       const stateDir = path.join(dir, "notion-sync");
@@ -532,7 +531,7 @@ describe("Notion sync", () => {
   it(
     "records a writeFile failure in the retry queue instead of " +
       "silently advancing the watermark past the page " +
-      "(regression: wave 7C BUG_0001)",
+      "(regression: writeFile errors used to silently advance the watermark)",
     async () => {
       // Fetch two pages in one pass. The first succeeds end-to-end;
       // the second fetches successfully from the API but disk
@@ -644,14 +643,13 @@ describe("Notion sync", () => {
   it(
     "drops Phase-1 fetchPageById failures from the retry queue " +
       "when the same page is re-synced successfully via the Phase-2 " +
-      "watermark scan (regression: wave 7C ANALYSIS_0001)",
+      "watermark scan (regression: Phase-1 entries used to linger after Phase-2 success)",
     async () => {
       // Pre-seed a retry queue containing one entry. Phase 1's
       // fetchPageById against that entry returns 502 (transient
       // failure). Phase 2's search lists the same page id with a
       // last_edited_time newer than the watermark; processing it
       // (fetchPageText + writeFile + addLocalFile) succeeds.
-      //
       // Before the call-site reconciliation, the page ended up in
       // both `failedThisPass` (from Phase 1) and `succeededIds`
       // (from Phase 2). `nextFailedRetryQueue`'s conservative
@@ -660,7 +658,6 @@ describe("Notion sync", () => {
       // authoritative when the same id appears in both sets,
       // re-inserting it with failureCount=1. The next sync would
       // then waste one API call re-fetching a page we already have.
-      //
       // After the reconciliation at the notion.ts call site, the
       // Phase-1 failure is dropped because the Phase-2 success
       // covered the same id within the same pass. The retry queue
@@ -751,7 +748,7 @@ describe("Notion sync", () => {
     "dedupes failedThisPass when the same page id fails in BOTH " +
       "Phase 1 fetchPageById AND Phase 2 fetchPageText so " +
       "failureCount bumps by exactly 1 per sync (regression: " +
-      "wave 11 ANALYSIS_0001)",
+      "failureCount used to double-bump when both phases failed on the same id)",
     async () => {
       // Pre-seed retry queue with one page (failureCount=1) and an
       // older watermark so Phase 2's search will re-surface the same
@@ -1092,7 +1089,6 @@ describe("Confluence sync", () => {
       // (which previously caused the early short-circuit), the
       // version comparison must still produce exactly one modified
       // page.
-      //
       // Note: after the first sync, `state.cloudId` is persisted so
       // syncConfluence skips the accessible-resources lookup on
       // subsequent runs — only spaces + pages are fetched. ----
@@ -1142,8 +1138,7 @@ describe("Confluence sync", () => {
       "transport failure (wifi drops mid-sync, token refresh socket " +
       "reset) propagates up to `runConnectorSync`'s outer catch and " +
       "surfaces as `{ status: 'offline' }` rather than a misleading " +
-      "`{ status: 'synced', added: 0 }`. Regression guard for Devin " +
-      "Review wave 19 ANALYSIS_0001.",
+      "`{ status: 'synced', added: 0 }`.",
     async () => {
       // accessible-resources succeeds — the initial cloudId resolve
       // happens BEFORE the loop, so the failure must come from the
@@ -1249,7 +1244,6 @@ describe("Confluence sync", () => {
       // FAILED_RETRY_MAX_ATTEMPTS` semantics: MAX_ATTEMPTS attempts
       // are allowed before the budget is depleted on the subsequent
       // pass.
-      //
       // The first sync issues 3 fetch calls (accessible-resources,
       // spaces, pages); subsequent syncs persist `state.cloudId` from
       // the first pass and skip the accessible-resources call,
@@ -1636,7 +1630,7 @@ describe("Figma sync", () => {
 
   it(
     "bumps failureCount by exactly one when a Phase-1 retry fails again " +
-      "(regression: Devin Review wave 7 BUG_0001 — the defensive " +
+      "(regression: the defensive " +
       "cleanup used to add the key to succeededIds unconditionally, " +
       "which caused nextFailedRetryQueue to reset the count to 1)",
     async () => {
@@ -1695,7 +1689,7 @@ describe("Figma sync", () => {
       "path index construction (wave 20 ANALYSIS: O(n²) listSources() " +
       "collapse) so an unexpected bridge crash at the very start of " +
       "iteration still triggers the saveState + writeManifest cleanup " +
-      "(regression: Devin Review wave 7 ANALYSIS_0004 — try/finally " +
+      "(regression: try/finally " +
       "defense-in-depth around saveState + writeManifest)",
     async () => {
       // Seed teamIds so we get past the early "no-teams" return.
@@ -1917,7 +1911,7 @@ describe("Jira sync — JQL watermark sanitisation", () => {
   it(
     "corrupted watermark + non-empty retries degrades to a full scan " +
       "(not a retry-only JQL) so newly-updated issues are not missed " +
-      "(regression: wave 14 ANALYSIS_0004)",
+      "(regression: )",
     async () => {
       const syncDir = path.join(dir, "jira-sync");
       await fsp.mkdir(syncDir, { recursive: true });
@@ -2001,7 +1995,7 @@ describe("Jira sync — retry-queue load-time validation", () => {
 
   it(
     "drops a corrupted failedRetries entry whose remoteId is not a " +
-      "JQL-safe identifier (regression: wave 9 ANALYSIS_0001 — escaped " +
+      "JQL-safe identifier (regression: escaped " +
       "vs raw key asymmetry)",
     async () => {
       // Pre-seed state.json with one legit retry key plus one corrupted
@@ -2116,7 +2110,7 @@ describe(
     it(
       "preserves per-page versions for pages in a space whose listing " +
         "threw, so the next sync does not re-process every page from " +
-        "scratch (regression: wave 9 ANALYSIS_0004)",
+        "scratch (regression: )",
       async () => {
         // ---- First sync: two spaces, four pages, all listed successfully ----
         fetchMock
@@ -2367,7 +2361,7 @@ describe(
     );
 
     // ---------------------------------------------------------------
-    // Wave 11 ANALYSIS_0005 (🚩): when a Confluence page is confirmed
+    // when a Confluence page is confirmed
     // deleted upstream, the connector must propagate the deletion all
     // the way through the local workspace:
     //   - increment the `removed` counter so the IPC return reflects it
@@ -2573,7 +2567,7 @@ describe("Google Drive sync — manifest cleanup", () => {
   );
 
   // ---------------------------------------------------------------
-  // Wave 12 ANALYSIS_0001 — gdrive lacked the try/finally manifest
+  // gdrive lacked the try/finally manifest
   // persistence pattern that all five other connectors have. A
   // transport-level `fetch` rejection mid-loop (DNS failure, socket
   // reset, undici AbortError) skipped the manifest write entirely,
@@ -2586,7 +2580,7 @@ describe("Google Drive sync — manifest cleanup", () => {
   // ---------------------------------------------------------------
   it(
     "persists manifest progress even when fetch rejects mid-loop " +
-      "(regression: wave 12 ANALYSIS_0001 try/finally parity)",
+      "(regression: try/finally parity)",
     async () => {
       // First file: meta then media — both successful.
       fetchMock
@@ -2631,7 +2625,7 @@ describe("Google Drive sync — manifest cleanup", () => {
   );
 
   // ---------------------------------------------------------------
-  // Wave 12 ANALYSIS_0004 — the finally block's manifest write is
+  // the finally block's manifest write is
   // wrapped in a nested try/catch so a state-write error does NOT
   // shadow the original upstream error. This test simulates the
   // pathological case: the sync loop throws, AND the manifest
@@ -2641,7 +2635,7 @@ describe("Google Drive sync — manifest cleanup", () => {
   // ---------------------------------------------------------------
   it(
     "preserves the original throw when manifest persistence in " +
-      "finally also fails (regression: wave 12 ANALYSIS_0004 " +
+      "finally also fails (regression: " +
       "finally-mask)",
     async () => {
       fetchMock.mockRejectedValueOnce(
@@ -2689,11 +2683,9 @@ describe("Google Drive sync — manifest cleanup", () => {
 // =================================================================
 // Wave 13 — token refresh + cascading-deletion regression tests
 // =================================================================
-//
-// These cover the four real bugs flagged by Devin Review on
+// These cover the four real bugs flagged by
 // commit 707f9f7:
-//
-//   BUG_0001 + ANALYSIS_0007 — the connector's hot loop used a
+//   the connector's hot loop used a
 //   single pre-resolved access token, so any sync that ran longer
 //   than the OAuth token's remaining lifetime (Google issues 1h
 //   tokens with a 60s buffer) failed every fetch after the
@@ -2702,8 +2694,7 @@ describe("Google Drive sync — manifest cleanup", () => {
 //   each iteration calls `resolveAccessToken(ctx)` to pull a fresh
 //   token. Tests below mock the callback to return a different
 //   value on each call and assert all expected calls happened.
-//
-//   ANALYSIS_0001 — `removed` was declared `const removed = 0`
+//   `removed` was declared `const removed = 0`
 //   and never incremented in notion.ts, jira.ts, figma.ts. Unlike
 //   OneDrive/Confluence which cascade upstream deletions, these
 //   three connectors silently left local files + bridge sources
@@ -2712,7 +2703,6 @@ describe("Google Drive sync — manifest cleanup", () => {
 //   Fix: cascade the deletion to `bridge.removeSource`, unlink
 //   the local file, decrement the manifest entry, increment
 //   `removed`. Tests below verify all three.
-//
 
 describe("Wave 13 — token refresh + cascading deletions", () => {
   const original = globalThis.fetch;
@@ -2732,7 +2722,7 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
   });
 
   // ---------------------------------------------------------------
-  // BUG_0001 — gdrive must call `getAccessToken` BEFORE every file
+  // gdrive must call `getAccessToken` BEFORE every file
   // iteration so a token expiring mid-sync transparently refreshes.
   // Test: supply a getAccessToken that returns a fresh token on each
   // call, verify it was called at least once per file id, and verify
@@ -2740,7 +2730,7 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
   // ---------------------------------------------------------------
   it(
     "gdrive calls getAccessToken per-iteration so mid-sync token " +
-      "refresh transparently kicks in (regression: wave 13 BUG_0001)",
+      "refresh transparently kicks in (regression: )",
     async () => {
       const tokens = ["T1", "T2", "T3", "T4"];
       let callCount = 0;
@@ -2817,11 +2807,11 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
   );
 
   // ---------------------------------------------------------------
-  // BUG_0001 (cross-cutting ANALYSIS_0007) — onedrive's pagination
+  // onedrive's pagination
   // loop must also refresh per page. Single delta page + finalLink.
   // ---------------------------------------------------------------
   it(
-    "onedrive calls getAccessToken per delta page (regression: wave 13 " +
+    "onedrive calls getAccessToken per delta page (regression: " +
       "BUG_0001 cross-cutting variant)",
     async () => {
       const { syncOneDrive } = await import("../ipc/connectors/onedrive");
@@ -2856,7 +2846,7 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
   );
 
   // ---------------------------------------------------------------
-  // ANALYSIS_0001 (Figma) — when the upstream file returns 404 and
+  // when the upstream file returns 404 and
   // the file was previously tracked in the manifest, the connector
   // must cascade: removeSource on the bridge, unlink the local
   // markdown file, decrement entriesById, and increment `removed`.
@@ -2864,7 +2854,7 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
   // ---------------------------------------------------------------
   it(
     "figma cascades upstream-deletion 404 to local file + bridge " +
-      "source (regression: wave 13 ANALYSIS_0001)",
+      "source (regression: )",
     async () => {
       // Pre-seed manifest + bridge so we have something to delete.
       const figmaDir = path.join(dir, "figma-sync");
@@ -2937,14 +2927,14 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
   );
 
   // ---------------------------------------------------------------
-  // ANALYSIS_0001 (Notion) — when fetchPageById returns null
+  // when fetchPageById returns null
   // (HTTP 404/410) for an entry that exists in the prior manifest,
   // the connector must cascade: removeSource, unlink, entriesById
   // delete, increment removed.
   // ---------------------------------------------------------------
   it(
     "notion cascades upstream-deletion 404 to local file + bridge " +
-      "source (regression: wave 13 ANALYSIS_0001)",
+      "source (regression: )",
     async () => {
       const notionDir = path.join(dir, "notion-sync");
       await fsp.mkdir(notionDir, { recursive: true });
@@ -3011,14 +3001,14 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
   );
 
   // ---------------------------------------------------------------
-  // ANALYSIS_0001 (Jira) — when a retry key is asked for via the JQL
+  // when a retry key is asked for via the JQL
   // `key in (...)` clause but the search response never returns it
   // (issue was deleted in Jira), and the key existed in the prior
   // manifest, the connector must cascade.
   // ---------------------------------------------------------------
   it(
     "jira cascades absent-retry-key to local file + bridge source " +
-      "(regression: wave 13 ANALYSIS_0001)",
+      "(regression: )",
     async () => {
       const jiraDir = path.join(dir, "jira-sync");
       await fsp.mkdir(jiraDir, { recursive: true });
@@ -3078,8 +3068,7 @@ describe("Wave 13 — token refresh + cascading deletions", () => {
 });
 
 // =====================================================================
-// Wave 23 ANALYSIS_0004 — OneDrive per-item download resilience.
-//
+// OneDrive per-item download resilience.
 // Brings OneDrive into parity with Notion/Figma/Confluence: a single
 // item's download failure (HTTP throw, fs ENOSPC, arrayBuffer stream
 // abort) must be skipped per-item rather than aborting the whole sync

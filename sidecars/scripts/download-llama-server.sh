@@ -5,16 +5,13 @@ set -euo pipefail
 # backend. The PrismML llama.cpp fork ships separate archives per (platform,
 # backend) combination — pick the one that matches the local hardware so the
 # runtime ggml dispatcher has the kernel it needs.
-#
 # Usage:
 #   ./download-llama-server.sh [--compute cpu|cuda|vulkan|rocm] [--version <tag>]
-#
 # Prerequisites:
 #   - bash, curl, mkdir, tar, mktemp (standard POSIX userland)
 #   - python3 on PATH (used to resolve {url, sha256} for the requested
 #     (platform, compute) variant from sidecars/models.json)
 #   - sha256sum (Linux) / shasum (macOS) for checksum verification
-#
 # Notes:
 #   - macOS Apple Silicon: the MLX adapter is the primary path; llama-server is
 #     the CPU fallback. We never download a CUDA or Vulkan build for macOS arm64.
@@ -144,7 +141,7 @@ fi
 # falling through to the manifest-resolution skip and emitting the confusing
 # "No URL configured for variant" error far below. This is the same
 # diagnostic the user has to reach either way — surfacing it next to the
-# actual cause makes the fix obvious. (Devin Review INFO finding 28f86d56.)
+# actual cause makes the fix obvious.
 if [[ ! -f "$MODELS_JSON" ]]; then
     echo "ERROR: Missing manifest at $MODELS_JSON" >&2
     echo "       Run from the repo root, or set MODELS_JSON to an alternate path." >&2
@@ -172,15 +169,13 @@ if true; then
     # `read -r RESOLVED_URL EXPECTED_HASH` can split them into both variables.
     # `read` only consumes one line from stdin, so multi-line output would
     # leave EXPECTED_HASH empty and silently skip checksum verification.
-    #
-    # ASSUMPTION (Devin Review finding 3270889887): space-as-delimiter is
+    # ASSUMPTION : space-as-delimiter is
     # safe because llama_server.variants[].url is always an HTTP(S) URL
     # (RFC 3986 forbids literal spaces in the path/query; they'd be
     # %20-encoded) and the SHA is hex characters. If a future manifest
     # adds a file:// URL with spaces, switch to a tab delimiter:
     #   print(f"{url}\t{sha}")  +  IFS=$'\t' read -r RESOLVED_URL EXPECTED_HASH
     # That's a 2-line change localised to this heredoc.
-    #
     # The manifest path, platform key, and compute key are passed to Python
     # via argv (sys.argv[1..3]) instead of being interpolated into the
     # heredoc body. Direct shell interpolation inside `python3 - <<PY` is
@@ -217,8 +212,6 @@ if [[ -z "$RESOLVED_URL" || "$RESOLVED_URL" == "placeholder" ]]; then
     # fallback would 404 in practice — silently misleading anyone who cleared
     # the manifest during development. Fail loudly instead with a clear
     # pointer to the manifest entry that needs to be populated.
-    #
-    # (Devin Review finding 3270628605.)
     cat >&2 <<EOF
 ERROR: No URL configured in $MODELS_JSON for variant: $VARIANT_KEY
        Populate llama_server.variants[].url for platform=$PLATFORM, compute=$COMPUTE
@@ -254,9 +247,7 @@ fi
 # llama.cpp release assets as `.tar.gz` for Linux/macOS and `.zip` for
 # Windows; rather than hard-coding one format, dispatch on the actual
 # filename so the script keeps working if the upstream packaging
-# convention changes for a future variant. (Devin Review BUG finding
-# 3270826050: the previous unconditional `unzip` failed on every
-# `.tar.gz` variant.)
+# convention changes for a future variant.
 mkdir -p "$TEMP_DIR/extracted"
 case "$ARCHIVE_PATH" in
     *.tar.gz|*.tgz)
