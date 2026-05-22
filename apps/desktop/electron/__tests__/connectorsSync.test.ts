@@ -2300,4 +2300,117 @@ describe("Google Drive sync — manifest cleanup", () => {
       await expect(fsp.access(manifestPath)).rejects.toThrow();
     },
   );
+
+  // ---------------------------------------------------------------
+  // Wave 12 ANALYSIS_0001 — gdrive lacked the try/finally manifest
+  // persistence pattern that all five other connectors have. A
+  // transport-level `fetch` rejection mid-loop (DNS failure, socket
+  // reset, undici AbortError) skipped the manifest write entirely,
+  // so the next sync re-pulled every file that had already landed
+  // on disk. This test exercises that exact scenario: first selected
+  // file syncs successfully and lands a real bridge source; second
+  // selected file's metadata fetch *throws* (not just non-ok response,
+  // a real rejection). The function must still persist the manifest
+  // with the first file's path before propagating the throw.
+  // ---------------------------------------------------------------
+  it(
+    "persists manifest progress even when fetch rejects mid-loop " +
+      "(regression: wave 12 ANALYSIS_0001 try/finally parity)",
+    async () => {
+      // First file: meta then media — both successful.
+      fetchMock
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            id: "good-1",
+            name: "good.txt",
+            mimeType: "text/plain",
+            size: "5",
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: async () => new TextEncoder().encode("hello").buffer,
+        })
+        // Second file's metadata fetch throws (transport-level
+        // rejection — what fetch() does on DNS failure or socket reset).
+        .mockRejectedValueOnce(
+          Object.assign(new Error("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" }),
+        );
+
+      await expect(
+        syncGoogleDrive({
+          accessToken: "AT",
+          userDataDir: dir,
+          bridge,
+          selectedFileIds: ["good-1", "bad-1"],
+        }),
+      ).rejects.toThrow(/ENOTFOUND/);
+
+      // The manifest must contain the successfully-synced file even
+      // though the loop threw on the second id. Without the
+      // try/finally fix, the manifest write would have been skipped
+      // and the next sync would re-pull `good-1` from scratch.
+      const manifestPath = path.join(dir, "gdrive-sync", "manifest.json");
+      const raw = await fsp.readFile(manifestPath, "utf8");
+      const persisted = JSON.parse(raw) as string[];
+      expect(persisted).toHaveLength(1);
+      expect(persisted[0]).toMatch(/good-1\.txt$/);
+    },
+  );
+
+  // ---------------------------------------------------------------
+  // Wave 12 ANALYSIS_0004 — the finally block's manifest write is
+  // wrapped in a nested try/catch so a state-write error does NOT
+  // shadow the original upstream error. This test simulates the
+  // pathological case: the sync loop throws, AND the manifest
+  // persistence also fails (sync dir replaced with a file mid-flight
+  // so mkdir fails). The user must see the *original* network error,
+  // not a derived EEXIST/EACCES from the recovery step.
+  // ---------------------------------------------------------------
+  it(
+    "preserves the original throw when manifest persistence in " +
+      "finally also fails (regression: wave 12 ANALYSIS_0004 " +
+      "finally-mask)",
+    async () => {
+      fetchMock.mockRejectedValueOnce(
+        Object.assign(new Error("upstream specific failure"), {
+          code: "ECONNRESET",
+        }),
+      );
+
+      // Replace the gdrive-sync dir with a regular file so the
+      // finally-block's mkdir(recursive) fails with ENOTDIR. (Note:
+      // we have to do this AFTER the initial mkdir at the top of
+      // syncGoogleDrive, so we shim writeFile to fail instead.)
+      const syncDir = path.join(dir, "gdrive-sync");
+      await fsp.mkdir(syncDir, { recursive: true });
+      // Lock the file by making the directory read-only — writeFile
+      // for the manifest will fail.
+      const fs = await import("fs");
+      const originalWriteFile = fs.promises.writeFile;
+      const writeSpy = vi
+        .spyOn(fs.promises, "writeFile")
+        .mockImplementation(async (...args) => {
+          const [p] = args;
+          if (typeof p === "string" && p.endsWith("manifest.json")) {
+            throw Object.assign(new Error("derived ENOSPC"), { code: "ENOSPC" });
+          }
+          return originalWriteFile(...(args as Parameters<typeof originalWriteFile>));
+        });
+
+      try {
+        await expect(
+          syncGoogleDrive({
+            accessToken: "AT",
+            userDataDir: dir,
+            bridge,
+            selectedFileIds: ["bad-1"],
+          }),
+        ).rejects.toThrow(/upstream specific failure/);
+      } finally {
+        writeSpy.mockRestore();
+      }
+    },
+  );
 });

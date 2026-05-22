@@ -341,13 +341,20 @@ export async function syncOneDrive(
     // reached a checkpoint the Graph API guarantees is consistent.
     // Leaving `deltaLink: null` causes the next sync to re-scan from
     // the start, which re-walks (but does not duplicate) any items
-    // already in the manifest.
-    await saveDeltaState(ctx.userDataDir, { deltaLink });
-    await writeManifest(ctx.userDataDir, {
-      version: 1,
-      provider: "onedrive",
-      entries: Array.from(entriesById.values()),
-    });
+    // already in the manifest. The whole block is wrapped in a nested
+    // try/catch so a state-write error (e.g. disk full) doesn't shadow
+    // the original upstream error the try block raised. See Devin
+    // Review wave 12 ANALYSIS_0004.
+    try {
+      await saveDeltaState(ctx.userDataDir, { deltaLink });
+      await writeManifest(ctx.userDataDir, {
+        version: 1,
+        provider: "onedrive",
+        entries: Array.from(entriesById.values()),
+      });
+    } catch {
+      // best-effort — original error (if any) is preserved
+    }
   }
 
   return { added, modified, removed, status: "synced" };

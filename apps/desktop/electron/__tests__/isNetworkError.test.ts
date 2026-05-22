@@ -55,6 +55,10 @@ describe("isNetworkError", () => {
     ["ETIMEDOUT"],
     ["ECONNREFUSED"],
     ["ECONNRESET"],
+    // ANALYSIS_0003 (wave 12) — ECONNABORTED is the libc/Node pair
+    // for Chromium's ERR_CONNECTION_ABORTED. Surfaces from SO_LINGER
+    // timeouts and undici-level AbortError teardowns.
+    ["ECONNABORTED"],
     ["ENETUNREACH"],
     ["EHOSTUNREACH"],
     ["EPIPE"],

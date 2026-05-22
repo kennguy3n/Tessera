@@ -516,19 +516,26 @@ export async function syncFigma(ctx: {
       }
     }
   } finally {
-    await saveState(ctx.userDataDir, {
-      lastSyncIso: nextWatermark,
-      teamIds,
-      failedRetries: nextFailedRetryQueue(state.failedRetries, {
-        succeeded: succeededIds,
-        failed: failedThisPass,
-      }),
-    });
-    await writeManifest(ctx.userDataDir, {
-      version: 1,
-      provider: "figma",
-      entries: Array.from(entriesById.values()),
-    });
+    // Persist progress in a nested try/catch so a state-write error
+    // (e.g. disk full) doesn't shadow the original upstream error the
+    // try block raised. See Devin Review wave 12 ANALYSIS_0004.
+    try {
+      await saveState(ctx.userDataDir, {
+        lastSyncIso: nextWatermark,
+        teamIds,
+        failedRetries: nextFailedRetryQueue(state.failedRetries, {
+          succeeded: succeededIds,
+          failed: failedThisPass,
+        }),
+      });
+      await writeManifest(ctx.userDataDir, {
+        version: 1,
+        provider: "figma",
+        entries: Array.from(entriesById.values()),
+      });
+    } catch {
+      // best-effort — original error (if any) is preserved
+    }
   }
 
   return { added, modified, removed, status: "synced" };

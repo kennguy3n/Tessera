@@ -508,16 +508,27 @@ export async function syncConfluence(ctx: {
       nextVersions[pageId] = prevVersion;
       if (recordedSpace) nextPageSpaces[pageId] = recordedSpace;
     }
-    await saveState(ctx.userDataDir, {
-      cloudId,
-      pageVersions: nextVersions,
-      pageSpaces: nextPageSpaces,
-    });
-    await writeManifest(ctx.userDataDir, {
-      version: 1,
-      provider: "confluence",
-      entries: Array.from(entriesById.values()),
-    });
+    // Persist progress in a nested try/catch so a state-write error
+    // (e.g. disk full, sync dir suddenly read-only) doesn't shadow the
+    // original error the try block raised. The whole point of running
+    // this in `finally` is best-effort progress save; if it fails the
+    // caller still needs to see the *original* upstream error (network
+    // failure, auth expiry, etc.), not a derived "ENOSPC" from the
+    // recovery step. See Devin Review wave 12 ANALYSIS_0004.
+    try {
+      await saveState(ctx.userDataDir, {
+        cloudId,
+        pageVersions: nextVersions,
+        pageSpaces: nextPageSpaces,
+      });
+      await writeManifest(ctx.userDataDir, {
+        version: 1,
+        provider: "confluence",
+        entries: Array.from(entriesById.values()),
+      });
+    } catch {
+      // best-effort — original error (if any) is preserved
+    }
   }
 
   return { added, modified, removed, status: "synced" };

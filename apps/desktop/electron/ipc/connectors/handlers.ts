@@ -162,6 +162,16 @@ export function isNetworkError(err: unknown): boolean {
       "ETIMEDOUT",
       "ECONNREFUSED",
       "ECONNRESET",
+      // `ECONNABORTED` is the libc/Node counterpart to Chromium's
+      // `ERR_CONNECTION_ABORTED` (already listed below). It surfaces
+      // when an SO_LINGER timeout, a `request.destroy()` from the
+      // server side, or an undici-level `AbortError` close the socket
+      // mid-request. The message-pattern heuristic below would catch
+      // most user-visible presentations, but the code-level allowlist
+      // is the strictly stronger signal and we list the Chromium
+      // variant — listing the libc variant here is the cheap completion
+      // of the pair. See Devin Review wave 12 ANALYSIS_0003.
+      "ECONNABORTED",
       "ENETUNREACH",
       "EHOSTUNREACH",
       "EPIPE",

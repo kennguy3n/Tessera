@@ -108,114 +108,135 @@ export async function syncGoogleDrive(ctx: {
   const syncDir = syncDirFor(ctx.userDataDir, "gdrive");
   await fsp.mkdir(syncDir, { recursive: true });
 
-  for (const fileId of resolvedFileIds) {
-    const metaResp = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,modifiedTime`,
-      { headers: { Authorization: `Bearer ${ctx.accessToken}` } },
-    );
-    if (!metaResp.ok) {
-      if (metaResp.status === 404 || metaResp.status === 410) {
-        failedFileIds.push(fileId);
+  // Wrap the iteration + manifest persistence in try/finally so partial
+  // progress is *always* committed before the function returns or
+  // rethrows. Without this, a transport-level `fetch` rejection
+  // (DNS failure, socket reset mid-stream, AbortError on a long
+  // download) mid-loop would skip the manifest write and re-pull every
+  // file that already landed on disk on the next sync — wasting API
+  // quota and incrementing `added` again for files the bridge already
+  // tracks. This brings gdrive into parity with the other five
+  // connectors (Notion, Jira, Confluence, Figma, OneDrive) that were
+  // built with this defense-in-depth pattern from the start. See
+  // Devin Review wave 12 ANALYSIS_0001 (gdrive.ts:111-169).
+  try {
+    for (const fileId of resolvedFileIds) {
+      const metaResp = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,modifiedTime`,
+        { headers: { Authorization: `Bearer ${ctx.accessToken}` } },
+      );
+      if (!metaResp.ok) {
+        if (metaResp.status === 404 || metaResp.status === 410) {
+          failedFileIds.push(fileId);
+        }
+        continue;
       }
-      continue;
-    }
-    const meta = (await metaResp.json()) as DriveMeta;
-    if (meta.mimeType === "application/vnd.google-apps.folder") continue;
-    const fileSize = Number(meta.size ?? "0");
-    if (fileSize > MAX_SYNC_FILE_BYTES) continue;
+      const meta = (await metaResp.json()) as DriveMeta;
+      if (meta.mimeType === "application/vnd.google-apps.folder") continue;
+      const fileSize = Number(meta.size ?? "0");
+      if (fileSize > MAX_SYNC_FILE_BYTES) continue;
 
-    let contentBytes: ArrayBuffer;
-    const exportMime = EXPORT_MIME_MAP[meta.mimeType];
-    if (exportMime) {
-      const exportResp = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`,
-        { headers: { Authorization: `Bearer ${ctx.accessToken}` } },
-      );
-      if (!exportResp.ok) continue;
-      contentBytes = await exportResp.arrayBuffer();
-    } else {
-      const dlResp = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
-        { headers: { Authorization: `Bearer ${ctx.accessToken}` } },
-      );
-      if (!dlResp.ok) continue;
-      contentBytes = await dlResp.arrayBuffer();
-    }
-
-    if (contentBytes.byteLength === 0) continue;
-    const ext = exportMime
-      ? exportMime === "text/csv"
-        ? ".csv"
-        : ".txt"
-      : meta.name.includes(".")
-        ? meta.name.substring(meta.name.lastIndexOf("."))
-        : "";
-    const localPath = path.join(syncDir, `${fileId}${ext}`);
-    await fsp.writeFile(localPath, Buffer.from(contentBytes));
-
-    try {
-      const sources = ctx.bridge.listSources();
-      const existing = sources.find((s) => s.path === localPath);
-      if (existing) {
-        ctx.bridge.reindexSource(existing.id);
-        modified += 1;
+      let contentBytes: ArrayBuffer;
+      const exportMime = EXPORT_MIME_MAP[meta.mimeType];
+      if (exportMime) {
+        const exportResp = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`,
+          { headers: { Authorization: `Bearer ${ctx.accessToken}` } },
+        );
+        if (!exportResp.ok) continue;
+        contentBytes = await exportResp.arrayBuffer();
       } else {
-        ctx.bridge.addLocalFile(localPath);
-        added += 1;
+        const dlResp = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
+          { headers: { Authorization: `Bearer ${ctx.accessToken}` } },
+        );
+        if (!dlResp.ok) continue;
+        contentBytes = await dlResp.arrayBuffer();
       }
-      syncedPaths.push(localPath);
-    } catch {
-      // Indexing failed — leave file on disk for next pass
-    }
-  }
 
-  // Remove local files + source index entries for 404/410 deletions
-  if (failedFileIds.length > 0) {
-    try {
-      const entries = await fsp.readdir(syncDir);
-      for (const failedId of failedFileIds) {
-        for (const entry of entries) {
-          const entryId = fileIdFromLocalPath(entry);
-          if (entryId === failedId) {
-            const localPath = path.join(syncDir, entry);
-            const src = ctx.bridge
-              .listSources()
-              .find((s) => s.path === localPath);
-            if (src) {
-              try {
-                ctx.bridge.removeSource(src.id);
-              } catch {
-                // best effort
+      if (contentBytes.byteLength === 0) continue;
+      const ext = exportMime
+        ? exportMime === "text/csv"
+          ? ".csv"
+          : ".txt"
+        : meta.name.includes(".")
+          ? meta.name.substring(meta.name.lastIndexOf("."))
+          : "";
+      const localPath = path.join(syncDir, `${fileId}${ext}`);
+      await fsp.writeFile(localPath, Buffer.from(contentBytes));
+
+      try {
+        const sources = ctx.bridge.listSources();
+        const existing = sources.find((s) => s.path === localPath);
+        if (existing) {
+          ctx.bridge.reindexSource(existing.id);
+          modified += 1;
+        } else {
+          ctx.bridge.addLocalFile(localPath);
+          added += 1;
+        }
+        syncedPaths.push(localPath);
+      } catch {
+        // Indexing failed — leave file on disk for next pass
+      }
+    }
+
+    // Remove local files + source index entries for 404/410 deletions
+    if (failedFileIds.length > 0) {
+      try {
+        const entries = await fsp.readdir(syncDir);
+        for (const failedId of failedFileIds) {
+          for (const entry of entries) {
+            const entryId = fileIdFromLocalPath(entry);
+            if (entryId === failedId) {
+              const localPath = path.join(syncDir, entry);
+              const src = ctx.bridge
+                .listSources()
+                .find((s) => s.path === localPath);
+              if (src) {
+                try {
+                  ctx.bridge.removeSource(src.id);
+                } catch {
+                  // best effort
+                }
               }
+              await fsp.unlink(localPath).catch(() => undefined);
+              removed += 1;
             }
-            await fsp.unlink(localPath).catch(() => undefined);
-            removed += 1;
           }
         }
+      } catch {
+        // syncDir may not exist
+      }
+    }
+  } finally {
+    // Persist manifest with whatever progress we have. The original
+    // error (if any) is wrapped in a fresh try/catch so a manifest-
+    // write failure (e.g. disk full) doesn't shadow the underlying
+    // network or auth error the caller actually needs to see. See
+    // Devin Review wave 12 ANALYSIS_0004 (cross-connector pattern).
+    try {
+      const existingManifest = await readGdriveManifest(ctx.userDataDir);
+      const failedIdSet = new Set(failedFileIds);
+      const surviving = existingManifest.filter(
+        (p) => !failedIdSet.has(fileIdFromLocalPath(p)),
+      );
+      const merged = Array.from(new Set([...surviving, ...syncedPaths]));
+      if (merged.length > 0) {
+        await writeGdriveManifest(ctx.userDataDir, merged);
+      } else {
+        // Every previously-tracked file has been confirmed remotely
+        // deleted (404/410) and no new files were synced this pass.
+        // Remove the manifest entirely — otherwise the next sync would
+        // re-read the stale id list, re-issue HEAD requests for each
+        // deleted file, and 404 forever in a wasted-API-call loop.
+        await fsp
+          .unlink(manifestPathFor(ctx.userDataDir))
+          .catch(() => undefined);
       }
     } catch {
-      // syncDir may not exist
+      // best-effort — don't shadow the original throw
     }
-  }
-
-  // Persist manifest with only currently-valid synced paths
-  const existingManifest = await readGdriveManifest(ctx.userDataDir);
-  const failedIdSet = new Set(failedFileIds);
-  const surviving = existingManifest.filter(
-    (p) => !failedIdSet.has(fileIdFromLocalPath(p)),
-  );
-  const merged = Array.from(new Set([...surviving, ...syncedPaths]));
-  if (merged.length > 0) {
-    await writeGdriveManifest(ctx.userDataDir, merged);
-  } else {
-    // Every previously-tracked file has been confirmed remotely
-    // deleted (404/410) and no new files were synced this pass.
-    // Remove the manifest entirely — otherwise the next sync would
-    // re-read the stale id list, re-issue HEAD requests for each
-    // deleted file, and 404 forever in a wasted-API-call loop.
-    await fsp
-      .unlink(manifestPathFor(ctx.userDataDir))
-      .catch(() => undefined);
   }
 
   return { added, modified, removed, status: "synced" };

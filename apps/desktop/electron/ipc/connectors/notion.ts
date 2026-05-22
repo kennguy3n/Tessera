@@ -533,18 +533,27 @@ export async function syncNotion(ctx: {
     const reconciledFailures = Array.from(dedupedFailures.values()).filter(
       (entry) => !succeededIds.has(entry.remoteId),
     );
-    await saveWatermark(ctx.userDataDir, {
-      lastSyncIso: newWatermark,
-      failedRetries: nextFailedRetryQueue(watermark.failedRetries, {
-        succeeded: succeededIds,
-        failed: reconciledFailures,
-      }),
-    });
-    await writeManifest(ctx.userDataDir, {
-      version: 1,
-      provider: "notion",
-      entries: Array.from(entriesById.values()),
-    });
+    // Persist progress in a nested try/catch so a state-write error
+    // (e.g. disk full) doesn't shadow the original upstream error the
+    // try block raised. See Devin Review wave 12 ANALYSIS_0004
+    // (confluence.ts variant; cross-cutting fix applied to all 5
+    // connectors).
+    try {
+      await saveWatermark(ctx.userDataDir, {
+        lastSyncIso: newWatermark,
+        failedRetries: nextFailedRetryQueue(watermark.failedRetries, {
+          succeeded: succeededIds,
+          failed: reconciledFailures,
+        }),
+      });
+      await writeManifest(ctx.userDataDir, {
+        version: 1,
+        provider: "notion",
+        entries: Array.from(entriesById.values()),
+      });
+    } catch {
+      // best-effort — original error (if any) is preserved
+    }
   }
 
   return { added, modified, removed, status: "synced" };
