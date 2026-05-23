@@ -492,7 +492,7 @@ function getDefaultValue(type: FieldType): unknown {
   }
 }
 
-function parseBaseContent(content: string): BaseContent {
+export function parseBaseContent(content: string): BaseContent {
   if (!content) {
     return {
       fields: [

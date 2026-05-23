@@ -291,7 +291,7 @@ function columnLabel(index: number): string {
 }
 
 /** Parse CSV text respecting RFC 4180 quoted fields (handles commas inside quotes). */
-function parseCSVLines(text: string): string[][] {
+export function parseCSVLines(text: string): string[][] {
   const rows: string[][] = [];
   let i = 0;
   while (i < text.length) {
@@ -339,7 +339,7 @@ function parseCSVLines(text: string): string[][] {
   return rows;
 }
 
-function parseSheetContent(content: string): SheetContent {
+export function parseSheetContent(content: string): SheetContent {
   if (!content) {
     return { columns: ["A", "B", "C"], rows: [["", "", ""], ["", "", ""], ["", "", ""]] };
   }
@@ -354,7 +354,7 @@ function parseSheetContent(content: string): SheetContent {
   return { columns: ["A", "B", "C"], rows: [["", "", ""], ["", "", ""], ["", "", ""]] };
 }
 
-function evaluateFormula(formula: string, sheet: SheetContent): string | number {
+export function evaluateFormula(formula: string, sheet: SheetContent): string | number {
   const expr = formula.slice(1).trim().toUpperCase();
 
   const rangeMatch = expr.match(/^(SUM|AVERAGE|COUNT|MIN|MAX)\(([A-Z]+\d+):([A-Z]+\d+)\)$/);
@@ -392,7 +392,7 @@ function evaluateFormula(formula: string, sheet: SheetContent): string | number 
   }
 }
 
-function parseCellRef(ref: string): { row: number; col: number } | null {
+export function parseCellRef(ref: string): { row: number; col: number } | null {
   const match = ref.match(/^([A-Z]+)(\d+)$/);
   if (!match) return null;
   const col = match[1].split("").reduce((acc, c) => acc * 26 + c.charCodeAt(0) - 64, 0) - 1;
