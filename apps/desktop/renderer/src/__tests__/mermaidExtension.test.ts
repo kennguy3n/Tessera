@@ -37,22 +37,22 @@ beforeAll(() => {
 // `editor.destroy()` flushes the observer's timer and clears the
 // editor's references to the jsdom document so the timer doesn't
 // outlive the test environment.
-const editors: Editor[] = [];
-
-afterEach(() => {
-  while (editors.length > 0) {
-    const editor = editors.pop();
-    editor?.destroy();
-  }
-});
+const liveEditors: Editor[] = [];
 
 function makeEditor() {
   const editor = new Editor({
     extensions: [Document, Paragraph, Text, MermaidNode],
   });
-  editors.push(editor);
+  liveEditors.push(editor);
   return editor;
 }
+
+afterEach(() => {
+  while (liveEditors.length > 0) {
+    const editor = liveEditors.pop();
+    editor?.destroy();
+  }
+});
 
 describe("MermaidNode TipTap extension", () => {
   it("exposes the expected name and group", () => {
