@@ -1,6 +1,7 @@
 import { app, BrowserWindow, safeStorage, session } from "electron";
 import * as path from "path";
 import { registerIpcHandlers } from "./ipc";
+import { replayPersistedHybridSearchConfigToBridge } from "./ipc/settings";
 import { loadConfig, saveWindowState } from "./config";
 import { initAppState } from "./appState";
 import { detectComputeBackends } from "./modelManagement";
@@ -500,6 +501,21 @@ app.whenReady().then(async () => {
   // strengthens the "handlers are registered before any renderer
   // can call them" invariant.
   registerIpcHandlers();
+  // Replay the persisted hybrid retrieval config into the live Rust
+  // `SourceManager`. Must run AFTER `initAppState` (which brings up
+  // the bridge) but is unrelated to IPC registration order — we
+  // place it here only because this is the soonest point where the
+  // bridge is reachable AND the disk config has been validated.
+  // A failure is logged but not fatal: the user can re-tune in
+  // Settings, the live engine simply uses its compiled defaults.
+  try {
+    replayPersistedHybridSearchConfigToBridge();
+  } catch (err) {
+    console.warn(
+      "[Tessera] Failed to replay persisted hybrid search config:",
+      err,
+    );
+  }
   await maybeInitPasswordVault();
   // Start the automations scheduler. Runs in the main process and
   // ticks every 30s, dispatching due `Schedule` automations directly
