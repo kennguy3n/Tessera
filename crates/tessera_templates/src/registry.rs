@@ -88,13 +88,33 @@ impl TemplateRegistry {
                     },
                     Err(e) => {
                         // YAML couldn't deserialize into the canonical
-                        // Template struct. The 4 known legacy visual
-                        // templates fall into this bucket today
-                        // (different section schema); see
-                        // `LEGACY_VISUAL_SCHEMA_TEMPLATES` in
-                        // `bundled_templates.rs`. Other parse failures
-                        // here indicate a typo or schema drift — we
-                        // surface them rather than swallow silently.
+                        // `Template` struct. Historically the four
+                        // legacy visual templates
+                        // (infographics/{comparison, process-flow,
+                        // stats-overview}.yaml and
+                        // landing_pages/saas-product.yaml) failed here
+                        // because they used the pre-canonical
+                        // `heading:` section schema; WS3 R10 migrated
+                        // those YAMLs to canonical `title:` / `prompt:`
+                        // and they now parse successfully (the
+                        // visual-hint fields `layout`,
+                        // `default_icon_set`, `color_scheme`, and
+                        // per-section `icon_suggestion` are silently
+                        // ignored by serde, by design).
+                        //
+                        // Today this arm exists purely as a guard
+                        // against future schema drift / typos: any
+                        // YAML newly committed under a category root
+                        // that doesn't deserialize into `Template`
+                        // surfaces here with the file path so the
+                        // operator can fix it rather than have it
+                        // silently disappear from the registry. We
+                        // log-and-continue rather than `?`-propagate
+                        // so a single broken template doesn't take
+                        // down the entire list operation —
+                        // `bundled_templates.rs::every_bundled_
+                        // template_parses_and_validates` is the
+                        // hard-fail gate in CI.
                         eprintln!(
                             "[tessera_templates] skipping unparseable template at {}: {e}",
                             file_path.display()
