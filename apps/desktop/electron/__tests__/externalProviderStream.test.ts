@@ -722,7 +722,7 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
         },
         () => {},
       ),
-    ).rejects.toThrow(/HTTP 503 after 1 attempts/);
+    ).rejects.toThrow(/HTTP 503 after 1 attempt(?!s)/);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     fetchSpy.mockRestore();
   });

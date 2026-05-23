@@ -1065,10 +1065,13 @@ export async function streamExternalProvider(
     // body preview helps diagnose provider-side rate-limit / outage
     // messages, for timeouts we show the configured timeout so the
     // user can see whether they need to raise it. Attempts count
-    // appears mid-message (`… after N attempts`) before any tail
+    // appears mid-message (`… after N attempt(s)`) before any tail
     // body preview so error monitoring / log aggregation can
     // structure-match against the prefix without false-positives on
-    // attacker-controlled body text.
+    // attacker-controlled body text. The singular/plural form
+    // matters because `maxRetries=0` (no retries) produces a single
+    // attempt total — "after 1 attempts" reads as a bug to the
+    // user even though it isn't, so we pluralise correctly.
     const last = lastRetryable as RetryableStatus;
     const summary =
       last.kind === "http"
@@ -1078,8 +1081,10 @@ export async function streamExternalProvider(
       last.kind === "http" && last.bodyPreview
         ? `: ${last.bodyPreview.slice(0, 200)}`
         : "";
+    const totalAttempts = maxRetries + 1;
+    const attemptsWord = totalAttempts === 1 ? "attempt" : "attempts";
     throw new Error(
-      `External provider ${summary} after ${maxRetries + 1} attempts${detail}`,
+      `External provider ${summary} after ${totalAttempts} ${attemptsWord}${detail}`,
     );
   }
 
