@@ -79,6 +79,43 @@ const mockApi = {
       currentPath: null,
       lastError: null,
     }),
+    backfillEmbeddings: vi.fn().mockResolvedValue({
+      embedded: 0,
+      failed: 0,
+      batchSize: 64,
+      progress: {
+        status: "done",
+        totalChunks: 0,
+        embedded: 0,
+        failed: 0,
+        modelId: "hash-trick-v1",
+        lastError: null,
+      },
+    }),
+    getEmbeddingProgress: vi.fn().mockResolvedValue({
+      status: "idle",
+      totalChunks: 0,
+      embedded: 0,
+      failed: 0,
+      modelId: null,
+      lastError: null,
+    }),
+    getHybridSearchConfig: vi.fn().mockResolvedValue({
+      bm25Weight: 1.0,
+      vectorWeight: 1.0,
+      rrfK: 60.0,
+      recencyDecayEnabled: true,
+      recencyHalflifeSecs: 30 * 24 * 60 * 60,
+      candidatePoolSize: 0,
+    }),
+    updateHybridSearchConfig: vi.fn().mockResolvedValue({
+      bm25Weight: 1.0,
+      vectorWeight: 1.0,
+      rrfK: 60.0,
+      recencyDecayEnabled: true,
+      recencyHalflifeSecs: 30 * 24 * 60 * 60,
+      candidatePoolSize: 0,
+    }),
   },
   artifacts: {
     create: vi.fn().mockResolvedValue({

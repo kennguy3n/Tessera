@@ -32,6 +32,32 @@ export interface ExternalProviderConfig {
   maxRetries: number;
 }
 
+/**
+ * On-disk persistence shape for the hybrid retrieval config.
+ *
+ * The renderer's Settings page edits these values and they get
+ * pushed to the Rust core via `settings:updateHybridSearchConfig`
+ * → `bridge_update_hybrid_search_config`. On launch, the bridge
+ * `state-init` path reads the persisted values and replays them
+ * through `SourceManager::update_hybrid_config` so a restart does
+ * not silently revert the user's choices.
+ *
+ * The Rust core uses `f64::INFINITY` to signal "no recency decay";
+ * we surface that here as the explicit `recencyDecayEnabled` flag
+ * (with `recencyHalflifeSecs` becoming meaningless when disabled)
+ * so the JSON on disk can round-trip cleanly — `Infinity` is not
+ * representable in JSON.
+ */
+export interface HybridSearchConfigPersisted {
+  bm25Weight: number;
+  vectorWeight: number;
+  rrfK: number;
+  recencyDecayEnabled: boolean;
+  /** Half-life in seconds. Ignored when `recencyDecayEnabled` is false. */
+  recencyHalflifeSecs: number;
+  candidatePoolSize: number;
+}
+
 export interface AppConfig {
   windowX?: number;
   windowY?: number;
@@ -46,7 +72,31 @@ export interface AppConfig {
   externalProvider: ExternalProviderConfig;
   /** When true the renderer should auto-check for updates on launch. */
   autoUpdate: boolean;
+  /**
+   * Persisted hybrid retrieval config. The defaults here mirror
+   * `tessera_sources::hybrid::HybridSearchConfig::default()` so a
+   * fresh install behaves identically with or without this field
+   * on disk.
+   */
+  hybridSearchConfig: HybridSearchConfigPersisted;
 }
+
+/** Default persisted hybrid config — mirrors Rust default. */
+export const DEFAULT_HYBRID_SEARCH_CONFIG: Readonly<HybridSearchConfigPersisted> =
+  Object.freeze({
+    bm25Weight: 1.0,
+    vectorWeight: 1.0,
+    rrfK: 60.0,
+    recencyDecayEnabled: true,
+    // 30 days in seconds — matches DEFAULT_RECENCY_HALFLIFE_SECS in
+    // `crates/tessera_sources/src/hybrid.rs`.
+    recencyHalflifeSecs: 30 * 24 * 60 * 60,
+    // 0 means "let the Rust side pick 4× the requested limit" — same
+    // semantic as the Rust default. We surface 0 here rather than a
+    // hardcoded number so a future Rust-side default change
+    // automatically applies without a config migration.
+    candidatePoolSize: 0,
+  });
 
 // Both DEFAULT_* constants are deep-frozen at module load so a
 // future contributor doing `DEFAULT_CONFIG.ignorePatterns.push(...)`
@@ -97,6 +147,7 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   sourcePaths: Object.freeze([]) as readonly string[] as string[],
   externalProvider: DEFAULT_EXTERNAL_PROVIDER,
   autoUpdate: true,
+  hybridSearchConfig: DEFAULT_HYBRID_SEARCH_CONFIG,
 });
 
 // --- On-disk config validation ----------------------------------------
@@ -196,6 +247,28 @@ const AppConfigSchema = z
       .catch(() => []),
     externalProvider: ExternalProviderConfigOnDiskSchema,
     autoUpdate: z.boolean().catch(true),
+    // Hybrid search config — every field has a `.catch()` fallback
+    // matching the documented Rust default so a partially-corrupted
+    // entry still produces a usable config. Bounds match the
+    // Rust-side validator in `HybridSearchConfig::apply_patch` so a
+    // value that round-trips through disk → bridge can never trigger
+    // a validation error on the bridge side.
+    hybridSearchConfig: z
+      .object({
+        bm25Weight: z.number().finite().min(0).max(10).catch(1.0),
+        vectorWeight: z.number().finite().min(0).max(10).catch(1.0),
+        rrfK: z.number().finite().min(0.0001).max(1_000).catch(60.0),
+        recencyDecayEnabled: z.boolean().catch(true),
+        recencyHalflifeSecs: z
+          .number()
+          .finite()
+          .min(1)
+          .max(10 * 365 * 24 * 60 * 60) // 10 years
+          .catch(30 * 24 * 60 * 60),
+        candidatePoolSize: z.number().int().min(0).max(10_000).catch(0),
+      })
+      .loose()
+      .catch(() => ({ ...DEFAULT_HYBRID_SEARCH_CONFIG })),
   })
   // `.loose()` (zod 4's rename of `.passthrough()`) preserves unknown
   // top-level keys instead of stripping them on a load → save round
@@ -212,6 +285,7 @@ const AppConfigSchema = z
   .catch(() => ({
     ...DEFAULT_CONFIG,
     externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
+    hybridSearchConfig: { ...DEFAULT_HYBRID_SEARCH_CONFIG },
   }));
 
 function getConfigPath(): string {
@@ -390,10 +464,20 @@ function readConfigFromDisk(configPath: string): AppConfig {
         ...DEFAULT_EXTERNAL_PROVIDER,
         ...healed.externalProvider,
       };
+      // Spread the persisted hybrid config over the defaults the same
+      // way `externalProvider` does — if a user's on-disk file is
+      // missing a newer subfield (forward compat with future versions
+      // adding fields) the default fills the gap rather than leaving
+      // `undefined` to crash downstream `bridge_update_hybrid_search_config`.
+      const hybridSearchConfig: HybridSearchConfigPersisted = {
+        ...DEFAULT_HYBRID_SEARCH_CONFIG,
+        ...healed.hybridSearchConfig,
+      };
       return {
         ...DEFAULT_CONFIG,
         ...healed,
         externalProvider,
+        hybridSearchConfig,
       };
     }
   } catch {
@@ -405,6 +489,7 @@ function readConfigFromDisk(configPath: string): AppConfig {
   return {
     ...DEFAULT_CONFIG,
     externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
+    hybridSearchConfig: { ...DEFAULT_HYBRID_SEARCH_CONFIG },
   };
 }
 

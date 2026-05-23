@@ -6,6 +6,7 @@ import Card from "../components/Card";
 import StatusBadge from "../components/StatusBadge";
 import { useSourceDetail, useReindexSource } from "../hooks/useSources";
 import { useIndexingProgress } from "../hooks/useIndexingProgress";
+import { useEmbeddingProgress } from "../hooks/useEmbeddingProgress";
 import type { ExtractedItem } from "../types/ipc";
 
 export default function SourceDetailPage() {
@@ -17,6 +18,19 @@ export default function SourceDetailPage() {
   const [extracted, setExtracted] = useState<ExtractedItem[] | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [extracting, setExtracting] = useState(false);
+  const [reembedding, setReembedding] = useState(false);
+  const [reembedError, setReembedError] = useState<string | null>(null);
+  const [reembedJustFinished, setReembedJustFinished] = useState(false);
+  // The embedding backfill tracker is workspace-global, so this
+  // poller doesn't take the source id — but we only run it while a
+  // backfill we initiated is in flight (or just finished, so the
+  // summary line stays visible briefly). Rate-limiting the
+  // `sources:backfillEmbeddings` IPC means a click-mashing user
+  // won't trigger multiple overlapping passes; the button is also
+  // disabled while `reembedding === true`.
+  const embeddingProgress = useEmbeddingProgress(
+    reembedding || reembedJustFinished,
+  );
 
   const handleReindex = async () => {
     if (!id) return;
@@ -25,6 +39,36 @@ export default function SourceDetailPage() {
       refresh();
     } catch {
       // error handled by hook
+    }
+  };
+
+  const handleReembed = async () => {
+    // Re-embed re-encodes every chunk in the workspace that doesn't
+    // have an embedding for the active model. The bridge is
+    // idempotent and rate-limited (1 every 10s) so a stale click
+    // is harmless, but we still gate the button with `reembedding`
+    // so the UI is unambiguous about "you already triggered this,
+    // wait for it to finish".
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api) {
+      setReembedError("Tessera bridge not available");
+      return;
+    }
+    setReembedError(null);
+    setReembedJustFinished(false);
+    setReembedding(true);
+    try {
+      await api.sources.backfillEmbeddings();
+    } catch (err) {
+      setReembedError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReembedding(false);
+      // Keep the progress banner visible for a moment so the user
+      // sees the final embedded/failed counts before it dismisses.
+      setReembedJustFinished(true);
+      // The poller stops itself on terminal status; we just need the
+      // active flag to keep the snapshot in render-state until the
+      // user navigates away.
     }
   };
 
@@ -105,6 +149,19 @@ export default function SourceDetailPage() {
             >
               {reindexing ? "Reindexing..." : "Reindex"}
             </Button>
+            <Button
+              variant="secondary"
+              onClick={handleReembed}
+              disabled={reembedding}
+              aria-label={
+                reembedding
+                  ? "Embedding backfill in progress"
+                  : "Re-embed all chunks against the active embedding model"
+              }
+              data-testid="reembed-button"
+            >
+              {reembedding ? "Re-embedding…" : "Re-embed"}
+            </Button>
             <Button variant="secondary" onClick={() => navigate("/sources")}>
               Back
             </Button>
@@ -149,6 +206,73 @@ export default function SourceDetailPage() {
           <Card>
             <p role="alert" style={{ color: "var(--color-error)" }}>
               Indexing failed: {progress.lastError ?? "unknown error"}
+            </p>
+          </Card>
+        )}
+        {embeddingProgress &&
+          (embeddingProgress.status === "running" ||
+            embeddingProgress.status === "done") &&
+          embeddingProgress.totalChunks > 0 && (
+            <Card data-testid="embedding-progress-card">
+              <h3 className="card-title">
+                {embeddingProgress.status === "done"
+                  ? "Re-embed complete"
+                  : "Re-embedding…"}
+              </h3>
+              <p
+                role="status"
+                aria-live="polite"
+                style={{ color: "var(--color-text-secondary)" }}
+              >
+                {embeddingProgress.embedded} / {embeddingProgress.totalChunks}{" "}
+                chunks embedded
+                {embeddingProgress.failed > 0 && (
+                  <span style={{ color: "var(--color-error)" }}>
+                    {" "}
+                    · {embeddingProgress.failed} failed
+                  </span>
+                )}
+                {embeddingProgress.modelId && (
+                  <span
+                    style={{
+                      fontSize: "var(--font-size-xs)",
+                      marginLeft: "var(--spacing-sm)",
+                    }}
+                  >
+                    (model: {embeddingProgress.modelId})
+                  </span>
+                )}
+              </p>
+              {/*
+                Plain HTML5 progress element so screen readers
+                announce the value/max pair without us having to
+                roll our own aria-valuemin/max plumbing. CSS in
+                index.css adjusts the bar to the Tessera palette.
+              */}
+              <progress
+                aria-label="Embedding backfill progress"
+                value={embeddingProgress.embedded}
+                max={Math.max(embeddingProgress.totalChunks, 1)}
+                style={{ width: "100%", marginTop: "var(--spacing-xs)" }}
+              />
+            </Card>
+          )}
+        {embeddingProgress && embeddingProgress.status === "failed" && (
+          <Card>
+            <p role="alert" style={{ color: "var(--color-error)" }}>
+              Re-embed failed:{" "}
+              {embeddingProgress.lastError ?? "unknown error"}
+            </p>
+          </Card>
+        )}
+        {reembedError && (
+          <Card>
+            <p
+              role="alert"
+              style={{ color: "var(--color-error)" }}
+              data-testid="reembed-error"
+            >
+              {reembedError}
             </p>
           </Card>
         )}

@@ -51,6 +51,78 @@ export interface IndexingProgressInfo {
   lastError: string | null;
 }
 
+/**
+ * Snapshot of the embedding-backfill progress tracker (mirror of
+ * `tessera_sources::progress::EmbeddingProgressSnapshot`). Used by
+ * the Re-embed button on the SourceDetailPage to render a progress
+ * banner while a backfill pass is in flight, and to dismiss it
+ * once `status === "done"`.
+ */
+export interface EmbeddingProgressInfo {
+  status: "idle" | "running" | "done" | "failed";
+  /** Total chunks the active backfill pass intended to embed. */
+  totalChunks: number;
+  /** Chunks successfully embedded so far. */
+  embedded: number;
+  /** Chunks that failed embedding and were excluded from retry. */
+  failed: number;
+  /**
+   * The active embedder's `model_id()`. Surfaces "which model is
+   * being used" in the UI so a model switch is visually obvious.
+   */
+  modelId: string | null;
+  /** Most recent embed-failure message, if any. */
+  lastError: string | null;
+}
+
+/** Result of one `sources:backfillEmbeddings` IPC call. */
+export interface BackfillEmbeddingsResult {
+  /** Number of chunks newly embedded by this call. */
+  embedded: number;
+  /** Final snapshot of the progress tracker after the call. */
+  progress: EmbeddingProgressInfo;
+}
+
+/**
+ * Wire shape for the hybrid retrieval config exposed to the renderer.
+ * Mirrors `tessera_bridge::sources::HybridSearchConfigInfo` — the
+ * Rust side surfaces "no recency decay" as the explicit
+ * `recencyDecayEnabled: false` flag (rather than `recencyHalflifeSecs
+ * = Infinity`) because Infinity cannot round-trip through JSON.
+ */
+export interface HybridSearchConfigInfo {
+  bm25Weight: number;
+  vectorWeight: number;
+  rrfK: number;
+  recencyDecayEnabled: boolean;
+  /** Half-life in seconds when decay is enabled; null when disabled. */
+  recencyHalflifeSecs: number | null;
+  candidatePoolSize: number;
+}
+
+/**
+ * Partial-update patch sent from the renderer's Settings page to the
+ * bridge. Every field is optional — fields that are undefined keep
+ * their current value. Mirrors
+ * `tessera_bridge::sources::HybridSearchConfigUpdate`.
+ */
+export interface HybridSearchConfigUpdate {
+  bm25Weight?: number;
+  vectorWeight?: number;
+  rrfK?: number;
+  /**
+   * `true`  → enable decay (use `recencyHalflifeSecs` if provided,
+   * otherwise keep the current value, falling back to the 30-day
+   * default if the current value is "disabled");
+   * `false` → disable decay (any accompanying `recencyHalflifeSecs`
+   * is ignored — the toggle wins);
+   * `undefined` → don't touch the flag.
+   */
+  recencyDecayEnabled?: boolean;
+  recencyHalflifeSecs?: number;
+  candidatePoolSize?: number;
+}
+
 export interface IndexedFileInfo {
   path: string;
   hash: string;
@@ -626,6 +698,27 @@ export interface SourceApi {
   getDetail: (id: string) => Promise<SourceDetailInfo>;
   reindex: (id: string) => Promise<SourceInfo>;
   getIndexingProgress: (id: string) => Promise<IndexingProgressInfo>;
+  /**
+   * Run an embedding-backfill pass over every chunk missing an
+   * embedding for the active model. Idempotent. Pass `batchSize`
+   * to override the bridge default (used by tests).
+   */
+  backfillEmbeddings: (
+    batchSize?: number,
+  ) => Promise<BackfillEmbeddingsResult>;
+  /** Lightweight poll for the active backfill pass. */
+  getEmbeddingProgress: () => Promise<EmbeddingProgressInfo>;
+  /** Fetch the current effective hybrid retrieval config. */
+  getHybridSearchConfig: () => Promise<HybridSearchConfigInfo>;
+  /**
+   * Apply a partial-update patch to the hybrid retrieval config.
+   * Returns the new effective config so the renderer can echo it
+   * back into its form state. Validation errors reject the entire
+   * patch (transactional).
+   */
+  updateHybridSearchConfig: (
+    update: HybridSearchConfigUpdate,
+  ) => Promise<HybridSearchConfigInfo>;
 }
 
 export interface ArtifactApi {

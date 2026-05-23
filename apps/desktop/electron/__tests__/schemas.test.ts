@@ -21,6 +21,7 @@ import {
   ExternalProviderApiKeySchema,
   ExternalProviderConfigSchema,
   GenerateRequestSchema,
+  HybridSearchConfigUpdateSchema,
   TypstExportSchema,
   MarpExportSchema,
   GdriveSelectedItemsSchema,
@@ -509,6 +510,90 @@ describe("SaveDialogOptionsSchema", () => {
   it("rejects a title exceeding 512 chars", () => {
     expect(() =>
       SaveDialogOptionsSchema.parse({ title: "x".repeat(513) }),
+    ).toThrow();
+  });
+});
+
+describe("HybridSearchConfigUpdateSchema", () => {
+  it("accepts an empty patch", () => {
+    expect(HybridSearchConfigUpdateSchema.parse({})).toEqual({});
+  });
+
+  it("accepts a typical Settings page slider payload", () => {
+    const payload = {
+      bm25Weight: 1.0,
+      vectorWeight: 0.7,
+      rrfK: 60.0,
+      recencyDecayEnabled: true,
+      recencyHalflifeSecs: 14 * 24 * 60 * 60,
+      candidatePoolSize: 0,
+    };
+    expect(HybridSearchConfigUpdateSchema.parse(payload)).toEqual(payload);
+  });
+
+  it("accepts the toggle-off shape (decay disabled, no halflife)", () => {
+    expect(
+      HybridSearchConfigUpdateSchema.parse({ recencyDecayEnabled: false }),
+    ).toEqual({ recencyDecayEnabled: false });
+  });
+
+  it("rejects NaN / Infinity / negative weights", () => {
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+      expect(() =>
+        HybridSearchConfigUpdateSchema.parse({ bm25Weight: value }),
+      ).toThrow();
+      expect(() =>
+        HybridSearchConfigUpdateSchema.parse({ vectorWeight: value }),
+      ).toThrow();
+    }
+  });
+
+  it("rejects zero or negative rrfK (RRF requires k > 0)", () => {
+    expect(() =>
+      HybridSearchConfigUpdateSchema.parse({ rrfK: 0 }),
+    ).toThrow();
+    expect(() =>
+      HybridSearchConfigUpdateSchema.parse({ rrfK: -10 }),
+    ).toThrow();
+  });
+
+  it("rejects sub-second recencyHalflifeSecs (a halflife shorter than 1s is nonsensical for the slider's day-scale resolution)", () => {
+    expect(() =>
+      HybridSearchConfigUpdateSchema.parse({ recencyHalflifeSecs: 0 }),
+    ).toThrow();
+    expect(() =>
+      HybridSearchConfigUpdateSchema.parse({ recencyHalflifeSecs: 0.5 }),
+    ).toThrow();
+    // 1 second is the smallest value the schema accepts.
+    expect(() =>
+      HybridSearchConfigUpdateSchema.parse({ recencyHalflifeSecs: 1 }),
+    ).not.toThrow();
+  });
+
+  it("rejects an absurdly large halflife (>10 years)", () => {
+    const elevenYears = 11 * 365 * 24 * 60 * 60;
+    expect(() =>
+      HybridSearchConfigUpdateSchema.parse({
+        recencyHalflifeSecs: elevenYears,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects non-integer candidatePoolSize", () => {
+    expect(() =>
+      HybridSearchConfigUpdateSchema.parse({ candidatePoolSize: 64.5 }),
+    ).toThrow();
+  });
+
+  it("rejects an oversize candidate pool (>10k)", () => {
+    expect(() =>
+      HybridSearchConfigUpdateSchema.parse({ candidatePoolSize: 100_000 }),
+    ).toThrow();
+  });
+
+  it("rejects extra fields (strict mode is the default for IPC inputs)", () => {
+    expect(() =>
+      HybridSearchConfigUpdateSchema.parse({ bogus: true }),
     ).toThrow();
   });
 });

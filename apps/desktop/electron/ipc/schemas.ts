@@ -210,6 +210,46 @@ export type ExternalProviderApiKeyInput = z.infer<
   typeof ExternalProviderApiKeySchema
 >;
 
+// --- Hybrid search config update ---
+// Matches `HybridSearchConfigUpdate` in `apps/desktop/shared/types.ts`
+// and is forwarded into `tessera_bridge::sources::HybridSearchConfigUpdate`
+// on the Rust side. Every field is optional — undefined fields keep
+// their current value, while explicit values are validated against
+// the same bounds the Rust `HybridSearchConfig::apply_patch` validator
+// enforces so we can return a structured error inline at the IPC layer
+// rather than relying on bridge errors leaking through.
+//
+// Bounds are deliberately tighter than the Rust validator (which only
+// rejects negative/NaN/Infinity weights and zero/negative halflives):
+// the renderer's slider can only ever produce values in these ranges,
+// so anything outside is a sign of a renderer bug or a tampering
+// attempt rather than a configuration choice we should honour.
+export const HybridSearchConfigUpdateSchema = z
+  .object({
+    bm25Weight: z.number().finite().min(0).max(10).optional(),
+    vectorWeight: z.number().finite().min(0).max(10).optional(),
+    rrfK: z.number().finite().min(0.0001).max(1_000).optional(),
+    recencyDecayEnabled: z.boolean().optional(),
+    recencyHalflifeSecs: z
+      .number()
+      .finite()
+      .min(1)
+      .max(10 * 365 * 24 * 60 * 60)
+      .optional(),
+    candidatePoolSize: z.number().int().min(0).max(10_000).optional(),
+  })
+  // Use `.strict()` rather than the default `.strip()` so a renderer
+  // bug or compromised IPC caller that sends a field the schema
+  // doesn't know about gets a hard error. The Rust bridge has its own
+  // strict serde-based validator one level down (`HybridSearchConfigUpdate`
+  // would reject unknown fields if `serde(deny_unknown_fields)` were
+  // set, but it isn't — napi-derive doesn't expose that knob). Strict
+  // mode here closes that gap.
+  .strict();
+export type HybridSearchConfigUpdateInput = z.infer<
+  typeof HybridSearchConfigUpdateSchema
+>;
+
 // --- Model generation ---
 //
 // Mirrors the canonical `GenerateRequest` in `shared/types.ts`. The

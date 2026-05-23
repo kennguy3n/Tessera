@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   AddCitationRequest,
   ExternalProviderConfigInput,
+  HybridSearchConfigUpdate,
   ModelDownloadProgress,
   ReplaceCitationRequest,
   SaveDialogOptions,
@@ -22,6 +23,7 @@ export type {
   AutomationApi,
   AutomationInfo,
   AutomationTrigger,
+  BackfillEmbeddingsResult,
   CitationApi,
   CitationFreshness,
   CitationInfo,
@@ -38,6 +40,7 @@ export type {
   DrivePickerItem,
   DrivePickerSelection,
   DriveSyncResult,
+  EmbeddingProgressInfo,
   ExportResult,
   ExternalProviderApi,
   ExternalProviderConfigInput,
@@ -47,6 +50,8 @@ export type {
   ExtractedItem,
   GenerateChunk,
   GenerateRequest,
+  HybridSearchConfigInfo,
+  HybridSearchConfigUpdate,
   IndexedFileInfo,
   IndexingProgressInfo,
   InstalledModelRecord,
@@ -163,6 +168,17 @@ const api: TesseraApi = {
     reindex: (id: string) => ipcRenderer.invoke("sources:reindex", id),
     getIndexingProgress: (id: string) =>
       ipcRenderer.invoke("sources:getIndexingProgress", id),
+    backfillEmbeddings: (batchSize?: number) =>
+      ipcRenderer.invoke(
+        "sources:backfillEmbeddings",
+        batchSize ?? null,
+      ),
+    getEmbeddingProgress: () =>
+      ipcRenderer.invoke("sources:getEmbeddingProgress"),
+    getHybridSearchConfig: () =>
+      ipcRenderer.invoke("settings:getHybridSearchConfig"),
+    updateHybridSearchConfig: (update: HybridSearchConfigUpdate) =>
+      ipcRenderer.invoke("settings:updateHybridSearchConfig", update),
   },
   artifacts: {
     create: (title: string, artifactType: string, templateId?: string) =>
