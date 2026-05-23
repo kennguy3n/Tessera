@@ -163,9 +163,30 @@ Localized templates live under `templates/<category>/locales/<locale>/<slug>.yam
 | Local storage | SQLite / SQLCipher |
 | Model runtime | llama.cpp / PrismML sidecar |
 | Apple Silicon acceleration | MLX |
-| External LLM provider *(optional)* | OpenAI-compatible / Anthropic / custom — API key stored in OS keychain, disabled by default |
+| External LLM provider *(optional)* | OpenAI-compatible / Anthropic / custom — real Server-Sent-Events streaming via `apps/desktop/electron/externalProviderStream.ts`, OS-keychain-stored API key, `AbortController` cancellation, disabled by default |
 | Electron ↔ Rust bridge | N-API |
+| Auto-updater | `electron-updater` wrapped behind `updates:*` IPC channels; ambient toast UX on the renderer side, opt-out from Settings |
 | Packaging | electron-builder (AppImage / .deb / .rpm / .dmg / NSIS exe) |
+
+## Security & hardening
+
+Tessera's Phase 10 production-hardening pass added five defense-in-depth
+controls on top of the baseline SQLCipher-encrypted local store. Each
+is documented in [ARCHITECTURE.md](ARCHITECTURE.md#defense-in-depth-controls-phase-10)
+and pinned with regression tests under
+`apps/desktop/electron/__tests__/`.
+
+| Control | What it does |
+|---|---|
+| **Password vault fallback** | When Electron's `safeStorage` cannot reach an OS keyring (headless Linux, certain CI runners), Tessera derives a 256-bit key from a user passphrase via **PBKDF2-SHA256 (600 000 iterations)** and wraps the SQLCipher DB key + OAuth tokens + API keys with **AES-256-GCM**. The vault is unlocked at startup by an ephemeral `BrowserWindow` (`data:text/html`, `sandbox: true`, single-purpose preload). |
+| **CSP per-connector image-source allow-list** | Replaces the prior wildcard `https:` image source with an explicit allow-list keyed off the connected providers — only the CDN hosts that ship thumbnails for the user's enabled connectors are allowed. |
+| **IPC rate limiting** | Token-bucket rate limiter applied to expensive IPC channels (search, generate, indexing actions) so a compromised renderer cannot exhaust the main process. |
+| **Export-path containment** | Renderer-initiated file writes resolve against an allow-list before reaching disk; symlinks and `..` traversal are rejected at the IPC boundary. |
+| **Extracted-item validation + HTML escape** | Every batch of extracted tasks / decisions / risks the bridge surfaces is validated against a zod schema and the renderer-bound string fields are HTML-escaped before display so an attacker-controlled source file cannot inject script into the Tessera UI. |
+
+Every `ipcMain.handle()` channel is enumerated, with its validation
+strategy and auth flag, in [`docs/IPC_AUDIT.md`](docs/IPC_AUDIT.md).
+CI fails if a new channel ships without an entry in that table.
 
 ---
 
@@ -185,7 +206,7 @@ The knowledge substrate provides:
 
 - **Encrypted local storage** — SQLite/SQLCipher with per-scope encryption.
 - **Evidence ingestion** — append-only, content-hash deduplicated storage.
-- **Hybrid retrieval** — FTS5 full-text search + vector similarity + temporal recency.
+- **Hybrid retrieval** — FTS5 lexical + `HashTrickEmbedding` vector similarity + temporal recency decay, fused via Reciprocal Rank Fusion (RRF, k=60). Configurable from the Settings page (hybrid toggle + recency half-life). See `crates/tessera_sources/src/hybrid.rs` and `embedding.rs`.
 - **Observation extraction** — entity and fact extraction from raw evidence.
 - **Concept graph** — higher-order synthesized entities and relationships.
 - **Memory management** — decay state machine, retention scoring, working memory.
@@ -295,7 +316,7 @@ The runtime manager (`crates/tessera_runtime/`) handles device detection, model 
 tessera/
 ├── apps/
 │   └── desktop/
-│       ├── electron/        # Electron main process (main.ts, preload.ts, ipc.ts, scheduler.ts, marpExport.ts)
+│       ├── electron/        # Electron main process (main.ts, preload.ts, ipc/, ipc.ts, scheduler.ts, marpExport.ts, typstExport.ts, autoUpdater.ts, cspImageSources.ts, dbKey.ts, exportPathSafety.ts, extractedItemValidation.ts, externalProviderStream.ts, passwordVault.ts, vaultCrypto.ts, passwordPromptPreload.ts, passwordPromptChannels.ts, secretsVault.ts, tokenVault.ts, modelManagement.ts, logger.ts, config.ts)
 │       └── renderer/        # React/TypeScript UI
 │           └── src/
 │               ├── editors/         # Document, Slide, Sheet, Base, Infographic, LandingPage editors
@@ -322,7 +343,7 @@ tessera/
 │   ├── sheets/              # Budget, Scorecard, Roadmap, Tracker, Inventory
 │   ├── bases/               # Vendor Register, Risk Register, Decision Log, Asset Inventory, Roadmap
 │   ├── infographics/        # Stats overview, Process flow, Comparison
-│   ├── landingpages/        # SaaS product landing page
+│   ├── landing_pages/       # SaaS product, Nonprofit cause, Event / conference, Personal & agency portfolio
 │   └── grammars/            # GBNF grammar files for structured LLM output
 ├── sidecars/                # Model sidecar binaries and manifests
 │   ├── scripts/             # Platform download scripts for llama-server

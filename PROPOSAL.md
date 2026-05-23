@@ -50,7 +50,9 @@
 | **Documents** | Document editor (PRDs, proposals, SOPs, reports) |
 | **Slides** | Slide deck editor (QBRs, strategy, reviews) |
 | **Sheets** | Spreadsheet editor (budgets, scorecards, trackers) |
-| **Bases** | Structured data editor (vendor register, risk register, roadmap) |
+| **Bases** | Structured data editor (vendor register, risk register, roadmap, asset inventory, CRM, incident tracker, employee directory, compliance register) |
+| **Infographics** | Visual one-pager editor (stats overview, process flow, comparison, timeline, org chart, KPI dashboard) |
+| **Landing pages** | Marketing landing-page editor (SaaS product, nonprofit cause, event / conference, personal & agency portfolio) |
 | **Templates** | Browse, create, and manage artifact templates |
 | **Tasks / Plans** | Task lists, project plans, launch checklists |
 | **Automations** | Scheduled index refreshes, template-triggered workflows |
@@ -81,7 +83,7 @@ Connect sources → Index knowledge → Select template → Create artifact → 
 | Extract text | Text extraction from supported file types |
 | Chunk | Content is split into retrievable chunks |
 | Store evidence | Chunks stored in encrypted local evidence store with content-hash dedup |
-| Search | Hybrid retrieval: FTS5 + vector similarity + temporal recency |
+| Search | Hybrid retrieval: FTS5 lexical + `HashTrickEmbedding` vector similarity + temporal recency decay (30-day half-life), fused via Reciprocal Rank Fusion (k=60). Configurable from Settings (hybrid toggle + recency half-life). |
 | Ignored files | `.gitignore`-style patterns, binary files, system files |
 | Provenance | Every chunk tracks source file path, page/section, extraction timestamp |
 

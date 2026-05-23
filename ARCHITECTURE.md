@@ -32,6 +32,7 @@ flowchart TB
 
     subgraph "Electron Main Process"
         IPC["Secure IPC"]
+        RateLimiter["IPC rate limiter (token bucket)"]
         WinMgr["Window / menu / tray"]
         FilePicker["OS file picker"]
         OAuthHandoff["OAuth handoff"]
@@ -39,12 +40,18 @@ flowchart TB
         SidecarSup["Sidecar supervision"]
         Scheduler["Automation scheduler"]
         MarpExport["Marp CLI PPTX export"]
+        AutoUpdater["Auto-updater (electron-updater)"]
+        CSPPolicy["CSP per-connector image-source policy"]
+        PasswordVault["Password vault fallback (PBKDF2 + AES-GCM)"]
+        ExternalProvider["External provider SSE streaming"]
     end
 
     subgraph "Rust Core"
         KnowledgeSub["Knowledge substrate"]
         EncStorage["Local encrypted storage"]
         FileIndex["File / folder indexing"]
+        EmbeddingProv["Embedding provider (HashTrick / transformer)"]
+        HybridSearch["Hybrid retrieval (BM25 + vector + RRF + recency)"]
         Retrieval["Retrieval engine"]
         TemplateEng["Template engine"]
         ArtifactEng["Artifact engine"]
@@ -93,6 +100,8 @@ flowchart TB
     LandingPageEditor --> IconPicker
     IconPicker --> IconResolver
 
+    IPC --> RateLimiter
+    RateLimiter --> NAPI
     IPC --> NAPI
     WinMgr --> NAPI
     FilePicker --> NAPI
@@ -102,10 +111,20 @@ flowchart TB
     Automations --> Scheduler
     Scheduler --> NAPI
     SlideEditor --> MarpExport
+    Settings --> AutoUpdater
+    Settings --> ExternalProvider
+    ExternalProvider --> LoopbackAPI
+    WinMgr --> CSPPolicy
+    WinMgr --> PasswordVault
+    PasswordVault --> EncStorage
 
     NAPI --> KnowledgeSub
     NAPI --> EncStorage
     NAPI --> FileIndex
+    NAPI --> EmbeddingProv
+    NAPI --> HybridSearch
+    HybridSearch --> EmbeddingProv
+    HybridSearch --> Retrieval
     NAPI --> Retrieval
     NAPI --> TemplateEng
     NAPI --> ArtifactEng
@@ -141,7 +160,7 @@ flowchart TB
 | Core engine | Rust | Performance, memory safety, indexing, storage, crypto |
 | Optional later | Go | Remote connector daemons, network services |
 | Local database | SQLite / SQLCipher | Local-first, encrypted, single-file DB |
-| Search | SQLite FTS5 + embeddings + metadata ranking | Hybrid retrieval without external services |
+| Search | FTS5 full-text + `HashTrickEmbedding` vector similarity + Reciprocal Rank Fusion (k=60) + temporal recency decay (30-day half-life) | Hybrid retrieval without external services; BM25 captures keywords, the embedding signal handles typos / substrings / paraphrase, RRF combines the rankings on rank rather than incomparable raw scores, and the recency decay biases toward fresh material when content similarity ties |
 | Model runtime | llama.cpp / PrismML sidecar | Local GGUF model inference |
 | Apple Silicon | MLX | macOS ARM acceleration |
 | Electron bridge | N-API | Low-overhead Rust ↔ Node.js calls |
@@ -198,6 +217,30 @@ The substrate is composed of modular Rust crates:
 | `ffi` | UniFFI bridge for iOS (Swift) and Android (Kotlin) |
 | `napi` | Node.js / Electron bindings for macOS and Windows |
 | `export_plane` | Governance, policy simulation, data egress controls |
+
+### Hybrid retrieval pipeline
+
+Search inside Tessera runs through `crates/tessera_sources/src/hybrid.rs`
+(`hybrid_search`) which combines three independent ranking signals:
+
+- **BM25 lexical** from SQLite FTS5 (`search_fts`) — dominant for keyword
+  queries, struggles with typos and paraphrase.
+- **Vector cosine** via the `EmbeddingProvider` trait
+  (`crates/tessera_sources/src/embedding.rs`). The default offline
+  implementation `HashTrickEmbedding` produces signed character-n-gram
+  vectors (Weinberger et al. 2009, dim=256, char 3..=5) so partial
+  matches and typos surface without a transformer. A transformer-backed
+  provider can be plugged in to add distributional semantics.
+- **Temporal recency** via `recency_multiplier(age_secs, halflife_secs)`,
+  a true half-life decay (`2^(-Δt / halflife)`, default 30-day half-life)
+  applied multiplicatively to the fused score so fresh material wins ties.
+
+The three signals are fused via **Reciprocal Rank Fusion**
+(Cormack 2009, k=60) — operating on ranks instead of raw scores
+sidesteps the cross-scale tuning that any weighted-sum approach would
+require. Per-signal weights and the recency half-life are configurable
+through `HybridSearchConfig`; setting `vector_weight` to 0 collapses
+the pipeline to BM25 + recency.
 
 ### User experience
 
@@ -303,6 +346,18 @@ GBNF (GGML BNF) grammars constrain model output to valid structured formats (JSO
 
 ## Platform-specific notes
 
+### Auto-update on every platform
+
+Tessera ships an in-app auto-updater backed by
+[`electron-updater`](https://www.electron.build/auto-update). The
+desktop main process wraps `electron-updater` in
+`apps/desktop/electron/autoUpdater.ts` and exposes the
+`updates:status` / `updates:check` / `updates:install` /
+`updates:getAutoUpdateEnabled` / `updates:setAutoUpdateEnabled`
+channels documented in [`docs/IPC_AUDIT.md`](docs/IPC_AUDIT.md). The
+renderer subscribes to `updates:status` for ambient toast UX. Auto-
+update can be disabled from the Settings page.
+
 ### macOS
 
 | Component | Detail |
@@ -372,6 +427,55 @@ The full registry lives in `sidecars/models.json`. `available_models_for_platfor
 | Revocation | Disconnect removes local index and revokes remote tokens |
 | Citation tracking | Every generated section links to its source material |
 
+### Defense-in-depth controls (Phase 10)
+
+The Phase 10 security pass added the following controls on top of the
+baseline principles above. Every control ships with regression tests
+under `apps/desktop/electron/__tests__/`.
+
+- **Password vault fallback.** When `safeStorage` cannot reach an OS
+  keyring (headless Linux, certain CI runners), Tessera falls back to
+  a user-supplied passphrase that derives a 256-bit key via
+  **PBKDF2-SHA256 with 600 000 iterations** and a per-installation
+  random salt, then wraps the SQLCipher DB key + OAuth tokens + API
+  keys with **AES-256-GCM**. The vault is unlocked at startup by an
+  ephemeral `BrowserWindow` (loaded via `data:text/html`, `sandbox:
+  true`, single-purpose preload). See
+  `apps/desktop/electron/passwordVault.ts`,
+  `vaultCrypto.ts`,
+  `passwordPromptPreload.ts`,
+  `passwordPromptChannels.ts`.
+- **CSP per-connector image-source allow-list.** The previous wildcard
+  `https:` image source was replaced by an explicit allow-list keyed
+  off the connected providers; only the CDN hosts that ship thumbnails
+  for the user's enabled connectors are allowed. See
+  `apps/desktop/electron/cspImageSources.ts`.
+- **IPC rate limiter.** Token-bucket limiter on expensive channels
+  (search, generate, indexing actions) so a compromised renderer
+  cannot exhaust the main process. See
+  `apps/desktop/electron/ipc/rateLimiter.ts`.
+- **Export-path containment.** Every renderer-initiated file write
+  resolves against an allow-list before reaching disk; symlinks and
+  `..` traversal are rejected at the IPC boundary. See
+  `apps/desktop/electron/exportPathSafety.ts`.
+- **Extracted-item schema + HTML escape.** Every batch of extracted
+  tasks / decisions / risks the bridge surfaces is validated against a
+  zod schema and the renderer-bound string fields are HTML-escaped
+  before display so an attacker-controlled source file cannot inject
+  script into the Tessera UI. See
+  `apps/desktop/electron/extractedItemValidation.ts`.
+- **IPC audit.** Every `ipcMain.handle()` channel is enumerated, with
+  its validation strategy and auth flag, in
+  [`docs/IPC_AUDIT.md`](docs/IPC_AUDIT.md). CI fails if a new channel
+  ships without an entry in that table.
+- **Auto-updater.** `electron-updater` is wrapped behind the
+  `updates:*` channels (`updates:status`, `updates:check`,
+  `updates:install`, `updates:getAutoUpdateEnabled`,
+  `updates:setAutoUpdateEnabled`). The renderer subscribes to
+  `updates:status` for ambient toast UX and the user can disable
+  background checks from Settings. See
+  `apps/desktop/electron/autoUpdater.ts`.
+
 ---
 
 ## Repository layout
@@ -381,14 +485,49 @@ tessera/
 ├── apps/
 │   └── desktop/
 │       ├── electron/                # Electron main process
-│       │   ├── main.ts              # App entry, window management, will-quit drain
-│       │   ├── ipc.ts               # IPC handler registration (sources, artifacts, runtime, tasks, automations)
-│       │   ├── appState.ts          # Bridge initialization and AppState
+│       │   ├── main.ts              # App entry, window management, will-quit drain, CSP install
+│       │   ├── ipc.ts               # Legacy aggregator that re-exports the modular `ipc/` directory
+│       │   ├── ipc/                 # Per-domain IPC modules (idempotent registration via `register.ts`)
+│       │   │   ├── register.ts          # `idempotentHandle()` helper — remove-then-handle for every channel
+│       │   │   ├── rateLimiter.ts       # Token-bucket rate limiter on expensive channels
+│       │   │   ├── validate.ts          # `assertId` / `assertString` / `assertNumber` / `assertStringArray`
+│       │   │   ├── schemas.ts           # zod schemas for object-arg channels
+│       │   │   ├── shared.ts            # cross-domain helpers
+│       │   │   ├── sources.ts           # `sources:*` handlers
+│       │   │   ├── artifacts.ts         # `artifacts:*` handlers
+│       │   │   ├── citations.ts         # `citations:*` handlers
+│       │   │   ├── settings.ts          # `settings:*` + `externalProvider:*` handlers
+│       │   │   ├── templates.ts         # `templates:*` handlers
+│       │   │   ├── model.ts             # `model:*` handlers + `activeGenerationController` cancellation
+│       │   │   ├── runtime.ts           # `runtime:*` handlers
+│       │   │   ├── tasks.ts             # `tasks:*` handlers
+│       │   │   ├── automations.ts       # `automations:*` handlers
+│       │   │   ├── dialog.ts            # `dialog:showSaveDialog`
+│       │   │   ├── context.ts           # shared context object passed into every handler
+│       │   │   ├── connectors/          # per-provider OAuth + sync handlers (gdrive / onedrive / notion / jira / confluence / figma)
+│       │   │   └── index.ts             # `registerAllIpcHandlers()`
+│       │   ├── appState.ts          # Bridge initialization, async DB-key path, password-vault hand-off
 │       │   ├── preload.ts           # Typed preload API exposed to renderer
 │       │   ├── sidecar.ts           # Model sidecar supervision
-│       │   ├── scheduler.ts         # Automation scheduler (activeTick / queuedRunNow state machine)
+│       │   ├── scheduler.ts         # Automation scheduler (activeTick / queuedRunNow state machine, `will-quit` drain)
 │       │   ├── marpExport.ts        # Marp CLI PPTX / HTML / PDF export
-│       │   └── config.ts            # Local JSON settings persistence
+│       │   ├── typstExport.ts       # Typst export wrapper
+│       │   ├── autoUpdater.ts       # `electron-updater` wrapper, `updates:*` channels, status broadcast
+│       │   ├── cspImageSources.ts   # Per-connector CSP image-source allow-list
+│       │   ├── dbKey.ts             # SQLCipher key generation + wrap via safeStorage; password-vault fallback (Task 13)
+│       │   ├── exportPathSafety.ts  # Export-path containment (renderer-supplied paths constrained to allow-list)
+│       │   ├── extractedItemValidation.ts # zod-shape validation of bridge-supplied extracted items; XSS-escape (Task 16)
+│       │   ├── externalProviderStream.ts  # Real SSE parser for OpenAI-compatible + Anthropic streaming
+│       │   ├── passwordVault.ts     # PBKDF2 + AES-256-GCM fallback when safeStorage is unavailable
+│       │   ├── vaultCrypto.ts       # AES-256-GCM primitives used by passwordVault
+│       │   ├── passwordPromptPreload.ts   # Ephemeral preload for the password-prompt window
+│       │   ├── passwordPromptChannels.ts  # `password-vault:submit` / `password-vault:cancel` channel names
+│       │   ├── modelManagement.ts   # Single-model-on-disk enforcement
+│       │   ├── secretsVault.ts      # API-key vault wrapper (used by externalProvider)
+│       │   ├── tokenVault.ts        # OAuth token vault wrapper (used by connectors)
+│       │   ├── oauth.ts             # OAuth helper utilities
+│       │   ├── logger.ts            # JSONL logger
+│       │   └── config.ts            # Local JSON settings persistence (hybridSearchConfig, externalProviderTokenUsage, etc.)
 │       └── renderer/                # React / TypeScript UI
 │           ├── src/
 │           │   ├── pages/               # Home, Sources, SourceDetail, Templates, Create, Tasks, Automations, Settings, ArtifactEditor
@@ -404,7 +543,7 @@ tessera/
 ├── crates/                          # Rust core engine
 │   ├── tessera_core/                # Core types, config, lifecycle (ArtifactType: Document/Slides/Sheet/Base/Infographic/LandingPage)
 │   ├── tessera_bridge/              # N-API bindings for Electron
-│   ├── tessera_sources/             # Source management, file indexing, .gitignore-style ignore patterns, EXIF/XMP/IPTC image metadata extraction, incremental re-index progress tracker
+│   ├── tessera_sources/             # Source management, file indexing, `.gitignore`-style ignore patterns, EXIF/XMP/IPTC image metadata extraction, incremental re-index progress tracker, `embedding.rs` (EmbeddingProvider trait + HashTrickEmbedding), `hybrid.rs` (BM25 + vector + RRF + recency), `search.rs` (engine entry point), `progress.rs`
 │   ├── tessera_templates/           # Template parsing and validation (Create / Analyze / Plan / Approve categories)
 │   ├── tessera_artifacts/           # Artifact creation, version history, storage, tasks model
 │   ├── tessera_export/              # csv.rs, markdown.rs, html.rs, pdf.rs, typst.rs, docx.rs, xlsx.rs, mermaid.rs, evidence_pack.rs
@@ -416,13 +555,13 @@ tessera/
 │   ├── llama-server/                # PrismML llama.cpp sidecar
 │   ├── scripts/                     # Platform download scripts (sh + ps1)
 │   └── models.json                  # Model download manifest
-├── templates/                       # YAML artifact templates
-│   ├── documents/                   # PRD, Proposal, SOP, Report, Memo, Form, Meeting agenda, Project plan, Task list, Launch checklist, Meeting notes, Brief, Purchase / Budget / Policy / Vendor approval flows
-│   ├── slides/                      # QBR, Strategy, Review, Training, Pitch
-│   ├── sheets/                      # Budget, Scorecard, Roadmap, Tracker, Inventory
-│   ├── bases/                       # Vendor register, Risk register, Decision log, Asset inventory, Roadmap
-│   ├── infographics/                # Stats overview, Process flow, Comparison
-│   ├── landingpages/                # SaaS product
+├── templates/                       # YAML artifact templates (>170 templates, 10 BCP-47 locales)
+│   ├── documents/                   # PRD, Proposal, SOP, Report, Memo, Form, Meeting agenda, Project plan, Task list, Launch checklist, Meeting notes, Brief, Purchase / Budget / Policy / Vendor approval flows, industry-tagged variants (healthcare / legal / education / government / finance / manufacturing / retail / nonprofit / creative / real estate) + `locales/<code>/`
+│   ├── slides/                      # QBR, Strategy, Review, Training, Pitch, Onboarding, Sales enablement, Board update, Investor update, Workshop + `locales/<code>/`
+│   ├── sheets/                      # Budget, Scorecard, Roadmap, Tracker, Inventory, Product catalog, Sales forecast + `locales/<code>/`
+│   ├── bases/                       # Vendor register, Risk register, Decision log, Asset inventory, Roadmap-as-Base, CRM, Incident tracker, Employee directory, Compliance register
+│   ├── infographics/                # Stats overview, Process flow, Comparison, Timeline, Org chart, KPI dashboard
+│   ├── landing_pages/               # SaaS product, Nonprofit cause, Event / conference, Personal & agency portfolio
 │   └── grammars/                    # GBNF grammar files for structured LLM output
 ├── schemas/                         # JSON Schema (template.schema.json, artifact.schema.json)
 ├── packaging/                       # electron-builder configs
@@ -432,6 +571,7 @@ tessera/
 │   └── electron-builder.yml         # Unified config used by `npm run package`
 ├── .github/workflows/ci.yml         # CI matrix (Ubuntu 22.04 / macOS 13 / Windows 2022)
 ├── docs/                            # Additional documentation
+│   └── IPC_AUDIT.md                 # Per-channel validation strategy + auth flag, cross-referenced against `apps/desktop/electron/ipc/`
 ├── LICENSE                          # MIT
 ├── README.md
 ├── PROPOSAL.md

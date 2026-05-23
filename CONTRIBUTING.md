@@ -114,6 +114,25 @@ cargo test --all
 npm run test:ui
 ```
 
+### Phase-tracking smoke suite
+
+The repo includes a cross-language smoke suite that asserts every
+feature claimed in `PROGRESS.md` / `PHASES.md` is actually backed by
+importable / callable code. CI runs the suite on every PR and the
+phase-exit checklist (see [Phase completion checklist](#phase-completion-checklist)
+below) requires it to be green before a phase flips to `DONE`:
+
+```bash
+npm run test:smoke
+```
+
+The suite covers four targets:
+
+- `apps/desktop/renderer/src/__tests__/smoke/phaseVerification.test.ts` — renderer surfaces, editors, settings.
+- `crates/tessera_connectors/tests/phase_smoke_connectors.rs` — every connector module compiles and exposes its expected entry points.
+- `crates/tessera_export/tests/phase_smoke_export.rs` — every export format module is reachable.
+- `crates/tessera_templates/tests/phase_smoke_templates.rs` — every claimed template ships and validates.
+
 ### Lint and format checks
 
 ```bash
@@ -125,6 +144,27 @@ cargo clippy --all-targets --all-features -- -D warnings
 npm run lint
 npm run type-check
 ```
+
+### Regression tests for security-sensitive changes
+
+When you touch a security-sensitive boundary (IPC handler registration,
+preload surface, CSP policy, vault crypto, export path resolution, rate
+limiter, password vault, scheduler drain, auto-updater channels), you
+**must** ship a regression test that fails without your fix and passes
+with it. The pattern lives under
+`apps/desktop/electron/__tests__/`; examples to mirror:
+
+- `__tests__/sandboxPreloadContract.test.ts` — pins the preload contract so the renderer cannot escape its sandbox.
+- `__tests__/windowAllClosedGuard.test.ts` — pins the macOS / non-macOS quit behaviour so a regression cannot leak background processes.
+- `__tests__/exportPathSafety.test.ts` — pins the export-path containment allow-list (rejects symlinks and `..` traversal).
+- `__tests__/rateLimiter.test.ts` — pins the token-bucket limiter on expensive IPC channels.
+- `__tests__/passwordVault.test.ts` — pins PBKDF2 + AES-GCM round-trip semantics for the keyringless-fallback vault.
+- `__tests__/extractedItemValidation.test.ts` — pins zod-shape validation and HTML escape of bridge-supplied extracted items.
+- `__tests__/externalProviderStream.test.ts` — pins SSE parsing + retry policy of the external LLM provider.
+
+If you cannot reproduce the failure mode with a unit test, surface the
+gap in the PR description so the reviewer can decide whether a
+higher-level test (smoke / integration) is required before merge.
 
 ---
 
