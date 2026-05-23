@@ -82,6 +82,45 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $RepoRoot  = (Resolve-Path (Join-Path $ScriptDir '..')).Path
 Set-Location $RepoRoot
 
+# Fail-fast on non-Windows hosts. PowerShell Core (`pwsh`) runs on
+# macOS and Linux, so a maintainer who has both shells available could
+# accidentally invoke `pwsh scripts/preflight.ps1` on a non-Windows
+# box. The Rollup workaround below is hard-coded to install
+# `@rollup/rollup-win32-*-msvc`, the architecture-detection block uses
+# `$env:PROCESSOR_ARCHITECTURE` / `$env:PROCESSOR_ARCHITEW6432`
+# (Windows-only environment variables — null/empty on macOS/Linux), and
+# every step assumes Windows path separators / line endings / shell
+# semantics. None of those assumptions hold on macOS/Linux, so the
+# script would silently install the wrong native binary and the
+# subsequent `vite build` would fail several minutes later with a
+# confusing "Cannot find module @rollup/rollup-win32-x64-msvc" error
+# (or, worse on Linux ARM64, install a binary that can't even be
+# loaded by the host loader). Surfacing the mismatch up front saves
+# the wait and points to the right tool — the bash sibling
+# (`scripts/preflight.sh`) has the inverse guard at the top, rejecting
+# Windows-flavoured bash (Git Bash / MSYS / Cygwin) with a pointer back
+# to this script.
+#
+# `$IsWindows` is the canonical platform indicator on PowerShell Core
+# (introduced in PS6), but it does NOT exist on Windows PowerShell 5.1
+# (the OS-shipped default on Windows 10/11). On 5.1 the `$IsWindows`
+# variable is genuinely $null, NOT $false — so a naive `if (-not
+# $IsWindows)` check would incorrectly reject Windows PowerShell 5.1.
+# We test `$null -ne $IsWindows -and -not $IsWindows` so the guard
+# only fires when we KNOW we're on macOS/Linux. On Windows PowerShell
+# 5.1 the variable is $null and the guard correctly falls through.
+if ($null -ne $IsWindows -and -not $IsWindows) {
+    Write-Host ''
+    Write-Host 'preflight.ps1 is the Windows entrypoint; it is not supported on macOS / Linux.' -ForegroundColor Red
+    Write-Host ''
+    Write-Host 'Run the bash sibling instead:'
+    Write-Host ''
+    Write-Host '    bash scripts/preflight.sh'
+    Write-Host ''
+    Write-Host '(see RELEASING.md for the full preflight workflow).'
+    exit 2
+}
+
 # ----------------------------------------------------------------------
 # Output helpers
 # ----------------------------------------------------------------------
