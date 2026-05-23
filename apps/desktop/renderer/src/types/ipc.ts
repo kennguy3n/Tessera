@@ -13,6 +13,13 @@
  *      DOM lib and cannot live in a file shared with the main process.
  */
 
+export {
+  TASK_STATUSES,
+  TASK_PRIORITIES,
+  THEMES,
+  EXPORT_FORMATS,
+} from "../../../shared/types";
+
 export type {
   AddCitationRequest,
   ArtifactApi,
@@ -45,6 +52,7 @@ export type {
   ExternalProviderTestResult,
   ExternalProviderType,
   ExtractedItem,
+  ExportFormat,
   GenerateChunk,
   GenerateRequest,
   IndexedFileInfo,
@@ -76,6 +84,7 @@ export type {
   TaskInfo,
   TaskPriority,
   TaskStatus,
+  Theme,
   TemplateApi,
   TemplateInfo,
   TesseraApi,

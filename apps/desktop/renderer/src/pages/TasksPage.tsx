@@ -12,7 +12,12 @@ import Button from "../components/Button";
 import Modal from "../components/Modal";
 import EmptyState from "../components/EmptyState";
 import { useTaskList, useTaskMutations } from "../hooks/useTasks";
-import type { TaskInfo, TaskPriority, TaskStatus } from "../types/ipc";
+import {
+  TASK_PRIORITIES,
+  type TaskInfo,
+  type TaskPriority,
+  type TaskStatus,
+} from "../types/ipc";
 
 interface ColumnDef {
   status: TaskStatus;
@@ -24,7 +29,10 @@ interface ColumnDef {
 // Blocked surfaced explicitly so users see stuck work rather than burying
 // it in a "Done" filter. The accent colors are deliberately tied to the
 // status (not the priority) so the column wall reads as a workflow board
-// at a glance.
+// at a glance. The `status` values are drawn from the canonical
+// `TaskStatus` union in `shared/types.ts` — TypeScript will fail the
+// build if a column references a status that isn't in `TASK_STATUSES`,
+// keeping the renderer and the IPC zod schema aligned.
 const COLUMNS: ColumnDef[] = [
   { status: "todo", label: "Todo", accent: "var(--color-text-secondary)" },
   {
@@ -36,7 +44,9 @@ const COLUMNS: ColumnDef[] = [
   { status: "done", label: "Done", accent: "var(--color-success, #15803d)" },
 ];
 
-const PRIORITIES: TaskPriority[] = ["low", "medium", "high", "critical"];
+// Pulled from the canonical const tuple in `shared/types.ts` so the
+// dropdown options and the IPC zod schema can never drift.
+const PRIORITIES: readonly TaskPriority[] = TASK_PRIORITIES;
 
 interface DraftTask {
   title: string;
