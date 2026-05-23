@@ -45,17 +45,19 @@ impl SourceStore {
             .expect("connection mutex poisoned")
             .execute_batch(
                 "
-            -- Enable referential integrity on this connection. SQLite
-            -- ships with `foreign_keys = OFF` for legacy compatibility,
-            -- which silently turns every `FOREIGN KEY ... ON DELETE
-            -- CASCADE` clause into a no-op. The `chunk_embeddings` table
-            -- below depends on the cascade firing when a parent chunk
-            -- is deleted; the `chunks_ad_embeddings` trigger acts as
-            -- belt-and-suspenders so cleanup still happens if a future
-            -- caller opens a connection without this pragma, but the
-            -- pragma is the primary mechanism. SQLite scopes this
-            -- pragma per-connection (not per-database), so it must be
-            -- set on every connection that opens the file.
+            -- Re-assert PRAGMA foreign_keys = ON on this connection.
+            -- The primary place this is set is `tessera_core::db::
+            -- open_shared`, which applies it at construction time so
+            -- every store inherits the setting regardless of which
+            -- `init_schema` runs first. We re-assert it here as
+            -- defence-in-depth: a future caller that constructs a
+            -- `SourceStore` from a raw `rusqlite::Connection` via some
+            -- yet-unwritten escape hatch would otherwise silently get
+            -- a no-op CASCADE on `chunk_embeddings`. The pragma is
+            -- idempotent, so applying it twice costs nothing.
+            -- Note that SQLite scopes this pragma per-connection (not
+            -- per-database); the per-connection nature is why the
+            -- pragma cannot live solely in the schema migration.
             PRAGMA foreign_keys = ON;
 
             CREATE TABLE IF NOT EXISTS sources (
@@ -574,19 +576,71 @@ impl SourceStore {
         model_id: &str,
         limit: usize,
     ) -> Result<Vec<(i64, String)>> {
+        self.chunks_missing_embedding_excluding(model_id, limit, &[])
+    }
+
+    /// Variant of [`chunks_missing_embedding`] that filters out chunk
+    /// IDs the caller has already attempted-and-failed this session.
+    ///
+    /// `backfill_embeddings` calls this with the running set of
+    /// permanently-failing chunk IDs so the SQL query doesn't keep
+    /// returning the same broken chunks on every iteration. Without
+    /// this filter, a corpus with P passing chunks and F permanently-
+    /// failing chunks at batch_size B requires `O(P * ⌈F/B⌉ / B)`
+    /// iterations to converge — every batch reads F failures before
+    /// finding the next B passes. With the filter, the failing set
+    /// is paid for exactly once (the first time each failure is hit)
+    /// and convergence is `O(P/B + F/B)`.
+    ///
+    /// SQLite's default `SQLITE_MAX_VARIABLE_NUMBER` is 32766 in modern
+    /// builds, so callers can safely accumulate thousands of excludes
+    /// before the prepared statement compiler complains; in practice
+    /// backfill should bail via the in-loop stall detector long before
+    /// the exclude list gets that large.
+    pub fn chunks_missing_embedding_excluding(
+        &self,
+        model_id: &str,
+        limit: usize,
+        exclude_chunk_ids: &[i64],
+    ) -> Result<Vec<(i64, String)>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
+        // Build the SQL with one `?` placeholder per excluded ID. We
+        // can't bind a Vec to a single placeholder in rusqlite; the
+        // canonical workaround is to construct the in-clause with the
+        // matching number of placeholders. We could use a temp table
+        // instead, but for the small exclude sets backfill produces
+        // (bounded by `total_chunks - successfully_embedded`), in-line
+        // binding is faster and simpler.
+        let exclude_placeholders = if exclude_chunk_ids.is_empty() {
+            String::new()
+        } else {
+            let placeholders: Vec<String> = (0..exclude_chunk_ids.len())
+                .map(|i| format!("?{}", i + 3))
+                .collect();
+            format!(" AND c.id NOT IN ({})", placeholders.join(", "))
+        };
+        let sql = format!(
+            "SELECT c.id, c.content
+             FROM chunks c
+             LEFT JOIN chunk_embeddings e
+                ON e.chunk_id = c.id AND e.model_id = ?1
+             WHERE e.chunk_id IS NULL{exclude_placeholders}
+             LIMIT ?2"
+        );
         let mut stmt = conn
-            .prepare(
-                "SELECT c.id, c.content
-                 FROM chunks c
-                 LEFT JOIN chunk_embeddings e
-                    ON e.chunk_id = c.id AND e.model_id = ?1
-                 WHERE e.chunk_id IS NULL
-                 LIMIT ?2",
-            )
+            .prepare(&sql)
             .map_err(|e| Error::Database(e.to_string()))?;
+        // Build the parameter list: ?1 = model_id, ?2 = limit,
+        // ?3.. = exclude IDs in order.
+        let mut params_vec: Vec<rusqlite::types::Value> = Vec::with_capacity(2 + exclude_chunk_ids.len());
+        params_vec.push(rusqlite::types::Value::Text(model_id.to_string()));
+        params_vec.push(rusqlite::types::Value::Integer(limit as i64));
+        for id in exclude_chunk_ids {
+            params_vec.push(rusqlite::types::Value::Integer(*id));
+        }
+        let params_iter = rusqlite::params_from_iter(params_vec.iter());
         let rows = stmt
-            .query_map(params![model_id, limit as i64], |row| {
+            .query_map(params_iter, |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
             })
             .map_err(|e| Error::Database(e.to_string()))?

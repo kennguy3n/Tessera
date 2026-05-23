@@ -110,8 +110,17 @@ impl Indexer {
             }
 
             match self.index_file(source_id, path, store) {
-                Ok(indexed) => {
-                    if indexed {
+                Ok(outcome) => {
+                    // Per-file inline drops fold into the pass-wide
+                    // count regardless of whether the file was newly
+                    // indexed or unchanged. (A re-index of a file
+                    // that already has chunks but no embeddings would
+                    // be `unchanged: true` AND drop-rich if the
+                    // embedder is offline, though in practice the
+                    // hash check short-circuits before chunks are
+                    // touched in that case.)
+                    result.inline_embeddings_dropped += outcome.inline_embeddings_dropped;
+                    if outcome.indexed {
                         result.indexed += 1;
                         if let Some(slot) = progress_slot {
                             progress::record_indexed(slot);
@@ -148,18 +157,26 @@ impl Indexer {
         source_id: &SourceId,
         file_path: &Path,
         store: &SourceStore,
-    ) -> Result<bool> {
+    ) -> Result<IndexFileOutcome> {
         self.index_file(source_id, file_path, store)
     }
 
-    fn index_file(&self, source_id: &SourceId, path: &Path, store: &SourceStore) -> Result<bool> {
+    fn index_file(
+        &self,
+        source_id: &SourceId,
+        path: &Path,
+        store: &SourceStore,
+    ) -> Result<IndexFileOutcome> {
         let content_bytes = std::fs::read(path)?;
         let file_hash = blake3::hash(&content_bytes).to_hex().to_string();
         let path_str = path.to_string_lossy().to_string();
 
         if let Ok(Some(existing_hash)) = store.get_file_hash(&path_str) {
             if existing_hash == file_hash {
-                return Ok(false);
+                return Ok(IndexFileOutcome {
+                    indexed: false,
+                    inline_embeddings_dropped: 0,
+                });
             }
         }
 
@@ -175,6 +192,7 @@ impl Indexer {
         let text = extract_text(path)?;
         let chunks = chunk_text(&path_str, &text, &self.chunker_config);
 
+        let mut inline_embeddings_dropped: u64 = 0;
         if !chunks.is_empty() {
             let ids = store.insert_chunks_returning_ids(file_id, &chunks)?;
             if let Some(embedder) = &self.embedder {
@@ -182,10 +200,24 @@ impl Indexer {
                 let dim = embedder.dim();
                 for (id, chunk) in ids.iter().zip(chunks.iter()) {
                     // Embedding failure on a single chunk should not
-                    // tank the whole indexing pass — log internally
-                    // and continue. The retrieval pipeline already
-                    // handles missing-embedding rows by falling back
-                    // to BM25 + recency for that chunk.
+                    // tank the whole indexing pass — log internally,
+                    // increment the per-file drop counter, and
+                    // continue. The retrieval pipeline already handles
+                    // missing-embedding rows by falling back to
+                    // BM25 + recency for that chunk. The caller
+                    // observes the cumulative drop count via
+                    // `IndexFileOutcome::inline_embeddings_dropped`
+                    // (folded into `IndexResult::
+                    // inline_embeddings_dropped` for folder passes)
+                    // and can invoke `backfill_embeddings` later to
+                    // retry — e.g. after a network-backed embedder
+                    // comes back online.
+                    //
+                    // Both the embed-compute failure path and the
+                    // upsert-persist failure path increment the same
+                    // counter: from the caller's perspective both
+                    // mean "this chunk has no embedding row and a
+                    // later backfill needs to retry it".
                     match embedder.embed(&chunk.content) {
                         Ok(vec) => {
                             let bytes = encode_vec(&vec);
@@ -195,17 +227,22 @@ impl Indexer {
                                 eprintln!(
                                     "[tessera_sources] failed to persist embedding for chunk {id}: {e}"
                                 );
+                                inline_embeddings_dropped += 1;
                             }
                         }
                         Err(e) => {
                             eprintln!("[tessera_sources] embedding failed for chunk {id}: {e}");
+                            inline_embeddings_dropped += 1;
                         }
                     }
                 }
             }
         }
 
-        Ok(true)
+        Ok(IndexFileOutcome {
+            indexed: true,
+            inline_embeddings_dropped,
+        })
     }
 
     /// Compute and persist embeddings for chunks that don't yet have
@@ -224,23 +261,49 @@ impl Indexer {
         let model_id = embedder.model_id().to_string();
         let dim = embedder.dim();
         let mut total = 0usize;
+        // Per-session failure log: chunk IDs that have failed to embed
+        // at least once in THIS backfill invocation. The next
+        // `chunks_missing_embedding_excluding` query skips them so
+        // the SQL doesn't keep returning the same broken chunks on
+        // every iteration.
+        //
+        // Without this filter, convergence on a corpus with P passing
+        // chunks and F persistently-failing chunks at batch size B is
+        // `O(P · ⌈F/B⌉ / B)` iterations — every batch query reads the
+        // F failures before finding the next B passes, so the
+        // wall-clock cost of finishing the backfill grows
+        // multiplicatively with F. With the exclude list, the failing
+        // set is paid for exactly once (the first time each failing
+        // chunk is returned) and convergence drops to the expected
+        // `O((P + F) / B)`.
+        //
+        // The pure stall-detector below ("every chunk in this batch
+        // failed") is still kept as a hard backstop: if a future
+        // pathological mix of `permanent_failures` + a batch_size
+        // smaller than F manages to fill a batch entirely with new
+        // failures, the loop still terminates rather than spinning.
+        // The exclude list shrinks the failure surface; the stall
+        // detector is the inner safety net.
+        let mut permanent_failures: Vec<i64> = Vec::new();
         // Guard against an infinite loop when `embedder.embed()`
         // returns `Err` for the same chunks on every iteration (e.g.
         // a network-backed provider whose backend is down, or a
         // chunk whose contents trip a deterministic parser bug in
-        // the embedder). Without progress accounting, the
-        // `chunks_missing_embedding` query would return the same
-        // failing chunks each pass and `backfill_embeddings` would
-        // never return. `HashTrickEmbedding` cannot hit this path
+        // the embedder). `HashTrickEmbedding` cannot hit this path
         // (pure math, infallible), but the trait is explicitly
         // designed for pluggable providers including network ones
         // (see the module-level comment in `embedding.rs`).
         loop {
-            let batch = store.chunks_missing_embedding(&model_id, batch_size)?;
+            let batch = store.chunks_missing_embedding_excluding(
+                &model_id,
+                batch_size,
+                &permanent_failures,
+            )?;
             if batch.is_empty() {
                 break;
             }
             let mut batch_progress = 0usize;
+            let mut batch_failures: Vec<i64> = Vec::new();
             for (id, content) in &batch {
                 match embedder.embed(content) {
                     Ok(vec) => {
@@ -251,23 +314,32 @@ impl Indexer {
                     }
                     Err(e) => {
                         eprintln!("[tessera_sources] backfill embed failed for chunk {id}: {e}");
+                        batch_failures.push(*id);
                     }
                 }
             }
             if batch_progress == 0 {
-                // Every chunk in this batch failed. Re-querying
-                // would return the exact same chunk IDs (the
-                // failure path doesn't insert an embedding row) and
-                // we'd loop forever. Bail out and let the caller
-                // surface the failure — the chunks stay flagged
-                // as missing, so a subsequent backfill call (after
-                // the embedder is restored) will pick them up.
+                // Every chunk in this batch failed. Even with the
+                // exclude-list optimisation, this can happen on the
+                // first iteration if F ≥ batch_size and all the
+                // freshly-discovered failures happen to land in the
+                // same batch. Bail out — the chunks stay flagged as
+                // missing on disk, so a subsequent backfill call
+                // (after the embedder is restored) will pick them up.
                 eprintln!(
                     "[tessera_sources] backfill stalled: {} chunks failed to embed in a single batch, aborting to avoid infinite loop",
                     batch.len()
                 );
                 break;
             }
+            // Park this batch's failures so the next SQL query skips
+            // them. This is what turns the worst-case convergence
+            // from `O(P · ⌈F/B⌉ / B)` to `O((P + F) / B)`. Allocating
+            // ahead-of-loop via `extend` avoids `Vec` reallocation
+            // churn on long backfills (`Vec::extend` doubles capacity
+            // amortised, vs `push` which may also double but in a
+            // less obviously-amortised way under MIR optimisation).
+            permanent_failures.extend(batch_failures);
             if batch.len() < batch_size {
                 break;
             }
@@ -289,6 +361,40 @@ pub struct IndexResult {
     pub skipped: u64,
     pub total_files: u64,
     pub errors: Vec<String>,
+    /// Number of chunks whose embedding failed to compute or persist
+    /// during this indexing pass.
+    ///
+    /// Embedding failures are intentionally non-fatal — the inline path
+    /// in `index_file` logs and continues so a single bad chunk can't
+    /// tank a 10k-file folder index. The retrieval pipeline already
+    /// degrades to BM25 + recency for chunks with no embedding row.
+    /// But silently swallowing the error robs callers of the signal
+    /// they need to decide whether to invoke `backfill_embeddings`
+    /// later (e.g. after the user reconnects to a network embedder).
+    ///
+    /// This counter surfaces that signal: callers that see a non-zero
+    /// `inline_embeddings_dropped` know there are missing-embedding
+    /// rows in the corpus that a backfill pass can later fill in.
+    pub inline_embeddings_dropped: u64,
+}
+
+/// Per-file outcome surfaced by [`Indexer::index_file`] and
+/// [`Indexer::index_single_file`].
+///
+/// Separated from [`IndexResult`] (which is whole-pass) so the
+/// `index_folder_with_progress` loop can fold per-file drop counts
+/// into the pass-wide total without losing the per-file granularity
+/// that single-file callers (`SourceManager::add_local_file`) need to
+/// react to drops on a per-file basis.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct IndexFileOutcome {
+    /// Whether the file was newly indexed (`true`) or skipped because
+    /// its content hash matched the existing record (`false`).
+    pub indexed: bool,
+    /// Number of chunks in THIS file whose embedding failed inline.
+    /// See `IndexResult::inline_embeddings_dropped` for why this is
+    /// surfaced rather than being silently logged.
+    pub inline_embeddings_dropped: u64,
 }
 
 #[cfg(test)]
@@ -385,10 +491,14 @@ mod tests {
         store.add_source(&source).unwrap();
 
         let indexer = Indexer::default();
-        let indexed = indexer
+        let outcome = indexer
             .index_single_file(&source.id, &file_path, &store)
             .unwrap();
-        assert!(indexed);
+        assert!(outcome.indexed);
+        assert_eq!(
+            outcome.inline_embeddings_dropped, 0,
+            "no embedder attached → nothing to drop"
+        );
 
         let results = store.search_fts("Single file content", 10).unwrap();
         assert!(!results.is_empty());
@@ -545,6 +655,237 @@ mod tests {
         assert!(
             total > 0,
             "backfill should embed at least one chunk on flaky failures; got total={total}"
+        );
+    }
+
+    /// Embedder that fails on a fixed, caller-supplied set of chunk
+    /// CONTENTS (matched by exact string) and succeeds otherwise.
+    /// Used to construct a corpus with a known persistently-failing
+    /// subset, so the backfill-convergence regression can measure
+    /// how many times each failing chunk is queried before the loop
+    /// terminates.
+    struct ContentBlocklistEmbedder {
+        model_id: String,
+        dim: usize,
+        blocked: std::collections::HashSet<String>,
+        per_chunk_calls: Arc<Mutex<std::collections::HashMap<String, usize>>>,
+    }
+    impl crate::embedding::EmbeddingProvider for ContentBlocklistEmbedder {
+        fn model_id(&self) -> &str {
+            &self.model_id
+        }
+        fn dim(&self) -> usize {
+            self.dim
+        }
+        fn embed(&self, text: &str) -> tessera_core::error::Result<Vec<f32>> {
+            let mut tally = self.per_chunk_calls.lock().unwrap();
+            *tally.entry(text.to_string()).or_insert(0) += 1;
+            if self.blocked.contains(text) {
+                Err(tessera_core::error::Error::Database(
+                    "persistently-failing content".to_string(),
+                ))
+            } else {
+                Ok(vec![0.0f32; self.dim])
+            }
+        }
+    }
+
+    #[test]
+    fn backfill_does_not_re_query_persistently_failing_chunks() {
+        // Regression test for the convergence-rate bug surfaced by
+        // Devin Review ANALYSIS_0005. Prior to the
+        // `chunks_missing_embedding_excluding` wiring, a corpus with P
+        // passing chunks and F persistently-failing chunks at batch
+        // size B converged in `O(P · ⌈F/B⌉ / B)` iterations because
+        // each batch SQL query returned the F failures before finding
+        // the next B passes. With the fix, each failing chunk is
+        // queried (and attempted) exactly ONCE per backfill
+        // invocation, then parked in the exclude list.
+        //
+        // We assert the exact contract: every blocked-content chunk
+        // has `per_chunk_calls[content] == 1` after the backfill
+        // finishes, even though several batches were needed to drain
+        // the passing chunks.
+        let dir = tempfile::tempdir().unwrap();
+        // 8 files: 2 will deterministically fail, 6 will pass. The
+        // batch size of 3 means it takes 3 batches to drain the
+        // passing set after the 2 failures are parked.
+        let failing_contents: Vec<String> = (0..2).map(|i| format!("FAIL chunk {i}")).collect();
+        let passing_contents: Vec<String> = (0..6).map(|i| format!("OK chunk {i}")).collect();
+        for (i, content) in failing_contents
+            .iter()
+            .chain(passing_contents.iter())
+            .enumerate()
+        {
+            std::fs::write(dir.path().join(format!("file_{i}.txt")), content).unwrap();
+        }
+
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder(dir.path().to_string_lossy().to_string());
+        store.add_source(&source).unwrap();
+        // Index without an embedder so all 8 chunks land in the table
+        // with no embedding row.
+        Indexer::default()
+            .index_folder(&source.id, dir.path(), &store)
+            .unwrap();
+
+        let per_chunk_calls = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let embedder = Arc::new(ContentBlocklistEmbedder {
+            model_id: "blocklist-v1-8d".to_string(),
+            dim: 8,
+            blocked: failing_contents.iter().cloned().collect(),
+            per_chunk_calls: Arc::clone(&per_chunk_calls),
+        });
+        let indexer = Indexer::default().with_embedder(embedder);
+        let total = indexer.backfill_embeddings(&store, 3).unwrap();
+
+        // All 6 passing chunks should have been embedded.
+        assert_eq!(
+            total, 6,
+            "all 6 passing chunks should be embedded after the failures are parked"
+        );
+
+        // Every failing chunk should have been ATTEMPTED exactly
+        // once. Pre-fix this would have been ⌈failing_count /
+        // (batch_size - failing_count)⌉ + 1 ≈ 3 attempts per failure.
+        let tally = per_chunk_calls.lock().unwrap();
+        for content in &failing_contents {
+            let n = tally.get(content).copied().unwrap_or(0);
+            assert_eq!(
+                n, 1,
+                "failing chunk {content:?} was attempted {n} times — exclude-list parking must prevent repeat queries"
+            );
+        }
+        // And every passing chunk should also have been attempted
+        // exactly once (no duplicate work).
+        for content in &passing_contents {
+            let n = tally.get(content).copied().unwrap_or(0);
+            assert_eq!(
+                n, 1,
+                "passing chunk {content:?} was attempted {n} times — embedded chunks should not be re-queried"
+            );
+        }
+    }
+
+    /// Embedder that succeeds on the first N calls then fails forever
+    /// — for exercising inline-embedding-drop counting on a folder
+    /// that's larger than the embedder's "budget".
+    struct BudgetedEmbedder {
+        model_id: String,
+        dim: usize,
+        budget: Arc<Mutex<usize>>,
+    }
+    impl crate::embedding::EmbeddingProvider for BudgetedEmbedder {
+        fn model_id(&self) -> &str {
+            &self.model_id
+        }
+        fn dim(&self) -> usize {
+            self.dim
+        }
+        fn embed(&self, _text: &str) -> tessera_core::error::Result<Vec<f32>> {
+            let mut b = self.budget.lock().unwrap();
+            if *b == 0 {
+                return Err(tessera_core::error::Error::Database(
+                    "embedder budget exhausted".to_string(),
+                ));
+            }
+            *b -= 1;
+            Ok(vec![0.0f32; self.dim])
+        }
+    }
+
+    #[test]
+    fn index_folder_surfaces_inline_embedding_drops() {
+        // Regression test for Devin Review ANALYSIS_0004. The inline
+        // path in `index_file` used to `eprintln!` embedding failures
+        // and silently continue, leaving callers with no signal that
+        // they should later invoke `backfill_embeddings` to retry.
+        // The fix surfaces a per-pass counter
+        // (`IndexResult::inline_embeddings_dropped`) so callers can
+        // observe the drop rate and decide.
+        //
+        // Construct: 6 single-chunk files. Embedder has budget 3, so
+        // 3 chunks embed successfully and 3 drop inline. The result
+        // should report `inline_embeddings_dropped = 3` AND the
+        // folder pass should still complete with `indexed = 6`
+        // (drops are non-fatal).
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..6 {
+            std::fs::write(
+                dir.path().join(format!("file_{i}.txt")),
+                format!("file {i} content"),
+            )
+            .unwrap();
+        }
+
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder(dir.path().to_string_lossy().to_string());
+        store.add_source(&source).unwrap();
+
+        let embedder = Arc::new(BudgetedEmbedder {
+            model_id: "budgeted-v1-8d".to_string(),
+            dim: 8,
+            budget: Arc::new(Mutex::new(3)),
+        });
+        let indexer = Indexer::default().with_embedder(embedder);
+        let result = indexer
+            .index_folder(&source.id, dir.path(), &store)
+            .unwrap();
+
+        // All 6 files indexed (drops are non-fatal).
+        assert_eq!(result.indexed, 6);
+        assert!(
+            result.errors.is_empty(),
+            "inline embedding drops are NOT errors — they're a separate signal"
+        );
+        // Exactly 3 chunks dropped (budget was 3, total chunks = 6).
+        assert_eq!(
+            result.inline_embeddings_dropped, 3,
+            "expected 3 dropped embeddings (budget=3, files=6); got {}",
+            result.inline_embeddings_dropped
+        );
+    }
+
+    #[test]
+    fn index_single_file_surfaces_inline_embedding_drops() {
+        // Per-file counterpart: callers that go through
+        // `index_single_file` (SourceManager::add_local_file,
+        // SourceManager::reindex_source on LocalFile sources) get the
+        // drop count via `IndexFileOutcome::inline_embeddings_dropped`
+        // directly, without going through IndexResult.
+        let dir = tempfile::tempdir().unwrap();
+        // Single file that the chunker will split into multiple
+        // chunks. We use a long string that exceeds the default
+        // chunker's target size to guarantee multiple chunks.
+        let mut large_content = String::new();
+        for i in 0..2000 {
+            use std::fmt::Write as _;
+            // `write!` into String avoids the intermediate `format!`
+            // allocation that clippy::format_push_string flags.
+            let _ = write!(large_content, "paragraph {i} of test content. ");
+        }
+        let file_path = dir.path().join("big.txt");
+        std::fs::write(&file_path, &large_content).unwrap();
+
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_file(file_path.to_string_lossy().to_string());
+        store.add_source(&source).unwrap();
+
+        // Budget = 0 → every chunk fails to embed.
+        let embedder = Arc::new(BudgetedEmbedder {
+            model_id: "broke-v1-8d".to_string(),
+            dim: 8,
+            budget: Arc::new(Mutex::new(0)),
+        });
+        let indexer = Indexer::default().with_embedder(embedder);
+        let outcome = indexer
+            .index_single_file(&source.id, &file_path, &store)
+            .unwrap();
+
+        assert!(outcome.indexed, "file indexed despite embedding failures");
+        assert!(
+            outcome.inline_embeddings_dropped > 0,
+            "expected >0 dropped embeddings on a multi-chunk file with budget=0"
         );
     }
 }

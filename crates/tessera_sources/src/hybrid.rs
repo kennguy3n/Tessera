@@ -40,15 +40,22 @@
 //! ranked items in one list can still surface if they're top of the
 //! other).
 //!
-//! Recency is applied multiplicatively on top of the RRF score:
+//! Recency is applied multiplicatively on top of the RRF score using a
+//! true half-life decay:
 //!
 //! ```text
-//!   final(d) = score(d) * exp(-Δt(d) / halflife)
+//!   final(d) = score(d) * 2^(-Δt(d) / halflife)
+//!            = score(d) * exp(-Δt(d) * ln(2) / halflife)
 //! ```
 //!
 //! where `Δt(d)` is the age in seconds and `halflife` is configurable
-//! (default 30 days). Chunks with no `last_modified` get a recency
-//! multiplier of 1.0 (neutral).
+//! (default 30 days). At one half-life the multiplier is exactly 0.5;
+//! at two half-lives 0.25; and so on. (The `ln(2)` factor is what
+//! converts the natural-exponent form into a true half-life — without
+//! it the multiplier at one half-life would be `1/e ≈ 0.368` instead
+//! of `0.5`. The `recency_one_halflife_is_half` regression test in
+//! this module pins the correct behaviour.) Chunks with no
+//! `last_modified` get a recency multiplier of 1.0 (neutral).
 //!
 //! ## Why RRF over weighted-sum-of-normalised-scores
 //!

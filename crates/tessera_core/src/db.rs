@@ -59,12 +59,31 @@ use crate::error::{Error, Result};
 /// when used, so reads and writes are serialised across all clones.
 pub type SharedConnection = Arc<Mutex<Connection>>;
 
+/// Apply the per-connection PRAGMAs that every Tessera store relies on.
+///
+/// SQLite ships with `foreign_keys = OFF` for legacy compatibility, so
+/// any `FOREIGN KEY ... ON DELETE CASCADE` clause is a silent no-op
+/// unless this pragma is set. `SourceStore`'s `chunk_embeddings` table
+/// (and any future table that uses cascading deletes) depends on this.
+/// SQLite scopes the pragma per-connection (not per-database), so it
+/// must be set on every connection that opens the file — which is why
+/// this lives at the bottom of the connection-construction stack rather
+/// than in any individual store's `init_schema`.
+fn apply_default_pragmas(conn: &Connection) -> Result<()> {
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| Error::Database(e.to_string()))
+}
+
 /// Open the database at `path` and wrap it in a [`SharedConnection`].
 ///
 /// Call this once during bridge initialisation; pass the returned
-/// handle (cloned) into each store constructor.
+/// handle (cloned) into each store constructor. The returned
+/// connection has `PRAGMA foreign_keys = ON` already applied so that
+/// every store sees CASCADE-enabled FK semantics regardless of the
+/// order in which their `init_schema` runs.
 pub fn open_shared(path: &str) -> Result<SharedConnection> {
     let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
+    apply_default_pragmas(&conn)?;
     Ok(Arc::new(Mutex::new(conn)))
 }
 
@@ -73,9 +92,11 @@ pub fn open_shared(path: &str) -> Result<SharedConnection> {
 ///
 /// Intended for tests that want to share a single in-memory database
 /// across multiple stores. Single-store tests can keep using each
-/// store's `open_in_memory()` helper instead.
+/// store's `open_in_memory()` helper instead. The returned connection
+/// has `PRAGMA foreign_keys = ON` already applied, matching production.
 pub fn open_shared_in_memory() -> Result<SharedConnection> {
     let conn = Connection::open_in_memory().map_err(|e| Error::Database(e.to_string()))?;
+    apply_default_pragmas(&conn)?;
     Ok(Arc::new(Mutex::new(conn)))
 }
 
@@ -93,6 +114,23 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn open_shared_enables_foreign_keys_pragma() {
+        // CASCADE semantics on FK clauses are silent no-ops unless this
+        // pragma is set on the connection. `apply_default_pragmas`
+        // runs at construction time so every store inherits the
+        // setting regardless of which `init_schema` runs first.
+        let db = open_shared_in_memory().expect("in-memory");
+        let conn = db.lock().expect("lock");
+        let fk: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .expect("pragma query");
+        assert_eq!(
+            fk, 1,
+            "open_shared_in_memory must enable PRAGMA foreign_keys so CASCADE clauses fire"
+        );
     }
 
     #[test]
