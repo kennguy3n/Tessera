@@ -391,9 +391,33 @@ export async function promptForVaultPassword(opts: {
       preload: path.join(__dirname, "passwordPromptPreload.js"),
     },
   });
-  await win.loadURL(
-    `data:text/html;charset=utf-8,${encodeURIComponent(promptHtml)}`,
-  );
+  // Guard `loadURL` with a try/destroy so a navigation failure cannot
+  // leave the prompt BrowserWindow open after this function rejects.
+  //
+  // Today the URL is `data:text/html;charset=utf-8,...` which is
+  // parsed in-process and cannot fail for well-formed input (and
+  // `encodeURIComponent` guarantees well-formedness), so the catch
+  // branch is unreachable. But this is defense-in-depth for the day
+  // someone migrates the prompt away from `data:` — e.g. to
+  // `file://passwordPrompt.html` so the inline `<script>` actually
+  // gets CSP coverage (a real WS10-related ask the bot flagged
+  // separately). At that point `loadURL` becomes capable of throwing
+  // ENOENT / file-not-found / Chromium-init failures, and a thrown
+  // `loadURL` here would orphan the BrowserWindow because the
+  // `closed`-event registration further down is wired up INSIDE the
+  // `new Promise` body and never runs if we reject before reaching
+  // it. Destroying the window here closes the resource leak before
+  // it can become reachable.
+  try {
+    await win.loadURL(
+      `data:text/html;charset=utf-8,${encodeURIComponent(promptHtml)}`,
+    );
+  } catch (err) {
+    if (!win.isDestroyed()) {
+      win.destroy();
+    }
+    throw err;
+  }
 
   return new Promise<string>((resolve, reject) => {
     let settled = false;
