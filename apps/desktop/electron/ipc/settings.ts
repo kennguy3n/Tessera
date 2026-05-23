@@ -166,6 +166,14 @@ async function testExternalProviderConnection(
  *     newer renderer (with a future provider type the main process
  *     doesn't know about) degrade gracefully rather than failing
  *     the whole list-models call.
+ *   - `enabled`: must be a boolean. Lets a user who has just
+ *     toggled the provider on in the form (without saving) still
+ *     successfully list models — the handler gates on the EFFECTIVE
+ *     `enabled` after merging overrides atop the persisted config.
+ *     Devin Review round 12 ANALYSIS_002 flagged that the handler
+ *     previously gated on the PERSISTED `enabled` flag only, so
+ *     fresh-enable + List would fail with "External provider is
+ *     disabled" even though the form clearly intended otherwise.
  */
 export function parseListModelsOverrides(
   raw: unknown,
@@ -182,6 +190,9 @@ export function parseListModelsOverrides(
   ) {
     out.providerType =
       obj.providerType as ExternalProviderListModelsDraftOverrides["providerType"];
+  }
+  if (typeof obj.enabled === "boolean") {
+    out.enabled = obj.enabled;
   }
   return out;
 }
@@ -350,11 +361,23 @@ export function registerSettingsHandlers(): void {
       try {
         const config = loadConfig();
         const baseProvider = config.externalProvider;
-        if (!baseProvider || !baseProvider.enabled) {
+        // Defer the enabled-state check until AFTER overrides are
+        // merged. A user who just toggled the provider on in the
+        // form (without saving) should still be able to list models
+        // — the form's draft `enabled` is what reflects their
+        // intent, not the last-saved value. We only reject
+        // outright here if the provider record itself is missing
+        // (i.e. the user has never configured an external provider
+        // at all), in which case the override could not possibly
+        // provide enough state to proceed: no `apiKeyRef`, no
+        // `apiUrl` field shape, nothing for the vault lookup
+        // below to key off. The post-merge check at line ~370
+        // handles the enabled-toggle gate.
+        if (!baseProvider) {
           return {
             ok: false,
             kind: "error",
-            error: "External provider is disabled",
+            error: "External provider is not configured",
           };
         }
 
@@ -371,7 +394,23 @@ export function registerSettingsHandlers(): void {
           ...(overrides.providerType !== undefined
             ? { providerType: overrides.providerType }
             : {}),
+          ...(overrides.enabled !== undefined
+            ? { enabled: overrides.enabled }
+            : {}),
         };
+
+        // Gate on the EFFECTIVE enabled flag (overrides merged
+        // atop persisted). This is the architectural fix to Devin
+        // Review round 12 ANALYSIS_002 — the form's draft `enabled`
+        // now reflects the user's intent for the listing call,
+        // matching what the renderer's button-enabled gate checks.
+        if (!provider.enabled) {
+          return {
+            ok: false,
+            kind: "error",
+            error: "External provider is disabled",
+          };
+        }
 
         if (!provider.apiUrl.trim()) {
           return {

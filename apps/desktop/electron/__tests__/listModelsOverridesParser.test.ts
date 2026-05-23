@@ -42,6 +42,34 @@ describe("parseListModelsOverrides — happy paths", () => {
     });
   });
 
+  it("extracts enabled when provided as a boolean (round 12 ANALYSIS_002)", () => {
+    // The form's `enabled` is forwarded as a draft override so a
+    // user who has just toggled the provider on in the form (but
+    // not yet saved) can still successfully list models. The
+    // handler gates on the EFFECTIVE enabled (override merged
+    // atop persisted) rather than the persisted-only flag.
+    expect(parseListModelsOverrides({ enabled: true })).toEqual({
+      enabled: true,
+    });
+    expect(parseListModelsOverrides({ enabled: false })).toEqual({
+      enabled: false,
+    });
+  });
+
+  it("accepts all three fields in the same payload", () => {
+    expect(
+      parseListModelsOverrides({
+        apiUrl: "https://x.example.com",
+        providerType: "anthropic",
+        enabled: true,
+      }),
+    ).toEqual({
+      apiUrl: "https://x.example.com",
+      providerType: "anthropic",
+      enabled: true,
+    });
+  });
+
   it("preserves an empty apiUrl (downstream handler decides what to do with it)", () => {
     // The handler explicitly checks `!provider.apiUrl.trim()` and
     // returns a clear error — the parser must not silently drop
@@ -75,6 +103,17 @@ describe("parseListModelsOverrides — defensive paths", () => {
       .toEqual({});
     expect(parseListModelsOverrides({ providerType: 1 })).toEqual({});
     expect(parseListModelsOverrides({ providerType: null })).toEqual({});
+  });
+
+  it("drops enabled when value is not a boolean (round 12 ANALYSIS_002)", () => {
+    // Strings, numbers, null, and undefined all dropped — the
+    // handler falls back to the persisted `enabled` for that field
+    // (the documented degrade-gracefully invariant).
+    expect(parseListModelsOverrides({ enabled: "true" })).toEqual({});
+    expect(parseListModelsOverrides({ enabled: 1 })).toEqual({});
+    expect(parseListModelsOverrides({ enabled: null })).toEqual({});
+    expect(parseListModelsOverrides({ enabled: undefined })).toEqual({});
+    expect(parseListModelsOverrides({ enabled: {} })).toEqual({});
   });
 
   it("ignores unrelated fields without error", () => {

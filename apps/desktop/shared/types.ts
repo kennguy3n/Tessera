@@ -377,10 +377,22 @@ export type ExternalProviderListModelsResult =
  * entry (looked up via `apiKeyRef`) is always used for the actual
  * HTTP call. To list models against a NEW key, the user must save
  * the key first.
+ *
+ * `enabled` IS settable so a user who has just toggled the
+ * provider on in the form (but not yet saved) can still click
+ * "List models" without first hitting Save. Devin Review round 12
+ * ANALYSIS_002 flagged the gap: previously the handler gated on
+ * the PERSISTED `enabled` flag, so a fresh-enable + List would
+ * fail with "External provider is disabled" even though the form
+ * the user is looking at clearly intends the provider to be on.
+ * Including `enabled` in the draft override lets the handler gate
+ * on the EFFECTIVE config (overrides merged atop persisted) so
+ * the UX matches the user's mental model.
  */
 export interface ExternalProviderListModelsDraftOverrides {
   apiUrl?: string;
   providerType?: ExternalProviderType;
+  enabled?: boolean;
 }
 
 /**

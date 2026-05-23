@@ -135,6 +135,15 @@ export default function ExternalProviderCard() {
             ? {
                 apiUrl: provider.apiUrl,
                 providerType: provider.providerType,
+                // Forward the form's `enabled` so the handler gates
+                // on what the user is currently seeing (form state)
+                // rather than what was last persisted. This lets a
+                // user who has just toggled the provider on click
+                // "List models" without first hitting Save. See the
+                // long doc comment on
+                // `ExternalProviderListModelsDraftOverrides` for the
+                // motivation (Devin Review round 12 ANALYSIS_002).
+                enabled: provider.enabled,
               }
             : undefined,
         );
@@ -436,17 +445,6 @@ export default function ExternalProviderCard() {
                   //   - `!provider.apiUrl.trim()`: nothing to list
                   //     against — the form's URL field is empty or
                   //     whitespace only.
-                  //   - `!provider.enabled`: the provider toggle is
-                  //     off in the form. The IPC handler in
-                  //     `electron/ipc/settings.ts` reads `enabled`
-                  //     from the PERSISTED config (the API key only
-                  //     comes from the vault, so there is no way to
-                  //     list against an in-flight unsaved key), so a
-                  //     locally-untoggled provider would error with
-                  //     "External provider is disabled" — we want
-                  //     the button to reflect that pre-condition
-                  //     instead of letting the user click it and get
-                  //     a confusing error.
                   //   - `!provider.hasApiKey`: no saved API key in
                   //     the vault. The handler cannot proceed
                   //     without one (we deliberately do NOT accept
@@ -454,26 +452,37 @@ export default function ExternalProviderCard() {
                   //     comment) so the only way forward is to Save
                   //     the key first and click List models again.
                   //
-                  // Devin Review round 10 surfaced the UX gap: the
-                  // button was clickable in all these states and the
-                  // user saw "External provider is disabled" on a
-                  // first-time-setup click instead of the expected
-                  // model list. The `title` attribute below surfaces
-                  // the precise reason so the user knows what to do.
+                  // Note: there is intentionally NO `!provider.enabled`
+                  // gate here. The entire editor body (this button
+                  // included) is wrapped in `{provider.enabled && ...}`
+                  // at line ~376, so a `provider.enabled=false` state
+                  // collapses this whole subtree before the button
+                  // can render. Adding the gate to `disabled` would
+                  // be dead code — Devin Review round 12 ANALYSIS_002
+                  // flagged the redundancy. The form's `enabled`
+                  // value is forwarded as a draft override to the
+                  // listModels handler (see `onListModels` above)
+                  // so the handler gates on the EFFECTIVE enabled
+                  // (form-override merged atop persisted), avoiding
+                  // the previous "fresh-enable + List = External
+                  // provider is disabled" UX gap.
+                  //
+                  // Devin Review round 10 surfaced the broader UX
+                  // gap: the button was clickable in all these
+                  // states and the user saw "External provider is
+                  // disabled" on a first-time-setup click instead
+                  // of the expected model list. The `title`
+                  // attribute below surfaces the precise reason so
+                  // the user knows what to do.
                   disabled={
-                    busy ||
-                    !provider.apiUrl.trim() ||
-                    !provider.enabled ||
-                    !provider.hasApiKey
+                    busy || !provider.apiUrl.trim() || !provider.hasApiKey
                   }
                   title={
                     !provider.apiUrl.trim()
                       ? "Provide an API URL first"
-                      : !provider.enabled
-                        ? "Enable the provider and Save before listing models"
-                        : !provider.hasApiKey
-                          ? "Save an API key first to list models from the provider"
-                          : "Fetch available models from this provider"
+                      : !provider.hasApiKey
+                        ? "Save an API key first to list models from the provider"
+                        : "Fetch available models from this provider"
                   }
                   aria-label="Fetch available models from this provider"
                 >
