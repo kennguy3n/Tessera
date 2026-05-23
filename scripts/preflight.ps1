@@ -135,8 +135,13 @@ function Invoke-AllSteps {
 # ----------------------------------------------------------------------
 
 function Resolve-Version {
-    if ($PSBoundParameters.ContainsKey('Version') -and $Version) {
-        return $Version
+    # NOTE: `$PSBoundParameters` here would scope to *this* function (which
+    # declares no parameters), not the script. The script-level `-Version`
+    # parameter is reachable via the parent scope because PowerShell
+    # functions inherit the caller's variables — so we test the variable
+    # itself rather than the (empty) function-local PSBoundParameters.
+    if ($script:Version) {
+        return $script:Version
     }
     if ($env:TESSERA_PREFLIGHT_VERSION) {
         return $env:TESSERA_PREFLIGHT_VERSION
@@ -156,38 +161,51 @@ function Resolve-Version {
 # Step registration
 # ----------------------------------------------------------------------
 
-# 1) Rust workspace tests.
+# 1) Rust formatting check — same command CI runs (ci.yml line 103).
+Add-Step `
+    -Label   'Rust format check (cargo fmt --all -- --check)' `
+    -Command 'cargo fmt --all -- --check' `
+    -Action  { cargo fmt --all -- --check }
+
+# 2) Rust clippy with warnings-as-errors — same command CI runs
+#    (ci.yml line 104; RUSTFLAGS="-D warnings" is set globally there).
+Add-Step `
+    -Label   'Rust clippy (cargo clippy --all-targets --all-features -- -D warnings)' `
+    -Command 'cargo clippy --all-targets --all-features -- -D warnings' `
+    -Action  { cargo clippy --all-targets --all-features -- -D warnings }
+
+# 3) Rust workspace tests.
 Add-Step `
     -Label   'Rust tests (cargo test --all)' `
     -Command 'cargo test --all' `
     -Action  { cargo test --all }
 
-# 2) Desktop renderer / Electron lint.
+# 4) Desktop renderer / Electron lint.
 Add-Step `
     -Label   'Desktop lint (npm run lint --workspace=apps/desktop)' `
     -Command 'npm run lint --workspace=apps/desktop' `
     -Action  { npm run lint --workspace=apps/desktop }
 
-# 3) Desktop TypeScript type-check.
+# 5) Desktop TypeScript type-check.
 Add-Step `
     -Label   'Desktop type-check (npm run type-check --workspace=apps/desktop)' `
     -Command 'npm run type-check --workspace=apps/desktop' `
     -Action  { npm run type-check --workspace=apps/desktop }
 
-# 4) Desktop unit / component tests (Vitest).
+# 6) Desktop unit / component tests (Vitest).
 Add-Step `
     -Label   'Desktop tests (npm run test --workspace=apps/desktop)' `
     -Command 'npm run test --workspace=apps/desktop' `
     -Action  { npm run test --workspace=apps/desktop }
 
-# 5) Build the bundle electron-builder will consume so the
+# 7) Build the bundle electron-builder will consume so the
 #    dry-pack runs against current artefacts, not a stale one.
 Add-Step `
     -Label   'Desktop build (npm run build --workspace=apps/desktop)' `
     -Command 'npm run build --workspace=apps/desktop' `
     -Action  { npm run build --workspace=apps/desktop }
 
-# 6) electron-builder dry-pack. `--dir` skips installer creation
+# 8) electron-builder dry-pack. `--dir` skips installer creation
 #    but still assembles the full app bundle, catching packaging
 #    regressions before a release tag is pushed.
 $skip = $SkipPackage -or ($env:TESSERA_PREFLIGHT_SKIP_PACKAGE -eq '1')

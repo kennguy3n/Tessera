@@ -45,12 +45,14 @@ scripts/preflight.sh
 
 The script runs:
 
-1. `cargo test --all`
-2. `npm run lint --workspace=apps/desktop`
-3. `npm run type-check --workspace=apps/desktop`
-4. `npm run test --workspace=apps/desktop`
-5. `npm run build --workspace=apps/desktop`
-6. `npx electron-builder --config packaging/electron-builder.yml --dir`
+1. `cargo fmt --all -- --check`
+2. `cargo clippy --all-targets --all-features -- -D warnings`
+3. `cargo test --all`
+4. `npm run lint --workspace=apps/desktop`
+5. `npm run type-check --workspace=apps/desktop`
+6. `npm run test --workspace=apps/desktop`
+7. `npm run build --workspace=apps/desktop`
+8. `npx electron-builder --config packaging/electron-builder.yml --dir`
 
 A successful run ends with:
 

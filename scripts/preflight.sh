@@ -55,12 +55,19 @@ else
   C_RESET=""
 fi
 
-# Step counter so the user sees "1/6", "2/6", ... headers. The total
+# Step counter so the user sees "1/N", "2/N", ... headers. The total
 # is recomputed at start so it stays correct even when steps are
 # skipped via env vars.
 STEP_INDEX=0
 STEP_TOTAL=0
-declare -a PREFLIGHT_STEPS=()
+
+# Parallel arrays. We deliberately avoid a single delimiter-joined
+# string because step *commands* commonly contain shell metacharacters
+# (pipes, ampersands, `--`, etc.) and any single ASCII delimiter would
+# either need escaping at every call site or risk silently truncating
+# the command at the first occurrence.
+declare -a PREFLIGHT_STEP_LABELS=()
+declare -a PREFLIGHT_STEP_COMMANDS=()
 
 # Registers a step. Each step is described by a label and a shell
 # command (single string, evaluated later). We collect all of them
@@ -68,18 +75,20 @@ declare -a PREFLIGHT_STEPS=()
 register_step() {
   local label="$1"
   local cmd="$2"
-  PREFLIGHT_STEPS+=("${label}|${cmd}")
+  PREFLIGHT_STEP_LABELS+=("${label}")
+  PREFLIGHT_STEP_COMMANDS+=("${cmd}")
 }
 
 # Runs all registered steps in order. On failure prints a clear
 # "FAILED" header pointing at the offending step and exits with the
 # step's own exit code so CI tooling can diagnose.
 run_steps() {
-  STEP_TOTAL="${#PREFLIGHT_STEPS[@]}"
-  for entry in "${PREFLIGHT_STEPS[@]}"; do
-    STEP_INDEX=$((STEP_INDEX + 1))
-    local label="${entry%%|*}"
-    local cmd="${entry#*|}"
+  STEP_TOTAL="${#PREFLIGHT_STEP_LABELS[@]}"
+  local i
+  for (( i = 0; i < STEP_TOTAL; i++ )); do
+    STEP_INDEX=$((i + 1))
+    local label="${PREFLIGHT_STEP_LABELS[$i]}"
+    local cmd="${PREFLIGHT_STEP_COMMANDS[$i]}"
     printf '\n%s[%d/%d] %s%s\n' "${C_BOLD}" "${STEP_INDEX}" "${STEP_TOTAL}" "${label}" "${C_RESET}"
     printf '%s    %s%s\n' "${C_DIM}" "${cmd}" "${C_RESET}"
     # `set -e` would abort the whole script on the first failure
@@ -124,31 +133,40 @@ detect_version() {
 # Step registration
 # ----------------------------------------------------------------------
 
-# 1) Rust workspace tests — mirrors `npm run test:rust` and the CI
+# 1) Rust formatting check — same command CI runs (ci.yml line 103).
+register_step "Rust format check (cargo fmt --all -- --check)" \
+  "cargo fmt --all -- --check"
+
+# 2) Rust clippy with warnings-as-errors — same command CI runs
+#    (ci.yml line 104; RUSTFLAGS="-D warnings" is set globally there).
+register_step "Rust clippy (cargo clippy --all-targets --all-features -- -D warnings)" \
+  "cargo clippy --all-targets --all-features -- -D warnings"
+
+# 3) Rust workspace tests — mirrors `npm run test:rust` and the CI
 #    Rust matrix. We run with `--all` so every crate's tests execute.
 register_step "Rust tests (cargo test --all)" \
   "cargo test --all"
 
-# 2) Desktop renderer / Electron lint — same command CI runs.
+# 4) Desktop renderer / Electron lint — same command CI runs.
 register_step "Desktop lint (npm run lint --workspace=apps/desktop)" \
   "npm run lint --workspace=apps/desktop"
 
-# 3) Desktop TypeScript type-check.
+# 5) Desktop TypeScript type-check.
 register_step "Desktop type-check (npm run type-check --workspace=apps/desktop)" \
   "npm run type-check --workspace=apps/desktop"
 
-# 4) Desktop unit / component tests (Vitest).
+# 6) Desktop unit / component tests (Vitest).
 register_step "Desktop tests (npm run test --workspace=apps/desktop)" \
   "npm run test --workspace=apps/desktop"
 
-# 5) Build the bundle electron-builder will consume. Without this,
+# 7) Build the bundle electron-builder will consume. Without this,
 #    `electron-builder --dir` would package whatever stale renderer /
 #    main bundles happen to be on disk, which defeats the purpose of
 #    a release dry-run.
 register_step "Desktop build (npm run build --workspace=apps/desktop)" \
   "npm run build --workspace=apps/desktop"
 
-# 6) electron-builder dry-pack. `--dir` skips the installer step
+# 8) electron-builder dry-pack. `--dir` skips the installer step
 #    (no .dmg / .exe / .AppImage produced) but still assembles the
 #    full app bundle, so we catch packaging regressions (missing
 #    files, broken extraResources, native asar issues) before
