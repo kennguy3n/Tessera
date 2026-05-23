@@ -14,6 +14,12 @@ import { getModelSidecar } from "../appState";
 import type { ModelStatus } from "../../shared/types";
 import { assertString } from "./validate";
 import { GenerateRequestSchema } from "./schemas";
+import { loadConfig, type ExternalProviderConfig } from "../config";
+import * as secretsVault from "../secretsVault";
+import {
+  streamExternalProvider,
+  type ExternalProviderStreamChunk,
+} from "../externalProviderStream";
 
 /**
  * Bind a destroyed-window-safe sender for an IPC channel.
@@ -137,18 +143,22 @@ export function registerModelHandlers(): void {
 
   idempotentHandle("model:generate", async (event, request: unknown) => {
     const parsed = GenerateRequestSchema.parse(request);
-    const sidecar = getModelSidecar();
-    if (!sidecar || !sidecar.isRunning) {
-      throw new Error("Model runtime not running — start a model first");
-    }
-    sidecar.markGenerationActive();
-    const endpoint = sidecar.endpoint;
-    const body = {
-      prompt: parsed.prompt,
-      n_predict: parsed.maxTokens ?? 2048,
-      temperature: parsed.temperature ?? 0.7,
-      stream: true,
-    };
+
+    // Dispatch decision:
+    //
+    //   1. If the External Provider is enabled, configured and has a
+    //      keychain-resident API key, route generation there and stream
+    //      tokens via `model:token` using the shared SSE parser in
+    //      `externalProviderStream.ts`.
+    //   2. Otherwise fall back to the local llama-server sidecar (the
+    //      original behaviour). The renderer doesn't need to know which
+    //      adapter served the call — the `model:token` channel shape is
+    //      identical.
+    //
+    // The two paths share the same destroyed-window-safe sender, the
+    // same `activeGenerationController` AbortController slot (so a
+    // single in-flight generation cancels cleanly on switch), and the
+    // same `sentDone` finality bookkeeping.
 
     // Abort any in-flight generation before starting a new one
     if (activeGenerationController) {
@@ -167,6 +177,54 @@ export function registerModelHandlers(): void {
       "model:token",
     );
     let sentDone = false;
+
+    const adapter = resolveGenerationAdapter();
+
+    if (adapter.kind === "external") {
+      try {
+        await streamExternalProvider(
+          {
+            provider: adapter.provider,
+            apiKey: adapter.apiKey,
+            prompt: parsed.prompt,
+            maxTokens: parsed.maxTokens,
+            temperature: parsed.temperature,
+            signal: controller.signal,
+          },
+          (chunk: ExternalProviderStreamChunk) => {
+            if (chunk.content.length > 0) {
+              sendToken({ token: chunk.content, done: false });
+            }
+          },
+        );
+      } finally {
+        if (activeGenerationController === controller) {
+          activeGenerationController = null;
+        }
+        if (!sentDone) {
+          sendToken({ token: "", done: true });
+          sentDone = true;
+        }
+      }
+      return;
+    }
+
+    const sidecar = getModelSidecar();
+    if (!sidecar || !sidecar.isRunning) {
+      if (activeGenerationController === controller) {
+        activeGenerationController = null;
+      }
+      sendToken({ token: "", done: true });
+      throw new Error("Model runtime not running — start a model first");
+    }
+    sidecar.markGenerationActive();
+    const endpoint = sidecar.endpoint;
+    const body = {
+      prompt: parsed.prompt,
+      n_predict: parsed.maxTokens ?? 2048,
+      temperature: parsed.temperature ?? 0.7,
+      stream: true,
+    };
 
     try {
       const resp = await fetch(`${endpoint}/completion`, {
@@ -239,4 +297,73 @@ export function registerModelHandlers(): void {
       activeGenerationController.abort();
     }
   });
+}
+
+/**
+ * Pick the adapter to use for the next `model:generate` call.
+ *
+ * External provider wins iff: enabled, all required fields are
+ * populated, AND a non-empty API key exists in the OS keychain under
+ * `apiKeyRef`. The presence-of-key check happens here so the handler
+ * can fall back to local before opening a network socket — a missing
+ * keychain entry would otherwise produce a cryptic 401 from the
+ * provider after the renderer already thought streaming had started.
+ *
+ * All three failure modes (disabled, missing config field, missing
+ * key) collapse to `kind: "local"`. This mirrors how
+ * `crates/tessera_runtime::adapters::plan_chain` treats the External
+ * step — both layers agree on the same fallback policy.
+ *
+ * Hoisted out of `registerModelHandlers()` so its closure binding is
+ * stable across re-registrations (test harness, future hot-reload),
+ * matching the rationale on `activeGenerationController` above.
+ */
+function resolveGenerationAdapter():
+  | { kind: "local" }
+  | { kind: "external"; provider: ExternalProviderConfig; apiKey: string } {
+  const cfg = loadConfig();
+  const provider = cfg.externalProvider;
+  if (!provider) {
+    return { kind: "local" };
+  }
+  // Surface each fallback reason at `info` level so post-mortem
+  // debugging from a packaged build doesn't require reproducing the
+  // misconfiguration. The default Electron log destination
+  // (`<userData>/logs/main.log`) preserves these without exposing them
+  // to the renderer or telemetry. We deliberately do NOT include the
+  // API URL or model name verbatim — those can leak private endpoints.
+  if (!provider.enabled) {
+    return { kind: "local" };
+  }
+  const missing: string[] = [];
+  if (!provider.apiUrl.trim()) missing.push("apiUrl");
+  if (!provider.modelName.trim()) missing.push("modelName");
+  if (!provider.apiKeyRef.trim()) missing.push("apiKeyRef");
+  if (missing.length > 0) {
+    console.info(
+      `[tessera] external provider enabled but config incomplete (missing: ${missing.join(", ")}); falling back to local sidecar`,
+    );
+    return { kind: "local" };
+  }
+  let apiKey: string | null = null;
+  try {
+    apiKey = secretsVault.getSecret(provider.apiKeyRef);
+  } catch (err) {
+    // A keychain read failure (e.g. user revoked Tessera's access to
+    // the OS keychain) should fall back to local rather than surfacing
+    // a confusing "secretsVault read failed" to the renderer
+    // mid-generation. The Settings page already has its own diagnostic
+    // surface for this.
+    console.warn(
+      `[tessera] external provider secret read failed; falling back to local: ${(err as Error).message}`,
+    );
+    return { kind: "local" };
+  }
+  if (!apiKey || apiKey.length === 0) {
+    console.info(
+      `[tessera] external provider enabled but no API key stored under '${provider.apiKeyRef}'; falling back to local sidecar`,
+    );
+    return { kind: "local" };
+  }
+  return { kind: "external", provider, apiKey };
 }

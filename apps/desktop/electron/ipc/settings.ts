@@ -14,6 +14,7 @@ import {
   DEFAULT_EXTERNAL_PROVIDER,
   type ExternalProviderConfig,
 } from "../config";
+import { resolveProviderEndpoint } from "../externalProviderStream";
 import * as secretsVault from "../secretsVault";
 import type { SettingsData } from "../../shared/types";
 import {
@@ -40,13 +41,20 @@ async function testExternalProviderConnection(
   const timeoutMs = Math.max(1, provider.timeoutSecs) * 1000;
   const t = setTimeout(() => controller.abort(), timeoutMs);
 
-  let url: string;
+  // Use the same endpoint-resolution helper that the streaming path
+  // uses (`apps/desktop/electron/externalProviderStream.ts`). Critical
+  // so a user who pastes a complete endpoint (e.g.
+  // `https://api.openai.com/v1/chat/completions`) into Settings gets
+  // a working test instead of a 404 from the double-suffixed URL
+  // `…/v1/chat/completions/v1/chat/completions`. The prior version of
+  // this function hand-rolled the URL composition and drifted out of
+  // sync with `buildStreamRequest` when the streaming path grew the
+  // `endsWith` guards.
+  const url = resolveProviderEndpoint(provider);
   let headers: Record<string, string>;
   let body: string;
 
-  const apiUrl = provider.apiUrl.replace(/\/+$/, "");
   if (provider.providerType === "anthropic") {
-    url = `${apiUrl}/v1/messages`;
     headers = {
       "Content-Type": "application/json",
       "x-api-key": apiKey,
@@ -59,7 +67,6 @@ async function testExternalProviderConnection(
     });
   } else {
     // OpenAI-compatible (covers OpenAI, Ollama, vLLM, LM Studio, …)
-    url = `${apiUrl}/v1/chat/completions`;
     headers = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
