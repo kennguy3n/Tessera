@@ -75,7 +75,22 @@ The script runs:
    because `npm ci` already installs the correct binary, so the
    per-run "[N/M]" banners show 8 steps on Linux and 9 on
    macOS/Windows.
-8. `npm run build --workspace=apps/desktop`
+8. `npm run build`
+
+   Invoked at the repo root. The root `package.json` defines `build`
+   as a forwarder to `npm run build --workspace=apps/desktop`, so
+   this is functionally equivalent today — but it keeps preflight in
+   lock-step with `.github/workflows/release.yml`, which runs the
+   same root-level `npm run build`. If the root `build` script later
+   grows additional steps (e.g. is changed to
+   `npm run build:native && npm run build --workspace=apps/desktop`
+   once the placeholder `build:native` script under `apps/desktop`
+   is promoted into the chain), preflight will automatically exercise
+   the new steps too rather than masking the divergence until a
+   release-day failure surfaces it. The earlier `lint` / `type-check`
+   / `test` steps remain workspace-scoped because CI runs them
+   workspace-scoped at `.github/workflows/ci.yml:160-166`; only the
+   desktop build was asymmetric, so the fix lives there.
 9. `npx --no electron-builder --config packaging/electron-builder.yml --dir`
 
    The `--no` flag (npm 10+ canonical form, equivalent to the legacy
