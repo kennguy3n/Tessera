@@ -197,9 +197,21 @@ export function initAutoUpdater(): void {
 }
 
 /**
- * Register the four `updates:*` IPC channels (called by the central
+ * Register the five `updates:*` IPC channels (`updates:status`,
+ * `updates:check`, `updates:install`, `updates:getAutoUpdateEnabled`,
+ * `updates:setAutoUpdateEnabled` — see the `channels` list below and
+ * `docs/IPC_AUDIT.md` ("Updates (auto-updater)" table) for the
+ * authoritative inventory). Called by the central
  * `registerIpcHandlers()` so the auto-updater integrates with the
- * same lifecycle as every other IPC surface).
+ * same lifecycle as every other IPC surface.
+ *
+ * `updates:status` is dual-purpose: it serves as both the
+ * `ipcMain.handle` pull endpoint registered here (returning the
+ * cached `lastStatus`) and the `webContents.send` broadcast channel
+ * driven by `broadcast(...)` whenever the underlying
+ * `electron-updater` emits an event. `docs/IPC_AUDIT.md` lists it in
+ * both the Updates table and the "Renderer-bound emit channels"
+ * table so a security reviewer sees both surfaces.
  */
 export function registerAutoUpdaterIpc(): void {
   // Idempotent registration. ipcMain.handle throws if a channel is

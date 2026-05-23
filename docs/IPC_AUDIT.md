@@ -157,11 +157,17 @@ extra scrutiny.
 These channels are registered by
 `apps/desktop/electron/autoUpdater.ts` (`registerAutoUpdaterIpc`). The
 renderer subscribes to `updates:status` events emitted via
-`webContents.send("updates:status", status)` for ambient toast UX.
+`webContents.send("updates:status", status)` for ambient toast UX —
+see the [Renderer-bound emit channels](#renderer-bound-emit-channels-one-way-main--renderer)
+section below for the push side of that channel. `updates:status` is
+dual-purpose: the row in this table covers the `ipcMain.handle`
+*pull* endpoint (returning the cached last status), and the
+corresponding entry in the emit-channels table covers the
+`webContents.send` *push* broadcast.
 
 | Channel                               | Strategy        | Auth |
 |---------------------------------------|-----------------|------|
-| `updates:status`                      | no-input        |      |
+| `updates:status`                      | no-input (pull only; also emitted as push — see emit table) |      |
 | `updates:check`                       | no-input        |      |
 | `updates:install`                     | no-input        |      |
 | `updates:getAutoUpdateEnabled`        | no-input        |      |
@@ -208,6 +214,7 @@ completeness:
 |-------------------------------|--------------------------------|-----------------------------------------|
 | `model:token`                 | `model:generate` SSE stream    | Per-token streaming chunks              |
 | `runtime:downloadProgress`    | `runtime:downloadModel`        | Download bytes-progress updates         |
+| `updates:status`              | `autoUpdater.ts` `broadcast()` (driven by the underlying `electron-updater` events) | Auto-update lifecycle notifications (`checking`, `available`, `not-available`, `downloading`, `downloaded`, `error`) for the ambient toast UX. Also exposed as a pull endpoint — see [Updates (auto-updater)](#updates-auto-updater). |
 
 ## Invariants
 
