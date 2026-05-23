@@ -10,6 +10,7 @@
 import { getBridge } from "../appState";
 import { assertId, assertNumber, assertString } from "./validate";
 import { idempotentHandle } from "./register";
+import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
 
 export function registerSourcesHandlers(): void {
   idempotentHandle(
@@ -106,4 +107,52 @@ export function registerSourcesHandlers(): void {
       throw new Error("Native bridge not available");
     },
   );
+
+  idempotentHandle(
+    "sources:backfillEmbeddings",
+    async (_event, batchSize: unknown) => {
+      // Rate-limit defensively. The Rust side is idempotent and the
+      // tracker has its own running-pass guard, but a click-mashing
+      // user could otherwise queue dozens of zero-work calls here.
+      defaultRateLimiter.consume(
+        "sources:backfillEmbeddings",
+        RATE_LIMIT_PROFILES["sources:backfillEmbeddings"],
+      );
+      // Optional argument — `undefined` falls through to the bridge
+      // default; if the caller did pass a value it must be a small
+      // positive integer (the indexer streams batches in memory so
+      // anything above a few thousand would defeat the purpose).
+      let validatedBatchSize: number | undefined;
+      if (batchSize !== undefined && batchSize !== null) {
+        validatedBatchSize = assertNumber(batchSize, "batchSize", {
+          integer: true,
+          min: 1,
+          max: 4096,
+        });
+      }
+      const bridge = getBridge();
+      if (bridge) {
+        return bridge.bridgeBackfillEmbeddings(validatedBatchSize ?? null);
+      }
+      throw new Error("Native bridge not available");
+    },
+  );
+
+  idempotentHandle("sources:getEmbeddingProgress", async () => {
+    const bridge = getBridge();
+    if (bridge) {
+      return bridge.bridgeGetEmbeddingProgress();
+    }
+    // Pre-bridge fallback — return an empty idle snapshot so the
+    // renderer's polling loop renders cleanly during the brief
+    // window between window-ready and bridge-init.
+    return {
+      status: "idle" as const,
+      totalChunks: 0,
+      embedded: 0,
+      failed: 0,
+      modelId: null,
+      lastError: null,
+    };
+  });
 }

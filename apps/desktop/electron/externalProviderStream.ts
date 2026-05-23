@@ -564,14 +564,13 @@ const RETRYABLE_HTTP_STATUS_CODES: ReadonlySet<number> = new Set([
 ]);
 
 /**
- * Exponential-backoff schedule for the pre-stream retry loop.
- * Delays in milliseconds for retry attempts 1, 2, 3. The schedule
- * is doubled each step (1s, 2s, 4s) for a total wait of ≤7s under
- * a worst-case three-retry chain. We deliberately do NOT add
- * jitter — the desktop app issues at most one streaming request at
- * a time per user gesture, so the thundering-herd concern that
- * motivates jitter in server-side retry policies doesn't apply
- * here.
+ * Base delay for the first retry, in milliseconds. Subsequent
+ * retries double this on each step: attempt 1 waits `1000ms`,
+ * attempt 2 waits `2000ms`, attempt 3 waits `4000ms`, and so on
+ * (see {@link retryDelayMs}). We deliberately do NOT add jitter —
+ * the desktop app issues at most one streaming request at a time
+ * per user gesture, so the thundering-herd concern that motivates
+ * jitter in server-side retry policies doesn't apply here.
  *
  * The user-visible "Stop generating" button (`ipc/model.ts`'s
  * `AbortController`) interrupts this delay via the standard
@@ -579,7 +578,39 @@ const RETRYABLE_HTTP_STATUS_CODES: ReadonlySet<number> = new Set([
  * `Retry-After` header does NOT trap the user; they can always
  * cancel.
  */
-const RETRY_DELAYS_MS: ReadonlyArray<number> = [1000, 2000, 4000];
+const RETRY_BASE_DELAY_MS = 1000;
+
+/**
+ * Safety cap on individual retry delays. The schema clamps
+ * `maxRetries` to `0..=10`; without a cap, a doubling schedule
+ * would request a ~17-minute wait before the 10th retry (1s, 2s,
+ * 4s, …, 512s, 1024s). The cap keeps any single wait under 30s so
+ * the user gets timely feedback even at the schema's upper bound.
+ * Note this is the cap on a SINGLE backoff step — the cumulative
+ * wait across 10 retries is still bounded but allows >7s overall
+ * when the user has explicitly raised `maxRetries`.
+ */
+const RETRY_MAX_DELAY_MS = 30_000;
+
+/**
+ * Compute the wait before retry `n` (1-indexed: `n=1` is the wait
+ * before the 1st retry, i.e. before attempt 2 overall). Exposed
+ * for tests; production callers go through the main retry loop.
+ *
+ * The formula is `RETRY_BASE_DELAY_MS * 2^(n-1)`, capped at
+ * {@link RETRY_MAX_DELAY_MS}. For the default `maxRetries=2` this
+ * yields the legacy schedule (1s, 2s); for higher values it
+ * continues doubling (4s, 8s, 16s, 30s, 30s, …).
+ */
+export function retryDelayMs(retryIndex1Based: number): number {
+  if (retryIndex1Based < 1) {
+    return 0;
+  }
+  return Math.min(
+    RETRY_MAX_DELAY_MS,
+    RETRY_BASE_DELAY_MS * 2 ** (retryIndex1Based - 1),
+  );
+}
 
 /**
  * Parse an HTTP `Retry-After` header (RFC 7231 §7.1.3). Returns the
@@ -715,8 +746,9 @@ async function openExternalProviderStream(
  *
  * The PRE-STREAM HTTP exchange is wrapped in an exponential-backoff
  * retry loop that retries transient upstream failures (408, 429,
- * 500, 502, 503, 504) up to three times with delays of 1s / 2s / 4s
- * (see {@link RETRY_DELAYS_MS}). On 429, the `Retry-After` response
+ * 500, 502, 503, 504) up to `provider.maxRetries` times (schema-
+ * validated `0..=10`, default `2`) with delays of 1s / 2s / 4s / …
+ * (see {@link retryDelayMs}). On 429, the `Retry-After` response
  * header is honoured (see {@link parseRetryAfter}); otherwise the
  * standard schedule applies. Non-retryable HTTP failures
  * (400/401/403/404/422/…) and network-level failures (DNS, TLS
@@ -745,23 +777,30 @@ export async function streamExternalProvider(
 ): Promise<void> {
   const req = buildStreamRequest(inputs);
   // Retry loop for the pre-stream HTTP exchange. `attempt` is
-  // 0-indexed: attempt 0 is the initial try, attempts 1..N are
-  // retries. We stop after exhausting `RETRY_DELAYS_MS` (3 retries)
-  // or once the body opens.
+  // 0-indexed: attempt 0 is the initial try, attempts 1..maxRetries
+  // are retries. We stop after exhausting the user-configured retry
+  // budget or once the body opens.
+  //
+  // `provider.maxRetries` is schema-clamped to `0..=10` in
+  // `electron/ipc/schemas.ts` and `electron/config.ts`'s loader, so
+  // it is safe to use directly here without a re-clamp.
+  const maxRetries = inputs.provider.maxRetries;
   let openedResponse: Response | undefined;
   let lastRetryable: RetryableStatus | undefined;
-  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     const outcome = await openExternalProviderStream(req, inputs.signal);
     if (outcome.status === "opened") {
       openedResponse = outcome.response;
       break;
     }
     lastRetryable = outcome;
-    if (attempt === RETRY_DELAYS_MS.length) {
+    if (attempt === maxRetries) {
       // Retry budget exhausted — surface the last transient error.
       break;
     }
-    const baseDelay = RETRY_DELAYS_MS[attempt];
+    // `attempt + 1` is the 1-indexed retry number we are about to
+    // perform: attempt=0 → about to do retry 1 → wait `retryDelayMs(1)`.
+    const baseDelay = retryDelayMs(attempt + 1);
     // Honour `Retry-After` for the upcoming wait, but never wait
     // LESS than the exponential schedule (so a server-sent
     // `Retry-After: 0` can't trick us into a tight retry loop).
@@ -775,7 +814,7 @@ export async function streamExternalProvider(
     // diagnose provider-side rate-limit / outage messages.
     const last = lastRetryable as RetryableStatus;
     throw new Error(
-      `External provider HTTP ${last.httpStatus} after ${RETRY_DELAYS_MS.length + 1} attempts${last.bodyPreview ? `: ${last.bodyPreview.slice(0, 200)}` : ""}`,
+      `External provider HTTP ${last.httpStatus} after ${maxRetries + 1} attempts${last.bodyPreview ? `: ${last.bodyPreview.slice(0, 200)}` : ""}`,
     );
   }
 

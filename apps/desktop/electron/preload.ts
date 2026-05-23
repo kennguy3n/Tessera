@@ -3,6 +3,7 @@ import type {
   AddCitationRequest,
   ExternalProviderConfigInput,
   ExternalProviderListModelsDraftOverrides,
+  HybridSearchConfigUpdate,
   ModelDownloadProgress,
   ReplaceCitationRequest,
   SaveDialogOptions,
@@ -23,6 +24,7 @@ export type {
   AutomationApi,
   AutomationInfo,
   AutomationTrigger,
+  BackfillEmbeddingsResult,
   CitationApi,
   CitationFreshness,
   CitationInfo,
@@ -39,6 +41,7 @@ export type {
   DrivePickerItem,
   DrivePickerSelection,
   DriveSyncResult,
+  EmbeddingProgressInfo,
   ExportResult,
   ExternalProviderApi,
   ExternalProviderConfigInput,
@@ -48,6 +51,8 @@ export type {
   ExtractedItem,
   GenerateChunk,
   GenerateRequest,
+  HybridSearchConfigInfo,
+  HybridSearchConfigUpdate,
   IndexedFileInfo,
   IndexingProgressInfo,
   InstalledModelRecord,
@@ -164,6 +169,13 @@ const api: TesseraApi = {
     reindex: (id: string) => ipcRenderer.invoke("sources:reindex", id),
     getIndexingProgress: (id: string) =>
       ipcRenderer.invoke("sources:getIndexingProgress", id),
+    backfillEmbeddings: (batchSize?: number) =>
+      ipcRenderer.invoke(
+        "sources:backfillEmbeddings",
+        batchSize ?? null,
+      ),
+    getEmbeddingProgress: () =>
+      ipcRenderer.invoke("sources:getEmbeddingProgress"),
   },
   artifacts: {
     create: (title: string, artifactType: string, templateId?: string) =>
@@ -241,6 +253,15 @@ const api: TesseraApi = {
     get: () => ipcRenderer.invoke("settings:get"),
     update: (settings: Partial<SettingsData>) =>
       ipcRenderer.invoke("settings:update", settings),
+    // Hybrid retrieval config: channel name (`settings:*`),
+    // handler registration (`registerSettingsHandlers`), and
+    // preload surface (`window.tessera.settings`) all agree that
+    // search tuning is a global setting. See `SettingsApi` in
+    // `shared/types.ts` for the rationale.
+    getHybridSearchConfig: () =>
+      ipcRenderer.invoke("settings:getHybridSearchConfig"),
+    updateHybridSearchConfig: (update: HybridSearchConfigUpdate) =>
+      ipcRenderer.invoke("settings:updateHybridSearchConfig", update),
   },
   externalProvider: {
     get: () => ipcRenderer.invoke("externalProvider:get"),

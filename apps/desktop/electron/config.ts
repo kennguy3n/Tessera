@@ -33,6 +33,32 @@ export interface ExternalProviderConfig {
   maxRetries: number;
 }
 
+/**
+ * On-disk persistence shape for the hybrid retrieval config.
+ *
+ * The renderer's Settings page edits these values and they get
+ * pushed to the Rust core via `settings:updateHybridSearchConfig`
+ * → `bridge_update_hybrid_search_config`. On launch, the bridge
+ * `state-init` path reads the persisted values and replays them
+ * through `SourceManager::update_hybrid_config` so a restart does
+ * not silently revert the user's choices.
+ *
+ * The Rust core uses `f64::INFINITY` to signal "no recency decay";
+ * we surface that here as the explicit `recencyDecayEnabled` flag
+ * (with `recencyHalflifeSecs` becoming meaningless when disabled)
+ * so the JSON on disk can round-trip cleanly — `Infinity` is not
+ * representable in JSON.
+ */
+export interface HybridSearchConfigPersisted {
+  bm25Weight: number;
+  vectorWeight: number;
+  rrfK: number;
+  recencyDecayEnabled: boolean;
+  /** Half-life in seconds. Ignored when `recencyDecayEnabled` is false. */
+  recencyHalflifeSecs: number;
+  candidatePoolSize: number;
+}
+
 export interface AppConfig {
   windowX?: number;
   windowY?: number;
@@ -50,7 +76,31 @@ export interface AppConfig {
   externalProviderTokenUsage: ExternalProviderTokenUsage;
   /** When true the renderer should auto-check for updates on launch. */
   autoUpdate: boolean;
+  /**
+   * Persisted hybrid retrieval config. The defaults here mirror
+   * `tessera_sources::hybrid::HybridSearchConfig::default()` so a
+   * fresh install behaves identically with or without this field
+   * on disk.
+   */
+  hybridSearchConfig: HybridSearchConfigPersisted;
 }
+
+/** Default persisted hybrid config — mirrors Rust default. */
+export const DEFAULT_HYBRID_SEARCH_CONFIG: Readonly<HybridSearchConfigPersisted> =
+  Object.freeze({
+    bm25Weight: 1.0,
+    vectorWeight: 1.0,
+    rrfK: 60.0,
+    recencyDecayEnabled: true,
+    // 30 days in seconds — matches DEFAULT_RECENCY_HALFLIFE_SECS in
+    // `crates/tessera_sources/src/hybrid.rs`.
+    recencyHalflifeSecs: 30 * 24 * 60 * 60,
+    // 0 means "let the Rust side pick 4× the requested limit" — same
+    // semantic as the Rust default. We surface 0 here rather than a
+    // hardcoded number so a future Rust-side default change
+    // automatically applies without a config migration.
+    candidatePoolSize: 0,
+  });
 
 // Both DEFAULT_* constants are deep-frozen at module load so a
 // future contributor doing `DEFAULT_CONFIG.ignorePatterns.push(...)`
@@ -79,24 +129,28 @@ export const DEFAULT_EXTERNAL_PROVIDER: Readonly<ExternalProviderConfig> =
 
 /**
  * Default external-provider token usage. The `lastResetDate`
- * captures the *first-launch* timestamp so the "used since
- * &lt;date&gt;" label in `SettingsPage` displays a meaningful date
- * for users who never explicitly reset. Re-evaluated at every
- * module load, but `loadConfig` heals stale defaults into the
- * persisted record on disk on first read, so the stored timestamp
- * is stable across launches once the config file exists.
+ * captures the epoch (`1970-01-01`) so the "used since &lt;date&gt;"
+ * label in `SettingsPage` displays a sentinel date for fresh
+ * installs that have never been reset; `loadConfig` heals the
+ * value into the persisted record on first read, so the stored
+ * timestamp is stable across launches once the config file exists.
  *
- * NOT frozen because consumers spread this into the persisted
- * `AppConfig.externalProviderTokenUsage` (mutability via the
- * `updateConfig` path expects a fresh mutable copy). Tests
- * verifying immutability should snapshot via spread, not by
- * reference.
+ * Frozen (matches the sibling `DEFAULT_EXTERNAL_PROVIDER` /
+ * `DEFAULT_HYBRID_SEARCH_CONFIG` pattern) so an accidental
+ * mutation at one consumer can't silently corrupt every subsequent
+ * `loadConfig()` baseline. Every consumer in this module already
+ * spreads this constant (`{ ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE }`)
+ * which produces a fresh mutable object, so freezing at the
+ * declaration site is a no-op for read paths and a useful
+ * tripwire for write paths. See the sibling block above
+ * (lines 105-114) for the broader rationale.
  */
-export const DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE: ExternalProviderTokenUsage = {
-  totalPromptTokens: 0,
-  totalCompletionTokens: 0,
-  lastResetDate: new Date(0).toISOString(),
-};
+export const DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE: Readonly<ExternalProviderTokenUsage> =
+  Object.freeze({
+    totalPromptTokens: 0,
+    totalCompletionTokens: 0,
+    lastResetDate: new Date(0).toISOString(),
+  });
 
 const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   windowWidth: 1280,
@@ -121,10 +175,9 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   lastOpenedArtifacts: Object.freeze([]) as readonly string[] as string[],
   sourcePaths: Object.freeze([]) as readonly string[] as string[],
   externalProvider: DEFAULT_EXTERNAL_PROVIDER,
-  externalProviderTokenUsage: Object.freeze(
-    DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE,
-  ) as ExternalProviderTokenUsage,
+  externalProviderTokenUsage: DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE,
   autoUpdate: true,
+  hybridSearchConfig: DEFAULT_HYBRID_SEARCH_CONFIG,
 });
 
 // --- On-disk config validation ----------------------------------------
@@ -250,6 +303,28 @@ const AppConfigSchema = z
     externalProvider: ExternalProviderConfigOnDiskSchema,
     externalProviderTokenUsage: ExternalProviderTokenUsageOnDiskSchema,
     autoUpdate: z.boolean().catch(true),
+    // Hybrid search config — every field has a `.catch()` fallback
+    // matching the documented Rust default so a partially-corrupted
+    // entry still produces a usable config. Bounds match the
+    // Rust-side validator in `HybridSearchConfig::apply_patch` so a
+    // value that round-trips through disk → bridge can never trigger
+    // a validation error on the bridge side.
+    hybridSearchConfig: z
+      .object({
+        bm25Weight: z.number().finite().min(0).max(10).catch(1.0),
+        vectorWeight: z.number().finite().min(0).max(10).catch(1.0),
+        rrfK: z.number().finite().min(0.0001).max(1_000).catch(60.0),
+        recencyDecayEnabled: z.boolean().catch(true),
+        recencyHalflifeSecs: z
+          .number()
+          .finite()
+          .min(1)
+          .max(10 * 365 * 24 * 60 * 60) // 10 years
+          .catch(30 * 24 * 60 * 60),
+        candidatePoolSize: z.number().int().min(0).max(10_000).catch(0),
+      })
+      .loose()
+      .catch(() => ({ ...DEFAULT_HYBRID_SEARCH_CONFIG })),
   })
   // `.loose()` (zod 4's rename of `.passthrough()`) preserves unknown
   // top-level keys instead of stripping them on a load → save round
@@ -267,6 +342,7 @@ const AppConfigSchema = z
     ...DEFAULT_CONFIG,
     externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
     externalProviderTokenUsage: { ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE },
+    hybridSearchConfig: { ...DEFAULT_HYBRID_SEARCH_CONFIG },
   }));
 
 function getConfigPath(): string {
@@ -449,11 +525,21 @@ function readConfigFromDisk(configPath: string): AppConfig {
         ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE,
         ...healed.externalProviderTokenUsage,
       };
+      // Spread the persisted hybrid config over the defaults the same
+      // way `externalProvider` does — if a user's on-disk file is
+      // missing a newer subfield (forward compat with future versions
+      // adding fields) the default fills the gap rather than leaving
+      // `undefined` to crash downstream `bridge_update_hybrid_search_config`.
+      const hybridSearchConfig: HybridSearchConfigPersisted = {
+        ...DEFAULT_HYBRID_SEARCH_CONFIG,
+        ...healed.hybridSearchConfig,
+      };
       return {
         ...DEFAULT_CONFIG,
         ...healed,
         externalProvider,
         externalProviderTokenUsage,
+        hybridSearchConfig,
       };
     }
   } catch {
@@ -466,6 +552,7 @@ function readConfigFromDisk(configPath: string): AppConfig {
     ...DEFAULT_CONFIG,
     externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
     externalProviderTokenUsage: { ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE },
+    hybridSearchConfig: { ...DEFAULT_HYBRID_SEARCH_CONFIG },
   };
 }
 
@@ -536,10 +623,40 @@ export type AppConfigPartial = Omit<
 /**
  * Apply a partial update to the on-disk config.
  *
- * Top-level fields are shallow-merged. The nested
- * {@link ExternalProviderConfig} is merged field-by-field so
- * passing only a subset of provider fields is safe; anyone wanting
- * to fully replace the provider can pass the complete object.
+ * **Merge semantics — read this before adding nested config types.**
+ *
+ * Top-level fields are shallow-merged via spread. Nested objects
+ * are handled in two different ways depending on the field:
+ *
+ *  - `externalProvider` is the only nested object that is
+ *    *field-by-field* merged. If you pass
+ *    `updateConfig({ externalProvider: { enabled: true } })` only
+ *    `enabled` is overwritten; everything else (apiUrl, apiKeyRef,
+ *    modelName, etc.) keeps its existing value. This is the
+ *    behaviour callsites historically relied on, so we preserve it.
+ *
+ *  - **Every other nested object — including `hybridSearchConfig` —
+ *    is REPLACED, not merged.** Passing
+ *    `updateConfig({ hybridSearchConfig: { vectorWeight: 0.5 } })`
+ *    would clobber `bm25Weight`, `rrfK`, `recencyDecayEnabled`,
+ *    `recencyHalflifeSecs`, and `candidatePoolSize` to whatever the
+ *    object literal omitted (which usually means `undefined` and
+ *    then the schema-level defaults take over on reload). All
+ *    production callers pass a **complete** `HybridSearchConfig`
+ *    object so this is safe in practice, but a future caller
+ *    writing `updateConfig({ hybridSearchConfig: { vectorWeight }})`
+ *    would silently reset everything else. The IPC handler at
+ *    `ipc/settings.ts:settings:updateHybridSearchConfig` always
+ *    composes a complete object before calling `updateConfig`, so
+ *    it is the canonical pattern.
+ *
+ *    If you ever add a callsite that needs a partial update for a
+ *    nested object other than `externalProvider`, either (a) extend
+ *    the merge logic below to handle the new field with explicit
+ *    field-by-field merging, or (b) compose the full object at the
+ *    call site before calling `updateConfig`. **Do not** rely on
+ *    spread-style partial updates working — they will only work for
+ *    `externalProvider`.
  *
  * **Ownership transfer.** Any nested array or object reference in
  * `partial` (e.g. `partial.ignorePatterns`, `partial.externalProvider`)

@@ -141,6 +141,18 @@ export default function ExternalProviderCard() {
       } else {
         setStatus({ kind: "error", message: result.error });
       }
+    } catch (e) {
+      // The IPC handler in `electron/ipc/settings.ts` wraps its own
+      // body in a try/catch and always returns a result object — so
+      // reaching this `catch` indicates a deeper failure: bridge
+      // serialization error, contextIsolation violation, etc. Surface
+      // it the same way `onSave` and `onResetTokenUsage` surface
+      // their errors so the user never sees a silently un-busied
+      // button with no feedback.
+      setStatus({
+        kind: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setBusy(false);
     }

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import Button from "./Button";
+import RelevanceBadge from "./RelevanceBadge";
 import type {
   CitationInfo,
   AddCitationRequest,
@@ -303,9 +304,7 @@ function AddCitationDialog({
             >
               <span className="citation-hit-path">{hit.sourcePath}</span>
               <span className="citation-hit-excerpt">{hit.excerpt}</span>
-              <span className="citation-hit-score">
-                {(hit.relevanceScore * 100).toFixed(0)}%
-              </span>
+              <RelevanceBadge score={hit.relevanceScore} />
             </button>
           ))}
         </div>
@@ -403,9 +402,7 @@ function ReplaceCitationDialog({
             >
               <span className="citation-hit-path">{hit.sourcePath}</span>
               <span className="citation-hit-excerpt">{hit.excerpt}</span>
-              <span className="citation-hit-score">
-                {(hit.relevanceScore * 100).toFixed(0)}%
-              </span>
+              <RelevanceBadge score={hit.relevanceScore} />
             </button>
           ))}
         </div>

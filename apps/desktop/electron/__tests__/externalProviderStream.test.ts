@@ -7,6 +7,7 @@ import {
   buildStreamRequest,
   streamExternalProvider,
   parseRetryAfter,
+  retryDelayMs,
   type ExternalProviderStreamChunk,
 } from "../externalProviderStream";
 import type { ExternalProviderConfig } from "../config";
@@ -632,13 +633,17 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     fetchSpy.mockRestore();
   });
 
-  it("exhausts retry budget after 4 attempts (1 + 3 retries) on persistent 502", async () => {
+  it("exhausts retry budget after 4 attempts (1 + 3 retries) on persistent 502 when maxRetries=3", async () => {
     vi.useFakeTimers();
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(makeErrorResponse(502, "bad gateway"));
     const streamPromise = streamExternalProvider(
-      { provider: mkProvider(), apiKey: "sk", prompt: "hi" },
+      {
+        provider: mkProvider({ maxRetries: 3 }),
+        apiKey: "sk",
+        prompt: "hi",
+      },
       () => {},
     );
     const rejection = expect(streamPromise).rejects.toThrow(
@@ -650,6 +655,83 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     await vi.advanceTimersByTimeAsync(4000);
     await rejection;
     expect(fetchSpy).toHaveBeenCalledTimes(4);
+    fetchSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("honours provider.maxRetries=0 by NOT retrying — single attempt then failure", async () => {
+    // Devin Review (round 2 on PR #27) flagged that the retry loop
+    // used to hardcode a 3-retry schedule regardless of the
+    // user-configured `maxRetries`. This regression test pins the
+    // new behaviour: `maxRetries: 0` means "do not retry, surface
+    // the first transient failure immediately".
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(makeErrorResponse(503, "service unavailable"));
+    await expect(
+      streamExternalProvider(
+        {
+          provider: mkProvider({ maxRetries: 0 }),
+          apiKey: "sk",
+          prompt: "hi",
+        },
+        () => {},
+      ),
+    ).rejects.toThrow(/HTTP 503 after 1 attempts/);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    fetchSpy.mockRestore();
+  });
+
+  it("honours the default provider.maxRetries=2 — 3 total attempts on persistent failure", async () => {
+    // Companion to the maxRetries=0 test: with the schema default
+    // (`2`), we expect 1 initial + 2 retries = 3 total attempts,
+    // NOT the legacy 4. This is the exact gap Devin Review flagged.
+    vi.useFakeTimers();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(makeErrorResponse(503, "service unavailable"));
+    const streamPromise = streamExternalProvider(
+      { provider: mkProvider(), apiKey: "sk", prompt: "hi" },
+      () => {},
+    );
+    const rejection = expect(streamPromise).rejects.toThrow(
+      /HTTP 503 after 3 attempts/,
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
+    await rejection;
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    fetchSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("honours provider.maxRetries=5 with the doubling schedule (1s/2s/4s/8s/16s)", async () => {
+    // Pins the >3-retry behaviour. Without this assertion a future
+    // refactor could silently re-introduce the hardcoded 3-retry
+    // limit. The schema clamps maxRetries to 0..=10 so 5 is in-range.
+    vi.useFakeTimers();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(makeErrorResponse(502, "bad gateway"));
+    const streamPromise = streamExternalProvider(
+      {
+        provider: mkProvider({ maxRetries: 5 }),
+        apiKey: "sk",
+        prompt: "hi",
+      },
+      () => {},
+    );
+    const rejection = expect(streamPromise).rejects.toThrow(
+      /HTTP 502 after 6 attempts/,
+    );
+    // 1 + 2 + 4 + 8 + 16 = 31s of waits across 5 retries.
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(4000);
+    await vi.advanceTimersByTimeAsync(8000);
+    await vi.advanceTimersByTimeAsync(16000);
+    await rejection;
+    expect(fetchSpy).toHaveBeenCalledTimes(6);
     fetchSpy.mockRestore();
     vi.useRealTimers();
   });
@@ -739,5 +821,32 @@ describe("externalProviderStream — parseRetryAfter", () => {
   it("returns undefined for HTTP-date in the past", () => {
     const past = new Date(Date.now() - 10_000).toUTCString();
     expect(parseRetryAfter(past)).toBeUndefined();
+  });
+});
+
+describe("externalProviderStream — retryDelayMs", () => {
+  // Pins the doubling schedule for any maxRetries up to the
+  // schema's 10-retry ceiling. The 30s cap kicks in at retry 6
+  // (1s, 2s, 4s, 8s, 16s, 30s, 30s, …) so the cumulative wait at
+  // the schema maximum is well-bounded but allows >7s when the
+  // user has explicitly opted in by raising `maxRetries`.
+
+  it("returns 0 for retry indices below 1", () => {
+    expect(retryDelayMs(0)).toBe(0);
+    expect(retryDelayMs(-1)).toBe(0);
+  });
+
+  it("doubles on each step starting at 1000ms", () => {
+    expect(retryDelayMs(1)).toBe(1000);
+    expect(retryDelayMs(2)).toBe(2000);
+    expect(retryDelayMs(3)).toBe(4000);
+    expect(retryDelayMs(4)).toBe(8000);
+    expect(retryDelayMs(5)).toBe(16000);
+  });
+
+  it("caps at 30_000ms for high retry indices", () => {
+    expect(retryDelayMs(6)).toBe(30_000);
+    expect(retryDelayMs(7)).toBe(30_000);
+    expect(retryDelayMs(10)).toBe(30_000);
   });
 });

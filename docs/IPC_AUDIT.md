@@ -7,20 +7,27 @@ checklist: when a new IPC channel is added it must appear here with
 its validation strategy, or this doc goes stale and CI surfaces the
 drift.
 
-> **Note:** This doc describes the post-WS6 + post-WS10 shipping state.
-> WS6 introduces the per-domain split of `ipc.ts` and the `zod`
-> schemas referenced below. Until WS6 lands on `main`, the channels
-> marked `zod-schema` are still validated by the legacy
-> `renderer-typed` pattern documented inline at their call sites.
-> Treat the audit table as the design contract; the WS6 PR is what
-> makes the runtime conform to it.
+> **Note:** This doc describes the shipping state on `main` (post-WS6
+> per-domain split of `ipc.ts` and post-WS10 security hardening).
+> Every channel marked `zod-schema` is validated by the schema named
+> in parentheses in `apps/desktop/electron/ipc/schemas.ts`; every
+> channel marked `scalar-helper` is validated by one of the typed
+> `assert*` helpers exported from
+> `apps/desktop/electron/ipc/validate.ts`
+> (`assertString`, `assertOptionalString`, `assertUuid`, `assertId`,
+> `assertProvider`, `assertSafePath`, `assertNumber`,
+> `assertBoolean`, `assertStringArray`). The strategy table below
+> tags each row with the primitive type expected so a reviewer can
+> map the row back to the specific helper without grepping. Adding a
+> new channel without a corresponding row here is a Phase-10 exit
+> blocker.
 
 The validation strategy for each channel is one of:
 
 | Strategy        | What it means                                                                                                                          |
 |-----------------|----------------------------------------------------------------------------------------------------------------------------------------|
-| **scalar-helper** | Single primitive arg, validated by `assertId` / `assertString` / `assertNumber` / `assertStringArray` from `ipc/validate.ts`         |
-| **zod-schema**    | Object arg validated by a `zod` schema in `ipc/schemas.ts` (introduced in WS6)                                                       |
+| **scalar-helper** | Single primitive arg, validated by one of the typed `assert*` helpers from `ipc/validate.ts`: `assertString`, `assertOptionalString`, `assertUuid`, `assertId`, `assertProvider`, `assertSafePath`, `assertNumber`, `assertBoolean`, `assertStringArray`. The row's parenthetical (e.g. `scalar-helper (boolean)`) flags the specific type. |
+| **zod-schema**    | Object arg validated by a `zod` schema in `ipc/schemas.ts`                                                                            |
 | **no-input**      | Handler takes no arguments — nothing to validate                                                                                     |
 | **renderer-typed**| Arg is a renderer-supplied typed buffer / `unknown` cast that is shape-checked at the call site inside the handler (legacy pattern). Should migrate to `zod-schema`. |
 
@@ -152,12 +159,24 @@ extra scrutiny.
 
 ## Updates (auto-updater)
 
+These channels are registered by
+`apps/desktop/electron/autoUpdater.ts` (`registerAutoUpdaterIpc`). The
+renderer subscribes to `updates:status` events emitted via
+`webContents.send("updates:status", status)` for ambient toast UX —
+see the [Renderer-bound emit channels](#renderer-bound-emit-channels-one-way-main--renderer)
+section below for the push side of that channel. `updates:status` is
+dual-purpose: the row in this table covers the `ipcMain.handle`
+*pull* endpoint (returning the cached last status), and the
+corresponding entry in the emit-channels table covers the
+`webContents.send` *push* broadcast.
+
 | Channel                               | Strategy        | Auth |
 |---------------------------------------|-----------------|------|
-| `updates:status`                      | no-input        |      |
+| `updates:status`                      | no-input (pull only; also emitted as push — see emit table) |      |
 | `updates:check`                       | no-input        |      |
 | `updates:install`                     | no-input        |      |
 | `updates:getAutoUpdateEnabled`        | no-input        |      |
+| `updates:setAutoUpdateEnabled`        | scalar-helper (boolean) |      |
 
 ## Password Vault (ephemeral prompt window)
 
@@ -200,6 +219,7 @@ completeness:
 |-------------------------------|--------------------------------|-----------------------------------------|
 | `model:token`                 | `model:generate` SSE stream    | Per-token streaming chunks              |
 | `runtime:downloadProgress`    | `runtime:downloadModel`        | Download bytes-progress updates         |
+| `updates:status`              | `autoUpdater.ts` `broadcast()` (driven by the underlying `electron-updater` events) | Auto-update lifecycle notifications (`checking`, `available`, `not-available`, `downloading`, `downloaded`, `error`) for the ambient toast UX. Also exposed as a pull endpoint — see [Updates (auto-updater)](#updates-auto-updater). |
 
 ## Invariants
 
