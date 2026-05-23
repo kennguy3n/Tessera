@@ -370,13 +370,19 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
   ],
   Analyze: [
     // Workflows surface at the top so they're the first thing users
-    // see when they open the Analyze tab.
+    // see when they open the Analyze tab. They reference the underlying
+    // `report-v1` template, which ships localized variants under
+    // `templates/documents/locales/<locale>/`. Mirroring `availableLocales`
+    // here ensures clicking a workflow under a non-English locale
+    // resolves to the localized template id (e.g. `report-v1-es`),
+    // matching the behavior of the canonical "Report" card below.
     {
       id: "report-v1",
       name: "Summarize sources",
       description:
         "Pick one or more sources and Tessera will draft a grounded summary report.",
       badge: "workflow",
+      availableLocales: CORE_LOCALES,
     },
     {
       id: "report-v1",
@@ -384,12 +390,14 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
       description:
         "Use the Report template with your selected sources for an analytical write-up.",
       badge: "workflow",
+      availableLocales: CORE_LOCALES,
     },
     {
       id: "report-v1",
       name: "Analyze spreadsheet",
       description: "Generate insights from a Sheet artifact.",
       badge: "workflow",
+      availableLocales: CORE_LOCALES,
       sourceHint:
         "Pick a Sheet you've already imported as a source — the report will cite its rows.",
     },
