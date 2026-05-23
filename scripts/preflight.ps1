@@ -298,31 +298,45 @@ Add-Step `
     -Command 'cargo clippy --all-targets --all-features -- -D warnings' `
     -Action  { cargo clippy --all-targets --all-features -- -D warnings }
 
-# 3) Rust workspace tests.
+# 3) Rust workspace build — same `cargo build --all-targets` step CI
+#    runs in the `rust` job at `.github/workflows/ci.yml:110-111`,
+#    BEFORE the test step. `cargo test --all` (step 4 below) does an
+#    implicit build of the *test* targets, but it doesn't exercise
+#    every non-test target the way `--all-targets` does: bench
+#    harnesses, examples, and the main binary path can compile-fail
+#    in ways that pure `cargo test` never observes. Running the
+#    explicit build here keeps preflight in lock-step with CI's step
+#    sequence and matches the bash sibling (`scripts/preflight.sh`).
+Add-Step `
+    -Label   'Rust build (cargo build --all-targets)' `
+    -Command 'cargo build --all-targets' `
+    -Action  { cargo build --all-targets }
+
+# 4) Rust workspace tests.
 Add-Step `
     -Label   'Rust tests (cargo test --all)' `
     -Command 'cargo test --all' `
     -Action  { cargo test --all }
 
-# 4) Desktop renderer / Electron lint.
+# 5) Desktop renderer / Electron lint.
 Add-Step `
     -Label   'Desktop lint (npm run lint --workspace=apps/desktop)' `
     -Command 'npm run lint --workspace=apps/desktop' `
     -Action  { npm run lint --workspace=apps/desktop }
 
-# 5) Desktop TypeScript type-check.
+# 6) Desktop TypeScript type-check.
 Add-Step `
     -Label   'Desktop type-check (npm run type-check --workspace=apps/desktop)' `
     -Command 'npm run type-check --workspace=apps/desktop' `
     -Action  { npm run type-check --workspace=apps/desktop }
 
-# 6) Desktop unit / component tests (Vitest).
+# 7) Desktop unit / component tests (Vitest).
 Add-Step `
     -Label   'Desktop tests (npm run test --workspace=apps/desktop)' `
     -Command 'npm run test --workspace=apps/desktop' `
     -Action  { npm run test --workspace=apps/desktop }
 
-# 7) Workaround for npm/cli#4828: Rollup ships per-platform native
+# 8) Workaround for npm/cli#4828: Rollup ships per-platform native
 #    binaries as optionalDependencies (e.g. `@rollup/rollup-win32-x64-msvc`),
 #    and `npm ci` does NOT always install the binary matching the
 #    current host when the lockfile was generated on a different OS.
@@ -374,18 +388,18 @@ if ($rollupHostBinary) {
         -Action  $rollupInstallBlock
 }
 
-# 8) Build the bundle electron-builder will consume so the
+# 9) Build the bundle electron-builder will consume so the
 #    dry-pack runs against current artefacts, not a stale one.
 #
 #    We invoke the *root-level* `npm run build` script (which today
 #    forwards to `npm run build --workspace=apps/desktop` via the
 #    `build` entry in the top-level package.json) rather than calling
 #    the workspace directly. This keeps the PowerShell preflight in
-#    lock-step with .github/workflows/release.yml (release.yml:111
+#    lock-step with .github/workflows/release.yml (release.yml:163
 #    also runs the root `npm run build`) and with the bash sibling
 #    scripts/preflight.sh. The earlier `lint` / `type-check` / `test`
 #    steps remain workspace-scoped because .github/workflows/ci.yml
-#    runs those workspace-scoped (lines 160 / 163 / 166); only the
+#    runs those workspace-scoped (lines 174 / 177 / 180); only the
 #    desktop build was asymmetric, and the fix lives here. If the
 #    root `build` script later grows additional steps (e.g.
 #    `npm run build:native && npm run build --workspace=apps/desktop`
@@ -398,7 +412,7 @@ Add-Step `
     -Command 'npm run build' `
     -Action  { npm run build }
 
-# 9) electron-builder dry-pack. `--dir` skips installer creation
+# 10) electron-builder dry-pack. `--dir` skips installer creation
 #    but still assembles the full app bundle, catching packaging
 #    regressions before a release tag is pushed.
 $skip = $SkipPackage -or ($env:TESSERA_PREFLIGHT_SKIP_PACKAGE -eq '1')

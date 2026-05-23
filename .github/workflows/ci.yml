@@ -149,12 +149,26 @@ jobs:
       # are not always installed on platforms other than the one the lockfile
       # was generated on. Rollup ships per-platform native binaries as
       # optionalDependencies, so we explicitly install the host-matching one.
+      # We pick the package by ${{ runner.arch }} rather than hardcoding the
+      # x64 variant so that bumping the matrix to a future ARM64 windows or
+      # macOS image (e.g. macos-14+) doesn't silently install the wrong
+      # binary and break the build with a confusing "Cannot find module"
+      # error — the release workflow and PowerShell preflight already do this.
       - name: Install platform-specific Rollup binary (Windows)
         if: matrix.os == 'windows-2022'
-        run: npm install --no-save --no-package-lock @rollup/rollup-win32-x64-msvc
+        shell: bash
+        run: |
+          case "${{ runner.arch }}" in
+            ARM64) npm install --no-save --no-package-lock @rollup/rollup-win32-arm64-msvc ;;
+            *)     npm install --no-save --no-package-lock @rollup/rollup-win32-x64-msvc ;;
+          esac
       - name: Install platform-specific Rollup binary (macOS)
-        if: matrix.os == 'macos-13'
-        run: npm install --no-save --no-package-lock @rollup/rollup-darwin-x64
+        if: startsWith(matrix.os, 'macos-')
+        run: |
+          case "${{ runner.arch }}" in
+            ARM64) npm install --no-save --no-package-lock @rollup/rollup-darwin-arm64 ;;
+            *)     npm install --no-save --no-package-lock @rollup/rollup-darwin-x64 ;;
+          esac
 
       - name: Lint
         run: npm run lint --workspace=apps/desktop

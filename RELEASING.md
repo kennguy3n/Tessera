@@ -39,7 +39,7 @@ before they reach the release workflow.
 > `apps/desktop`, so `npm ci` is what puts the pinned binary on disk.
 > The packaging step uses `npx --no electron-builder ...`,
 > which intentionally fails if the binary isn't already present —
-> see step 9 below for the rationale.
+> see step 10 below for the rationale.
 
 **Linux / macOS:**
 
@@ -57,11 +57,19 @@ The script runs:
 
 1. `cargo fmt --all -- --check`
 2. `cargo clippy --all-targets --all-features -- -D warnings`
-3. `cargo test --all`
-4. `npm run lint --workspace=apps/desktop`
-5. `npm run type-check --workspace=apps/desktop`
-6. `npm run test --workspace=apps/desktop`
-7. *(macOS / Windows only)* `npm install --no-save --no-package-lock @rollup/rollup-<plat>-<arch>`
+3. `cargo build --all-targets`
+
+   Mirrors the explicit Rust build step CI runs at
+   `.github/workflows/ci.yml:110-111` between clippy and tests.
+   `cargo test --all` (next step) only builds the test targets;
+   `--all-targets` also exercises bench harnesses, examples, and
+   the main binary path, so a build-script-level regression that
+   `cargo test` would miss surfaces here.
+4. `cargo test --all`
+5. `npm run lint --workspace=apps/desktop`
+6. `npm run type-check --workspace=apps/desktop`
+7. `npm run test --workspace=apps/desktop`
+8. *(macOS / Windows only)* `npm install --no-save --no-package-lock @rollup/rollup-<plat>-<arch>`
 
    On macOS and Windows the script inserts a host-matching Rollup
    binary install before the build step as a workaround for
@@ -73,9 +81,9 @@ The script runs:
    "Cannot find module" error. CI and the release workflow carry
    the same workaround. On Linux this step is silently skipped
    because `npm ci` already installs the correct binary, so the
-   per-run "[N/M]" banners show 8 steps on Linux and 9 on
+   per-run "[N/M]" banners show 9 steps on Linux and 10 on
    macOS/Windows.
-8. `npm run build`
+9. `npm run build`
 
    Invoked at the repo root. The root `package.json` defines `build`
    as a forwarder to `npm run build --workspace=apps/desktop`, so
@@ -89,9 +97,9 @@ The script runs:
    the new steps too rather than masking the divergence until a
    release-day failure surfaces it. The earlier `lint` / `type-check`
    / `test` steps remain workspace-scoped because CI runs them
-   workspace-scoped at `.github/workflows/ci.yml:160-166`; only the
+   workspace-scoped at `.github/workflows/ci.yml:174-180`; only the
    desktop build was asymmetric, so the fix lives there.
-9. `npx --no electron-builder --config packaging/electron-builder.yml --dir`
+10. `npx --no electron-builder --config packaging/electron-builder.yml --dir`
 
    The `--no` flag (npm 10+ canonical form, equivalent to the legacy
    `--no-install`) prevents npx from silently downloading a different

@@ -69,6 +69,18 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.88
 
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
       - name: Install dependencies
         run: npm ci
 
@@ -87,12 +99,52 @@ jobs:
       # https://github.com/npm/cli/issues/4828 ships and the
       # minimum supported npm in CONTRIBUTING.md is bumped past
       # the fix, all three of these workaround steps can be deleted.
+      # Pick the Windows package by ${{ runner.arch }} so the matrix
+      # can grow an ARM64 windows leg later without resurrecting this
+      # hardcoded x64 binary. PowerShell preflight already does this
+      # via $env:PROCESSOR_ARCHITECTURE; matching it here keeps the
+      # four gates (CI, release, bash preflight, pwsh preflight) in
+      # lock-step.
       - name: Install platform-specific Rollup binary (Windows)
         if: matrix.os == 'windows-2022'
-        run: npm install --no-save --no-package-lock @rollup/rollup-win32-x64-msvc
+        shell: bash
+        run: |
+          case "${{ runner.arch }}" in
+            ARM64) npm install --no-save --no-package-lock @rollup/rollup-win32-arm64-msvc ;;
+            *)     npm install --no-save --no-package-lock @rollup/rollup-win32-x64-msvc ;;
+          esac
+      # Same future-proofing for macOS: ${{ runner.arch }} returns X64
+      # on macos-13 today but ARM64 on macos-14+. Without this branch,
+      # bumping the matrix to a newer macOS image would silently
+      # install the wrong Rollup binary and break the build. The bash
+      # preflight script does the equivalent host-arch detection via
+      # `uname -m` on lines 309-315.
       - name: Install platform-specific Rollup binary (macOS)
-        if: matrix.os == 'macos-13'
-        run: npm install --no-save --no-package-lock @rollup/rollup-darwin-x64
+        if: startsWith(matrix.os, 'macos-')
+        run: |
+          case "${{ runner.arch }}" in
+            ARM64) npm install --no-save --no-package-lock @rollup/rollup-darwin-arm64 ;;
+            *)     npm install --no-save --no-package-lock @rollup/rollup-darwin-x64 ;;
+          esac
+
+      # Belt-and-suspenders validation: the release workflow only
+      # triggers on `v*` tag pushes, and RELEASING.md step 1 directs
+      # the maintainer to confirm `main` is green before tagging — but
+      # a tag can be pushed against any commit, not necessarily the
+      # CI-validated tip. Building the Rust workspace here catches the
+      # "tag pushed against an unvalidated SHA" failure mode early,
+      # before electron-builder packages a bundle that ships a broken
+      # native dependency tree. This mirrors `.github/workflows/ci.yml`
+      # which builds with `cargo build --all-targets`; we keep the
+      # exact flag set so a clippy- or build-script-level regression
+      # surfaces here the same way it would surface in CI.
+      - name: Build Rust workspace
+        run: cargo build --release --all-targets
+        env:
+          # Match CI's `-D warnings` posture so a release-day rebuild
+          # of an out-of-date Cargo.lock can't silently introduce a
+          # warning that CI would have rejected.
+          RUSTFLAGS: "-D warnings"
 
       - name: Build all
         # The repo's `package.json` `build` script forwards to
@@ -101,10 +153,10 @@ jobs:
         #   vite build                  (bundles the React renderer)
         #   tsc -p tsconfig.electron.json (compiles main + preload)
         # i.e. it's purely TypeScript / Vite — the Rust crates are
-        # built separately by `cargo build` (run via `cargo test --all`
-        # during the Test job in CI) and the napi-rs bridge addon is
-        # produced by the `build:native` script. That script is
-        # currently a placeholder; when the real napi-rs toolchain
+        # built separately by the `Build Rust workspace` step above
+        # (which mirrors the equivalent CI step). The napi-rs bridge
+        # addon is produced by the `build:native` script. That script
+        # is currently a placeholder; when the real napi-rs toolchain
         # lands, `build:native` should be invoked *before* this step
         # so the resulting `.node` artifact is in place for
         # electron-builder's packaging stage to pick up.

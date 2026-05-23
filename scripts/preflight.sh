@@ -250,24 +250,38 @@ register_step "Rust format check (cargo fmt --all -- --check)" \
 register_step "Rust clippy (cargo clippy --all-targets --all-features -- -D warnings)" \
   "cargo clippy --all-targets --all-features -- -D warnings"
 
-# 3) Rust workspace tests — mirrors `npm run test:rust` and the CI
+# 3) Rust workspace build — same `cargo build --all-targets` step CI
+#    runs in the `rust` job at `.github/workflows/ci.yml:110-111`,
+#    BEFORE the test step. `cargo test --all` (step 4 below) does an
+#    implicit build of the *test* targets, but it doesn't exercise
+#    every non-test target the way `--all-targets` does: bench
+#    harnesses, examples, and the main binary path can compile-fail
+#    in ways that pure `cargo test` never observes (e.g. a build
+#    script that compiles a fixture only under `cfg(test)`). Running
+#    the explicit build here keeps preflight in lock-step with CI's
+#    step sequence and ensures a clippy- or build-script-level
+#    regression surfaces under the same flag set CI uses.
+register_step "Rust build (cargo build --all-targets)" \
+  "cargo build --all-targets"
+
+# 4) Rust workspace tests — mirrors `npm run test:rust` and the CI
 #    Rust matrix. We run with `--all` so every crate's tests execute.
 register_step "Rust tests (cargo test --all)" \
   "cargo test --all"
 
-# 4) Desktop renderer / Electron lint — same command CI runs.
+# 5) Desktop renderer / Electron lint — same command CI runs.
 register_step "Desktop lint (npm run lint --workspace=apps/desktop)" \
   "npm run lint --workspace=apps/desktop"
 
-# 5) Desktop TypeScript type-check.
+# 6) Desktop TypeScript type-check.
 register_step "Desktop type-check (npm run type-check --workspace=apps/desktop)" \
   "npm run type-check --workspace=apps/desktop"
 
-# 6) Desktop unit / component tests (Vitest).
+# 7) Desktop unit / component tests (Vitest).
 register_step "Desktop tests (npm run test --workspace=apps/desktop)" \
   "npm run test --workspace=apps/desktop"
 
-# 7) Workaround for npm/cli#4828: Rollup ships per-platform native
+# 8) Workaround for npm/cli#4828: Rollup ships per-platform native
 #    binaries as optionalDependencies (e.g. `@rollup/rollup-darwin-arm64`),
 #    and `npm ci` does NOT always install the binary matching the
 #    current host when the lockfile was generated on a different OS.
@@ -291,8 +305,11 @@ register_step "Desktop tests (npm run test --workspace=apps/desktop)" \
 #        Linux-specific lockfile bugs that CI is supposed to catch.
 #      * RELEASING.md documents this as a macOS/Windows-only step;
 #        keeping the script in lock-step with the docs avoids
-#        confusing maintainers ("docs say 8 steps on Linux but I see
-#        9").
+#        confusing maintainers ("docs say 9 steps on Linux but I see
+#        10"). Linux: 9 steps (fmt/clippy/build/test → desktop
+#        lint/type-check/test → desktop build → electron dry-pack).
+#        macOS/Windows: 10 steps (Rollup workaround slots in before
+#        the desktop build).
 #
 #    The package name follows the convention
 #    `@rollup/rollup-<plat>-<arch>[-<libc>]`. We pick it from
@@ -319,7 +336,7 @@ if [[ -n "${ROLLUP_HOST_BINARY}" ]]; then
     "npm install --no-save --no-package-lock ${ROLLUP_HOST_BINARY}"
 fi
 
-# 8) Build the bundle electron-builder will consume. Without this,
+# 9) Build the bundle electron-builder will consume. Without this,
 #    `electron-builder --dir` would package whatever stale renderer /
 #    main bundles happen to be on disk, which defeats the purpose of
 #    a release dry-run.
@@ -329,10 +346,10 @@ fi
 #    via the `build` entry in the top-level package.json) rather than
 #    targeting the workspace directly. This keeps preflight in lock-step
 #    with `.github/workflows/release.yml` (which runs the same root
-#    `npm run build` at release.yml:111). The earlier `lint` /
+#    `npm run build` at release.yml:163). The earlier `lint` /
 #    `type-check` / `test` steps stay workspace-scoped because
 #    `.github/workflows/ci.yml` runs them workspace-scoped (lines
-#    160 / 163 / 166); only the desktop build is asymmetric, and the
+#    174 / 177 / 180); only the desktop build is asymmetric, and the
 #    fix lives here. If the root `build` script later grows additional
 #    steps (e.g. is changed to
 #    `npm run build:native && npm run build --workspace=apps/desktop`
@@ -343,7 +360,7 @@ fi
 register_step "Desktop build (npm run build)" \
   "npm run build"
 
-# 9) electron-builder dry-pack. `--dir` skips the installer step
+# 10) electron-builder dry-pack. `--dir` skips the installer step
 #    (no .dmg / .exe / .AppImage produced) but still assembles the
 #    full app bundle, so we catch packaging regressions (missing
 #    files, broken extraResources, native asar issues) before
