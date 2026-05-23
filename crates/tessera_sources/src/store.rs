@@ -45,6 +45,21 @@ impl SourceStore {
             .expect("connection mutex poisoned")
             .execute_batch(
                 "
+            -- Re-assert PRAGMA foreign_keys = ON on this connection.
+            -- The primary place this is set is `tessera_core::db::
+            -- open_shared`, which applies it at construction time so
+            -- every store inherits the setting regardless of which
+            -- `init_schema` runs first. We re-assert it here as
+            -- defence-in-depth: a future caller that constructs a
+            -- `SourceStore` from a raw `rusqlite::Connection` via some
+            -- yet-unwritten escape hatch would otherwise silently get
+            -- a no-op CASCADE on `chunk_embeddings`. The pragma is
+            -- idempotent, so applying it twice costs nothing.
+            -- Note that SQLite scopes this pragma per-connection (not
+            -- per-database); the per-connection nature is why the
+            -- pragma cannot live solely in the schema migration.
+            PRAGMA foreign_keys = ON;
+
             CREATE TABLE IF NOT EXISTS sources (
                 id TEXT PRIMARY KEY,
                 source_type TEXT NOT NULL,
@@ -92,6 +107,22 @@ impl SourceStore {
             CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
                 INSERT INTO chunks_fts(chunks_fts, rowid, content) VALUES('delete', old.id, old.content);
                 INSERT INTO chunks_fts(rowid, content) VALUES (new.id, new.content);
+            END;
+
+            CREATE TABLE IF NOT EXISTS chunk_embeddings (
+                chunk_id INTEGER NOT NULL,
+                model_id TEXT NOT NULL,
+                dim INTEGER NOT NULL,
+                vec BLOB NOT NULL,
+                PRIMARY KEY (chunk_id, model_id),
+                FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model
+                ON chunk_embeddings(model_id);
+
+            CREATE TRIGGER IF NOT EXISTS chunks_ad_embeddings BEFORE DELETE ON chunks BEGIN
+                DELETE FROM chunk_embeddings WHERE chunk_id = old.id;
             END;
             ",
             )
@@ -322,7 +353,21 @@ impl SourceStore {
     }
 
     pub fn insert_chunks(&self, indexed_file_id: i64, chunks: &[Chunk]) -> Result<()> {
+        self.insert_chunks_returning_ids(indexed_file_id, chunks)
+            .map(|_| ())
+    }
+
+    /// Insert chunks and return the `(chunk_index, chunk_id)` pairs
+    /// in the same order as the input slice. Used by the indexer to
+    /// hand newly-created chunks off to the embedding pipeline
+    /// without a follow-up SELECT.
+    pub fn insert_chunks_returning_ids(
+        &self,
+        indexed_file_id: i64,
+        chunks: &[Chunk],
+    ) -> Result<Vec<i64>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut ids = Vec::with_capacity(chunks.len());
         {
             let mut stmt = conn
                 .prepare(
@@ -340,6 +385,7 @@ impl SourceStore {
                     chunk.hash,
                 ])
                 .map_err(|e| Error::Database(e.to_string()))?;
+                ids.push(conn.last_insert_rowid());
             }
         }
 
@@ -349,7 +395,7 @@ impl SourceStore {
         )
         .map_err(|e| Error::Database(e.to_string()))?;
 
-        Ok(())
+        Ok(ids)
     }
 
     pub fn get_file_hash(&self, path: &str) -> Result<Option<String>> {
@@ -388,7 +434,7 @@ impl SourceStore {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
             .prepare(
-                "SELECT c.content, c.hash, c.chunk_index, c.byte_offset, f.path,
+                "SELECT c.id, c.content, c.hash, c.chunk_index, c.byte_offset, f.path,
                         f.source_id, rank
                  FROM chunks_fts fts
                  JOIN chunks c ON c.id = fts.rowid
@@ -402,13 +448,14 @@ impl SourceStore {
         let results = stmt
             .query_map(params![query, limit as i64], |row| {
                 Ok(SearchHit {
-                    content: row.get(0)?,
-                    hash: row.get(1)?,
-                    chunk_index: row.get::<_, i64>(2)? as usize,
-                    byte_offset: row.get::<_, i64>(3)? as usize,
-                    source_path: row.get(4)?,
-                    source_id: row.get(5)?,
-                    relevance: -row.get::<_, f64>(6)?,
+                    chunk_id: row.get::<_, i64>(0)?,
+                    content: row.get(1)?,
+                    hash: row.get(2)?,
+                    chunk_index: row.get::<_, i64>(3)? as usize,
+                    byte_offset: row.get::<_, i64>(4)? as usize,
+                    source_path: row.get(5)?,
+                    source_id: row.get(6)?,
+                    relevance: -row.get::<_, f64>(7)?,
                 })
             })
             .map_err(|e| Error::Database(e.to_string()))?
@@ -416,6 +463,260 @@ impl SourceStore {
             .collect();
 
         Ok(results)
+    }
+
+    /// Look up the contents of a set of chunks by id, preserving the
+    /// input order. Used by the hybrid retrieval pipeline to hydrate
+    /// the final ranked list with chunk text + source metadata after
+    /// fusion has determined the order.
+    pub fn fetch_chunks_by_ids(&self, ids: &[i64]) -> Result<Vec<SearchHit>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let placeholders = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT c.id, c.content, c.hash, c.chunk_index, c.byte_offset, f.path, f.source_id
+             FROM chunks c
+             JOIN indexed_files f ON f.id = c.indexed_file_id
+             WHERE c.id IN ({placeholders})"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let id_params: Vec<rusqlite::types::Value> = ids
+            .iter()
+            .map(|&i| rusqlite::types::Value::Integer(i))
+            .collect();
+        let rows: Vec<SearchHit> = stmt
+            .query_map(rusqlite::params_from_iter(id_params.iter()), |row| {
+                Ok(SearchHit {
+                    chunk_id: row.get::<_, i64>(0)?,
+                    content: row.get(1)?,
+                    hash: row.get(2)?,
+                    chunk_index: row.get::<_, i64>(3)? as usize,
+                    byte_offset: row.get::<_, i64>(4)? as usize,
+                    source_path: row.get(5)?,
+                    source_id: row.get(6)?,
+                    // relevance is filled in by the caller based on the
+                    // hybrid-fusion score; we set 0.0 here as a sentinel.
+                    relevance: 0.0,
+                })
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+
+        // Reorder to match the requested id sequence.
+        let mut by_id: std::collections::HashMap<i64, SearchHit> =
+            rows.into_iter().map(|h| (h.chunk_id, h)).collect();
+        let ordered: Vec<SearchHit> = ids.iter().filter_map(|id| by_id.remove(id)).collect();
+        Ok(ordered)
+    }
+
+    /// Upsert an embedding for a chunk. Replaces any existing row with
+    /// the same `(chunk_id, model_id)` pair so re-embedding the same
+    /// chunk doesn't accumulate duplicates.
+    pub fn upsert_chunk_embedding(
+        &self,
+        chunk_id: i64,
+        model_id: &str,
+        dim: usize,
+        vec_bytes: &[u8],
+    ) -> Result<()> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        conn.execute(
+            "INSERT INTO chunk_embeddings (chunk_id, model_id, dim, vec)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(chunk_id, model_id) DO UPDATE SET
+                dim = excluded.dim,
+                vec = excluded.vec",
+            params![chunk_id, model_id, dim as i64, vec_bytes],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Load every embedding stored for a given model. Used by hybrid
+    /// retrieval to scan for cosine similarity. For corpora large
+    /// enough that an in-memory scan is slow (~100K+ chunks), this
+    /// can be replaced with an sqlite-vec / sqlite-vss native index;
+    /// the trait surface stays the same.
+    pub fn load_embeddings_for_model(&self, model_id: &str) -> Result<Vec<ChunkEmbeddingRow>> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
+            .prepare("SELECT chunk_id, model_id, vec FROM chunk_embeddings WHERE model_id = ?1")
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![model_id], |row| {
+                let chunk_id: i64 = row.get(0)?;
+                let model_id: String = row.get(1)?;
+                let bytes: Vec<u8> = row.get(2)?;
+                let vector = crate::embedding::decode_vec(&bytes).unwrap_or_default();
+                Ok(ChunkEmbeddingRow {
+                    chunk_id,
+                    model_id,
+                    vector,
+                })
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .filter(|r| !r.vector.is_empty())
+            .collect();
+        Ok(rows)
+    }
+
+    /// Find chunks that don't yet have an embedding for the given
+    /// model. The indexer uses this to incrementally back-fill
+    /// embeddings without re-processing every chunk on every run.
+    pub fn chunks_missing_embedding(
+        &self,
+        model_id: &str,
+        limit: usize,
+    ) -> Result<Vec<(i64, String)>> {
+        self.chunks_missing_embedding_excluding(model_id, limit, &[])
+    }
+
+    /// Variant of [`chunks_missing_embedding`] that filters out chunk
+    /// IDs the caller has already attempted-and-failed this session.
+    ///
+    /// `backfill_embeddings` calls this with the running set of
+    /// permanently-failing chunk IDs so the SQL query doesn't keep
+    /// returning the same broken chunks on every iteration. Without
+    /// this filter, a corpus with P passing chunks and F permanently-
+    /// failing chunks at batch_size B requires `O(P * ⌈F/B⌉ / B)`
+    /// iterations to converge — every batch reads F failures before
+    /// finding the next B passes. With the filter, the failing set
+    /// is paid for exactly once (the first time each failure is hit)
+    /// and convergence is `O(P/B + F/B)`.
+    ///
+    /// SQLite's default `SQLITE_MAX_VARIABLE_NUMBER` is 32766 in modern
+    /// builds, so callers can safely accumulate thousands of excludes
+    /// before the prepared statement compiler complains; in practice
+    /// backfill should bail via the in-loop stall detector long before
+    /// the exclude list gets that large.
+    pub fn chunks_missing_embedding_excluding(
+        &self,
+        model_id: &str,
+        limit: usize,
+        exclude_chunk_ids: &[i64],
+    ) -> Result<Vec<(i64, String)>> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        // Build the SQL with one `?` placeholder per excluded ID. We
+        // can't bind a Vec to a single placeholder in rusqlite; the
+        // canonical workaround is to construct the in-clause with the
+        // matching number of placeholders. We could use a temp table
+        // instead, but for the small exclude sets backfill produces
+        // (bounded by `total_chunks - successfully_embedded`), in-line
+        // binding is faster and simpler.
+        let exclude_placeholders = if exclude_chunk_ids.is_empty() {
+            String::new()
+        } else {
+            let placeholders: Vec<String> = (0..exclude_chunk_ids.len())
+                .map(|i| format!("?{}", i + 3))
+                .collect();
+            format!(" AND c.id NOT IN ({})", placeholders.join(", "))
+        };
+        // `ORDER BY c.id` makes the iteration order deterministic
+        // and stable across repeated calls with the same exclude set.
+        // Correctness doesn't depend on the order — the upsert is
+        // idempotent and successful embeddings drop out of the
+        // left-join filter on the next pass — but pinning it serves
+        // two real benefits:
+        //
+        //   1. **Debuggability.** A backfill stall logged with the
+        //      first-batch chunk ids reproduces byte-for-byte across
+        //      restarts; without ORDER BY the implicit rowid order
+        //      can shift if a vacuum / autovacuum reshuffles the
+        //      btree leaves, making "embed chunk 4711 keeps failing"
+        //      bug reports impossible to reproduce.
+        //
+        //   2. **Stall detector tractability.** The in-loop
+        //      stall detector in `backfill_embeddings` decides whether
+        //      to bail by comparing the chunk-id set returned by
+        //      successive iterations. Deterministic order means the
+        //      set comparison reduces to a vec-equality check at
+        //      worst — and to a "first id same?" check in the
+        //      common case — instead of always paying the
+        //      HashSet-build cost.
+        //
+        // ORDER BY happens *before* LIMIT, so the cost is bounded by
+        // the index on `chunks.id` (the SQLite rowid alias) rather
+        // than by the size of the corpus.
+        let sql = format!(
+            "SELECT c.id, c.content
+             FROM chunks c
+             LEFT JOIN chunk_embeddings e
+                ON e.chunk_id = c.id AND e.model_id = ?1
+             WHERE e.chunk_id IS NULL{exclude_placeholders}
+             ORDER BY c.id ASC
+             LIMIT ?2"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| Error::Database(e.to_string()))?;
+        // Build the parameter list: ?1 = model_id, ?2 = limit,
+        // ?3.. = exclude IDs in order.
+        let mut params_vec: Vec<rusqlite::types::Value> =
+            Vec::with_capacity(2 + exclude_chunk_ids.len());
+        params_vec.push(rusqlite::types::Value::Text(model_id.to_string()));
+        params_vec.push(rusqlite::types::Value::Integer(limit as i64));
+        for id in exclude_chunk_ids {
+            params_vec.push(rusqlite::types::Value::Integer(*id));
+        }
+        let params_iter = rusqlite::params_from_iter(params_vec.iter());
+        let rows = stmt
+            .query_map(params_iter, |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+        Ok(rows)
+    }
+
+    /// Look up `last_modified` ages in seconds (relative to `now`)
+    /// for a list of chunk ids. Chunks whose `last_modified` cannot
+    /// be parsed get age 0 (treated as fresh) — defensive choice so
+    /// a malformed timestamp doesn't tank a result's ranking.
+    pub fn ages_secs_for_chunks(&self, ids: &[i64]) -> Result<std::collections::HashMap<i64, f64>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let placeholders = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT c.id, f.last_modified
+             FROM chunks c
+             JOIN indexed_files f ON f.id = c.indexed_file_id
+             WHERE c.id IN ({placeholders})"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let id_params: Vec<rusqlite::types::Value> = ids
+            .iter()
+            .map(|&i| rusqlite::types::Value::Integer(i))
+            .collect();
+        let now = chrono::Utc::now();
+        let mut ages = std::collections::HashMap::new();
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(id_params.iter()), |row| {
+                let id: i64 = row.get(0)?;
+                let last_mod: String = row.get(1)?;
+                Ok((id, last_mod))
+            })
+            .map_err(|e| Error::Database(e.to_string()))?;
+        for r in rows.flatten() {
+            let age_secs =
+                parse_datetime_opt(&r.1).map_or(0.0, |dt| (now - dt).num_seconds().max(0) as f64);
+            ages.insert(r.0, age_secs);
+        }
+        Ok(ages)
     }
 
     pub fn file_count_for_source(&self, source_id: &SourceId) -> Result<u64> {
@@ -499,6 +800,7 @@ impl SourceStore {
 
 #[derive(Debug, Clone)]
 pub struct SearchHit {
+    pub chunk_id: i64,
     pub content: String,
     pub hash: String,
     pub chunk_index: usize,
@@ -506,6 +808,13 @@ pub struct SearchHit {
     pub source_path: String,
     pub source_id: String,
     pub relevance: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChunkEmbeddingRow {
+    pub chunk_id: i64,
+    pub model_id: String,
+    pub vector: Vec<f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -519,6 +828,7 @@ pub struct IndexedFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn store_add_and_list_sources() {
@@ -649,5 +959,179 @@ mod tests {
         let sources = b.list_sources().unwrap();
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].path, "/tmp/shared");
+    }
+
+    #[test]
+    fn pragma_foreign_keys_is_enabled_on_store_connection() {
+        // Regression for the original finding that `chunk_embeddings`
+        // had `ON DELETE CASCADE` but SQLite's default
+        // `foreign_keys = OFF` silently turned the cascade into a
+        // no-op. We now `PRAGMA foreign_keys = ON` in `init_schema()`
+        // so the cascade actually fires. Pin that pragma stays ON
+        // for the rest of the connection's lifetime — pragmas are
+        // per-connection and could be silently flipped by any later
+        // `execute_batch` that runs on the same connection.
+        let store = SourceStore::open_in_memory().unwrap();
+        let conn = store.conn.lock().expect("connection mutex poisoned");
+        let fk_on: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            fk_on, 1,
+            "PRAGMA foreign_keys must be ON for chunk_embeddings cascade to fire"
+        );
+    }
+
+    #[test]
+    fn chunk_embeddings_cascade_fires_when_parent_chunk_is_deleted() {
+        // Defence-in-depth regression test for ANALYSIS_0003: with
+        // foreign_keys=ON, deleting a chunk must remove its
+        // associated `chunk_embeddings` row via either the trigger
+        // (belt) or the CASCADE clause (suspenders). We assert the
+        // chunk_embeddings row disappears after the parent delete.
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/cascade-test".to_string());
+        store.add_source(&source).unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("doc.txt"),
+            "alpha bravo charlie delta echo foxtrot golf",
+        )
+        .unwrap();
+
+        // Index with an embedder so chunk_embeddings rows get populated.
+        let embedder: Arc<dyn crate::embedding::EmbeddingProvider> =
+            Arc::new(crate::embedding::HashTrickEmbedding::default_config());
+        let indexer = crate::indexer::Indexer::default().with_embedder(Arc::clone(&embedder));
+        indexer
+            .index_folder(&source.id, dir.path(), &store)
+            .unwrap();
+
+        let embedding_count_before: i64 = {
+            let conn = store.conn.lock().expect("connection mutex poisoned");
+            conn.query_row("SELECT COUNT(*) FROM chunk_embeddings", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert!(
+            embedding_count_before > 0,
+            "expected the embedder to have populated chunk_embeddings"
+        );
+
+        // Delete a single chunk directly (not via remove_source, which
+        // already deletes embeddings explicitly). The trigger +
+        // CASCADE pair must remove the matching chunk_embeddings row.
+        let chunk_id: i64 = {
+            let conn = store.conn.lock().expect("connection mutex poisoned");
+            conn.query_row("SELECT id FROM chunks LIMIT 1", [], |r| r.get(0))
+                .unwrap()
+        };
+        {
+            let conn = store.conn.lock().expect("connection mutex poisoned");
+            conn.execute("DELETE FROM chunks WHERE id = ?1", params![chunk_id])
+                .unwrap();
+        }
+
+        let leftover: i64 = {
+            let conn = store.conn.lock().expect("connection mutex poisoned");
+            conn.query_row(
+                "SELECT COUNT(*) FROM chunk_embeddings WHERE chunk_id = ?1",
+                params![chunk_id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            leftover, 0,
+            "deleting a chunk must cascade-remove its chunk_embeddings rows"
+        );
+    }
+
+    #[test]
+    fn chunks_missing_embedding_excluding_returns_ascending_chunk_id() {
+        // Regression for ANALYSIS_0005: the SELECT in
+        // `chunks_missing_embedding_excluding` previously had no
+        // ORDER BY clause, relying on SQLite's implicit rowid order.
+        // That ordering is an implementation detail and can shift
+        // when the btree is reshuffled (autovacuum, page-split
+        // rebalances), so a backfill stall reproducer logged with
+        // the first-batch chunk ids would have been impossible to
+        // reproduce on a later run.
+        //
+        // This test pins the contract: ascending `chunks.id`,
+        // stable across repeated calls with the same exclude set.
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/ordering".to_string());
+        store.add_source(&source).unwrap();
+
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/ordering/doc.txt", "h", "2026-01-01")
+            .unwrap();
+
+        // Insert five chunks. SQLite will assign them rowids 1..=5
+        // in insertion order; we intentionally do NOT sort the
+        // input list — the ORDER BY in the query is what pins the
+        // output order, not the insertion order.
+        let chunks: Vec<_> = (0..5)
+            .map(|i| crate::chunker::Chunk {
+                source_path: "/tmp/ordering/doc.txt".to_string(),
+                chunk_index: i,
+                byte_offset: i * 100,
+                content: format!("chunk body {i}"),
+                hash: format!("hash{i}"),
+            })
+            .collect();
+        store.insert_chunks(file_id, &chunks).unwrap();
+
+        let model_id = "test-embed-v1";
+
+        // First call: no excludes. Should return all 5 ids in
+        // ascending order.
+        let first = store
+            .chunks_missing_embedding_excluding(model_id, 100, &[])
+            .unwrap();
+        let first_ids: Vec<i64> = first.iter().map(|(id, _)| *id).collect();
+        assert_eq!(first_ids.len(), 5, "expected all 5 chunks unembedded");
+        for w in first_ids.windows(2) {
+            assert!(
+                w[0] < w[1],
+                "chunks_missing_embedding_excluding output must be ascending; saw {w:?}"
+            );
+        }
+
+        // Repeat the same call 20 times to make sure the ordering
+        // is truly stable, not just "happened to be ascending once".
+        // Without ORDER BY this would still typically pass on a
+        // freshly-built table, so the windowing assertion above is
+        // the real meat — but pinning stability across iterations
+        // catches any future "let's optimise this with a hash
+        // join" regression that would shuffle the rows.
+        for _ in 0..20 {
+            let again = store
+                .chunks_missing_embedding_excluding(model_id, 100, &[])
+                .unwrap();
+            let again_ids: Vec<i64> = again.iter().map(|(id, _)| *id).collect();
+            assert_eq!(
+                again_ids, first_ids,
+                "chunks_missing_embedding_excluding must be order-stable across repeated calls"
+            );
+        }
+
+        // With excludes: pulling out the middle chunk must keep
+        // the remaining four in ascending order.
+        let middle = first_ids[2];
+        let with_excludes = store
+            .chunks_missing_embedding_excluding(model_id, 100, &[middle])
+            .unwrap();
+        let with_exclude_ids: Vec<i64> = with_excludes.iter().map(|(id, _)| *id).collect();
+        let expected: Vec<i64> = first_ids
+            .iter()
+            .copied()
+            .filter(|id| *id != middle)
+            .collect();
+        assert_eq!(
+            with_exclude_ids, expected,
+            "exclude set must not perturb the ascending-id contract"
+        );
     }
 }

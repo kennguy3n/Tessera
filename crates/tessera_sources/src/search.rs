@@ -1,9 +1,13 @@
 use tessera_core::error::Result;
 
+use crate::embedding::EmbeddingProvider;
+use crate::hybrid::{hybrid_search, HybridSearchConfig};
 use crate::store::SourceStore;
 
 pub struct SearchEngine<'a> {
     store: &'a SourceStore,
+    provider: Option<&'a dyn EmbeddingProvider>,
+    config: HybridSearchConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -13,13 +17,74 @@ pub struct SearchResult {
     pub source_path: String,
     pub source_id: String,
     pub chunk_index: usize,
+    /// Reciprocal-rank relevance score, bounded to `(0.0, 1.0]`.
+    ///
+    /// For the result ranked at position `i` (1-based) in the
+    /// query result list, this is `1.0 / i`. The highest-ranked
+    /// result therefore has `relevance == 1.0`; the second has
+    /// `0.5`; the third `0.333`; and so on.
+    ///
+    /// Why reciprocal-rank rather than the raw BM25 / RRF /
+    /// recency-fused score:
+    ///
+    /// * The fused score combines three signals (BM25, cosine,
+    ///   recency) with weights from `HybridSearchConfig`. Its
+    ///   magnitude is not stable across queries (or across
+    ///   weight configurations) and is therefore meaningless as
+    ///   an absolute confidence value at the UI layer.
+    /// * Reciprocal-rank is *position-stable*: the top hit is
+    ///   always `1.0`, the second always `0.5`, regardless of
+    ///   which signals fired.
+    /// * The renderer (`CitationPanel`) displays this value as a
+    ///   percentage; bounding to `(0, 1]` means the displayed
+    ///   value is always in `[1%, 100%]` instead of the
+    ///   previous BM25-derived path which could produce
+    ///   nonsensical magnitudes (raw `-FTS5_rank` was unbounded
+    ///   positive and routinely exceeded 2.0, displaying as
+    ///   "230%" etc.).
+    ///
+    /// Compatibility note: chunks indexed prior to the WS3
+    /// hybrid-retrieval landing have citation `confidence`
+    /// values stored on disk in the *old* BM25-derived
+    /// magnitude. Renderer code that needs to compare against
+    /// stored values should clamp on read; new values are
+    /// always in `(0, 1]`. The
+    /// `search_result_relevance_is_bounded` regression test
+    /// pins the new contract.
     pub relevance: f64,
     pub hash: String,
 }
 
 impl<'a> SearchEngine<'a> {
+    /// Build a search engine that runs BM25-only retrieval (no
+    /// vector / no recency). Kept for backwards compatibility with
+    /// call sites that haven't been migrated to hybrid yet.
     pub fn new(store: &'a SourceStore) -> Self {
-        Self { store }
+        Self {
+            store,
+            provider: None,
+            config: HybridSearchConfig {
+                vector_weight: 0.0,
+                recency_halflife_secs: f64::INFINITY,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Build a hybrid search engine. When `provider` is `Some`,
+    /// vector cosine contributes to ranking via Reciprocal Rank
+    /// Fusion alongside BM25; when `None`, only BM25 contributes.
+    /// Recency decay is always applied per the supplied `config`.
+    pub fn hybrid(
+        store: &'a SourceStore,
+        provider: Option<&'a dyn EmbeddingProvider>,
+        config: HybridSearchConfig,
+    ) -> Self {
+        Self {
+            store,
+            provider,
+            config,
+        }
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
@@ -37,22 +102,43 @@ impl<'a> SearchEngine<'a> {
         use_or: bool,
     ) -> Result<Vec<SearchResult>> {
         let fts_query = build_fts_query(query, use_or);
-        if fts_query.is_empty() {
+
+        let ranked_ids = hybrid_search(
+            self.store,
+            self.provider,
+            query,
+            &fts_query,
+            limit,
+            &self.config,
+        )?;
+        if ranked_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let hits = self.store.search_fts(&fts_query, limit)?;
+        let hits = self.store.fetch_chunks_by_ids(&ranked_ids)?;
+
+        // Build a (chunk_id -> 1-based rank) map so we can attach a
+        // monotonically-decreasing relevance score to each result.
+        // The actual fused score isn't surfaced to the renderer
+        // (it's not stable across queries), but rank-based
+        // relevance gives callers a usable ordering signal.
+        let rank_of: std::collections::HashMap<i64, f64> = ranked_ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (*id, 1.0 / (i as f64 + 1.0)))
+            .collect();
 
         let results = hits
             .into_iter()
             .map(|hit| {
                 let excerpt = build_excerpt(&hit.content, query, 200);
+                let relevance = rank_of.get(&hit.chunk_id).copied().unwrap_or(0.0);
                 SearchResult {
                     content: hit.content,
                     excerpt,
                     source_path: hit.source_path,
                     source_id: hit.source_id,
                     chunk_index: hit.chunk_index,
-                    relevance: hit.relevance,
+                    relevance,
                     hash: hit.hash,
                 }
             })
@@ -369,5 +455,102 @@ mod tests {
             "Lorem ipsum dolor sit amet. Tessera workspace is great. Consectetur adipiscing.";
         let excerpt = build_excerpt(text, "Tessera", 200);
         assert!(excerpt.contains("Tessera"));
+    }
+
+    /// Pins the `SearchResult::relevance` contract: every returned
+    /// score is in `(0.0, 1.0]`, the first result is exactly
+    /// `1.0`, and the i-th (1-based) result is `1.0 / i`.
+    ///
+    /// Before WS3 hybrid retrieval landed, this field held
+    /// `-FTS5_rank` (unbounded positive BM25-derived magnitude),
+    /// which the renderer multiplied by 100 to produce a
+    /// percentage — resulting in displays like "230%" for
+    /// strongly-matching chunks. The renderer is unchanged; only
+    /// the value now produced by this struct is reciprocal-rank
+    /// (`1/i`) so the percentage stays in `[0, 100]`. A future
+    /// refactor that changes the score function MUST keep the
+    /// `(0, 1]` invariant or update the renderer + this test in
+    /// the same commit.
+    #[test]
+    fn search_result_relevance_is_bounded() {
+        let store = setup_store_with_data();
+        let engine = SearchEngine::new(&store);
+        // Use an OR query that matches multiple chunks so we get a
+        // ranking with at least two positions.
+        // `search_broad` uses OR semantics so we get hits from
+        // multiple chunks — necessary to exercise rank > 1.
+        let results = engine
+            .search_broad("Tessera encrypted meeting", 10)
+            .unwrap();
+        assert!(
+            results.len() >= 2,
+            "test needs at least two hits to exercise rank ordering"
+        );
+        for (i, hit) in results.iter().enumerate() {
+            let expected = 1.0 / (i as f64 + 1.0);
+            assert!(
+                hit.relevance > 0.0,
+                "relevance must be strictly positive (got {} at rank {})",
+                hit.relevance,
+                i
+            );
+            assert!(
+                hit.relevance <= 1.0,
+                "relevance must be <= 1.0 — the renderer multiplies by 100 to display a percentage (got {} at rank {})",
+                hit.relevance,
+                i
+            );
+            assert!(
+                (hit.relevance - expected).abs() < 1e-9,
+                "rank {} should have relevance {} (= 1/(rank+1)) but got {}",
+                i,
+                expected,
+                hit.relevance
+            );
+        }
+        assert!(
+            (results[0].relevance - 1.0).abs() < 1e-9,
+            "top hit must have relevance == 1.0; got {}",
+            results[0].relevance
+        );
+    }
+
+    /// Pins the empty/whitespace-only query contract.
+    ///
+    /// Before this guard landed, the WS3 hybrid path would:
+    ///   * skip the BM25 call (good — `build_fts_query("")` returns
+    ///     ""), but then
+    ///   * still build a "query embedding" via `embed("")` (which
+    ///     for `HashTrickEmbedding` is the all-zeros vector), and
+    ///   * cosine-rank every stored embedding against that zero
+    ///     vector. Cosine similarity is `0.0` for every chunk, the
+    ///     all-tied set is sorted by the `chunk_id` secondary key,
+    ///     and `take(limit)` returns the `limit` lowest-id chunks
+    ///     with monotonically-decreasing RRF relevance.
+    ///
+    /// Net effect: `SourceManager::search("", 10)` would surface
+    /// up to 10 arbitrary chunks instead of an empty result — a
+    /// data-leak-shaped UX bug (the renderer would render the
+    /// snippets as if they were "matches"). This test pins the
+    /// fix at the public `SearchEngine::search` API level.
+    #[test]
+    fn search_empty_or_whitespace_query_returns_no_results() {
+        let store = setup_store_with_data();
+        let engine = SearchEngine::new(&store);
+
+        for q in ["", " ", "\t", "  \n  ", "\u{00A0}"] {
+            let results = engine.search(q, 10).unwrap();
+            assert!(
+                results.is_empty(),
+                "expected no results for empty/whitespace-only query {q:?}, got {} hits",
+                results.len()
+            );
+            let broad = engine.search_broad(q, 10).unwrap();
+            assert!(
+                broad.is_empty(),
+                "expected no results for empty/whitespace-only broad query {q:?}, got {} hits",
+                broad.len()
+            );
+        }
     }
 }
