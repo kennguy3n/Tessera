@@ -433,11 +433,7 @@ fn every_templates_subdirectory_is_classified() {
     let mut discovered: Vec<String> = std::fs::read_dir(&root)
         .unwrap_or_else(|e| panic!("read_dir({root:?}) failed: {e}"))
         .filter_map(std::result::Result::ok)
-        .filter(|e| {
-            e.file_type()
-                .map(|t| t.is_dir())
-                .unwrap_or(false)
-        })
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     discovered.sort();
@@ -470,12 +466,20 @@ fn every_templates_subdirectory_is_classified() {
     // correspond to a real directory. A stale entry (e.g. a category
     // that was removed) would otherwise sit forever in the constants
     // pretending to be covered.
-    let discovered_set: HashSet<&String> = discovered.iter().collect();
+    //
+    // We collect the discovered names into a `HashSet<&str>` (not
+    // `HashSet<&String>`) so the membership test below can hash a
+    // borrowed `&str` directly — `HashSet::<&str>::contains(&str)`
+    // avoids allocating a fresh `String` per check. Devin Review
+    // round-10 / clippy `inefficient_to_string` flagged the previous
+    // `discovered_set.contains(&name.to_string())` form for exactly
+    // this reason.
+    let discovered_set: HashSet<&str> = discovered.iter().map(String::as_str).collect();
     let stale: Vec<&&str> = RUST_TEMPLATE_DIRS
         .iter()
         .chain(RENDERER_ONLY_TEMPLATE_DIRS.iter())
         .chain(NON_TEMPLATE_DIRS.iter())
-        .filter(|name| !discovered_set.contains(&name.to_string()))
+        .filter(|name| !discovered_set.contains(**name))
         .collect();
     assert!(
         stale.is_empty(),
