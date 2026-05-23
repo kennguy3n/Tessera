@@ -165,6 +165,24 @@ jobs:
       - name: Test
         run: npm run test --workspace=apps/desktop
 
+      # Run the actual Vite/TS build so configuration regressions
+      # (broken `vite.config.ts`, missing entry point, electron main
+      # tsconfig drift, etc.) are caught on every PR instead of only
+      # at preflight or release-tag time. `tsc --noEmit` (the
+      # type-check step above) catches typing errors but does NOT
+      # exercise Vite's plugin pipeline, asset resolution, or the
+      # electron main/preload tsconfig, so a maintainer could land
+      # a green PR whose `npm run build` is broken — which would then
+      # silently propagate to anyone running `scripts/preflight.sh` or
+      # a release tag push. The root `npm run build` script forwards
+      # to `npm run build --workspace=apps/desktop` and is the same
+      # command run by `.github/workflows/release.yml:111` and by both
+      # preflight scripts, so this CI step now exercises the identical
+      # command path. Kept after `Test` so a failing build never masks
+      # a test signal (tests run first; build runs once tests pass).
+      - name: Build
+        run: npm run build
+
   # Single aggregator check. This is the one to require in branch
   # protection on `main`; everything else is conditional or advisory.
   #
