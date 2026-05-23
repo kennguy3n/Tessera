@@ -40,9 +40,11 @@
 
 | Platform | Status |
 |---|---|
-| macOS (Intel & Apple Silicon) | Planned |
-| Windows (x64) | Planned |
-| Linux (x64, arm64) | Planned |
+| macOS (Intel & Apple Silicon) | Available |
+| Windows (x64) | Available |
+| Linux (x64, arm64) | Available |
+
+Download installers from the [Releases](https://github.com/kennguy3n/Tessera/releases) page. Unsigned builds are fully functional; code-signed builds require CI secrets (see [CONTRIBUTING.md](CONTRIBUTING.md) and [RELEASING.md](RELEASING.md)).
 
 Desktop only. Supports **CPU-only** and **CPU+GPU** configurations.
 
