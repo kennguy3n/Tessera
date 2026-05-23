@@ -273,3 +273,218 @@ describe("dbKey", () => {
     expect(DB_KEY_HEX_LEN).toBe(64);
   });
 });
+
+// =====================================================================
+// Phase 10 / Task 13 — vault-aware async path
+// =====================================================================
+//
+// The async `getOrCreateDbKeyAsync` integrates the password vault as a
+// fallback when `safeStorage` is unavailable. These tests pin the new
+// dispatch matrix; the sync `getOrCreateDbKey` tests above remain the
+// regression suite for the safeStorage-only path.
+describe("getOrCreateDbKeyAsync (vault-aware path)", () => {
+  let userDataDir: string;
+
+  beforeEach(async () => {
+    userDataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "tessera-dbkey-async-test-"),
+    );
+    hoisted.userData.value = userDataDir;
+    safeStorageMock.isEncryptionAvailable.mockReturnValue(true);
+    safeStorageMock.encryptString.mockImplementation((plain: string) =>
+      Buffer.from(`enc:${plain}`),
+    );
+    safeStorageMock.decryptString.mockImplementation((blob: Buffer) => {
+      const s = blob.toString("utf8");
+      if (!s.startsWith("enc:")) {
+        throw new Error("Decryption failed: bad ciphertext");
+      }
+      return s.slice("enc:".length);
+    });
+    // Re-import passwordVault freshly so test isolation around the
+    // cached vault key is robust. We always start with the vault
+    // locked.
+    const pv = await import("../passwordVault");
+    pv._setCachedKeyForTests(null);
+  });
+
+  afterEach(async () => {
+    const pv = await import("../passwordVault");
+    pv._setCachedKeyForTests(null);
+    pv._setSaltPathForTests(null);
+    if (fs.existsSync(userDataDir)) {
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
+    vi.clearAllMocks();
+  });
+
+  /**
+   * Helper: pre-seed a valid vault salt + cached AES-256-GCM key so
+   * `encryptWithPasswordKey` / `decryptWithPasswordKey` work
+   * without going through the BrowserWindow prompt. The cached key
+   * here is a fixed test value, not derived from a password — we
+   * only need crypto consistency, not the PBKDF2 work factor.
+   */
+  async function activateVault(): Promise<void> {
+    const pv = await import("../passwordVault");
+    // Pin the salt path to a known location so the password vault
+    // operates against our temp dir (`getOrCreateSalt` runs inside
+    // `encryptWithPasswordKey`).
+    pv._setSaltPathForTests(path.join(userDataDir, "vault-salt.bin"));
+    pv._setCachedKeyForTests(Buffer.alloc(32, 0xab));
+  }
+
+  it("uses safeStorage when it is available, ignoring vault state", async () => {
+    const { getOrCreateDbKeyAsync } = await import("../dbKey");
+    await activateVault();
+    const hex = await getOrCreateDbKeyAsync();
+    expect(hex).toHaveLength(DB_KEY_HEX_LEN);
+    // Persisted via safeStorage (mock prepends "enc:") — NOT via
+    // password vault (which would start with the 'TSPV' magic).
+    const blob = fs.readFileSync(path.join(userDataDir, "db.key"));
+    expect(blob.toString("utf8")).toBe(`enc:${hex}`);
+    expect(blob.subarray(0, 4).toString("ascii")).not.toBe("TSPV");
+  });
+
+  it("falls back to the password vault when safeStorage is unavailable AND vault is active", async () => {
+    safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
+    await activateVault();
+    const { getOrCreateDbKeyAsync } = await import("../dbKey");
+    const hex = await getOrCreateDbKeyAsync();
+    expect(hex).toHaveLength(DB_KEY_HEX_LEN);
+    // Persisted with the TSPV magic, i.e. via the password-vault
+    // path, not safeStorage.
+    const blob = fs.readFileSync(path.join(userDataDir, "db.key"));
+    expect(blob.subarray(0, 4).toString("ascii")).toBe("TSPV");
+    // And safeStorage was never asked to encrypt — the dispatch
+    // went straight to the vault path because safeStorage is
+    // unavailable.
+    expect(safeStorageMock.encryptString).not.toHaveBeenCalled();
+  });
+
+  it("reads back a vault-wrapped key on subsequent calls", async () => {
+    safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
+    await activateVault();
+    const { getOrCreateDbKeyAsync } = await import("../dbKey");
+    const a = await getOrCreateDbKeyAsync();
+    const b = await getOrCreateDbKeyAsync();
+    expect(a).toBe(b);
+    // Second call did NOT regenerate or hit safeStorage.
+    expect(safeStorageMock.encryptString).not.toHaveBeenCalled();
+    expect(safeStorageMock.decryptString).not.toHaveBeenCalled();
+  });
+
+  it("throws EncryptionUnavailableError when neither safeStorage nor vault is available AND db.key is absent", async () => {
+    safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
+    // Vault deliberately NOT activated.
+    const { getOrCreateDbKeyAsync, EncryptionUnavailableError } = await import(
+      "../dbKey"
+    );
+    await expect(getOrCreateDbKeyAsync()).rejects.toBeInstanceOf(
+      EncryptionUnavailableError,
+    );
+    // No key file written on the failure path.
+    expect(fs.existsSync(path.join(userDataDir, "db.key"))).toBe(false);
+  });
+
+  it("refuses to read a TSPV-wrapped key when the vault is locked (encrypted DB unrecoverable)", async () => {
+    safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
+    await activateVault();
+    const { getOrCreateDbKeyAsync } = await import("../dbKey");
+    // Seed a vault-wrapped key on disk.
+    await getOrCreateDbKeyAsync();
+    expect(
+      fs
+        .readFileSync(path.join(userDataDir, "db.key"))
+        .subarray(0, 4)
+        .toString("ascii"),
+    ).toBe("TSPV");
+    // Now lock the vault and re-read.
+    const pv = await import("../passwordVault");
+    pv._setCachedKeyForTests(null);
+    // Must throw a plain Error (NOT EncryptionUnavailableError) so
+    // appState.ts refuses to bring up the bridge. Silent fallback
+    // to "regenerate a fresh key" would render the existing
+    // encrypted tessera.db permanently unreadable.
+    const { EncryptionUnavailableError } = await import("../dbKey");
+    await expect(getOrCreateDbKeyAsync()).rejects.toThrow(
+      /vault.*not unlocked/i,
+    );
+    await expect(getOrCreateDbKeyAsync()).rejects.not.toBeInstanceOf(
+      EncryptionUnavailableError,
+    );
+  });
+
+  it("re-throws WrongVaultPasswordError as a plain Error so appState refuses the unencrypted fallback", async () => {
+    safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
+    await activateVault();
+    const { getOrCreateDbKeyAsync, EncryptionUnavailableError } = await import(
+      "../dbKey"
+    );
+    // Seed a vault-wrapped key using the test vault key.
+    await getOrCreateDbKeyAsync();
+    // Now swap the cached vault key for a different one — the
+    // existing TSPV blob now fails GCM auth.
+    const pv = await import("../passwordVault");
+    pv._setCachedKeyForTests(Buffer.alloc(32, 0xcd));
+    await expect(getOrCreateDbKeyAsync()).rejects.toThrow(
+      /Failed to decrypt database key with the supplied vault password/i,
+    );
+    await expect(getOrCreateDbKeyAsync()).rejects.not.toBeInstanceOf(
+      EncryptionUnavailableError,
+    );
+  });
+
+  it("dispatches a safeStorage blob to safeStorage even when the vault is active (mixed-history install)", async () => {
+    // Real-world scenario: user originally had safeStorage (so
+    // db.key was wrapped via safeStorage), then on this launch
+    // both safeStorage AND the vault are available. We must read
+    // the existing blob via safeStorage (its TSPV magic is absent)
+    // and not try to dispatch it to the vault decryption path.
+    const { getOrCreateDbKeyAsync } = await import("../dbKey");
+    // Initial bootstrap with safeStorage (vault inactive).
+    const hexInitial = await getOrCreateDbKeyAsync();
+    // Now activate the vault too, then re-read.
+    await activateVault();
+    const hexRead = await getOrCreateDbKeyAsync();
+    expect(hexRead).toBe(hexInitial);
+    // The blob is still safeStorage-shaped (no TSPV magic).
+    const blob = fs.readFileSync(path.join(userDataDir, "db.key"));
+    expect(blob.subarray(0, 4).toString("ascii")).not.toBe("TSPV");
+  });
+
+  it("writes vault-wrapped key atomically (no .tmp leak on success)", async () => {
+    safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
+    await activateVault();
+    const { getOrCreateDbKeyAsync } = await import("../dbKey");
+    await getOrCreateDbKeyAsync();
+    const dirEntries = fs.readdirSync(userDataDir);
+    expect(dirEntries).toContain("db.key");
+    expect(dirEntries.filter((e) => e.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("plaintext-to-encrypted migration: generates a key when tessera.db exists but db.key does not", async () => {
+    // The Rust bridge handles the actual rekey via sqlcipher_export
+    // on the next initBridge call; the JS side just needs to
+    // generate and persist a wrapping key. This test pins that
+    // the JS contract for the migration scenario is "behave the
+    // same as a fresh install" — i.e. generate, wrap with whichever
+    // path is active, persist atomically.
+    safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
+    await activateVault();
+    // Simulate an existing plaintext tessera.db file.
+    fs.writeFileSync(
+      path.join(userDataDir, "tessera.db"),
+      Buffer.from("fake-sqlite-header"),
+    );
+    const { getOrCreateDbKeyAsync } = await import("../dbKey");
+    const hex = await getOrCreateDbKeyAsync();
+    expect(hex).toHaveLength(DB_KEY_HEX_LEN);
+    // db.key now exists, wrapped via vault (TSPV magic).
+    const blob = fs.readFileSync(path.join(userDataDir, "db.key"));
+    expect(blob.subarray(0, 4).toString("ascii")).toBe("TSPV");
+    // tessera.db is left untouched on this side — the Rust bridge
+    // will rekey it on the next initBridge call.
+    expect(fs.existsSync(path.join(userDataDir, "tessera.db"))).toBe(true);
+  });
+});

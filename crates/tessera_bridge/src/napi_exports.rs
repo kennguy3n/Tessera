@@ -202,6 +202,9 @@ pub fn bridge_get_source_detail(source_id: String) -> napi::Result<sources::Sour
 #[napi]
 pub fn bridge_reindex_source(source_id: String) -> napi::Result<sources::SourceInfo> {
     let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_source_reindexed(&source_id);
+    }
     let mgr = s
         .source_manager
         .lock()
@@ -251,6 +254,9 @@ pub fn bridge_update_artifact_content(
     content: String,
 ) -> napi::Result<artifacts::ArtifactInfo> {
     let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_updated(&artifact_id);
+    }
     let mgr = s
         .artifact_manager
         .lock()
@@ -282,6 +288,9 @@ pub fn bridge_list_artifacts() -> napi::Result<Vec<artifacts::ArtifactInfo>> {
 #[napi]
 pub fn bridge_delete_artifact(artifact_id: String) -> napi::Result<()> {
     let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_deleted(&artifact_id);
+    }
     let mgr = s
         .artifact_manager
         .lock()
@@ -328,6 +337,9 @@ pub fn bridge_export_artifact_to_file(
     content_override: Option<String>,
 ) -> napi::Result<()> {
     let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_exported(&artifact_id, &format);
+    }
     let art_mgr = s
         .artifact_manager
         .lock()
@@ -383,6 +395,13 @@ pub fn bridge_add_citation(
     // Parse artifact_id before locking to validate early
     let artifact_uuid = uuid::Uuid::parse_str(&req.artifact_id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Capture the citation arguments needed for the audit log before
+    // `req` is moved into `add_citation` below. The audit call itself
+    // happens AFTER the citation has been persisted so we don't log
+    // failed adds (mirroring the contract for replace/remove which
+    // also log on success only).
+    let artifact_id_for_audit = req.artifact_id.clone();
+    let source_uri_for_audit = req.source_uri.clone();
     let src_mgr = s
         .source_manager
         .lock()
@@ -406,6 +425,21 @@ pub fn bridge_add_citation(
             tessera_core::CitationId(cid),
         )
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Drop the per-store locks before acquiring the audit logger to
+    // keep the documented lock-acquisition order one-way (logger →
+    // source → artifact → citation). Logging after the citation has
+    // been persisted means a failed audit append never rolls back
+    // the user-visible citation.
+    drop(tracker);
+    drop(art_mgr);
+    drop(src_mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_citation_added(
+            &artifact_id_for_audit,
+            &info.citation_id,
+            &source_uri_for_audit,
+        );
+    }
     Ok(info)
 }
 
@@ -522,6 +556,14 @@ pub fn bridge_restore_version(
     version_number: u32,
 ) -> napi::Result<artifacts::ArtifactInfo> {
     let s = state()?;
+    // Version restore is semantically an artifact update — the
+    // content snapshot at `version_number` is rewritten into the
+    // canonical artifact row. Audit it as `ArtifactUpdated` so a
+    // future compliance review sees the lineage ("this artifact was
+    // rolled back at <time>") rather than a silent overwrite.
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_updated(&artifact_id);
+    }
     let mgr = s
         .artifact_manager
         .lock()
@@ -659,6 +701,13 @@ pub fn bridge_compare_sources(
     let result = tessera_artifacts::comparison::compare_sources(&chunks_a, &chunks_b);
     let content = result.to_markdown("Source A", "Source B");
 
+    // Audit the comparison-artifact creation under the same
+    // `ArtifactCreated` event type used by `bridge_create_artifact`
+    // so reports counting created artifacts don't undercount
+    // comparison results.
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_created("Source Comparison");
+    }
     let art = art_mgr
         .create(
             "Source Comparison".to_string(),
@@ -681,6 +730,12 @@ pub fn bridge_export_evidence_pack(
     output_path: String,
 ) -> napi::Result<String> {
     let s = state()?;
+    // The evidence pack is a ZIP export — record it under the
+    // shared `ArtifactExported` event type so an auditor sees every
+    // form of export (file format + evidence pack) in one query.
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_exported(&artifact_id, "evidence_pack");
+    }
     let art_mgr = s
         .artifact_manager
         .lock()
@@ -873,4 +928,118 @@ pub fn bridge_record_automation_run(automation_id: String, status: String) -> na
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     automations::record_automation_run(&store, &automation_id, &status)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+// --- Audit pass-throughs (Phase 10 / Task 17) ---
+//
+// Most audit events are emitted directly by other bridge methods on
+// behalf of the JS caller (see `bridge_add_local_folder`,
+// `bridge_create_artifact`, etc.). The events below originate
+// entirely on the JS side — the local model sidecar lifecycle,
+// settings writes, and the connector OAuth + sync + disconnect
+// lifecycle all live in `apps/desktop/electron/ipc/`. To get
+// those events into the same `tessera_audit` store as everything
+// else (and therefore into the same audit reports), we expose thin
+// pass-throughs here.
+//
+// Each pass-through swallows `Err(audit-store-write-failure)` the
+// same way the inline audit calls above do: the audit log is
+// best-effort and must never propagate failure back to the JS
+// caller (a transient SQLite contention causing the renderer to
+// see a "model failed to start" error would be a far worse user
+// experience than a missing audit row).
+
+/// JS-facing pass-through for [`AuditLogger::log_settings_changed`].
+/// Called by `apps/desktop/electron/ipc/settings.ts` whenever a
+/// persisted config field changes via the `settings:update` /
+/// `externalProvider:set` IPC handlers.
+#[napi]
+pub fn bridge_log_settings_changed(setting: String, value: String) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_settings_changed(&setting, &value);
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_model_started`].
+/// Called by `apps/desktop/electron/ipc/model.ts` when the
+/// `model:start` IPC handler successfully starts the local sidecar.
+#[napi]
+pub fn bridge_log_model_started(model_id: String) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_model_started(&model_id);
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_model_stopped`].
+/// Called by `apps/desktop/electron/ipc/model.ts` when the
+/// `model:stop` IPC handler shuts the local sidecar down. `reason`
+/// is rendered verbatim — pass `"user-requested"` for explicit
+/// shutdowns, `"app-shutdown"` for window-close, etc.
+#[napi]
+pub fn bridge_log_model_stopped(reason: String) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_model_stopped(&reason);
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_connector_connected`].
+/// Called by `apps/desktop/electron/ipc/connectors/handlers.ts`
+/// after a successful OAuth flow has completed and the access /
+/// refresh tokens have been written to the `tokenVault`.
+#[napi]
+pub fn bridge_log_connector_connected(provider: String) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_connector_connected(&provider);
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_connector_synced`].
+/// Called by `apps/desktop/electron/ipc/connectors/handlers.ts`
+/// after a connector sync completes with the per-run delta counts.
+/// The `status` field of the `ConnectorSyncResult` is intentionally
+/// NOT logged here — `"offline"` is a transient transport error,
+/// not a user-meaningful audit event.
+#[napi]
+pub fn bridge_log_connector_synced(
+    provider: String,
+    added: u32,
+    updated: u32,
+    removed: u32,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_connector_synced(
+            &provider,
+            added as usize,
+            updated as usize,
+            removed as usize,
+        );
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_connector_disconnected`].
+/// Called by `apps/desktop/electron/ipc/connectors/handlers.ts`
+/// after the connector's tokens have been revoked and the local
+/// sync directory has been purged. `files_removed` is the
+/// per-provider disconnect-result count of files that were
+/// removed from the indexed-sources set as part of the cleanup.
+#[napi]
+pub fn bridge_log_connector_disconnected(
+    provider: String,
+    files_removed: u32,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_connector_disconnected(&provider, files_removed as usize);
+    }
+    Ok(())
 }

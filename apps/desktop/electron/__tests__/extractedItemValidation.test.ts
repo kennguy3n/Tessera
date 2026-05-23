@@ -22,6 +22,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 import {
+  escapeExtractedHtml,
   validateExtractedItems,
   type ExtractedItem,
 } from "../extractedItemValidation";
@@ -194,5 +195,216 @@ describe("validateExtractedItems", () => {
     expect(msg).toContain("dropped 8/8");
     // Logger summary head shows the first 5 reasons; tail says "...".
     expect(msg).toContain("...");
+  });
+});
+
+// =====================================================================
+// Phase 10 / Task 16 — XSS hardening at the validation seam
+// =====================================================================
+//
+// `extractedItem.text` and `extractedItem.sourceCitation` are
+// derived from LLM-extracted content, which is a known
+// prompt-injection attack surface: malicious source data can
+// instruct the model to embed `<script>` / `<img onerror=>` /
+// `javascript:` payloads in the extracted fields. The renderer
+// historically rendered these fields as React text (which React
+// escapes), but the validation seam should NOT depend on the
+// renderer's choice of render path. Pin the contract that every
+// item returned from `validateExtractedItems` has HTML-safe
+// `text` and `sourceCitation` regardless of what the renderer
+// does with them.
+describe("validateExtractedItems — XSS hardening (Phase 10 / Task 16)", () => {
+  it("escapes <script> tags in the text field", () => {
+    const out = validateExtractedItems(
+      [
+        {
+          ...VALID,
+          text: "<script>alert(1)</script>",
+        },
+      ],
+      opts(),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe("&lt;script&gt;alert(1)&lt;/script&gt;");
+    // No raw `<` survives — pin the security property structurally,
+    // not just via the literal string match.
+    expect(out[0].text).not.toMatch(/[<>]/);
+  });
+
+  it("escapes <img onerror=...> in the text field", () => {
+    const out = validateExtractedItems(
+      [
+        {
+          ...VALID,
+          text: '<img src=x onerror="alert(\'pwn\')">',
+        },
+      ],
+      opts(),
+    );
+    expect(out).toHaveLength(1);
+    // Both the `<` / `>` and the embedded `"` / `'` are escaped,
+    // because the field could land inside an HTML attribute via
+    // a future renderer feature (e.g. tooltip / aria-label).
+    expect(out[0].text).toBe(
+      "&lt;img src=x onerror=&quot;alert(&#39;pwn&#39;)&quot;&gt;",
+    );
+    expect(out[0].text).not.toMatch(/[<>"']/);
+  });
+
+  it("escapes javascript: URI payloads in the text field", () => {
+    // A `javascript:` URI is only dangerous when piped into an
+    // `href` / `src` attribute, but we still escape the
+    // surrounding HTML structure so an embedded
+    // `<a href="javascript:...">` is rendered as inert text.
+    const out = validateExtractedItems(
+      [
+        {
+          ...VALID,
+          text: '<a href="javascript:alert(1)">click</a>',
+        },
+      ],
+      opts(),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe(
+      "&lt;a href=&quot;javascript:alert(1)&quot;&gt;click&lt;/a&gt;",
+    );
+    expect(out[0].text).not.toMatch(/<a /);
+  });
+
+  it("escapes data: URI payloads in the sourceCitation field", () => {
+    // A `data:text/html;base64,...` URI in an iframe src is a
+    // well-known XSS vector. Same defense as the javascript: case:
+    // escape the HTML structure around it so the URI cannot reach
+    // an actual `src` attribute on the renderer side.
+    const out = validateExtractedItems(
+      [
+        {
+          ...VALID,
+          sourceCitation: '<iframe src="data:text/html,<script>1</script>">',
+        },
+      ],
+      opts(),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].sourceCitation).toBe(
+      "&lt;iframe src=&quot;data:text/html,&lt;script&gt;1&lt;/script&gt;&quot;&gt;",
+    );
+  });
+
+  it("double-escapes pre-escaped HTML entities (input is treated as plain text)", () => {
+    // Contract: the validation seam treats inputs as untrusted
+    // plain text. A pre-existing `&amp;` in the input becomes
+    // `&amp;amp;` on the way out — this is the SAFE behaviour
+    // (idempotent under repeated escape). If we tried to be
+    // "smart" and detect already-escaped content, an attacker
+    // could craft an input that looks pre-escaped but bypasses
+    // re-escaping (e.g. `&lt;script&gt;alert(1)&lt;/script&gt;`
+    // would not be re-escaped, and a future renderer change to
+    // `dangerouslySetInnerHTML` would then execute it).
+    const out = validateExtractedItems(
+      [{ ...VALID, text: "Tom & Jerry", sourceCitation: "AT&T memo" }],
+      opts(),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe("Tom &amp; Jerry");
+    expect(out[0].sourceCitation).toBe("AT&amp;T memo");
+
+    // Now feed the previous output back in — pin that we double-escape.
+    const second = validateExtractedItems(
+      [
+        {
+          ...VALID,
+          text: out[0].text,
+          sourceCitation: out[0].sourceCitation,
+        },
+      ],
+      opts(),
+    );
+    expect(second[0].text).toBe("Tom &amp;amp; Jerry");
+    expect(second[0].sourceCitation).toBe("AT&amp;amp;T memo");
+  });
+
+  it("preserves plain (non-HTML) text unchanged", () => {
+    // The happy path: ordinary text with no HTML metacharacters
+    // is returned verbatim. Pins that we don't accidentally
+    // mangle Unicode, emoji, RTL text, etc.
+    const out = validateExtractedItems(
+      [
+        {
+          ...VALID,
+          text: "Plain ASCII text 🎉 with emoji and عربي RTL",
+          sourceCitation: "Section 3.2 — para 4",
+        },
+      ],
+      opts(),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe(
+      "Plain ASCII text 🎉 with emoji and عربي RTL",
+    );
+    expect(out[0].sourceCitation).toBe("Section 3.2 — para 4");
+  });
+
+  it("escapes the apostrophe so attribute-injection via <a title='..'> is blocked", () => {
+    // Apostrophe escaping defends against `<a title='...'>`-style
+    // attribute contexts where a stray `'` would close the
+    // attribute and inject new attributes / handlers.
+    const out = validateExtractedItems(
+      [{ ...VALID, text: "It's a 'test' with quotes" }],
+      opts(),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe(
+      "It&#39;s a &#39;test&#39; with quotes",
+    );
+    expect(out[0].text).not.toMatch(/'/);
+  });
+
+  it("logs warnings BEFORE escaping (so the operator sees the original payload)", () => {
+    // Drop-reason logging must reflect the original input so an
+    // operator debugging "why is this item dropping?" sees the
+    // un-escaped value. The escape only applies to the surviving
+    // items in the return path.
+    const warn = vi.fn();
+    validateExtractedItems(
+      [
+        { ...VALID, itemType: "<script>" }, // bad enum
+        VALID,
+      ],
+      opts(warn),
+    );
+    expect(warn).toHaveBeenCalledTimes(1);
+    const msg = warn.mock.calls[0][0] as string;
+    expect(msg).toContain('itemType="<script>"');
+  });
+});
+
+describe("escapeExtractedHtml — unit", () => {
+  it("escapes the five HTML-significant characters", () => {
+    expect(escapeExtractedHtml("&<>\"'")).toBe(
+      "&amp;&lt;&gt;&quot;&#39;",
+    );
+  });
+
+  it("processes & before < / > / \" / ' so emitted entities are not re-escaped", () => {
+    // If `&` were replaced LAST, an input like `<` would first
+    // become `&lt;`, then `&` would be replaced producing
+    // `&amp;lt;`. Pin the correct ordering structurally — feed
+    // an input whose escaped form would diverge under wrong
+    // ordering.
+    expect(escapeExtractedHtml("<")).toBe("&lt;");
+    expect(escapeExtractedHtml("&lt;")).toBe("&amp;lt;");
+  });
+
+  it("returns the empty string unchanged", () => {
+    expect(escapeExtractedHtml("")).toBe("");
+  });
+
+  it("is pure (no mutation of input string semantics)", () => {
+    const original = "<b>hi</b>";
+    const escaped = escapeExtractedHtml(original);
+    expect(original).toBe("<b>hi</b>");
+    expect(escaped).toBe("&lt;b&gt;hi&lt;/b&gt;");
   });
 });

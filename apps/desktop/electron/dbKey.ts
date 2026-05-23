@@ -74,6 +74,13 @@ import * as fs from "fs";
 import * as path from "path";
 
 import { keyringUnavailableSentence } from "./vaultCrypto";
+import {
+  decryptWithPasswordKey,
+  encryptWithPasswordKey,
+  isPasswordVaultBlob,
+  passwordVaultActive,
+  WrongVaultPasswordError,
+} from "./passwordVault";
 
 /** Length of the SQLCipher raw key in bytes (256-bit cipher key). */
 const KEY_BYTES = 32;
@@ -92,19 +99,21 @@ function keyPath(): string {
 
 /**
  * Signals that the current platform / environment cannot back the
- * database key chain because `safeStorage.isEncryptionAvailable()`
- * returned false (e.g. Linux without gnome-keyring / kwallet5).
+ * database key chain because **both** `safeStorage.isEncryptionAvailable()`
+ * is false AND `passwordVaultActive()` is false (i.e. neither the
+ * OS keyring nor the password-derived fallback vault is reachable).
  *
  * Callers in `appState.ts` use this distinct type to decide whether
  * to fall through to an unencrypted bridge: ONLY this error means
- * the platform itself lacks encryption support. Any other error
- * thrown by {@link getOrCreateDbKey} (zero-byte key file, wrong
- * decrypted length, underlying decrypt failure) indicates the user
- * previously had encryption working and the key is now lost or
- * corrupted — in those cases the on-disk database is almost
- * certainly encrypted, and proceeding with `dbKey = null` would
- * either fail noisily at the next `CREATE TABLE` or, worse, write
- * fresh unencrypted bytes alongside an encrypted file. Both
+ * the platform itself lacks any encryption-wrapping primitive. Any
+ * other error thrown by {@link getOrCreateDbKey} /
+ * {@link getOrCreateDbKeyAsync} (zero-byte key file, wrong decrypted
+ * length, underlying decrypt failure, wrong vault password)
+ * indicates the user previously had encryption working and the key
+ * is now lost or corrupted — in those cases the on-disk database is
+ * almost certainly encrypted, and proceeding with `dbKey = null`
+ * would either fail noisily at the next `CREATE TABLE` or, worse,
+ * write fresh unencrypted bytes alongside an encrypted file. Both
  * outcomes are wrong; let those errors bubble up and refuse to
  * bring up the bridge instead.
  */
@@ -253,4 +262,167 @@ export function _deleteDbKeyForTests(): void {
   if (fs.existsSync(fp)) {
     fs.unlinkSync(fp);
   }
+}
+
+/**
+ * Return the SQLCipher key for this install, creating and persisting
+ * one on first launch — vault-aware variant.
+ *
+ * This is the same contract as {@link getOrCreateDbKey} with one
+ * additional integration: when `safeStorage` is unavailable but the
+ * password vault has been unlocked via
+ * `initPasswordVaultIfNeeded` (so `passwordVaultActive()` is true),
+ * the SQLCipher key is wrapped under the vault's password-derived
+ * AES-256-GCM key instead of being unsupported.
+ *
+ * The on-disk format is the same for both wrapping paths — a
+ * 64-character hex string wrapped in the wrapping-key's encryption.
+ * We disambiguate at read time by inspecting the first four bytes:
+ * password-vault blobs start with the `TSPV` magic
+ * (see {@link isPasswordVaultBlob}); safeStorage blobs do not.
+ *
+ * # Dispatch matrix
+ *
+ * | `db.key` on disk? | safeStorage avail? | vault active? | Behaviour |
+ * | ----------------- | ------------------ | ------------- | --------- |
+ * | yes, safeStorage  | yes                | any           | Decrypt via safeStorage (existing path). |
+ * | yes, safeStorage  | **no**             | any           | Throw plain Error — keyring is gone, DB is unrecoverable on this machine. |
+ * | yes, vault (TSPV) | any                | **yes**       | Decrypt via vault key. |
+ * | yes, vault (TSPV) | any                | **no**        | Throw plain Error — vault is locked. |
+ * | no                | yes                | any           | Generate, wrap via safeStorage, persist. |
+ * | no                | no                 | **yes**       | Generate, wrap via vault, persist with TSPV magic. |
+ * | no                | no                 | no            | Throw `EncryptionUnavailableError`. |
+ *
+ * # Migration of pre-existing plaintext databases
+ *
+ * If `db.key` is absent but `tessera.db` exists, the database is
+ * plaintext (a pre-encryption install). The Rust bridge's
+ * `open_shared_with_key` handles the plaintext → SQLCipher
+ * migration transparently via `sqlcipher_export` when called with
+ * a key, so this function does NOT need to issue a separate
+ * migration command. We just generate + persist a key normally; the
+ * very next `initBridge` call will trigger the migration on the
+ * Rust side.
+ *
+ * # Why async
+ *
+ * The vault decryption path runs `AES-256-GCM` via Node's
+ * `crypto.createDecipheriv`. That call itself is synchronous (it
+ * uses libcrypto on the calling thread), so this function COULD be
+ * synchronous in principle. We mark it async anyway to leave
+ * headroom for a future improvement where we want to debounce the
+ * password prompt against the dock-click race in `main.ts` (the
+ * existing `maybeInitPasswordVault` is already async), and so
+ * callers cannot rely on synchronous completion as a contract.
+ */
+export async function getOrCreateDbKeyAsync(): Promise<string> {
+  const fp = keyPath();
+  if (fs.existsSync(fp)) {
+    const blob = fs.readFileSync(fp);
+    if (blob.length === 0) {
+      // Same as the sync path: half-written first-launch attempt.
+      // Surface loudly rather than regenerating — overwriting
+      // would render the matching `tessera.db` permanently
+      // unreadable regardless of which wrapping path produced it.
+      throw new Error(
+        `Database key file at ${fp} is empty. Restore from backup or delete both this file and the database to start fresh (data loss).`,
+      );
+    }
+    if (isPasswordVaultBlob(blob)) {
+      // Password-vault path: the user previously generated a key
+      // on a keyringless platform and wrapped it under the vault
+      // password. We need the vault to be active to read it.
+      if (!passwordVaultActive()) {
+        // The vault prompt either wasn't presented or the user
+        // cancelled it. We MUST NOT fall back to safeStorage or
+        // to "regenerate a fresh key" — both paths render the
+        // existing encrypted `tessera.db` permanently unreadable.
+        throw new Error(
+          `Database key file at ${fp} is wrapped under the password vault, but the vault is not unlocked. Restart Tessera and enter the vault password, or restore from backup if the password is lost.`,
+        );
+      }
+      let hex: string;
+      try {
+        hex = decryptWithPasswordKey(blob);
+      } catch (e) {
+        if (e instanceof WrongVaultPasswordError) {
+          // Re-throw as plain Error so appState.ts's catch
+          // path doesn't treat it as a recoverable
+          // "encryption unavailable" situation. The DB is
+          // encrypted and unrecoverable without the right
+          // password — refusing to bring up the bridge is the
+          // correct response (same as a corrupt safeStorage
+          // blob).
+          throw new Error(
+            `Failed to decrypt database key with the supplied vault password. Restart Tessera with the correct password, or restore from backup if the password is lost. (${e.message})`,
+          );
+        }
+        throw e;
+      }
+      if (hex.length !== DB_KEY_HEX_LEN) {
+        throw new Error(
+          `Decrypted database key has unexpected length ${hex.length} (expected ${DB_KEY_HEX_LEN}). The key file may be corrupted.`,
+        );
+      }
+      if (!HEX_KEY_REGEX.test(hex)) {
+        throw new Error(
+          `Decrypted database key has length ${DB_KEY_HEX_LEN} but contains non-hex characters. The key file is corrupted.`,
+        );
+      }
+      return hex;
+    }
+    // Not a vault blob — must be a safeStorage blob. Fall through
+    // to the existing sync path, which encapsulates all the same
+    // safeStorage validation invariants. This also includes the
+    // "safeStorage unavailable with an existing key file" branch,
+    // which is correctly a hard failure (not EncryptionUnavailableError).
+    return getOrCreateDbKey();
+  }
+  // No `db.key` on disk — fresh install (or the user deleted it
+  // intentionally). Prefer safeStorage when available; fall back
+  // to the vault if the vault is active; only then surface the
+  // recoverable EncryptionUnavailableError.
+  if (safeStorage.isEncryptionAvailable()) {
+    // Same as the sync path; delegate to keep the safeStorage
+    // generate / wrap / atomic-rename logic in one place.
+    return getOrCreateDbKey();
+  }
+  if (passwordVaultActive()) {
+    // Vault-wrapped first-launch path. Generate, wrap under the
+    // PBKDF2-derived vault key, persist with the `TSPV` magic so
+    // future reads dispatch to the vault decryption path. This
+    // also covers the migration scenario: if `tessera.db` exists
+    // (plaintext) but `db.key` doesn't, generate a key now — the
+    // Rust bridge's `open_shared_with_key` will then issue
+    // `sqlcipher_export` and migrate the plaintext DB to a
+    // SQLCipher-encrypted one transparently on the next
+    // `initBridge` call. No separate migration step is needed.
+    const hex = generateDbKey();
+    const dir = path.dirname(fp);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const blob = encryptWithPasswordKey(hex);
+    // Same atomic-rename pattern as the safeStorage path to
+    // protect against partial writes during machine crashes /
+    // power loss.
+    const tmp = `${fp}.tmp`;
+    fs.writeFileSync(tmp, blob, { mode: 0o600 });
+    fs.renameSync(tmp, fp);
+    return hex;
+  }
+  // Neither safeStorage nor the password vault is available.
+  // This is the original "keyringless platform AND user declined
+  // / cancelled the password prompt" path. Surface a recoverable
+  // EncryptionUnavailableError so appState.ts can degrade to an
+  // unencrypted bridge.
+  //
+  // Use `keyringUnavailableSentence()` here, NOT
+  // `encryptionUnavailableReason()`. The latter would tell the
+  // user to enter a vault password — but we just observed
+  // `passwordVaultActive() === false`, meaning either the prompt
+  // wasn't presented (no salt file → first launch) or the user
+  // dismissed it. Showing them the vault hint in either case
+  // sends them in a loop.
+  throw new EncryptionUnavailableError(keyringUnavailableSentence());
 }

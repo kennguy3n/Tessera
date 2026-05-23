@@ -39,6 +39,69 @@ import type { ExtractedItem } from "../shared/types";
 export type { ExtractedItem };
 
 /**
+ * Minimal HTML escape for the `text` and `sourceCitation` fields
+ * before the validated `ExtractedItem` reaches the renderer.
+ *
+ * # Why this lives at the validation seam
+ *
+ * The renderer renders extracted items as plain React text by
+ * default (`<li>{item.text}</li>`-shaped JSX), which React itself
+ * escapes via its `setTextContent` codepath. But there are two
+ * realistic future regressions we want to defend against
+ * structurally:
+ *
+ *   1. **A future maintainer adds a `dangerouslySetInnerHTML` /
+ *      `Markdown` render path** for the `text` field (e.g. to
+ *      surface inline `**bold**` or `> quote` from the LLM
+ *      extractor), at which point the field is no longer escaped
+ *      by React and a model-prompt-injection attack can inject
+ *      `<script>` / `<img onerror>` / `javascript:` URIs through
+ *      the source content into the renderer. This is a well-known
+ *      attack surface for LLM-extracted content.
+ *   2. **The renderer pipes `sourceCitation` into a markdown
+ *      tooltip or an `<a href>` attribute** (the field is a
+ *      free-form citation string, so this is a natural future
+ *      enhancement). HTML-escaping it at the validation seam means
+ *      the renderer never has to remember which fields are
+ *      pre-escaped.
+ *
+ * Escaping at the validation seam means BOTH the React text path
+ * (idempotent — `&amp;amp;` would only appear if React itself
+ * regressed on its escape) and any future `dangerouslySetInnerHTML`
+ * path are safe by default. The renderer can rely on a single
+ * invariant: "every string that came through `validateExtractedItems`
+ * is safe to drop into HTML without further escaping".
+ *
+ * # Escape set
+ *
+ * Mirrors the existing `escapeHtml` in `passwordVault.ts` /
+ * `providerOAuth.ts` / `LandingPageEditor.tsx` so the contract is
+ * consistent across the codebase. Escapes the five HTML-significant
+ * characters: `&`, `<`, `>`, `"`, `'`. Order is significant —
+ * `&` MUST be replaced first so that subsequent replacements
+ * (which all emit `&...;` entities) don't get re-escaped.
+ *
+ * # Double-escape avoidance
+ *
+ * `escapeExtractedHtml("&amp;")` returns `"&amp;amp;"`, NOT `"&amp;"`.
+ * This is the correct behaviour: the contract is "the input is
+ * untrusted plain text" and the output is "HTML-safe text". If a
+ * caller has already pre-escaped, that's a caller-side bug — the
+ * validation seam is a fresh-input boundary. The test suite
+ * pins this with an explicit "&amp;amp;" assertion so a future
+ * "smart" double-escape-prevention refactor cannot regress the
+ * invariant silently.
+ */
+export function escapeExtractedHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
  * `console.warn`-shaped sink. Tests inject a recording fake so we can
  * assert that bridge mismatches are logged with enough detail to
  * diagnose the schema break, even when the throw path is exercised.
@@ -101,7 +164,21 @@ export function validateExtractedItems(
       dropReasons.push(`bad-confidence=${JSON.stringify(rec.confidence)}`);
       continue;
     }
-    items.push({ itemType, text, sourceCitation, confidence });
+    // HTML-escape both string fields at the validation seam so the
+    // renderer can treat them as HTML-safe regardless of which
+    // rendering path it uses today or in the future
+    // (`{text}` JSX text, `dangerouslySetInnerHTML`, a markdown
+    // tooltip, an `<a href>` derived from `sourceCitation`, etc.).
+    // See the doc comment on `escapeExtractedHtml` for the full
+    // rationale and the test suite for the XSS attack surface
+    // we're defending against (e.g. `<script>`, `<img onerror>`,
+    // `javascript:` URIs from prompt-injected source content).
+    items.push({
+      itemType,
+      text: escapeExtractedHtml(text),
+      sourceCitation: escapeExtractedHtml(sourceCitation),
+      confidence,
+    });
   }
 
   if (dropReasons.length === 0) {

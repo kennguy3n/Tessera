@@ -42,6 +42,16 @@ impl AuditLogger {
         )
     }
 
+    /// Record that a source was manually re-indexed. Distinct from
+    /// `SourceAdded` because re-index does not change the on-disk
+    /// path; it only invalidates the chunk + embedding cache.
+    pub fn log_source_reindexed(&self, source_id: &str) -> Result<()> {
+        self.log(
+            AuditEventType::SourceReindexed,
+            format!("Source reindexed: {source_id}"),
+        )
+    }
+
     pub fn log_artifact_created(&self, title: &str) -> Result<()> {
         self.log(
             AuditEventType::ArtifactCreated,
@@ -49,10 +59,53 @@ impl AuditLogger {
         )
     }
 
+    /// Record that an artifact's content changed. Caller passes the
+    /// artifact id (UUID string) rather than the title so downstream
+    /// reports can correlate updates to the original create event
+    /// without depending on a stable title.
+    pub fn log_artifact_updated(&self, artifact_id: &str) -> Result<()> {
+        self.log(
+            AuditEventType::ArtifactUpdated,
+            format!("Artifact updated: {artifact_id}"),
+        )
+    }
+
+    /// Record that an artifact was hard-deleted. Caller passes the
+    /// artifact id rather than the title because the title is not
+    /// guaranteed to be retrievable after the delete commits.
+    pub fn log_artifact_deleted(&self, artifact_id: &str) -> Result<()> {
+        self.log(
+            AuditEventType::ArtifactDeleted,
+            format!("Artifact deleted: {artifact_id}"),
+        )
+    }
+
     pub fn log_artifact_exported(&self, title: &str, format: &str) -> Result<()> {
         self.log(
             AuditEventType::ArtifactExported,
             format!("Artifact exported: {title} as {format}"),
+        )
+    }
+
+    /// Record that the local model sidecar started. `model_id` is
+    /// the absolute path or model identifier so an auditor can
+    /// correlate the start event with the model file actually
+    /// loaded.
+    pub fn log_model_started(&self, model_id: &str) -> Result<()> {
+        self.log(
+            AuditEventType::ModelStarted,
+            format!("Model started: {model_id}"),
+        )
+    }
+
+    /// Record that the local model sidecar stopped. `reason` is
+    /// rendered verbatim (e.g. `"user-requested"`, `"app-shutdown"`,
+    /// `"crash: <message>"`) so the audit trail captures intentional
+    /// vs. unintentional terminations.
+    pub fn log_model_stopped(&self, reason: &str) -> Result<()> {
+        self.log(
+            AuditEventType::ModelStopped,
+            format!("Model stopped: {reason}"),
         )
     }
 
@@ -162,5 +215,61 @@ mod tests {
 
         let source_events = logger.query_by_type(&AuditEventType::SourceAdded).unwrap();
         assert_eq!(source_events.len(), 1);
+    }
+
+    /// Phase 10 / Task 17: pin each newly added helper to its
+    /// `AuditEventType`. The matrix tests both the routing (helper →
+    /// event-type) and the detail-string contract so a future
+    /// refactor of the underlying format strings cannot silently
+    /// regress an auditor's grep query.
+    #[test]
+    fn newly_added_helpers_route_to_correct_event_types() {
+        let logger = AuditLogger::new_in_memory().unwrap();
+
+        logger.log_source_reindexed("source-abc123").unwrap();
+        logger
+            .log_artifact_updated("11111111-2222-3333-4444-555555555555")
+            .unwrap();
+        logger
+            .log_artifact_deleted("66666666-7777-8888-9999-aaaaaaaaaaaa")
+            .unwrap();
+        logger.log_model_started("/models/llama-3.gguf").unwrap();
+        logger.log_model_stopped("user-requested").unwrap();
+
+        assert_eq!(logger.event_count().unwrap(), 5);
+
+        let reindexed = logger
+            .query_by_type(&AuditEventType::SourceReindexed)
+            .unwrap();
+        assert_eq!(reindexed.len(), 1);
+        assert!(reindexed[0].details.contains("source-abc123"));
+
+        let updated = logger
+            .query_by_type(&AuditEventType::ArtifactUpdated)
+            .unwrap();
+        assert_eq!(updated.len(), 1);
+        assert!(updated[0]
+            .details
+            .contains("11111111-2222-3333-4444-555555555555"));
+
+        let deleted = logger
+            .query_by_type(&AuditEventType::ArtifactDeleted)
+            .unwrap();
+        assert_eq!(deleted.len(), 1);
+        assert!(deleted[0]
+            .details
+            .contains("66666666-7777-8888-9999-aaaaaaaaaaaa"));
+
+        let started = logger
+            .query_by_type(&AuditEventType::ModelStarted)
+            .unwrap();
+        assert_eq!(started.len(), 1);
+        assert!(started[0].details.contains("/models/llama-3.gguf"));
+
+        let stopped = logger
+            .query_by_type(&AuditEventType::ModelStopped)
+            .unwrap();
+        assert_eq!(stopped.len(), 1);
+        assert!(stopped[0].details.contains("user-requested"));
     }
 }

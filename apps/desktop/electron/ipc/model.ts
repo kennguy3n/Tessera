@@ -10,7 +10,7 @@
  */
 import { BrowserWindow } from "electron";
 import { idempotentHandle } from "./register";
-import { getModelSidecar } from "../appState";
+import { getBridge, getModelSidecar } from "../appState";
 import type { ModelStatus } from "../../shared/types";
 import { assertString } from "./validate";
 import { GenerateRequestSchema } from "./schemas";
@@ -132,12 +132,35 @@ export function registerModelHandlers(): void {
     if (sidecar.isRunning) return;
     sidecar.setModelPath(validated);
     await sidecar.start(true);
+    // Phase 10 / Task 17: audit the local model lifecycle. The
+    // `validated` model path is what was loaded, so an auditor can
+    // correlate "model started" with the GGUF the sidecar
+    // actually pointed at. The bridge audit pass-through is
+    // best-effort; we wrap the call so an unavailable bridge (the
+    // sidecar can start before `initAppState()` finishes when the
+    // user's last session left a model selected) never breaks
+    // model startup.
+    try {
+      getBridge()?.bridgeLogModelStarted(validated);
+    } catch {
+      // best-effort — audit failure must not break model startup
+    }
   });
 
   idempotentHandle("model:stop", async () => {
     const sidecar = getModelSidecar();
     if (sidecar && sidecar.isRunning) {
       await sidecar.stop();
+      // The IPC channel is only reachable from the renderer, so a
+      // call here is always user-initiated (window close goes
+      // through `before-quit`, not this IPC). Tag the audit reason
+      // accordingly so an auditor can distinguish manual stops
+      // from app-shutdown stops once that path is also wired.
+      try {
+        getBridge()?.bridgeLogModelStopped("user-requested");
+      } catch {
+        // best-effort
+      }
     }
   });
 

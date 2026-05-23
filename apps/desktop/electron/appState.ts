@@ -2,7 +2,7 @@ import { app } from "electron";
 import * as path from "path";
 import * as fs from "fs";
 import { ModelSidecar } from "./sidecar";
-import { getOrCreateDbKey, EncryptionUnavailableError } from "./dbKey";
+import { getOrCreateDbKeyAsync, EncryptionUnavailableError } from "./dbKey";
 import type {
   AddCitationRequest,
   ArtifactInfo,
@@ -127,6 +127,27 @@ export interface NativeBridge {
   bridgeMatchingOnGenerateAutomations(templateId: string): AutomationInfo[];
   /** Persist a run result. `status` is rendered verbatim by the UI. */
   bridgeRecordAutomationRun(automationId: string, status: string): void;
+  // --- Audit pass-throughs (Phase 10 / Task 17) ---
+  //
+  // The events below are emitted from JS-side IPC handlers
+  // (`ipc/settings.ts`, `ipc/model.ts`, `ipc/connectors/handlers.ts`)
+  // and routed through the Rust audit store via these pass-throughs
+  // so every audit event lives in the same SQLite append-only table
+  // as the bridge-internal ones. Each method is a no-throw, no-await
+  // best-effort call — failure to append an audit row must never
+  // propagate back to the IPC handler (see Rust-side rationale in
+  // `napi_exports.rs`).
+  bridgeLogSettingsChanged(setting: string, value: string): void;
+  bridgeLogModelStarted(modelId: string): void;
+  bridgeLogModelStopped(reason: string): void;
+  bridgeLogConnectorConnected(provider: string): void;
+  bridgeLogConnectorSynced(
+    provider: string,
+    added: number,
+    updated: number,
+    removed: number,
+  ): void;
+  bridgeLogConnectorDisconnected(provider: string, filesRemoved: number): void;
 }
 
 let bridge: NativeBridge | null = null;
@@ -165,7 +186,7 @@ function resolveNativeAddon(): NativeBridge | null {
   return null;
 }
 
-export function initAppState(): boolean {
+export async function initAppState(): Promise<boolean> {
   bridge = resolveNativeAddon();
   if (!bridge) {
     console.warn(
@@ -180,27 +201,33 @@ export function initAppState(): boolean {
 
   // Derive the SQLCipher key. Two-tier failure handling:
   //
-  // - `EncryptionUnavailableError` means the platform itself can't
-  //   back the keyring (typically Linux headless without
-  //   gnome-keyring / kwallet5). The on-disk DB is either fresh or
-  //   was previously opened unencrypted, so falling through to an
-  //   unencrypted bridge is the right degradation path. WS10
-  //   replaces this with an interactive password prompt.
+  // - `EncryptionUnavailableError` means NEITHER `safeStorage` NOR
+  //   the password-derived vault is available to wrap the cipher
+  //   key. This is the post-Phase-10 contract: the call sequence
+  //   in `main.ts` runs `maybeInitPasswordVault()` BEFORE
+  //   `initAppState()`, so by the time we reach this code the
+  //   vault has either been unlocked (in which case
+  //   `getOrCreateDbKeyAsync` uses it transparently to wrap the
+  //   cipher key) or it's verifiably absent. Falling through to an
+  //   unencrypted bridge is the right degradation path because the
+  //   on-disk DB is either fresh or was previously opened
+  //   unencrypted — there is no encrypted state to lose.
   //
-  // - Any OTHER error from `getOrCreateDbKey` (zero-byte key file,
-  //   wrong decrypted length, decrypt failure from a userData dir
-  //   copied to a different machine) means the user previously had
-  //   encryption working and the key is now lost or corrupted. The
-  //   on-disk DB is almost certainly encrypted, so we MUST NOT fall
-  //   back to unencrypted mode — doing so would either fail noisily
-  //   at the next `CREATE TABLE` or, in the corner case where the
-  //   DB doesn't yet exist, silently regress to plaintext storage
-  //   without the user realising. Refuse to bring up the bridge
-  //   and surface the actionable recovery message (`db.key` corrupt
-  //   → restore from backup or accept data loss).
+  // - Any OTHER error from `getOrCreateDbKeyAsync` (zero-byte key
+  //   file, wrong decrypted length, decrypt failure from a userData
+  //   dir copied to a different machine, wrong vault password)
+  //   means the user previously had encryption working and the key
+  //   is now lost or corrupted. The on-disk DB is almost certainly
+  //   encrypted, so we MUST NOT fall back to unencrypted mode —
+  //   doing so would either fail noisily at the next `CREATE TABLE`
+  //   or, in the corner case where the DB doesn't yet exist,
+  //   silently regress to plaintext storage without the user
+  //   realising. Refuse to bring up the bridge and surface the
+  //   actionable recovery message (`db.key` corrupt → restore from
+  //   backup or accept data loss).
   let dbKey: string | null = null;
   try {
-    dbKey = getOrCreateDbKey();
+    dbKey = await getOrCreateDbKeyAsync();
   } catch (keyErr) {
     if (keyErr instanceof EncryptionUnavailableError) {
       console.warn(

@@ -90,8 +90,100 @@ describe("sandboxed preload contract: passwordPromptChannels.ts", () => {
   });
 });
 
+/**
+ * Strip JS line and block comments from a source string while
+ * preserving line positions and column offsets, so `indexOf`-based
+ * substring searches against the result always hit a CODE token,
+ * never a JSDoc reference.
+ *
+ * Phase 10 / Task 13 added rich JSDoc references to
+ * `maybeInitPasswordVault()` and `installContentSecurityPolicy()`
+ * INSIDE the `app.whenReady().then(async () => { ... })` body —
+ * those references appear textually BEFORE the actual call sites,
+ * which broke the four "X before Y" ordering tests below. The
+ * correct long-term fix is to make these structural-ordering
+ * assertions operate on CODE only, so new documentation comments
+ * never produce a false regression.
+ *
+ * The approach is intentionally minimal: replace each comment with
+ * an equal-length run of spaces (preserving newlines for line-
+ * comments, preserving all newlines inside block comments). This
+ * keeps every `source.indexOf(...)` offset valid for downstream
+ * positional comparisons and error messages.
+ *
+ * Quoted strings are preserved verbatim — if a quoted string ever
+ * contained a `//` token (e.g. a URL in a literal), it would
+ * legitimately be code. The implementation walks character-by-
+ * character with a tiny state machine rather than using a single
+ * regex because regex alternation can't distinguish `//` inside a
+ * string from `//` starting a line comment in the general case.
+ */
+function stripJsComments(src: string): string {
+  const out: string[] = [];
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    const c = src[i];
+    const c2 = i + 1 < n ? src[i + 1] : "";
+    if (c === '"' || c === "'" || c === "`") {
+      // String/template literal — copy until matching close,
+      // respecting backslash escapes (templates can contain
+      // newlines, which we preserve).
+      const quote = c;
+      out.push(c);
+      i += 1;
+      while (i < n) {
+        const k = src[i];
+        if (k === "\\" && i + 1 < n) {
+          out.push(src[i], src[i + 1]);
+          i += 2;
+          continue;
+        }
+        out.push(k);
+        i += 1;
+        if (k === quote) break;
+      }
+      continue;
+    }
+    if (c === "/" && c2 === "/") {
+      // Line comment — consume up to (but not including) the
+      // newline, replacing each char with a space so column
+      // positions for downstream tokens stay aligned.
+      while (i < n && src[i] !== "\n") {
+        out.push(" ");
+        i += 1;
+      }
+      continue;
+    }
+    if (c === "/" && c2 === "*") {
+      // Block comment — consume up to and including `*/`,
+      // preserving every newline and replacing other chars with
+      // spaces.
+      out.push("  ");
+      i += 2;
+      while (i < n && !(src[i] === "*" && i + 1 < n && src[i + 1] === "/")) {
+        out.push(src[i] === "\n" ? "\n" : " ");
+        i += 1;
+      }
+      if (i < n) {
+        out.push("  ");
+        i += 2;
+      }
+      continue;
+    }
+    out.push(c);
+    i += 1;
+  }
+  return out.join("");
+}
+
 describe("CSP session handler hoist: main.ts", () => {
-  const source = readFileSync(MAIN_TS, "utf-8").replace(/\r\n/g, "\n");
+  const rawSource = readFileSync(MAIN_TS, "utf-8").replace(/\r\n/g, "\n");
+  // `source` is the comment-stripped view used for structural
+  // ordering assertions. The few tests that explicitly want to
+  // observe documentation (e.g. the "defines ... as a module-level
+  // function" regex on line 97 below) read from `rawSource`.
+  const source = stripJsComments(rawSource);
 
   it("defines `installContentSecurityPolicy` as a module-level function", () => {
     expect(source).toMatch(/function\s+installContentSecurityPolicy\s*\(\s*\)\s*:\s*void/);
