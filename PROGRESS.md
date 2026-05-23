@@ -504,7 +504,16 @@ plus nine localized variants).
       template under its declared industries and surfaces untagged
       templates under "General".
 - [x] The CreatePage locale filter routes cards to the localized id
-      when a translation exists and falls back to English when not.
+      when a translation exists. Cards without a localized variant for
+      the selected non-English locale are hidden from the grid (a
+      deliberate UX signal that those templates are not yet
+      translated). The locale-aware workflow shortcuts in the Analyze
+      tab carry `availableLocales: CORE_LOCALES` so they remain
+      visible under every locale and route to the localized id when
+      one exists. See the `matchesLocale` / `resolveTemplateId`
+      contract documented at the top of `CreatePage.tsx`. Choosing
+      "All languages" or "English" shows every card; non-English
+      locales filter to the translated subset.
 
 ---
 
