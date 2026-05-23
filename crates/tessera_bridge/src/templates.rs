@@ -4,6 +4,7 @@ use std::path::Path;
 use tessera_core::Error as CoreError;
 use tessera_templates::parser::load_template_by_id;
 use tessera_templates::template::Template;
+use tessera_templates::validator::validate_template;
 use tessera_templates::TemplateRegistry;
 
 use crate::{BridgeError, BridgeResult};
@@ -53,15 +54,39 @@ pub fn get_template(template_dir: &str, template_id: &str) -> BridgeResult<Optio
     // path, and WS3 grew the on-disk template set ~5x to 170+ files
     // across locales, so the full-registry walk became measurable.
     //
-    // `load_template_by_id` returns `Err(Error::TemplateValidation("Template not found: <id>"))`
-    // on miss. We map *that specific* error back to `Ok(None)` to
-    // preserve the bridge's `Option<TemplateInfo>` contract (the
-    // renderer treats `None` as "no such template", not "lookup
-    // failed"); every other error -- IO, malformed YAML, etc. -- must
-    // still propagate so callers can distinguish a real failure from a
-    // missing id.
+    // We deliberately reproduce two semantics from the previous
+    // registry-backed implementation:
+    //
+    // 1. Missing id  -> `Ok(None)`.
+    //    `load_template_by_id` returns
+    //    `Err(Error::TemplateValidation("Template not found: <id>"))`
+    //    on miss. We map *that specific* error back to `Ok(None)` so
+    //    the renderer's `None` ("no such template") vs. `Err`
+    //    ("lookup failed") contract is preserved.
+    //
+    // 2. Validation failure -> `Ok(None)`.
+    //    The old `TemplateRegistry::load_from_directory` ran
+    //    `validate_template` on every template before adding it to
+    //    the registry, so `registry.get_by_id` would only ever return
+    //    a validated template (and would yield `None` for parse- or
+    //    validate-failed YAML). `load_template_by_id` only parses, so
+    //    we need to call the validator here to keep `get_template`
+    //    contractually equivalent. Logging the validation failure to
+    //    stderr matches the convention already used in
+    //    `parser::load_template_by_id` and
+    //    `registry::load_from_directory`.
+    //
+    // Every other error (IO, malformed YAML, etc.) still propagates
+    // so callers can distinguish a real failure from a missing or
+    // invalid id.
     match load_template_by_id(template_dir, template_id) {
-        Ok(template) => Ok(Some(template_to_info(&template))),
+        Ok(template) => match validate_template(&template) {
+            Ok(()) => Ok(Some(template_to_info(&template))),
+            Err(e) => {
+                eprintln!("[tessera_bridge] template `{template_id}` failed validation: {e}");
+                Ok(None)
+            }
+        },
         Err(CoreError::TemplateValidation(msg)) if msg.starts_with("Template not found:") => {
             Ok(None)
         }
@@ -151,5 +176,45 @@ export:
     fn nonexistent_dir_returns_empty() {
         let templates = list_templates("/nonexistent/path").unwrap();
         assert!(templates.is_empty());
+    }
+
+    /// `get_template` must return `Ok(None)` (not `Ok(Some(...))`) for a
+    /// template that parses successfully but fails `validate_template`.
+    /// The pre-WS3 implementation enforced this implicitly via
+    /// `TemplateRegistry::load_from_directory`, which excluded
+    /// validate-failed templates from the registry; the WS3 perf
+    /// refactor switched to `load_template_by_id` which only parses,
+    /// so the validation step has to be re-applied explicitly inside
+    /// `get_template`. This test fails the moment somebody removes
+    /// that re-application.
+    #[test]
+    fn get_template_skips_validate_failed_template() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("documents")).unwrap();
+        // `description` is required (validator at
+        // `tessera_templates::validator::validate_template` rejects an
+        // empty description). The YAML parses fine; only the validator
+        // catches it.
+        std::fs::write(
+            dir.path().join("documents/invalid.yaml"),
+            r#"
+id: invalid-v1
+name: Invalid
+type: document
+description: ""
+sections:
+  - title: Intro
+    prompt: Write intro.
+export:
+  - markdown
+"#,
+        )
+        .unwrap();
+
+        let result = get_template(dir.path().to_str().unwrap(), "invalid-v1").unwrap();
+        assert!(
+            result.is_none(),
+            "expected Ok(None) for validate-failed template; got Ok(Some({result:?}))"
+        );
     }
 }
