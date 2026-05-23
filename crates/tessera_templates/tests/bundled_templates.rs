@@ -75,9 +75,7 @@ const TEMPLATE_CATEGORIES: &[&str] = &[
 /// every other locale corresponds to a `locales/<code>/` subdirectory
 /// under one or more category roots. Keep this in sync with the
 /// `locale` enum in `schemas/template.schema.json`.
-const SUPPORTED_LOCALES: &[&str] = &[
-    "en", "es", "fr", "de", "ja", "zh", "pt", "ko", "ar", "hi",
-];
+const SUPPORTED_LOCALES: &[&str] = &["en", "es", "fr", "de", "ja", "zh", "pt", "ko", "ar", "hi"];
 
 fn workspace_templates_root() -> PathBuf {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -146,10 +144,9 @@ fn every_bundled_template_parses_and_validates() {
             });
             continue;
         }
-        let tmpl = parse_template_file(path)
-            .unwrap_or_else(|e| panic!("Failed to parse {display}: {e}"));
-        validate_template(&tmpl)
-            .unwrap_or_else(|e| panic!("Failed to validate {display}: {e}"));
+        let tmpl =
+            parse_template_file(path).unwrap_or_else(|e| panic!("Failed to parse {display}: {e}"));
+        validate_template(&tmpl).unwrap_or_else(|e| panic!("Failed to validate {display}: {e}"));
 
         assert!(!tmpl.id.is_empty(), "{display} has empty id");
         assert!(!tmpl.name.is_empty(), "{display} has empty name");
@@ -158,10 +155,7 @@ fn every_bundled_template_parses_and_validates() {
             "{display} has empty description"
         );
         assert!(!tmpl.sections.is_empty(), "{display} has no sections");
-        assert!(
-            !tmpl.export.is_empty(),
-            "{display} has no export formats"
-        );
+        assert!(!tmpl.export.is_empty(), "{display} has no export formats");
         for (i, section) in tmpl.sections.iter().enumerate() {
             assert!(
                 !section.title.is_empty(),
@@ -205,15 +199,14 @@ fn all_bundled_template_ids_are_unique() {
 /// id-uniqueness check still covers legacy visual templates.
 fn template_id_from_yaml(path: &Path) -> String {
     let display = display_path(path);
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("Failed to read {display}: {e}"));
+    let raw =
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("Failed to read {display}: {e}"));
     let value: serde_yaml::Value = serde_yaml::from_str(&raw)
         .unwrap_or_else(|e| panic!("Failed to parse YAML for {display}: {e}"));
-    value
-        .get("id")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| panic!("{display} has no top-level `id` field"))
+    match value.get("id").and_then(|v| v.as_str()) {
+        Some(id) => id.to_string(),
+        None => panic!("{display} has no top-level `id` field"),
+    }
 }
 
 /// Every template's `locale` field must be a member of `SUPPORTED_LOCALES`.
@@ -234,8 +227,8 @@ fn locale_field_matches_directory_layout() {
             // their category root and the runtime treats them as `en`.
             continue;
         }
-        let tmpl = parse_template_file(&path)
-            .unwrap_or_else(|e| panic!("Failed to parse {display}: {e}"));
+        let tmpl =
+            parse_template_file(&path).unwrap_or_else(|e| panic!("Failed to parse {display}: {e}"));
 
         assert!(
             supported.contains(tmpl.locale.as_str()),
@@ -290,8 +283,8 @@ fn category_specific_artifact_types_match_directory() {
             // legacy_visual_templates_declare_expected_type test.
             continue;
         }
-        let tmpl = parse_template_file(&path)
-            .unwrap_or_else(|e| panic!("Failed to parse {display}: {e}"));
+        let tmpl =
+            parse_template_file(&path).unwrap_or_else(|e| panic!("Failed to parse {display}: {e}"));
 
         let category = category_for(&path);
         let expected = expected_artifact_type(category);
@@ -331,8 +324,8 @@ fn approval_documents_expose_governance_section() {
             // we skip it rather than fail the whole suite.
             continue;
         }
-        let tmpl = parse_template_file(&path)
-            .unwrap_or_else(|e| panic!("Failed to parse {name}: {e}"));
+        let tmpl =
+            parse_template_file(&path).unwrap_or_else(|e| panic!("Failed to parse {name}: {e}"));
         let has_governance = tmpl.sections.iter().any(|s| {
             let t = s.title.to_lowercase();
             t.contains("risk")
@@ -367,10 +360,7 @@ fn every_non_english_locale_ships_the_canonical_template_set() {
         ("slides", "pitch.yaml"),
     ];
     let root = workspace_templates_root();
-    let non_english: Vec<&&str> = SUPPORTED_LOCALES
-        .iter()
-        .filter(|l| **l != "en")
-        .collect();
+    let non_english: Vec<&&str> = SUPPORTED_LOCALES.iter().filter(|l| **l != "en").collect();
     for locale in &non_english {
         for (category, filename) in &canonical {
             let path = root
@@ -397,8 +387,7 @@ fn every_non_english_locale_ships_the_canonical_template_set() {
 fn display_path(path: &Path) -> String {
     let root = workspace_templates_root();
     path.strip_prefix(&root)
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| path.display().to_string())
+        .map_or_else(|_| path.display().to_string(), |p| p.display().to_string())
 }
 
 /// Map a path relative to `templates/` to the locale it implies.
@@ -430,11 +419,10 @@ fn category_for(path: &Path) -> &'static str {
         .expect("discovered path lives under templates root");
     let first = relative
         .components()
-        .filter_map(|c| match c {
+        .find_map(|c| match c {
             std::path::Component::Normal(s) => s.to_str(),
             _ => None,
         })
-        .next()
         .expect("template path has at least one component");
     // Borrow check: we want a `&'static str` so the panic messages
     // can interpolate without a lifetime parameter. Match against the
@@ -470,8 +458,7 @@ fn expected_artifact_type(category: &str) -> ArtifactType {
 fn locale_industry_profile_round_trip_through_parser() {
     let docs_root = workspace_templates_root().join("documents");
     // English source PRD omits `locale:` → parser should default to "en".
-    let prd = parse_template_file(&docs_root.join("prd.yaml"))
-        .expect("baseline prd.yaml parses");
+    let prd = parse_template_file(&docs_root.join("prd.yaml")).expect("baseline prd.yaml parses");
     assert_eq!(prd.locale, "en", "English source must default to en");
 
     // Explicit German variant should round-trip the literal value.
