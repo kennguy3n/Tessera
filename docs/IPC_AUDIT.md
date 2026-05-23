@@ -11,17 +11,22 @@ drift.
 > per-domain split of `ipc.ts` and post-WS10 security hardening).
 > Every channel marked `zod-schema` is validated by the schema named
 > in parentheses in `apps/desktop/electron/ipc/schemas.ts`; every
-> channel marked `scalar-helper` is validated by the
-> `assertId` / `assertString` / `assertNumber` / `assertStringArray`
-> helpers in `apps/desktop/electron/ipc/validate.ts`. Adding a new
-> channel without a corresponding row here is a Phase-10 exit
+> channel marked `scalar-helper` is validated by one of the typed
+> `assert*` helpers exported from
+> `apps/desktop/electron/ipc/validate.ts`
+> (`assertString`, `assertOptionalString`, `assertUuid`, `assertId`,
+> `assertProvider`, `assertSafePath`, `assertNumber`,
+> `assertBoolean`, `assertStringArray`). The strategy table below
+> tags each row with the primitive type expected so a reviewer can
+> map the row back to the specific helper without grepping. Adding a
+> new channel without a corresponding row here is a Phase-10 exit
 > blocker.
 
 The validation strategy for each channel is one of:
 
 | Strategy        | What it means                                                                                                                          |
 |-----------------|----------------------------------------------------------------------------------------------------------------------------------------|
-| **scalar-helper** | Single primitive arg, validated by `assertId` / `assertString` / `assertNumber` / `assertStringArray` from `ipc/validate.ts`         |
+| **scalar-helper** | Single primitive arg, validated by one of the typed `assert*` helpers from `ipc/validate.ts`: `assertString`, `assertOptionalString`, `assertUuid`, `assertId`, `assertProvider`, `assertSafePath`, `assertNumber`, `assertBoolean`, `assertStringArray`. The row's parenthetical (e.g. `scalar-helper (boolean)`) flags the specific type. |
 | **zod-schema**    | Object arg validated by a `zod` schema in `ipc/schemas.ts`                                                                            |
 | **no-input**      | Handler takes no arguments — nothing to validate                                                                                     |
 | **renderer-typed**| Arg is a renderer-supplied typed buffer / `unknown` cast that is shape-checked at the call site inside the handler (legacy pattern). Should migrate to `zod-schema`. |

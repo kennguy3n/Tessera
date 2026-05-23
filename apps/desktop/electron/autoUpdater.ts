@@ -17,9 +17,13 @@
  *     short-circuit before we ever touch the module.
  *
  *   - The renderer never talks to electron-updater directly. All
- *     interactions go through the four IPC handlers exposed by
- *     `registerAutoUpdaterIpc()` so the renderer cannot, e.g., pin
- *     itself to a downgrade URL or smuggle a forged feed.
+ *     interactions go through the five IPC handlers exposed by
+ *     `registerAutoUpdaterIpc()` (`updates:status`, `updates:check`,
+ *     `updates:install`, `updates:getAutoUpdateEnabled`,
+ *     `updates:setAutoUpdateEnabled`) so the renderer cannot, e.g.,
+ *     pin itself to a downgrade URL or smuggle a forged feed. See
+ *     `docs/IPC_AUDIT.md` ("Updates (auto-updater)" table) for the
+ *     authoritative inventory.
  */
 import { app, BrowserWindow, ipcMain } from "electron";
 import { loadConfig, updateConfig } from "./config";
