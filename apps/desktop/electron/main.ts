@@ -381,62 +381,53 @@ function installCSPDevtoolsLogger(): void {
 let appInitComplete = false;
 
 app.whenReady().then(async () => {
-  // KNOWN LIMITATION — DB-key path runs BEFORE the password-vault is
-  // initialised. This is the WS10-scoped behaviour:
+  // Phase 10 / Task 13 — DB-key + password-vault unification.
   //
-  //   - `initAppState()` calls `getOrCreateDbKey()` (see
-  //     `dbKey.ts`), which uses ONLY Electron's `safeStorage` to
-  //     wrap/unwrap the 256-bit SQLCipher key.
-  //   - On keyringless platforms (Linux without
-  //     gnome-keyring / kwallet5, headless CI, certain hardened
-  //     containers) `safeStorage.isEncryptionAvailable()` returns
-  //     false. `getOrCreateDbKey()` then throws
-  //     `EncryptionUnavailableError` (only when `db.key` is absent on
-  //     disk — see the function-level doc on `getOrCreateDbKey` for
-  //     why an EXISTING `db.key` file with no keyring is a hard
-  //     failure, not a fallback case). `appState.ts` catches that
-  //     specific subclass and brings up the bridge in unencrypted
-  //     mode.
-  //   - `maybeInitPasswordVault` runs AFTER that, so the
-  //     password-vault key (used to encrypt OAuth tokens + API keys
-  //     on the same keyringless platforms) is derived too late to be
-  //     reused for the DB.
+  // Boot ordering for the at-rest-encryption stack is now:
   //
-  // Net effect: on keyringless platforms today, tokens + API keys
-  // are encrypted under the user's vault password while the SQLite
-  // DB is plaintext. This is a real security asymmetry — flagged by
-  // Devin Review as ANALYSIS_0004 (PR #17) — but extending the
-  // password vault to back the DB key is a larger workstream that
-  // belongs outside WS10's scope for three concrete reasons:
+  //   1. Install the session-level CSP and CSP devtools logger,
+  //      so even the password-prompt BrowserWindow is loaded
+  //      under the production CSP.
+  //   2. Register the macOS `activate` listener so a dock click
+  //      during the password prompt cannot get silently dropped.
+  //   3. Register every IPC handler (`registerIpcHandlers`)
+  //      BEFORE the password prompt awaits, so that even if
+  //      Cocoa fires `activate` and the listener above
+  //      synchronously opens the main window, the renderer
+  //      finds every channel wired (defense-in-depth against a
+  //      future refactor that splits the await chain).
+  //   4. `await maybeInitPasswordVault()` — if `safeStorage` is
+  //      unavailable on this platform, prompts the user for a
+  //      vault password, runs PBKDF2-SHA256 (600k iterations) and
+  //      caches the derived AES-256-GCM key in module-local
+  //      memory.
+  //   5. `await initAppState()` — calls
+  //      `getOrCreateDbKeyAsync()`. The new async key path is
+  //      vault-aware: when `safeStorage` is unavailable AND the
+  //      vault was unlocked in step 4, the SQLCipher 256-bit
+  //      cipher key is wrapped under the vault key and persisted
+  //      with the `TSPV` magic. Subsequent launches dispatch on
+  //      that magic to read back via the vault rather than
+  //      `safeStorage`. See `dbKey.ts:getOrCreateDbKeyAsync` for
+  //      the full dispatch matrix.
   //
-  //   1. **Migration of existing keyringless installs.** Users
-  //      already running with an unencrypted DB cannot switch to a
-  //      password-vault-wrapped key without re-keying the on-disk
-  //      tessera.db, which is a SQLCipher schema-level operation
-  //      (`PRAGMA rekey`). That re-key needs its own UX flow
-  //      (consent screen, progress UI, atomic-write recovery in
-  //      case of crash mid-rekey) that hasn't been designed.
-  //   2. **Ordering / lifecycle.** `getOrCreateDbKey` is currently
-  //      synchronous because every caller below it is synchronous;
-  //      reaching the password vault would require either threading
-  //      an async-init boot phase BEFORE `initAppState` (impacting
-  //      every other startup-time module that assumes the bridge is
-  //      up) or making the DB-key path async itself (impacting
-  //      every existing call site).
-  //   3. **Recovery story.** If the user forgets their vault
-  //      password today, only their tokens / API keys are
-  //      unrecoverable — they re-authenticate and move on. If the
-  //      DB key were also wrapped under the same password, a
-  //      forgotten password would mean total data loss. That
-  //      tradeoff deserves explicit product input before we ship it.
+  // Migration of pre-Phase-10 keyringless installs:
+  // `tessera.db` is on disk as plaintext (no `db.key` file). On
+  // the next launch, the vault prompt fires (step 4), a fresh
+  // 256-bit key is generated and vault-wrapped (step 5), and the
+  // Rust bridge's `open_shared_with_key` calls `sqlcipher_export`
+  // to transparently re-encrypt the DB. The migration is
+  // automatic — no consent UI needed because the user is
+  // strictly UPGRADING from unencrypted to encrypted (no data
+  // loss / lockout risk if the vault password is forgotten:
+  // they still have the plaintext DB before migration runs, and
+  // the migration only succeeds atomically when the new cipher
+  // key is committed to disk).
   //
-  // The right home for this is a future "DB-key recovery + password
-  // vault unification" workstream that ships the migration UX, the
-  // async-init boot phase, and the data-loss-warning consent flow
-  // together. Until then, this comment + the explicit
-  // `EncryptionUnavailableError` catch in `appState.ts` make the
-  // current behaviour discoverable.
-  initAppState();
+  // Note: `initAppState()` is called LATER in this block, AFTER
+  // `maybeInitPasswordVault()` has cached the vault key. See the
+  // call site below for the full sequencing rationale.
+
   // Install the session-level CSP BEFORE any window (including the
   // password prompt) is created, so the policy is in effect for
   // every page load — not just for windows created after the main
@@ -501,13 +492,27 @@ app.whenReady().then(async () => {
   // strengthens the "handlers are registered before any renderer
   // can call them" invariant.
   registerIpcHandlers();
+  // Run the vault prompt BEFORE `initAppState()` so that when
+  // `getOrCreateDbKeyAsync()` checks `passwordVaultActive()`, the
+  // vault key (if any) is already cached. On non-keyringless
+  // platforms `maybeInitPasswordVault` is a synchronous no-op.
+  await maybeInitPasswordVault();
+  // Initialise the native bridge + SQLCipher key. Runs AFTER the
+  // vault is unlocked so that on keyringless platforms
+  // `getOrCreateDbKeyAsync` can wrap the SQLCipher key under the
+  // vault key (instead of throwing `EncryptionUnavailableError`
+  // and falling back to unencrypted mode like the pre-Phase-10
+  // boot sequence did). See the doc comment at the top of this
+  // callback for the full ordering rationale.
+  await initAppState();
   // Replay the persisted hybrid retrieval config into the live Rust
-  // `SourceManager`. Must run AFTER `initAppState` (which brings up
-  // the bridge) but is unrelated to IPC registration order — we
-  // place it here only because this is the soonest point where the
-  // bridge is reachable AND the disk config has been validated.
-  // A failure is logged but not fatal: the user can re-tune in
-  // Settings, the live engine simply uses its compiled defaults.
+  // `SourceManager`. Must run AFTER `initAppState` brings the
+  // bridge up (block-c's await on `initAppState` is what makes
+  // that ordering deterministic — block-b's original placement
+  // before `initAppState` raced against the bridge being ready
+  // and silently no-op'd via `getBridge() === null`). A failure
+  // is logged but not fatal: the user can re-tune in Settings,
+  // the live engine simply uses its compiled defaults.
   try {
     replayPersistedHybridSearchConfigToBridge();
   } catch (err) {
@@ -516,7 +521,6 @@ app.whenReady().then(async () => {
       err,
     );
   }
-  await maybeInitPasswordVault();
   // Start the automations scheduler. Runs in the main process and
   // ticks every 30s, dispatching due `Schedule` automations directly
   // against the native bridge (i.e. without bouncing through the

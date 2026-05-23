@@ -84,6 +84,39 @@ function bridgeHooks(ctx: IpcContext): BridgeHooks {
   };
 }
 
+/**
+ * Best-effort audit helper used by every `connectors:*` handler.
+ *
+ * The audit pass-throughs on the bridge (`bridgeLogConnector*`) are
+ * defined as no-throw on the Rust side — they swallow audit-store
+ * write failures and return `Ok(())`. We still wrap each call in a
+ * `try ... catch` here for two independent defence-in-depth
+ * reasons:
+ *
+ *   1. The bridge itself may not be initialised yet — the Block-C
+ *      boot sequence orders `registerIpcHandlers()` BEFORE
+ *      `initAppState()`, so an audit call from `connectors:status`
+ *      that fires during the brief window after IPC registration
+ *      but before bridge init would throw "Native bridge not
+ *      available" out of `ctx.requireBridge()`.
+ *   2. An audit failure must never block the user-visible action.
+ *      The connector flow has already committed at the point we
+ *      log; rolling back would lose the user's work.
+ *
+ * The handler logs the audit failure via `ctx.log.warn` so an
+ * operator can diagnose a chronically-failing audit pipeline
+ * without it manifesting as a user-facing error.
+ */
+function safeAudit(ctx: IpcContext, fn: (b: ReturnType<IpcContext["requireBridge"]>) => void): void {
+  try {
+    fn(ctx.requireBridge());
+  } catch (err) {
+    ctx.log.warn("audit log failed (continuing)", {
+      error: (err as Error).message,
+    });
+  }
+}
+
 // Network-error classification (NetworkError class, NotConnectedError
 // class, isNetworkError function) lives in a dedicated
 // `./networkErrors` module so per-connector sync files
@@ -356,7 +389,33 @@ export async function runConnectorSync(
     throw err;
   }
   try {
-    return await runSync(ctx, provider, token, ctx.userDataDir(), options);
+    const result = await runSync(ctx, provider, token, ctx.userDataDir(), options);
+    // Phase 10 / Task 17: log the sync delta counts on the `"synced"`
+    // path only. The `"offline"` status returned below reflects a
+    // transient network failure (no actual sync work happened) so an
+    // audit row for it would pollute reports with noise.
+    //
+    // This audit lives inside `runConnectorSync` — NOT inside the
+    // individual IPC handlers — so EVERY caller is audited
+    // automatically: the new `connectors:sync` handler in this file
+    // AND the legacy `connectors:gdrive:sync` handler in
+    // `connectorsLegacy.ts` (still reachable from the renderer via
+    // `preload.ts`'s `gdrive:sync` channel), AND any future channel
+    // that delegates to this shared wrapper. Devin Review (round 2
+    // on PR #26) flagged this gap when the audit lived in the
+    // handler; moving it here closes it structurally instead of
+    // requiring every future caller to remember to add the wrap.
+    if (result.status === "synced") {
+      safeAudit(ctx, (b) =>
+        b.bridgeLogConnectorSynced(
+          provider,
+          result.added,
+          result.modified,
+          result.removed,
+        ),
+      );
+    }
+    return result;
   } catch (err) {
     if (isNetworkError(err)) {
       ctx.log.warn("connector sync hit network failure", {
@@ -373,27 +432,21 @@ async function runDisconnect(
   ctx: IpcContext,
   provider: ProviderId,
   userDataDir: string,
-): Promise<void> {
+): Promise<{ filesRemoved: number }> {
   const bridge = bridgeHooks(ctx);
   switch (provider) {
     case "google_drive":
-      await disconnectGoogleDrive(userDataDir, bridge);
-      return;
+      return disconnectGoogleDrive(userDataDir, bridge);
     case "onedrive":
-      await disconnectOneDrive(userDataDir, bridge);
-      return;
+      return disconnectOneDrive(userDataDir, bridge);
     case "notion":
-      await disconnectNotion(userDataDir, bridge);
-      return;
+      return disconnectNotion(userDataDir, bridge);
     case "jira":
-      await disconnectJira(userDataDir, bridge);
-      return;
+      return disconnectJira(userDataDir, bridge);
     case "confluence":
-      await disconnectConfluence(userDataDir, bridge);
-      return;
+      return disconnectConfluence(userDataDir, bridge);
     case "figma":
-      await disconnectFigma(userDataDir, bridge);
-      return;
+      return disconnectFigma(userDataDir, bridge);
     default: {
       // Exhaustiveness assertion. Same architectural rationale as the
       // sibling `default` branch in `runSync` above: `ProviderId` is
@@ -481,6 +534,11 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
         clientSecret,
       });
       ctx.log.info("connector authenticated", { provider });
+      // Phase 10 / Task 17: log the connect event AFTER the tokens
+      // have been written to the vault. A failed audit append must
+      // not roll back the user's successful OAuth flow — `safeAudit`
+      // swallows the failure and logs a warning instead.
+      safeAudit(ctx, (b) => b.bridgeLogConnectorConnected(provider));
       return { provider, connected: true, status: "connected" };
     },
   );
@@ -507,15 +565,25 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
       } catch {
         // best-effort
       }
+      // `runDisconnect` returns the count of bridge sources actually
+      // removed from the index — Phase 10 / Task 17 plumbs this
+      // count through to the `ConnectorDisconnected` audit event so
+      // an auditor can see how much state each disconnect cleaned
+      // up. On cleanup failure we still log the disconnect (the
+      // user-visible action — token revocation — already
+      // succeeded) but report `filesRemoved=0` rather than guess.
+      let filesRemoved = 0;
       try {
-        await runDisconnect(ctx, provider, ctx.userDataDir());
+        const result = await runDisconnect(ctx, provider, ctx.userDataDir());
+        filesRemoved = result.filesRemoved;
       } catch (err) {
         ctx.log.warn("connector disconnect cleanup failed (continuing)", {
           provider,
           error: (err as Error).message,
         });
       }
-      ctx.log.info("connector disconnected", { provider });
+      ctx.log.info("connector disconnected", { provider, filesRemoved });
+      safeAudit(ctx, (b) => b.bridgeLogConnectorDisconnected(provider, filesRemoved));
       return { provider, connected: false, status: "disconnected" };
     },
   );
@@ -562,7 +630,11 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
     "connectors:sync",
     async (_event, providerRaw: unknown): Promise<ConnectorSyncResult> => {
       const provider = assertProvider(providerRaw, "provider");
-      return runConnectorSync(ctx, provider);
+      // The audit row for successful syncs is emitted by
+      // `runConnectorSync` itself so the legacy `connectors:gdrive:sync`
+      // handler (also routed through `runConnectorSync`) gets audited
+      // automatically. See the doc comment in `runConnectorSync`.
+      return await runConnectorSync(ctx, provider);
     },
   );
 }

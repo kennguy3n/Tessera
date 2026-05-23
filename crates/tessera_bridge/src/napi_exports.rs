@@ -25,11 +25,33 @@ static APP_STATE: std::sync::OnceLock<AppState> = std::sync::OnceLock::new();
 
 // N-API callbacks are single-threaded (main thread only), so deadlocks from
 // concurrent lock acquisition cannot occur. Mutexes provide interior mutability.
-// If async work is added in the future, acquire locks in this order:
-// 1. audit_logger → 2. source_manager → 3. artifact_manager → 4. citation_tracker
-// → 5. task_store → 6. automation_store
-// (audit_logger first so every other path can log under its lock; task_store
-// and automation_store are leaf locks — nothing else acquires them.)
+//
+// There are TWO acquisition patterns in this file:
+//
+//   A. **Stacked acquisition** — used when an operation needs to
+//      hold multiple locks simultaneously (e.g. `bridge_export_artifact_to_file`
+//      reads both `artifact_manager` and `citation_tracker` and exports them
+//      together). When stacking, acquire in this order to keep the lock graph
+//      a DAG and to prevent any future async refactor from deadlocking:
+//
+//        1. audit_logger → 2. source_manager → 3. artifact_manager →
+//        4. citation_tracker → 5. task_store → 6. automation_store
+//
+//   B. **Sequential non-overlapping acquisition** — used for the audit-after-action
+//      pattern. The handler acquires a per-store lock, runs the operation, drops
+//      that lock, then acquires `audit_logger` to emit the row. The two locks
+//      are never held at the same time, so there is no deadlock risk regardless
+//      of which one is documented "first" in pattern A above. The fence between
+//      operate-and-emit-audit is an explicit `drop(per_store_lock)` so the
+//      ordering is mechanically clear from the source. This pattern
+//      (a) prevents phantom audit rows on failed operations (the audit emit is
+//      gated on the operation's `?` early-return) and (b) ensures the audit
+//      append never delays the user-visible action by holding the per-store lock
+//      across a SQLite write to the audit DB.
+//
+// Both patterns are safe; the choice depends on whether the audit row's data
+// is computed only after the operation completes (→ use B) or is known before
+// (→ either, but B is preferred for new code so the audit is gated on success).
 //
 // Every store is also internally backed by a single shared
 // `Arc<Mutex<rusqlite::Connection>>` (opened once in `init_bridge`), so
@@ -141,27 +163,40 @@ fn state() -> napi::Result<&'static AppState> {
 #[napi]
 pub fn bridge_add_local_folder(path: String) -> napi::Result<sources::SourceInfo> {
     let s = state()?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_source_added(&path);
-    }
     let mgr = s
         .source_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::add_local_folder(&mgr, &path).map_err(|e| napi::Error::from_reason(e.to_string()))
+    let info = sources::add_local_folder(&mgr, &path)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the add commits (sequential non-overlapping
+    // acquisition; pattern B in the file-level comment). A failed
+    // add (invalid path, permission denied, duplicate source,
+    // FS error) must not leave a phantom "SourceAdded" row.
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_source_added(&path);
+    }
+    Ok(info)
 }
 
 #[napi]
 pub fn bridge_add_local_file(path: String) -> napi::Result<sources::SourceInfo> {
     let s = state()?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_source_added(&path);
-    }
     let mgr = s
         .source_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::add_local_file(&mgr, &path).map_err(|e| napi::Error::from_reason(e.to_string()))
+    let info = sources::add_local_file(&mgr, &path)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the add commits (pattern B). Same rationale as
+    // `bridge_add_local_folder` above: phantom-row prevention on
+    // every audit-emitting source-add path.
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_source_added(&path);
+    }
+    Ok(info)
 }
 
 #[napi]
@@ -177,14 +212,21 @@ pub fn bridge_list_sources() -> napi::Result<Vec<sources::SourceInfo>> {
 #[napi]
 pub fn bridge_remove_source(source_id: String) -> napi::Result<()> {
     let s = state()?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_source_removed(&source_id);
-    }
     let mgr = s
         .source_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::remove_source(&mgr, &source_id).map_err(|e| napi::Error::from_reason(e.to_string()))
+    sources::remove_source(&mgr, &source_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the remove commits (pattern B). A failed remove
+    // (bad source_id, FK constraint, lock contention) must not
+    // leave a phantom "SourceRemoved" row claiming the source was
+    // removed when it still exists in the source table.
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_source_removed(&source_id);
+    }
+    Ok(())
 }
 
 #[napi]
@@ -219,7 +261,21 @@ pub fn bridge_reindex_source(source_id: String) -> napi::Result<sources::SourceI
         .source_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::reindex_source(&mgr, &source_id).map_err(|e| napi::Error::from_reason(e.to_string()))
+    let info = sources::reindex_source(&mgr, &source_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the reindex commits (matches the contract for
+    // `bridge_add_citation` below): a failed reindex must not
+    // leave a phantom row claiming the source was reindexed. This
+    // uses the sequential non-overlapping acquisition pattern
+    // (pattern B in the file-level comment): per-store lock is
+    // explicitly dropped BEFORE the audit logger lock is acquired,
+    // so the two locks are never held simultaneously and the
+    // operation can't be rolled back by a failed audit append.
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_source_reindexed(&source_id);
+    }
+    Ok(info)
 }
 
 /// Returns the latest indexing progress snapshot. Safe to poll on
@@ -399,15 +455,21 @@ pub fn bridge_create_artifact(
     template_id: Option<String>,
 ) -> napi::Result<artifacts::ArtifactInfo> {
     let s = state()?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_artifact_created(&title);
-    }
     let mgr = s
         .artifact_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    artifacts::create_artifact(&mgr, &title, &artifact_type, template_id.as_deref())
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let info = artifacts::create_artifact(&mgr, &title, &artifact_type, template_id.as_deref())
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the artifact has been persisted so a failed
+    // create (e.g. invalid template id, lock contention) doesn't
+    // leave a phantom "created" row. Matches the contract for
+    // every other artifact lifecycle event in this file.
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_created(&title);
+    }
+    Ok(info)
 }
 
 #[napi]
@@ -420,8 +482,15 @@ pub fn bridge_update_artifact_content(
         .artifact_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    artifacts::update_artifact_content(&mgr, &artifact_id, &content)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let info = artifacts::update_artifact_content(&mgr, &artifact_id, &content)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the update commits to avoid phantom rows on
+    // failed updates (e.g. bad UUID, lock contention).
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_updated(&artifact_id);
+    }
+    Ok(info)
 }
 
 #[napi]
@@ -452,7 +521,15 @@ pub fn bridge_delete_artifact(artifact_id: String) -> napi::Result<()> {
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     artifacts::delete_artifact(&mgr, &artifact_id)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the delete commits — a failed delete (e.g. bad
+    // UUID, FK constraint, lock contention) must not leave a
+    // phantom row claiming the artifact was deleted.
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_deleted(&artifact_id);
+    }
+    Ok(())
 }
 
 // --- Export ---
@@ -464,9 +541,6 @@ pub fn bridge_export_artifact(
     content_override: Option<String>,
 ) -> napi::Result<exporter::ExportResult> {
     let s = state()?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_artifact_exported(&artifact_id, &format);
-    }
     let art_mgr = s
         .artifact_manager
         .lock()
@@ -475,14 +549,26 @@ pub fn bridge_export_artifact(
         .citation_tracker
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    exporter::export_artifact(
+    let result = exporter::export_artifact(
         &art_mgr,
         &tracker,
         &artifact_id,
         &format,
         content_override.as_deref(),
     )
-    .map_err(|e| napi::Error::from_reason(e.to_string()))
+    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit-after-action (sequential non-overlapping pattern B): a
+    // failed export (missing artifact, missing citation, format
+    // unsupported, content_override invalid) must not leave a
+    // phantom row claiming the artifact was exported. Drop the
+    // per-store locks first so the audit logger lock is acquired
+    // after they release.
+    drop(tracker);
+    drop(art_mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_exported(&artifact_id, &format);
+    }
+    Ok(result)
 }
 
 #[napi]
@@ -509,7 +595,20 @@ pub fn bridge_export_artifact_to_file(
         &path,
         content_override.as_deref(),
     )
-    .map_err(|e| napi::Error::from_reason(e.to_string()))
+    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the export commits to disk so a failed write
+    // (permission denied, path-safety violation, format
+    // unsupported) never produces a phantom row claiming the
+    // artifact was exported. Per-store locks are dropped first
+    // (sequential non-overlapping acquisition; pattern B in the
+    // file-level comment) so the audit logger lock and the
+    // per-store locks are never held simultaneously.
+    drop(tracker);
+    drop(art_mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_exported(&artifact_id, &format);
+    }
+    Ok(())
 }
 
 // --- Templates ---
@@ -548,6 +647,13 @@ pub fn bridge_add_citation(
     // Parse artifact_id before locking to validate early
     let artifact_uuid = uuid::Uuid::parse_str(&req.artifact_id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Capture the citation arguments needed for the audit log before
+    // `req` is moved into `add_citation` below. The audit call itself
+    // happens AFTER the citation has been persisted so we don't log
+    // failed adds (mirroring the contract for replace/remove which
+    // also log on success only).
+    let artifact_id_for_audit = req.artifact_id.clone();
+    let source_uri_for_audit = req.source_uri.clone();
     let src_mgr = s
         .source_manager
         .lock()
@@ -571,21 +677,44 @@ pub fn bridge_add_citation(
             tessera_core::CitationId(cid),
         )
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Drop the per-store locks BEFORE acquiring the audit logger
+    // (sequential non-overlapping acquisition; pattern B in the
+    // file-level comment). The two locks are never held
+    // simultaneously, so the user-visible citation persists even
+    // if the audit append fails afterwards, and the audit row is
+    // gated on the citation having actually been written.
+    drop(tracker);
+    drop(art_mgr);
+    drop(src_mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_citation_added(
+            &artifact_id_for_audit,
+            &info.citation_id,
+            &source_uri_for_audit,
+        );
+    }
     Ok(info)
 }
 
 #[napi]
 pub fn bridge_remove_citation(artifact_id: String, citation_id: String) -> napi::Result<()> {
     let s = state()?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_citation_removed(&artifact_id, &citation_id);
-    }
     let mut tracker = s
         .citation_tracker
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     citations::remove_citation(&mut tracker, &artifact_id, &citation_id)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit-after-action (sequential non-overlapping pattern B):
+    // a failed remove (bad citation_id, FK constraint, lock
+    // contention) must not leave a phantom row claiming the
+    // citation was removed. Drop the per-store lock first so the
+    // audit logger lock is acquired after it releases.
+    drop(tracker);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_citation_removed(&artifact_id, &citation_id);
+    }
+    Ok(())
 }
 
 #[napi]
@@ -697,7 +826,21 @@ pub fn bridge_restore_version(
     let restored = mgr
         .restore_version(&aid, version_number)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    Ok(artifacts::artifact_to_info(&restored))
+    let info = artifacts::artifact_to_info(&restored);
+    // Audit AFTER the restore commits. Version restore is
+    // semantically an artifact update — the content snapshot at
+    // `version_number` is rewritten into the canonical artifact
+    // row. Audit it as `ArtifactUpdated` so a future compliance
+    // review sees the lineage ("this artifact was rolled back at
+    // <time>") rather than a silent overwrite. Logging AFTER the
+    // restore (rather than before) ensures a failed restore (bad
+    // UUID, missing version, lock contention) never produces a
+    // phantom rollback row.
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_updated(&artifact_id);
+    }
+    Ok(info)
 }
 
 // --- Artifact Generation ---
@@ -837,7 +980,20 @@ pub fn bridge_compare_sources(
     let updated = art_mgr
         .get(&art.id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    Ok(artifacts::artifact_to_info(&updated))
+    let info = artifacts::artifact_to_info(&updated);
+    // Audit AFTER the comparison artifact has been persisted under
+    // the same `ArtifactCreated` event type used by
+    // `bridge_create_artifact` so reports counting created
+    // artifacts don't undercount comparison results. Logging AFTER
+    // ensures a failed comparison (chunk fetch error, content
+    // generation panic, persist failure) never produces a phantom
+    // "Source Comparison" audit row.
+    drop(art_mgr);
+    drop(src_mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_created("Source Comparison");
+    }
+    Ok(info)
 }
 
 #[napi]
@@ -864,8 +1020,22 @@ pub fn bridge_export_evidence_pack(
 
     let citation_list = tracker.list_for_artifact(&aid).unwrap_or_default();
 
-    tessera_export::evidence_pack::build_evidence_pack(&artifact, &citation_list, &output_path)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let zip_path =
+        tessera_export::evidence_pack::build_evidence_pack(&artifact, &citation_list, &output_path)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the ZIP has been built and written. The evidence
+    // pack is a ZIP export — record it under the shared
+    // `ArtifactExported` event type so an auditor sees every form
+    // of export (file format + evidence pack) in one query.
+    // Logging AFTER ensures a failed pack build (missing artifact,
+    // disk full, path-safety violation) never produces a phantom
+    // export row.
+    drop(tracker);
+    drop(art_mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_exported(&artifact_id, "evidence_pack");
+    }
+    Ok(zip_path)
 }
 
 // --- Tasks ---
@@ -1038,4 +1208,115 @@ pub fn bridge_record_automation_run(automation_id: String, status: String) -> na
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     automations::record_automation_run(&store, &automation_id, &status)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+// --- Audit pass-throughs (Phase 10 / Task 17) ---
+//
+// Most audit events are emitted directly by other bridge methods on
+// behalf of the JS caller (see `bridge_add_local_folder`,
+// `bridge_create_artifact`, etc.). The events below originate
+// entirely on the JS side — the local model sidecar lifecycle,
+// settings writes, and the connector OAuth + sync + disconnect
+// lifecycle all live in `apps/desktop/electron/ipc/`. To get
+// those events into the same `tessera_audit` store as everything
+// else (and therefore into the same audit reports), we expose thin
+// pass-throughs here.
+//
+// Each pass-through swallows `Err(audit-store-write-failure)` the
+// same way the inline audit calls above do: the audit log is
+// best-effort and must never propagate failure back to the JS
+// caller (a transient SQLite contention causing the renderer to
+// see a "model failed to start" error would be a far worse user
+// experience than a missing audit row).
+
+/// JS-facing pass-through for [`AuditLogger::log_settings_changed`].
+/// Called by `apps/desktop/electron/ipc/settings.ts` whenever a
+/// persisted config field changes via the `settings:update` /
+/// `externalProvider:set` IPC handlers.
+#[napi]
+pub fn bridge_log_settings_changed(setting: String, value: String) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_settings_changed(&setting, &value);
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_model_started`].
+/// Called by `apps/desktop/electron/ipc/model.ts` when the
+/// `model:start` IPC handler successfully starts the local sidecar.
+#[napi]
+pub fn bridge_log_model_started(model_id: String) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_model_started(&model_id);
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_model_stopped`].
+/// Called by `apps/desktop/electron/ipc/model.ts` when the
+/// `model:stop` IPC handler shuts the local sidecar down. `reason`
+/// is rendered verbatim — pass `"user-requested"` for explicit
+/// shutdowns, `"app-shutdown"` for window-close, etc.
+#[napi]
+pub fn bridge_log_model_stopped(reason: String) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_model_stopped(&reason);
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_connector_connected`].
+/// Called by `apps/desktop/electron/ipc/connectors/handlers.ts`
+/// after a successful OAuth flow has completed and the access /
+/// refresh tokens have been written to the `tokenVault`.
+#[napi]
+pub fn bridge_log_connector_connected(provider: String) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_connector_connected(&provider);
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_connector_synced`].
+/// Called by `apps/desktop/electron/ipc/connectors/handlers.ts`
+/// after a connector sync completes with the per-run delta counts.
+/// The `status` field of the `ConnectorSyncResult` is intentionally
+/// NOT logged here — `"offline"` is a transient transport error,
+/// not a user-meaningful audit event.
+#[napi]
+pub fn bridge_log_connector_synced(
+    provider: String,
+    added: u32,
+    updated: u32,
+    removed: u32,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_connector_synced(
+            &provider,
+            added as usize,
+            updated as usize,
+            removed as usize,
+        );
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_connector_disconnected`].
+/// Called by `apps/desktop/electron/ipc/connectors/handlers.ts`
+/// after the connector's tokens have been revoked and the local
+/// sync directory has been purged. `files_removed` is the
+/// per-provider disconnect-result count of files that were
+/// removed from the indexed-sources set as part of the cleanup.
+#[napi]
+pub fn bridge_log_connector_disconnected(provider: String, files_removed: u32) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_connector_disconnected(&provider, files_removed as usize);
+    }
+    Ok(())
 }

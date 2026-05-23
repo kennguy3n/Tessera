@@ -290,18 +290,35 @@ export async function syncGoogleDrive(ctx: {
   return { added, modified, removed, status: "synced" };
 }
 
+/**
+ * Disconnect the Google Drive connector: remove every source that
+ * was created by a previous sync, purge the local file mirror, and
+ * tear down the sync directory.
+ *
+ * Returns the number of bridge sources that were successfully
+ * removed so the calling IPC handler can include the count in the
+ * `ConnectorDisconnected` audit event (Phase 10 / Task 17). The
+ * `manifest.length` is intentionally NOT the right number to report
+ * — a previous sync may have failed mid-flight, leaving some
+ * manifest entries without corresponding bridge sources, or the
+ * user may have manually deleted some sources between syncs. Using
+ * the count of actually-removed sources gives a faithful audit
+ * trail of "what state the connector left the index in".
+ */
 export async function disconnectGoogleDrive(
   userDataDir: string,
   bridge: GdriveBridgeHooks,
-): Promise<void> {
+): Promise<{ filesRemoved: number }> {
   const syncDir = syncDirFor(userDataDir, "gdrive");
   const manifest = await readGdriveManifest(userDataDir);
   const syncedSet = new Set(manifest);
   const sources = bridge.listSources();
+  let filesRemoved = 0;
   for (const src of sources) {
     if (syncedSet.has(src.path)) {
       try {
         bridge.removeSource(src.id);
+        filesRemoved += 1;
       } catch {
         // best effort
       }
@@ -312,6 +329,7 @@ export async function disconnectGoogleDrive(
   );
   await fsp.unlink(manifestPathFor(userDataDir)).catch(() => undefined);
   await fsp.rm(syncDir, { recursive: true, force: true }).catch(() => undefined);
+  return { filesRemoved };
 }
 
 export const __test = { manifestPathFor };
