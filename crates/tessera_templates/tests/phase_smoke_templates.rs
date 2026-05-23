@@ -1,0 +1,290 @@
+//! Phase-verification smoke test for the bundled template registry.
+//!
+//! Part of the Phase 7/8 tracking-integrity guarantee: every bundled
+//! YAML template under `templates/` must (a) parse, (b) validate, and
+//! (c) appear in the registry that the renderer-side `CreatePage.tsx`
+//! sources its picker from.
+//!
+//! This test is intentionally broader than `bundled_templates.rs` (the
+//! pre-existing per-category test). It walks the entire `templates/`
+//! tree from disk and applies the parse + validate + invariants check
+//! to every `.yaml`/`.yml` file it finds — so future templates added
+//! without being mentioned in the per-category enumerations still get
+//! verified, and a malformed template can't sneak into a release.
+//!
+//! Companion suites:
+//!   * Renderer side — `apps/desktop/renderer/src/__tests__/smoke/
+//!     phaseVerification.test.ts` (cross-checks template ids against
+//!     CreatePage.tsx CATEGORIES).
+//!   * Connectors — `crates/tessera_connectors/tests/
+//!     phase_smoke_connectors.rs`
+//!   * Export — `crates/tessera_export/tests/phase_smoke_export.rs`
+
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
+use tessera_templates::parser::parse_template_file;
+use tessera_templates::registry::TemplateRegistry;
+use tessera_templates::validator::validate_template;
+
+/// Resolve the workspace-root `templates/` directory from the
+/// crate manifest dir. Works no matter what working dir cargo is
+/// invoked from.
+fn templates_root() -> PathBuf {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    PathBuf::from(manifest_dir).join("../..").join("templates")
+}
+
+/// Subdirectories under `templates/` whose YAML files are
+/// `tessera_templates::Template`-compatible. The infographic and
+/// landing-page templates intentionally use a richer renderer-side
+/// schema (with `hero:`, `features:`, `stats:`, `layout:`, ...) that
+/// the Rust struct does not model — those are verified in the
+/// renderer's `phaseVerification.test.ts` smoke suite instead.
+const RUST_TEMPLATE_DIRS: &[&str] = &["documents", "slides", "sheets", "bases"];
+
+/// Recursively collect every `.yaml`/`.yml` file under the supplied
+/// templates root that belongs to a Rust-side template category
+/// (`documents/`, `slides/`, `sheets/`, `bases/`).
+///
+/// Returns paths in deterministic sort order so test failures point
+/// at the same file across runs.
+fn collect_template_files(root: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for sub in RUST_TEMPLATE_DIRS {
+        let dir = root.join(sub);
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(&dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+            .filter(|e| e.file_type().is_file())
+        {
+            let path = entry.into_path();
+            if matches!(
+                path.extension().and_then(|s| s.to_str()),
+                Some("yaml" | "yml")
+            ) {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Every bundled YAML template must parse, validate, and meet the
+/// repository-wide invariants (non-empty id, non-empty name, at least
+/// one section, at least one export format).
+///
+/// Plan 2C calls for a "phase 9+" smoke test that catches templates
+/// claimed in docs but not wired into the registry. This is exactly
+/// that test: it walks the on-disk fixtures so any new YAML file is
+/// automatically covered without an edit here.
+#[test]
+fn every_bundled_template_parses_validates_and_has_required_fields() {
+    let root = templates_root();
+    let files = collect_template_files(&root);
+    assert!(
+        !files.is_empty(),
+        "expected at least one bundled template under {}",
+        root.display()
+    );
+
+    for path in &files {
+        let rel = path.strip_prefix(&root).unwrap_or(path);
+        let display = rel.display();
+
+        let tmpl = parse_template_file(path)
+            .unwrap_or_else(|e| panic!("failed to parse {display}: {e}"));
+        validate_template(&tmpl)
+            .unwrap_or_else(|e| panic!("failed to validate {display}: {e}"));
+
+        assert!(!tmpl.id.is_empty(), "{display} has empty id");
+        assert!(!tmpl.name.is_empty(), "{display} has empty name");
+        assert!(
+            !tmpl.description.is_empty(),
+            "{display} has empty description"
+        );
+        assert!(!tmpl.sections.is_empty(), "{display} has zero sections");
+        assert!(
+            !tmpl.export.is_empty(),
+            "{display} has no export formats configured"
+        );
+
+        for (i, section) in tmpl.sections.iter().enumerate() {
+            assert!(
+                !section.title.is_empty(),
+                "{display} section {i} has empty title"
+            );
+            assert!(
+                !section.prompt.is_empty(),
+                "{display} section {i} has empty prompt"
+            );
+        }
+    }
+}
+
+/// Template ids are the registry key the renderer uses to look up
+/// templates by name. Duplicates would shadow each other silently in
+/// the picker, so the phase smoke suite makes uniqueness an explicit
+/// guarantee rather than relying on convention.
+#[test]
+fn every_bundled_template_has_a_unique_id() {
+    let root = templates_root();
+    let files = collect_template_files(&root);
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut duplicates: Vec<(String, PathBuf)> = Vec::new();
+
+    for path in &files {
+        let tmpl = parse_template_file(path)
+            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()));
+        if !seen.insert(tmpl.id.clone()) {
+            duplicates.push((tmpl.id, path.clone()));
+        }
+    }
+
+    assert!(
+        duplicates.is_empty(),
+        "found duplicate template ids — these would shadow each other in the picker: {duplicates:?}"
+    );
+}
+
+/// Templates of each Rust-modelled artifact type must appear in the
+/// on-disk fixtures. This is the structural floor implied by
+/// PROGRESS.md: Phase 5/6 shipped at least one template per
+/// artifact category.
+///
+/// Only the four categories that `tessera_templates::Template` can
+/// represent (Document, Slides, Sheet, Base) are covered here.
+/// Infographic and LandingPage templates use a richer renderer-side
+/// schema (with `hero:`, `features:`, `stats:`, `layout:`, etc.)
+/// that the Rust struct does not model — the renderer's
+/// `phaseVerification.test.ts` smoke suite enforces the floor for
+/// those two categories instead.
+#[test]
+fn every_rust_modelled_category_has_at_least_one_template() {
+    use tessera_core::ArtifactType;
+
+    let root = templates_root();
+    let files = collect_template_files(&root);
+
+    // `ArtifactType` doesn't derive `Hash`, so we accumulate a `Vec`
+    // and use linear `.contains()` checks. The set is at most 4 wide.
+    let mut seen: Vec<ArtifactType> = Vec::new();
+    for path in &files {
+        if let Ok(tmpl) = parse_template_file(path) {
+            if !seen.contains(&tmpl.artifact_type) {
+                seen.push(tmpl.artifact_type);
+            }
+        }
+    }
+
+    let expected = [
+        ArtifactType::Document,
+        ArtifactType::Slides,
+        ArtifactType::Sheet,
+        ArtifactType::Base,
+    ];
+
+    for ty in expected {
+        assert!(
+            seen.contains(&ty),
+            "no bundled template found with artifact_type = {ty:?} — phase 5/6 floor regressed; seen types: {seen:?}"
+        );
+    }
+}
+
+/// The `TemplateRegistry::load_from_directory` API is what the desktop
+/// app uses at startup. This test enforces two distinct properties:
+///
+/// 1. Every Rust-modelled on-disk template (documents/, slides/,
+///    sheets/, bases/) must appear in the registry. A regression in
+///    `WalkDir` filtering or in `parse_template_file` that silently
+///    skips a fixture would fail this check — which is the core
+///    Phase 7/8 tracking-integrity guarantee.
+///
+/// 2. Every registry entry must correspond to a real .yaml/.yml file
+///    on disk somewhere under templates/. A phantom template (e.g.
+///    one duplicated by a future caching layer) would fail this
+///    check.
+///
+/// We deliberately do NOT compare the registry's full id set against
+/// our Rust-modelled-only collector (`collect_template_files`). The
+/// registry walks the entire `templates/` tree, including the
+/// `infographics/` and `landing_pages/` subdirectories. Templates
+/// under those two categories use a richer renderer-side schema that
+/// `tessera_templates::Template` does not model, so today the
+/// registry skips them — but a future infographic/landing-page YAML
+/// happening to use only Rust-modelled fields (e.g. a stripped-down
+/// `infographics/onboarding-summary.yaml` with a normal `sections:`
+/// block) would be silently picked up by the registry, land in
+/// `loaded_ids`, and a naïve symmetric-difference assertion would
+/// false-positive. Property (2) above is enforced against a separate
+/// full-tree id set instead, so the bidirectional check remains
+/// strict while staying robust to additions in the
+/// renderer-only directories.
+#[test]
+fn registry_loads_every_bundled_template() {
+    let root = templates_root();
+    let rust_modelled_on_disk = collect_template_files(&root);
+    let registry = TemplateRegistry::load_from_directory(&root)
+        .expect("TemplateRegistry::load_from_directory must succeed for bundled templates");
+
+    // Property (1): every Rust-modelled on-disk template must be in
+    // the registry.
+    let mut rust_modelled_ids: HashSet<String> = HashSet::new();
+    for path in &rust_modelled_on_disk {
+        let tmpl = parse_template_file(path)
+            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()));
+        rust_modelled_ids.insert(tmpl.id);
+    }
+    let loaded_ids: HashSet<String> =
+        registry.list().iter().map(|t| t.id.clone()).collect();
+
+    let missing: Vec<&String> = rust_modelled_ids.difference(&loaded_ids).collect();
+    assert!(
+        missing.is_empty(),
+        "TemplateRegistry::load_from_directory skipped these on-disk Rust-modelled templates: {missing:?}"
+    );
+
+    // Property (2): every registry id corresponds to a real .yaml/.yml
+    // file somewhere on disk. We rebuild ground truth by walking the
+    // whole tree (not just RUST_TEMPLATE_DIRS) and parsing every file
+    // the registry's WalkDir would visit, so a renderer-only template
+    // that happens to be Rust-parseable counts as legitimate ground
+    // truth rather than a phantom.
+    let mut all_on_disk_ids: HashSet<String> = HashSet::new();
+    for entry in walkdir::WalkDir::new(&root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+        .filter(|e| e.file_type().is_file())
+    {
+        let path = entry.into_path();
+        if !matches!(
+            path.extension().and_then(|s| s.to_str()),
+            Some("yaml" | "yml")
+        ) {
+            continue;
+        }
+        // Mirror the registry's silent-skip behaviour on parse/validate
+        // failures: a YAML that doesn't fit `Template` is not a phantom,
+        // it's just out-of-scope for the registry (and out-of-scope here
+        // too).
+        if let Ok(tmpl) = parse_template_file(&path) {
+            if validate_template(&tmpl).is_ok() {
+                all_on_disk_ids.insert(tmpl.id);
+            }
+        }
+    }
+
+    let phantoms: Vec<&String> = loaded_ids.difference(&all_on_disk_ids).collect();
+    assert!(
+        phantoms.is_empty(),
+        "TemplateRegistry reported templates not present on disk anywhere under templates/: {phantoms:?}"
+    );
+}

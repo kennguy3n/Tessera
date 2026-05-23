@@ -1,5 +1,24 @@
 # Tessera — Progress Tracker
 
+> ## Tracking-integrity note
+>
+> Phase 7 was initially marked `DONE` in an earlier revision of this
+> document before all of its features were wired into source — the
+> actual integration code shipped in Phase 8. To prevent recurrence,
+> the project now ships a smoke-test suite (`npm run test:smoke`)
+> that asserts every claimed feature is backed by importable,
+> callable production code, not just documentation. The phase-exit
+> [checklist](CONTRIBUTING.md#phase-completion-checklist) in
+> `CONTRIBUTING.md` codifies the gates a maintainer must clear before
+> flipping a phase to `DONE`, and the smoke suite runs in CI on
+> every PR so a regression in a closed phase blocks the next phase
+> from closing.
+>
+> If you spot a feature listed in this document that has no
+> corresponding code or test, please open an issue with the
+> `tracking-integrity` label so the discrepancy is logged rather
+> than silently re-discovered.
+
 ## Overview
 
 This document tracks Tessera's phased delivery from open-source foundation to a complete local-first productivity workspace.
