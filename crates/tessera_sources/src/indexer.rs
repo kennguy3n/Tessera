@@ -8,7 +8,10 @@ use crate::chunker::{chunk_text, ChunkerConfig};
 use crate::embedding::{encode_vec, EmbeddingProvider};
 use crate::extractor::{extract_text, is_supported_extension};
 use crate::ignore::IgnoreRules;
-use crate::progress::{self, ProgressSnapshot};
+use crate::progress::{
+    self, record_chunk_embed_failed, record_chunk_embedded, EmbeddingProgressSnapshot,
+    ProgressSnapshot,
+};
 use crate::store::SourceStore;
 
 pub struct Indexer {
@@ -339,6 +342,83 @@ impl Indexer {
             // churn on long backfills (`Vec::extend` doubles capacity
             // amortised, vs `push` which may also double but in a
             // less obviously-amortised way under MIR optimisation).
+            permanent_failures.extend(batch_failures);
+            if batch.len() < batch_size {
+                break;
+            }
+        }
+        Ok(total)
+    }
+
+    /// Variant of [`backfill_embeddings`] that reports per-chunk
+    /// progress into the supplied [`EmbeddingProgressSnapshot`] slot.
+    ///
+    /// The slot is the same mutex the IPC poll loop reads via
+    /// `EmbeddingProgressTracker::snapshot`, so the renderer sees the
+    /// `embedded` / `failed` counters increment as the backfill makes
+    /// progress through the corpus. The `total_chunks` denominator and
+    /// the `Running` status flip are the caller's responsibility (they
+    /// must call `tracker.start(total, model_id)` before invoking this
+    /// method); on exit the caller decides whether to call
+    /// `finish_embedding` (success path) or `mark_embedding_failed`
+    /// (whole-pass failure).
+    ///
+    /// Returns the same `usize` "chunks embedded successfully" total as
+    /// `backfill_embeddings` so existing callers that only care about
+    /// the count can use this path interchangeably.
+    pub fn backfill_embeddings_with_progress(
+        &self,
+        store: &SourceStore,
+        batch_size: usize,
+        progress_slot: &std::sync::Mutex<EmbeddingProgressSnapshot>,
+    ) -> Result<usize> {
+        let Some(embedder) = &self.embedder else {
+            return Ok(0);
+        };
+        let model_id = embedder.model_id().to_string();
+        let dim = embedder.dim();
+        let mut total = 0usize;
+        // See `backfill_embeddings` for the rationale behind the
+        // per-session exclude list and the stall-detector backstop —
+        // this method is the progress-reporting twin of that one and
+        // intentionally mirrors its termination guarantees.
+        let mut permanent_failures: Vec<i64> = Vec::new();
+        loop {
+            let batch = store.chunks_missing_embedding_excluding(
+                &model_id,
+                batch_size,
+                &permanent_failures,
+            )?;
+            if batch.is_empty() {
+                break;
+            }
+            let mut batch_progress = 0usize;
+            let mut batch_failures: Vec<i64> = Vec::new();
+            for (id, content) in &batch {
+                match embedder.embed(content) {
+                    Ok(vec) => {
+                        let bytes = encode_vec(&vec);
+                        store.upsert_chunk_embedding(*id, &model_id, dim, &bytes)?;
+                        total += 1;
+                        batch_progress += 1;
+                        record_chunk_embedded(progress_slot);
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[tessera_sources] tracked backfill embed failed for chunk {id}: {e}"
+                        );
+                        batch_failures.push(*id);
+                        record_chunk_embed_failed(progress_slot);
+                    }
+                }
+            }
+            if batch_progress == 0 {
+                eprintln!(
+                    "[tessera_sources] tracked backfill stalled: {} chunks failed to embed in a single batch, aborting to avoid infinite loop",
+                    batch.len()
+                );
+                break;
+            }
             permanent_failures.extend(batch_failures);
             if batch.len() < batch_size {
                 break;

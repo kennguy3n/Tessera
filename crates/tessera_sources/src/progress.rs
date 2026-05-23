@@ -158,6 +158,141 @@ pub fn mark_failed(slot: &Arc<Mutex<ProgressSnapshot>>, error: &str) {
     s.current_path = None;
 }
 
+// =====================================================================
+// Embedding backfill progress
+// =====================================================================
+//
+// The indexing tracker above is per-source — multiple folders can reindex
+// concurrently, each with its own counters. Embedding backfill is
+// fundamentally different: it operates over the entire corpus (any chunk
+// missing an embedding for the current model) rather than over a single
+// source, and runs as a single global pass. A second concurrent invocation
+// would just race over the same row set, so we expose a single shared
+// snapshot rather than a per-source map.
+//
+// The UI polls `EmbeddingProgressSnapshot` on a short interval (same
+// pattern as `ProgressSnapshot`) so the renderer can show a determinate
+// progress bar (`embedded / total_chunks`) plus a failure count without
+// keeping a long-lived IPC subscription open. Status transitions follow
+// the same `Idle → Running → (Done | Failed)` lifecycle so the renderer
+// can reuse its existing polling machinery.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingStatus {
+    Idle,
+    Running,
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingProgressSnapshot {
+    pub status: EmbeddingStatus,
+    /// Total chunks the current backfill pass intended to embed at
+    /// the moment `start` was called. Snapshotted once and kept
+    /// constant for the duration of the pass so the UI shows a
+    /// stable denominator.
+    pub total_chunks: u64,
+    /// Chunks that were successfully embedded and persisted by the
+    /// current (or most recent) pass.
+    pub embedded: u64,
+    /// Chunks the embedder returned `Err` for during the current
+    /// (or most recent) pass. Embedding failures are non-fatal —
+    /// retrieval still works via BM25 + recency — but the count is
+    /// surfaced so the user knows their corpus has unembedded chunks
+    /// they may want to investigate.
+    pub failed: u64,
+    /// `model_id` of the embedder the current (or most recent) pass
+    /// was targeting. `None` when no pass has been started since
+    /// the bridge process came up.
+    pub model_id: Option<String>,
+    /// Human-readable failure reason populated by [`mark_embedding_failed`].
+    /// Empty in `Idle` / `Running` / `Done` states.
+    pub last_error: Option<String>,
+}
+
+impl Default for EmbeddingProgressSnapshot {
+    fn default() -> Self {
+        Self {
+            status: EmbeddingStatus::Idle,
+            total_chunks: 0,
+            embedded: 0,
+            failed: 0,
+            model_id: None,
+            last_error: None,
+        }
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct EmbeddingProgressTracker {
+    inner: Mutex<EmbeddingProgressSnapshot>,
+}
+
+impl EmbeddingProgressTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Reset state and mark `Running` at the start of a backfill pass.
+    /// Returns a slot the caller can hand to the helper functions
+    /// below for cheap per-chunk progress updates.
+    pub fn start(&self, total_chunks: u64, model_id: &str) -> &Mutex<EmbeddingProgressSnapshot> {
+        let mut s = self.inner.lock().expect("embedding tracker poisoned");
+        *s = EmbeddingProgressSnapshot {
+            status: EmbeddingStatus::Running,
+            total_chunks,
+            embedded: 0,
+            failed: 0,
+            model_id: Some(model_id.to_string()),
+            last_error: None,
+        };
+        drop(s);
+        &self.inner
+    }
+
+    /// Read-only snapshot for the IPC poll loop.
+    pub fn snapshot(&self) -> EmbeddingProgressSnapshot {
+        self.inner
+            .lock()
+            .expect("embedding tracker poisoned")
+            .clone()
+    }
+}
+
+/// Record one chunk successfully embedded. Saturating add so a
+/// pathologically large corpus can't overflow.
+pub fn record_chunk_embedded(slot: &Mutex<EmbeddingProgressSnapshot>) {
+    let mut s = slot.lock().expect("embedding snapshot poisoned");
+    s.embedded = s.embedded.saturating_add(1);
+}
+
+/// Record one chunk that failed to embed.
+pub fn record_chunk_embed_failed(slot: &Mutex<EmbeddingProgressSnapshot>) {
+    let mut s = slot.lock().expect("embedding snapshot poisoned");
+    s.failed = s.failed.saturating_add(1);
+}
+
+/// Flip status to `Done`. Called when the backfill loop exits
+/// normally (no more chunks to embed or per-batch stall detector
+/// tripped). `total_chunks` is left as-is so the renderer can show
+/// `embedded / total_chunks` after completion.
+pub fn finish_embedding(slot: &Mutex<EmbeddingProgressSnapshot>) {
+    let mut s = slot.lock().expect("embedding snapshot poisoned");
+    s.status = EmbeddingStatus::Done;
+}
+
+/// Flip status to `Failed` and record the error message. Reserved
+/// for whole-pass failures (e.g. the DB connection died); per-chunk
+/// errors should call [`record_chunk_embed_failed`] instead so the
+/// pass keeps making progress on the other chunks.
+pub fn mark_embedding_failed(slot: &Mutex<EmbeddingProgressSnapshot>, error: &str) {
+    let mut s = slot.lock().expect("embedding snapshot poisoned");
+    s.status = EmbeddingStatus::Failed;
+    s.last_error = Some(error.to_string());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,5 +361,159 @@ mod tests {
         record_indexed(&slot2);
         finish(&slot2, 2);
         assert_eq!(t.snapshot(&id).indexed, 2);
+    }
+
+    // ----------------------------------------------------------------
+    // EmbeddingProgressTracker tests
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn embedding_idle_snapshot_before_any_start() {
+        let t = EmbeddingProgressTracker::new();
+        let snap = t.snapshot();
+        assert_eq!(snap.status, EmbeddingStatus::Idle);
+        assert_eq!(snap.total_chunks, 0);
+        assert_eq!(snap.embedded, 0);
+        assert_eq!(snap.failed, 0);
+        assert!(snap.model_id.is_none());
+        assert!(snap.last_error.is_none());
+    }
+
+    #[test]
+    fn embedding_start_initializes_running_state() {
+        let t = EmbeddingProgressTracker::new();
+        let _slot = t.start(42, "hash-trick-v1@256");
+        let snap = t.snapshot();
+        assert_eq!(snap.status, EmbeddingStatus::Running);
+        assert_eq!(snap.total_chunks, 42);
+        assert_eq!(snap.embedded, 0);
+        assert_eq!(snap.failed, 0);
+        assert_eq!(snap.model_id.as_deref(), Some("hash-trick-v1@256"));
+        assert!(snap.last_error.is_none());
+    }
+
+    #[test]
+    fn embedding_record_embedded_and_failed_increment_counters() {
+        let t = EmbeddingProgressTracker::new();
+        let slot = t.start(5, "hash-trick-v1@256");
+        record_chunk_embedded(slot);
+        record_chunk_embedded(slot);
+        record_chunk_embedded(slot);
+        record_chunk_embed_failed(slot);
+        record_chunk_embed_failed(slot);
+        let snap = t.snapshot();
+        assert_eq!(snap.status, EmbeddingStatus::Running);
+        assert_eq!(snap.total_chunks, 5);
+        assert_eq!(snap.embedded, 3);
+        assert_eq!(snap.failed, 2);
+    }
+
+    #[test]
+    fn embedding_finish_flips_status_done_preserves_counters() {
+        let t = EmbeddingProgressTracker::new();
+        let slot = t.start(10, "hash-trick-v1@256");
+        for _ in 0..7 {
+            record_chunk_embedded(slot);
+        }
+        record_chunk_embed_failed(slot);
+        finish_embedding(slot);
+        let snap = t.snapshot();
+        assert_eq!(snap.status, EmbeddingStatus::Done);
+        // Denominator preserved so the UI can show "7/10 embedded".
+        assert_eq!(snap.total_chunks, 10);
+        assert_eq!(snap.embedded, 7);
+        assert_eq!(snap.failed, 1);
+    }
+
+    #[test]
+    fn embedding_mark_failed_records_error_and_preserves_counters() {
+        let t = EmbeddingProgressTracker::new();
+        let slot = t.start(20, "hash-trick-v1@256");
+        record_chunk_embedded(slot);
+        record_chunk_embedded(slot);
+        mark_embedding_failed(slot, "sqlite write failed: disk full");
+        let snap = t.snapshot();
+        assert_eq!(snap.status, EmbeddingStatus::Failed);
+        // Counters survive the fatal flip so the UI can show how far the
+        // pass got before it died.
+        assert_eq!(snap.embedded, 2);
+        assert_eq!(snap.total_chunks, 20);
+        assert_eq!(
+            snap.last_error.as_deref(),
+            Some("sqlite write failed: disk full"),
+        );
+    }
+
+    #[test]
+    fn embedding_restart_after_done_resets_counters_and_model() {
+        let t = EmbeddingProgressTracker::new();
+        let slot = t.start(5, "hash-trick-v1@256");
+        for _ in 0..5 {
+            record_chunk_embedded(slot);
+        }
+        finish_embedding(slot);
+        assert_eq!(t.snapshot().status, EmbeddingStatus::Done);
+
+        // Re-start with a fresh model_id; counters should reset to 0.
+        let _slot2 = t.start(8, "transformer-v1@384");
+        let snap = t.snapshot();
+        assert_eq!(snap.status, EmbeddingStatus::Running);
+        assert_eq!(snap.total_chunks, 8);
+        assert_eq!(snap.embedded, 0);
+        assert_eq!(snap.failed, 0);
+        assert_eq!(snap.model_id.as_deref(), Some("transformer-v1@384"));
+        assert!(snap.last_error.is_none());
+    }
+
+    #[test]
+    fn embedding_restart_after_failed_clears_error() {
+        let t = EmbeddingProgressTracker::new();
+        let slot = t.start(3, "hash-trick-v1@256");
+        mark_embedding_failed(slot, "boom");
+        assert_eq!(t.snapshot().status, EmbeddingStatus::Failed);
+
+        // A subsequent start must wipe the prior error message — the new
+        // pass shouldn't show a stale "boom" to the user.
+        let _slot2 = t.start(3, "hash-trick-v1@256");
+        let snap = t.snapshot();
+        assert_eq!(snap.status, EmbeddingStatus::Running);
+        assert!(snap.last_error.is_none());
+    }
+
+    #[test]
+    fn embedding_concurrent_recording_serialized_by_mutex() {
+        // The slot returned by `start()` is shared across threads (a
+        // backfill worker pool would call `record_chunk_embedded` from
+        // multiple threads on the same slot). Verify the mutex
+        // serializes increments correctly with no lost updates.
+        use std::thread;
+
+        let t = std::sync::Arc::new(EmbeddingProgressTracker::new());
+        const TOTAL: u64 = 1_000;
+        const THREADS: u64 = 4;
+        const PER_THREAD: u64 = TOTAL / THREADS;
+
+        t.start(TOTAL, "hash-trick-v1@256");
+
+        let mut handles = Vec::new();
+        for _ in 0..THREADS {
+            let tracker = std::sync::Arc::clone(&t);
+            handles.push(thread::spawn(move || {
+                // SAFETY: we hold an Arc<EmbeddingProgressTracker> so the
+                // inner Mutex outlives every borrow we hand to the
+                // helpers. Each helper takes its own short critical
+                // section.
+                for _ in 0..PER_THREAD {
+                    record_chunk_embedded(&tracker.inner);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("worker thread panicked");
+        }
+
+        let snap = t.snapshot();
+        assert_eq!(snap.embedded, TOTAL);
+        assert_eq!(snap.failed, 0);
     }
 }

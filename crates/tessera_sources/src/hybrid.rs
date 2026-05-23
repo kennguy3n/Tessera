@@ -69,8 +69,9 @@
 
 use crate::embedding::{cosine_similarity, EmbeddingProvider};
 use crate::store::{ChunkEmbeddingRow, SourceStore};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tessera_core::error::Result;
+use tessera_core::error::{Error, Result};
 
 /// Reciprocal Rank Fusion damping constant. The value Cormack,
 /// Clarke, and Buettcher (2009) recommend; matches Elasticsearch's
@@ -82,7 +83,50 @@ pub const RRF_K: f64 = 60.0;
 /// project work without overpenalising older reference material.
 pub const DEFAULT_RECENCY_HALFLIFE_SECS: f64 = 30.0 * 24.0 * 60.0 * 60.0;
 
-#[derive(Debug, Clone)]
+/// Custom (de)serializer for [`HybridSearchConfig::recency_halflife_secs`].
+///
+/// The runtime sentinel for "disable recency decay" is `f64::INFINITY`
+/// (see [`recency_multiplier`]), but `serde_json` lowers `INFINITY`
+/// (and `NaN`) to JSON `null`, which then fails to round-trip back
+/// to a bare `f64` field on deserialize. So we shape the wire format
+/// explicitly as `number | null`:
+///
+///   * finite, positive number → number on the wire
+///   * `f64::INFINITY` (no decay) → JSON `null` on the wire
+///   * JSON `null` on read → `f64::INFINITY` in memory
+///
+/// This makes `HybridSearchConfig` safely persistable through the
+/// renderer's `config.ts` JSON store and through `bridge_*` IPC
+/// envelopes without losing the "decay disabled" semantic.
+mod halflife_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    // The `&f64` arg shape is fixed by serde's `serialize_with`
+    // contract; clippy's trivially-copy-pass-by-ref lint can't see
+    // through that constraint.
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    pub fn serialize<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if value.is_finite() {
+            value.serialize(serializer)
+        } else {
+            serializer.serialize_none()
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<f64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<f64> = Option::deserialize(deserializer)?;
+        Ok(opt.unwrap_or(f64::INFINITY))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HybridSearchConfig {
     /// Weight applied to the BM25 ranking in RRF. Default 1.0.
     pub bm25_weight: f64,
@@ -94,7 +138,9 @@ pub struct HybridSearchConfig {
     pub rrf_k: f64,
     /// Recency half-life in seconds. Default 30 days. Set to
     /// `f64::INFINITY` to disable recency decay (multiplier = 1.0
-    /// for all chunks).
+    /// for all chunks). On the JSON wire this is represented as
+    /// `null`; see [`halflife_serde`] for the round-trip contract.
+    #[serde(with = "halflife_serde")]
     pub recency_halflife_secs: f64,
     /// How many candidates to retrieve from each individual ranking
     /// before fusion. Defaults to 4× the requested limit so the
@@ -116,6 +162,26 @@ impl Default for HybridSearchConfig {
     }
 }
 
+/// Partial-update payload accepted by
+/// [`SourceManager::update_hybrid_config`]. Fields that are `None`
+/// keep their existing value; fields that are `Some` are validated
+/// (see [`HybridSearchConfig::apply_patch`]) and applied atomically.
+///
+/// Lives in this crate (rather than the bridge layer) so the input
+/// validation contract is co-located with the algorithm it feeds
+/// — the bridge translates between IPC types and this struct, but
+/// the source of truth for "what's a legal hybrid config" stays
+/// in `tessera_sources`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HybridSearchConfigInput {
+    pub bm25_weight: Option<f64>,
+    pub vector_weight: Option<f64>,
+    pub rrf_k: Option<f64>,
+    pub recency_halflife_secs: Option<f64>,
+    pub candidate_pool_size: Option<usize>,
+}
+
 impl HybridSearchConfig {
     /// Resolve `candidate_pool_size` against `limit`, applying the
     /// 4× default when the field is 0.
@@ -125,6 +191,90 @@ impl HybridSearchConfig {
         } else {
             (limit * 4).max(20)
         }
+    }
+
+    /// Apply a partial-update patch in-place. Returns `Err` and
+    /// leaves the receiver untouched if any patched field is out of
+    /// range, so callers can safely propagate the error to the user
+    /// without rolling back manually.
+    ///
+    /// Validation rules:
+    ///   * `bm25_weight` and `vector_weight` must be finite and
+    ///     non-negative. Negative weights would invert the ranking;
+    ///     `NaN` / `Inf` would poison every downstream RRF score.
+    ///   * `rrf_k` must be finite and strictly positive — `k=0`
+    ///     gives `1/(rank+1)` which is fine, but Cormack et al.'s
+    ///     formulation assumes `k > 0` and `k=0` makes the score
+    ///     unbounded for rank=0 inputs in degenerate edge cases.
+    ///   * `recency_halflife_secs` must be either `f64::INFINITY`
+    ///     (no decay) or strictly positive and finite. Zero / NaN /
+    ///     negative would produce a multiplier of 0 or NaN for every
+    ///     chunk and crater all search results.
+    ///   * `candidate_pool_size` is bounded above at 10_000 so a
+    ///     misconfigured renderer can't issue searches that
+    ///     materialise hundreds of thousands of candidate rows on
+    ///     every call. `0` is allowed and means "use the 4× default".
+    pub fn apply_patch(&mut self, patch: &HybridSearchConfigInput) -> Result<()> {
+        // Validate ALL patched fields first, then commit. This
+        // makes the method transactional: a patch that touches
+        // both `bm25_weight` (valid) and `recency_halflife_secs`
+        // (invalid) leaves the config unchanged rather than
+        // half-applied.
+        if let Some(v) = patch.bm25_weight {
+            if !v.is_finite() || v < 0.0 {
+                return Err(Error::InvalidConfig(format!(
+                    "hybrid bm25_weight must be a finite, non-negative number; got {v}"
+                )));
+            }
+        }
+        if let Some(v) = patch.vector_weight {
+            if !v.is_finite() || v < 0.0 {
+                return Err(Error::InvalidConfig(format!(
+                    "hybrid vector_weight must be a finite, non-negative number; got {v}"
+                )));
+            }
+        }
+        if let Some(v) = patch.rrf_k {
+            if !v.is_finite() || v <= 0.0 {
+                return Err(Error::InvalidConfig(format!(
+                    "hybrid rrf_k must be a finite, strictly positive number; got {v}"
+                )));
+            }
+        }
+        if let Some(v) = patch.recency_halflife_secs {
+            // f64::INFINITY is explicitly allowed (means "no decay").
+            // Everything else must be finite and strictly positive.
+            if v != f64::INFINITY && (!v.is_finite() || v <= 0.0) {
+                return Err(Error::InvalidConfig(format!(
+                    "hybrid recency_halflife_secs must be Infinity or a finite, strictly positive number of seconds; got {v}"
+                )));
+            }
+        }
+        if let Some(v) = patch.candidate_pool_size {
+            if v > 10_000 {
+                return Err(Error::InvalidConfig(format!(
+                    "hybrid candidate_pool_size must be <= 10000 (use 0 for the 4× limit default); got {v}"
+                )));
+            }
+        }
+
+        // All patched fields validated — commit.
+        if let Some(v) = patch.bm25_weight {
+            self.bm25_weight = v;
+        }
+        if let Some(v) = patch.vector_weight {
+            self.vector_weight = v;
+        }
+        if let Some(v) = patch.rrf_k {
+            self.rrf_k = v;
+        }
+        if let Some(v) = patch.recency_halflife_secs {
+            self.recency_halflife_secs = v;
+        }
+        if let Some(v) = patch.candidate_pool_size {
+            self.candidate_pool_size = v;
+        }
+        Ok(())
     }
 }
 
@@ -656,5 +806,201 @@ mod tests {
         let q = vec![1.0f32, 0.0];
         let result = rank_chunks_by_cosine(&rows, &q, "m", 5);
         assert_eq!(result.len(), 5);
+    }
+
+    // ----------------------------------------------------------------
+    // HybridSearchConfig patch + serialization tests
+    // ----------------------------------------------------------------
+
+    /// f64-equality tolerance used by every assert in this test
+    /// block. We test for exact-value preservation across patch /
+    /// serialize / deserialize round-trips, so the tolerance only
+    /// needs to guard against compiler reordering of
+    /// `30.0 * 24.0 * 60.0 * 60.0` — a single ULP is plenty.
+    const F64_EPS: f64 = 1e-9;
+
+    #[test]
+    fn apply_patch_updates_only_specified_fields() {
+        let mut cfg = HybridSearchConfig::default();
+        let original = cfg.clone();
+
+        let patch = HybridSearchConfigInput {
+            vector_weight: Some(0.0),
+            recency_halflife_secs: Some(7.0 * 24.0 * 60.0 * 60.0),
+            ..HybridSearchConfigInput::default()
+        };
+        cfg.apply_patch(&patch).unwrap();
+
+        assert!(cfg.vector_weight.abs() < F64_EPS);
+        assert!(
+            (cfg.recency_halflife_secs - 7.0 * 24.0 * 60.0 * 60.0).abs() < 1.0,
+            "7-day half-life should be applied verbatim"
+        );
+        // Unchanged fields must keep their original value.
+        assert!((cfg.bm25_weight - original.bm25_weight).abs() < F64_EPS);
+        assert!((cfg.rrf_k - original.rrf_k).abs() < F64_EPS);
+        assert_eq!(cfg.candidate_pool_size, original.candidate_pool_size);
+    }
+
+    #[test]
+    fn apply_patch_rejects_negative_weights() {
+        let mut cfg = HybridSearchConfig::default();
+        let snapshot_before = cfg.clone();
+        let patch = HybridSearchConfigInput {
+            bm25_weight: Some(-0.5),
+            ..HybridSearchConfigInput::default()
+        };
+        let err = cfg.apply_patch(&patch).unwrap_err();
+        assert!(
+            err.to_string().contains("bm25_weight"),
+            "error message should name the offending field: {err}"
+        );
+        // Receiver must be untouched on validation failure.
+        assert!((cfg.bm25_weight - snapshot_before.bm25_weight).abs() < F64_EPS);
+    }
+
+    #[test]
+    fn apply_patch_rejects_nan_and_infinity_weights() {
+        let mut cfg = HybridSearchConfig::default();
+        let patch_nan = HybridSearchConfigInput {
+            vector_weight: Some(f64::NAN),
+            ..HybridSearchConfigInput::default()
+        };
+        assert!(cfg.apply_patch(&patch_nan).is_err(), "NaN must be rejected");
+
+        let patch_inf = HybridSearchConfigInput {
+            bm25_weight: Some(f64::INFINITY),
+            ..HybridSearchConfigInput::default()
+        };
+        assert!(
+            cfg.apply_patch(&patch_inf).is_err(),
+            "Infinity weight must be rejected (weights must be finite)"
+        );
+    }
+
+    #[test]
+    fn apply_patch_accepts_infinity_halflife_as_disable_sentinel() {
+        // Recency half-life is the one f64 field where Infinity is
+        // an explicit "no decay" sentinel — make sure the validator
+        // allows it through.
+        let mut cfg = HybridSearchConfig::default();
+        let patch = HybridSearchConfigInput {
+            recency_halflife_secs: Some(f64::INFINITY),
+            ..HybridSearchConfigInput::default()
+        };
+        cfg.apply_patch(&patch).unwrap();
+        assert!(cfg.recency_halflife_secs.is_infinite());
+    }
+
+    #[test]
+    fn apply_patch_rejects_zero_or_negative_halflife() {
+        let mut cfg = HybridSearchConfig::default();
+        let patch_zero = HybridSearchConfigInput {
+            recency_halflife_secs: Some(0.0),
+            ..HybridSearchConfigInput::default()
+        };
+        assert!(cfg.apply_patch(&patch_zero).is_err());
+        let patch_neg = HybridSearchConfigInput {
+            recency_halflife_secs: Some(-60.0),
+            ..HybridSearchConfigInput::default()
+        };
+        assert!(cfg.apply_patch(&patch_neg).is_err());
+    }
+
+    #[test]
+    fn apply_patch_rejects_oversize_candidate_pool() {
+        let mut cfg = HybridSearchConfig::default();
+        let patch = HybridSearchConfigInput {
+            candidate_pool_size: Some(20_000),
+            ..HybridSearchConfigInput::default()
+        };
+        let err = cfg.apply_patch(&patch).unwrap_err();
+        assert!(
+            err.to_string().contains("candidate_pool_size"),
+            "error must identify the field: {err}"
+        );
+    }
+
+    #[test]
+    fn apply_patch_is_transactional_on_partial_failure() {
+        // A patch that touches both a valid field (vector_weight=0)
+        // and an invalid field (recency=-1) must leave the config
+        // entirely untouched. This is the contract the IPC layer
+        // relies on so the renderer never sees a half-applied state.
+        let mut cfg = HybridSearchConfig::default();
+        let before = cfg.clone();
+        let patch = HybridSearchConfigInput {
+            vector_weight: Some(0.0),
+            recency_halflife_secs: Some(-1.0),
+            ..HybridSearchConfigInput::default()
+        };
+        let _ = cfg.apply_patch(&patch).unwrap_err();
+        assert!((cfg.vector_weight - before.vector_weight).abs() < F64_EPS);
+        assert!(
+            (cfg.recency_halflife_secs - before.recency_halflife_secs).abs() < F64_EPS
+        );
+    }
+
+    #[test]
+    fn hybrid_search_config_roundtrips_through_json_with_finite_halflife() {
+        // Default config has a finite 30-day half-life — must serialize
+        // as a JSON number and round-trip back identically.
+        let cfg = HybridSearchConfig::default();
+        let s = serde_json::to_string(&cfg).expect("serialize default");
+        let back: HybridSearchConfig = serde_json::from_str(&s).expect("deserialize default");
+        assert!((back.bm25_weight - cfg.bm25_weight).abs() < F64_EPS);
+        assert!((back.vector_weight - cfg.vector_weight).abs() < F64_EPS);
+        assert!((back.rrf_k - cfg.rrf_k).abs() < F64_EPS);
+        assert!((back.recency_halflife_secs - cfg.recency_halflife_secs).abs() < F64_EPS);
+        assert_eq!(back.candidate_pool_size, cfg.candidate_pool_size);
+    }
+
+    #[test]
+    fn hybrid_search_config_roundtrips_through_json_with_infinity_halflife() {
+        // The dangerous case the knowledge hint warns about: a config
+        // with `recency_halflife_secs == f64::INFINITY` would silently
+        // serialize as JSON `null` via the default serde_json behaviour
+        // and then fail to round-trip back to `f64`. The custom
+        // `halflife_serde` module exists specifically to make this
+        // work — pin it with an explicit round-trip test so a future
+        // refactor that removes the custom serde catches itself here.
+        let cfg = HybridSearchConfig {
+            recency_halflife_secs: f64::INFINITY,
+            ..HybridSearchConfig::default()
+        };
+        let s = serde_json::to_string(&cfg).expect("INFINITY must serialize cleanly");
+        // The wire shape is `null`, not the literal string "Infinity"
+        // — pin that contract so a future "encode as string" refactor
+        // doesn't break wire-compat with the renderer.
+        assert!(
+            s.contains("\"recencyHalflifeSecs\":null"),
+            "expected null wire shape for INFINITY, got: {s}"
+        );
+        let back: HybridSearchConfig =
+            serde_json::from_str(&s).expect("INFINITY must deserialize cleanly");
+        assert!(back.recency_halflife_secs.is_infinite());
+    }
+
+    #[test]
+    fn hybrid_search_config_input_roundtrips_with_camelcase() {
+        // The IPC layer hands us camelCase JSON; make sure the input
+        // deserializes from that shape.
+        let json = r#"{ "vectorWeight": 0.0, "recencyHalflifeSecs": 86400 }"#;
+        let input: HybridSearchConfigInput = serde_json::from_str(json).unwrap();
+        assert!(input.vector_weight.unwrap().abs() < F64_EPS);
+        assert!((input.recency_halflife_secs.unwrap() - 86400.0).abs() < F64_EPS);
+        assert!(input.bm25_weight.is_none());
+        assert!(input.rrf_k.is_none());
+        assert!(input.candidate_pool_size.is_none());
+    }
+
+    #[test]
+    fn hybrid_search_config_input_accepts_missing_fields_as_no_op() {
+        let input: HybridSearchConfigInput = serde_json::from_str("{}").unwrap();
+        assert!(input.bm25_weight.is_none());
+        assert!(input.vector_weight.is_none());
+        assert!(input.rrf_k.is_none());
+        assert!(input.recency_halflife_secs.is_none());
+        assert!(input.candidate_pool_size.is_none());
     }
 }

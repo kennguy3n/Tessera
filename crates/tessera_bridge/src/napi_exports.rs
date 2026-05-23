@@ -225,6 +225,75 @@ pub fn bridge_get_indexing_progress(
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+/// Triggers an embedding backfill pass over every chunk that doesn't
+/// yet have an embedding for the active provider's model. Returns
+/// the number of newly-embedded chunks and a snapshot of the
+/// progress tracker (so the renderer doesn't need an extra round
+/// trip to render the final state).
+///
+/// Pass `None` for `batch_size` to use the bridge-default; the
+/// renderer doesn't need to know the value. Idempotent — a second
+/// call against an up-to-date index reports `embedded=0`.
+#[napi]
+pub fn bridge_backfill_embeddings(
+    batch_size: Option<u32>,
+) -> napi::Result<sources::BackfillEmbeddingsResult> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::backfill_embeddings(&mgr, batch_size)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Lightweight poll for the renderer. Always returns the latest
+/// snapshot of the embedding-progress tracker — `status=Done` plus
+/// the final counters are what the renderer uses to dismiss the
+/// progress banner after a `bridge_backfill_embeddings` call.
+#[napi]
+pub fn bridge_get_embedding_progress() -> napi::Result<sources::EmbeddingProgressInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::get_embedding_progress(&mgr)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Returns the current effective hybrid retrieval config so the
+/// renderer's Settings page can populate its initial form state.
+#[napi]
+pub fn bridge_get_hybrid_search_config() -> napi::Result<sources::HybridSearchConfigInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::get_hybrid_search_config(&mgr)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Apply a partial-update patch to the hybrid retrieval config.
+/// Returns the new effective config so the renderer can echo it
+/// back into its form state (e.g. to display the clamped value if
+/// validation rounded something). Validation errors surface as
+/// `napi::Error` so the renderer can show them inline next to the
+/// offending field.
+#[napi]
+pub fn bridge_update_hybrid_search_config(
+    update: sources::HybridSearchConfigUpdate,
+) -> napi::Result<sources::HybridSearchConfigInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::update_hybrid_search_config(&mgr, update)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 // --- Artifacts ---
 
 #[napi]
