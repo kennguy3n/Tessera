@@ -493,6 +493,200 @@ interface CategoryEntry {
   line: number;
 }
 
+/**
+ * Walk a `{...}` object-literal slice and extract the literal string
+ * values of its TOP-LEVEL (non-nested) properties whose keys appear in
+ * `wanted`.
+ *
+ * "Top-level" means a property whose `key:` appears at brace depth 1
+ * relative to the opening `{` of `slice`. Properties of nested object
+ * literals don't qualify, and crucially, identifier-like substrings
+ * inside a value's string literal won't be mistaken for a property
+ * key — the JS/TS lexical state machine ensures that.
+ *
+ * Devin Review round-7 flagged the previous regex-based approach as
+ * fragile: a regex like `/\bname:\s*(["'])(...)\1/.exec(slice)` would
+ * false-match if an earlier property's string value contained the
+ * literal substring `name: "..."`. Today the CATEGORIES entries
+ * consistently order `id` then `name` then `description`, so the bug
+ * didn't fire — but property reorders (or a description that quoted
+ * another entry's name verbatim) would have silently extracted the
+ * wrong tuple, with no failing assertion to catch it. This walker is
+ * the long-term correct fix: it operates on the lex stream, not the
+ * raw byte stream.
+ *
+ * Only single- and double-quoted string values are decoded. Properties
+ * whose values are bare identifiers, numbers, arrays, nested objects,
+ * or template literals return `null` (the entry simply has no recorded
+ * value for that key). For our use case the picker entries' `id` and
+ * `name` are always quoted strings, so the limited support is
+ * sufficient. Decoding mirrors the YAML-side `extractTopLevelScalar`
+ * convention: double-quoted strings use C-style `\` escapes;
+ * single-quoted strings use only the `''` literal-quote escape.
+ */
+function extractObjectProperties(
+  slice: string,
+  wanted: ReadonlyArray<string>,
+): Record<string, string | null> {
+  const want = new Set(wanted);
+  const result: Record<string, string | null> = {};
+  for (const w of wanted) result[w] = null;
+
+  let depth = 0;
+  type LexState = "code" | "sl_comment" | "ml_comment" | "sq" | "dq" | "bt";
+  let state: LexState = "code";
+  const templateInterpStack: number[] = [];
+
+  let i = 0;
+  for (; i < slice.length; i++) {
+    const ch = slice[i];
+    const next = slice[i + 1];
+
+    if (state === "code") {
+      if (ch === "/" && next === "/") {
+        state = "sl_comment";
+        i += 1;
+        continue;
+      }
+      if (ch === "/" && next === "*") {
+        state = "ml_comment";
+        i += 1;
+        continue;
+      }
+      if (ch === "'") {
+        state = "sq";
+        continue;
+      }
+      if (ch === '"') {
+        state = "dq";
+        continue;
+      }
+      if (ch === "`") {
+        state = "bt";
+        continue;
+      }
+      if (ch === "{") {
+        depth += 1;
+        continue;
+      }
+      if (ch === "}") {
+        if (templateInterpStack.length > 0) {
+          const interpDepth = templateInterpStack[templateInterpStack.length - 1];
+          if (depth === interpDepth) {
+            templateInterpStack.pop();
+            depth -= 1;
+            state = "bt";
+            continue;
+          }
+        }
+        depth -= 1;
+        continue;
+      }
+
+      // Only look for property keys at the entry's top depth. The
+      // outer `{` of `slice` pushes depth to 1, so depth === 1 inside
+      // the body means "directly inside this entry object". depth > 1
+      // means "inside a nested object" — skip those keys.
+      if (depth === 1 && /[A-Za-z_$]/.test(ch)) {
+        // Tokenise the identifier.
+        const idStart = i;
+        while (i < slice.length && /[A-Za-z0-9_$]/.test(slice[i])) i++;
+        const key = slice.slice(idStart, i);
+        // Skip whitespace before the colon.
+        while (i < slice.length && /\s/.test(slice[i])) i++;
+        if (slice[i] !== ":") {
+          // Not a property declaration (could be a method name in a
+          // shorthand, a JSX-style attribute, etc.) — back off so the
+          // outer loop re-examines `slice[i]` from code state.
+          i -= 1;
+          continue;
+        }
+        i += 1; // consume `:`
+        while (i < slice.length && /\s/.test(slice[i])) i++;
+        const quote = slice[i];
+        if (quote !== '"' && quote !== "'") {
+          // Non-string value — record nothing and let the outer loop
+          // walk over it character by character (so any nested `{`
+          // adjusts depth and any string boundaries are honoured).
+          i -= 1;
+          continue;
+        }
+        // Read the string literal honouring single/double-quote escape
+        // conventions; same logic as extractTopLevelScalar above. We
+        // ALWAYS consume the string regardless of whether the key is
+        // wanted — even unwanted string values must be skipped past so
+        // that any `{` / `}` characters inside the value don't perturb
+        // the brace-depth counter that drives top-level detection.
+        let j = i + 1;
+        const decoded: string[] = [];
+        let terminated = false;
+        while (j < slice.length) {
+          const c = slice[j];
+          if (c === "\\" && quote === '"') {
+            if (j + 1 < slice.length) decoded.push(slice[j + 1]);
+            j += 2;
+            continue;
+          }
+          if (c === quote) {
+            if (quote === "'" && slice[j + 1] === "'") {
+              decoded.push("'");
+              j += 2;
+              continue;
+            }
+            terminated = true;
+            break;
+          }
+          decoded.push(c);
+          j += 1;
+        }
+        if (terminated) {
+          if (want.has(key) && result[key] === null) {
+            // First occurrence wins so that, e.g., a property re-declared
+            // illegally (`{ id: "a", id: "b" }`) records the first value.
+            // Re-declaration would be a lint error in CreatePage.tsx
+            // anyway, and the test cares about existence not last-value.
+            result[key] = decoded.join("");
+          }
+          i = j; // skip past closing quote (outer loop's i++ lands after)
+        } else {
+          i = j - 1; // unterminated; outer loop will exit
+        }
+        continue;
+      }
+    } else if (state === "sl_comment") {
+      if (ch === "\n") state = "code";
+    } else if (state === "ml_comment") {
+      if (ch === "*" && next === "/") {
+        state = "code";
+        i += 1;
+      }
+    } else if (state === "sq" || state === "dq") {
+      if (ch === "\\") {
+        i += 1;
+        continue;
+      }
+      if ((state === "sq" && ch === "'") || (state === "dq" && ch === '"')) {
+        state = "code";
+      }
+    } else {
+      // state === "bt"
+      if (ch === "\\") {
+        i += 1;
+        continue;
+      }
+      if (ch === "`") {
+        state = "code";
+      } else if (ch === "$" && next === "{") {
+        i += 1;
+        depth += 1;
+        templateInterpStack.push(depth);
+        state = "code";
+      }
+    }
+  }
+  return result;
+}
+
 function extractCategoryEntries(): CategoryEntry[] {
   const block = extractCategoriesBlock();
   const out: CategoryEntry[] = [];
@@ -501,6 +695,13 @@ function extractCategoryEntries(): CategoryEntry[] {
   // at depth = 1), each category-array `[` does not change brace
   // depth, and each entry-object `{` opens at depth = 2. We delegate
   // to the shared lexer and react only at depth = 2.
+  //
+  // Inside each entry slice, `extractObjectProperties` re-walks the
+  // slice with its own lex state machine so an entry value like
+  // `description: "see id: foo for details"` cannot pollute the
+  // `id` / `name` capture — the only id/name pair returned is the
+  // one whose key token appears at depth 1 in code state inside the
+  // outer `{...}` of THIS entry.
   const entryStarts: number[] = [];
   lexJsBraces(block, 0, {
     onOpen: (pos, depth) => {
@@ -510,17 +711,12 @@ function extractCategoryEntries(): CategoryEntry[] {
       if (depth !== 2 || entryStarts.length === 0) return;
       const startPos = entryStarts.pop()!;
       const slice = block.slice(startPos, pos + 1);
-      const idMatch = /\bid:\s*(["'])([A-Za-z0-9_-]+)\1/.exec(slice);
-      // `name` is a free-form string — allow C-style escapes inside
-      // double-quoted values and treat the closing quote as the one
-      // not preceded by `\`. The non-greedy `(?:\\.|[^\\])*?` inner
-      // pattern stops at the first un-escaped quote that matches the
-      // opener (captured as `\1`), so e.g. `"They\"re here"` matches
-      // as a single string ending at the trailing `"`.
-      const nameMatch = /\bname:\s*(["'])((?:\\.|[^\\])*?)\1/.exec(slice);
-      if (idMatch && nameMatch) {
+      const props = extractObjectProperties(slice, ["id", "name"]);
+      const id = props.id;
+      const name = props.name;
+      if (id && name) {
         const lineNumber = block.slice(0, startPos).split(/\r?\n/).length;
-        out.push({ id: idMatch[2], name: nameMatch[2], line: lineNumber });
+        out.push({ id, name, line: lineNumber });
       }
     },
   });
@@ -719,5 +915,84 @@ describe("phase verification — bundled template registry", () => {
         `Remove them from the constants — the smoke suite should not claim\n` +
         `coverage of a directory that isn't on disk.`,
     ).toEqual([]);
+  });
+});
+
+describe("phase verification — internal helper invariants", () => {
+  // These tests pin down the behaviour of the helpers above so future
+  // refactors can't silently regress them. Devin Review round-7 flagged
+  // the previous regex-based extractor as fragile against
+  // identifier-like substrings inside string values; the new
+  // `extractObjectProperties` lexer is the correct fix, and the cases
+  // below lock that in.
+
+  test("extractObjectProperties returns null for missing keys", () => {
+    const props = extractObjectProperties(`{ id: "foo" }`, ["id", "name"]);
+    expect(props.id).toBe("foo");
+    expect(props.name).toBeNull();
+  });
+
+  test("extractObjectProperties is not fooled by 'name:' substring in another value", () => {
+    // Before round-7, the regex /\bname:\s*(["'])(?:\\.|[^\\])*?\1/.exec(slice)
+    // applied to the entry slice as a whole would match the SUBSTRING
+    // `name: 'imposter'` inside the description value, since the regex
+    // doesn't know it's inside a string. The walker honours JS lexical
+    // state, so the only `name:` that counts is the one at depth 1 in
+    // code state — here, the trailing `name: "real"` property.
+    const slice = `{
+      id: "real-id",
+      description: "this entry has a description that mentions name: 'imposter' inline",
+      name: "real",
+    }`;
+    const props = extractObjectProperties(slice, ["id", "name"]);
+    expect(props.id).toBe("real-id");
+    expect(props.name).toBe("real");
+  });
+
+  test("extractObjectProperties ignores nested-object property keys", () => {
+    // A property whose value is a nested object literal can itself
+    // declare a `name:` inside that nested object. The outer walker
+    // tracks depth, so depth > 1 keys are ignored.
+    const slice = `{
+      id: "outer",
+      meta: { name: "inner-imposter", description: "nested" },
+      name: "outer-real",
+    }`;
+    const props = extractObjectProperties(slice, ["id", "name"]);
+    expect(props.id).toBe("outer");
+    expect(props.name).toBe("outer-real");
+  });
+
+  test("extractObjectProperties handles single-quoted '' escapes correctly", () => {
+    // YAML 1.2 §7.3.2 — '' is a literal single quote. Tessera doesn't
+    // currently use this pattern for CATEGORIES names, but a future
+    // localisation that adds e.g. a French entry name `O''Reilly` must
+    // still decode to `O'Reilly`. The helper shares the same decode
+    // rules as the YAML scalar extractor above, so we lock that
+    // symmetry down here.
+    const slice = `{ id: "a", name: 'O''Reilly' }`;
+    const props = extractObjectProperties(slice, ["id", "name"]);
+    expect(props.name).toBe("O'Reilly");
+  });
+
+  test("extractObjectProperties handles double-quoted backslash escapes", () => {
+    const slice = `{ id: "a", name: "She said \\"hi\\"" }`;
+    const props = extractObjectProperties(slice, ["id", "name"]);
+    expect(props.name).toBe(`She said "hi"`);
+  });
+
+  test("extractObjectProperties tolerates // comments containing fake property keys", () => {
+    // A line comment containing the substring `name: "comment-impostor"`
+    // must not pollute extraction. The walker enters sl_comment state
+    // on `//` and exits on `\n`, so identifier-like tokens inside the
+    // comment are never inspected.
+    const slice = `{
+      id: "real",
+      // name: "comment-impostor"
+      name: "real-name",
+    }`;
+    const props = extractObjectProperties(slice, ["id", "name"]);
+    expect(props.id).toBe("real");
+    expect(props.name).toBe("real-name");
   });
 });

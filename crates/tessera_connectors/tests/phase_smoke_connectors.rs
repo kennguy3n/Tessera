@@ -25,18 +25,38 @@
 //! repo root invokes `cargo test -p tessera_connectors --test
 //! phase_smoke_connectors` for a focused, fast-feedback run.
 //!
-//! ## Roster source of truth
+//! ## Roster source of truth (partial)
 //!
 //! The list of shipping connectors lives in exactly one place — the
 //! `tessera_connectors::for_each_connector!` macro in `src/lib.rs` —
-//! and BOTH the in-crate unit tests (`src/traits.rs`) AND this smoke
-//! suite expand the same macro. Adding a 7th connector updates the
-//! macro and that's it; both the trait-impl assertion and the
-//! provider-name pinning automatically cover it. Earlier rounds of
-//! this PR had each test maintain its own hand-typed list, which
-//! Devin Review correctly flagged as a duplication hazard (drift
-//! between the two copies would have gone unnoticed until CI ran
-//! both).
+//! and BOTH the in-crate unit tests (`src/traits.rs`) AND the
+//! identical-shape checks in this smoke suite expand the same macro.
+//! Specifically, `every_connector_implements_remote_connector` and
+//! `connector_provider_names_are_stable` below are macro-driven, so
+//! adding a 7th connector updates the macro and those two checks
+//! automatically cover it. Earlier rounds of this PR had each test
+//! maintain its own hand-typed list, which Devin Review correctly
+//! flagged as a duplication hazard (drift between the two copies
+//! would have gone unnoticed until CI ran both).
+//!
+//! The async lifecycle-method check
+//! (`every_connector_exposes_authenticate_sync_revoke` below) is
+//! deliberately NOT macro-driven. The `_smoke_gdrive` ...
+//! `_smoke_figma` wrappers each thread provider-specific argument
+//! shapes through `authenticate` / `sync_changes` / `revoke`, and
+//! those shapes vary per connector (e.g. Jira silently records the
+//! Atlassian cloud-id; Notion's `sync_changes` takes a
+//! `known_file_ids` set; etc. — see `src/traits.rs` for why a
+//! uniform action trait was rejected). A macro that tried to expand
+//! a uniform body would have to fall back to `Default::default()` for
+//! every argument, which would defeat the point of having
+//! type-checked signature wrappers in the first place. So adding a
+//! 7th connector requires (a) extending `for_each_connector!`, (b)
+//! writing a matching `_smoke_<provider>` wrapper here, AND (c)
+//! adding its name to the `stringify!` list in
+//! `every_connector_exposes_authenticate_sync_revoke`. The doc on
+//! `for_each_connector!` (lib.rs) calls this out explicitly so
+//! future maintainers don't get tripped up.
 
 use std::collections::HashSet;
 
