@@ -76,24 +76,23 @@ pub trait RemoteConnector: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::confluence::ConfluenceConnector;
-    use crate::figma::FigmaConnector;
-    use crate::gdrive::GoogleDriveConnector;
-    use crate::jira::JiraConnector;
-    use crate::notion::NotionConnector;
-    use crate::onedrive::OneDriveConnector;
+    // Tests delegate to the crate-level `for_each_connector!` macro so
+    // the connector roster lives in exactly one place (lib.rs). Adding
+    // a 7th connector requires updating the macro and nothing else —
+    // both these in-crate tests AND the external `phase_smoke_connectors`
+    // suite expand to cover it automatically.
 
     /// Every connector must implement RemoteConnector. This test fails
     /// to compile if a new connector forgets the impl.
     #[test]
     fn every_connector_implements_remote_connector() {
         fn assert_impl<T: RemoteConnector>() {}
-        assert_impl::<GoogleDriveConnector>();
-        assert_impl::<OneDriveConnector>();
-        assert_impl::<NotionConnector>();
-        assert_impl::<JiraConnector>();
-        assert_impl::<ConfluenceConnector>();
-        assert_impl::<FigmaConnector>();
+        macro_rules! check {
+            ($t:ty, $n:literal) => {
+                assert_impl::<$t>();
+            };
+        }
+        crate::for_each_connector!(check);
     }
 
     /// Pin each connector's provider name as the stable registry key.
@@ -101,12 +100,12 @@ mod tests {
     /// token records.
     #[test]
     fn provider_names_are_stable() {
-        assert_eq!(GoogleDriveConnector::new().provider_name(), "google_drive");
-        assert_eq!(OneDriveConnector::new().provider_name(), "onedrive");
-        assert_eq!(NotionConnector::new().provider_name(), "notion");
-        assert_eq!(JiraConnector::new().provider_name(), "jira");
-        assert_eq!(ConfluenceConnector::new().provider_name(), "confluence");
-        assert_eq!(FigmaConnector::new().provider_name(), "figma");
+        macro_rules! check {
+            ($t:ty, $n:literal) => {
+                assert_eq!(<$t>::new().provider_name(), $n);
+            };
+        }
+        crate::for_each_connector!(check);
     }
 
     /// A fresh-constructed connector is always Disconnected with no
@@ -119,12 +118,12 @@ mod tests {
             assert!(c.last_sync_time().is_none());
             assert_eq!(c.file_count(), 0);
         }
-        assert_fresh(GoogleDriveConnector::new());
-        assert_fresh(OneDriveConnector::new());
-        assert_fresh(NotionConnector::new());
-        assert_fresh(JiraConnector::new());
-        assert_fresh(ConfluenceConnector::new());
-        assert_fresh(FigmaConnector::new());
+        macro_rules! check {
+            ($t:ty, $n:literal) => {
+                assert_fresh(<$t>::new());
+            };
+        }
+        crate::for_each_connector!(check);
     }
 
     /// Box<dyn RemoteConnector> compiles and behaves like the concrete
@@ -133,15 +132,17 @@ mod tests {
     /// test fails to compile.
     #[test]
     fn trait_is_object_safe() {
-        let connectors: Vec<Box<dyn RemoteConnector>> = vec![
-            Box::new(GoogleDriveConnector::new()),
-            Box::new(OneDriveConnector::new()),
-            Box::new(NotionConnector::new()),
-            Box::new(JiraConnector::new()),
-            Box::new(ConfluenceConnector::new()),
-            Box::new(FigmaConnector::new()),
-        ];
-        assert_eq!(connectors.len(), 6);
+        let mut connectors: Vec<Box<dyn RemoteConnector>> = Vec::new();
+        macro_rules! push {
+            ($t:ty, $n:literal) => {
+                connectors.push(Box::new(<$t>::new()));
+            };
+        }
+        crate::for_each_connector!(push);
+        // The macro is the source of truth for the count; we don't
+        // hardcode 6 here because adding a 7th connector should pass
+        // this test without an unrelated edit.
+        assert!(!connectors.is_empty());
         for c in &connectors {
             assert_eq!(c.status(), ConnectorStatus::Disconnected);
         }

@@ -24,12 +24,26 @@
 //! this file is picked up automatically. `npm run test:smoke` at the
 //! repo root invokes `cargo test -p tessera_connectors --test
 //! phase_smoke_connectors` for a focused, fast-feedback run.
+//!
+//! ## Roster source of truth
+//!
+//! The list of shipping connectors lives in exactly one place — the
+//! `tessera_connectors::for_each_connector!` macro in `src/lib.rs` —
+//! and BOTH the in-crate unit tests (`src/traits.rs`) AND this smoke
+//! suite expand the same macro. Adding a 7th connector updates the
+//! macro and that's it; both the trait-impl assertion and the
+//! provider-name pinning automatically cover it. Earlier rounds of
+//! this PR had each test maintain its own hand-typed list, which
+//! Devin Review correctly flagged as a duplication hazard (drift
+//! between the two copies would have gone unnoticed until CI ran
+//! both).
 
 use std::collections::HashSet;
 
 use tessera_connectors::{
-    AuthConfig, ConfluenceConnector, ConnectorResult, FigmaConnector, GoogleDriveConnector,
-    JiraConnector, NotionConnector, OneDriveConnector, RemoteConnector, SyncResult,
+    for_each_connector, AuthConfig, ConfluenceConnector, ConnectorResult, FigmaConnector,
+    GoogleDriveConnector, JiraConnector, NotionConnector, OneDriveConnector, RemoteConnector,
+    SyncResult,
 };
 // `StoredTokens` lives in the `types` submodule and is not currently
 // re-exported at the crate root. We import it via its module path so
@@ -48,12 +62,16 @@ fn every_connector_implements_remote_connector() {
     // still has to *compile* this function, which forces the trait
     // bounds to resolve. If any connector loses its `impl
     // RemoteConnector`, the build fails here with a clear error.
-    assert_remote_connector::<GoogleDriveConnector>();
-    assert_remote_connector::<OneDriveConnector>();
-    assert_remote_connector::<NotionConnector>();
-    assert_remote_connector::<JiraConnector>();
-    assert_remote_connector::<ConfluenceConnector>();
-    assert_remote_connector::<FigmaConnector>();
+    //
+    // The roster comes from `for_each_connector!` so this and the
+    // in-crate `traits::tests::every_connector_implements_remote_connector`
+    // can never drift apart.
+    macro_rules! check {
+        ($t:ty, $n:literal) => {
+            assert_remote_connector::<$t>();
+        };
+    }
+    for_each_connector!(check);
 }
 
 // ----------------------------------------------------------------------
@@ -204,23 +222,15 @@ fn every_connector_exposes_authenticate_sync_revoke() {
 /// Renaming any of these is a breaking change for stored config and
 /// token records — keeping the check here means any rename has to go
 /// through a deliberate phase-verification update.
+///
+/// Same roster source as the trait-impl test above: a single edit to
+/// `for_each_connector!` covers both.
 #[test]
 fn connector_provider_names_are_stable() {
-    let gdrive = GoogleDriveConnector::new();
-    assert_eq!(gdrive.provider_name(), "google_drive");
-
-    let onedrive = OneDriveConnector::new();
-    assert_eq!(onedrive.provider_name(), "onedrive");
-
-    let notion = NotionConnector::new();
-    assert_eq!(notion.provider_name(), "notion");
-
-    let jira = JiraConnector::new();
-    assert_eq!(jira.provider_name(), "jira");
-
-    let conf = ConfluenceConnector::new();
-    assert_eq!(conf.provider_name(), "confluence");
-
-    let figma = FigmaConnector::new();
-    assert_eq!(figma.provider_name(), "figma");
+    macro_rules! check {
+        ($t:ty, $n:literal) => {
+            assert_eq!(<$t>::new().provider_name(), $n);
+        };
+    }
+    for_each_connector!(check);
 }

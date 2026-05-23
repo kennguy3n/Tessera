@@ -54,6 +54,14 @@ const RUST_TEMPLATE_DIRS: &[&str] = &["documents", "slides", "sheets", "bases"];
 /// flagged in Devin Review round-2.
 const RENDERER_ONLY_TEMPLATE_DIRS: &[&str] = &["infographics", "landing_pages"];
 
+/// Subdirectories under `templates/` that are NOT template categories
+/// at all and must be excluded from the dynamic-discovery test below.
+/// Currently just `grammars/` (GBNF files for LLM output constraint).
+/// If a future addition lands (e.g. `templates/shared/` for reusable
+/// fragments), the maintainer must explicitly classify it here so a
+/// new template category cannot quietly bypass the smoke suite.
+const NON_TEMPLATE_DIRS: &[&str] = &["grammars"];
+
 /// Recursively collect every `.yaml`/`.yml` file under the supplied
 /// templates root that belongs to a Rust-side template category
 /// (`documents/`, `slides/`, `sheets/`, `bases/`).
@@ -391,4 +399,88 @@ fn every_renderer_only_template_is_well_formed_yaml() {
             "renderer-only template {path:?} declares duplicate id `{id}` (already seen in another file)",
         );
     }
+}
+
+/// Reading the live `templates/` tree at test time, assert that every
+/// subdirectory is explicitly classified as one of:
+///
+///   * `RUST_TEMPLATE_DIRS`        — schema-validated by tessera_templates
+///   * `RENDERER_ONLY_TEMPLATE_DIRS` — well-formed-only check
+///   * `NON_TEMPLATE_DIRS`         — not a template category (e.g. grammars/)
+///
+/// This closes the failure mode Devin Review round-6 flagged: if a
+/// contributor adds a new category directory (say `templates/forms/`)
+/// without updating either list, the per-category tests above silently
+/// skip it. Walking the directory at runtime here forces the new
+/// category to be classified before the suite can pass — even if the
+/// new category isn't yet referenced from `CreatePage.tsx::CATEGORIES`
+/// (which is the only thing the renderer-side cross-check covers).
+///
+/// The companion test on the TS side
+/// (`apps/desktop/renderer/src/__tests__/smoke/phaseVerification.test.ts::
+/// "every templates/ subdirectory is a classified category"`) enforces
+/// the same invariant against `TEMPLATE_CATEGORIES` there, so all three
+/// hand-maintained lists (Rust × 2 + TS × 1) are gated by runtime
+/// discovery.
+#[test]
+fn every_templates_subdirectory_is_classified() {
+    let root = templates_root();
+    assert!(
+        root.is_dir(),
+        "templates/ directory not found at {root:?} \u{2014} workspace layout changed?",
+    );
+
+    let mut discovered: Vec<String> = std::fs::read_dir(&root)
+        .unwrap_or_else(|e| panic!("read_dir({root:?}) failed: {e}"))
+        .filter_map(std::result::Result::ok)
+        .filter(|e| {
+            e.file_type()
+                .map(|t| t.is_dir())
+                .unwrap_or(false)
+        })
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    discovered.sort();
+
+    let classified: HashSet<&str> = RUST_TEMPLATE_DIRS
+        .iter()
+        .chain(RENDERER_ONLY_TEMPLATE_DIRS.iter())
+        .chain(NON_TEMPLATE_DIRS.iter())
+        .copied()
+        .collect();
+
+    let unclassified: Vec<&String> = discovered
+        .iter()
+        .filter(|d| !classified.contains(d.as_str()))
+        .collect();
+
+    assert!(
+        unclassified.is_empty(),
+        "Unclassified templates/ subdirectories found: {unclassified:?}.\n\
+         Add each to RUST_TEMPLATE_DIRS (if its YAML deserialises into\n\
+         tessera_templates::Template), RENDERER_ONLY_TEMPLATE_DIRS (if it\n\
+         uses the renderer's richer schema), or NON_TEMPLATE_DIRS (if it\n\
+         is not a template category at all). See the doc comments above\n\
+         each constant for the distinction. The renderer-side\n\
+         phaseVerification.test.ts must also be updated to reference the\n\
+         new category in TEMPLATE_CATEGORIES.",
+    );
+
+    // Symmetry check: every name in the three lists must actually
+    // correspond to a real directory. A stale entry (e.g. a category
+    // that was removed) would otherwise sit forever in the constants
+    // pretending to be covered.
+    let discovered_set: HashSet<&String> = discovered.iter().collect();
+    let stale: Vec<&&str> = RUST_TEMPLATE_DIRS
+        .iter()
+        .chain(RENDERER_ONLY_TEMPLATE_DIRS.iter())
+        .chain(NON_TEMPLATE_DIRS.iter())
+        .filter(|name| !discovered_set.contains(&name.to_string()))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "Classified directory names that don't exist under templates/: {stale:?}.\n\
+         Remove them from the constants \u{2014} the smoke suite should not\n\
+         claim coverage of a directory that isn't on disk.",
+    );
 }

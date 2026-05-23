@@ -240,11 +240,19 @@ fn evidence_pack_builds_a_zip_envelope_with_provided_artifact() {
         "evidence_pack::build_evidence_pack returned an error: {res:?}"
     );
     // The function writes a ZIP to disk — verify the envelope magic
-    // and that the file is non-empty.
+    // and that the file is non-empty. `read_exact` is the right
+    // primitive here (not `read`): per the `Read` trait contract a
+    // single `read` may return fewer than the requested number of
+    // bytes even when more data is available, so the previous
+    // `f.read(&mut head)` + `assert_eq!(read, 4)` was idiom-deficient
+    // — it would have spuriously failed on a short read rather than
+    // doing the retry the assertion implied. `read_exact` either
+    // fills the whole buffer or returns an error, which is what we
+    // actually want for "the first 4 bytes are PK\x03\x04".
     let mut f = std::fs::File::open(&output_path).expect("open evidence pack");
     let mut head = [0u8; 4];
-    let read = f.read(&mut head).expect("read pack magic");
-    assert_eq!(read, 4, "evidence pack must be at least 4 bytes long");
+    f.read_exact(&mut head)
+        .expect("evidence pack must be at least 4 bytes long");
     assert_eq!(
         &head, b"PK\x03\x04",
         "evidence_pack::build_evidence_pack must emit a ZIP envelope (PK\\x03\\x04), got: {head:?}"

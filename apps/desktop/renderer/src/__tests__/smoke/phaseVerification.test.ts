@@ -43,17 +43,19 @@ const REPO_ROOT = resolve(__dirname, "..", "..", "..", "..", "..", "..");
 const TEMPLATES_DIR = join(REPO_ROOT, "templates");
 
 // Categories we expect under templates/. If a new artifact type lands,
-// add it here and add a section parser below — the test will fail loudly
-// if a new directory shows up that isn't covered.
+// add it here and add a section parser below — the
+// `every templates/ subdirectory is a classified category` test below
+// dynamically enumerates the actual subdirectories at test time and
+// fails loudly if any are missing from this list (or NON_TEMPLATE_DIRS).
 //
-// NOTE: `templates/grammars/` is intentionally not listed here. That
-// directory holds GBNF grammar files (`.gbnf`) that constrain LLM
-// output for structured generation — it is not a template category.
-// The walker below filters on the `.yaml`/`.yml` extension anyway, so
-// even if a stray `.gbnf` ended up under one of the listed categories
-// it would be skipped, but keeping the exclusion explicit here means
-// a future contributor reading this list isn't left wondering whether
-// `grammars/` was an oversight.
+// NOTE: `templates/grammars/` is intentionally classified separately,
+// in NON_TEMPLATE_DIRS, because it holds GBNF grammar files (`.gbnf`)
+// that constrain LLM output for structured generation — it is not a
+// template category. The walker below filters on the `.yaml`/`.yml`
+// extension anyway, so even if a stray `.gbnf` ended up under one of
+// the listed categories it would be skipped, but keeping the exclusion
+// explicit means a future contributor reading these lists isn't left
+// wondering whether `grammars/` was an oversight.
 const TEMPLATE_CATEGORIES = [
   "documents",
   "slides",
@@ -62,6 +64,14 @@ const TEMPLATE_CATEGORIES = [
   "infographics",
   "landing_pages",
 ] as const;
+
+// Subdirectories under `templates/` that are NOT template categories.
+// Currently just `grammars/`. Mirrors `NON_TEMPLATE_DIRS` in the Rust
+// smoke test (`crates/tessera_templates/tests/phase_smoke_templates.rs`).
+// If a future addition lands (e.g. `templates/shared/` for reusable
+// fragments), classify it here so the dynamic-discovery test still
+// passes without silently waving in a new template category.
+const NON_TEMPLATE_DIRS = ["grammars"] as const;
 
 interface BundledTemplate {
   id: string;
@@ -163,28 +173,64 @@ function extractTopLevelScalar(body: string, key: string): string | null {
     // bundled templates but YAML permits it.
     rest = rest.replace(/^[\t ]+/, "");
     // Quoted scalar — the value lives between the quotes and any
-    // trailing text on the line (including `#`) is comment.
+    // trailing text on the line (including `#`) is comment. Escape
+    // conventions differ between the two flavours:
+    //
+    //   * Double-quoted (YAML 1.2 §7.3.1): C-style backslash escapes
+    //     (`\n`, `\t`, `\"`, `\\`, `\uXXXX`, etc.). We don't need to
+    //     fully decode these for our limited use case (template ids
+    //     and types) — we just need to know that a backslash protects
+    //     the next character, so a `\"` in the middle of the scalar
+    //     is not the closing quote.
+    //
+    //   * Single-quoted (YAML 1.2 §7.3.2): the ONLY escape is the
+    //     literal sequence `''` (two consecutive single quotes),
+    //     which represents one literal `'`. No backslash escapes
+    //     apply. So `'it''s'` decodes to `it's`. This was the gap
+    //     Devin Review round-6 flagged — the previous lexer would
+    //     stop at the first `'` and incorrectly return `it`.
+    //
+    // We accumulate the decoded value as we go so the returned
+    // string is the actual scalar content, not the raw slice between
+    // the quote characters.
     if (rest.startsWith('"') || rest.startsWith("'")) {
       const quote = rest[0];
-      // Find the matching closing quote. YAML 1.2 double-quoted
-      // scalars support C-style escapes; for our limited use case
-      // (template ids and types) we don't need full escape handling
-      // — a closing quote that isn't preceded by `\\` is sufficient.
       let i = 1;
+      const decoded: string[] = [];
+      let terminated = false;
       while (i < rest.length) {
-        if (rest[i] === "\\" && quote === '"') {
+        const c = rest[i];
+        if (c === "\\" && quote === '"') {
+          // Double-quoted backslash escape: pass through the next
+          // character verbatim. (For our purposes — ids and types
+          // are ASCII identifiers — this is sufficient. Full YAML
+          // escape decoding would substitute the escape's meaning
+          // here, but no bundled template id needs that.)
+          if (i + 1 < rest.length) decoded.push(rest[i + 1]);
           i += 2;
           continue;
         }
-        if (rest[i] === quote) break;
+        if (c === quote) {
+          // Single-quoted scalars treat `''` as a literal single
+          // quote and continue scanning. Anything else is the
+          // closing quote.
+          if (quote === "'" && rest[i + 1] === "'") {
+            decoded.push("'");
+            i += 2;
+            continue;
+          }
+          terminated = true;
+          break;
+        }
+        decoded.push(c);
         i += 1;
       }
-      if (i >= rest.length) {
+      if (!terminated) {
         // Unterminated quoted scalar — treat as no match rather
         // than guessing.
         continue;
       }
-      return rest.slice(1, i);
+      return decoded.join("");
     }
     // Unquoted scalar — strip a trailing comment only when the `#`
     // is preceded by ASCII whitespace, per YAML 1.2 §6.6. A `#`
@@ -617,6 +663,61 @@ describe("phase verification — bundled template registry", () => {
     expect(
       duplicates,
       `CreatePage.tsx CATEGORIES contains duplicate (id, name) tuples — almost certainly copy-paste errors:\n  ${duplicates.join("\n  ")}`,
+    ).toEqual([]);
+  });
+
+  test("every templates/ subdirectory is a classified category", () => {
+    // Dynamically enumerate the live `templates/` tree at test time and
+    // assert that every subdirectory is explicitly classified as either
+    // a template category (`TEMPLATE_CATEGORIES`) or a deliberate
+    // non-category (`NON_TEMPLATE_DIRS`).
+    //
+    // This closes the failure mode Devin Review round-6 flagged: if a
+    // contributor adds a new category directory (say `templates/forms/`)
+    // without updating `TEMPLATE_CATEGORIES`, the `loadBundledTemplates`
+    // walker above silently skips it. Walking the directory at runtime
+    // here forces the new category to be classified before the suite
+    // can pass.
+    //
+    // The Rust companion test
+    // (`crates/tessera_templates/tests/phase_smoke_templates.rs::
+    // every_templates_subdirectory_is_classified`) enforces the same
+    // invariant against `RUST_TEMPLATE_DIRS` + `RENDERER_ONLY_TEMPLATE_DIRS`
+    // + `NON_TEMPLATE_DIRS`, so all three hand-maintained lists (Rust × 2
+    // + TS × 1) are now gated by runtime discovery.
+    const discovered = readdirSync(TEMPLATES_DIR, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort();
+
+    const classified = new Set<string>([
+      ...TEMPLATE_CATEGORIES,
+      ...NON_TEMPLATE_DIRS,
+    ]);
+
+    const unclassified = discovered.filter((d) => !classified.has(d));
+    expect(
+      unclassified,
+      `Unclassified templates/ subdirectories found: ${unclassified.join(", ")}.\n` +
+        `Add each to TEMPLATE_CATEGORIES (if it is a template artifact type)\n` +
+        `or NON_TEMPLATE_DIRS (if it is not a template category at all). The Rust\n` +
+        `smoke suite's RUST_TEMPLATE_DIRS / RENDERER_ONLY_TEMPLATE_DIRS lists must\n` +
+        `also be updated.`,
+    ).toEqual([]);
+
+    // Symmetry check: every name in the two lists must correspond to a
+    // real directory. A stale entry (e.g. a category that was removed)
+    // would otherwise sit forever in the constants pretending to be
+    // covered.
+    const discoveredSet = new Set(discovered);
+    const stale = [...TEMPLATE_CATEGORIES, ...NON_TEMPLATE_DIRS].filter(
+      (name) => !discoveredSet.has(name),
+    );
+    expect(
+      stale,
+      `Classified directory names that don't exist under templates/: ${stale.join(", ")}.\n` +
+        `Remove them from the constants — the smoke suite should not claim\n` +
+        `coverage of a directory that isn't on disk.`,
     ).toEqual([]);
   });
 });
