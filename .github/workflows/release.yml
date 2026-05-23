@@ -34,13 +34,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # NOTE: previous revisions of this workflow carried an `artifact`
+        # field per matrix entry (e.g. `dist/Tessera-*.AppImage ...`).
+        # No step ever consumed it — the upload step uses the static
+        # `path: dist/` and the GitHub-release step uses its own
+        # hardcoded glob list at the bottom of this job — so the field
+        # was dead documentation that could mislead a future maintainer
+        # into thinking it gated which files get attached. The actual
+        # per-platform filtering happens implicitly via the glob list:
+        # each runner only produces files matching a subset of
+        # `*.AppImage / *.deb / *.rpm / *.dmg / *.exe / *.zip`, and
+        # softprops/action-gh-release skips patterns with no matches.
+        # Removed to keep the matrix honest.
         include:
           - os: ubuntu-22.04
-            artifact: "dist/Tessera-*.AppImage dist/Tessera_*.deb dist/Tessera-*.rpm"
           - os: macos-13
-            artifact: "dist/Tessera-*.dmg"
           - os: windows-2022
-            artifact: "dist/Tessera Setup *.exe"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -62,6 +71,28 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Workaround for npm/cli#4828: optional native deps in
+      # package-lock.json are not always installed on platforms
+      # other than the one the lockfile was generated on. Rollup
+      # ships per-platform native binaries as optionalDependencies,
+      # and the lockfile in this repo currently only carries the
+      # Linux entries — so `npm ci` on the macos-13 or windows-2022
+      # runners leaves `node_modules/@rollup/rollup-darwin-x64` and
+      # `node_modules/@rollup/rollup-win32-x64-msvc` missing, and
+      # the subsequent `vite build` (inside `npm run build`) fails
+      # with a confusing "Cannot find module @rollup/rollup-<plat>-<arch>"
+      # error. The CI workflow (.github/workflows/ci.yml) carries
+      # the same fix; preflight scripts mirror it too. Once
+      # https://github.com/npm/cli/issues/4828 ships and the
+      # minimum supported npm in CONTRIBUTING.md is bumped past
+      # the fix, all three of these workaround steps can be deleted.
+      - name: Install platform-specific Rollup binary (Windows)
+        if: matrix.os == 'windows-2022'
+        run: npm install --no-save --no-package-lock @rollup/rollup-win32-x64-msvc
+      - name: Install platform-specific Rollup binary (macOS)
+        if: matrix.os == 'macos-13'
+        run: npm install --no-save --no-package-lock @rollup/rollup-darwin-x64
 
       - name: Build all
         # The repo's `package.json` `build` script forwards to

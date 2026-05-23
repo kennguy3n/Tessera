@@ -61,8 +61,22 @@ The script runs:
 4. `npm run lint --workspace=apps/desktop`
 5. `npm run type-check --workspace=apps/desktop`
 6. `npm run test --workspace=apps/desktop`
-7. `npm run build --workspace=apps/desktop`
-8. `npx --no-install electron-builder --config packaging/electron-builder.yml --dir`
+7. *(macOS / Windows only)* `npm install --no-save --no-package-lock @rollup/rollup-<plat>-<arch>`
+
+   On macOS and Windows the script inserts a host-matching Rollup
+   binary install before the build step as a workaround for
+   [npm/cli#4828](https://github.com/npm/cli/issues/4828): the
+   lockfile only carries the Linux entries of Rollup's per-platform
+   optionalDependencies, so `npm ci` on a non-Linux host leaves
+   `@rollup/rollup-darwin-*` / `@rollup/rollup-win32-*` missing and
+   the next step's `vite build` would fail with a confusing
+   "Cannot find module" error. CI and the release workflow carry
+   the same workaround. On Linux this step is silently skipped
+   because `npm ci` already installs the correct binary, so the
+   per-run "[N/M]" banners show 8 steps on Linux and 9 on
+   macOS/Windows.
+8. `npm run build --workspace=apps/desktop`
+9. `npx --no-install electron-builder --config packaging/electron-builder.yml --dir`
 
    The `--no-install` flag prevents npx from silently downloading a
    different electron-builder version into the npx cache if the

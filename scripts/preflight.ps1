@@ -344,10 +344,28 @@ switch ($hostArchRaw) {
     default { $rollupHostBinary = '' }
 }
 if ($rollupHostBinary) {
+    # IMPORTANT: do NOT close over `$rollupHostBinary` from the Action
+    # script block. PowerShell script blocks resolve variables
+    # dynamically at invocation time, not at definition time — so a
+    # naive `{ npm install ... $rollupHostBinary }` would re-resolve
+    # the name through the scope chain inside Invoke-AllSteps. Today
+    # nothing shadows the name, but a future maintainer adding a
+    # local `$rollupHostBinary` inside Invoke-AllSteps (or refactoring
+    # this script into a module that re-uses the name) would silently
+    # change which package gets installed. The bash sibling
+    # (scripts/preflight.sh) avoids this by expanding the variable
+    # at registration time into a plain string command — we do the
+    # same here so the two scripts have identical robustness
+    # properties. The Action body now holds a pre-built script block
+    # with the package name baked in as a literal, which is also why
+    # we build it via `[ScriptBlock]::Create(...)` rather than a
+    # `{ ... }` literal: the literal would still defer lookup.
+    $rollupInstallCmd  = "npm install --no-save --no-package-lock $rollupHostBinary"
+    $rollupInstallBlock = [ScriptBlock]::Create($rollupInstallCmd)
     Add-Step `
         -Label   ("Install host Rollup binary ({0})" -f $rollupHostBinary) `
-        -Command ("npm install --no-save --no-package-lock {0}" -f $rollupHostBinary) `
-        -Action  { npm install --no-save --no-package-lock $rollupHostBinary }
+        -Command $rollupInstallCmd `
+        -Action  $rollupInstallBlock
 }
 
 # 8) Build the bundle electron-builder will consume so the
