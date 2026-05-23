@@ -368,6 +368,17 @@ export function registerSettingsHandlers(): void {
           ? "disabled"
           : String(effective.recencyHalflifeSecs),
       );
+      // `candidatePoolSize` is the size of the BM25+vector candidate
+      // pool the engine retrieves before RRF fusion. It is a mutable
+      // search-tuning parameter that ships in `HybridSearchConfigInfo`
+      // alongside the other five tracked fields, so omitting it here
+      // would break the contract documented above ("Each field is
+      // logged as its own row"). Devin Review (round 3 on PR #26)
+      // flagged the omission.
+      auditSettingsField(
+        "hybridSearch.candidatePoolSize",
+        String(effective.candidatePoolSize),
+      );
       return effective;
     },
   );
