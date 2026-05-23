@@ -332,6 +332,61 @@ function installCSPDevtoolsLogger(): void {
 let appInitComplete = false;
 
 app.whenReady().then(async () => {
+  // KNOWN LIMITATION — DB-key path runs BEFORE the password-vault is
+  // initialised. This is the WS10-scoped behaviour:
+  //
+  //   - `initAppState()` calls `getOrCreateDbKey()` (see
+  //     `dbKey.ts`), which uses ONLY Electron's `safeStorage` to
+  //     wrap/unwrap the 256-bit SQLCipher key.
+  //   - On keyringless platforms (Linux without
+  //     gnome-keyring / kwallet5, headless CI, certain hardened
+  //     containers) `safeStorage.isEncryptionAvailable()` returns
+  //     false. `getOrCreateDbKey()` then throws
+  //     `EncryptionUnavailableError` (only when `db.key` is absent on
+  //     disk — see the function-level doc on `getOrCreateDbKey` for
+  //     why an EXISTING `db.key` file with no keyring is a hard
+  //     failure, not a fallback case). `appState.ts` catches that
+  //     specific subclass and brings up the bridge in unencrypted
+  //     mode.
+  //   - `maybeInitPasswordVault()` runs AFTER that, so the
+  //     password-vault key (used to encrypt OAuth tokens + API keys
+  //     on the same keyringless platforms) is derived too late to be
+  //     reused for the DB.
+  //
+  // Net effect: on keyringless platforms today, tokens + API keys
+  // are encrypted under the user's vault password while the SQLite
+  // DB is plaintext. This is a real security asymmetry — flagged by
+  // Devin Review as ANALYSIS_0004 (PR #17) — but extending the
+  // password vault to back the DB key is a larger workstream that
+  // belongs outside WS10's scope for three concrete reasons:
+  //
+  //   1. **Migration of existing keyringless installs.** Users
+  //      already running with an unencrypted DB cannot switch to a
+  //      password-vault-wrapped key without re-keying the on-disk
+  //      tessera.db, which is a SQLCipher schema-level operation
+  //      (`PRAGMA rekey`). That re-key needs its own UX flow
+  //      (consent screen, progress UI, atomic-write recovery in
+  //      case of crash mid-rekey) that hasn't been designed.
+  //   2. **Ordering / lifecycle.** `getOrCreateDbKey` is currently
+  //      synchronous because every caller below it is synchronous;
+  //      reaching the password vault would require either threading
+  //      an async-init boot phase BEFORE `initAppState` (impacting
+  //      every other startup-time module that assumes the bridge is
+  //      up) or making the DB-key path async itself (impacting
+  //      every existing call site).
+  //   3. **Recovery story.** If the user forgets their vault
+  //      password today, only their tokens / API keys are
+  //      unrecoverable — they re-authenticate and move on. If the
+  //      DB key were also wrapped under the same password, a
+  //      forgotten password would mean total data loss. That
+  //      tradeoff deserves explicit product input before we ship it.
+  //
+  // The right home for this is a future "DB-key recovery + password
+  // vault unification" workstream that ships the migration UX, the
+  // async-init boot phase, and the data-loss-warning consent flow
+  // together. Until then, this comment + the explicit
+  // `EncryptionUnavailableError` catch in `appState.ts` make the
+  // current behaviour discoverable.
   initAppState();
   // Install the session-level CSP BEFORE any window (including the
   // password prompt) is created, so the policy is in effect for

@@ -159,6 +159,33 @@ extra scrutiny.
 | `updates:install`                     | no-input        |      |
 | `updates:getAutoUpdateEnabled`        | no-input        |      |
 
+## Password Vault (ephemeral prompt window)
+
+These channels are `ipcMain.on` (not `ipcMain.handle`) and are
+**transient**: they are registered by `passwordVault.ts` only while
+the password-prompt `BrowserWindow` is open at app startup, and torn
+down via `ipcMain.removeAllListeners(channel)` as soon as the user
+submits, cancels, or closes the window. The prompt loads via
+`data:text/html;charset=utf-8,…` (no `file://` or `http(s)://`), and
+its preload (`passwordPromptPreload.ts`) only exposes a single
+`tesseraPasswordPrompt` API that forwards the user input to these
+two channels. The renderer for the *main* app window cannot reach
+these channels because they are not registered while the main window
+is open.
+
+| Channel                               | Strategy        | Auth |
+|---------------------------------------|-----------------|------|
+| `password-vault:submit`               | renderer-typed (`{ password: string }`, shape-checked at the call site; the password string is treated as opaque material — no length / charset assertions at the IPC boundary because the vault accepts any string) | ✓ — supplies the AES-256-GCM key-derivation input for the password vault |
+| `password-vault:cancel`               | no-input        | ✓ — user-initiated abort; the in-flight `promptForVaultPassword` promise rejects and `maybeInitPasswordVault` falls through to "no password cached" |
+
+**Invariant note (vault-specific).** The prompt's preload script is
+the only renderer surface allowed to send on these two channels. The
+preload is loaded via Electron's `webPreferences.preload` so it runs
+in an isolated context; `sandbox: true` is set on the prompt
+`BrowserWindow` so the preload cannot `require('electron')`
+directly. Both properties are pinned by `sandboxPreloadContract.test.ts`
+and `passwordVault.test.ts`.
+
 ## Renderer-bound emit channels (one-way, main → renderer)
 
 These are `webContents.send(...)` channels rather than

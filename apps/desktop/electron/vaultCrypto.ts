@@ -115,11 +115,26 @@ export function keyringUnavailableSentence(): string {
  * cannot decrypt safeStorage-encrypted blobs because the derivation
  * keys are different — telling the user to "restart and enter a vault
  * password" sends them on a recovery path that won't work.
+ *
+ * Phrasing rationale: the prior version of this sentence opened with
+ * "If you cannot install a keyring daemon" — Linux-specific wording
+ * that did not apply on macOS (Keychain) or Windows (DPAPI), where
+ * "keyring" is not the user-facing term and "install a daemon" maps
+ * to no real action. The current phrasing is platform-neutral —
+ * "OS-level secure storage" covers Keychain / DPAPI / Secret Service
+ * uniformly, and the recovery action ("restart Tessera and enter a
+ * vault password") IS the same on every platform. The
+ * `keyringDiagnosis()` paragraph that runs immediately before this
+ * hint already names the specific OS-level service when one is known
+ * (e.g. "gnome-keyring / kwallet5 on Linux"), so the hint itself
+ * doesn't need to repeat the diagnosis — it focuses on the recovery
+ * action a user can take regardless of platform.
  */
 export const PASSWORD_VAULT_RECOVERY_HINT =
-  "If you cannot install a keyring daemon, restart Tessera and enter a " +
-  "vault password when prompted — the app will derive an encryption " +
-  "key from your password and use it in place of the OS keyring.";
+  "If OS-level secure storage cannot be restored, restart Tessera " +
+  "and enter a vault password when prompted — the app will derive " +
+  "an encryption key from your password and use it in place of the " +
+  "OS-managed key.";
 
 /**
  * Build a human-readable error explaining why the OS keyring is unavailable
