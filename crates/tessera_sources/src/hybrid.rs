@@ -207,10 +207,25 @@ where
         })
         .collect();
 
+    // Tiebreak on `chunk_id` ascending when two candidates have equal
+    // `final_score`. Without this the iteration order from
+    // `HashMap::into_iter` above leaks into the sorted output — Rust's
+    // `HashMap` uses a random per-process seed, so identical inputs
+    // produce different orderings across runs. That non-determinism
+    // propagates into the `relevance = 1/(position+1)` values assigned
+    // by `SearchEngine::search_with_mode`, so the same query against
+    // the same corpus would surface tied chunks with different
+    // displayed confidences from one launch to the next.
+    //
+    // The chunk_id tiebreaker mirrors what `rank_chunks_by_cosine`
+    // already does for the vector-ranking path (`.then_with(|a, b|
+    // a.0.cmp(&b.0))`). Pinning the contract here means the entire
+    // hybrid ranking is fully reproducible given fixed inputs.
     out.sort_by(|a, b| {
         b.final_score
             .partial_cmp(&a.final_score)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.chunk_id.cmp(&b.chunk_id))
     });
     out
 }
@@ -474,6 +489,64 @@ mod tests {
         // final score (two halflives → 1/4).
         let ratio = fused[1].final_score / fused[0].final_score;
         assert!((ratio - 0.25).abs() < 1e-3, "expected ~0.25, got {ratio}");
+    }
+
+    #[test]
+    fn fuse_rankings_orders_ties_deterministically_by_chunk_id() {
+        // Three chunks all sharing the same BM25 rank and no vector
+        // signal → all final scores are identical. Without the
+        // `chunk_id` tiebreaker the relative order would depend on
+        // `HashMap::into_iter()` iteration order (random per-process
+        // seed), so the same query could surface tied chunks in a
+        // different order on each launch.
+        //
+        // The contract this test pins: ties resolve in ascending
+        // `chunk_id` order, which makes the entire fused ranking a
+        // pure function of the inputs.
+        let bm25 = vec![
+            RankedCandidate {
+                chunk_id: 17,
+                rank: 0,
+            },
+            RankedCandidate {
+                chunk_id: 3,
+                rank: 0,
+            },
+            RankedCandidate {
+                chunk_id: 42,
+                rank: 0,
+            },
+        ];
+        let vector: Vec<RankedCandidate> = Vec::new();
+        let ages: HashMap<i64, f64> = HashMap::new();
+        let cfg = HybridSearchConfig {
+            // Disable recency so every chunk has multiplier 1.0 and
+            // the test is solely about score-equality tiebreaking.
+            recency_halflife_secs: f64::INFINITY,
+            ..Default::default()
+        };
+
+        // Run the fusion multiple times. Each invocation builds a
+        // fresh `HashMap` whose iteration order is randomised by
+        // SipHash's per-process key, so a missing tiebreaker would
+        // produce different orderings here even with no other
+        // changes. The first call sets the expected ordering;
+        // subsequent calls must match it byte-for-byte.
+        let first = fuse_rankings(&bm25, &vector, &ages, &cfg);
+        let chunk_ids: Vec<i64> = first.iter().map(|f| f.chunk_id).collect();
+        assert_eq!(
+            chunk_ids,
+            vec![3, 17, 42],
+            "expected ascending chunk_id on ties, got {chunk_ids:?}"
+        );
+        for _ in 0..50 {
+            let again = fuse_rankings(&bm25, &vector, &ages, &cfg);
+            let again_ids: Vec<i64> = again.iter().map(|f| f.chunk_id).collect();
+            assert_eq!(
+                again_ids, chunk_ids,
+                "fuse_rankings must be order-stable across repeated invocations on identical inputs"
+            );
+        }
     }
 
     #[test]
