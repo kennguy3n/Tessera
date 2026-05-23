@@ -348,7 +348,7 @@ app.whenReady().then(async () => {
   //     failure, not a fallback case). `appState.ts` catches that
   //     specific subclass and brings up the bridge in unencrypted
   //     mode.
-  //   - `maybeInitPasswordVault()` runs AFTER that, so the
+  //   - `maybeInitPasswordVault` runs AFTER that, so the
   //     password-vault key (used to encrypt OAuth tokens + API keys
   //     on the same keyringless platforms) is derived too late to be
   //     reused for the DB.
