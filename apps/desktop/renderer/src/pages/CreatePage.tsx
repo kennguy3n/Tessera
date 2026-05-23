@@ -110,6 +110,14 @@ function resolveTemplateId(item: CategoryItem, locale: string): string {
  */
 function matchesIndustry(item: CategoryItem, sel: string): boolean {
   if (sel === "all") return true;
+  // Workflow shortcuts are universal entry points (e.g. "Generate
+  // report") that produce artifacts regardless of the active industry
+  // filter. Hiding them when the user picks a specific industry would
+  // leave the tab confusingly empty even when relevant work is
+  // available — the underlying template card resolves the artifact
+  // for the right industry on its own. Keep workflows visible under
+  // every industry, including "General".
+  if (item.badge === "workflow") return true;
   const tags = item.industry ?? [];
   if (sel === "general") return tags.length === 0;
   return tags.includes(sel);
@@ -123,6 +131,12 @@ function matchesIndustry(item: CategoryItem, sel: string): boolean {
  */
 function matchesLocale(item: CategoryItem, sel: string): boolean {
   if (sel === "all" || sel === "en") return true;
+  // Workflow shortcuts launch the underlying template, which itself
+  // resolves to the localized variant via `resolveTemplateId`. Hiding
+  // the workflow card on a non-English locale would force the user
+  // to find the underlying template card manually, which defeats the
+  // shortcut. Keep workflows visible under every locale.
+  if (item.badge === "workflow") return true;
   return item.availableLocales?.includes(sel) ?? false;
 }
 
@@ -636,19 +650,49 @@ function localItemForTemplate(
   id: string,
   preferWorkflow?: string,
 ): CategoryItem | undefined {
+  // Localized templates use the `<base-id>-<locale>` suffix convention
+  // (e.g. `prd-v1-es`), but CATEGORIES only lists base ids — the
+  // locale-aware `resolveTemplateId` adds the suffix at link time. To
+  // keep the runner's loading state showing a human-friendly name
+  // (e.g. "PRD" rather than the raw "prd-v1-es"), fall back to the
+  // base id by stripping a trailing `-<locale>` segment whose locale
+  // matches one of the known LOCALE_OPTIONS. We only strip when the
+  // suffixed id is not directly in CATEGORIES — that way a future
+  // locale-variant added to CATEGORIES wins over the stripped lookup.
+  const lookupIds = [id];
+  const lastDash = id.lastIndexOf("-");
+  if (lastDash > 0) {
+    const suffix = id.slice(lastDash + 1);
+    const knownLocale = LOCALE_OPTIONS.some(
+      (opt) => opt.value === suffix && opt.value !== "all" && opt.value !== "en",
+    );
+    if (knownLocale) {
+      lookupIds.push(id.slice(0, lastDash));
+    }
+  }
   if (preferWorkflow) {
+    for (const candidate of lookupIds) {
+      for (const list of Object.values(CATEGORIES)) {
+        const match = list.find(
+          (c) => c.id === candidate && c.name === preferWorkflow,
+        );
+        if (match) return match;
+      }
+    }
+  }
+  for (const candidate of lookupIds) {
     for (const list of Object.values(CATEGORIES)) {
-      const match = list.find((c) => c.id === id && c.name === preferWorkflow);
+      const match = list.find(
+        (c) => c.id === candidate && c.badge !== "workflow",
+      );
       if (match) return match;
     }
   }
-  for (const list of Object.values(CATEGORIES)) {
-    const match = list.find((c) => c.id === id && c.badge !== "workflow");
-    if (match) return match;
-  }
-  for (const list of Object.values(CATEGORIES)) {
-    const match = list.find((c) => c.id === id);
-    if (match) return match;
+  for (const candidate of lookupIds) {
+    for (const list of Object.values(CATEGORIES)) {
+      const match = list.find((c) => c.id === candidate);
+      if (match) return match;
+    }
   }
   return undefined;
 }
