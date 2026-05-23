@@ -419,6 +419,53 @@ export function resolveProviderEndpoint(
   return endsWithCompletions ? apiUrl : `${apiUrl}/v1/chat/completions`;
 }
 
+/**
+ * Compose the OpenAI-compatible `GET /v1/models` endpoint for the
+ * configured provider, applying the same "did the user paste a full
+ * URL?" trimming logic as {@link resolveProviderEndpoint}.
+ *
+ * Returns `null` for Anthropic — the Messages API has no
+ * `/v1/models` analogue, and asking the caller to handle a
+ * provider-type-aware decision higher up in the stack would
+ * duplicate the "is the listing supported?" predicate at every
+ * caller. Returning `null` lets the IPC handler short-circuit to a
+ * graceful "not supported" reply without an extra type-narrowing
+ * pass.
+ *
+ * For OpenAI-compatible / custom: the user's `apiUrl` may be a
+ * base (`https://api.openai.com`), a chat-completions endpoint
+ * (`https://api.openai.com/v1/chat/completions`), or even an
+ * already-resolved models endpoint
+ * (`https://api.openai.com/v1/models`). We strip the
+ * chat-completions suffix when present and append `/v1/models` if
+ * not already there. The handful of self-hosted shims that omit
+ * the `/v1` prefix on chat completions (LM Studio's
+ * `.../chat/completions`) generally ALSO omit it on `/models`, so
+ * we accept both endings.
+ */
+export function resolveProviderModelsEndpoint(
+  provider: ExternalProviderConfig,
+): string | null {
+  if (provider.providerType === "anthropic") return null;
+  let apiUrl = provider.apiUrl.replace(/\/+$/, "");
+  // If the user pasted a `…/v1/chat/completions` or
+  // `…/chat/completions` URL, strip the suffix so we can append the
+  // `/models` path below without composing
+  // `…/chat/completions/v1/models`.
+  if (apiUrl.endsWith("/v1/chat/completions")) {
+    apiUrl = apiUrl.slice(0, -"/v1/chat/completions".length);
+  } else if (apiUrl.endsWith("/chat/completions")) {
+    apiUrl = apiUrl.slice(0, -"/chat/completions".length);
+  }
+  if (
+    apiUrl.endsWith("/v1/models") ||
+    apiUrl.endsWith("/models")
+  ) {
+    return apiUrl;
+  }
+  return `${apiUrl}/v1/models`;
+}
+
 /** Build the HTTP request for a streaming call. Exported for tests
  *  so they can assert that the wire format matches the Rust impl. */
 export function buildStreamRequest(
@@ -485,14 +532,206 @@ export function buildStreamRequest(
 }
 
 /**
+ * HTTP status codes that we treat as transient pre-stream failures
+ * and retry with exponential backoff. The set is deliberately
+ * narrow:
+ *
+ *   - **408 Request Timeout**: the server didn't respond in time;
+ *     a quick retry against the same edge often succeeds.
+ *   - **429 Too Many Requests**: rate limit hit; we honour the
+ *     `Retry-After` response header if present (see
+ *     {@link parseRetryAfter}) and otherwise fall back to the
+ *     standard exponential schedule.
+ *   - **500 Internal Server Error, 502 Bad Gateway, 503 Service
+ *     Unavailable, 504 Gateway Timeout**: edge / origin failures
+ *     that are routinely transient.
+ *
+ * Everything else — in particular **400/401/403/404/422** — is a
+ * client-side error (bad request shape, bad credentials, missing
+ * model, content-policy violation) that retrying cannot fix; we
+ * fail fast on those so the user sees the real error message
+ * immediately instead of waiting 7 seconds for the retry chain to
+ * exhaust against a permanent failure.
+ *
+ * This list mirrors the canonical "retryable upstream" set used by
+ * the OpenAI / Anthropic official client SDKs and by industry
+ * best-practice proxies (envoy, nginx-plus, traefik). Keeping it in
+ * sync means the desktop client doesn't develop its own opinion of
+ * which errors are transient versus permanent.
+ */
+const RETRYABLE_HTTP_STATUS_CODES: ReadonlySet<number> = new Set([
+  408, 429, 500, 502, 503, 504,
+]);
+
+/**
+ * Exponential-backoff schedule for the pre-stream retry loop.
+ * Delays in milliseconds for retry attempts 1, 2, 3. The schedule
+ * is doubled each step (1s, 2s, 4s) for a total wait of ≤7s under
+ * a worst-case three-retry chain. We deliberately do NOT add
+ * jitter — the desktop app issues at most one streaming request at
+ * a time per user gesture, so the thundering-herd concern that
+ * motivates jitter in server-side retry policies doesn't apply
+ * here.
+ *
+ * The user-visible "Stop generating" button (`ipc/model.ts`'s
+ * `AbortController`) interrupts this delay via the standard
+ * `AbortSignal` polling inside `delayWithAbort`, so a long
+ * `Retry-After` header does NOT trap the user; they can always
+ * cancel.
+ */
+const RETRY_DELAYS_MS: ReadonlyArray<number> = [1000, 2000, 4000];
+
+/**
+ * Parse an HTTP `Retry-After` header (RFC 7231 §7.1.3). Returns the
+ * delay in milliseconds, or `undefined` if the header is missing or
+ * unparseable. Accepts both numeric forms (delta-seconds) and
+ * HTTP-date forms.
+ *
+ * Returns `undefined` for negative or zero values so the caller
+ * falls through to the standard exponential schedule rather than
+ * retrying immediately (which would just thrash the upstream).
+ *
+ * Capped at 60 seconds: a server that asks for a multi-minute
+ * back-off effectively means the request will never succeed in
+ * this interactive session; the cap lets the retry chain exhaust
+ * and surface the 429 to the user, who can then back off manually.
+ */
+export function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+
+  // delta-seconds form.
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+    return Math.min(seconds * 1000, 60_000);
+  }
+
+  // HTTP-date form.
+  const ts = Date.parse(trimmed);
+  if (Number.isNaN(ts)) return undefined;
+  const deltaMs = ts - Date.now();
+  if (deltaMs <= 0) return undefined;
+  return Math.min(deltaMs, 60_000);
+}
+
+/**
+ * Sleep for `ms` milliseconds, but resolve early (and throw a
+ * `DOMException` named `"AbortError"`) if the supplied
+ * `AbortSignal` fires. The error shape matches what `fetch()`
+ * itself throws on `AbortController.abort()`, so the upstream
+ * caller's already-existing abort handling kicks in unchanged.
+ */
+function delayWithAbort(
+  ms: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * One attempt at the pre-stream HTTP exchange. Returns the open
+ * `Response` on a 2xx body, OR a sentinel describing a retryable
+ * status so the caller's loop can decide whether to back off and
+ * retry. Throws on non-retryable HTTP failures (the error message
+ * includes the upstream body so the user can see what went wrong)
+ * and on network-level failures (DNS, TLS, connection-refused).
+ *
+ * The function name reflects its scope: this is the PRE-STREAM
+ * boundary. Once the body opens (return value here), every
+ * subsequent failure is treated as mid-stream and is NOT retried
+ * — we don't want to silently re-deliver tokens the renderer has
+ * already shown to the user.
+ */
+interface OpenedResponse {
+  readonly status: "opened";
+  readonly response: Response;
+}
+interface RetryableStatus {
+  readonly status: "retryable";
+  readonly httpStatus: number;
+  readonly retryAfterMs: number | undefined;
+  readonly bodyPreview: string;
+}
+async function openExternalProviderStream(
+  req: BuildRequestResult,
+  signal: AbortSignal | undefined,
+): Promise<OpenedResponse | RetryableStatus> {
+  const res = await fetch(req.url, {
+    method: "POST",
+    headers: req.headers,
+    body: req.body,
+    signal,
+  });
+  if (res.ok) {
+    return { status: "opened", response: res };
+  }
+  if (RETRYABLE_HTTP_STATUS_CODES.has(res.status)) {
+    // Drain the body so the connection can be reused and so we can
+    // include a preview in the eventual user-visible error (if the
+    // retry chain exhausts). Errors here are swallowed because the
+    // status code is the authoritative signal, not the body shape.
+    const bodyPreview = await res.text().catch(() => "");
+    const retryAfterMs = parseRetryAfter(res.headers.get("retry-after"));
+    return {
+      status: "retryable",
+      httpStatus: res.status,
+      retryAfterMs,
+      bodyPreview,
+    };
+  }
+  // Non-retryable client error (400/401/403/404/422/…). Surface
+  // immediately so the user sees the real problem without 7 s of
+  // pointless retry delay.
+  const text = await res.text().catch(() => "");
+  throw new Error(
+    `External provider HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`,
+  );
+}
+
+/**
  * Stream tokens from the configured external provider, invoking
  * `emit` once per assembled chunk. Resolves with `void` when the
  * stream terminates (either by `[DONE]` / `message_stop` /
  * `finish_reason`, or by clean connection close).
  *
- * Throws on pre-stream errors (non-2xx status, network failure
- * before the body opens). Mid-stream errors propagate via the
- * `reader.read()` promise rejection.
+ * # Retry policy
+ *
+ * The PRE-STREAM HTTP exchange is wrapped in an exponential-backoff
+ * retry loop that retries transient upstream failures (408, 429,
+ * 500, 502, 503, 504) up to three times with delays of 1s / 2s / 4s
+ * (see {@link RETRY_DELAYS_MS}). On 429, the `Retry-After` response
+ * header is honoured (see {@link parseRetryAfter}); otherwise the
+ * standard schedule applies. Non-retryable HTTP failures
+ * (400/401/403/404/422/…) and network-level failures (DNS, TLS
+ * handshake, connection refused) throw immediately so the user
+ * sees the real error.
+ *
+ * Once the response body opens, we are mid-stream and **do NOT**
+ * retry on any subsequent failure — retrying mid-stream could
+ * silently re-deliver tokens that the renderer has already shown
+ * to the user, breaking the at-most-once delivery contract that
+ * `ipc/model.ts`'s `model:token` channel assumes.
+ *
+ * Throws on pre-stream errors (non-retryable status, exhausted
+ * retry chain, network failure before the body opens). Mid-stream
+ * errors propagate via the `reader.read()` promise rejection.
  *
  * The caller is responsible for emitting a final `{content: "",
  * stop: true}` chunk to its renderer-facing channel; this function
@@ -505,20 +744,42 @@ export async function streamExternalProvider(
   emit: (chunk: ExternalProviderStreamChunk) => void,
 ): Promise<void> {
   const req = buildStreamRequest(inputs);
-  const res = await fetch(req.url, {
-    method: "POST",
-    headers: req.headers,
-    body: req.body,
-    signal: inputs.signal,
-  });
+  // Retry loop for the pre-stream HTTP exchange. `attempt` is
+  // 0-indexed: attempt 0 is the initial try, attempts 1..N are
+  // retries. We stop after exhausting `RETRY_DELAYS_MS` (3 retries)
+  // or once the body opens.
+  let openedResponse: Response | undefined;
+  let lastRetryable: RetryableStatus | undefined;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    const outcome = await openExternalProviderStream(req, inputs.signal);
+    if (outcome.status === "opened") {
+      openedResponse = outcome.response;
+      break;
+    }
+    lastRetryable = outcome;
+    if (attempt === RETRY_DELAYS_MS.length) {
+      // Retry budget exhausted — surface the last transient error.
+      break;
+    }
+    const baseDelay = RETRY_DELAYS_MS[attempt];
+    // Honour `Retry-After` for the upcoming wait, but never wait
+    // LESS than the exponential schedule (so a server-sent
+    // `Retry-After: 0` can't trick us into a tight retry loop).
+    const delay = Math.max(baseDelay, outcome.retryAfterMs ?? 0);
+    await delayWithAbort(delay, inputs.signal);
+  }
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
+  if (!openedResponse) {
+    // The retry chain exhausted without opening a body. Surface the
+    // last transient status to the user; the body preview helps
+    // diagnose provider-side rate-limit / outage messages.
+    const last = lastRetryable as RetryableStatus;
     throw new Error(
-      `External provider HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`,
+      `External provider HTTP ${last.httpStatus} after ${RETRY_DELAYS_MS.length + 1} attempts${last.bodyPreview ? `: ${last.bodyPreview.slice(0, 200)}` : ""}`,
     );
   }
 
+  const res = openedResponse;
   const reader = res.body?.getReader();
   if (!reader) {
     throw new Error("External provider response had no body to stream");

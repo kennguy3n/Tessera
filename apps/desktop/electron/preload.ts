@@ -246,6 +246,10 @@ const api: TesseraApi = {
     set: (provider: ExternalProviderConfigInput, apiKey: string | null) =>
       ipcRenderer.invoke("externalProvider:set", provider, apiKey),
     test: () => ipcRenderer.invoke("externalProvider:test"),
+    listModels: () => ipcRenderer.invoke("externalProvider:listModels"),
+    getTokenUsage: () => ipcRenderer.invoke("externalProvider:getTokenUsage"),
+    resetTokenUsage: () =>
+      ipcRenderer.invoke("externalProvider:resetTokenUsage"),
   },
   model: {
     status: () => ipcRenderer.invoke("model:status"),

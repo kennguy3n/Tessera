@@ -235,6 +235,22 @@ const mockApi = {
         apiKey === null ? false : apiKey === "" ? false : true,
     })),
     test: vi.fn().mockResolvedValue({ ok: true, latencyMs: 42 }),
+    listModels: vi
+      .fn()
+      .mockResolvedValue({
+        ok: true,
+        models: ["gpt-3.5-turbo", "gpt-4o", "gpt-4o-mini"],
+      }),
+    getTokenUsage: vi.fn().mockResolvedValue({
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      lastResetDate: new Date(0).toISOString(),
+    }),
+    resetTokenUsage: vi.fn().mockResolvedValue({
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      lastResetDate: new Date().toISOString(),
+    }),
   },
   model: {
     status: vi.fn().mockResolvedValue({

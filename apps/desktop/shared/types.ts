@@ -271,6 +271,40 @@ export type ExternalProviderTestResult =
   | { ok: true; latencyMs: number }
   | { ok: false; error: string };
 
+/**
+ * Result of listing available models from an OpenAI-compatible
+ * provider via `GET /v1/models`. Discriminated on `ok` so renderer
+ * code can switch on success vs. failure without crashing on
+ * provider-not-supported or transport errors.
+ *
+ * - `ok: true, models: string[]`: at least one model id was
+ *   returned. Sorted alphabetically by id for stable display.
+ * - `ok: false, kind: "unsupported"`: the configured provider does
+ *   not expose a models endpoint (Anthropic). The renderer should
+ *   gracefully degrade to the manual text input.
+ * - `ok: false, kind: "error", error: string`: network or HTTP
+ *   error. The renderer should surface the message and keep the
+ *   manual text input.
+ */
+export type ExternalProviderListModelsResult =
+  | { ok: true; models: string[] }
+  | { ok: false; kind: "unsupported" }
+  | { ok: false; kind: "error"; error: string };
+
+/**
+ * Cumulative external-provider token usage. The shape and units are
+ * documented in `electron/tokenCounter.ts`. Lives in `AppConfig` so
+ * it survives launches; the renderer reads it via
+ * `externalProvider.getTokenUsage` and resets it via
+ * `externalProvider.resetTokenUsage`.
+ */
+export interface ExternalProviderTokenUsage {
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  /** ISO-8601 timestamp when the counter was last reset. */
+  lastResetDate: string;
+}
+
 // -----------------------------------------------------------------
 // Tasks & decisions
 // -----------------------------------------------------------------
@@ -694,6 +728,17 @@ export interface ExternalProviderApi {
     apiKey: string | null,
   ) => Promise<ExternalProviderConfigView>;
   test: () => Promise<ExternalProviderTestResult>;
+  /** List available models from the configured OpenAI-compatible
+   *  provider via `GET /v1/models`. Anthropic providers return
+   *  `{ ok: false, kind: "unsupported" }`; network/HTTP errors
+   *  return `{ ok: false, kind: "error", error }`. */
+  listModels: () => Promise<ExternalProviderListModelsResult>;
+  /** Read the cumulative external-provider token-usage counter.
+   *  See `electron/tokenCounter.ts` for the heuristic and rationale. */
+  getTokenUsage: () => Promise<ExternalProviderTokenUsage>;
+  /** Reset the cumulative external-provider token-usage counter to
+   *  zero (with `lastResetDate` updated to now). */
+  resetTokenUsage: () => Promise<ExternalProviderTokenUsage>;
 }
 
 export interface ModelApi {

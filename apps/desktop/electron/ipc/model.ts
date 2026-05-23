@@ -14,12 +14,17 @@ import { getModelSidecar } from "../appState";
 import type { ModelStatus } from "../../shared/types";
 import { assertString } from "./validate";
 import { GenerateRequestSchema } from "./schemas";
-import { loadConfig, type ExternalProviderConfig } from "../config";
+import { loadConfig, updateConfig, type ExternalProviderConfig } from "../config";
 import * as secretsVault from "../secretsVault";
 import {
   streamExternalProvider,
   type ExternalProviderStreamChunk,
 } from "../externalProviderStream";
+import {
+  estimateTokens,
+  accumulateTokenUsage,
+  type ExternalProviderTokenUsage,
+} from "../tokenCounter";
 
 /**
  * Bind a destroyed-window-safe sender for an IPC channel.
@@ -181,6 +186,31 @@ export function registerModelHandlers(): void {
     const adapter = resolveGenerationAdapter();
 
     if (adapter.kind === "external") {
+      // Token-usage accounting for the optional external provider.
+      //
+      // We use a CLIENT-SIDE heuristic (see `tokenCounter.ts`)
+      // rather than the provider's authoritative `usage` field
+      // because OpenAI's `chat.completion.chunk.usage` requires
+      // `stream_options.include_usage = true` (not supported by
+      // every OpenAI-compatible proxy — Ollama, vLLM, LM Studio,
+      // llama-server OpenAI shim — so turning it on would
+      // silently degrade routing) and Anthropic's `usage` lives
+      // in `message_start` / `message_delta` events we currently
+      // treat as opaque framing.
+      //
+      // The prompt-token estimate is computed ONCE at the start.
+      // Response-token estimates accumulate per delivered chunk
+      // (NOT per byte; chunks already align with token boundaries
+      // for OpenAI-compatible deltas, and Anthropic deltas
+      // similarly align). We persist the cumulative usage
+      // exactly ONCE per stream — in the `finally` block —
+      // because writing on every chunk would amplify disk I/O
+      // 100x for a 100-token completion and would race the IPC
+      // settings handlers if the renderer happens to read the
+      // counter mid-stream. The end-of-stream write captures the
+      // final cumulative value.
+      const promptTokens = estimateTokens(parsed.prompt);
+      let completionTokens = 0;
       try {
         await streamExternalProvider(
           {
@@ -193,6 +223,7 @@ export function registerModelHandlers(): void {
           },
           (chunk: ExternalProviderStreamChunk) => {
             if (chunk.content.length > 0) {
+              completionTokens += estimateTokens(chunk.content);
               sendToken({ token: chunk.content, done: false });
             }
           },
@@ -204,6 +235,27 @@ export function registerModelHandlers(): void {
         if (!sentDone) {
           sendToken({ token: "", done: true });
           sentDone = true;
+        }
+        // Persist the cumulative usage delta. This runs even on
+        // mid-stream failure (network drop, abort) so a partial
+        // completion still counts the tokens the user actually
+        // received — they were billed for those tokens by the
+        // upstream provider regardless of whether the stream
+        // completed cleanly. Errors during the config write are
+        // swallowed because (1) the disk write is best-effort
+        // for an informational counter and (2) propagating them
+        // would mask the original generation error.
+        try {
+          const current = loadConfig();
+          const previous: ExternalProviderTokenUsage =
+            current.externalProviderTokenUsage;
+          const next = accumulateTokenUsage(previous, {
+            promptTokens,
+            completionTokens,
+          });
+          updateConfig({ externalProviderTokenUsage: next });
+        } catch {
+          // Best-effort; see comment above.
         }
       }
       return;

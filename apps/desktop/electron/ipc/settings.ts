@@ -12,9 +12,12 @@ import {
   loadConfig,
   updateConfig,
   DEFAULT_EXTERNAL_PROVIDER,
+  DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE,
   type ExternalProviderConfig,
 } from "../config";
+import { createEmptyTokenUsage } from "../tokenCounter";
 import { resolveProviderEndpoint } from "../externalProviderStream";
+import { listExternalProviderModels } from "../externalProviderModels";
 import * as secretsVault from "../secretsVault";
 import type { SettingsData } from "../../shared/types";
 import {
@@ -188,6 +191,54 @@ export function registerSettingsHandlers(): void {
       };
     },
   );
+
+  idempotentHandle("externalProvider:listModels", async () => {
+    const config = loadConfig();
+    const provider = config.externalProvider;
+    if (!provider || !provider.enabled) {
+      return { ok: false, kind: "error", error: "External provider is disabled" };
+    }
+    if (!provider.apiUrl.trim()) {
+      return { ok: false, kind: "error", error: "API URL is required" };
+    }
+    if (!secretsVault.hasSecret(provider.apiKeyRef)) {
+      return {
+        ok: false,
+        kind: "error",
+        error: "API key has not been stored",
+      };
+    }
+    const apiKey = secretsVault.getSecret(provider.apiKeyRef);
+    if (!apiKey) {
+      return {
+        ok: false,
+        kind: "error",
+        error: "API key has not been stored",
+      };
+    }
+    return await listExternalProviderModels(provider, apiKey);
+  });
+
+  idempotentHandle("externalProvider:getTokenUsage", async () => {
+    const config = loadConfig();
+    return (
+      config.externalProviderTokenUsage ?? {
+        ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE,
+      }
+    );
+  });
+
+  idempotentHandle("externalProvider:resetTokenUsage", async () => {
+    // The reset writes a fresh record with `lastResetDate = now()`
+    // so the renderer's "since &lt;date&gt;" label updates
+    // immediately after the user clicks the button. The two
+    // counters drop to zero; the field is persisted via the same
+    // `updateConfig` write-through path settings updates use, so a
+    // subsequent main-process crash / kill cannot lose the reset.
+    const fresh = createEmptyTokenUsage();
+    updateConfig({ externalProviderTokenUsage: fresh });
+    return fresh;
+  });
 
   idempotentHandle("externalProvider:test", async () => {
     const config = loadConfig();

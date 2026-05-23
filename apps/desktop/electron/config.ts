@@ -17,6 +17,8 @@ import {
 // (`ExternalProviderConfigInput`) and the on-disk config shape
 // (`ExternalProviderConfig`) cannot drift apart.
 export type { ExternalProviderType };
+import type { ExternalProviderTokenUsage } from "../shared/types";
+export type { ExternalProviderTokenUsage };
 
 export interface ExternalProviderConfig {
   enabled: boolean;
@@ -44,6 +46,9 @@ export interface AppConfig {
   lastOpenedArtifacts: string[];
   sourcePaths: string[];
   externalProvider: ExternalProviderConfig;
+  /** Cumulative external-provider token usage. See
+   *  `electron/tokenCounter.ts` for the heuristic and rationale. */
+  externalProviderTokenUsage: ExternalProviderTokenUsage;
   /** When true the renderer should auto-check for updates on launch. */
   autoUpdate: boolean;
 }
@@ -73,6 +78,27 @@ export const DEFAULT_EXTERNAL_PROVIDER: Readonly<ExternalProviderConfig> =
     maxRetries: 2,
   });
 
+/**
+ * Default external-provider token usage. The `lastResetDate`
+ * captures the *first-launch* timestamp so the "used since
+ * &lt;date&gt;" label in `SettingsPage` displays a meaningful date
+ * for users who never explicitly reset. Re-evaluated at every
+ * module load, but `loadConfig` heals stale defaults into the
+ * persisted record on disk on first read, so the stored timestamp
+ * is stable across launches once the config file exists.
+ *
+ * NOT frozen because consumers spread this into the persisted
+ * `AppConfig.externalProviderTokenUsage` (mutability via the
+ * `updateConfig` path expects a fresh mutable copy). Tests
+ * verifying immutability should snapshot via spread, not by
+ * reference.
+ */
+export const DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE: ExternalProviderTokenUsage = {
+  totalPromptTokens: 0,
+  totalCompletionTokens: 0,
+  lastResetDate: new Date(0).toISOString(),
+};
+
 const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   windowWidth: 1280,
   windowHeight: 800,
@@ -96,6 +122,9 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   lastOpenedArtifacts: Object.freeze([]) as readonly string[] as string[],
   sourcePaths: Object.freeze([]) as readonly string[] as string[],
   externalProvider: DEFAULT_EXTERNAL_PROVIDER,
+  externalProviderTokenUsage: Object.freeze(
+    DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE,
+  ) as ExternalProviderTokenUsage,
   autoUpdate: true,
 });
 
@@ -151,6 +180,31 @@ const ExternalProviderConfigOnDiskSchema = z
   .loose()
   .catch(() => ({ ...DEFAULT_EXTERNAL_PROVIDER }));
 
+/**
+ * On-disk schema for `AppConfig.externalProviderTokenUsage`. Each
+ * field has a `.catch()` heal so a corrupted persisted value (e.g.
+ * a future version wrote `totalPromptTokens: "lots"` or someone
+ * hand-edited the JSON) doesn't blow up the entire config load.
+ *
+ * The reset-date factory `() => new Date(0).toISOString()` matches
+ * `DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE` and is intentionally
+ * `1970-01-01` rather than "now" — a corrupted timestamp shouldn't
+ * silently roll the displayed reset date forward, which would
+ * obscure the original first-launch date in the UI.
+ */
+const ExternalProviderTokenUsageOnDiskSchema = z
+  .object({
+    totalPromptTokens: z.number().int().min(0).catch(0),
+    totalCompletionTokens: z.number().int().min(0).catch(0),
+    lastResetDate: z
+      .string()
+      .min(1)
+      .max(64)
+      .catch(() => new Date(0).toISOString()),
+  })
+  .loose()
+  .catch(() => ({ ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE }));
+
 const AppConfigSchema = z
   .object({
     // `windowX` and `windowY` need their own `.catch(undefined)` (even
@@ -195,6 +249,7 @@ const AppConfigSchema = z
       .max(10_000)
       .catch(() => []),
     externalProvider: ExternalProviderConfigOnDiskSchema,
+    externalProviderTokenUsage: ExternalProviderTokenUsageOnDiskSchema,
     autoUpdate: z.boolean().catch(true),
   })
   // `.loose()` (zod 4's rename of `.passthrough()`) preserves unknown
@@ -212,6 +267,7 @@ const AppConfigSchema = z
   .catch(() => ({
     ...DEFAULT_CONFIG,
     externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
+    externalProviderTokenUsage: { ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE },
   }));
 
 function getConfigPath(): string {
@@ -390,10 +446,15 @@ function readConfigFromDisk(configPath: string): AppConfig {
         ...DEFAULT_EXTERNAL_PROVIDER,
         ...healed.externalProvider,
       };
+      const externalProviderTokenUsage: ExternalProviderTokenUsage = {
+        ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE,
+        ...healed.externalProviderTokenUsage,
+      };
       return {
         ...DEFAULT_CONFIG,
         ...healed,
         externalProvider,
+        externalProviderTokenUsage,
       };
     }
   } catch {
@@ -405,6 +466,7 @@ function readConfigFromDisk(configPath: string): AppConfig {
   return {
     ...DEFAULT_CONFIG,
     externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
+    externalProviderTokenUsage: { ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE },
   };
 }
 
@@ -461,8 +523,15 @@ export function saveConfig(config: AppConfig): void {
  * `updateConfig({ externalProvider: { enabled: true } })` without
  * accidentally clobbering `apiUrl`, `apiKeyRef`, etc.
  */
-export type AppConfigPartial = Omit<Partial<AppConfig>, "externalProvider"> & {
+export type AppConfigPartial = Omit<
+  Partial<AppConfig>,
+  "externalProvider" | "externalProviderTokenUsage"
+> & {
   externalProvider?: Partial<ExternalProviderConfig>;
+  /** Same field-by-field merge semantics as `externalProvider`:
+   *  passing `{ totalPromptTokens: 100 }` updates that field
+   *  without clobbering the other two. */
+  externalProviderTokenUsage?: Partial<ExternalProviderTokenUsage>;
 };
 
 /**
@@ -491,7 +560,11 @@ export type AppConfigPartial = Omit<Partial<AppConfig>, "externalProvider"> & {
  */
 export function updateConfig(partial: AppConfigPartial): void {
   const current = loadConfig();
-  const { externalProvider: providerPartial, ...topLevel } = partial;
+  const {
+    externalProvider: providerPartial,
+    externalProviderTokenUsage: usagePartial,
+    ...topLevel
+  } = partial;
   const mergedProvider: ExternalProviderConfig | undefined =
     providerPartial !== undefined
       ? {
@@ -499,10 +572,18 @@ export function updateConfig(partial: AppConfigPartial): void {
           ...providerPartial,
         }
       : undefined;
+  const mergedUsage: ExternalProviderTokenUsage | undefined =
+    usagePartial !== undefined
+      ? {
+          ...current.externalProviderTokenUsage,
+          ...usagePartial,
+        }
+      : undefined;
   const updated: AppConfig = {
     ...current,
     ...topLevel,
     ...(mergedProvider ? { externalProvider: mergedProvider } : {}),
+    ...(mergedUsage ? { externalProviderTokenUsage: mergedUsage } : {}),
   };
   saveConfig(updated);
 }

@@ -4,9 +4,38 @@ import Button from "./Button";
 import type {
   ExternalProviderConfigInput,
   ExternalProviderConfigView,
+  ExternalProviderListModelsResult,
   ExternalProviderTestResult,
+  ExternalProviderTokenUsage,
   ExternalProviderType,
 } from "../types/ipc";
+
+/** Format a token count for compact display, e.g. 1234 -> "1.2k",
+ *  1_234_567 -> "1.2M". Used in the token-usage row to keep the UI
+ *  width stable as the counter grows over time. The threshold for
+ *  switching units is intentionally low (1_000) so small counts
+ *  still show meaningful precision for users running tests. */
+function formatTokenCount(n: number): string {
+  if (n < 1_000) return n.toLocaleString();
+  if (n < 1_000_000) return `${(n / 1_000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(2)}M`;
+}
+
+/** Format an ISO-8601 reset date for the "since &lt;date&gt;" label.
+ *  A first-launch sentinel (epoch zero, before 2010) is displayed
+ *  as "since first launch" so the UI doesn't show a confusing
+ *  1970 date for users who never explicitly reset. */
+function formatResetDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime()) || d.getFullYear() < 2010) {
+    return "since first launch";
+  }
+  return `since ${d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  })}`;
+}
 
 /**
  * Settings card that owns the user's optional external LLM provider
@@ -44,11 +73,29 @@ export default function ExternalProviderCard() {
     | { kind: "saved" }
     | { kind: "test_ok"; latencyMs: number }
     | { kind: "error"; message: string }
+    | { kind: "usage_reset" }
   >({ kind: "idle" });
+  const [tokenUsage, setTokenUsage] =
+    useState<ExternalProviderTokenUsage | null>(null);
+  /** When set, displays the dropdown populated from
+   *  `externalProvider:listModels`. Null means the dropdown has
+   *  never been opened — the manual text input is the only
+   *  control. Empty array means "list returned no models"
+   *  (different from "never listed"). */
+  const [availableModels, setAvailableModels] = useState<string[] | null>(
+    null,
+  );
 
   const refresh = useCallback(async () => {
-    const cur = await window.tessera.externalProvider.get();
+    // Fetch both the provider config AND the token usage in
+    // parallel — they're independent IPC calls and the user
+    // sees the card update in one frame instead of two.
+    const [cur, usage] = await Promise.all([
+      window.tessera.externalProvider.get(),
+      window.tessera.externalProvider.getTokenUsage(),
+    ]);
     setProvider(cur);
+    setTokenUsage(usage);
     setDraftKey("");
     setClearKey(false);
   }, []);
@@ -56,6 +103,41 @@ export default function ExternalProviderCard() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const onListModels = useCallback(async () => {
+    setBusy(true);
+    setStatus({ kind: "idle" });
+    try {
+      const result: ExternalProviderListModelsResult =
+        await window.tessera.externalProvider.listModels();
+      if (result.ok) {
+        setAvailableModels(result.models);
+      } else if (result.kind === "unsupported") {
+        setStatus({
+          kind: "error",
+          message:
+            "Model listing is not available for this provider — keep using the manual model name input.",
+        });
+      } else {
+        setStatus({ kind: "error", message: result.error });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const onResetTokenUsage = useCallback(async () => {
+    try {
+      const fresh = await window.tessera.externalProvider.resetTokenUsage();
+      setTokenUsage(fresh);
+      setStatus({ kind: "usage_reset" });
+    } catch (e) {
+      setStatus({
+        kind: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }, []);
 
   if (!provider) {
     return (
@@ -243,20 +325,78 @@ export default function ExternalProviderCard() {
           </div>
 
           <div style={fieldRow}>
-            <label style={fieldLabel} htmlFor="external-provider-model">
-              Model name
-            </label>
-            <input
-              id="external-provider-model"
-              className="input"
-              value={provider.modelName}
-              onChange={(e) => setField("modelName", e.target.value)}
-              placeholder={
-                provider.providerType === "anthropic"
-                  ? "claude-3-5-sonnet-latest"
-                  : "gpt-4o-mini / llama3.1:8b / etc."
-              }
-            />
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: "var(--spacing-xs)",
+              }}
+            >
+              <label
+                style={{ ...fieldLabel, marginBottom: 0 }}
+                htmlFor="external-provider-model"
+              >
+                Model name
+              </label>
+              {provider.providerType !== "anthropic" && (
+                <Button
+                  variant="secondary"
+                  onClick={onListModels}
+                  disabled={busy || !provider.apiUrl.trim()}
+                  aria-label="Fetch available models from this provider"
+                >
+                  List models
+                </Button>
+              )}
+            </div>
+            {availableModels && availableModels.length > 0 ? (
+              <select
+                id="external-provider-model"
+                className="input"
+                value={
+                  availableModels.includes(provider.modelName)
+                    ? provider.modelName
+                    : ""
+                }
+                onChange={(e) => {
+                  if (e.target.value === "__manual__") {
+                    // Switch back to manual entry by clearing the
+                    // populated list. The current modelName is
+                    // preserved so the user can edit it.
+                    setAvailableModels(null);
+                  } else {
+                    setField("modelName", e.target.value);
+                  }
+                }}
+              >
+                {!availableModels.includes(provider.modelName) && (
+                  <option value="">
+                    {provider.modelName
+                      ? `Current: ${provider.modelName} (not in list)`
+                      : "— select a model —"}
+                  </option>
+                )}
+                {availableModels.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+                <option value="__manual__">— enter manually —</option>
+              </select>
+            ) : (
+              <input
+                id="external-provider-model"
+                className="input"
+                value={provider.modelName}
+                onChange={(e) => setField("modelName", e.target.value)}
+                placeholder={
+                  provider.providerType === "anthropic"
+                    ? "claude-3-5-sonnet-latest"
+                    : "gpt-4o-mini / llama3.1:8b / etc."
+                }
+              />
+            )}
           </div>
 
           <div style={fieldRow}>
@@ -386,6 +526,75 @@ export default function ExternalProviderCard() {
         )}
       </div>
 
+      {tokenUsage && (
+        <div
+          style={{
+            marginTop: "var(--spacing-lg)",
+            paddingTop: "var(--spacing-md)",
+            borderTop: "1px solid var(--color-border)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: "var(--spacing-xs)",
+            }}
+          >
+            <h4
+              style={{
+                margin: 0,
+                fontSize: "var(--font-size-sm)",
+                color: "var(--color-text-headline)",
+              }}
+            >
+              Token usage
+            </h4>
+            <Button
+              onClick={onResetTokenUsage}
+              variant="secondary"
+              aria-label="Reset external provider token usage counter"
+              disabled={busy}
+            >
+              Reset counter
+            </Button>
+          </div>
+          <p
+            role="status"
+            aria-live="polite"
+            style={{
+              margin: 0,
+              fontSize: "var(--font-size-sm)",
+              color: "var(--color-text-secondary)",
+            }}
+          >
+            ~
+            <span style={{ color: "var(--color-text)" }}>
+              {formatTokenCount(
+                tokenUsage.totalPromptTokens + tokenUsage.totalCompletionTokens,
+              )}
+            </span>{" "}
+            tokens used {formatResetDate(tokenUsage.lastResetDate)}{" "}
+            <span style={{ color: "var(--color-text-tertiary)" }}>
+              (prompt {formatTokenCount(tokenUsage.totalPromptTokens)},
+              completion {formatTokenCount(tokenUsage.totalCompletionTokens)})
+            </span>
+          </p>
+          <p
+            style={{
+              marginTop: "var(--spacing-xs)",
+              fontSize: "var(--font-size-xs)",
+              color: "var(--color-text-tertiary)",
+            }}
+          >
+            Counts are client-side estimates (~4 chars/token) since not every
+            OpenAI-compatible proxy returns authoritative usage in stream
+            mode. Use the provider's billing dashboard for exact figures.
+          </p>
+        </div>
+      )}
+
       {status.kind === "saved" && (
         <p
           role="status"
@@ -396,6 +605,18 @@ export default function ExternalProviderCard() {
           }}
         >
           Saved.
+        </p>
+      )}
+      {status.kind === "usage_reset" && (
+        <p
+          role="status"
+          style={{
+            marginTop: "var(--spacing-md)",
+            color: "var(--color-success)",
+            fontSize: "var(--font-size-sm)",
+          }}
+        >
+          Token counter reset.
         </p>
       )}
       {status.kind === "test_ok" && (

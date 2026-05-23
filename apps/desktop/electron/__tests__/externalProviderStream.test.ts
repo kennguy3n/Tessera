@@ -6,6 +6,7 @@ import {
   newSseParserState,
   buildStreamRequest,
   streamExternalProvider,
+  parseRetryAfter,
   type ExternalProviderStreamChunk,
 } from "../externalProviderStream";
 import type { ExternalProviderConfig } from "../config";
@@ -524,4 +525,219 @@ describe("externalProviderStream — reader cleanup on early break", () => {
   // microtask the throw propagated through. The two tests above
   // already pin the regression: every non-natural exit path goes
   // through the `finally` block which awaits `reader.cancel()`.
+});
+
+describe("externalProviderStream — pre-stream retry with exponential backoff", () => {
+  // The retry loop in `streamExternalProvider` wraps the
+  // pre-stream HTTP exchange. The body stream itself is NEVER
+  // retried (mid-stream retries would silently re-deliver tokens).
+  //
+  // Tests use vitest fake timers so the 1s/2s/4s backoff schedule
+  // doesn't actually wait — we advance the timer manually after
+  // every retryable response.
+
+  /** Mock a 503 (or other transient) HTTP response that doesn't open
+   *  a stream body. The `Response` constructor with a non-empty
+   *  body is enough; the retry loop checks `res.ok` BEFORE reading
+   *  the body. */
+  function makeErrorResponse(
+    status: number,
+    body: string = "",
+    headers: Record<string, string> = {},
+  ): Response {
+    return new Response(body, { status, headers });
+  }
+
+  /** Mock a 200 SSE response with a single content delta + DONE.
+   *  Used for the "succeeds after N retries" tests. */
+  function makeSuccessResponse(): Response {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n' +
+              "data: [DONE]\n\n",
+          ),
+        );
+        controller.close();
+      },
+    });
+    return new Response(stream, { status: 200 });
+  }
+
+  it("retries on 503 twice then succeeds on the third attempt", async () => {
+    vi.useFakeTimers();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(makeErrorResponse(503, "service unavailable"))
+      .mockResolvedValueOnce(makeErrorResponse(503, "service unavailable"))
+      .mockResolvedValueOnce(makeSuccessResponse());
+    const emitted: ExternalProviderStreamChunk[] = [];
+    const streamPromise = streamExternalProvider(
+      { provider: mkProvider(), apiKey: "sk", prompt: "hi" },
+      (c) => emitted.push(c),
+    );
+    // Advance through the 1s + 2s schedule. The third attempt
+    // returns 200 and the stream drains naturally.
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
+    await streamPromise;
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(emitted.map((c) => c.content)).toEqual(["ok"]);
+    fetchSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("does NOT retry on 401 (client error) — fails immediately on first attempt", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(makeErrorResponse(401, "invalid api key"));
+    await expect(
+      streamExternalProvider(
+        { provider: mkProvider(), apiKey: "sk-bad", prompt: "hi" },
+        () => {},
+      ),
+    ).rejects.toThrow(/HTTP 401/);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    fetchSpy.mockRestore();
+  });
+
+  it("does NOT retry on 400 (bad request) — fails immediately", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        makeErrorResponse(400, '{"error":"bad request"}'),
+      );
+    await expect(
+      streamExternalProvider(
+        { provider: mkProvider(), apiKey: "sk", prompt: "hi" },
+        () => {},
+      ),
+    ).rejects.toThrow(/HTTP 400/);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    fetchSpy.mockRestore();
+  });
+
+  it("does NOT retry on 403 (forbidden) — fails immediately", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(makeErrorResponse(403, "forbidden"));
+    await expect(
+      streamExternalProvider(
+        { provider: mkProvider(), apiKey: "sk", prompt: "hi" },
+        () => {},
+      ),
+    ).rejects.toThrow(/HTTP 403/);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    fetchSpy.mockRestore();
+  });
+
+  it("exhausts retry budget after 4 attempts (1 + 3 retries) on persistent 502", async () => {
+    vi.useFakeTimers();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(makeErrorResponse(502, "bad gateway"));
+    const streamPromise = streamExternalProvider(
+      { provider: mkProvider(), apiKey: "sk", prompt: "hi" },
+      () => {},
+    );
+    const rejection = expect(streamPromise).rejects.toThrow(
+      /HTTP 502 after 4 attempts/,
+    );
+    // Walk through the full 1s + 2s + 4s schedule.
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(4000);
+    await rejection;
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    fetchSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("honours `Retry-After: 5` (seconds) on 429, waiting at least 5s before next attempt", async () => {
+    vi.useFakeTimers();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        makeErrorResponse(429, "rate limited", { "retry-after": "5" }),
+      )
+      .mockResolvedValueOnce(makeSuccessResponse());
+    const streamPromise = streamExternalProvider(
+      { provider: mkProvider(), apiKey: "sk", prompt: "hi" },
+      () => {},
+    );
+    // The first attempt returned 429 with Retry-After: 5 → we
+    // should be waiting ~5 s, not the 1 s default. Advancing 1 s
+    // should NOT trigger the second fetch yet.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // Now advance the remaining 4 s and the second attempt fires.
+    await vi.advanceTimersByTimeAsync(4000);
+    await streamPromise;
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    fetchSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("AbortSignal during backoff delay rejects immediately with AbortError", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(makeErrorResponse(503, "transient"));
+    const streamPromise = streamExternalProvider(
+      {
+        provider: mkProvider(),
+        apiKey: "sk",
+        prompt: "hi",
+        signal: controller.signal,
+      },
+      () => {},
+    );
+    // The first 503 has fired; we're mid-backoff. Cancel.
+    const rejection = expect(streamPromise).rejects.toThrow(/Aborted/);
+    controller.abort();
+    await rejection;
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    fetchSpy.mockRestore();
+    vi.useRealTimers();
+  });
+});
+
+describe("externalProviderStream — parseRetryAfter", () => {
+  it("parses delta-seconds form", () => {
+    expect(parseRetryAfter("5")).toBe(5000);
+    expect(parseRetryAfter("30")).toBe(30_000);
+    expect(parseRetryAfter("  10  ")).toBe(10_000);
+  });
+
+  it("caps at 60s for excessive delta-seconds values", () => {
+    expect(parseRetryAfter("120")).toBe(60_000);
+    expect(parseRetryAfter("3600")).toBe(60_000);
+  });
+
+  it("returns undefined for missing / blank / zero / negative", () => {
+    expect(parseRetryAfter(null)).toBeUndefined();
+    expect(parseRetryAfter("")).toBeUndefined();
+    expect(parseRetryAfter("   ")).toBeUndefined();
+    expect(parseRetryAfter("0")).toBeUndefined();
+  });
+
+  it("returns undefined for unparseable strings", () => {
+    expect(parseRetryAfter("not-a-date")).toBeUndefined();
+    expect(parseRetryAfter("abc")).toBeUndefined();
+  });
+
+  it("parses HTTP-date form (future date)", () => {
+    const future = new Date(Date.now() + 10_000).toUTCString();
+    const ms = parseRetryAfter(future);
+    // Allow ±500ms slack for test-execution timing.
+    expect(ms).toBeGreaterThan(8_500);
+    expect(ms).toBeLessThanOrEqual(10_000);
+  });
+
+  it("returns undefined for HTTP-date in the past", () => {
+    const past = new Date(Date.now() - 10_000).toUTCString();
+    expect(parseRetryAfter(past)).toBeUndefined();
+  });
 });

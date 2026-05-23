@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Card from "../components/Card";
+import StopGenerationButton from "../components/StopGenerationButton";
 import {
   DocumentEditor,
   SlideEditor,
@@ -472,6 +473,7 @@ export default function ArtifactEditorPage() {
         description={`${artifact.artifactType} — v${artifact.version}`}
         actions={
           <div style={{ display: "flex", gap: "var(--spacing-sm)" }}>
+            <StopGenerationButton />
             <select
               aria-label="Export artifact"
               disabled={exporting}
