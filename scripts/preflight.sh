@@ -28,11 +28,12 @@
 
 set -euo pipefail
 
-# Mirror the CI workflow's global RUSTFLAGS (ci.yml line 18). Without
-# this, `cargo test --all` (and any plain `cargo build` it triggers)
-# would only emit warnings while CI treats those same warnings as
-# errors — a release-day surprise we exist to prevent. We append rather
-# than overwrite so a developer's pre-existing RUSTFLAGS (e.g. for
+# Mirror the CI workflow's global RUSTFLAGS (the workflow-level
+# `env:` block in .github/workflows/ci.yml). Without this,
+# `cargo test --all` (and any plain `cargo build` it triggers) would
+# only emit warnings while CI treats those same warnings as errors —
+# a release-day surprise we exist to prevent. We append rather than
+# overwrite so a developer's pre-existing RUSTFLAGS (e.g. for
 # target-cpu tuning) is preserved.
 if [[ -n "${RUSTFLAGS:-}" ]]; then
   export RUSTFLAGS="${RUSTFLAGS} -D warnings"
@@ -161,12 +162,15 @@ detect_version() {
 # Step registration
 # ----------------------------------------------------------------------
 
-# 1) Rust formatting check — same command CI runs (ci.yml line 103).
+# 1) Rust formatting check — same command the CI workflow runs in
+#    the "Check formatting" step of the `rust` job.
 register_step "Rust format check (cargo fmt --all -- --check)" \
   "cargo fmt --all -- --check"
 
-# 2) Rust clippy with warnings-as-errors — same command CI runs
-#    (ci.yml line 104; RUSTFLAGS="-D warnings" is set globally there).
+# 2) Rust clippy with warnings-as-errors — same command the CI
+#    workflow runs in the "Clippy" step of the `rust` job
+#    (RUSTFLAGS="-D warnings" is set globally in the workflow's
+#    top-level `env:` block; we propagate it above).
 register_step "Rust clippy (cargo clippy --all-targets --all-features -- -D warnings)" \
   "cargo clippy --all-targets --all-features -- -D warnings"
 

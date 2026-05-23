@@ -45,11 +45,12 @@ param(
 # the failure banner has the correct step name.
 $ErrorActionPreference = 'Stop'
 
-# Mirror the CI workflow's global RUSTFLAGS (ci.yml line 18). Without
-# this, `cargo test --all` (and any plain `cargo build` it triggers)
-# would only emit warnings while CI treats those same warnings as
-# errors — a release-day surprise we exist to prevent. We append rather
-# than overwrite so a developer's pre-existing RUSTFLAGS (e.g. for
+# Mirror the CI workflow's global RUSTFLAGS (the workflow-level
+# `env:` block in .github/workflows/ci.yml). Without this,
+# `cargo test --all` (and any plain `cargo build` it triggers) would
+# only emit warnings while CI treats those same warnings as errors —
+# a release-day surprise we exist to prevent. We append rather than
+# overwrite so a developer's pre-existing RUSTFLAGS (e.g. for
 # target-cpu tuning) is preserved.
 # PowerShell 5.1 lacks the `??` null-coalescing operator, so we
 # explicitly normalise an unset env var to the empty string before
@@ -124,11 +125,41 @@ function Invoke-AllSteps {
         # having PowerShell short-circuit.
         $prevPref = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
+        # Track whether the dispatched command actually launched. A
+        # command-not-found (e.g. cargo is not installed) raises a
+        # CommandNotFoundException without ever updating
+        # $LASTEXITCODE, so without this guard the bash version
+        # (which sees exit 127 from `bash -o pipefail -c`) would be
+        # strictly more robust than the PowerShell one.
+        $stepFailure = $null
         try {
             & $step.Action
         }
+        catch [System.Management.Automation.CommandNotFoundException] {
+            $stepFailure = $_
+        }
+        catch {
+            # Re-surface any other terminating error from the step
+            # body so we can convert it to a non-zero exit. Without
+            # this catch, ErrorActionPreference='Continue' inside
+            # the step would let unhandled exceptions bubble
+            # straight out of the script with no failure banner.
+            $stepFailure = $_
+        }
         finally {
             $ErrorActionPreference = $prevPref
+        }
+
+        if ($null -ne $stepFailure) {
+            Write-Host ''
+            Write-Failure (
+                "FAILED at step {0}/{1}: {2} ({3})" -f $index, $total, $step.Label, $stepFailure.Exception.Message
+            )
+            # Use 127 to mirror bash's command-not-found exit code
+            # when that's what we caught; fall back to 1 for any
+            # other terminating error.
+            $exitCode = if ($stepFailure.Exception -is [System.Management.Automation.CommandNotFoundException]) { 127 } else { 1 }
+            exit $exitCode
         }
 
         $code = $LASTEXITCODE
@@ -186,14 +217,17 @@ function Resolve-Version {
 # Step registration
 # ----------------------------------------------------------------------
 
-# 1) Rust formatting check — same command CI runs (ci.yml line 103).
+# 1) Rust formatting check — same command the CI workflow runs in
+#    the "Check formatting" step of the `rust` job.
 Add-Step `
     -Label   'Rust format check (cargo fmt --all -- --check)' `
     -Command 'cargo fmt --all -- --check' `
     -Action  { cargo fmt --all -- --check }
 
-# 2) Rust clippy with warnings-as-errors — same command CI runs
-#    (ci.yml line 104; RUSTFLAGS="-D warnings" is set globally there).
+# 2) Rust clippy with warnings-as-errors — same command the CI
+#    workflow runs in the "Clippy" step of the `rust` job
+#    (RUSTFLAGS="-D warnings" is set globally in the workflow's
+#    top-level `env:` block; we propagate it above).
 Add-Step `
     -Label   'Rust clippy (cargo clippy --all-targets --all-features -- -D warnings)' `
     -Command 'cargo clippy --all-targets --all-features -- -D warnings' `
