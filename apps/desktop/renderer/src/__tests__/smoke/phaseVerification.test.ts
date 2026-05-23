@@ -467,8 +467,10 @@ function extractCategoryEntries(): CategoryEntry[] {
       const idMatch = /\bid:\s*(["'])([A-Za-z0-9_-]+)\1/.exec(slice);
       // `name` is a free-form string — allow C-style escapes inside
       // double-quoted values and treat the closing quote as the one
-      // not preceded by `\`. The greedy-but-safe `(?:\\.|[^\\])*?`
-      // inner pattern handles `"They\"re here"` correctly.
+      // not preceded by `\`. The non-greedy `(?:\\.|[^\\])*?` inner
+      // pattern stops at the first un-escaped quote that matches the
+      // opener (captured as `\1`), so e.g. `"They\"re here"` matches
+      // as a single string ending at the trailing `"`.
       const nameMatch = /\bname:\s*(["'])((?:\\.|[^\\])*?)\1/.exec(slice);
       if (idMatch && nameMatch) {
         const lineNumber = block.slice(0, startPos).split(/\r?\n/).length;
