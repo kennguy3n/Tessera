@@ -231,28 +231,41 @@ register_step "Desktop tests (npm run test --workspace=apps/desktop)" \
 #    The Vite-driven `npm run build` step below depends on Rollup at
 #    runtime, so without the host-matching binary the build fails with
 #    a confusing "Cannot find module @rollup/rollup-<plat>-<arch>"
-#    error. CI works around this in .github/workflows/ci.yml by
-#    running `npm install --no-save --no-package-lock @rollup/rollup-<plat>` —
-#    we mirror that here so a maintainer running preflight on macOS or
-#    Windows from a Linux-generated lockfile gets the same fix.
+#    error.
 #
-#    The package name follows the convention `@rollup/rollup-<plat>-<arch>[-<libc>]`.
-#    We pick it from `uname -s` × `uname -m`, falling back to the
-#    Linux glibc / macOS / no-op cases that cover Tessera's currently
-#    supported targets per the README platform table. If the host is
-#    a platform we don't ship for, we skip the install rather than
-#    fail — `npm install` against a non-existent package would just
-#    add a confusing failure to the run.
+#    Scope: this step ONLY runs on macOS and Windows hosts — Linux is
+#    skipped on purpose. Rationale:
+#
+#      * The committed `package-lock.json` is generated on Linux, so
+#        `npm ci` already installs `@rollup/rollup-linux-x64-gnu` /
+#        `@rollup/rollup-linux-arm64-gnu` directly from the lockfile.
+#        The npm/cli#4828 bug only affects the foreign-OS case.
+#      * `.github/workflows/ci.yml` runs the workaround only for the
+#        macos-13 and windows-2022 matrix legs (the Linux leg skips
+#        it), and so does `.github/workflows/release.yml`. Running an
+#        extra install on Linux preflight that CI doesn't would
+#        create a behaviour gap between the gates and could mask
+#        Linux-specific lockfile bugs that CI is supposed to catch.
+#      * RELEASING.md documents this as a macOS/Windows-only step;
+#        keeping the script in lock-step with the docs avoids
+#        confusing maintainers ("docs say 8 steps on Linux but I see
+#        9").
+#
+#    The package name follows the convention
+#    `@rollup/rollup-<plat>-<arch>[-<libc>]`. We pick it from
+#    `uname -s` × `uname -m`, mapping the macOS x86_64 / arm64 cases
+#    explicitly. If the host is a platform we don't ship for, we
+#    skip the install rather than fail — `npm install` against a
+#    non-existent package would just add a confusing failure to the
+#    run.
 #
 #    See https://github.com/npm/cli/issues/4828 for the underlying
-#    npm bug; this workaround can be removed once that issue is fixed
-#    and the minimum npm in CONTRIBUTING.md is bumped past the fix.
+#    npm bug; this workaround (here, in ci.yml, and in release.yml)
+#    can be removed once that issue is fixed and the minimum npm in
+#    CONTRIBUTING.md is bumped past the fix.
 __os="$(uname -s)"
 __arch="$(uname -m)"
 case "${__os}-${__arch}" in
-  Linux-x86_64)   ROLLUP_HOST_BINARY="@rollup/rollup-linux-x64-gnu" ;;
-  Linux-aarch64)  ROLLUP_HOST_BINARY="@rollup/rollup-linux-arm64-gnu" ;;
-  Linux-arm64)    ROLLUP_HOST_BINARY="@rollup/rollup-linux-arm64-gnu" ;;
   Darwin-x86_64)  ROLLUP_HOST_BINARY="@rollup/rollup-darwin-x64" ;;
   Darwin-arm64)   ROLLUP_HOST_BINARY="@rollup/rollup-darwin-arm64" ;;
   *)              ROLLUP_HOST_BINARY="" ;;
