@@ -196,7 +196,22 @@ is_valid_version() {
 }
 
 detect_version() {
-  if [[ -n "${TESSERA_PREFLIGHT_VERSION:-}" ]]; then
+  # Honour the explicit override first, but run it through the same
+  # is_valid_version filter the rest of this function uses for the
+  # package.json/regex paths. The PowerShell sibling (preflight.ps1's
+  # Get-PreflightVersion) gates $env:TESSERA_PREFLIGHT_VERSION through
+  # Test-VersionUsable, which strips the JS sentinels `"undefined"`
+  # and `"null"`; matching that behaviour here keeps the two scripts
+  # identical for a user who deliberately or accidentally exports
+  # `TESSERA_PREFLIGHT_VERSION=undefined` (e.g. as the result of a
+  # shell pipeline like `export TESSERA_PREFLIGHT_VERSION=$(jq -r
+  # .version package.json)` against a package.json that lacks the
+  # field). Without this filter, bash would happily print "vundefined"
+  # in the final banner while PowerShell would fall back to the
+  # package.json read — a confusing cross-platform asymmetry. After
+  # the filter, an invalid override falls through to the package.json
+  # and regex paths just like the no-override case.
+  if is_valid_version "${TESSERA_PREFLIGHT_VERSION:-}"; then
     printf '%s' "${TESSERA_PREFLIGHT_VERSION}"
     return
   fi
