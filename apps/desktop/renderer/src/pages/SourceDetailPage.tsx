@@ -69,6 +69,31 @@ export default function SourceDetailPage() {
       await api.sources.backfillEmbeddings();
     } catch (err) {
       setReembedError(err instanceof Error ? err.message : String(err));
+      // Roll the generation back to the quiescent sentinel (`0`).
+      // The IPC failed BEFORE reaching the Rust bridge (e.g. the
+      // `sources:backfillEmbeddings` IPC handler in `ipc/sources.ts`
+      // rejects synchronously via `defaultRateLimiter.consume(...)`
+      // when the user mashes Re-embed faster than the configured
+      // budget), which means the bridge's pre-flight
+      // `embedding_progress.mark_starting()` never fired. Without
+      // this rollback, `useEmbeddingProgress` would be left in an
+      // unobservable state — its `observedRunning` guard requires a
+      // `running` status to ever surface, but the tracker is stuck
+      // in whatever prior state the worker left it in (`idle` on
+      // first launch, or `done`/`failed` from a previous successful
+      // pass). The polling loop would then tick every 500 ms
+      // forever, never reaching a state that satisfies the
+      // terminal check, until the user clicks Re-embed again or the
+      // component unmounts.
+      //
+      // Resetting to 0 trips the `if (generation <= 0) return;`
+      // guard at the top of the hook's effect, which causes the
+      // cleanup of the previous effect run to fire — cancelling the
+      // pending timer — and the new effect to early-return without
+      // scheduling another tick. The next successful Re-embed click
+      // re-bumps to 1, which is a fresh generation as far as the
+      // hook is concerned. Devin Review flagged this on PR #25.
+      setReembedGeneration(0);
     } finally {
       setReembedding(false);
       // The poller stops itself once it observes `status=done` or

@@ -439,4 +439,83 @@ describe("SourceDetailPage Re-embed button", () => {
     // (i.e. it didn't quit on poll 1's stale `done`).
     expect(pollCount).toBeGreaterThanOrEqual(3);
   });
+
+  it("stops the polling loop when the backfill IPC rejects synchronously (no infinite-poll leak)", async () => {
+    // Regression test for Devin Review round 5 finding: if
+    // `sources:backfillEmbeddings` rejects before reaching the
+    // bridge (e.g. the IPC handler's
+    // `defaultRateLimiter.consume(...)` throws synchronously),
+    // the bridge's pre-flight `mark_starting()` never fires. The
+    // tracker is therefore stuck in whatever state the previous
+    // run left it in (`idle` on fresh launch, `done` / `failed`
+    // afterwards), and the `useEmbeddingProgress` hook's
+    // `observedRunning` guard can never be satisfied — the
+    // polling loop would tick every 500 ms forever, never
+    // reaching a terminal state, until the user clicks Re-embed
+    // again or unmounts the page.
+    //
+    // The fix in `SourceDetailPage.handleReembed` rolls
+    // `reembedGeneration` back to the quiescent sentinel (`0`)
+    // on the catch path, tripping the
+    // `if (generation <= 0) return;` early-return at the top of
+    // the hook's effect. That cancels the pending timer via the
+    // effect cleanup and prevents any further polls from being
+    // scheduled.
+    //
+    // We assert the bounded-poll-count contract: after the
+    // rejection, `getEmbeddingProgress` may have fired a couple
+    // of in-flight polls before the rollback flush, but it must
+    // NOT keep growing on a wall-clock interval. A 1.5 s wait
+    // (three full 500 ms intervals) is enough to catch a
+    // never-ending poller.
+    let pollCount = 0;
+    window.tessera.sources.getEmbeddingProgress = vi.fn().mockImplementation(
+      async () => {
+        pollCount += 1;
+        // Simulate the "previous run finished" / fresh-launch
+        // case: tracker is sitting in a stale `done` state. The
+        // hook's `observedRunning` guard means this never
+        // terminates the polling loop on its own.
+        return {
+          status: "done" as const,
+          totalChunks: 0,
+          embedded: 0,
+          failed: 0,
+          modelId: "hash-trick-v1",
+          lastError: null,
+        };
+      },
+    );
+    window.tessera.sources.backfillEmbeddings = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          "Rate limit exceeded for sources:backfillEmbeddings — retry in 10s",
+        ),
+      );
+
+    renderWithRoute();
+    const button = await screen.findByTestId("reembed-button");
+    fireEvent.click(button);
+
+    // Wait until the error banner renders — at that point the
+    // catch handler has run, including the `setReembedGeneration(0)`
+    // rollback, and React has scheduled the effect cleanup.
+    await waitFor(() => {
+      expect(screen.getByTestId("reembed-error")).toHaveTextContent(
+        /Rate limit exceeded/i,
+      );
+    });
+
+    // Take a snapshot of how many polls leaked through before
+    // the cleanup fired. There may be a small number due to
+    // microtask ordering (the hook's first tick can dispatch
+    // before the rollback's effect flush), but the count must
+    // not keep growing.
+    const pollsAtSettle = pollCount;
+    // Wait 1.5 s — three full polling intervals. If the cleanup
+    // worked, the poll count must NOT grow during this window.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(pollCount).toBe(pollsAtSettle);
+  });
 });
