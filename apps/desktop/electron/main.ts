@@ -195,19 +195,36 @@ function createWindow(): void {
  *   "keyring unavailable" message and reads of password-vault blobs
  *   will fail with a clear "no password cached" message
  *
- * The prompt is shown BEFORE registerIpcHandlers / startScheduler /
- * createWindow so the rest of the app can safely treat the vault as
- * ready (or unambiguously unavailable) without race conditions.
+ * Ordering inside `app.whenReady`:
+ *
+ *   - `registerIpcHandlers` runs BEFORE this prompt awaits. This is a
+ *     defense-in-depth move for the macOS dock-click recovery path:
+ *     if Cocoa fires `activate` during the prompt and the listener
+ *     creates the main window synchronously, the renderer it loads
+ *     must find every `ipcRenderer.invoke(...)` channel already
+ *     wired. Registering handlers earlier than the vault prompt is
+ *     safe because handlers do not read vault state at registration
+ *     time — they consult vault state lazily when invoked. See the
+ *     inline comment at the `registerIpcHandlers()` call site in
+ *     `whenReady` for the full rationale.
+ *   - `startScheduler` and `createWindow` run AFTER this prompt
+ *     resolves. The scheduler ticks every 30s and may need to read
+ *     OAuth tokens (which live in the password-vault on keyringless
+ *     platforms), and `createWindow` loads the renderer which may
+ *     immediately invoke vault-dependent IPCs on startup — both
+ *     therefore wait for the vault to be ready (or unambiguously
+ *     unavailable) before they start.
  */
 async function maybeInitPasswordVault(): Promise<void> {
   if (safeStorage.isEncryptionAvailable()) return;
   try {
     // Inspect the `{ active, reason? }` result rather than treating
     // any non-throw as success. The outer `safeStorage.isEncryptionAvailable()`
-    // guard above makes the `active=false` branch unreachable in
-    // practice (the inner check at passwordVault.ts:608 would only
-    // short-circuit if keyring availability flipped between the two
-    // checks), but pinning the result-shape here keeps this caller
+    // guard at the top of this function makes the `active=false`
+    // branch unreachable in practice (the inner check inside
+    // `initPasswordVaultIfNeeded` would only short-circuit if keyring
+    // availability flipped between the two checks — TOCTOU window),
+    // but pinning the result-shape here keeps this caller
     // self-documenting and future-proof against either: (a) the
     // outer guard being removed, (b) `initPasswordVaultIfNeeded`
     // adding a new "skipped because <reason>" path. The success log
@@ -222,14 +239,15 @@ async function maybeInitPasswordVault(): Promise<void> {
       );
     } else if (result.reason === VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE) {
       // TOCTOU race: the OS keyring daemon became available between
-      // the outer `safeStorage.isEncryptionAvailable()` check on line
-      // 169 and the inner re-check inside `initPasswordVaultIfNeeded`.
-      // This is NOT a vault failure — safeStorage is now available so
-      // the existing OS-keyring path takes over; the password vault
-      // is simply not needed. The previous unconditional warning
-      // ("token / secret writes will fail until the vault is unlocked
-      // or the OS keyring becomes available") was actively misleading
-      // here because the keyring IS available.
+      // the outer `safeStorage.isEncryptionAvailable()` guard at the
+      // top of this function and the inner re-check inside
+      // `initPasswordVaultIfNeeded`. This is NOT a vault failure —
+      // safeStorage is now available so the existing OS-keyring path
+      // takes over; the password vault is simply not needed. The
+      // previous unconditional warning ("token / secret writes will
+      // fail until the vault is unlocked or the OS keyring becomes
+      // available") was actively misleading here because the keyring
+      // IS available.
       console.log(
         "[Tessera] OS keyring became available during startup — " +
           "using safeStorage; password vault not needed.",

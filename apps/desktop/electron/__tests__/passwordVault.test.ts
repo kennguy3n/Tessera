@@ -175,6 +175,34 @@ describe("passwordVault — derivation and caching", () => {
       /unexpected length 8/,
     );
   });
+
+  it("salt file is written via atomic rename (no `.tmp` left behind)", async () => {
+    // Contract: `getOrCreateSalt` writes the freshly-generated salt
+    // to `<saltPath>.tmp` and then renames into place, mirroring the
+    // pattern used by `dbKey.ts:getOrCreateDbKey` for the SQLCipher
+    // master key. After a successful first-launch derivation:
+    //   - The final salt file must exist with exactly SALT_LEN bytes.
+    //   - The temp file (`.tmp` sibling) must NOT exist — leaking it
+    //     would leave a confusing artefact in the userData directory
+    //     that future tooling (a "reset vault" UX, a backup script)
+    //     might mishandle.
+    // A future refactor that drops the rename in favour of a direct
+    // `writeFileSync` would still leave the final file intact and
+    // pass the happy-path tests above, but would leave a half-written
+    // salt on disk if interrupted by a power-loss / SIGKILL. Pinning
+    // the absence-of-tmp invariant here catches that regression at
+    // unit-test time without needing a real crash-injection harness.
+    expect(passwordVaultSaltExists()).toBe(false);
+    await deriveAndCacheKey("hunter2");
+    const saltFile = path.join(tmpDir, "vault-salt.bin");
+    const tmpFile = `${saltFile}.tmp`;
+    expect(fs.existsSync(saltFile), "salt file must exist after derivation").toBe(true);
+    expect(
+      fs.existsSync(tmpFile),
+      "`.tmp` sidecar file must NOT exist after successful atomic rename",
+    ).toBe(false);
+    expect(fs.readFileSync(saltFile).length).toBe(16);
+  });
 });
 
 describe("passwordVault — encryption round-trip", () => {

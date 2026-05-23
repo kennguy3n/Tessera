@@ -187,7 +187,22 @@ function getOrCreateSalt(): Buffer {
   }
   const fresh = crypto.randomBytes(SALT_LEN);
   fs.mkdirSync(path.dirname(fp), { recursive: true });
-  fs.writeFileSync(fp, fresh, { mode: 0o600 });
+  // Write to a temp path and rename so an interrupted write (machine
+  // crash, power loss) cannot leave a partial salt file alongside a
+  // populated vault directory. The length check above would catch a
+  // truncated salt and throw "unexpected length", but the user-visible
+  // recovery from that is "delete the salt file and re-enter every
+  // secret" — which is worse than what they'd see if the rename was
+  // atomic and the salt-file simply didn't appear at all on next
+  // launch (the prompt would offer a fresh-install flow). After
+  // rename the file is either fully written or absent.
+  //
+  // Matches the same pattern used by `dbKey.ts:getOrCreateDbKey` for
+  // the SQLCipher master key, keeping the on-disk-write semantics
+  // consistent across both at-rest-encryption material on disk.
+  const tmp = `${fp}.tmp`;
+  fs.writeFileSync(tmp, fresh, { mode: 0o600 });
+  fs.renameSync(tmp, fp);
   return fresh;
 }
 
