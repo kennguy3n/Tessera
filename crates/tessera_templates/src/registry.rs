@@ -21,50 +21,69 @@ impl TemplateRegistry {
     pub fn load_from_directory(path: &Path) -> Result<Self> {
         let mut registry = Self::new();
 
-        for entry in WalkDir::new(path)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(std::result::Result::ok)
-        {
-            let file_path = entry.path();
-            if !file_path.is_file() {
+        // Walk every canonical template-category directory rooted at
+        // `path/<category>/`. This mirrors `parser::load_template_by_id`
+        // so the list and the by-id lookup paths can never disagree on
+        // which files count as templates — adding a new category at
+        // `crate::TEMPLATE_CATEGORIES` updates both paths atomically.
+        // Walking the entire `path` tree (as the pre-WS3 implementation
+        // did) would also process stray YAML under `templates/grammars/`
+        // or any other non-category subdirectory the runtime parser
+        // deliberately ignores, which would silently desync the "list"
+        // and "load by id" semantics. The tests in this file create
+        // their fixtures under the same canonical category names, so
+        // they continue to pass unchanged.
+        for category in crate::TEMPLATE_CATEGORIES {
+            let category_root = path.join(category);
+            if !category_root.is_dir() {
                 continue;
             }
-            let ext = file_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or_default();
-            if ext != "yaml" && ext != "yml" {
-                continue;
-            }
-            match parse_template_file(file_path) {
-                Ok(template) => match validate_template(&template) {
-                    Ok(()) => registry.templates.push(template),
+            for entry in WalkDir::new(&category_root)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(std::result::Result::ok)
+            {
+                let file_path = entry.path();
+                if !file_path.is_file() {
+                    continue;
+                }
+                let ext = file_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or_default();
+                if ext != "yaml" && ext != "yml" {
+                    continue;
+                }
+                match parse_template_file(file_path) {
+                    Ok(template) => match validate_template(&template) {
+                        Ok(()) => registry.templates.push(template),
+                        Err(e) => {
+                            // The template parsed but failed semantic
+                            // validation (missing sections, invalid
+                            // max_tokens, etc.). Skip it so the rest
+                            // of the registry still loads, but surface
+                            // the error so the operator can fix the
+                            // offending file.
+                            eprintln!(
+                                "[tessera_templates] template at {} failed validation: {e}",
+                                file_path.display()
+                            );
+                        }
+                    },
                     Err(e) => {
-                        // The template parsed but failed semantic
-                        // validation (missing sections, invalid
-                        // max_tokens, etc.). Skip it so the rest of the
-                        // registry still loads, but surface the error
-                        // so the operator can fix the offending file.
+                        // YAML couldn't deserialize into the canonical
+                        // Template struct. The 4 known legacy visual
+                        // templates fall into this bucket today
+                        // (different section schema); see
+                        // `LEGACY_VISUAL_SCHEMA_TEMPLATES` in
+                        // `bundled_templates.rs`. Other parse failures
+                        // here indicate a typo or schema drift — we
+                        // surface them rather than swallow silently.
                         eprintln!(
-                            "[tessera_templates] template at {} failed validation: {e}",
+                            "[tessera_templates] skipping unparseable template at {}: {e}",
                             file_path.display()
                         );
                     }
-                },
-                Err(e) => {
-                    // YAML couldn't deserialize into the canonical
-                    // Template struct. The 4 known legacy visual
-                    // templates fall into this bucket today (different
-                    // section schema); see
-                    // `LEGACY_VISUAL_SCHEMA_TEMPLATES` in
-                    // `bundled_templates.rs`. Other parse failures
-                    // here indicate a typo or schema drift — we surface
-                    // them rather than swallow silently.
-                    eprintln!(
-                        "[tessera_templates] skipping unparseable template at {}: {e}",
-                        file_path.display()
-                    );
                 }
             }
         }
