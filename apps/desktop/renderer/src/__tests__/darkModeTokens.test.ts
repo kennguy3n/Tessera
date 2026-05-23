@@ -70,15 +70,21 @@ function collectDeclaredTokens(
 ): Set<string> {
   const text = readFileSync(TOKENS_CSS, "utf8");
   let blockText: string | undefined;
+  // Regexes tolerate any amount of indentation before the closing
+  // `}` so a future `prettier`/`stylelint` reformat that changes
+  // whitespace won't silently break the test. Match the FIRST `}`
+  // at the start of a line (after optional whitespace) — none of
+  // these CSS blocks contain a nested block at the same depth, so
+  // the non-greedy capture won't over-shoot.
   if (scope === "root") {
-    blockText = text.match(/:root\s*\{([\s\S]*?)\n\}/)?.[1];
+    blockText = text.match(/:root\s*\{([\s\S]*?)\n\s*\}/)?.[1];
   } else if (scope === "dark") {
-    blockText = text.match(/\[data-theme="dark"\]\s*\{([\s\S]*?)\n\}/)?.[1];
+    blockText = text.match(/\[data-theme="dark"\]\s*\{([\s\S]*?)\n\s*\}/)?.[1];
   } else {
     // The @media block wraps an inner `:root:not([data-theme=…])`
     // selector — extract just the inner declarations.
     blockText = text.match(
-      /@media \(prefers-color-scheme: dark\)\s*\{[\s\S]*?\{([\s\S]*?)\n  \}/,
+      /@media \(prefers-color-scheme: dark\)\s*\{[\s\S]*?\{([\s\S]*?)\n\s{2}\}/,
     )?.[1];
   }
   if (!blockText) {
@@ -170,6 +176,12 @@ describe("dark-mode CSS variable enforcement", () => {
       "--color-relevance-medium-bg",
       "--color-relevance-low-fg",
       "--color-relevance-low-bg",
+      // Phase 10 round-2 fix: --color-priority-high was added to
+      // give the "high" priority badge a dedicated dark value
+      // (#fb923c orange-400) for contrast on dark surfaces. If a
+      // future patch drops the dark override, the badge silently
+      // reverts to orange-700 which is unreadable on dark grey.
+      "--color-priority-high",
     ];
     const dark = collectDeclaredTokens("dark");
     const missing = REQUIRED_DARK_OVERRIDES.filter((t) => !dark.has(t));
@@ -198,8 +210,18 @@ describe("dark-mode CSS variable enforcement", () => {
       "utils/cssColor.ts",
     ]);
     const violations: string[] = [];
+    // Cover both styles of property name:
+    //   • CSS kebab-case in *.css files: `color: "#fff"` /
+    //     `background-color: "#fff"`
+    //   • JSX camelCase in *.tsx files: `color: "#fff"` /
+    //     `backgroundColor: "#fff"` / `borderColor: "#fff"`
+    //
+    // Anchor on a property-name boundary so the `color` alternative
+    // doesn't accidentally match as a suffix of `backgroundColor`,
+    // `borderColor`, etc. (the previous regex relied on that
+    // accident — Devin Review caught it).
     const re =
-      /(?:color|background|background-color)\s*:\s*"(?:#fff(?:fff)?|white)"/gi;
+      /(?:(?:^|[\s,;{])(?:color|backgroundColor|background-color|background|borderColor|border-color))\s*:\s*["'](?:#fff(?:fff)?|white)["']/gim;
     for (const file of walk(RENDERER_SRC)) {
       const rel = file.slice(RENDERER_SRC.length + 1).replace(/\\/g, "/");
       if (EXEMPT_FILES.has(rel)) continue;
