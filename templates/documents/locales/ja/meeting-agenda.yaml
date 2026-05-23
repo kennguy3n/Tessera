@@ -42,3 +42,4 @@ sections:
 export:
   - markdown
   - html
+  - pdf

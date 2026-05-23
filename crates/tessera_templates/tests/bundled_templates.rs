@@ -333,28 +333,35 @@ fn approval_documents_expose_governance_section() {
     }
 }
 
+/// Canonical set of localized templates whose shape must mirror the
+/// English source. This is the ten most-used templates listed in the
+/// WS3 spec. Lifted to a module-level constant so the presence check,
+/// section-count check, and export-format check all share one source
+/// of truth — adding a new canonical template is a single-line edit
+/// that all three parity tests pick up automatically.
+const CANONICAL_LOCALIZED_TEMPLATES: &[(&str, &str)] = &[
+    ("documents", "prd.yaml"),
+    ("documents", "proposal.yaml"),
+    ("documents", "sop.yaml"),
+    ("documents", "report.yaml"),
+    ("documents", "meeting-agenda.yaml"),
+    ("documents", "meeting-notes.yaml"),
+    ("documents", "task-list.yaml"),
+    ("documents", "form.yaml"),
+    ("sheets", "budget.yaml"),
+    ("slides", "pitch.yaml"),
+];
+
 /// Sanity-check that every supported non-English locale has the same
 /// canonical set of localized templates so the renderer's locale
 /// filter shows a consistent picker across languages. The canonical
 /// set is the ten most-used templates listed in the WS3 spec.
 #[test]
 fn every_non_english_locale_ships_the_canonical_template_set() {
-    let canonical = [
-        ("documents", "prd.yaml"),
-        ("documents", "proposal.yaml"),
-        ("documents", "sop.yaml"),
-        ("documents", "report.yaml"),
-        ("documents", "meeting-agenda.yaml"),
-        ("documents", "meeting-notes.yaml"),
-        ("documents", "task-list.yaml"),
-        ("documents", "form.yaml"),
-        ("sheets", "budget.yaml"),
-        ("slides", "pitch.yaml"),
-    ];
     let root = workspace_templates_root();
     let non_english: Vec<&&str> = SUPPORTED_LOCALES.iter().filter(|l| **l != "en").collect();
     for locale in &non_english {
-        for (category, filename) in &canonical {
+        for (category, filename) in CANONICAL_LOCALIZED_TEMPLATES {
             let path = root
                 .join(category)
                 .join("locales")
@@ -388,21 +395,9 @@ fn every_non_english_locale_ships_the_canonical_template_set() {
 /// *structure* must remain identical.
 #[test]
 fn localized_variants_match_english_section_count() {
-    let canonical = [
-        ("documents", "prd.yaml"),
-        ("documents", "proposal.yaml"),
-        ("documents", "sop.yaml"),
-        ("documents", "report.yaml"),
-        ("documents", "meeting-agenda.yaml"),
-        ("documents", "meeting-notes.yaml"),
-        ("documents", "task-list.yaml"),
-        ("documents", "form.yaml"),
-        ("sheets", "budget.yaml"),
-        ("slides", "pitch.yaml"),
-    ];
     let root = workspace_templates_root();
     let non_english: Vec<&&str> = SUPPORTED_LOCALES.iter().filter(|l| **l != "en").collect();
-    for (category, filename) in &canonical {
+    for (category, filename) in CANONICAL_LOCALIZED_TEMPLATES {
         let english_path = root.join(category).join(filename);
         let english = parse_template_file(&english_path)
             .unwrap_or_else(|e| panic!("failed to parse {}: {e}", display_path(&english_path)));
@@ -425,6 +420,65 @@ fn localized_variants_match_english_section_count() {
                 actual,
                 display_path(&english_path),
                 expected,
+            );
+        }
+    }
+}
+
+/// Localized variants must offer the same set of `export` formats as
+/// their English source. The user-visible export picker in the renderer
+/// is keyed off this list, so a French `meeting-agenda.fr.yaml` that
+/// silently dropped `pdf` would surprise the user with a different menu
+/// than the English variant. The validator does not enforce this (it
+/// only checks individual format identifiers parse), so a translator
+/// pruning the list — intentionally or accidentally — would commit
+/// successfully.
+///
+/// We enforce *set* equality rather than order: the renderer dedupes
+/// and re-sorts before display, so list ordering is cosmetic, but the
+/// set of formats is contractually load-bearing.
+#[test]
+fn localized_variants_match_english_export_formats() {
+    let root = workspace_templates_root();
+    let non_english: Vec<&&str> = SUPPORTED_LOCALES.iter().filter(|l| **l != "en").collect();
+    for (category, filename) in CANONICAL_LOCALIZED_TEMPLATES {
+        let english_path = root.join(category).join(filename);
+        let english = parse_template_file(&english_path)
+            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", display_path(&english_path)));
+        // `ExportFormat` does not derive `Hash`; compare via the canonical
+        // `Display` string each variant emits (which is what the renderer
+        // ultimately surfaces to the user anyway).
+        let expected: HashSet<String> = english
+            .export_formats()
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
+        for locale in &non_english {
+            let path = root
+                .join(category)
+                .join("locales")
+                .join(**locale)
+                .join(filename);
+            let translated = parse_template_file(&path)
+                .unwrap_or_else(|e| panic!("failed to parse {}: {e}", display_path(&path)));
+            let actual: HashSet<String> = translated
+                .export_formats()
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect();
+            let mut actual_sorted: Vec<&String> = actual.iter().collect();
+            actual_sorted.sort();
+            let mut expected_sorted: Vec<&String> = expected.iter().collect();
+            expected_sorted.sort();
+            assert_eq!(
+                actual,
+                expected,
+                "export-format drift in {}: locale `{}` exports {:?} but English source `{}` exports {:?}",
+                display_path(&path),
+                locale,
+                actual_sorted,
+                display_path(&english_path),
+                expected_sorted,
             );
         }
     }
