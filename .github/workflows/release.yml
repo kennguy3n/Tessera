@@ -142,12 +142,24 @@ jobs:
           else
             log="$(git log --pretty=format:'- %s (%h)' "${prev}..${tag}")"
           fi
+          # Use a per-run random heredoc delimiter so a commit subject
+          # can never collide with it. The previous fixed delimiter
+          # (`TESSERA_EOF`) happened to be safe only because the
+          # `--pretty=format:'- %s (%h)'` line shape ensured no line
+          # could ever equal the literal token — but that's a fragile
+          # contract: anyone tweaking the format string later (e.g. to
+          # `%s` for terser notes) would reintroduce a truncation /
+          # output-injection risk. The GitHub-documented pattern is a
+          # random delimiter derived from `uuidgen`, which is part of
+          # `util-linux` on every ubuntu-* runner image.
+          # See: https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#multiline-strings
+          delimiter="ghadelimiter_$(uuidgen)"
           {
-            echo "body<<TESSERA_EOF"
+            echo "body<<${delimiter}"
             echo "## Tessera ${tag}"
             echo
             echo "$log"
-            echo "TESSERA_EOF"
+            echo "${delimiter}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Update GitHub Release
