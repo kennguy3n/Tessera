@@ -22,12 +22,28 @@
  *     synchronous napi-rs crate, plus moving the local sidecar
  *     streaming through the same surface for consistency. That is a
  *     deliberate future-PR scope.
- *   * Until then this TS module reproduces the Rust parser's
- *     algorithm byte-for-byte so the two implementations cannot
- *     drift in behaviour. The
+ *   * Until then this TS module reproduces the **SSE parser
+ *     algorithm** in `crates/tessera_runtime/src/external_provider.rs::http_impl::stream`
+ *     byte-for-byte (line buffering, CRLF tolerance, comment skipping,
+ *     OpenAI `[DONE]` / `finish_reason` / Anthropic `message_stop`
+ *     sentinels, ping-event tolerance). The
  *     {@link parseExternalProviderSSE} function is exported and
  *     covered by a unit-test suite that asserts the same fixture
  *     shapes the Rust `http_tests` module asserts.
+ *
+ *     **Deliberate asymmetry, NOT a parser difference**: the Rust
+ *     `stream` function always emits a terminal
+ *     `GenerateChunk { content: "", stop: true }` (see
+ *     `external_provider.rs:553-556`) while this module's
+ *     {@link streamExternalProvider} deliberately does NOT — its
+ *     callers (`ipc/model.ts`'s `model:generate` `finally` block) own
+ *     the `sentDone` bookkeeping and need to stay authoritative
+ *     across both the local-sidecar and external paths. The
+ *     {@link parseExternalProviderSSE} test helper manually appends
+ *     the stop chunk so the fixture-shape comparisons against the
+ *     Rust tests still line up. If you add a NEW external-path
+ *     caller, you are responsible for emitting your own stop signal —
+ *     consider this a contract documented at the function level too.
  *
  * SSE framing per
  * https://html.spec.whatwg.org/multipage/server-sent-events.html:
@@ -352,6 +368,57 @@ interface BuildRequestResult {
   body: string;
 }
 
+/**
+ * Compose the canonical chat-completions / messages endpoint URL for
+ * the given provider, honouring whichever sub-path the user may have
+ * already typed into Settings.
+ *
+ * Two failure modes this prevents:
+ *
+ *   1. **Trailing-slash double-suffixing.** Strips one-or-more trailing
+ *      slashes from `apiUrl` before composing the path, so an
+ *      `apiUrl` of `https://api.openai.com/v1/` doesn't yield
+ *      `https://api.openai.com/v1//v1/chat/completions`.
+ *
+ *   2. **Already-complete-URL double-suffixing.** If the user pastes
+ *      the full endpoint (`https://api.openai.com/v1/chat/completions`
+ *      for OpenAI, or `https://api.anthropic.com/v1/messages` for
+ *      Anthropic), don't append the canonical sub-path a second time.
+ *      The OpenAI branch also accepts the shorter `…/chat/completions`
+ *      form some self-hosted shims advertise.
+ *
+ * Exported and re-used by:
+ *
+ *   - `buildStreamRequest` (this module, streaming path)
+ *   - `testExternalProviderConnection` (`ipc/settings.ts`,
+ *     `externalProvider:test` IPC handler)
+ *
+ * Keeping the URL composition single-sourced means the test endpoint
+ * cannot drift away from the streaming endpoint — a previous version
+ * of `testExternalProviderConnection` lacked the `endsWith` guards and
+ * produced 404s ("…/v1/chat/completions/v1/chat/completions") when the
+ * user pasted a complete URL, while the streaming path quietly worked.
+ */
+export function resolveProviderEndpoint(
+  provider: ExternalProviderConfig,
+): string {
+  const apiUrl = provider.apiUrl.replace(/\/+$/, "");
+  if (provider.providerType === "anthropic") {
+    // The `/v1/messages` form is the only documented Anthropic
+    // Messages endpoint; older `/v1/complete` is for the legacy
+    // Completions API and shouldn't be routed through this provider
+    // class.
+    return apiUrl.endsWith("/v1/messages") ? apiUrl : `${apiUrl}/v1/messages`;
+  }
+  // OpenAI-compatible OR custom. Some self-hosted shims (older
+  // llama-server builds, certain LM Studio versions) only expose
+  // `…/chat/completions` without the `/v1` prefix — accept that too.
+  const endsWithCompletions =
+    apiUrl.endsWith("/v1/chat/completions") ||
+    apiUrl.endsWith("/chat/completions");
+  return endsWithCompletions ? apiUrl : `${apiUrl}/v1/chat/completions`;
+}
+
 /** Build the HTTP request for a streaming call. Exported for tests
  *  so they can assert that the wire format matches the Rust impl. */
 export function buildStreamRequest(
@@ -373,20 +440,17 @@ export function buildStreamRequest(
         : inputs.stop.slice(0, 4)
       : undefined;
 
-  const apiUrl = provider.apiUrl.replace(/\/+$/, "");
+  const url = resolveProviderEndpoint(provider);
 
   if (provider.providerType === "anthropic") {
-    const url = apiUrl.endsWith("/v1/messages")
-      ? apiUrl
-      : `${apiUrl}/v1/messages`;
-    const body: Record<string, unknown> = {
+    const anthropicBody: Record<string, unknown> = {
       model: provider.modelName,
       messages: [{ role: "user", content: prompt }],
       max_tokens: maxTokens,
       temperature,
       stream: true,
     };
-    if (stop) body.stop_sequences = stop;
+    if (stop) anthropicBody.stop_sequences = stop;
     return {
       url,
       headers: {
@@ -395,23 +459,20 @@ export function buildStreamRequest(
         "anthropic-version": "2023-06-01",
         Accept: "text/event-stream",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(anthropicBody),
     };
   }
 
-  // OpenAI-compatible OR custom
-  const endsWithCompletions =
-    apiUrl.endsWith("/v1/chat/completions") ||
-    apiUrl.endsWith("/chat/completions");
-  const url = endsWithCompletions ? apiUrl : `${apiUrl}/v1/chat/completions`;
-  const body: Record<string, unknown> = {
+  // OpenAI-compatible OR custom (URL already resolved above via
+  // `resolveProviderEndpoint(provider)`).
+  const openAiBody: Record<string, unknown> = {
     model: provider.modelName,
     messages: [{ role: "user", content: prompt }],
     max_tokens: maxTokens,
     temperature,
     stream: true,
   };
-  if (stop) body.stop = stop;
+  if (stop) openAiBody.stop = stop;
   return {
     url,
     headers: {
@@ -419,7 +480,7 @@ export function buildStreamRequest(
       Authorization: `Bearer ${apiKey}`,
       Accept: "text/event-stream",
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(openAiBody),
   };
 }
 

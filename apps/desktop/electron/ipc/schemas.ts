@@ -226,6 +226,26 @@ export const GenerateRequestSchema = z.object({
   sourceIds: z.array(NonEmptyString).max(10_000).optional(),
   sectionIndex: z.number().int().min(0).max(1_000_000).optional(),
   prompt: NonEmptyString,
+  // Per-request override cap (32k tokens) is deliberately tighter
+  // than `ExternalProviderConfigSchema.maxTokens` (1M). Rationale:
+  //
+  //   * The provider-level cap protects the on-disk config from
+  //     accidental garbage (a renderer bug that writes
+  //     `Number.MAX_SAFE_INTEGER` shouldn't be silently persisted).
+  //     1M is the documented hard ceiling for several
+  //     frontier-model context windows today.
+  //   * The per-request cap is a runtime budget guard — the
+  //     `model:generate` IPC is what a single user keystroke can
+  //     fire, and 32k tokens is more than enough headroom for any
+  //     single rendered section (`sectionIndex` above) while making
+  //     it structurally impossible for a stale renderer state to
+  //     burn down an entire 1M-token provider budget in one call.
+  //
+  // The effective limit applied by `buildStreamRequest` is
+  // `inputs.maxTokens ?? provider.maxTokens`, so per-request
+  // omission silently falls through to the provider cap — that path
+  // is reserved for explicit "use my configured ceiling" semantics
+  // and the renderer never hits it via the `maxTokens` slider.
   maxTokens: z.number().int().min(1).max(32_768).optional(),
   temperature: z.number().min(0).max(2).optional(),
 });
