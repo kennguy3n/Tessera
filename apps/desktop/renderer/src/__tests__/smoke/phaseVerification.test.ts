@@ -21,8 +21,8 @@
  * The combined entrypoint that runs every smoke check is
  * `npm run test:smoke` (defined at the repo root).
  */
-import { readFileSync, readdirSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join, sep } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import * as mermaidRenderer from "../../services/mermaidRenderer";
@@ -30,16 +30,70 @@ import * as marpRenderer from "../../services/marpRenderer";
 import * as iconResolver from "../../services/iconResolver";
 import * as editors from "../../editors";
 
-// Repository root — six directory levels up from this test file.
-// The file lives at:
-//   apps/desktop/renderer/src/__tests__/smoke/phaseVerification.test.ts
-// so resolving six `..` segments walks back through, in order:
-//   smoke -> __tests__ -> src -> renderer -> desktop -> apps -> <root>.
-// We resolve via __dirname rather than hardcoding so the test runs the
-// same on every contributor's box. If the test file is ever relocated
-// (e.g. promoted to a top-level tests/ directory), this count and the
-// comment must be updated together.
-const REPO_ROOT = resolve(__dirname, "..", "..", "..", "..", "..", "..");
+// Repository root — located by walking up from this test file looking
+// for the workspace-root sentinel pair (a `Cargo.toml` containing a
+// top-level `[workspace]` table AND a `templates/` directory). The
+// previous implementation hardcoded a six-level `..` path:
+//
+//   resolve(__dirname, "..", "..", "..", "..", "..", "..")
+//
+// which Devin Review round-11 correctly flagged as fragile against
+// future repository layout changes — promoting the smoke suite to a
+// top-level `tests/` directory, moving it deeper into a fixture
+// folder, or any other relocation would silently slice the wrong
+// `REPO_ROOT` and either fail mysteriously or, worse, succeed against
+// the wrong directory tree. The upward-walk pattern is the long-term
+// correct fix: it tolerates any future file move so long as the test
+// stays somewhere under the workspace root.
+//
+// We require BOTH conditions because:
+//   • `Cargo.toml` alone matches every per-crate manifest under
+//     `crates/`, so we need the `[workspace]` marker to disambiguate.
+//   • `[workspace]` parsing without `templates/` would still match a
+//     stripped-down workspace; requiring `templates/` pins us to the
+//     Tessera repo specifically.
+function findRepoRoot(startDir: string): string {
+  // The walk is bounded: each iteration steps one directory closer to
+  // the filesystem root, and POSIX guarantees `dirname` is idempotent
+  // at `/` (Windows: at the drive root). The explicit `parent === dir`
+  // termination check guarantees we never loop. We use `for (;;)`
+  // rather than `while (true)` to keep ESLint's `no-constant-condition`
+  // rule happy — both compile to identical bytecode.
+  let dir = startDir;
+  for (;;) {
+    const cargoToml = join(dir, "Cargo.toml");
+    const templatesDir = join(dir, "templates");
+    if (existsSync(cargoToml) && existsSync(templatesDir)) {
+      try {
+        const body = readFileSync(cargoToml, "utf8");
+        // `^\[workspace\]` (multiline) matches the table header even
+        // when it's preceded by other tables earlier in the file.
+        // Per-crate Cargo.toml files never carry `[workspace]`, so
+        // this cleanly distinguishes the root manifest.
+        if (/^\[workspace\]/m.test(body)) {
+          return dir;
+        }
+      } catch {
+        // Unreadable Cargo.toml — keep walking. The throw at the
+        // filesystem-root boundary below is the eventual stop.
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      throw new Error(
+        `phaseVerification.test.ts could not locate the Tessera workspace ` +
+          `root by walking up from ${startDir}: no ancestor directory ` +
+          `contains both a Cargo.toml with [workspace] AND a templates/ ` +
+          `directory. Either the test file was moved outside the repo, ` +
+          `or the workspace layout changed in a way the smoke suite ` +
+          `needs to be updated to accommodate.`,
+      );
+    }
+    dir = parent;
+  }
+}
+
+const REPO_ROOT = findRepoRoot(__dirname);
 const TEMPLATES_DIR = join(REPO_ROOT, "templates");
 
 // Categories we expect under templates/. If a new artifact type lands,
@@ -1202,5 +1256,30 @@ describe("phase verification — internal helper invariants", () => {
     const m = declRe.exec(realistic);
     expect(m).not.toBeNull();
     expect(m && m.index).toBe(realistic.indexOf("const CATEGORIES:"));
+  });
+
+  test("REPO_ROOT was located by walking up to the workspace sentinel (round-11 #0006)", () => {
+    // Devin Review round-11 flagged the previous hardcoded six-level
+    // `..` chain as fragile. The replacement walks upward looking for
+    // a directory that contains BOTH a `Cargo.toml` with a top-level
+    // `[workspace]` table AND a `templates/` directory. The test below
+    // pins down the invariants the `findRepoRoot` helper relies on so
+    // a future refactor can't silently regress them.
+
+    // 1. The discovered REPO_ROOT actually contains the sentinel pair.
+    expect(existsSync(join(REPO_ROOT, "Cargo.toml"))).toBe(true);
+    expect(existsSync(join(REPO_ROOT, "templates"))).toBe(true);
+    // 2. That Cargo.toml carries the `[workspace]` table header —
+    //    distinguishing the workspace manifest from any per-crate
+    //    Cargo.toml the walker might have walked past.
+    const cargoBody = readFileSync(join(REPO_ROOT, "Cargo.toml"), "utf8");
+    expect(/^\[workspace\]/m.test(cargoBody)).toBe(true);
+    // 3. REPO_ROOT must be an ancestor of __dirname (the walker should
+    //    not have crossed a sibling tree). We deliberately do NOT
+    //    assert anything about REPO_ROOT's basename — contributors
+    //    routinely clone into custom directory names (`tessera-fork`,
+    //    `tessera-experimental`, `T1`), and the smoke suite must work
+    //    in every such layout.
+    expect(__dirname.startsWith(REPO_ROOT + sep) || __dirname === REPO_ROOT).toBe(true);
   });
 });
