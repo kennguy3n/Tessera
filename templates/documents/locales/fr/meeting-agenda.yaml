@@ -29,10 +29,14 @@ sections:
     prompt: >
       Listez explicitement les décisions à prendre lors de la
       réunion et qui les applique. Répondez en français.
-  - title: Prochaines étapes
+  - title: Lectures préalables
     prompt: >
-      Anticipez les prochaines étapes, les points de suivi et la
-      prochaine réunion ou jalon. Répondez en français.
+      Indiquez les documents sources que les participants doivent
+      consulter avant la réunion. Répondez en français.
+  - title: Points de suivi
+    prompt: >
+      Réservez de l'espace pour les actions identifiées durant la
+      réunion, à compléter après l'événement. Répondez en français.
 export:
   - markdown
   - html

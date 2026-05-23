@@ -38,11 +38,27 @@ impl TemplateRegistry {
             if !category_root.is_dir() {
                 continue;
             }
-            for entry in WalkDir::new(&category_root)
-                .follow_links(false)
-                .into_iter()
-                .filter_map(std::result::Result::ok)
-            {
+            for entry_result in WalkDir::new(&category_root).follow_links(false) {
+                let entry = match entry_result {
+                    Ok(entry) => entry,
+                    Err(e) => {
+                        // Walkdir failed to descend (e.g. permission
+                        // denied on `locales/<code>/`). The pre-WS3
+                        // implementation propagated IO errors via
+                        // `read_dir(&dir).map_err(...)?`; the walkdir
+                        // migration would silently drop them via
+                        // `filter_map(Result::ok)`. Log so an
+                        // unreadable directory shows up in operator
+                        // logs instead of silently shrinking the
+                        // registry list. Mirrors the convention used
+                        // for parse / validate failures below.
+                        eprintln!(
+                            "[tessera_templates] walkdir error under {}: {e}",
+                            category_root.display()
+                        );
+                        continue;
+                    }
+                };
                 let file_path = entry.path();
                 if !file_path.is_file() {
                     continue;

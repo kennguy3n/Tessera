@@ -32,11 +32,28 @@ pub fn load_template_by_id(template_dir: &str, template_id: &str) -> Result<Temp
         if !dir.is_dir() {
             continue;
         }
-        for entry in walkdir::WalkDir::new(&dir)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(std::result::Result::ok)
-        {
+        for entry_result in walkdir::WalkDir::new(&dir).follow_links(false) {
+            let entry = match entry_result {
+                Ok(entry) => entry,
+                Err(e) => {
+                    // Walkdir failed to descend into a subdirectory
+                    // (most commonly: permission denied on
+                    // `locales/<code>/`). The pre-WS3 implementation
+                    // used `std::fs::read_dir(&dir).map_err(...)?` and
+                    // would have propagated the IO error to the caller;
+                    // the walkdir migration would silently drop it via
+                    // `filter_map(Result::ok)`. Log it so an unreadable
+                    // template directory surfaces in operator logs
+                    // (matching the convention used for parse / validate
+                    // failures below) instead of producing a misleading
+                    // "Template not found" error downstream.
+                    eprintln!(
+                        "[tessera_templates] walkdir error under {}: {e}",
+                        dir.display()
+                    );
+                    continue;
+                }
+            };
             let path = entry.path();
             if !path.is_file() {
                 continue;

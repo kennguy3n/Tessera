@@ -107,8 +107,17 @@ export:
     #[test]
     fn get_template_by_id() {
         let dir = tempfile::tempdir().unwrap();
+        // Templates must live under a canonical category subdirectory
+        // (see `tessera_templates::TEMPLATE_CATEGORIES`). The
+        // `list_templates_from_dir` test above already follows this
+        // layout — `get_template_by_id` was written before the WS3
+        // contract tightening and used to drop the YAML at the root,
+        // which the registry now correctly ignores so its by-id lookup
+        // can never diverge from `load_template_by_id` for stray files
+        // outside the canonical category tree.
+        std::fs::create_dir_all(dir.path().join("documents")).unwrap();
         std::fs::write(
-            dir.path().join("test.yaml"),
+            dir.path().join("documents/test.yaml"),
             r#"
 id: test-v1
 name: Test

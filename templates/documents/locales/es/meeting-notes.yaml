@@ -4,6 +4,14 @@ type: document
 description: Notas con decisiones, acciones, riesgos y próximos pasos de una reunión (versión en español)
 locale: es
 sections:
+  - title: Metadatos de la reunión
+    prompt: >
+      Registre el título, la fecha, los asistentes presentes y
+      ausentes, el facilitador y el responsable de las notas.
+      Cite la agenda si existe. Responda en español.
+    required_sources:
+      - type: local
+        min: 0
   - title: Resumen
     prompt: >
       Resumen en un párrafo de la reunión: lo que se discutió

@@ -4,6 +4,14 @@ type: document
 description: Compte-rendu avec décisions, actions, risques et prochaines étapes (version française)
 locale: fr
 sections:
+  - title: Métadonnées de la réunion
+    prompt: >
+      Saisissez le titre, la date, les participants présents et
+      absents, l'animateur et la personne chargée des notes.
+      Référencez l'ordre du jour le cas échéant. Répondez en français.
+    required_sources:
+      - type: local
+        min: 0
   - title: Synthèse
     prompt: >
       Synthèse d'un paragraphe de la réunion : ce qui a été

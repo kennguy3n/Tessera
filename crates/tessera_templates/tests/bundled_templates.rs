@@ -374,6 +374,62 @@ fn every_non_english_locale_ships_the_canonical_template_set() {
     }
 }
 
+/// Localized variants must have the same section count as the English
+/// source they translate. Drift surfaces as a downstream renderer that
+/// produces structurally different artifacts per locale (e.g. a 6-section
+/// agenda in Spanish vs. a 7-section agenda in English), which silently
+/// breaks layouts that assume a fixed shape. The validator only checks
+/// non-empty sections, so without this test a translator who merged two
+/// sections into one (or dropped a section) would commit successfully.
+///
+/// We only enforce *count* parity, not section-by-section title parity:
+/// it's legitimate (and sometimes necessary) for a translator to retitle
+/// a section into idiomatic phrasing in the target language, but the
+/// *structure* must remain identical.
+#[test]
+fn localized_variants_match_english_section_count() {
+    let canonical = [
+        ("documents", "prd.yaml"),
+        ("documents", "proposal.yaml"),
+        ("documents", "sop.yaml"),
+        ("documents", "report.yaml"),
+        ("documents", "meeting-agenda.yaml"),
+        ("documents", "meeting-notes.yaml"),
+        ("documents", "task-list.yaml"),
+        ("documents", "form.yaml"),
+        ("sheets", "budget.yaml"),
+        ("slides", "pitch.yaml"),
+    ];
+    let root = workspace_templates_root();
+    let non_english: Vec<&&str> = SUPPORTED_LOCALES.iter().filter(|l| **l != "en").collect();
+    for (category, filename) in &canonical {
+        let english_path = root.join(category).join(filename);
+        let english = parse_template_file(&english_path)
+            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", display_path(&english_path)));
+        let expected = english.section_count();
+        for locale in &non_english {
+            let path = root
+                .join(category)
+                .join("locales")
+                .join(**locale)
+                .join(filename);
+            let translated = parse_template_file(&path)
+                .unwrap_or_else(|e| panic!("failed to parse {}: {e}", display_path(&path)));
+            let actual = translated.section_count();
+            assert_eq!(
+                actual,
+                expected,
+                "section-count drift in {}: locale `{}` has {} sections but English source `{}` has {}",
+                display_path(&path),
+                locale,
+                actual,
+                display_path(&english_path),
+                expected,
+            );
+        }
+    }
+}
+
 /// Derive `<category>/<locale>/<basename>` style display path so
 /// failure messages don't leak absolute paths from the build agent.
 fn display_path(path: &Path) -> String {

@@ -29,10 +29,15 @@ sections:
     prompt: >
       Liste explícitamente las decisiones que deben tomarse en la
       reunión y los responsables de su aplicación. Responda en español.
-  - title: Próximos pasos
+  - title: Lecturas previas
     prompt: >
-      Anticipe los próximos pasos, los puntos de seguimiento y la
-      próxima reunión o checkpoint. Responda en español.
+      Enlace al material de origen que los asistentes deben revisar
+      antes de la reunión. Responda en español.
+  - title: Seguimientos
+    prompt: >
+      Reserve espacio para los puntos de acción capturados durante
+      la reunión, para ser completados después del evento.
+      Responda en español.
 export:
   - markdown
   - html

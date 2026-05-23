@@ -29,10 +29,15 @@ sections:
     prompt: >
       Listen Sie ausdrücklich die in der Besprechung zu treffenden
       Entscheidungen auf und wer sie umsetzt. Antworten Sie auf Deutsch.
-  - title: Nächste Schritte
+  - title: Vorzubereitende Lektüre
     prompt: >
-      Antizipieren Sie die nächsten Schritte, Folgepunkte und
-      die nächste Besprechung bzw. den nächsten Meilenstein. Antworten Sie auf Deutsch.
+      Verlinken Sie das Quellmaterial, das die Teilnehmer vor der
+      Besprechung durchgehen sollten. Antworten Sie auf Deutsch.
+  - title: Folgepunkte
+    prompt: >
+      Reservieren Sie Platz für die in der Besprechung erfassten
+      Aktionspunkte, die nach dem Termin ausgefüllt werden.
+      Antworten Sie auf Deutsch.
 export:
   - markdown
   - html
