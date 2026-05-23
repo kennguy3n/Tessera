@@ -862,14 +862,32 @@ async function openExternalProviderStream(
       body: req.body,
       signal: attemptController.signal,
     });
+    // Headers arrived. The per-attempt timer's job is bounding the
+    // PRE-RESPONSE wait (how long we wait for the upstream to start
+    // producing a body); once `fetch` resolves we've passed that
+    // boundary and the timer should be cleared regardless of which
+    // status-code branch we take below. Devin Review round 12
+    // BUG_001 surfaced the regression: when the timer was only
+    // cleared in the `res.ok` branch, a slow body-drain on a non-
+    // retryable HTTP error (e.g. a `await res.text()` for a 401
+    // response that takes longer than `timeoutMs`) would trip the
+    // timer mid-drain, the `.catch(() => "")` would swallow the
+    // resulting abort error, and the explicit `throw new Error(...)`
+    // for "HTTP 401" would then enter the catch block where
+    // `attemptController.signal.aborted === true` would misclassify
+    // the failure as a retryable timeout. The user would see "pre-
+    // stream timeout (Nms) after K attempts" instead of "HTTP 401",
+    // and the retry loop would waste its budget on a permanent
+    // failure. Clearing the timer here, before any body-read, makes
+    // the misclassification structurally impossible.
+    clearTimeout(timer);
     if (res.ok) {
-      // Body is open. The per-attempt timer no longer applies —
-      // mid-stream slowness is bounded only by the user's Stop
-      // signal (see the long-running-streaming-response comment on
-      // `timeoutMs` in `streamExternalProvider`). Clear the timer
-      // here and transfer listener ownership to the caller via
-      // `cleanupBodyForwarder`.
-      clearTimeout(timer);
+      // Body is open. Mid-stream slowness is bounded only by the
+      // user's Stop signal (see the long-running-streaming-response
+      // comment on `timeoutMs` in `streamExternalProvider`).
+      // Transfer listener ownership to the caller via
+      // `cleanupBodyForwarder`; the per-attempt timer was already
+      // cleared above.
       ownershipTransferred = true;
       return {
         status: "opened",
@@ -884,6 +902,9 @@ async function openExternalProviderStream(
       // include a preview in the eventual user-visible error (if the
       // retry chain exhausts). Errors here are swallowed because the
       // status code is the authoritative signal, not the body shape.
+      // Per the comment above, the timer was already cleared so this
+      // drain can take as long as the upstream needs without
+      // affecting classification.
       const bodyPreview = await res.text().catch(() => "");
       const retryAfterMs = parseRetryAfter(res.headers.get("retry-after"));
       return {
@@ -896,7 +917,9 @@ async function openExternalProviderStream(
     }
     // Non-retryable client error (400/401/403/404/422/…). Surface
     // immediately so the user sees the real problem without 7 s of
-    // pointless retry delay.
+    // pointless retry delay. Per the comment above, the timer was
+    // already cleared so a slow body-drain on the error response
+    // can't mid-classify this as a retryable timeout.
     const text = await res.text().catch(() => "");
     throw new Error(
       `External provider HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`,

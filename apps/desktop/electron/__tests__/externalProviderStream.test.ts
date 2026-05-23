@@ -750,6 +750,81 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     vi.useRealTimers();
   });
 
+  it("does NOT misclassify a slow body-drain on a non-retryable HTTP error as a pre-stream timeout (BUG_001 regression)", async () => {
+    // Devin Review round 12 BUG_001 flagged that the per-attempt
+    // timer was only cleared in the `res.ok` branch of
+    // `openExternalProviderStream`. For a non-retryable status
+    // (e.g. 401 invalid api key), the function reads the response
+    // body via `await res.text().catch(() => "")` before throwing
+    // the explicit `External provider HTTP 401` error. If the
+    // per-attempt timer fired DURING that body read,
+    // `attemptController.abort()` would run, the `.catch(() => "")`
+    // would swallow the resulting abort error returning empty
+    // string, and the subsequent `throw new Error("HTTP 401")`
+    // would enter the catch block where
+    // `attemptController.signal.aborted === true` would misclassify
+    // the failure as a retryable timeout. The retry loop would
+    // then waste its budget retrying a permanent 401 and surface
+    // "pre-stream timeout (1000ms) after K attempts" instead of
+    // "HTTP 401" — a confusing and misleading error message for
+    // the user.
+    //
+    // The fix clears the timer immediately after `fetch` resolves,
+    // before any body-read branches. This test pins the invariant:
+    // a 401 with a slow-to-drain body MUST still surface as HTTP
+    // 401, not as pre-stream timeout.
+    vi.useFakeTimers();
+    // Construct a Response-shaped object whose `.text()` resolves
+    // after 5 seconds. We don't reject with AbortError because the
+    // production code swallows that anyway via `.catch(() => "")`;
+    // the resolve path is enough to demonstrate the bug. A real
+    // `Response` body backed by the underlying fetch would be
+    // aborted by `attemptController.signal`, but we're testing
+    // what happens REGARDLESS of whether the body read sees the
+    // abort — the bug is structural in `openExternalProviderStream`
+    // (the timer firing during the drain), not in the body
+    // reader's awareness of the signal.
+    const mockText = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          setTimeout(() => resolve("invalid api key"), 5000);
+        }),
+    );
+    const mockResponse = {
+      ok: false,
+      status: 401,
+      headers: new Headers(),
+      text: mockText,
+    } as unknown as Response;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(mockResponse);
+    const streamPromise = streamExternalProvider(
+      {
+        // timeoutSecs=1 → per-attempt timer fires at +1000ms
+        // (before the body-drain mock resolves at +5000ms).
+        // maxRetries=0 keeps the test simple — with the bug the
+        // loop would exhaust to "after 1 attempt" of timeout; with
+        // the fix it throws HTTP 401 directly.
+        provider: mkProvider({ timeoutSecs: 1, maxRetries: 0 }),
+        apiKey: "sk-bad",
+        prompt: "hi",
+      },
+      () => {},
+    );
+    const rejection = expect(streamPromise).rejects.toThrow(/HTTP 401/);
+    // Advance through both the per-attempt timer (1000ms) AND the
+    // slow body-drain (5000ms total). With the fix, the per-attempt
+    // timer is a no-op because it was cleared right after fetch
+    // resolved.
+    await vi.advanceTimersByTimeAsync(5000);
+    await rejection;
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(mockText).toHaveBeenCalledTimes(1);
+    fetchSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
   it("honours provider.maxRetries=5 with the doubling schedule (1s/2s/4s/8s/16s)", async () => {
     // Pins the >3-retry behaviour. Without this assertion a future
     // refactor could silently re-introduce the hardcoded 3-retry
