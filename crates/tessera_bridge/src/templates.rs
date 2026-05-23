@@ -57,12 +57,14 @@ pub fn get_template(template_dir: &str, template_id: &str) -> BridgeResult<Optio
     // We deliberately reproduce two semantics from the previous
     // registry-backed implementation:
     //
-    // 1. Missing id  -> `Ok(None)`.
-    //    `load_template_by_id` returns
-    //    `Err(Error::TemplateValidation("Template not found: <id>"))`
-    //    on miss. We map *that specific* error back to `Ok(None)` so
-    //    the renderer's `None` ("no such template") vs. `Err`
-    //    ("lookup failed") contract is preserved.
+    // 1. Missing id -> `Ok(None)`.
+    //    `load_template_by_id` returns the dedicated
+    //    `Error::TemplateNotFound(id)` variant on miss (previously
+    //    this was a string-matched `TemplateValidation("Template not
+    //    found: <id>")`, which made the bridge contract fragile to
+    //    any refactor of the error wording). The renderer treats
+    //    `None` as "no such template" and `Err` as "lookup failed",
+    //    so we map this specific variant back to `Ok(None)`.
     //
     // 2. Validation failure -> `Ok(None)`.
     //    The old `TemplateRegistry::load_from_directory` ran
@@ -87,9 +89,7 @@ pub fn get_template(template_dir: &str, template_id: &str) -> BridgeResult<Optio
                 Ok(None)
             }
         },
-        Err(CoreError::TemplateValidation(msg)) if msg.starts_with("Template not found:") => {
-            Ok(None)
-        }
+        Err(CoreError::TemplateNotFound(_)) => Ok(None),
         Err(e) => Err(BridgeError::Core(e)),
     }
 }
@@ -176,6 +176,44 @@ export:
     fn nonexistent_dir_returns_empty() {
         let templates = list_templates("/nonexistent/path").unwrap();
         assert!(templates.is_empty());
+    }
+
+    /// `get_template` must return `Ok(None)` (not `Err(...)`) when the
+    /// requested id does not exist in any canonical category. The
+    /// previous implementation distinguished "not found" from other
+    /// errors via `Err(CoreError::TemplateValidation(msg))
+    /// if msg.starts_with("Template not found:")`, which would have
+    /// silently propagated as `Err` the moment somebody refactored the
+    /// error message in `parser::load_template_by_id`. The new
+    /// dedicated `Error::TemplateNotFound` variant makes this contract
+    /// type-checked; this test pins it down.
+    #[test]
+    fn get_template_returns_none_for_missing_id() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("documents")).unwrap();
+        // Drop one real template in so the directory exists and the
+        // walker has something to traverse.
+        std::fs::write(
+            dir.path().join("documents/prd.yaml"),
+            r#"
+id: prd-v1
+name: PRD
+type: document
+description: Product Requirements Document
+sections:
+  - title: Problem
+    prompt: Describe the problem.
+export:
+  - markdown
+"#,
+        )
+        .unwrap();
+
+        let result = get_template(dir.path().to_str().unwrap(), "no-such-id-v1").unwrap();
+        assert!(
+            result.is_none(),
+            "expected Ok(None) for missing template id; got Ok(Some({result:?}))"
+        );
     }
 
     /// `get_template` must return `Ok(None)` (not `Ok(Some(...))`) for a

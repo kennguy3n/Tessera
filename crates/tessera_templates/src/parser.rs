@@ -90,9 +90,19 @@ pub fn load_template_by_id(template_dir: &str, template_id: &str) -> Result<Temp
             }
         }
     }
-    Err(Error::TemplateValidation(format!(
-        "Template not found: {template_id}"
-    )))
+    // Dedicated `TemplateNotFound` variant (not `TemplateValidation`)
+    // so callers like the NAPI bridge can distinguish a missing id
+    // (`Ok(None)` in the UI) from a parse/validation error (real
+    // failure) without resorting to string matching on the error
+    // message. Previously this returned
+    // `Error::TemplateValidation(format!("Template not found: {id}"))`
+    // and the bridge did
+    // `if msg.starts_with("Template not found:")` to recover the
+    // not-found semantics; any future refactor of the error text
+    // would have silently broken that contract. See
+    // `crates/tessera_bridge/src/templates.rs::get_template` for
+    // the matching consumer.
+    Err(Error::TemplateNotFound(template_id.to_string()))
 }
 
 #[cfg(test)]

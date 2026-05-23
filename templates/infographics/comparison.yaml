@@ -11,7 +11,7 @@ color_scheme:
   secondary: "#0EA5E9"
   accent: "#F59E0B"
 sections:
-  - heading: Option A
+  - title: Option A
     prompt: >
       Summarise the first option being compared. Highlight 2-3 defining
       characteristics from the source material.
@@ -19,22 +19,22 @@ sections:
     required_sources:
       - type: local
         min: 1
-  - heading: Option B
+  - title: Option B
     prompt: >
       Summarise the second option being compared.
     icon_suggestion: circles-four
     required_sources:
       - type: local
         min: 1
-  - heading: Strengths
+  - title: Strengths
     prompt: >
       Side-by-side strengths. List the strongest argument for each option.
     icon_suggestion: trophy
-  - heading: Weaknesses
+  - title: Weaknesses
     prompt: >
       Side-by-side weaknesses. Be specific and source-backed.
     icon_suggestion: warning
-  - heading: Verdict
+  - title: Verdict
     prompt: >
       One-line recommendation grounded in the comparison above. Cite the
       criterion that tipped the decision.

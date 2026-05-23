@@ -29,39 +29,6 @@ use tessera_templates::validator::validate_template;
 // when adding a new category.
 use tessera_templates::TEMPLATE_CATEGORIES;
 
-/// Some legacy visual templates (infographics + the SaaS landing page)
-/// ship with a richer, type-specific schema that uses `heading:` instead
-/// of `title:` for sections and adds top-level fields like `layout`,
-/// `default_icon_set`, `color_scheme`, `hero`, `features`. The runtime
-/// `TemplateRegistry::load_from_directory` silently skips these files
-/// (see `crates/tessera_templates/src/registry.rs:46`) because the
-/// canonical `Template` deserialiser is strict. Until the visual
-/// schema is reconciled with the canonical one, this test deliberately
-/// mirrors that runtime behaviour: it tolerates a parse failure on the
-/// listed files while still asserting that *every other* template
-/// parses cleanly. Adding a new file here without first reconciling
-/// the schemas would mask a real regression.
-const LEGACY_VISUAL_SCHEMA_TEMPLATES: &[&str] = &[
-    "infographics/comparison.yaml",
-    "infographics/process-flow.yaml",
-    "infographics/stats-overview.yaml",
-    "landing_pages/saas-product.yaml",
-];
-
-/// Returns `true` if `path` matches one of the legacy visual-schema
-/// templates listed above. Comparison is done against the workspace-
-/// relative path so it works regardless of where the test is run from.
-fn is_legacy_visual_template(path: &Path) -> bool {
-    let root = workspace_templates_root();
-    let Ok(relative) = path.strip_prefix(&root) else {
-        return false;
-    };
-    let relative_str = relative.to_string_lossy().replace('\\', "/");
-    LEGACY_VISUAL_SCHEMA_TEMPLATES
-        .iter()
-        .any(|s| relative_str == *s)
-}
-
 /// BCP-47 locales the WS3 expansion ships localized variants in.
 /// `en` is the implicit default for every English-source template;
 /// every other locale corresponds to a `locales/<code>/` subdirectory
@@ -124,18 +91,6 @@ fn every_bundled_template_parses_and_validates() {
 
     for path in &paths {
         let display = display_path(path);
-        if is_legacy_visual_template(path) {
-            // Verify the file is still well-formed YAML so a typo or
-            // accidental deletion is still caught — but accept that
-            // it does not deserialize into `Template` until the
-            // visual schema is reconciled.
-            let raw = std::fs::read_to_string(path)
-                .unwrap_or_else(|e| panic!("Failed to read {display}: {e}"));
-            let _value: serde_yaml::Value = serde_yaml::from_str(&raw).unwrap_or_else(|e| {
-                panic!("Legacy visual template {display} is not valid YAML: {e}")
-            });
-            continue;
-        }
         let tmpl =
             parse_template_file(path).unwrap_or_else(|e| panic!("Failed to parse {display}: {e}"));
         validate_template(&tmpl).unwrap_or_else(|e| panic!("Failed to validate {display}: {e}"));
@@ -170,11 +125,13 @@ fn all_bundled_template_ids_are_unique() {
     let paths = discover_all_templates();
     let mut seen: HashMap<String, PathBuf> = HashMap::new();
     for path in &paths {
-        // Extract the id from raw YAML so legacy visual templates
-        // (which cannot deserialize into `Template`) are still
-        // included in the uniqueness check — duplicate ids across
-        // schemas would still confuse `load_template_by_id`.
-        let id = template_id_from_yaml(path);
+        let tmpl = parse_template_file(path).unwrap_or_else(|e| {
+            panic!(
+                "Failed to parse {} for id-uniqueness check: {e}",
+                display_path(path)
+            )
+        });
+        let id = tmpl.id.clone();
         if let Some(prev) = seen.insert(id.clone(), path.clone()) {
             panic!(
                 "Duplicate template id `{}` found in both {} and {}",
@@ -183,21 +140,6 @@ fn all_bundled_template_ids_are_unique() {
                 display_path(path)
             );
         }
-    }
-}
-
-/// Pull the top-level `id:` value from a template YAML file without
-/// going through the strict `Template` deserialiser. Used so the
-/// id-uniqueness check still covers legacy visual templates.
-fn template_id_from_yaml(path: &Path) -> String {
-    let display = display_path(path);
-    let raw =
-        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("Failed to read {display}: {e}"));
-    let value: serde_yaml::Value = serde_yaml::from_str(&raw)
-        .unwrap_or_else(|e| panic!("Failed to parse YAML for {display}: {e}"));
-    match value.get("id").and_then(|v| v.as_str()) {
-        Some(id) => id.to_string(),
-        None => panic!("{display} has no top-level `id` field"),
     }
 }
 
@@ -213,12 +155,6 @@ fn locale_field_matches_directory_layout() {
 
     for path in discover_all_templates() {
         let display = display_path(&path);
-        if is_legacy_visual_template(&path) {
-            // Legacy visual templates ship only in English today and
-            // don't carry a `locale` field — they live directly under
-            // their category root and the runtime treats them as `en`.
-            continue;
-        }
         let tmpl =
             parse_template_file(&path).unwrap_or_else(|e| panic!("Failed to parse {display}: {e}"));
 
@@ -267,14 +203,6 @@ fn locale_field_matches_directory_layout() {
 fn category_specific_artifact_types_match_directory() {
     for path in discover_all_templates() {
         let display = display_path(&path);
-        if is_legacy_visual_template(&path) {
-            // Skip: legacy visual templates do declare a `type:` field
-            // but cannot be deserialized into the canonical `Template`
-            // struct (different section schema). Their `type:` is
-            // verified by raw YAML inspection in the
-            // legacy_visual_templates_declare_expected_type test.
-            continue;
-        }
         let tmpl =
             parse_template_file(&path).unwrap_or_else(|e| panic!("Failed to parse {display}: {e}"));
 
@@ -591,47 +519,4 @@ fn locale_industry_profile_round_trip_through_parser() {
     // enough to use in error messages: not strictly necessary, but
     // prevents regressions if someone accidentally drops the derive.
     let _ = format!("{:?}", Template { ..prd });
-}
-
-/// Legacy visual templates declare their artifact type in the YAML
-/// even though the canonical parser cannot deserialize them. We still
-/// want to catch the "I copied this file into the wrong directory"
-/// mistake — so we verify the raw YAML's `type:` field matches the
-/// expected `ArtifactType` for the directory the file sits in.
-#[test]
-fn legacy_visual_templates_declare_expected_type() {
-    let root = workspace_templates_root();
-    for relative in LEGACY_VISUAL_SCHEMA_TEMPLATES {
-        let path = root.join(relative);
-        if !path.is_file() {
-            // Legacy file could be removed in a future cleanup — that's
-            // fine, just don't fail the test.
-            continue;
-        }
-        let raw = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("Failed to read {relative}: {e}"));
-        let value: serde_yaml::Value = serde_yaml::from_str(&raw)
-            .unwrap_or_else(|e| panic!("Failed to parse YAML for {relative}: {e}"));
-        let declared = value
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or_else(|| panic!("{relative} missing `type:` field"));
-
-        let category = category_for(&path);
-        // ArtifactType uses snake_case serde rename, so the YAML
-        // string is the snake_case variant: `infographic`,
-        // `landing_page`, etc.
-        let expected_str = match expected_artifact_type(category) {
-            ArtifactType::Document => "document",
-            ArtifactType::Slides => "slides",
-            ArtifactType::Sheet => "sheet",
-            ArtifactType::Base => "base",
-            ArtifactType::Infographic => "infographic",
-            ArtifactType::LandingPage => "landing_page",
-        };
-        assert_eq!(
-            declared, expected_str,
-            "legacy visual template {relative} sits under `{category}/` but declares `type: {declared}`"
-        );
-    }
 }

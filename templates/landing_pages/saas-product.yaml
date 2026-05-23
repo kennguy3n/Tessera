@@ -4,52 +4,54 @@ type: landing_page
 description: >
   Standard SaaS product landing page: hero, feature grid, stats bar,
   testimonials, final CTA.
+# Visual hints retained for the landing-page renderer. The canonical
+# `Template` deserialiser silently ignores unknown fields, so these
+# entries do not affect parsing or registry behaviour, but they remain
+# accessible to renderers that consume the raw YAML directly.
 default_icon_set: lucide
 color_scheme:
   primary: "#7C3AED"
   secondary: "#0EA5E9"
   accent: "#F59E0B"
-hero:
-  headline_prompt: >
-    Distill the product's value into a 6-10 word headline. Lead with the
-    outcome the customer gets, not the feature.
-  subheadline_prompt: >
-    One sentence (15-25 words) that explains who it's for and what makes
-    it different.
-  cta_text: Get started
-features:
-  - title_prompt: Speed
-    description_prompt: >
+sections:
+  - title: Hero
+    prompt: >
+      Compose the landing page hero in three lines:
+      (1) a 6-10 word headline that leads with the outcome the
+      customer gets (not the feature);
+      (2) a 15-25 word subheadline naming who it's for and what
+      makes it different;
+      (3) the primary call-to-action label, e.g. "Get started".
+  - title: Speed
+    prompt: >
       Describe the speed advantage with concrete numbers from the
-      sources if available.
-    icon_suggestion: zap
-  - title_prompt: Security
-    description_prompt: >
-      Describe the security story. Cite specific guarantees from the
-      sources (encryption, residency, certifications).
-    icon_suggestion: shield-check
-  - title_prompt: Integrations
-    description_prompt: >
-      Summarise the integration story (number of providers, depth of
-      integration).
-    icon_suggestion: plug
-  - title_prompt: Privacy
-    description_prompt: >
-      Describe the privacy / local-first / on-device story.
-    icon_suggestion: lock
-stats:
-  - value_prompt: Largest metric from sources
-    label_prompt: One-word label
-  - value_prompt: Second largest metric
-    label_prompt: One-word label
-testimonials:
-  - quote_prompt: >
-      Pull or paraphrase the strongest customer quote from the sources.
-    name_prompt: Customer name
-    company_prompt: Customer company
-final_cta:
-  headline_prompt: Closing line that reinforces the hero promise.
-  button_text: Try it free
+      sources if available. One paragraph.
+  - title: Security
+    prompt: >
+      Describe the security story. Cite specific guarantees from
+      the sources (encryption, residency, certifications). One
+      paragraph.
+  - title: Integrations
+    prompt: >
+      Summarise the integration story (number of providers, depth
+      of integration). One paragraph.
+  - title: Privacy
+    prompt: >
+      Describe the privacy / local-first / on-device story. One
+      paragraph.
+  - title: Stats Bar
+    prompt: >
+      Surface the two strongest quantitative metrics from the
+      sources as a two-cell stats bar. For each cell give the
+      value (number or percentage) and a one-word label.
+  - title: Testimonial
+    prompt: >
+      Pull or paraphrase the strongest customer quote from the
+      sources. Include the customer name and company.
+  - title: Final Call to Action
+    prompt: >
+      Closing line that reinforces the hero promise, plus the
+      final CTA button label (e.g. "Try it free").
 export:
   - html
   - pdf
