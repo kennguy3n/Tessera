@@ -196,6 +196,29 @@ export default function ExternalProviderCard() {
     value: ExternalProviderConfigInput[K],
   ) => {
     setProvider({ ...provider, [key]: value });
+    // Clear the listed-models dropdown when the user switches the
+    // provider type. Without this clear, switching from
+    // `openai_compatible` (after a successful "List models" populate)
+    // to `anthropic` would leave a stale select dropdown showing
+    // OpenAI-compatible model names, AND the "List models" button is
+    // intentionally hidden for `anthropic` (no `/v1/models` endpoint)
+    // so the user has no obvious way back to manual entry except
+    // hunting for the `— enter manually —` option at the bottom of a
+    // wrong-provider list. Clearing on the type-switch returns the
+    // card to the manual-text-input state, which IS the right
+    // default for Anthropic and a sensible default for an unconfigured
+    // OpenAI-compatible provider too (the user can re-click "List
+    // models" once they finish typing the apiUrl).
+    //
+    // We do NOT clear on every apiUrl keystroke because the user is
+    // typically mid-edit when the URL field receives onChange events
+    // — clobbering the list on each character would feel buggy. A
+    // stale list against a different host is recoverable via a fresh
+    // "List models" click; a stuck dropdown across a provider-type
+    // switch is not, hence the asymmetric treatment.
+    if (key === "providerType") {
+      setAvailableModels(null);
+    }
   };
 
   const placeholderUrl =
