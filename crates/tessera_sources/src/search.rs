@@ -514,4 +514,43 @@ mod tests {
             results[0].relevance
         );
     }
+
+    /// Pins the empty/whitespace-only query contract.
+    ///
+    /// Before this guard landed, the WS3 hybrid path would:
+    ///   * skip the BM25 call (good — `build_fts_query("")` returns
+    ///     ""), but then
+    ///   * still build a "query embedding" via `embed("")` (which
+    ///     for `HashTrickEmbedding` is the all-zeros vector), and
+    ///   * cosine-rank every stored embedding against that zero
+    ///     vector. Cosine similarity is `0.0` for every chunk, the
+    ///     all-tied set is sorted by the `chunk_id` secondary key,
+    ///     and `take(limit)` returns the `limit` lowest-id chunks
+    ///     with monotonically-decreasing RRF relevance.
+    ///
+    /// Net effect: `SourceManager::search("", 10)` would surface
+    /// up to 10 arbitrary chunks instead of an empty result — a
+    /// data-leak-shaped UX bug (the renderer would render the
+    /// snippets as if they were "matches"). This test pins the
+    /// fix at the public `SearchEngine::search` API level.
+    #[test]
+    fn search_empty_or_whitespace_query_returns_no_results() {
+        let store = setup_store_with_data();
+        let engine = SearchEngine::new(&store);
+
+        for q in ["", " ", "\t", "  \n  ", "\u{00A0}"] {
+            let results = engine.search(q, 10).unwrap();
+            assert!(
+                results.is_empty(),
+                "expected no results for empty/whitespace-only query {q:?}, got {} hits",
+                results.len()
+            );
+            let broad = engine.search_broad(q, 10).unwrap();
+            assert!(
+                broad.is_empty(),
+                "expected no results for empty/whitespace-only broad query {q:?}, got {} hits",
+                broad.len()
+            );
+        }
+    }
 }

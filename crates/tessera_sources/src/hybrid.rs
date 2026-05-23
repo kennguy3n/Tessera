@@ -277,7 +277,54 @@ pub fn hybrid_search(
     limit: usize,
     config: &HybridSearchConfig,
 ) -> Result<Vec<i64>> {
-    let pool = config.pool_size(limit);
+    // Whitespace-only query short-circuit. Both signals would otherwise
+    // produce "results":
+    //
+    //   * BM25: `build_fts_query("")` already returns "" and the
+    //     `fts_query.is_empty()` branch below skips the FTS call, so this
+    //     half is fine on its own.
+    //   * Vector: `EmbeddingProvider::embed("")` — for the only provider
+    //     wired today (`HashTrickEmbedding`) — returns the zero vector,
+    //     and `cosine_similarity(any_stored_vec, zero_vec)` returns `0.0`
+    //     for every stored chunk (see `embedding::cosine_similarity`).
+    //     `rank_chunks_by_cosine` then sorts the all-tied set by the
+    //     `chunk_id` secondary key and emits up to `pool` candidates,
+    //     each of which picks up a non-zero RRF contribution from
+    //     `fuse_rankings`. Net effect: a `SourceManager::search("", N)`
+    //     call would return `N` lowest-chunk_id rows with monotonically
+    //     decreasing relevance instead of returning empty.
+    //
+    // Pinning this contract here — at the boundary that owns the
+    // BM25+vector union — means every caller of `hybrid_search` (the
+    // `SearchEngine` API today, plus any future direct consumers like
+    // the planned `/sources/search` HTTP endpoint) inherits the
+    // correct behaviour without each one having to remember to guard
+    // its own input. The `search_with_mode` caller keeps its own
+    // `ranked_ids.is_empty()` early return as a defence-in-depth path
+    // for non-empty queries that happen to produce no matches.
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Pool sizing: oversample BM25 + vector candidates so the fusion
+    // has enough material to rerank, but ONLY when both signals are
+    // contributing. When the vector signal is disabled (provider is
+    // None, e.g. fresh install with no embeddings; OR `vector_weight`
+    // is explicitly set to 0.0, the `SearchEngine::new()` BM25-only
+    // path), RRF is monotonic over the single remaining BM25 ranking
+    // — the top-`limit` IDs after fusion are exactly the top-`limit`
+    // BM25 hits in BM25 order, so fetching 4× candidates from FTS
+    // would be wasted work (extra rows materialised, extra HashMap
+    // accumulator entries built, extra `ages_secs_for_chunks` IDs
+    // probed). Reduce to `limit` for the BM25-only path so the
+    // backwards-compatible `SearchEngine::new()` call site doesn't pay
+    // a perf regression for the hybrid feature it isn't using.
+    let vector_active = provider.is_some() && config.vector_weight > 0.0;
+    let pool = if vector_active {
+        config.pool_size(limit)
+    } else {
+        limit
+    };
 
     let bm25_hits = if fts_query.is_empty() {
         Vec::new()
@@ -293,13 +340,13 @@ pub fn hybrid_search(
         })
         .collect();
 
-    let vector: Vec<RankedCandidate> = match provider {
-        Some(p) if config.vector_weight > 0.0 => {
-            let query_vec = p.embed(query)?;
-            let rows = store.load_embeddings_for_model(p.model_id())?;
-            rank_chunks_by_cosine(&rows, &query_vec, p.model_id(), pool)
-        }
-        _ => Vec::new(),
+    let vector: Vec<RankedCandidate> = if vector_active {
+        let p = provider.expect("vector_active implies provider is Some");
+        let query_vec = p.embed(query)?;
+        let rows = store.load_embeddings_for_model(p.model_id())?;
+        rank_chunks_by_cosine(&rows, &query_vec, p.model_id(), pool)
+    } else {
+        Vec::new()
     };
 
     // Gather ages_secs for every candidate in the union.
