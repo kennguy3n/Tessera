@@ -57,7 +57,17 @@ $ErrorActionPreference = 'Stop'
 # concatenating. The Trim() ensures we don't leave a leading space
 # when RUSTFLAGS was previously unset.
 $existingRustflags = if ($env:RUSTFLAGS) { $env:RUSTFLAGS } else { '' }
-$env:RUSTFLAGS = ("{0} -D warnings" -f $existingRustflags).Trim()
+# Detect whether the user already has `-D warnings` in their RUSTFLAGS
+# so we don't emit `... -D warnings -D warnings`. rustc deduplicates
+# flags so the repeat is harmless, but it makes CI logs noisy and the
+# dedup is essentially free. The regex matches on token boundaries
+# (`(^|\s)-D\s+warnings(\s|$)`) so we don't false-positive on e.g.
+# `-D warnings-as-deny` or any future flag that prefixes `warnings`.
+if ($existingRustflags -match '(^|\s)-D\s+warnings(\s|$)') {
+    $env:RUSTFLAGS = $existingRustflags
+} else {
+    $env:RUSTFLAGS = ("{0} -D warnings" -f $existingRustflags).Trim()
+}
 
 # Always run from the repo root so relative paths in cargo / npm /
 # electron-builder resolve correctly even when the script is invoked

@@ -35,7 +35,19 @@ set -euo pipefail
 # a release-day surprise we exist to prevent. We append rather than
 # overwrite so a developer's pre-existing RUSTFLAGS (e.g. for
 # target-cpu tuning) is preserved.
-if [[ -n "${RUSTFLAGS:-}" ]]; then
+# Detect whether the user already has `-D warnings` in their
+# RUSTFLAGS — if so we leave the value untouched rather than emitting
+# `... -D warnings -D warnings`. rustc deduplicates flags so the
+# duplicate is harmless, but the noisy string shows up in CI logs and
+# in `cargo` error messages, and the dedup is cheap. We match on the
+# token boundaries (`(^| )-D warnings($| )`) rather than a bare
+# substring so we don't false-positive on e.g. `-D warnings-as-deny`
+# or any future tooling that prefixes the flag.
+if [[ "${RUSTFLAGS:-}" =~ (^|[[:space:]])-D[[:space:]]+warnings([[:space:]]|$) ]]; then
+  # Already contains `-D warnings` — keep the existing value as-is,
+  # but make sure it's exported so the subshell inherits it.
+  export RUSTFLAGS
+elif [[ -n "${RUSTFLAGS:-}" ]]; then
   export RUSTFLAGS="${RUSTFLAGS} -D warnings"
 else
   export RUSTFLAGS="-D warnings"
@@ -109,20 +121,27 @@ run_steps() {
     # explicitly disable it for the duration of the step and check
     # the subshell's exit code ourselves.
     #
-    # The subshell, however, gets `-e -o pipefail`:
+    # The subshell, however, gets `-e -u -o pipefail` so it mirrors
+    # the parent's `set -euo pipefail` strictness exactly:
     #   * `-o pipefail` makes a piped step (e.g. `foo | grep`) fail
     #     when any element of the pipeline fails, not just the last.
     #   * `-e` makes a multi-statement step (e.g. `cmd1; cmd2`) fail
     #     as soon as the first statement returns non-zero, instead of
     #     silently masking it and reporting only the final exit code.
-    # Without `-e`, a step like `cargo build; cargo test` would let a
-    # broken build slip through if the (separate, unrelated) test run
-    # later happened to succeed — a class of bug the preflight gate
-    # exists to prevent. Today every step is a single command so the
-    # behaviour change is theoretical, but adding it now guarantees
-    # the property holds for any step a future maintainer adds.
+    #   * `-u` makes an unset-variable reference inside a step (e.g.
+    #     `echo "$RUSTFLAGS_NEW"` when the variable was never set)
+    #     fail loudly instead of silently expanding to the empty
+    #     string and letting the surrounding command run with a
+    #     misleading argument list.
+    # Without these, a step like `cargo build; cargo test` would let
+    # a broken build slip through if the (separate, unrelated) test
+    # run later happened to succeed — a class of bug the preflight
+    # gate exists to prevent. Today every step is a single string
+    # literal with no variable references so the behaviour change is
+    # theoretical, but enabling all three now guarantees the property
+    # holds for any step a future maintainer adds.
     set +e
-    bash -e -o pipefail -c "${cmd}"
+    bash -e -u -o pipefail -c "${cmd}"
     local rc=$?
     set -e
     if [[ "${rc}" -ne 0 ]]; then
