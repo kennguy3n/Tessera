@@ -200,11 +200,30 @@ function Test-VersionUsable {
 }
 
 function Resolve-Version {
-    # NOTE: `$PSBoundParameters` here would scope to *this* function (which
-    # declares no parameters), not the script. The script-level `-Version`
-    # parameter is reachable via the parent scope because PowerShell
-    # functions inherit the caller's variables — so we test the variable
-    # itself rather than the (empty) function-local PSBoundParameters.
+    # Precedence (highest to lowest):
+    #   1. `-Version` CLI parameter — explicit, scoped to a single
+    #      invocation; if the maintainer typed it on the command line
+    #      they meant it for THIS run.
+    #   2. `$env:TESSERA_PREFLIGHT_VERSION` — shell-scoped, less
+    #      explicit than a CLI arg but still a deliberate override.
+    #   3. `package.json` `version` field — the source of truth.
+    #   4. Placeholder `X.Y.Z` — only reached if package.json is
+    #      missing or malformed; the build steps would fail loudly
+    #      well before the summary line is printed.
+    #
+    # The bash script omits step 1 (POSIX shells don't support named
+    # parameters cleanly), so its precedence is 2 → 3 → 4. Adding a
+    # CLI arg to bash would mean recreating `getopts` boilerplate
+    # for a script that runs maybe once per release; the slight
+    # asymmetry is deliberate. The mental model holds either way:
+    # "most explicit wins, falling back to package.json".
+    #
+    # `$PSBoundParameters` here would scope to *this* function (which
+    # declares no parameters), not the script. The script-level
+    # `-Version` parameter is reachable via the parent scope because
+    # PowerShell functions inherit the caller's variables — so we test
+    # the variable itself rather than the (empty) function-local
+    # PSBoundParameters.
     if (Test-VersionUsable $script:Version) {
         return $script:Version
     }
