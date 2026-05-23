@@ -286,10 +286,24 @@ let cachedPath: string | null = null;
  * config in place (e.g. `cfg.parent = cfg`) before caching it would
  * otherwise stack-overflow. The cost is one `WeakSet` per freeze call.
  *
- * Idempotency: `Object.freeze` on an already-frozen object is a no-op,
- * and `Object.isFrozen` short-circuits the descent at each subtree.
- * Calling `freezeConfig(loadConfig())` from a caller is therefore safe
- * and effectively free.
+ * Idempotency without short-circuit: `Object.freeze` on an
+ * already-frozen object is a no-op, so re-freezing during a descent
+ * is free. We deliberately do NOT short-circuit on
+ * `Object.isFrozen(obj)` at any level — the pre-split code at
+ * `electron/config.ts` (before WS6) carried an explicit comment
+ * rejecting that optimisation:
+ *
+ *   "a partially-frozen config (top frozen, children unfrozen) is a
+ *   state no production path produces today, but if a future refactor
+ *   ever does, skipping children based on the top-level state would
+ *   silently leak unfrozen mutable references through the cache."
+ *
+ * That posture still applies here, and the walker preserves it: every
+ * reachable node is visited and re-frozen even if its parent was
+ * already frozen. The `WeakSet` is for cycle protection, not for
+ * skipping already-frozen subtrees. The amortised cost is still
+ * O(N) walks of cheap no-op freezes, identical to the cost of the
+ * old one-level helper in the common all-frozen case.
  */
 function deepFreeze<T>(value: T, seen: WeakSet<object>): T {
   if (value === null || typeof value !== "object") {
@@ -300,14 +314,16 @@ function deepFreeze<T>(value: T, seen: WeakSet<object>): T {
     return value;
   }
   seen.add(obj);
-  if (Object.isFrozen(obj)) {
-    return value;
-  }
   // Freeze the parent BEFORE recursing into children so a cycle that
-  // walks back to this node sees it as frozen and stops. Without this
+  // walks back to this node sees it in `seen` and stops. Without this
   // ordering a `{ a: { b: parent } }` graph would re-enter the parent
-  // before `Object.freeze(parent)` ran and the `seen` short-circuit
-  // would be the only thing preventing infinite recursion.
+  // before `seen.add` ran and recursion would only terminate by stack
+  // overflow.
+  //
+  // No `Object.isFrozen` short-circuit here — see the function comment
+  // above for the architectural reason. Calling `Object.freeze` on an
+  // already-frozen object is a documented no-op, so re-freezing is
+  // free.
   Object.freeze(obj);
   if (Array.isArray(obj)) {
     for (const item of obj) {
@@ -323,6 +339,21 @@ function deepFreeze<T>(value: T, seen: WeakSet<object>): T {
 
 function freezeConfig(config: AppConfig): AppConfig {
   return deepFreeze(config, new WeakSet<object>());
+}
+
+/**
+ * Test-only seam: invoke the deep-freeze walker on an arbitrary value
+ * so the pin on the "partially-frozen graph still gets children
+ * frozen" contract can exercise the walker without going through
+ * `loadConfig`'s on-disk + spread path (which would always produce a
+ * fully-unfrozen top with already-frozen `DEFAULT_CONFIG` children —
+ * the OPPOSITE of the case we want to pin).
+ *
+ * Production code never calls this — every cache write goes through
+ * `freezeConfig(readConfigFromDisk(...))`.
+ */
+export function _deepFreezeForTests<T>(value: T): T {
+  return deepFreeze(value, new WeakSet<object>());
 }
 
 /**

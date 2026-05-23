@@ -32,6 +32,7 @@ import {
   type AppConfig,
   DEFAULT_EXTERNAL_PROVIDER,
   _clearConfigCacheForTests,
+  _deepFreezeForTests,
   loadConfig,
   saveConfig,
   updateConfig,
@@ -317,6 +318,82 @@ describe("config cache", () => {
     // `mergedProvider` from the previously-frozen one.
     updateConfig({ externalProvider: { enabled: true } });
     expect(loadConfig().externalProvider.enabled).toBe(true);
+  });
+
+  it("freezes children of a partially-frozen graph (no Object.isFrozen short-circuit)", () => {
+    // Regression test for the architectural rule the pre-WS6 code
+    // documented at length:
+    //
+    //   "a partially-frozen config (top frozen, children unfrozen) is
+    //   a state no production path produces today, but if a future
+    //   refactor ever does, skipping children based on the top-level
+    //   state would silently leak unfrozen mutable references through
+    //   the cache."
+    //
+    // The first iteration of the WS6 recursive walker accidentally
+    // re-introduced an `Object.isFrozen(obj)` short-circuit, which
+    // would have silently regressed that defensive posture. This test
+    // pins the contract by constructing exactly the failure mode the
+    // old comment warned about — top frozen, children unfrozen — and
+    // asserting the walker descends and freezes the children anyway.
+    //
+    // The construction can't happen through the public load/save API
+    // (every production path produces a fully-unfrozen top with
+    // already-frozen DEFAULT_CONFIG-derived children, the inverse of
+    // this case), so we use the `_deepFreezeForTests` seam to invoke
+    // the walker directly on a hand-crafted graph.
+    const child = { mutable: true, items: [1, 2, 3] };
+    const grandchild = { deeper: { deepest: ["a", "b"] } };
+    const partial = { child, grandchild };
+    Object.freeze(partial); // only the top — children remain mutable
+
+    expect(Object.isFrozen(partial)).toBe(true);
+    expect(Object.isFrozen(child)).toBe(false);
+    expect(Object.isFrozen(grandchild)).toBe(false);
+    expect(Object.isFrozen(grandchild.deeper)).toBe(false);
+
+    _deepFreezeForTests(partial);
+
+    // Every node in the reachable graph is now frozen, even though
+    // the walker entered through an already-frozen top.
+    expect(Object.isFrozen(partial)).toBe(true);
+    expect(Object.isFrozen(child)).toBe(true);
+    expect(Object.isFrozen(child.items)).toBe(true);
+    expect(Object.isFrozen(grandchild)).toBe(true);
+    expect(Object.isFrozen(grandchild.deeper)).toBe(true);
+    expect(Object.isFrozen(grandchild.deeper.deepest)).toBe(true);
+
+    // And mutations at every depth now throw.
+    expect(() => {
+      (child as { mutable: boolean }).mutable = false;
+    }).toThrow(TypeError);
+    expect(() => {
+      child.items.push(4);
+    }).toThrow(TypeError);
+    expect(() => {
+      grandchild.deeper.deepest.push("c");
+    }).toThrow(TypeError);
+  });
+
+  it("deep-freeze walker handles self-referential cycles without stack overflow", () => {
+    // The walker uses a WeakSet of in-flight references to terminate
+    // cycles. This is a hard prerequisite for the "no isFrozen
+    // short-circuit" stance: with the short-circuit removed, the
+    // ONLY thing preventing infinite recursion on a cycle is the
+    // WeakSet, so we need a regression test that exercises it.
+    //
+    // The production load path can't produce cycles (JSON.parse only
+    // emits trees), but a future in-memory mutation path that does
+    // `cfg.parent = cfg` before caching would otherwise stack-overflow
+    // when the walker descended into `cfg.parent`'s `parent`'s
+    // `parent`... etc.
+    const cyclic = { name: "root" } as Record<string, unknown>;
+    cyclic.self = cyclic;
+    cyclic.nested = { back: cyclic };
+
+    expect(() => _deepFreezeForTests(cyclic)).not.toThrow();
+    expect(Object.isFrozen(cyclic)).toBe(true);
+    expect(Object.isFrozen(cyclic.nested)).toBe(true);
   });
 
   it("deep-freezes nested objects preserved through .loose() passthrough", () => {

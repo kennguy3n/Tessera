@@ -115,10 +115,20 @@ describe("loadConfig defensive normalisation", () => {
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "tessera-config-heal-"));
     userDataDir = dir;
+    // Match the sibling `describe` blocks' cache-reset discipline.
+    // Today this is technically redundant because each test uses a
+    // fresh `mkdtempSync` directory and `loadConfig`'s `cachedPath`
+    // check auto-invalidates on a path change — but a future test that
+    // re-uses a directory across runs, or that mutates the on-disk file
+    // mid-test and re-calls `loadConfig`, would silently observe a
+    // stale cache. The explicit reset closes that door without any
+    // dependency on the path-keyed invalidation logic being preserved.
+    _clearConfigCacheForTests();
   });
 
   afterEach(() => {
     fs.rmSync(dir, { recursive: true, force: true });
+    _clearConfigCacheForTests();
   });
 
   function writeConfig(raw: unknown): void {
