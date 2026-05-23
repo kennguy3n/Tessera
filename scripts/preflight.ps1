@@ -376,10 +376,27 @@ if ($rollupHostBinary) {
 
 # 8) Build the bundle electron-builder will consume so the
 #    dry-pack runs against current artefacts, not a stale one.
+#
+#    We invoke the *root-level* `npm run build` script (which today
+#    forwards to `npm run build --workspace=apps/desktop` via the
+#    `build` entry in the top-level package.json) rather than calling
+#    the workspace directly. This keeps the PowerShell preflight in
+#    lock-step with .github/workflows/release.yml (release.yml:111
+#    also runs the root `npm run build`) and with the bash sibling
+#    scripts/preflight.sh. The earlier `lint` / `type-check` / `test`
+#    steps remain workspace-scoped because .github/workflows/ci.yml
+#    runs those workspace-scoped (lines 160 / 163 / 166); only the
+#    desktop build was asymmetric, and the fix lives here. If the
+#    root `build` script later grows additional steps (e.g.
+#    `npm run build:native && npm run build --workspace=apps/desktop`
+#    once apps/desktop/package.json's placeholder `build:native` is
+#    promoted into the chain), preflight will automatically exercise
+#    them too, instead of letting the new step surface only on
+#    release day.
 Add-Step `
-    -Label   'Desktop build (npm run build --workspace=apps/desktop)' `
-    -Command 'npm run build --workspace=apps/desktop' `
-    -Action  { npm run build --workspace=apps/desktop }
+    -Label   'Desktop build (npm run build)' `
+    -Command 'npm run build' `
+    -Action  { npm run build }
 
 # 9) electron-builder dry-pack. `--dir` skips installer creation
 #    but still assembles the full app bundle, catching packaging

@@ -308,8 +308,25 @@ fi
 #    `electron-builder --dir` would package whatever stale renderer /
 #    main bundles happen to be on disk, which defeats the purpose of
 #    a release dry-run.
-register_step "Desktop build (npm run build --workspace=apps/desktop)" \
-  "npm run build --workspace=apps/desktop"
+#
+#    We deliberately invoke the *root-level* `npm run build` script
+#    (which currently forwards to `npm run build --workspace=apps/desktop`
+#    via the `build` entry in the top-level package.json) rather than
+#    targeting the workspace directly. This keeps preflight in lock-step
+#    with `.github/workflows/release.yml` (which runs the same root
+#    `npm run build` at release.yml:111). The earlier `lint` /
+#    `type-check` / `test` steps stay workspace-scoped because
+#    `.github/workflows/ci.yml` runs them workspace-scoped (lines
+#    160 / 163 / 166); only the desktop build is asymmetric, and the
+#    fix lives here. If the root `build` script later grows additional
+#    steps (e.g. is changed to
+#    `npm run build:native && npm run build --workspace=apps/desktop`
+#    once apps/desktop/package.json's placeholder `build:native` is
+#    promoted into the chain), preflight will automatically exercise
+#    them too. Calling the workspace command directly here would have
+#    masked that transition until a release-day failure surfaced it.
+register_step "Desktop build (npm run build)" \
+  "npm run build"
 
 # 9) electron-builder dry-pack. `--dir` skips the installer step
 #    (no .dmg / .exe / .AppImage produced) but still assembles the
