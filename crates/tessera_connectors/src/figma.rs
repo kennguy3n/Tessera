@@ -471,12 +471,9 @@ impl FigmaConnector {
         result.has_more = false;
 
         self.last_sync = Some(Utc::now());
-        let added = result.added.len() as u64;
-        let removed = result.removed.len() as u64;
-        self.file_count = self
-            .file_count
-            .saturating_add(added)
-            .saturating_sub(removed);
+        // NET file-count via the shared `SyncResult::apply_to_file_count`
+        // helper — see its docstring for the rationale.
+        self.file_count = result.apply_to_file_count(self.file_count);
         self.status = ConnectorStatus::Connected;
         Ok(result)
     }
@@ -508,6 +505,21 @@ impl FigmaConnector {
 impl Default for FigmaConnector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl crate::traits::RemoteConnector for FigmaConnector {
+    fn provider_name(&self) -> &'static str {
+        FigmaConnector::provider_name(self)
+    }
+    fn status(&self) -> ConnectorStatus {
+        FigmaConnector::status(self)
+    }
+    fn last_sync_time(&self) -> Option<DateTime<Utc>> {
+        FigmaConnector::last_sync_time(self)
+    }
+    fn file_count(&self) -> u64 {
+        FigmaConnector::file_count(self)
     }
 }
 

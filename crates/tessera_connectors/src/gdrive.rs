@@ -473,14 +473,11 @@ impl GoogleDriveConnector {
         }
 
         self.last_sync = Some(Utc::now());
-        // Only count truly new files (added), not modifications
-        self.file_count = if result.added.len() >= result.removed.len() {
-            self.file_count
-                .saturating_add((result.added.len() - result.removed.len()) as u64)
-        } else {
-            self.file_count
-                .saturating_sub((result.removed.len() - result.added.len()) as u64)
-        };
+        // NET file-count semantics live on `SyncResult::apply_to_file_count`
+        // so every connector applies them identically. See that helper's
+        // docstring for the rationale (was: half-monotonic, half-NET,
+        // every implementation slightly different).
+        self.file_count = result.apply_to_file_count(self.file_count);
         self.status = ConnectorStatus::Connected;
 
         Ok(result)
@@ -519,6 +516,21 @@ impl GoogleDriveConnector {
 impl Default for GoogleDriveConnector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl crate::traits::RemoteConnector for GoogleDriveConnector {
+    fn provider_name(&self) -> &'static str {
+        GoogleDriveConnector::provider_name(self)
+    }
+    fn status(&self) -> ConnectorStatus {
+        GoogleDriveConnector::status(self)
+    }
+    fn last_sync_time(&self) -> Option<DateTime<Utc>> {
+        GoogleDriveConnector::last_sync_time(self)
+    }
+    fn file_count(&self) -> u64 {
+        GoogleDriveConnector::file_count(self)
     }
 }
 
