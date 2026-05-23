@@ -17,6 +17,40 @@ pub struct SearchResult {
     pub source_path: String,
     pub source_id: String,
     pub chunk_index: usize,
+    /// Reciprocal-rank relevance score, bounded to `(0.0, 1.0]`.
+    ///
+    /// For the result ranked at position `i` (1-based) in the
+    /// query result list, this is `1.0 / i`. The highest-ranked
+    /// result therefore has `relevance == 1.0`; the second has
+    /// `0.5`; the third `0.333`; and so on.
+    ///
+    /// Why reciprocal-rank rather than the raw BM25 / RRF /
+    /// recency-fused score:
+    ///
+    /// * The fused score combines three signals (BM25, cosine,
+    ///   recency) with weights from `HybridSearchConfig`. Its
+    ///   magnitude is not stable across queries (or across
+    ///   weight configurations) and is therefore meaningless as
+    ///   an absolute confidence value at the UI layer.
+    /// * Reciprocal-rank is *position-stable*: the top hit is
+    ///   always `1.0`, the second always `0.5`, regardless of
+    ///   which signals fired.
+    /// * The renderer (`CitationPanel`) displays this value as a
+    ///   percentage; bounding to `(0, 1]` means the displayed
+    ///   value is always in `[1%, 100%]` instead of the
+    ///   previous BM25-derived path which could produce
+    ///   nonsensical magnitudes (raw `-FTS5_rank` was unbounded
+    ///   positive and routinely exceeded 2.0, displaying as
+    ///   "230%" etc.).
+    ///
+    /// Compatibility note: chunks indexed prior to the WS3
+    /// hybrid-retrieval landing have citation `confidence`
+    /// values stored on disk in the *old* BM25-derived
+    /// magnitude. Renderer code that needs to compare against
+    /// stored values should clamp on read; new values are
+    /// always in `(0, 1]`. The
+    /// `search_result_relevance_is_bounded` regression test
+    /// pins the new contract.
     pub relevance: f64,
     pub hash: String,
 }
@@ -421,5 +455,61 @@ mod tests {
             "Lorem ipsum dolor sit amet. Tessera workspace is great. Consectetur adipiscing.";
         let excerpt = build_excerpt(text, "Tessera", 200);
         assert!(excerpt.contains("Tessera"));
+    }
+
+    /// Pins the `SearchResult::relevance` contract: every returned
+    /// score is in `(0.0, 1.0]`, the first result is exactly
+    /// `1.0`, and the i-th (1-based) result is `1.0 / i`.
+    ///
+    /// Before WS3 hybrid retrieval landed, this field held
+    /// `-FTS5_rank` (unbounded positive BM25-derived magnitude),
+    /// which the renderer multiplied by 100 to produce a
+    /// percentage — resulting in displays like "230%" for
+    /// strongly-matching chunks. The renderer is unchanged; only
+    /// the value now produced by this struct is reciprocal-rank
+    /// (`1/i`) so the percentage stays in `[0, 100]`. A future
+    /// refactor that changes the score function MUST keep the
+    /// `(0, 1]` invariant or update the renderer + this test in
+    /// the same commit.
+    #[test]
+    fn search_result_relevance_is_bounded() {
+        let store = setup_store_with_data();
+        let engine = SearchEngine::new(&store);
+        // Use an OR query that matches multiple chunks so we get a
+        // ranking with at least two positions.
+        // `search_broad` uses OR semantics so we get hits from
+        // multiple chunks — necessary to exercise rank > 1.
+        let results = engine.search_broad("Tessera encrypted meeting", 10).unwrap();
+        assert!(
+            results.len() >= 2,
+            "test needs at least two hits to exercise rank ordering"
+        );
+        for (i, hit) in results.iter().enumerate() {
+            let expected = 1.0 / (i as f64 + 1.0);
+            assert!(
+                hit.relevance > 0.0,
+                "relevance must be strictly positive (got {} at rank {})",
+                hit.relevance,
+                i
+            );
+            assert!(
+                hit.relevance <= 1.0,
+                "relevance must be <= 1.0 — the renderer multiplies by 100 to display a percentage (got {} at rank {})",
+                hit.relevance,
+                i
+            );
+            assert!(
+                (hit.relevance - expected).abs() < 1e-9,
+                "rank {} should have relevance {} (= 1/(rank+1)) but got {}",
+                i,
+                expected,
+                hit.relevance
+            );
+        }
+        assert!(
+            (results[0].relevance - 1.0).abs() < 1e-9,
+            "top hit must have relevance == 1.0; got {}",
+            results[0].relevance
+        );
     }
 }
