@@ -220,12 +220,87 @@ detect_version() {
   local v
   v="$(node -e "console.log(require('./package.json').version)" 2>/dev/null || true)"
   if ! is_valid_version "${v}"; then
-    # Fallback to a regex if Node is missing OR if Node returned the
-    # JS sentinel "undefined"/"null" (which would happen if the
-    # package.json had no `version` field). Preflight needs Node for
-    # the desktop build anyway, but this keeps the version detection
-    # from emitting a bogus "vundefined" banner.
-    v="$(grep -E '"version"' package.json | head -n1 | sed -E 's/.*"version"[^"]*"([^"]+)".*/\1/')"
+    # Fallback if Node is missing OR if Node returned the JS sentinel
+    # "undefined" / "null" (the latter happens if package.json lacks a
+    # `version` field). Preflight needs Node for the desktop build
+    # anyway, so this path is rarely hit — but when it IS hit we want
+    # the version banner to be correct rather than print a bogus
+    # "vundefined" or, worse, the first matching string in the file
+    # (which a naive `grep '"version"' | head -n1 | sed ...` would
+    # pick up from a nested object like `dependencies."some-pkg":
+    # "1.2.3"` whose surrounding context happens to mention "version"
+    # — vanishingly rare in the current package.json, but the kind of
+    # latent fragility that surfaces after a future maintainer rewrites
+    # the file).
+    #
+    # The PowerShell sibling (`preflight.ps1`'s Resolve-Version) reads
+    # package.json with `ConvertFrom-Json` which is a real JSON parser,
+    # so it's already immune to this class of bug. To bring bash to
+    # parity without taking a runtime dependency on `jq`, we run a
+    # depth-tracking awk parser that:
+    #   1. Scans the file character-by-character.
+    #   2. Tracks whether we're inside a JSON string literal (so braces
+    #      and the literal text `"version"` inside string values don't
+    #      affect depth or trigger a match).
+    #   3. Tracks `{`/`}` nesting depth at the structural level.
+    #   4. Captures the value of the first `"version": "..."` pair found
+    #      at depth 1 (i.e. a direct child of the root object), and
+    #      ignores anything at deeper depth (nested dependency entries,
+    #      `engines.version`, etc).
+    # The result is a parser that's POSIX-portable, has no external
+    # dependencies, and behaves identically to ConvertFrom-Json for the
+    # property we care about. If awk itself is missing the var stays
+    # empty and the caller falls back to the "X.Y.Z" placeholder.
+    v="$(awk '
+      BEGIN { depth = 0; in_str = 0; found = 0 }
+      {
+        line = $0
+        nchars = length(line)
+        # Walk the line character-by-character. We need both the depth
+        # at the START of the line (for the gate below, so a same-line
+        # `"foo": { "version": "x" }` does not match) AND the depth at
+        # the position of any "version" match (so the gate is fair on
+        # the actual key location). We accomplish both by remembering
+        # whether the match position fell inside the current line and
+        # at what depth it was first observed.
+        match_depth = -1
+        match_pos = -1
+        for (i = 1; i <= nchars; i++) {
+          c = substr(line, i, 1)
+          if (in_str) {
+            if (c == "\\") { i++; continue }
+            if (c == "\"") { in_str = 0 }
+            continue
+          }
+          if (c == "\"") {
+            # Peek ahead: is this the start of the literal `"version"`
+            # at the current structural depth? We only care about the
+            # FIRST top-level `"version"` key, so once we have a
+            # candidate position we keep it.
+            if (match_pos == -1 && depth == 1 && \
+                substr(line, i, 9) == "\"version\"") {
+              match_pos = i
+              match_depth = depth
+            }
+            in_str = 1
+            continue
+          }
+          if (c == "{") { depth++; continue }
+          if (c == "}") { depth--; continue }
+        }
+        if (!found && match_pos != -1 && match_depth == 1) {
+          tail = substr($0, match_pos)
+          if (match(tail, /^"version"[[:space:]]*:[[:space:]]*"[^"]+"/)) {
+            token = substr(tail, RSTART, RLENGTH)
+            sub(/^"version"[[:space:]]*:[[:space:]]*"/, "", token)
+            sub(/"$/, "", token)
+            print token
+            found = 1
+            exit
+          }
+        }
+      }
+    ' package.json)"
   fi
   if is_valid_version "${v}"; then
     printf '%s' "${v}"
