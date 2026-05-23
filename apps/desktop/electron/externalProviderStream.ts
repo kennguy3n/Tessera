@@ -770,6 +770,21 @@ function delayWithAbort(
 interface OpenedResponse {
   readonly status: "opened";
   readonly response: Response;
+  /**
+   * Detach the per-attempt user-cancel forwarder from the user's
+   * outer `AbortSignal`. The caller MUST call this exactly once,
+   * after body reading completes (success, abort, or error), so the
+   * listener does not leak past the lifetime of the stream.
+   *
+   * Until this is called, a user-cancel on the outer signal will
+   * propagate to the per-attempt `AbortController` that backs the
+   * open response body, which is exactly what makes the "Stop
+   * generating" button cancel mid-stream. Detaching too early
+   * (e.g. in `openExternalProviderStream`'s own `finally`) would
+   * silently disconnect the user signal from the body stream and
+   * make the Stop button non-functional once the body opened.
+   */
+  readonly cleanupBodyForwarder: () => void;
 }
 /** Pre-stream attempt completed but the upstream returned a
  *  retryable HTTP status (408/429/500/502/503/504). */
@@ -814,11 +829,31 @@ async function openExternalProviderStream(
 
   // Forward a LATER user-cancel into our composite controller so
   // `fetch` aborts immediately even though we passed it the
-  // composite signal (not the user's signal directly). Cleanup in
-  // `finally` so we don't leak the listener after the attempt
-  // resolves.
+  // composite signal (not the user's signal directly). The lifetime
+  // of this listener depends on the outcome:
+  //
+  //   - Pre-stream failure (retryable HTTP, non-retryable HTTP,
+  //     timeout, network error, propagated user-cancel) — the
+  //     listener is detached by this function's `finally` block
+  //     because the attempt is over.
+  //   - Body opens successfully — ownership of the listener transfers
+  //     to the caller via `cleanupBodyForwarder()`, so the user's
+  //     Stop signal continues to abort the underlying connection
+  //     while the caller reads the body. The caller MUST detach
+  //     exactly once after body reading completes.
+  //
+  // Without the ownership transfer, the listener would be detached
+  // here while the body stream is still bound to `attemptController.
+  // signal`, leaving the user's outer signal disconnected from the
+  // body stream and making the Stop button non-functional mid-
+  // stream. Devin Review round 8 surfaced exactly this regression.
   const forwardUserAbort = (): void => attemptController.abort();
   signal?.addEventListener("abort", forwardUserAbort, { once: true });
+  // Set to true when the body opens successfully so the `finally`
+  // block below leaves the listener attached for the caller. All
+  // other code paths exit with this still `false` and the listener
+  // is detached normally.
+  let ownershipTransferred = false;
 
   try {
     const res = await fetch(req.url, {
@@ -828,7 +863,21 @@ async function openExternalProviderStream(
       signal: attemptController.signal,
     });
     if (res.ok) {
-      return { status: "opened", response: res };
+      // Body is open. The per-attempt timer no longer applies —
+      // mid-stream slowness is bounded only by the user's Stop
+      // signal (see the long-running-streaming-response comment on
+      // `timeoutMs` in `streamExternalProvider`). Clear the timer
+      // here and transfer listener ownership to the caller via
+      // `cleanupBodyForwarder`.
+      clearTimeout(timer);
+      ownershipTransferred = true;
+      return {
+        status: "opened",
+        response: res,
+        cleanupBodyForwarder: () => {
+          signal?.removeEventListener("abort", forwardUserAbort);
+        },
+      };
     }
     if (RETRYABLE_HTTP_STATUS_CODES.has(res.status)) {
       // Drain the body so the connection can be reused and so we can
@@ -880,8 +929,13 @@ async function openExternalProviderStream(
     // documents the same design choice for the streaming half.
     throw e;
   } finally {
+    // Always clear the timer — idempotent if already cleared on the
+    // success path. Only detach the listener if ownership was NOT
+    // transferred to the caller (i.e. body never opened).
     clearTimeout(timer);
-    signal?.removeEventListener("abort", forwardUserAbort);
+    if (!ownershipTransferred) {
+      signal?.removeEventListener("abort", forwardUserAbort);
+    }
   }
 }
 
@@ -971,6 +1025,7 @@ export async function streamExternalProvider(
   // legitimate streaming response can exceed `timeoutSecs`).
   const timeoutMs = inputs.provider.timeoutSecs * 1000;
   let openedResponse: Response | undefined;
+  let cleanupBodyForwarder: (() => void) | undefined;
   let lastRetryable: RetryableStatus | undefined;
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     const outcome = await openExternalProviderStream(
@@ -980,6 +1035,7 @@ export async function streamExternalProvider(
     );
     if (outcome.status === "opened") {
       openedResponse = outcome.response;
+      cleanupBodyForwarder = outcome.cleanupBodyForwarder;
       break;
     }
     lastRetryable = outcome;
@@ -1107,5 +1163,12 @@ export async function streamExternalProvider(
         // Stream was already closed / errored; nothing to clean up.
       });
     }
+    // Detach the user-cancel forwarder from the user's outer signal.
+    // Ownership was transferred to us from `openExternalProviderStream`
+    // on the successful body-open; failure to detach here would leak
+    // the listener for the lifetime of the user's AbortController
+    // (which often outlives the stream because the controller is
+    // reused for the next generation in `ipc/model.ts`).
+    cleanupBodyForwarder?.();
   }
 }

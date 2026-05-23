@@ -958,6 +958,79 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     fetchSpy.mockRestore();
     vi.useRealTimers();
   });
+
+  it("user-cancel mid-stream aborts the body reader (Devin Review round 8 BUG_001)", async () => {
+    // Devin Review round 8 surfaced a regression: after the round 7
+    // per-attempt-timeout refactor split fetch onto a per-attempt
+    // `AbortController`, `openExternalProviderStream`'s `finally`
+    // block detached the user-cancel forwarder as soon as the body
+    // opened. The body reader was bound to the per-attempt signal,
+    // and the user's outer signal was never reconnected — so
+    // clicking "Stop generating" after tokens started flowing did
+    // nothing.
+    //
+    // The fix transfers listener ownership to the caller via
+    // `cleanupBodyForwarder()`, returned in the OpenedResponse. This
+    // test pins the correct behaviour: open a body, emit one chunk
+    // so we're definitively mid-stream, then user-cancel — the
+    // promise must reject with AbortError, NOT hang.
+    const controller = new AbortController();
+    let bodyController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((_input, init) => {
+        const fetchSignal = init?.signal as AbortSignal | undefined;
+        const stream = new ReadableStream<Uint8Array>({
+          start(c) {
+            bodyController = c;
+            // Emit one valid SSE chunk so the parser advances past
+            // initial framing and we're definitively in mid-stream
+            // territory before the user cancels.
+            c.enqueue(
+              new TextEncoder().encode(
+                'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+              ),
+            );
+            // Wire the fetch's signal into our body stream so an
+            // abort on the per-attempt controller (which is what
+            // user-cancel forwards to) errors the body \u2014 the same
+            // wiring real `fetch()` does internally. Without this
+            // the mock would never error and the test couldn't
+            // distinguish "Stop button broken" from "test mock
+            // doesn't propagate aborts".
+            fetchSignal?.addEventListener(
+              "abort",
+              () => {
+                c.error(new DOMException("Aborted", "AbortError"));
+              },
+              { once: true },
+            );
+          },
+        });
+        return Promise.resolve(new Response(stream, { status: 200 }));
+      });
+    const emitted: ExternalProviderStreamChunk[] = [];
+    const streamPromise = streamExternalProvider(
+      {
+        provider: mkProvider(),
+        apiKey: "sk",
+        prompt: "hi",
+        signal: controller.signal,
+      },
+      (c) => emitted.push(c),
+    );
+    // Yield once so the body stream is read and the first chunk
+    // arrives \u2014 we are now unambiguously mid-stream.
+    await Promise.resolve();
+    await Promise.resolve();
+    // Cancel. Without the round-8 fix the user signal is
+    // disconnected from the body reader and this rejects only
+    // when the test runner times out the entire it().
+    controller.abort();
+    await expect(streamPromise).rejects.toThrow(/Aborted/);
+    expect(bodyController).not.toBeNull();
+    fetchSpy.mockRestore();
+  });
 });
 
 describe("externalProviderStream — parseRetryAfter", () => {
