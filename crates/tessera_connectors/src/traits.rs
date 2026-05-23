@@ -13,9 +13,6 @@
 //!     a uniform `authenticate(&AuthConfig) -> ConnectorResult<()>`
 //!     signature would hide that the connector is now stateful in a way
 //!     that affects subsequent `list_files` calls.
-//!   * `NotionConnector::sync_changes` takes a `change_token` AND a
-//!     `known_file_ids` set for periodic full-walk deletion detection;
-//!     other connectors' `sync_changes` takes only a `change_token`.
 //!   * `GoogleDriveConnector::list_files` takes `folder_id` for tree
 //!     traversal; Notion takes a `folder_id` that's actually a
 //!     database-id which dispatches to a different endpoint; Jira and
@@ -25,6 +22,22 @@
 //! (complex), generic parameters that punt the problem (mostly cosmetic),
 //! or a string-typed "options bag" parameter (worst — loses every
 //! type-safety guarantee the trait was meant to provide).
+//!
+//! Note on `sync_changes`: today all six connectors *do* share the
+//! same `(change_token: Option<&str>, known_file_ids: &HashSet<String>)`
+//! signature — Notion was the first to need the `known_file_ids` set
+//! for periodic full-walk deletion detection, and rather than carve
+//! out a Notion-only quirk we threaded the set through every
+//! connector for symmetry (each one ignores it iff its native delta
+//! API already covers deletes). The macro-driven lifecycle smoke
+//! check in `tests/phase_smoke_connectors.rs` leans on that uniform
+//! signature to type-check `sync_changes` calls on every connector
+//! from one macro arm. If a future 7th connector ever genuinely needs
+//! a divergent `sync_changes` shape, the smoke macro becomes a
+//! constraint rather than a verification — the right response then is
+//! to either reshape the new connector to fit, or split the smoke
+//! check into per-connector arms. Devin Review round-9 flagged this
+//! design tension; documenting it here is the long-term fix.
 //!
 //! Instead, this trait captures the **read-only summary surface** every
 //! connector shares (provider name, status, last sync time, file count).

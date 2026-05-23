@@ -107,9 +107,11 @@ fn every_connector_implements_remote_connector() {
 // summary surface (provider name, status, last sync time, file count
 // — see `src/traits.rs` for the rationale). The OAuth lifecycle
 // methods `authenticate` / `sync_changes` / `revoke` live as inherent
-// methods on each concrete connector because they have provider-shaped
-// arg sets (Jira records cloud-id internally, Notion takes a
-// `known_file_ids` set, etc.).
+// methods on each concrete connector because (a) `authenticate`
+// signatures vary by provider — Jira's discovers the cloud-id from
+// `accessible-resources` and stores it internally, which a uniform
+// `authenticate(&AuthConfig) -> ConnectorResult<()>` would hide — and
+// (b) we want the trait surface to stay read-only.
 //
 // That means the macro-driven trait-impl check above does NOT verify
 // the lifecycle surface — adding a 7th connector to
@@ -128,6 +130,23 @@ fn every_connector_implements_remote_connector() {
 // automatically extends the lifecycle check; forgetting to define
 // `authenticate` (etc.) on the new connector becomes a "method not
 // found" compile error pointing at the new connector type.
+//
+// Uniform `sync_changes` signature assumption: the macro generates a
+// SINGLE `check_lifecycle` async fn signature shared by every
+// connector, hard-coding `sync_changes(Option<&str>,
+// &HashSet<String>)`. Today all six shipping connectors take exactly
+// that signature (Notion needed the `known_file_ids` set for
+// full-walk deletion detection, and the other connectors thread it
+// through for symmetry — see `src/traits.rs` for the design
+// rationale). Devin Review round-9 correctly noted that this turns
+// the macro into a CONSTRAINT on any 7th connector rather than just
+// a verification of an existing invariant. If a future connector
+// genuinely needs a divergent `sync_changes` shape, the right
+// response is to either reshape it to fit (preserving the macro's
+// single-arm uniformity) or split this macro into per-connector
+// arms; we accept that future cost in exchange for the current
+// one-edit "add a connector" ergonomics. This comment is the
+// long-term doc of the design tension.
 // ----------------------------------------------------------------------
 
 macro_rules! smoke_check_lifecycle {

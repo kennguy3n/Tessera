@@ -243,68 +243,183 @@ function extractTopLevelScalar(body: string, key: string): string | null {
 }
 
 /**
- * Lex `source` from `startIdx` as JS/TS code, tracking brace depth
- * across the five lexical productions that can contain `{` / `}`
- * without semantic meaning: line comments (`// …`), block comments
- * (`/* … *\/`), single-quoted strings, double-quoted strings, and
- * template literals (including their `${…}` interpolations).
+ * Lex `source` from `startIdx` as JS/TS code and emit token events.
  *
- * Real braces — i.e. `{` / `}` encountered in code state, NOT the
- * boundary braces of a template-literal interpolation — fire the
- * `onOpen` / `onClose` callbacks. `onClose` may return `true` to stop
- * the walk; this lets callers slice out an enclosing block as soon as
- * the matching closing brace is seen.
+ * This is the single source of truth for JS/TS lexical state in the
+ * smoke suite. Earlier rounds shipped two separate state machines —
+ * one in `lexJsBraces` (brace-tracking only) and one inside
+ * `extractObjectProperties` (brace + identifier + colon + string
+ * tracking) — and Devin Review correctly flagged the duplication as a
+ * maintenance hazard: any fix to one lexer (e.g. the `${…}`
+ * depth-decrement repair in round 6) would have to be applied to both,
+ * and a regression in only one would silently diverge them. The unified
+ * lexer below covers BOTH callers' needs through optional callbacks.
  *
- * Both `extractCategoriesBlock` and `extractCategoryEntries` share
- * this helper to avoid the two-copies-of-90-lines maintenance hazard:
- * every fix to the lexer (e.g. the `${…}` depth-decrement repair in
- * the previous round) only has to be made in one place, and any
- * future regression in one caller would by construction affect both.
+ * Five lexical productions can hide `{` / `}` / identifier-shaped
+ * substrings from semantic interpretation:
+ *
+ *   1. line comments (`// …`)
+ *   2. block comments (`/* … *\/`)
+ *   3. single-quoted strings
+ *   4. double-quoted strings
+ *   5. template literals — including their `${…}` interpolations,
+ *      which re-enter code state and may themselves contain strings,
+ *      nested braces, further template literals, etc.
+ *
+ * Inside those productions, no callbacks fire. In code state, the
+ * lexer emits at most one callback per logical token:
+ *
+ *   - `onOpen`  on every `{` that is not the lexical boundary of a
+ *     `${…}` template-literal interpolation. `depth` is the
+ *     post-increment value (so the outermost `{` of a fresh lex pass
+ *     fires onOpen with depth = 1).
+ *   - `onClose` on every `}` that is not the closing brace of a
+ *     `${…}` interpolation. `depth` is the pre-decrement value (=
+ *     the depth at which the matching `{` opened).
+ *   - `onIdentifier` on every contiguous run of identifier characters
+ *     (`[A-Za-z_$][A-Za-z0-9_$]*`) seen in code state.
+ *   - `onColon` on every `:` punctuator in code state.
+ *   - `onStringLiteral` on every single- or double-quoted string
+ *     literal, with `decoded` already containing the JS-escape-decoded
+ *     value (each `\X` is passed through as `X`; this matches the
+ *     behaviour ECMA-262 requires for the only escape sequences
+ *     CATEGORIES values ever use — `\'` and `\"`).
+ *
+ * Any callback may return `true` to halt the walk; this lets callers
+ * stop as soon as they have seen the event they care about.
+ *
+ * The lexer does NOT emit events for: whitespace, numeric literals,
+ * regex literals, JSX, decorators, BigInt suffixes, hash-private
+ * fields, or any other punctuator besides `:`. Those are outside the
+ * scope this suite needs — extending here is the place to add them,
+ * NOT in a parallel state machine.
  */
 interface LexJsCallbacks {
-  /** Fired when a real `{` is seen in code state. `depth` is the new depth (post-increment). */
-  onOpen?: (pos: number, depth: number) => void;
-  /** Fired when a real `}` is seen in code state (NOT a `${…}` closer). `depth` is the depth
-   *  the closing brace is balancing against (i.e. the depth just *before* the decrement, equal
-   *  to the depth at which the matching `{` opened). Return `true` to stop walking. */
+  /** Fired when a real `{` is seen in code state. `depth` is the new depth
+   *  (post-increment). Return `true` to stop walking. */
+  onOpen?: (pos: number, depth: number) => boolean | void;
+  /** Fired when a real `}` is seen in code state (NOT a `${…}` closer).
+   *  `depth` is the depth the closing brace is balancing against (i.e. the
+   *  depth just *before* the decrement, equal to the depth at which the
+   *  matching `{` opened). Return `true` to stop walking. */
   onClose?: (pos: number, depth: number) => boolean | void;
+  /** Fired when an identifier-shaped token is seen in code state. `pos` is
+   *  the position of the first character; `endPos` is the position just
+   *  after the last character (so `source.slice(pos, endPos) === name`).
+   *  `depth` is the current brace depth. Return `true` to stop walking. */
+  onIdentifier?: (
+    pos: number,
+    name: string,
+    endPos: number,
+    depth: number,
+  ) => boolean | void;
+  /** Fired when a `:` punctuator is seen in code state. `depth` is the
+   *  current brace depth. Return `true` to stop walking. */
+  onColon?: (pos: number, depth: number) => boolean | void;
+  /** Fired when a string literal is seen in code state. `pos` points at the
+   *  opening quote; `endPos` is the position just after the closing quote.
+   *  `decoded` honours JS backslash escapes (each `\X` passes through as
+   *  `X`); `quote` is the literal delimiter used. `depth` is the current
+   *  brace depth. Return `true` to stop walking. */
+  onStringLiteral?: (
+    pos: number,
+    decoded: string,
+    quote: "'" | '"',
+    endPos: number,
+    depth: number,
+  ) => boolean | void;
 }
 
-function lexJsBraces(
+function lexJs(
   source: string,
   startIdx: number,
   cb: LexJsCallbacks,
 ): void {
   let depth = 0;
-  type LexState = "code" | "sl_comment" | "ml_comment" | "sq" | "dq" | "bt";
+  type LexState = "code" | "sl_comment" | "ml_comment" | "bt";
   let state: LexState = "code";
   // Stack of `${…}` interpolation depths so a `}` that closes an
   // interpolation doesn't fire onClose against the outer brace counter.
   const templateInterpStack: number[] = [];
-  for (let i = startIdx; i < source.length; i++) {
+  let i = startIdx;
+  while (i < source.length) {
     const ch = source[i];
     const next = source[i + 1];
     if (state === "code") {
       if (ch === "/" && next === "/") {
         state = "sl_comment";
-        i += 1;
+        i += 2;
         continue;
       }
       if (ch === "/" && next === "*") {
         state = "ml_comment";
+        i += 2;
+        continue;
+      }
+      if (ch === "`") {
+        state = "bt";
         i += 1;
         continue;
       }
-      if (ch === "'") {
-        state = "sq";
-      } else if (ch === '"') {
-        state = "dq";
-      } else if (ch === "`") {
-        state = "bt";
-      } else if (ch === "{") {
+      if (ch === '"' || ch === "'") {
+        // Consume the string literal inline. We emit a single
+        // onStringLiteral event with the decoded payload — strings are
+        // atomic tokens, never something the outer walker re-enters
+        // mid-flight, so the previous `sq` / `dq` states are gone.
+        //
+        // Escape decoding is JS / TypeScript semantics: a backslash
+        // protects the next character (so `\'`, `\"`, `\n`, `\\` all
+        // pass through as the literal next character). We do not run
+        // ECMA-262 §12.8.4 escape-sequence substitution because the
+        // only escapes CATEGORIES values ever contain are `\'` /
+        // `\"`, both of which the pass-through gives correctly. A
+        // future caller that needs `\n` → newline can extend the
+        // decode here.
+        const quote = ch as "'" | '"';
+        const startPos = i;
+        let j = i + 1;
+        const decoded: string[] = [];
+        let terminated = false;
+        while (j < source.length) {
+          const c = source[j];
+          if (c === "\\") {
+            if (j + 1 < source.length) decoded.push(source[j + 1]);
+            j += 2;
+            continue;
+          }
+          if (c === quote) {
+            terminated = true;
+            break;
+          }
+          decoded.push(c);
+          j += 1;
+        }
+        if (!terminated) {
+          // Unterminated string — abort lexing rather than guessing.
+          return;
+        }
+        const endPos = j + 1;
+        if (
+          cb.onStringLiteral?.(
+            startPos,
+            decoded.join(""),
+            quote,
+            endPos,
+            depth,
+          )
+        ) {
+          return;
+        }
+        i = endPos;
+        continue;
+      }
+      if (ch === "{") {
         depth += 1;
-        cb.onOpen?.(i, depth);
-      } else if (ch === "}") {
+        if (cb.onOpen?.(i, depth)) return;
+        i += 1;
+        continue;
+      }
+      if (ch === "}") {
         // Two cases:
         //   1. This `}` closes a `${…}` interpolation — the opener
         //      pushed onto templateInterpStack so that braces inside
@@ -323,57 +438,74 @@ function lexJsBraces(
             templateInterpStack.pop();
             depth -= 1;
             state = "bt";
+            i += 1;
             continue;
           }
         }
         const closingDepth = depth;
         depth -= 1;
         if (cb.onClose?.(i, closingDepth)) return;
-      }
-    } else if (state === "sl_comment") {
-      if (ch === "\n") {
-        state = "code";
-      }
-    } else if (state === "ml_comment") {
-      if (ch === "*" && next === "/") {
-        state = "code";
-        i += 1;
-      }
-    } else if (state === "sq" || state === "dq") {
-      if (ch === "\\") {
         i += 1;
         continue;
       }
-      if ((state === "sq" && ch === "'") || (state === "dq" && ch === '"')) {
-        state = "code";
+      if (ch === ":") {
+        if (cb.onColon?.(i, depth)) return;
+        i += 1;
+        continue;
       }
+      if (/[A-Za-z_$]/.test(ch)) {
+        // Identifier run.
+        const idStart = i;
+        let j = i + 1;
+        while (j < source.length && /[A-Za-z0-9_$]/.test(source[j])) j++;
+        const name = source.slice(idStart, j);
+        if (cb.onIdentifier?.(idStart, name, j, depth)) return;
+        i = j;
+        continue;
+      }
+      i += 1;
+    } else if (state === "sl_comment") {
+      if (ch === "\n") state = "code";
+      i += 1;
+    } else if (state === "ml_comment") {
+      if (ch === "*" && next === "/") {
+        state = "code";
+        i += 2;
+        continue;
+      }
+      i += 1;
     } else {
       // state === "bt" — inside a template literal.
       if (ch === "\\") {
-        i += 1;
+        i += 2;
         continue;
       }
       if (ch === "`") {
         state = "code";
-      } else if (ch === "$" && next === "{") {
+        i += 1;
+        continue;
+      }
+      if (ch === "$" && next === "{") {
         // Step past the `${`, push the brace depth at which the
         // interpolation opened, and re-enter code mode. This brace is
         // counted (so braces inside the interpolation balance against
         // the same counter), but the open itself is a lexical
         // boundary — do NOT fire onOpen.
-        i += 1;
         depth += 1;
         templateInterpStack.push(depth);
         state = "code";
+        i += 2;
+        continue;
       }
+      i += 1;
     }
   }
 }
 
 /**
  * Read `CreatePage.tsx` from disk and return the literal source of the
- * `const CATEGORIES … = { … }` object, sliced from the leading `const`
- * keyword to the matching closing brace (inclusive).
+ * CATEGORIES object literal, sliced from the opening `{` (inclusive)
+ * to the matching closing `}` (inclusive).
  *
  * We deliberately do a text-based extraction rather than importing
  * CATEGORIES directly, for two reasons:
@@ -392,16 +524,19 @@ function lexJsBraces(
  * Finding the *matching* closing brace requires a real JS/TS lexer; a
  * naive brace counter would mis-balance the moment a `{` or `}`
  * appears inside a string literal, comment, or template literal
- * interpolation. The shared `lexJsBraces` helper covers those cases.
+ * interpolation. The shared `lexJs` helper covers those cases.
  *
- * Anchoring on the `=` token rather than the first `{` after `const
- * CATEGORIES` keeps the scan robust against future type-annotation
- * refactors. The current declaration is
- * `const CATEGORIES: Record<string, CategoryItem[]> = { … }` — no
- * braces in the type — but if a future maintainer inlined the entry
- * type (`Record<string, { id: string; … }[]>`), a `source.indexOf("{")`
- * anchor would start counting from the type's `{` and slice the wrong
- * range. Anchoring on the `=` puts us unambiguously at the value side.
+ * The function returns ONLY the object literal — i.e. the slice begins
+ * at the value side `{` rather than at the `const CATEGORIES` keyword.
+ * This was Devin Review round-9 finding #0001: returning the larger
+ * slice meant downstream lexers had to lex past the (currently
+ * empty-of-braces, but theoretically arbitrary) type annotation
+ * `Record<string, CategoryItem[]>`. Anchoring the returned slice on
+ * the object literal removes that latent risk and matches the
+ * function's stated purpose. Anchoring on the `=` BEFORE searching for
+ * `{` keeps the search robust against a future inlined-entry-type
+ * refactor (`Record<string, { id: string; … }[]>`); we never look at
+ * the type annotation's contents.
  */
 function extractCategoriesBlock(): string {
   const source = readFileSync(
@@ -409,13 +544,13 @@ function extractCategoriesBlock(): string {
     "utf8",
   );
 
-  const start = source.indexOf("const CATEGORIES");
-  if (start === -1) {
+  const decl = source.indexOf("const CATEGORIES");
+  if (decl === -1) {
     throw new Error("CATEGORIES constant not found in CreatePage.tsx");
   }
   // Skip past the `=` so any `{` characters in the type annotation are
   // outside our scan window.
-  const eqIdx = source.indexOf("=", start);
+  const eqIdx = source.indexOf("=", decl);
   if (eqIdx === -1) {
     throw new Error("CATEGORIES declaration is missing the `=` assignment token");
   }
@@ -425,7 +560,7 @@ function extractCategoriesBlock(): string {
   }
 
   let end = -1;
-  lexJsBraces(source, openIdx, {
+  lexJs(source, openIdx, {
     onClose: (pos, depth) => {
       // depth === 1 means this `}` closes the outermost `{` of the
       // CATEGORIES object literal.
@@ -438,33 +573,7 @@ function extractCategoriesBlock(): string {
   if (end === -1) {
     throw new Error("CATEGORIES constant did not close cleanly");
   }
-  return source.slice(start, end);
-}
-
-/**
- * Parse the CATEGORIES block once and return the de-duplicated set of
- * template ids referenced. The id pattern is intentionally permissive
- * (`[A-Za-z0-9_-]+`): any string-shaped id is captured so that the
- * downstream cross-check ("every CATEGORIES id maps to a real bundled
- * template") raises a real, loud test failure when a contributor
- * sneaks in an id that violates the bundled-template `[a-z0-9][a-z0-9-]*`
- * convention. A stricter extraction regex here would *silently* drop
- * the non-conforming id and let the cross-check give a false pass.
- *
- * The leading `["']` is captured into group 1 and the trailing `\1`
- * backreference enforces that the closing quote matches the opening
- * one — a hand-edit like `id: "foo'` (open double, close single)
- * won't false-positive.
- */
-function extractCategoryTemplateIds(): Set<string> {
-  const block = extractCategoriesBlock();
-  const ids = new Set<string>();
-  const re = /\bid:\s*(["'])([A-Za-z0-9_-]+)\1/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(block)) !== null) {
-    ids.add(m[2]);
-  }
-  return ids;
+  return source.slice(openIdx, end);
 }
 
 /**
@@ -500,38 +609,43 @@ interface CategoryEntry {
  *
  * "Top-level" means a property whose `key:` appears at brace depth 1
  * relative to the opening `{` of `slice`. Properties of nested object
- * literals don't qualify, and crucially, identifier-like substrings
- * inside a value's string literal won't be mistaken for a property
- * key — the JS/TS lexical state machine ensures that.
+ * literals don't qualify, and identifier-like substrings inside a
+ * value's string literal won't be mistaken for a property key — the
+ * JS/TS lexical state machine driving the walk ensures that.
  *
  * Devin Review round-7 flagged the previous regex-based approach as
  * fragile: a regex like `/\bname:\s*(["'])(...)\1/.exec(slice)` would
  * false-match if an earlier property's string value contained the
- * literal substring `name: "..."`. Today the CATEGORIES entries
- * consistently order `id` then `name` then `description`, so the bug
- * didn't fire — but property reorders (or a description that quoted
- * another entry's name verbatim) would have silently extracted the
- * wrong tuple, with no failing assertion to catch it. This walker is
- * the long-term correct fix: it operates on the lex stream, not the
- * raw byte stream.
+ * literal substring `name: "..."`. Round-9 then flagged the
+ * lexer-based replacement for duplicating the brace-tracking state
+ * machine from `lexJsBraces`. The current incarnation is the proper
+ * long-term fix to BOTH: this helper is now a thin observer on top of
+ * the shared `lexJs` lexer, so any future fix to escape decoding /
+ * template-literal handling / brace tracking lands in one place and
+ * automatically applies to every caller.
  *
  * Only single- and double-quoted string values are decoded. Properties
  * whose values are bare identifiers, numbers, arrays, nested objects,
  * or template literals return `null` (the entry simply has no recorded
  * value for that key). For our use case the picker entries' `id` and
- * `name` are always quoted strings, so the limited support is sufficient.
+ * `name` are always quoted strings, so the limited support is
+ * sufficient — and `lexJs`'s escape decoding correctly handles
+ * `'L\'Étranger'` / `"She said \"hi\""` / etc.
  *
- * Escape decoding follows JavaScript / TypeScript semantics (NOT YAML):
- * both single- and double-quoted strings honour `\` as the escape
- * character. So `"O\"Reilly"` decodes to `O"Reilly` and `'O\'Reilly'`
- * decodes to `O'Reilly`. Adjacent quotes (`'O''Reilly'`) are NOT an
- * escape in JavaScript — they are two separate string literals back
- * to back, which is a syntax error inside an object literal. An
- * earlier round of this helper used the YAML `''` convention by
- * accident; Devin Review flagged the mismatch and we corrected it
- * here. The companion YAML scalar extractor (`extractTopLevelScalar`)
- * legitimately uses the `''` convention because it parses YAML
- * documents, not JS.
+ * State machine on top of the lex stream:
+ *
+ *   - An identifier event at depth 1 records the candidate key. A
+ *     later identifier at the same depth replaces it (e.g. a
+ *     shorthand-property declaration `foo,` with no colon following).
+ *   - A colon event at the candidate's depth marks us as awaiting a
+ *     string value.
+ *   - A string event at the candidate's depth, while awaiting, is the
+ *     value. Record it (first-occurrence-wins so a re-declared key
+ *     keeps the first value — re-declaration is a lint error in
+ *     CreatePage.tsx anyway), then clear pending state.
+ *   - Any open / close brace or a string seen WITHOUT awaiting clears
+ *     pending state — the value was not a string, or the candidate
+ *     was a free-standing identifier.
  */
 function extractObjectProperties(
   slice: string,
@@ -541,165 +655,62 @@ function extractObjectProperties(
   const result: Record<string, string | null> = {};
   for (const w of wanted) result[w] = null;
 
-  let depth = 0;
-  type LexState = "code" | "sl_comment" | "ml_comment" | "sq" | "dq" | "bt";
-  let state: LexState = "code";
-  const templateInterpStack: number[] = [];
+  let pendingKey: string | null = null;
+  let pendingKeyDepth = -1;
+  let awaitingValueAfterColon = false;
 
-  let i = 0;
-  for (; i < slice.length; i++) {
-    const ch = slice[i];
-    const next = slice[i + 1];
-
-    if (state === "code") {
-      if (ch === "/" && next === "/") {
-        state = "sl_comment";
-        i += 1;
-        continue;
+  lexJs(slice, 0, {
+    onIdentifier: (_pos, name, _endPos, depth) => {
+      if (depth !== 1) {
+        // Nested-object property keys are explicitly out of scope. We
+        // also drop any pending key — a nested object value should not
+        // pick up an inner property as its own.
+        pendingKey = null;
+        awaitingValueAfterColon = false;
+        return;
       }
-      if (ch === "/" && next === "*") {
-        state = "ml_comment";
-        i += 1;
-        continue;
+      // New identifier at top depth — replaces any pending key.
+      pendingKey = name;
+      pendingKeyDepth = depth;
+      awaitingValueAfterColon = false;
+    },
+    onColon: (_pos, depth) => {
+      if (pendingKey !== null && depth === pendingKeyDepth) {
+        awaitingValueAfterColon = true;
       }
-      if (ch === "'") {
-        state = "sq";
-        continue;
+    },
+    onStringLiteral: (_pos, decoded, _quote, _endPos, depth) => {
+      if (
+        awaitingValueAfterColon &&
+        pendingKey !== null &&
+        depth === pendingKeyDepth &&
+        want.has(pendingKey) &&
+        result[pendingKey] === null
+      ) {
+        // First occurrence wins so that, e.g., a property re-declared
+        // illegally (`{ id: "a", id: "b" }`) records the first value.
+        result[pendingKey] = decoded;
       }
-      if (ch === '"') {
-        state = "dq";
-        continue;
-      }
-      if (ch === "`") {
-        state = "bt";
-        continue;
-      }
-      if (ch === "{") {
-        depth += 1;
-        continue;
-      }
-      if (ch === "}") {
-        if (templateInterpStack.length > 0) {
-          const interpDepth = templateInterpStack[templateInterpStack.length - 1];
-          if (depth === interpDepth) {
-            templateInterpStack.pop();
-            depth -= 1;
-            state = "bt";
-            continue;
-          }
-        }
-        depth -= 1;
-        continue;
-      }
-
-      // Only look for property keys at the entry's top depth. The
-      // outer `{` of `slice` pushes depth to 1, so depth === 1 inside
-      // the body means "directly inside this entry object". depth > 1
-      // means "inside a nested object" — skip those keys.
-      if (depth === 1 && /[A-Za-z_$]/.test(ch)) {
-        // Tokenise the identifier.
-        const idStart = i;
-        while (i < slice.length && /[A-Za-z0-9_$]/.test(slice[i])) i++;
-        const key = slice.slice(idStart, i);
-        // Skip whitespace before the colon.
-        while (i < slice.length && /\s/.test(slice[i])) i++;
-        if (slice[i] !== ":") {
-          // Not a property declaration (could be a method name in a
-          // shorthand, a JSX-style attribute, etc.) — back off so the
-          // outer loop re-examines `slice[i]` from code state.
-          i -= 1;
-          continue;
-        }
-        i += 1; // consume `:`
-        while (i < slice.length && /\s/.test(slice[i])) i++;
-        const quote = slice[i];
-        if (quote !== '"' && quote !== "'") {
-          // Non-string value — record nothing and let the outer loop
-          // walk over it character by character (so any nested `{`
-          // adjusts depth and any string boundaries are honoured).
-          i -= 1;
-          continue;
-        }
-        // Read the string literal honouring JavaScript escape
-        // conventions. Both single- and double-quoted strings treat
-        // `\` as the escape character (e.g. `\'`, `\"`, `\n`, `\\`).
-        // We pass the escaped character through verbatim rather than
-        // doing full ECMA-262 §12.8.4 escape-sequence substitution
-        // because:
-        //   * the only escapes that meaningfully appear in CATEGORIES
-        //     are `\'` and `\"` (quote inside the same-quote string),
-        //     both of which pass-through gives the correct decoded
-        //     character;
-        //   * fuller escapes (`\n`, `\uXXXX`, etc.) on a picker entry
-        //     `name` field would be unusual and have no current call
-        //     site, so any decode-time loss is theoretical.
-        // We ALWAYS consume the string regardless of whether the key
-        // is wanted — even unwanted string values must be skipped past
-        // so that any `{` / `}` characters inside the value don't
-        // perturb the brace-depth counter that drives top-level
-        // detection.
-        let j = i + 1;
-        const decoded: string[] = [];
-        let terminated = false;
-        while (j < slice.length) {
-          const c = slice[j];
-          if (c === "\\") {
-            if (j + 1 < slice.length) decoded.push(slice[j + 1]);
-            j += 2;
-            continue;
-          }
-          if (c === quote) {
-            terminated = true;
-            break;
-          }
-          decoded.push(c);
-          j += 1;
-        }
-        if (terminated) {
-          if (want.has(key) && result[key] === null) {
-            // First occurrence wins so that, e.g., a property re-declared
-            // illegally (`{ id: "a", id: "b" }`) records the first value.
-            // Re-declaration would be a lint error in CreatePage.tsx
-            // anyway, and the test cares about existence not last-value.
-            result[key] = decoded.join("");
-          }
-          i = j; // skip past closing quote (outer loop's i++ lands after)
-        } else {
-          i = j - 1; // unterminated; outer loop will exit
-        }
-        continue;
-      }
-    } else if (state === "sl_comment") {
-      if (ch === "\n") state = "code";
-    } else if (state === "ml_comment") {
-      if (ch === "*" && next === "/") {
-        state = "code";
-        i += 1;
-      }
-    } else if (state === "sq" || state === "dq") {
-      if (ch === "\\") {
-        i += 1;
-        continue;
-      }
-      if ((state === "sq" && ch === "'") || (state === "dq" && ch === '"')) {
-        state = "code";
-      }
-    } else {
-      // state === "bt"
-      if (ch === "\\") {
-        i += 1;
-        continue;
-      }
-      if (ch === "`") {
-        state = "code";
-      } else if (ch === "$" && next === "{") {
-        i += 1;
-        depth += 1;
-        templateInterpStack.push(depth);
-        state = "code";
-      }
-    }
-  }
+      // A string clears pending state regardless of whether it was
+      // captured: if it wasn't awaited, it's a stray string elsewhere
+      // in the slice; if it was, we're done with this property.
+      pendingKey = null;
+      awaitingValueAfterColon = false;
+    },
+    onOpen: () => {
+      // Opening a nested object resets pending state — the previous
+      // identifier+colon was followed by `{`, not a string, so the
+      // value is a nested object (not a string we can decode).
+      pendingKey = null;
+      awaitingValueAfterColon = false;
+    },
+    onClose: () => {
+      // Same rationale for `}`: we crossed an object boundary, drop
+      // any half-built pending state.
+      pendingKey = null;
+      awaitingValueAfterColon = false;
+    },
+  });
   return result;
 }
 
@@ -707,19 +718,20 @@ function extractCategoryEntries(): CategoryEntry[] {
   const block = extractCategoriesBlock();
   const out: CategoryEntry[] = [];
 
-  // The CATEGORIES block begins with `{` (its outermost brace, opened
-  // at depth = 1), each category-array `[` does not change brace
-  // depth, and each entry-object `{` opens at depth = 2. We delegate
-  // to the shared lexer and react only at depth = 2.
+  // The CATEGORIES block now begins with the value-side `{` directly
+  // (Devin Review round-9 finding #0001 — extractCategoriesBlock no
+  // longer includes the `const CATEGORIES: …Type… =` prefix). So the
+  // outermost CATEGORIES brace opens at depth = 1, the category-array
+  // `[` does not change brace depth, and each entry-object `{` opens
+  // at depth = 2.
   //
-  // Inside each entry slice, `extractObjectProperties` re-walks the
-  // slice with its own lex state machine so an entry value like
-  // `description: "see id: foo for details"` cannot pollute the
-  // `id` / `name` capture — the only id/name pair returned is the
-  // one whose key token appears at depth 1 in code state inside the
-  // outer `{...}` of THIS entry.
+  // Inside each entry slice, `extractObjectProperties` consumes the
+  // SAME `lexJs` token stream, so an entry value like `description:
+  // "see id: foo for details"` cannot pollute the `id` / `name`
+  // capture — both helpers honour identical lexical state, by
+  // construction (round-9 finding #0003).
   const entryStarts: number[] = [];
-  lexJsBraces(block, 0, {
+  lexJs(block, 0, {
     onOpen: (pos, depth) => {
       if (depth === 2) entryStarts.push(pos);
     },
@@ -737,6 +749,19 @@ function extractCategoryEntries(): CategoryEntry[] {
     },
   });
   return out;
+}
+
+/**
+ * The de-duplicated set of template ids referenced from CreatePage.tsx's
+ * CATEGORIES constant. Derived directly from `extractCategoryEntries`
+ * so both checks share a single extraction path — Devin Review
+ * round-9 finding #0002 correctly flagged that an earlier regex-based
+ * implementation could false-match `id:` inside string values or
+ * comments. Folding it onto the lexer-based entry walker means the
+ * two helpers can never disagree about what a "CATEGORIES id" is.
+ */
+function extractCategoryTemplateIds(): Set<string> {
+  return new Set(extractCategoryEntries().map((e) => e.id));
 }
 
 describe("phase verification — rendering services", () => {
