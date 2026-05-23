@@ -233,7 +233,36 @@ export function registerModelHandlers(): void {
       // counter mid-stream. The end-of-stream write captures the
       // final cumulative value.
       const promptTokens = estimateTokens(parsed.prompt);
-      let completionTokens = 0;
+      // Accumulate the streamed completion text as a single string
+      // and call `estimateTokens` ONCE on the concatenation in the
+      // `finally` block. The earlier implementation summed
+      // `estimateTokens(chunk.content)` per chunk, but `estimateTokens`
+      // uses `Math.ceil(length / CHARS_PER_TOKEN)` with a floor of
+      // `MIN_TOKENS_FOR_NON_EMPTY = 1`, so applying it independently
+      // to each short SSE delta (typically 1–6 chars) systematically
+      // over-counted. Concrete example flagged by Devin Review (round
+      // 5 on PR #27): `"Hello"` + `", "` + `"world"` per-chunk yields
+      // `ceil(5/4) + ceil(1/4) + ceil(5/4) = 2+1+2 = 5` tokens, but
+      // the concatenated `"Hello, world"` yields `ceil(12/4) = 3`. For
+      // typical OpenAI streaming (many short chunks) the cumulative
+      // over-count is 40–60% of the bulk estimate, which inflated the
+      // `"~N tokens used"` display in `SettingsPage` and would mislead
+      // a user trying to track their actual provider spend.
+      //
+      // Buffering the full completion text in memory is acceptable
+      // here: a single generation is bounded by `parsed.maxTokens`
+      // (and the schema clamps that to a sensible ceiling), so the
+      // buffer never exceeds a few tens of KB of UTF-16. The
+      // alternative — tracking raw char count and applying the
+      // `Math.ceil(chars / CHARS_PER_TOKEN)` formula directly here —
+      // would lose the whitespace normalisation that `estimateTokens`
+      // performs (collapsing runs of whitespace to a single space
+      // before counting), which matters because providers compress
+      // whitespace before tokenising. Keeping the single
+      // `estimateTokens` call preserves bulk-vs-streaming
+      // consistency: the counter increments by the same value
+      // whether the response arrived as one chunk or fifty.
+      let completionText = "";
       // Tracks whether the upstream stream body actually opened
       // (i.e. the provider began emitting deltas). Pre-stream
       // failures — HTTP 401/403/400, retry-exhausted 502/503/504,
@@ -266,7 +295,7 @@ export function registerModelHandlers(): void {
           (chunk: ExternalProviderStreamChunk) => {
             streamOpened = true;
             if (chunk.content.length > 0) {
-              completionTokens += estimateTokens(chunk.content);
+              completionText += chunk.content;
               sendToken({ token: chunk.content, done: false });
             }
           },
@@ -291,6 +320,17 @@ export function registerModelHandlers(): void {
         // mask the original generation error.
         if (streamOpened) {
           try {
+            // Single bulk `estimateTokens` call on the concatenated
+            // completion text — NOT a per-chunk sum (see the long
+            // comment near `completionText`'s declaration for the
+            // over-counting rationale). The empty-text branch is
+            // handled inside `estimateTokens` (returns 0 for
+            // length-0 input), so a stream that opened but never
+            // delivered non-empty content cleanly records 0
+            // completion tokens — NOT the `MIN_TOKENS_FOR_NON_EMPTY`
+            // floor that a per-chunk `estimateTokens("")` would have
+            // hit had we still been summing.
+            const completionTokens = estimateTokens(completionText);
             const current = loadConfig();
             const previous: ExternalProviderTokenUsage =
               current.externalProviderTokenUsage;

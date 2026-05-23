@@ -227,4 +227,82 @@ describe("model:generate — streamOpened gate", () => {
     expect(persistedUsage.totalPromptTokens).toBeGreaterThan(0);
     expect(persistedUsage.totalCompletionTokens).toBeGreaterThan(0);
   });
+
+  it("completion-token count equals the BULK estimate of the concatenated stream, not the per-chunk sum (Devin Review round 5 BUG_001)", async () => {
+    // Regression for Devin Review round 5 BUG_001 on PR #27: the
+    // earlier implementation summed `estimateTokens(chunk.content)`
+    // per SSE chunk, applying `Math.ceil(length / 4)` independently
+    // to each short delta. This systematically over-counted because
+    // every chunk \u22641 char paid a forced 1-token floor. The fix
+    // accumulates the raw completion text and calls `estimateTokens`
+    // ONCE on the concatenation in the `finally` block.
+    //
+    // Concrete witness from the bot's example: streaming "Hello",
+    // ", ", "world" with the broken implementation yields
+    // ceil(5/4) + ceil(1/4) + ceil(5/4) = 2+1+2 = 5 tokens. The
+    // correct bulk estimate is ceil(12/4) = 3 tokens (the
+    // concatenated text "Hello, world" has 12 chars after the
+    // whitespace-collapse normalisation in `estimateTokens`). A
+    // regression that reintroduces per-chunk summing would push
+    // this assertion from 3 back to 5.
+    streamExternalProviderMock.mockImplementation(async (_opts, emit) => {
+      emit({ content: "Hello" });
+      emit({ content: ", " });
+      emit({ content: "world" });
+    });
+
+    await invokeGenerate("a prompt");
+
+    expect(updateConfigMock).toHaveBeenCalledTimes(1);
+    // 3 = ceil(12 / 4) where 12 is `len("Hello, world")` after the
+    // collapse-whitespace normalisation that `estimateTokens`
+    // applies internally. If a future refactor changes
+    // `estimateTokens` to round differently this literal will need
+    // updating, but the BULK-equals-streaming invariant is the
+    // contract this test pins.
+    expect(persistedUsage.totalCompletionTokens).toBe(3);
+  });
+
+  it("a single long chunk and many short chunks produce IDENTICAL completion-token counts when their concatenations match", async () => {
+    // Companion to the witness above: pin the bulk-equals-streaming
+    // invariant directly by running the SAME 24-char text through
+    // (a) a single chunk and (b) twelve 2-char chunks, then
+    // asserting both runs land on the same persisted counter
+    // value. Without this invariant the per-chunk path would emit
+    // 12 tokens (each 2-char chunk getting `MIN_TOKENS_FOR_NON_EMPTY
+    // = 1`) while the single-chunk path would emit 6 (= ceil(24/4)).
+    const text = "the quick brown fox jumps"; // 25 chars, 1 space
+    // Reset counter between the two runs so we measure the delta
+    // from each generation independently.
+    persistedUsage = {
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      lastResetDate: new Date("2025-01-01T00:00:00.000Z").toISOString(),
+    };
+
+    streamExternalProviderMock.mockImplementation(async (_opts, emit) => {
+      emit({ content: text });
+    });
+    await invokeGenerate("a prompt");
+    const singleChunkCompletion = persistedUsage.totalCompletionTokens;
+
+    // Reset for the many-chunk run.
+    persistedUsage = {
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      lastResetDate: new Date("2025-01-01T00:00:00.000Z").toISOString(),
+    };
+
+    streamExternalProviderMock.mockImplementation(async (_opts, emit) => {
+      // Split into 2-char chunks. The Anthropic delta protocol does
+      // exactly this in practice for short token chunks.
+      for (let i = 0; i < text.length; i += 2) {
+        emit({ content: text.slice(i, i + 2) });
+      }
+    });
+    await invokeGenerate("a prompt");
+    const manyChunkCompletion = persistedUsage.totalCompletionTokens;
+
+    expect(manyChunkCompletion).toBe(singleChunkCompletion);
+  });
 });
