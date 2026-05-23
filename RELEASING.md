@@ -31,6 +31,16 @@ The preflight script is the same set of gates CI runs, plus an
 `electron-builder --dir` dry-pack that catches packaging regressions
 before they reach the release workflow.
 
+> **Before the first preflight run on a fresh clone:**
+> ```
+> npm ci   # or `npm install` if package-lock.json is being updated
+> ```
+> `electron-builder` is declared as a `devDependency` of
+> `apps/desktop`, so `npm ci` is what puts the pinned binary on disk.
+> The packaging step uses `npx --no-install electron-builder ...`,
+> which intentionally fails if the binary isn't already present —
+> see step 8 below for the rationale.
+
 **Linux / macOS:**
 
 ```bash

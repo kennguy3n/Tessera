@@ -72,13 +72,16 @@ jobs:
       - name: Package with electron-builder
         # `--config packaging/electron-builder.yml` keeps the
         # packaging metadata co-located with the platform-specific
-        # entitlements/icons. We invoke it directly through `npx`
-        # to avoid pinning a global install in package.json.
+        # entitlements/icons. We invoke it through `npx` so it picks
+        # up the workspace-pinned binary from `node_modules/.bin/`
+        # (declared as a devDependency of `apps/desktop` so it lands
+        # in the root `node_modules/.bin` via npm workspace hoisting).
         # `--no-install` mirrors `scripts/preflight.sh` /
-        # `scripts/preflight.ps1`: if `electron-builder` is missing
-        # from `node_modules` we'd rather fail loudly than have npx
-        # silently fetch a floating version into its cache and
-        # publish a release built by an untested binary.
+        # `scripts/preflight.ps1`: if the pinned binary somehow isn't
+        # present we'd rather fail loudly than have npx silently fetch
+        # a floating version into its cache and publish a release built
+        # by an untested binary. The preceding `npm ci` step is what
+        # guarantees the pinned version is on disk.
         # Code-signing certificates are picked up from env if set
         # (CSC_LINK / CSC_KEY_PASSWORD), but unsigned builds still
         # produce installable artifacts.
