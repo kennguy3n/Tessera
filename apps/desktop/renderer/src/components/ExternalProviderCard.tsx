@@ -173,18 +173,27 @@ export default function ExternalProviderCard() {
     } finally {
       setBusy(false);
     }
-    // Narrow deps to ONLY the two `provider` fields this callback
-    // actually reads (`apiUrl` and `providerType`) instead of the
-    // whole `provider` object. The previous `[provider]` dep caused
-    // the callback to recreate on every keystroke in any form field
-    // (`modelName`, `maxTokens`, `temperature`, etc.) because
-    // `setField` produces a new object via spread — which in turn
-    // re-rendered the "List models" Button with a new `onClick`
-    // reference on every character typed elsewhere. With the
-    // narrowed dep the callback identity is stable across edits to
-    // unrelated fields, and the Button only re-renders when one of
-    // the two fields the callback actually reads changes.
-  }, [provider?.apiUrl, provider?.providerType]);
+    // Narrow deps to ONLY the three `provider` fields this callback
+    // actually reads (`apiUrl`, `providerType`, and `enabled`)
+    // instead of the whole `provider` object. The previous
+    // `[provider]` dep caused the callback to recreate on every
+    // keystroke in any form field (`modelName`, `maxTokens`,
+    // `temperature`, etc.) because `setField` produces a new object
+    // via spread — which in turn re-rendered the "List models"
+    // Button with a new `onClick` reference on every character
+    // typed elsewhere. With the narrowed deps the callback identity
+    // is stable across edits to unrelated fields, and the Button
+    // only re-renders when one of the three fields the callback
+    // actually reads changes.
+    //
+    // The `enabled` dep is REQUIRED — without it the callback's
+    // closure captures the value at first render and never sees
+    // subsequent toggles (Devin Review round 13 BUG_001). Concrete
+    // failure mode: user has persisted `enabled: false`, toggles
+    // the form ON, clicks List models → stale `false` flows through
+    // as the override and the handler returns "External provider
+    // is disabled", defeating the round-12 ANALYSIS_002 fix.
+  }, [provider?.apiUrl, provider?.providerType, provider?.enabled]);
 
   const onResetTokenUsage = useCallback(async () => {
     // Bracket the async IPC with the same `busy` flag the sibling

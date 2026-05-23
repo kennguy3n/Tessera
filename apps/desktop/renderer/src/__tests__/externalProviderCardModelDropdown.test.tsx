@@ -244,6 +244,83 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     ).not.toBeInTheDocument();
   });
 
+  it("forwards the form's CURRENT enabled flag to listModels after the user toggles it (round 13 BUG_001)", async () => {
+    // Devin Review round 13 BUG_001: the `enabled` override I added
+    // in round 12 ANALYSIS_002 was captured by the `onListModels`
+    // useCallback at first render and never refreshed because
+    // `enabled` was missing from the deps array. Pin the fix here:
+    // after the user toggles the form's `enabled`, a subsequent
+    // List models click must forward the CURRENT value, not the
+    // stale closure capture from first render.
+    //
+    // Scenario (matches the bot's repro):
+    //   1. Persisted config: enabled=false, apiUrl set, key stored.
+    //   2. User toggles the form ON via the "Enable external
+    //      provider" checkbox.
+    //   3. User clicks List models.
+    //   4. Without the fix: `listModels` receives `enabled: false`
+    //      (stale closure). Handler returns "External provider is
+    //      disabled".
+    //   5. With the fix: `listModels` receives `enabled: true`
+    //      (current form state). Handler proceeds.
+    const user = userEvent.setup();
+    const tessera = window.tessera;
+    // Persisted state: enabled=false, but everything else valid so
+    // the toggle-on path is a clean enable.
+    tessera.externalProvider.get = vi.fn().mockResolvedValue({
+      enabled: false,
+      providerType: "openai_compatible",
+      apiUrl: "https://api.openai.com",
+      apiKeyRef: "tessera.external_provider.primary",
+      modelName: "",
+      maxTokens: 1024,
+      temperature: 0.7,
+      timeoutSecs: 60,
+      maxRetries: 2,
+      hasApiKey: true,
+    });
+    const listModelsSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      models: ["gpt-4o-mini"],
+    });
+    tessera.externalProvider.listModels = listModelsSpy;
+
+    render(<ExternalProviderCard />);
+    // The card renders the enable checkbox even when the provider
+    // is disabled — that's how the user flips it on.
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText("Enable external provider"),
+      ).toBeInTheDocument();
+    });
+
+    // Toggle enabled ON in the form. The editor body (with the
+    // List models button) only renders after this.
+    await user.click(screen.getByLabelText("Enable external provider"));
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText("Fetch available models from this provider"),
+      ).toBeInTheDocument();
+    });
+
+    // Click List models. With the stale-closure bug, this would
+    // send enabled=false. With the fix, it sends enabled=true.
+    await user.click(
+      screen.getByLabelText("Fetch available models from this provider"),
+    );
+
+    await waitFor(() => {
+      expect(listModelsSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(listModelsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiUrl: "https://api.openai.com",
+        providerType: "openai_compatible",
+        enabled: true,
+      }),
+    );
+  });
+
   it("disables List models when apiUrl is empty (ANALYSIS_006 — pre-existing gate, pinned)", async () => {
     const tessera = window.tessera;
     tessera.externalProvider.get = vi.fn().mockResolvedValue({
