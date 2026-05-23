@@ -316,14 +316,48 @@ Add-Step `
     -Command 'npm run test --workspace=apps/desktop' `
     -Action  { npm run test --workspace=apps/desktop }
 
-# 7) Build the bundle electron-builder will consume so the
+# 7) Workaround for npm/cli#4828: Rollup ships per-platform native
+#    binaries as optionalDependencies (e.g. `@rollup/rollup-win32-x64-msvc`),
+#    and `npm ci` does NOT always install the binary matching the
+#    current host when the lockfile was generated on a different OS.
+#    The Vite-driven `npm run build` step below depends on Rollup at
+#    runtime, so without the host-matching binary the build fails with
+#    a confusing "Cannot find module @rollup/rollup-<plat>-<arch>"
+#    error. The CI workflow at .github/workflows/ci.yml runs the
+#    equivalent `npm install --no-save --no-package-lock` for the
+#    Windows and macOS legs — we mirror that here so the preflight
+#    behaves identically when invoked on a Windows release-prep box.
+#
+#    See https://github.com/npm/cli/issues/4828 for the underlying
+#    npm bug; this workaround can be removed once that issue is
+#    resolved and the minimum supported npm version is bumped.
+#
+#    PowerShell's `$env:PROCESSOR_ARCHITECTURE` reports the *current
+#    process's* architecture, which is `x86` for 32-bit PowerShell on
+#    a 64-bit host. To get the host arch reliably we check
+#    `PROCESSOR_ARCHITEW6432` (set by WoW64 when running 32-bit on
+#    64-bit) before falling back to `PROCESSOR_ARCHITECTURE`.
+$hostArchRaw = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+switch ($hostArchRaw) {
+    'AMD64' { $rollupHostBinary = '@rollup/rollup-win32-x64-msvc' }
+    'ARM64' { $rollupHostBinary = '@rollup/rollup-win32-arm64-msvc' }
+    default { $rollupHostBinary = '' }
+}
+if ($rollupHostBinary) {
+    Add-Step `
+        -Label   ("Install host Rollup binary ({0})" -f $rollupHostBinary) `
+        -Command ("npm install --no-save --no-package-lock {0}" -f $rollupHostBinary) `
+        -Action  { npm install --no-save --no-package-lock $rollupHostBinary }
+}
+
+# 8) Build the bundle electron-builder will consume so the
 #    dry-pack runs against current artefacts, not a stale one.
 Add-Step `
     -Label   'Desktop build (npm run build --workspace=apps/desktop)' `
     -Command 'npm run build --workspace=apps/desktop' `
     -Action  { npm run build --workspace=apps/desktop }
 
-# 8) electron-builder dry-pack. `--dir` skips installer creation
+# 9) electron-builder dry-pack. `--dir` skips installer creation
 #    but still assembles the full app bundle, catching packaging
 #    regressions before a release tag is pushed.
 $skip = $SkipPackage -or ($env:TESSERA_PREFLIGHT_SKIP_PACKAGE -eq '1')

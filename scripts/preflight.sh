@@ -224,14 +224,53 @@ register_step "Desktop type-check (npm run type-check --workspace=apps/desktop)"
 register_step "Desktop tests (npm run test --workspace=apps/desktop)" \
   "npm run test --workspace=apps/desktop"
 
-# 7) Build the bundle electron-builder will consume. Without this,
+# 7) Workaround for npm/cli#4828: Rollup ships per-platform native
+#    binaries as optionalDependencies (e.g. `@rollup/rollup-darwin-arm64`),
+#    and `npm ci` does NOT always install the binary matching the
+#    current host when the lockfile was generated on a different OS.
+#    The Vite-driven `npm run build` step below depends on Rollup at
+#    runtime, so without the host-matching binary the build fails with
+#    a confusing "Cannot find module @rollup/rollup-<plat>-<arch>"
+#    error. CI works around this in .github/workflows/ci.yml by
+#    running `npm install --no-save --no-package-lock @rollup/rollup-<plat>` —
+#    we mirror that here so a maintainer running preflight on macOS or
+#    Windows from a Linux-generated lockfile gets the same fix.
+#
+#    The package name follows the convention `@rollup/rollup-<plat>-<arch>[-<libc>]`.
+#    We pick it from `uname -s` × `uname -m`, falling back to the
+#    Linux glibc / macOS / no-op cases that cover Tessera's currently
+#    supported targets per the README platform table. If the host is
+#    a platform we don't ship for, we skip the install rather than
+#    fail — `npm install` against a non-existent package would just
+#    add a confusing failure to the run.
+#
+#    See https://github.com/npm/cli/issues/4828 for the underlying
+#    npm bug; this workaround can be removed once that issue is fixed
+#    and the minimum npm in CONTRIBUTING.md is bumped past the fix.
+__os="$(uname -s)"
+__arch="$(uname -m)"
+case "${__os}-${__arch}" in
+  Linux-x86_64)   ROLLUP_HOST_BINARY="@rollup/rollup-linux-x64-gnu" ;;
+  Linux-aarch64)  ROLLUP_HOST_BINARY="@rollup/rollup-linux-arm64-gnu" ;;
+  Linux-arm64)    ROLLUP_HOST_BINARY="@rollup/rollup-linux-arm64-gnu" ;;
+  Darwin-x86_64)  ROLLUP_HOST_BINARY="@rollup/rollup-darwin-x64" ;;
+  Darwin-arm64)   ROLLUP_HOST_BINARY="@rollup/rollup-darwin-arm64" ;;
+  *)              ROLLUP_HOST_BINARY="" ;;
+esac
+unset __os __arch
+if [[ -n "${ROLLUP_HOST_BINARY}" ]]; then
+  register_step "Install host Rollup binary (${ROLLUP_HOST_BINARY})" \
+    "npm install --no-save --no-package-lock ${ROLLUP_HOST_BINARY}"
+fi
+
+# 8) Build the bundle electron-builder will consume. Without this,
 #    `electron-builder --dir` would package whatever stale renderer /
 #    main bundles happen to be on disk, which defeats the purpose of
 #    a release dry-run.
 register_step "Desktop build (npm run build --workspace=apps/desktop)" \
   "npm run build --workspace=apps/desktop"
 
-# 8) electron-builder dry-pack. `--dir` skips the installer step
+# 9) electron-builder dry-pack. `--dir` skips the installer step
 #    (no .dmg / .exe / .AppImage produced) but still assembles the
 #    full app bundle, so we catch packaging regressions (missing
 #    files, broken extraResources, native asar issues) before
