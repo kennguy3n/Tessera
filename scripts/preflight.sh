@@ -362,7 +362,7 @@ if [[ -n "${ROLLUP_HOST_BINARY}" ]]; then
     "npm install --no-save --no-package-lock ${ROLLUP_HOST_BINARY}"
 fi
 
-# 9) Build the bundle electron-builder will consume. Without this,
+# 10) Build the bundle electron-builder will consume. Without this,
 #    `electron-builder --dir` would package whatever stale renderer /
 #    main bundles happen to be on disk, which defeats the purpose of
 #    a release dry-run.
@@ -389,7 +389,7 @@ fi
 register_step "Desktop build (npm run build)" \
   "npm run build"
 
-# 10) electron-builder dry-pack. `--dir` skips the installer step
+# 11) electron-builder dry-pack. `--dir` skips the installer step
 #    (no .dmg / .exe / .AppImage produced) but still assembles the
 #    full app bundle, so we catch packaging regressions (missing
 #    files, broken extraResources, native asar issues) before
