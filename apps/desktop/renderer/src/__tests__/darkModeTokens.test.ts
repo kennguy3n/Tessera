@@ -65,9 +65,7 @@ function collectTokenRefs(): Set<string> {
   return refs;
 }
 
-function collectDeclaredTokens(
-  scope: "root" | "dark" | "media-dark",
-): Set<string> {
+function readScopeBlock(scope: "root" | "dark" | "media-dark"): string {
   const text = readFileSync(TOKENS_CSS, "utf8");
   let blockText: string | undefined;
   // Regexes tolerate any amount of indentation before the closing
@@ -90,11 +88,41 @@ function collectDeclaredTokens(
   if (!blockText) {
     throw new Error(`tokens.css is missing the ${scope} selector`);
   }
+  return blockText;
+}
+
+function collectDeclaredTokens(
+  scope: "root" | "dark" | "media-dark",
+): Set<string> {
+  const blockText = readScopeBlock(scope);
   const declared = new Set<string>();
   const re = /(--color-[a-z0-9-]+)\s*:/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(blockText)) !== null) {
     declared.add(m[1]);
+  }
+  return declared;
+}
+
+/**
+ * Collect `--color-*` token → declared value pairs from the given
+ * CSS block scope. Values are normalized to lowercase + whitespace
+ * collapsed so cosmetic edits (case of hex digits, spaces around
+ * commas in `rgba(…)`) don't trigger spurious drift alarms; only
+ * meaningful value diffs surface.
+ */
+function collectDeclaredTokenValues(
+  scope: "root" | "dark" | "media-dark",
+): Map<string, string> {
+  const blockText = readScopeBlock(scope);
+  const declared = new Map<string, string>();
+  // Capture everything up to the line-terminating `;` so multi-arg
+  // values like `rgba(0, 0, 0, 0.6)` are picked up whole.
+  const re = /(--color-[a-z0-9-]+)\s*:\s*([^;]+);/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(blockText)) !== null) {
+    const normalized = m[2].toLowerCase().replace(/\s+/g, " ").trim();
+    declared.set(m[1], normalized);
   }
   return declared;
 }
@@ -120,27 +148,55 @@ describe("dark-mode CSS variable enforcement", () => {
     ).toEqual([]);
   });
 
-  it("[data-theme=\"dark\"] and @media (prefers-color-scheme: dark) declare the same tokens", () => {
+  it("[data-theme=\"dark\"] and @media (prefers-color-scheme: dark) declare the same tokens with identical values", () => {
     // Devin Review flagged that the explicit-Dark scope and the
     // System-Dark media query block are duplicated, and a future
     // patch could update one without the other — silently giving
-    // users in System-Dark different colors than users in Dark.
-    // This test pins that the two blocks declare the EXACT SAME
-    // set of tokens. (We don't compare the *values* because
-    // they're identical by design — anyone diffing this test will
-    // be reminded to copy the value to both blocks.)
-    const dark = collectDeclaredTokens("dark");
-    const media = collectDeclaredTokens("media-dark");
-    const onlyInDark = [...dark].filter((t) => !media.has(t));
-    const onlyInMedia = [...media].filter((t) => !dark.has(t));
+    // users in System-Dark different colors than users who
+    // selected Dark explicitly.
+    //
+    // We pin BOTH:
+    //   (a) the same set of token *names* is declared, AND
+    //   (b) each token resolves to the same normalized *value*.
+    //
+    // Name-set parity alone would let a maintainer update the hex
+    // in one block but not the other and the test would still
+    // pass; value parity catches that drift class too. Values are
+    // normalized (lowercase + collapsed whitespace) so cosmetic
+    // edits (uppercase hex, extra space in `rgba(…)`) don't trip
+    // the test.
+    const dark = collectDeclaredTokenValues("dark");
+    const media = collectDeclaredTokenValues("media-dark");
+    const onlyInDark = [...dark.keys()].filter((t) => !media.has(t));
+    const onlyInMedia = [...media.keys()].filter((t) => !dark.has(t));
+    const valueDrift: Array<{
+      token: string;
+      dark: string;
+      media: string;
+    }> = [];
+    for (const [token, darkVal] of dark) {
+      const mediaVal = media.get(token);
+      if (mediaVal !== undefined && mediaVal !== darkVal) {
+        valueDrift.push({ token, dark: darkVal, media: mediaVal });
+      }
+    }
     expect(
-      { onlyInDark, onlyInMedia },
+      { onlyInDark, onlyInMedia, valueDrift },
       `[data-theme="dark"] and @media (prefers-color-scheme: dark) ` +
-        `must declare the same token set. Tokens that appear in one ` +
-        `but not the other:\n  only in [data-theme]: ${JSON.stringify(
+        `must declare the same token set with identical values. ` +
+        `Tokens that appear in one but not the other, or that have ` +
+        `different values:\n  only in [data-theme]: ${JSON.stringify(
           onlyInDark,
-        )}\n  only in @media: ${JSON.stringify(onlyInMedia)}`,
-    ).toEqual({ onlyInDark: [], onlyInMedia: [] });
+        )}\n  only in @media: ${JSON.stringify(
+          onlyInMedia,
+        )}\n  value drift:\n${valueDrift
+          .map(
+            (d) =>
+              `    ${d.token}: [data-theme]=${JSON.stringify(d.dark)} ` +
+              `vs @media=${JSON.stringify(d.media)}`,
+          )
+          .join("\n")}`,
+    ).toEqual({ onlyInDark: [], onlyInMedia: [], valueDrift: [] });
   });
 
   it("every primary palette / surface / text token is overridden in [data-theme=\"dark\"]", () => {
