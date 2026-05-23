@@ -172,4 +172,100 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
       screen.queryByPlaceholderText(/gpt-4o-mini/),
     ).not.toBeInTheDocument();
   });
+
+  // Devin Review round 10 (ANALYSIS_006) flagged a UX gap: the
+  // "List models" button was clickable even when the persisted
+  // provider was not saved/enabled or had no API key in the vault,
+  // producing a confusing "External provider is disabled" toast on a
+  // first-time-setup click. The fix gates the button on
+  // `provider.enabled`, `provider.hasApiKey`, and a non-empty
+  // `apiUrl`. The three tests below pin each gate independently so a
+  // future maintainer who narrows the predicate to fewer dimensions
+  // re-introduces a regression that the test suite flags.
+
+  it("disables List models when the persisted provider has no API key (ANALYSIS_006)", async () => {
+    const tessera = window.tessera;
+    tessera.externalProvider.get = vi.fn().mockResolvedValue({
+      enabled: true,
+      providerType: "openai_compatible",
+      apiUrl: "https://api.openai.com",
+      apiKeyRef: "tessera.external_provider.primary",
+      modelName: "",
+      maxTokens: 1024,
+      temperature: 0.7,
+      timeoutSecs: 60,
+      maxRetries: 2,
+      hasApiKey: false,
+    });
+    render(<ExternalProviderCard />);
+    await waitFor(() => {
+      expect(screen.getByText("Model name")).toBeInTheDocument();
+    });
+    const button = screen.getByLabelText(
+      "Fetch available models from this provider",
+    );
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute(
+      "title",
+      "Save an API key first to list models from the provider",
+    );
+  });
+
+  it("disables List models when the form has the provider toggled off (ANALYSIS_006)", async () => {
+    const tessera = window.tessera;
+    tessera.externalProvider.get = vi.fn().mockResolvedValue({
+      enabled: false,
+      providerType: "openai_compatible",
+      apiUrl: "https://api.openai.com",
+      apiKeyRef: "tessera.external_provider.primary",
+      modelName: "",
+      maxTokens: 1024,
+      temperature: 0.7,
+      timeoutSecs: 60,
+      maxRetries: 2,
+      hasApiKey: true,
+    });
+    render(<ExternalProviderCard />);
+    // When the form's `enabled` is false the entire editor body —
+    // including the Model name row and the List models button — is
+    // collapsed by the parent conditional. The button being absent
+    // is the correct UX: the user can't list models against a
+    // disabled provider in any state. Pin the negative assertion so
+    // a future maintainer who flattens the conditional doesn't
+    // accidentally expose a clickable List models button under a
+    // disabled provider.
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText("Enable external provider"),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByLabelText("Fetch available models from this provider"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("disables List models when apiUrl is empty (ANALYSIS_006 — pre-existing gate, pinned)", async () => {
+    const tessera = window.tessera;
+    tessera.externalProvider.get = vi.fn().mockResolvedValue({
+      enabled: true,
+      providerType: "openai_compatible",
+      apiUrl: "",
+      apiKeyRef: "tessera.external_provider.primary",
+      modelName: "",
+      maxTokens: 1024,
+      temperature: 0.7,
+      timeoutSecs: 60,
+      maxRetries: 2,
+      hasApiKey: true,
+    });
+    render(<ExternalProviderCard />);
+    await waitFor(() => {
+      expect(screen.getByText("Model name")).toBeInTheDocument();
+    });
+    const button = screen.getByLabelText(
+      "Fetch available models from this provider",
+    );
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("title", "Provide an API URL first");
+  });
 });

@@ -14,10 +14,18 @@ import type {
  *  1_234_567 -> "1.2M". Used in the token-usage row to keep the UI
  *  width stable as the counter grows over time. The threshold for
  *  switching units is intentionally low (1_000) so small counts
- *  still show meaningful precision for users running tests. */
+ *  still show meaningful precision for users running tests.
+ *
+ *  The k→M boundary is at 999_500 (not 1_000_000) because (999_999 /
+ *  1_000).toFixed(1) === "1000.0" — displaying "1000.0k" instead of
+ *  "1.0M" is the obvious-but-wrong threshold that Devin Review round
+ *  10 flagged. Moving the boundary down to 999_500 means any value
+ *  that would round-up to 1000.0k at one decimal place is shown in M
+ *  units instead, which is what every conventional financial /
+ *  analytics display does (e.g. Stripe dashboard, GitHub Insights). */
 function formatTokenCount(n: number): string {
   if (n < 1_000) return n.toLocaleString();
-  if (n < 1_000_000) return `${(n / 1_000).toFixed(1)}k`;
+  if (n < 999_500) return `${(n / 1_000).toFixed(1)}k`;
   return `${(n / 1_000_000).toFixed(2)}M`;
 }
 
@@ -420,7 +428,53 @@ export default function ExternalProviderCard() {
                 <Button
                   variant="secondary"
                   onClick={onListModels}
-                  disabled={busy || !provider.apiUrl.trim()}
+                  // Disable the button when any of the pre-conditions
+                  // for a successful listModels invocation are not met:
+                  //
+                  //   - `busy`: another IPC operation is in flight
+                  //     (Save / Test / Reset / List).
+                  //   - `!provider.apiUrl.trim()`: nothing to list
+                  //     against — the form's URL field is empty or
+                  //     whitespace only.
+                  //   - `!provider.enabled`: the provider toggle is
+                  //     off in the form. The IPC handler in
+                  //     `electron/ipc/settings.ts` reads `enabled`
+                  //     from the PERSISTED config (the API key only
+                  //     comes from the vault, so there is no way to
+                  //     list against an in-flight unsaved key), so a
+                  //     locally-untoggled provider would error with
+                  //     "External provider is disabled" — we want
+                  //     the button to reflect that pre-condition
+                  //     instead of letting the user click it and get
+                  //     a confusing error.
+                  //   - `!provider.hasApiKey`: no saved API key in
+                  //     the vault. The handler cannot proceed
+                  //     without one (we deliberately do NOT accept
+                  //     plaintext keys over IPC, see the handler
+                  //     comment) so the only way forward is to Save
+                  //     the key first and click List models again.
+                  //
+                  // Devin Review round 10 surfaced the UX gap: the
+                  // button was clickable in all these states and the
+                  // user saw "External provider is disabled" on a
+                  // first-time-setup click instead of the expected
+                  // model list. The `title` attribute below surfaces
+                  // the precise reason so the user knows what to do.
+                  disabled={
+                    busy ||
+                    !provider.apiUrl.trim() ||
+                    !provider.enabled ||
+                    !provider.hasApiKey
+                  }
+                  title={
+                    !provider.apiUrl.trim()
+                      ? "Provide an API URL first"
+                      : !provider.enabled
+                        ? "Enable the provider and Save before listing models"
+                        : !provider.hasApiKey
+                          ? "Save an API key first to list models from the provider"
+                          : "Fetch available models from this provider"
+                  }
                   aria-label="Fetch available models from this provider"
                 >
                   List models

@@ -1010,7 +1010,7 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
       ),
     ).rejects.toThrow(/no body to stream/);
     // The implementation must have detached the forwarder before
-    // throwing. Net listener delta should be 0 \u2014 every
+    // throwing. Net listener delta should be 0 — every
     // addEventListener("abort", ...) on the user signal must be
     // matched by a removeEventListener("abort", ...).
     expect(netAbortListeners).toBe(0);
@@ -1051,7 +1051,7 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
             );
             // Wire the fetch's signal into our body stream so an
             // abort on the per-attempt controller (which is what
-            // user-cancel forwards to) errors the body \u2014 the same
+            // user-cancel forwards to) errors the body — the same
             // wiring real `fetch()` does internally. Without this
             // the mock would never error and the test couldn't
             // distinguish "Stop button broken" from "test mock
@@ -1078,7 +1078,7 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
       (c) => emitted.push(c),
     );
     // Yield once so the body stream is read and the first chunk
-    // arrives \u2014 we are now unambiguously mid-stream.
+    // arrives — we are now unambiguously mid-stream.
     await Promise.resolve();
     await Promise.resolve();
     // Cancel. Without the round-8 fix the user signal is
