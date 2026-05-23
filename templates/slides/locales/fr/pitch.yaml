@@ -1,0 +1,52 @@
+id: pitch-v1-fr
+name: Pitch Deck
+type: slides
+description: Pitch deck fondateur ou commercial avec problème, solution, marché, traction, équipe et demande (version française)
+locale: fr
+format: marp
+theme: gaia
+paginate: true
+sections:
+  - title: Accroche
+    prompt: >
+      Ouvrez avec une seule phrase à fort impact sur
+      l'opportunité. Commencez par le problème ou la métrique
+      phare. Répondez en français.
+  - title: Problème
+    prompt: >
+      Décrivez le problème dans un langage concret, ancré dans
+      le client. Quantifiez la douleur (coût, temps, attrition)
+      quand c'est possible. Répondez en français.
+  - title: Solution
+    prompt: >
+      Expliquez la solution succinctement. Mettez en avant la
+      capacité magique qui la fait fonctionner.
+      Répondez en français.
+  - title: Marché et traction
+    prompt: >
+      Dimensionnez le marché (TAM/SAM/SOM) et rapportez la
+      traction actuelle (utilisateurs, ARR, taux de croissance).
+      Citez vos sources. Répondez en français.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Modèle économique et concurrence
+    prompt: >
+      Décrivez comment les revenus sont générés et comment
+      l'offre se différencie des alternatives.
+      Répondez en français.
+  - title: Équipe
+    prompt: >
+      Présentez les fondateurs et les membres clés de l'équipe
+      avec leur rôle, expérience et preuve de pertinence.
+      Répondez en français.
+  - title: La demande
+    prompt: >
+      Indiquez le montant de la levée, l'utilisation des fonds
+      et les jalons débloqués. Terminez sur l'élan.
+      Répondez en français.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

@@ -1,0 +1,80 @@
+id: curriculum-map-v1
+name: Curriculum Map
+type: document
+description: Standards-aligned curriculum map covering scope, sequence, assessment, and resources across an academic year
+industry:
+  - education
+profile:
+  - curriculum-coordinator
+  - department-chair
+  - teacher
+sections:
+  - title: Course / Grade Level Identification
+    prompt: >
+      Course or grade-level title, subject area, total instructional
+      weeks, the curriculum framework being aligned to (CCSS, NGSS,
+      state standard, IB, AP framework), and the curriculum-design
+      team.
+  - title: Course Philosophy and Big Ideas
+    prompt: >
+      Articulate the course philosophy in 2-3 paragraphs, then list
+      the enduring understandings and essential questions that
+      organize the year. These should be transferable concepts that
+      students return to across units.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Unit Overview
+    prompt: >
+      Table of all units across the year: unit number, title,
+      anchor standards, duration in weeks, essential question, and
+      summative assessment. Confirm that all priority standards are
+      taught and assessed.
+    output_format: table
+  - title: Standards Coverage Matrix
+    prompt: >
+      Coverage matrix showing each priority standard against the
+      unit(s) where it is introduced (I), developed (D), and
+      mastered (M). Identify any standards with insufficient
+      coverage or duplication across units.
+    output_format: table
+  - title: Vertical Alignment
+    prompt: >
+      Describe how this course aligns with the prior grade level
+      (incoming knowledge expectations) and the subsequent grade
+      level (where students will go next). Identify pacing
+      adjustments needed to bridge any gaps.
+  - title: Cross-Curricular Connections
+    prompt: >
+      Identify natural connections to other subject areas (literacy
+      in science, math in social studies) and the planned cross-
+      curricular projects, units, or co-teaching opportunities.
+  - title: Assessment Plan
+    prompt: >
+      Distinguish formative checkpoints (every 1-2 weeks),
+      benchmark assessments (quarterly), and summative assessments
+      (end of unit, end of semester, end of year). Specify the
+      tool, format, and the standards measured by each.
+    output_format: table
+  - title: Differentiation and Accessibility
+    prompt: >
+      How the curriculum supports students with IEPs / 504 plans,
+      English learners, gifted learners, and students needing
+      tier-2 / tier-3 interventions. Reference the supplemental
+      resources or modified pathways embedded in each unit.
+  - title: Resources and Texts
+    prompt: >
+      List the core texts, anchor texts, supplementary materials,
+      digital resources, and lab/manipulative kits used across the
+      course. Identify any required-purchase items versus library
+      / open resources.
+  - title: Review and Revision Cycle
+    prompt: >
+      State the review cycle: who reviews, on what cadence
+      (annually / every 3 years), against what data (assessment
+      results, teacher feedback, student surveys, state results),
+      and the process for proposing mid-cycle revisions.
+export:
+  - markdown
+  - pdf
+  - docx

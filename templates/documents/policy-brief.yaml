@@ -1,0 +1,83 @@
+id: policy-brief-v1
+name: Policy Brief
+type: document
+description: Policy brief with background, options analysis, recommendation, and implementation considerations
+industry:
+  - government
+  - nonprofit
+profile:
+  - policy-analyst
+  - executive
+  - legislative-staff
+sections:
+  - title: Executive Summary
+    prompt: >
+      One-page summary: the policy question, the recommended option,
+      the expected outcome, and the requested action from the
+      decision-maker. Written in plain language for a non-specialist
+      reader. Include the brief's date and the issuing agency or
+      organization.
+  - title: Background and Problem Statement
+    prompt: >
+      State the policy problem with evidence: who is affected, the
+      scale of the problem (with data), the trend over time, and
+      why action is needed now. Distinguish symptoms from underlying
+      causes.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Policy Context and Stakeholders
+    prompt: >
+      Map the policy landscape: existing laws, regulations, and
+      programs touching the issue; the relevant agencies; advocacy
+      groups; affected populations; and any prior attempts to
+      address the problem and their outcomes.
+  - title: Decision Criteria
+    prompt: >
+      State the criteria against which options will be evaluated:
+      effectiveness (outcome impact), equity (distributional
+      effects), efficiency (cost / benefit), feasibility (political
+      and operational), and any statutory or constitutional limits.
+  - title: Policy Options Analysis
+    prompt: >
+      Present 3-4 substantive options (including a status-quo
+      baseline). For each, summarize the mechanism, expected
+      impact, who bears the costs and who receives the benefits,
+      and the implementation timeline. Rate each option against
+      the decision criteria in a comparison table.
+    output_format: table
+  - title: Recommended Option
+    prompt: >
+      State the recommendation and the rationale grounded in the
+      evidence and criteria. Address the strongest counterargument
+      and explain why the recommendation still prevails.
+  - title: Implementation Plan
+    prompt: >
+      Outline the implementation steps: legislative or regulatory
+      vehicle, lead agency, required appropriations, timeline by
+      quarter, stakeholder engagement plan, and the metrics that
+      will demonstrate success at 12 / 24 / 36 months.
+  - title: Risks and Mitigations
+    prompt: >
+      Identify the principal risks: implementation, political,
+      legal, fiscal, and unintended consequences. For each, rate
+      likelihood and severity and propose a mitigation strategy.
+    output_format: table
+  - title: Equity Impact
+    prompt: >
+      Assess the distributional impact of the recommended option
+      on historically underserved communities (race / ethnicity,
+      income, geography, disability, age). Identify whether the
+      policy narrows, maintains, or widens existing disparities and
+      what equity safeguards are built in.
+  - title: References and Methodology
+    prompt: >
+      Cite the data sources, peer-reviewed studies, government
+      reports, and interviews informing the analysis. Note the
+      methodology (literature review, econometric modeling,
+      stakeholder interviews) and any limitations of the evidence
+      base.
+export:
+  - markdown
+  - pdf
+  - docx

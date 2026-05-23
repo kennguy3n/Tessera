@@ -1,0 +1,42 @@
+id: task-list-v1-pt
+name: Lista de Tarefas
+type: document
+description: Lista de tarefas priorizada com responsáveis, prazos e dependências (versão em português)
+locale: pt
+sections:
+  - title: Contexto
+    prompt: >
+      Contexto de um parágrafo para esta lista de tarefas — qual iniciativa
+      ou projeto ela serve e o status atual. Responda em português.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Caminho Crítico
+    prompt: >
+      Liste tarefas que devem ser concluídas no prazo para que o esforço
+      maior seja bem-sucedido. Cada uma deve incluir responsável e prazo.
+      Responda em português.
+  - title: Em Andamento
+    prompt: >
+      Tarefas em que está sendo trabalhado atualmente, com responsável,
+      status atual, bloqueios e conclusão esperada. Responda em português.
+  - title: A Seguir
+    prompt: >
+      Tarefas enfileiradas para o próximo sprint ou ciclo, com ranking
+      de prioridade e responsável. Responda em português.
+  - title: Backlog
+    prompt: >
+      Tarefas de prioridade mais baixa ainda não programadas, com prioridade
+      e estimativa aproximada de esforço. Responda em português.
+  - title: Concluídas
+    prompt: >
+      Tarefas recentemente concluídas, com data de conclusão e resumo
+      do resultado para rastreabilidade. Responda em português.
+  - title: Notas e Dependências
+    prompt: >
+      Dependências entre tarefas, decisões que afetam a priorização
+      e quaisquer bloqueios que precisem ser escalonados. Responda em português.
+export:
+  - markdown
+  - html
+  - csv

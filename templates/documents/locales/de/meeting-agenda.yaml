@@ -1,0 +1,38 @@
+id: meeting-agenda-v1-de
+name: Besprechungsagenda
+type: document
+description: Strukturierte Agenda mit Zielen, Teilnehmern, Themen und Zeiten (deutsche Version)
+locale: de
+sections:
+  - title: Besprechungsübersicht
+    prompt: >
+      Erfassen Sie Titel, Datum, Uhrzeit, Ort oder Video-Link
+      und ein einzeiliges Ziel. Antworten Sie auf Deutsch.
+  - title: Teilnehmer
+    prompt: >
+      Listen Sie erforderliche und optionale Teilnehmer mit
+      ihren Rollen auf. Vermerken Sie vorzubereitende Lektüren. Antworten Sie auf Deutsch.
+  - title: Ziele
+    prompt: >
+      Nennen Sie 2 bis 5 konkrete Ergebnisse, die die Besprechung
+      erreichen soll. Jedes sollte messbar sein (Entscheidung
+      getroffen oder Artefakt erstellt). Antworten Sie auf Deutsch.
+  - title: Agendapunkte
+    prompt: >
+      Erfassen Sie für jeden Punkt das Thema, den Verantwortlichen,
+      die zugewiesene Zeit, das gewünschte Ergebnis und die
+      Links zur Vorbereitung. Antworten Sie auf Deutsch.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Erforderliche Entscheidungen
+    prompt: >
+      Listen Sie ausdrücklich die in der Besprechung zu treffenden
+      Entscheidungen auf und wer sie umsetzt. Antworten Sie auf Deutsch.
+  - title: Nächste Schritte
+    prompt: >
+      Antizipieren Sie die nächsten Schritte, Folgepunkte und
+      die nächste Besprechung bzw. den nächsten Meilenstein. Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - html

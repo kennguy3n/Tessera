@@ -1,0 +1,29 @@
+id: sop-v1-zh
+name: 标准作业程序
+type: document
+description: 包含角色、前置条件和验证步骤的逐步操作程序（中文版）
+locale: zh
+sections:
+  - title: 目的
+    prompt: >
+      说明此程序的目的以及何时应遵循。请用中文回答。
+  - title: 适用范围
+    prompt: >
+      定义此程序适用于谁以及在什么情况下适用。请用中文回答。
+  - title: 前置条件
+    prompt: >
+      列出开始此程序之前所需的所有前置条件、工具、访问权限和授权。
+      请用中文回答。
+  - title: 程序步骤
+    prompt: >
+      提供详细的逐步说明。对每个步骤进行编号。包括每个步骤的预期结果。
+      请用中文回答。
+  - title: 验证
+    prompt: >
+      描述如何验证程序已成功完成。请用中文回答。
+  - title: 故障排除
+    prompt: >
+      列出常见问题及其解决方案。请用中文回答。
+export:
+  - markdown
+  - html

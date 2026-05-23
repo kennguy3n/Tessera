@@ -1,0 +1,82 @@
+id: landing-portfolio-v1
+name: Personal / Agency Portfolio
+type: landing_page
+description: Portfolio landing page with bio, services, featured work, testimonials, and contact CTAs
+industry:
+  - creative
+profile:
+  - designer
+  - freelancer
+  - agency-principal
+sections:
+  - title: Hero — Identity and Promise
+    prompt: >
+      The portfolio owner's name, role / specialty, and a
+      one-sentence positioning ("Brand designer for
+      mission-driven startups", "Independent product
+      strategy consultant for B2B SaaS"). A primary CTA
+      ("View Work" or "Book an Intro"). Hero image or
+      portrait optional.
+  - title: About
+    prompt: >
+      2-3 paragraph bio in the first person: career
+      arc, distinctive perspective, what kinds of
+      problems the work is best suited to, and the
+      values that show up in the work.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Services and Offerings
+    prompt: >
+      The services offered, organized as cards. Per
+      service: name, scope, typical deliverables,
+      timeline, and price band (or "starting at" or
+      "contact for quote"). Distinguish productized
+      offerings from fully bespoke engagements.
+  - title: Featured Case Studies
+    prompt: >
+      3-5 featured projects. Per project: client name
+      (with permission), project type, the problem,
+      the approach, the deliverables, the outcome
+      (quantified where possible), and a hero image
+      or before/after.
+    output_format: table
+  - title: Selected Clients
+    prompt: >
+      Logo grid of clients worked with. Honor any
+      anonymity preferences. Group by industry or
+      company size if helpful to the target
+      prospect.
+  - title: Testimonials
+    prompt: >
+      Three to five testimonials. Per testimonial:
+      the quote, the client's full name, title, and
+      company (when permission granted), and the
+      project context in one phrase. Choose
+      testimonials that speak to the specific
+      services being sold.
+  - title: Process
+    prompt: >
+      The engagement process from intro call to
+      handoff: discovery → proposal → kickoff →
+      delivery phases → review → handoff. Per phase:
+      duration, what the client experiences, what is
+      delivered, and the touchpoint cadence.
+  - title: FAQ and Working Style
+    prompt: >
+      Frequently asked questions: how engagements
+      are scoped, payment terms, revisions policy,
+      IP ownership, working timezone / hours, and
+      the kinds of projects the portfolio owner does
+      NOT take.
+  - title: Contact CTA
+    prompt: >
+      Closing call-to-action: book an intro call
+      (calendar link), email, contact form, or
+      typeform. Include a one-sentence reassurance
+      ("I respond within one business day") and the
+      kind of project info to bring.
+export:
+  - markdown
+  - html
+  - pdf

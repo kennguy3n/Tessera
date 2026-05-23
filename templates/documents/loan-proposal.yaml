@@ -1,0 +1,91 @@
+id: loan-proposal-v1
+name: Loan / Credit Proposal
+type: document
+description: Loan or credit facility proposal with borrower profile, financials, collateral, pricing, and covenant package
+industry:
+  - finance
+profile:
+  - credit-officer
+  - relationship-manager
+  - underwriter
+sections:
+  - title: Transaction Summary
+    prompt: >
+      Borrower name, facility type (term loan, revolver, ABL,
+      mortgage, mezzanine), requested amount, proposed term and
+      amortization, all-in pricing (rate, fees), use of proceeds,
+      and the recommended action (approve / approve with
+      modifications / decline). Identify the credit officer and
+      the approval level required.
+  - title: Borrower Profile
+    prompt: >
+      Borrower's legal structure, jurisdiction, ownership, principal
+      officers, industry, geography, years in business, headcount,
+      and a brief history (origination, key milestones, recent
+      ownership changes).
+    required_sources:
+      - type: local
+        min: 1
+  - title: Business Description and Strategy
+    prompt: >
+      Product and service offerings, customer base (concentration,
+      tenure, contract terms), suppliers, competitive position,
+      management depth, and the borrower's strategic plan for the
+      next 24-36 months that the facility supports.
+  - title: Financial Performance
+    prompt: >
+      Three-year financial summary: revenue, EBITDA, net income,
+      free cash flow, total debt, equity, and key credit ratios
+      (debt/EBITDA, fixed-charge coverage, interest coverage,
+      debt/equity). Note the basis (audited, reviewed, compiled,
+      tax-basis, internal) and any non-recurring adjustments.
+    output_format: table
+  - title: Cash Flow and Repayment Source
+    prompt: >
+      Demonstrate the primary repayment source from operating cash
+      flow under base / downside scenarios. Identify the secondary
+      repayment source (asset sale, refinance, guarantor) and
+      tertiary if applicable. Test against a stressed downside
+      (e.g., 20% revenue decline, 200 bps higher rates).
+  - title: Collateral and Security Package
+    prompt: >
+      Describe the collateral: real estate (appraised value, LTV),
+      equipment (NOLV), inventory and accounts receivable (advance
+      rates, eligibility criteria), cash, securities, IP, or
+      blanket lien. Identify the lien position, prior liens, and
+      any subordination or intercreditor agreements.
+    output_format: table
+  - title: Guarantors and Other Credit Support
+    prompt: >
+      List personal and corporate guarantors with their financial
+      strength, the form of guaranty (limited vs. unlimited,
+      validity vs. payment), and any other credit support (letters
+      of credit, deposit accounts, parent comfort letter).
+  - title: Covenants and Reporting Requirements
+    prompt: >
+      Proposed financial covenants (debt/EBITDA cap, fixed-charge
+      coverage floor, minimum liquidity, capex limit) with cushion
+      to projected performance, affirmative covenants (financial
+      reporting cadence, insurance, compliance certificates),
+      negative covenants (additional debt, liens, dividends, M&A),
+      and reporting requirements (frequency, format, certifying
+      officer).
+    output_format: table
+  - title: Risk Assessment and Risk Rating
+    prompt: >
+      State the proposed risk rating per the bank's internal scale,
+      the rationale, and how it compares to the prior period.
+      Identify the principal risks (industry, customer concentration,
+      management succession, regulatory) and the mitigants.
+  - title: Approval Recommendation
+    prompt: >
+      Final recommendation with conditions (any pre-funding items,
+      post-close milestones, covenant step-downs at year 2),
+      approval authority required, and the signatures needed.
+      Include the relationship view: total commitment, anticipated
+      revenue from cross-sell, and the relationship profitability
+      analysis.
+export:
+  - markdown
+  - pdf
+  - docx

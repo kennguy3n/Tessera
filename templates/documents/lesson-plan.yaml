@@ -1,0 +1,80 @@
+id: lesson-plan-v1
+name: Lesson Plan
+type: document
+description: K-12 / higher-education lesson plan with objectives, standards alignment, activities, assessment, and differentiation
+industry:
+  - education
+profile:
+  - teacher
+  - instructional-coach
+sections:
+  - title: Lesson Identification
+    prompt: >
+      State the subject area, grade level or course, unit title,
+      lesson title, lesson number within the unit, estimated duration,
+      and the teacher of record. Note the date(s) the lesson will be
+      delivered.
+  - title: Standards Alignment
+    prompt: >
+      List the relevant standards by code and full descriptor: CCSS,
+      NGSS, state, IB, AP, AERO, or other applicable framework.
+      Identify primary standards the lesson directly addresses and
+      supporting standards reinforced.
+    output_format: bullets
+  - title: Learning Objectives
+    prompt: >
+      State the student-facing learning objectives in measurable,
+      observable language using Bloom's revised taxonomy verbs.
+      Format as "Students will be able to (SWBAT)..." statements,
+      each tied to a standard above.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Prior Knowledge and Misconceptions
+    prompt: >
+      Identify the prerequisite skills and content students should
+      already have. List two or three common misconceptions for this
+      topic and how the lesson will address each.
+  - title: Materials and Resources
+    prompt: >
+      List all materials required: texts (with page references),
+      worksheets, manipulatives, technology, lab supplies, and
+      teacher prep items. Include a backup plan if technology fails.
+    output_format: bullets
+  - title: Lesson Activities (Minute-by-Minute)
+    prompt: >
+      Sequence the lesson by minutes — opening / warm-up / engage,
+      explore / direct instruction, explain / guided practice,
+      elaborate / independent practice, evaluate / close. For each
+      segment, give the teacher action, student action, expected
+      duration, and the grouping (whole class / small group /
+      partners / individual).
+    output_format: table
+  - title: Differentiation and Accessibility
+    prompt: >
+      Describe how the lesson is differentiated for: students with
+      IEPs / 504 plans (with specific accommodations), English
+      learners (by proficiency level), advanced learners, and
+      students needing scaffolding. Reference Universal Design for
+      Learning (UDL) principles applied.
+  - title: Formative and Summative Assessment
+    prompt: >
+      Identify the formative assessments used during the lesson
+      (exit ticket, cold call, mini whiteboards, polling) and how
+      they will inform instruction in real time. Describe the
+      summative assessment (if any) and the rubric used.
+  - title: Homework and Extension
+    prompt: >
+      Specify the homework assignment (with estimated time), the
+      extension activity for early finishers, and any cross-
+      curricular connections to upcoming lessons.
+  - title: Reflection
+    prompt: >
+      Post-lesson reflection prompts the teacher will answer after
+      delivery: which objectives were met, what evidence supports
+      that, what would the teacher change next time, and what
+      individual students need follow-up.
+export:
+  - markdown
+  - pdf
+  - docx

@@ -1,0 +1,75 @@
+id: student-progress-report-v1
+name: Student Progress Report
+type: document
+description: Student progress report covering academic, behavioral, and social-emotional growth with parent-facing summary
+industry:
+  - education
+profile:
+  - teacher
+  - counselor
+  - administrator
+sections:
+  - title: Student Identification and Reporting Period
+    prompt: >
+      Student name (or de-identified ID for template), grade level,
+      homeroom or advisory teacher, reporting period (e.g., Term 2,
+      Quarter 3), report date, and the staff member preparing the
+      report.
+  - title: Academic Performance Summary
+    prompt: >
+      Per-subject grade or proficiency level with comparison to the
+      prior reporting period (improved / steady / declined). For
+      standards-based reporting, list each standard and the
+      proficiency level (Beginning / Developing / Proficient /
+      Extending).
+    output_format: table
+    required_sources:
+      - type: local
+        min: 1
+  - title: Strengths
+    prompt: >
+      Two or three specific academic and social strengths the
+      student has demonstrated this period, each backed by a brief
+      example or work sample reference. Frame in strength-based
+      language.
+    output_format: bullets
+  - title: Areas for Growth
+    prompt: >
+      Two or three specific areas where the student is not yet
+      meeting expectations, with the evidence for the assessment
+      (assessment scores, work samples, observation). Avoid
+      character judgments; focus on observable behaviors and skills.
+    output_format: bullets
+  - title: Social-Emotional and Behavioral Observations
+    prompt: >
+      Note observations about the student's engagement, classroom
+      participation, peer interactions, self-regulation, persistence,
+      and any concerns regarding well-being. Reference SEL
+      competencies (self-awareness, self-management, social
+      awareness, relationship skills, responsible decision-making).
+  - title: Attendance and Punctuality
+    prompt: >
+      Attendance summary: days present, absent (excused / unexcused),
+      tardies, and early dismissals. Identify any patterns affecting
+      learning.
+  - title: Support and Interventions
+    prompt: >
+      Document any tier-2 or tier-3 interventions in place (RTI /
+      MTSS), 504 / IEP accommodations, ELL services, gifted services,
+      counseling support, or other supports. Note progress against
+      intervention goals.
+  - title: Goals for Next Period
+    prompt: >
+      Two or three SMART goals for the next reporting period, tied
+      to the areas-for-growth section. Specify the supports the
+      teacher, school, and family will provide.
+  - title: Parent / Guardian Communication
+    prompt: >
+      Brief parent-facing narrative summarizing the report in plain
+      language. Avoid jargon. Invite the family to a conference,
+      identify the best contact channel, and outline what families
+      can do at home to support the goals.
+export:
+  - markdown
+  - pdf
+  - docx

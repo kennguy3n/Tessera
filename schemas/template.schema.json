@@ -19,7 +19,7 @@
     },
     "type": {
       "type": "string",
-      "enum": ["document", "slides", "sheet", "base"],
+      "enum": ["document", "slides", "sheet", "base", "infographic", "landing_page"],
       "description": "Artifact type this template produces"
     },
     "description": {
@@ -61,6 +61,40 @@
         }
       },
       "additionalProperties": true
+    },
+    "locale": {
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(-[A-Z][a-zA-Z]+)?(-[A-Z]{2})?$",
+      "default": "en",
+      "description": "BCP-47 language tag for the template's section titles and prompts. Defaults to 'en' when omitted. Localized template variants live under `templates/<category>/locales/<locale>/` and share the same base id with a locale suffix (e.g. `prd-v1-es`, `prd-v1-ja`)."
+    },
+    "industry": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "description": "Industry domains this template is tailored for (e.g. 'healthcare', 'legal', 'education', 'government', 'finance', 'manufacturing', 'retail', 'nonprofit', 'creative', 'real-estate'). Omitting this field means the template is industry-agnostic. Multiple values are permitted for cross-industry templates."
+    },
+    "profile": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "description": "Intended user profile(s) this template was authored for (e.g. 'executive', 'analyst', 'teacher', 'nurse', 'product-manager', 'engineer'). Used by the CreatePage UI to filter and rank templates per the current user's profile preferences."
+    },
+    "format": {
+      "type": "string",
+      "description": "Optional output format hint for the renderer (e.g. 'marp' for slide decks that should be rendered through Marp Core). Mirrors the Rust struct's `format` field."
+    },
+    "theme": {
+      "type": "string",
+      "description": "Optional preferred theme when the renderer supports themed output (e.g. Marp 'default' / 'gaia' / 'uncover')."
+    },
+    "paginate": {
+      "type": "boolean",
+      "description": "Whether the rendering engine should paginate output. Marp uses this directly; other engines may ignore it."
+    },
+    "marp_template": {
+      "type": "string",
+      "description": "Optional raw Marp markdown body. When present the template engine can emit Marp output directly without re-rendering from sections."
     }
   },
   "additionalProperties": false,

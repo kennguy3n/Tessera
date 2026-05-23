@@ -1,0 +1,85 @@
+id: impact-assessment-v1
+name: Regulatory Impact Assessment
+type: document
+description: Regulatory / policy impact assessment with cost-benefit analysis, alternatives, stakeholder analysis, and equity review
+industry:
+  - government
+profile:
+  - policy-analyst
+  - economist
+  - regulator
+sections:
+  - title: Title Page and Summary
+    prompt: >
+      Proposed regulation or policy title, issuing agency,
+      regulatory identifier (RIN, docket number), public comment
+      period, and a one-page summary stating the problem, the
+      proposed action, the estimated net benefits, the affected
+      sectors, and the major distributional impacts.
+  - title: Problem Statement and Need for Action
+    prompt: >
+      Articulate the market failure, externality, information
+      asymmetry, or statutory mandate that justifies regulatory
+      action. Cite empirical evidence of the harm and the trend
+      in its magnitude.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Statutory Authority and Mandate
+    prompt: >
+      Identify the statutory authority for the proposed action
+      and the statutory deadlines or required findings. Note any
+      relevant judicial decisions, executive orders, or
+      international obligations.
+  - title: Baseline Scenario
+    prompt: >
+      Describe the no-action / status-quo baseline against which
+      alternatives are measured: projected outcomes over the
+      analytic horizon, current regulatory burden, and the
+      expected evolution absent intervention.
+  - title: Alternatives Considered
+    prompt: >
+      Present the proposed action and at least two alternatives
+      (a less stringent and a more stringent option, plus any
+      market-based or information-disclosure alternative). For
+      each, describe the mechanism, scope, compliance pathway,
+      and expected effective date.
+  - title: Cost-Benefit Analysis
+    prompt: >
+      Quantify expected benefits and costs over the analytic
+      horizon (typically 10-20 years) using a real discount rate
+      (e.g., 3% and 7% sensitivity per OMB Circular A-4).
+      Disaggregate by affected group. Identify quantifiable vs.
+      unquantified categories and provide the rationale for any
+      monetization choices.
+    output_format: table
+  - title: Distributional and Equity Impacts
+    prompt: >
+      Analyze the distributional consequences across income
+      quintiles, race / ethnicity, geographic regions, small
+      businesses (RFA), tribal governments, and environmental
+      justice communities. Identify regressivity or progressive
+      impacts and any mitigations.
+  - title: Stakeholder Analysis
+    prompt: >
+      Map the principal stakeholders: regulated entities, end
+      consumers, trade associations, labor, NGOs, and other
+      federal / state agencies. For each, summarize their
+      expected position, the evidence base, and the channels
+      through which they have engaged or will engage.
+  - title: Implementation and Compliance
+    prompt: >
+      Describe the implementation plan: enforcement model,
+      compliance assistance (small entity compliance guide),
+      paperwork / Paperwork Reduction Act burden, IT system
+      changes, training, and the projected effective date.
+  - title: Monitoring and Retrospective Review
+    prompt: >
+      State the metrics and data sources for monitoring the
+      regulation's outcomes, the planned retrospective review
+      schedule (per EO 12866 / 13563), and the criteria that
+      would trigger amendment or repeal.
+export:
+  - markdown
+  - pdf
+  - docx

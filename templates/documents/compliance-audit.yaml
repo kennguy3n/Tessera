@@ -1,0 +1,87 @@
+id: compliance-audit-v1
+name: Compliance Audit Report
+type: document
+description: Compliance audit report with scope, methodology, findings, evidence, root cause, and remediation plan
+industry:
+  - legal
+  - finance
+profile:
+  - auditor
+  - compliance-officer
+  - risk-manager
+sections:
+  - title: Executive Summary
+    prompt: >
+      One-page executive summary: in-scope regulations / frameworks
+      audited, period covered, the overall opinion (effective /
+      effective with exceptions / not effective), the count of
+      findings by severity, and the top three recommendations. Written
+      for a board-level audience.
+  - title: Audit Scope and Objectives
+    prompt: >
+      State the audit objectives, scope boundaries (entities, business
+      units, systems, locations, time period), the regulatory
+      frameworks or control standards measured against (e.g., SOX,
+      HIPAA, GDPR, PCI-DSS, ISO 27001, NIST 800-53), and any agreed-
+      upon exclusions or carve-outs.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Methodology
+    prompt: >
+      Describe the audit methodology: control inventory, sample sizes,
+      test design (inquiry, observation, inspection, re-performance),
+      use of CAATs (computer-assisted audit techniques), reliance on
+      third-party reports (SOC 1/2, ISO certifications), and
+      independence considerations.
+  - title: Control Environment Summary
+    prompt: >
+      Summarize the entity-level controls: governance, tone at the
+      top, risk assessment process, monitoring activities, and the
+      information and communication structures. Rate each component
+      on a five-point maturity scale and justify the rating.
+  - title: Findings and Observations
+    prompt: >
+      Detailed findings table with: finding ID, control reference,
+      description, criteria (the requirement), condition (what was
+      observed), cause, effect (risk if unremediated), severity
+      (Critical / High / Medium / Low), and evidence reference. Group
+      by severity, then by control area.
+    output_format: table
+  - title: Root Cause Analysis
+    prompt: >
+      For each Critical or High finding, document the root cause:
+      design deficiency, operating deficiency, or a combination.
+      Identify systemic patterns where multiple findings trace to
+      the same root cause (e.g., inadequate change-management
+      training).
+  - title: Management Response
+    prompt: >
+      For each finding, capture management's response: agree /
+      partially agree / disagree, the planned corrective action,
+      the action owner, and the target completion date. Disagreements
+      should include the auditor's rejoinder.
+    output_format: table
+  - title: Remediation Roadmap
+    prompt: >
+      Sequence the corrective actions in a Gantt-style roadmap
+      grouping quick wins (≤ 30 days), medium-term (30-90 days),
+      and long-term (> 90 days). Identify dependencies and the
+      single accountable executive for each track.
+  - title: Repeat Findings and Trend Analysis
+    prompt: >
+      Identify any findings that repeat from prior audits, the age
+      of each repeat finding, and the reason previous remediation
+      was insufficient. Trend the count and severity of findings
+      over the last three audit cycles.
+  - title: Auditor's Opinion and Sign-Off
+    prompt: >
+      State the audit team's overall opinion: the controls were
+      effective / effective with exceptions / not effective during
+      the audit period. Identify the engagement partner, in-charge
+      auditor, and the date of report issuance. Reference the
+      next planned audit cycle.
+export:
+  - markdown
+  - pdf
+  - docx

@@ -1,0 +1,32 @@
+id: report-v1-zh
+name: 报告
+type: document
+description: 包含调查结果、分析和建议的分析报告（中文版）
+locale: zh
+sections:
+  - title: 执行摘要
+    prompt: >
+      总结本报告的关键调查结果和建议。请用中文回答。
+  - title: 方法论
+    prompt: >
+      描述用于数据收集和分析的方法论。请用中文回答。
+  - title: 调查结果
+    prompt: >
+      呈现关键调查结果，并以来源数据为支撑。包括相关统计数据和证据。
+      请用中文回答。
+    required_sources:
+      - type: local
+        min: 1
+  - title: 分析
+    prompt: >
+      对调查结果进行详细分析。识别模式、趋势和影响。请用中文回答。
+  - title: 建议
+    prompt: >
+      根据分析列出可操作的建议。按影响和可行性排序。请用中文回答。
+  - title: 附录
+    prompt: >
+      包括支持数据、参考资料和补充材料。请用中文回答。
+export:
+  - markdown
+  - html
+  - csv

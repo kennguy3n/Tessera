@@ -1,0 +1,93 @@
+id: volunteer-handbook-v1
+name: Volunteer Handbook
+type: document
+description: Volunteer onboarding handbook with roles, expectations, policies, and contacts
+industry:
+  - nonprofit
+profile:
+  - volunteer-coordinator
+  - hr-manager
+sections:
+  - title: Welcome and Mission
+    prompt: >
+      Warm welcome from the executive director or board chair.
+      Restate the organization's mission, vision, and the role
+      volunteers play in achieving them. Explain why the
+      organization values volunteer involvement.
+  - title: Volunteer Roles
+    prompt: >
+      Catalog the volunteer roles available, with: role title,
+      brief description, time commitment, prerequisites (skills,
+      certifications, background check), training required,
+      supervisor, and the activities the role does NOT cover
+      (to set clear scope).
+    output_format: table
+    required_sources:
+      - type: local
+        min: 1
+  - title: Volunteer Rights and Responsibilities
+    prompt: >
+      State the rights of volunteers (meaningful work, training,
+      safe environment, recognition, freedom from discrimination
+      and harassment) and the responsibilities (reliability,
+      confidentiality, professionalism, alignment with mission,
+      reporting concerns).
+  - title: Onboarding Process
+    prompt: >
+      Step-by-step onboarding: application, interview, background
+      check (specify the offenses considered), orientation,
+      role-specific training, shadowing, supervisor introduction,
+      and provisioning (badge, login, equipment). Include time
+      estimates for each step.
+    output_format: numbered_list
+  - title: Code of Conduct
+    prompt: >
+      Behavioral expectations: respect, confidentiality, social-
+      media policy, gift acceptance, conflict of interest, dual
+      relationships with beneficiaries, mandatory reporting (where
+      legally required), and the consequences of policy violation.
+  - title: Safety, Health, and Emergencies
+    prompt: >
+      Health and safety requirements: PPE (if any), accessible
+      facilities, ergonomics for office work, food-safety
+      requirements (for kitchen volunteers), bloodborne pathogen
+      protocol, and the emergency response plan (evacuation,
+      shelter-in-place, medical, missing client).
+  - title: Communication and Scheduling
+    prompt: >
+      How volunteers will be contacted and scheduled, the
+      cancellation / late policy, the platform used (volunteer
+      management system), and the escalation path for scheduling
+      issues. Identify the primary point of contact.
+  - title: Boundaries with Beneficiaries
+    prompt: >
+      Guidelines for healthy boundaries: appropriate physical
+      contact, gift-giving, social-media connections, after-
+      hours contact, financial transactions, transportation, and
+      photography or social-media references. The aim is to
+      protect beneficiary dignity and volunteer well-being.
+  - title: Recognition and Advancement
+    prompt: >
+      How the organization recognizes volunteer contributions:
+      milestones (hours, years), annual recognition events,
+      volunteer-of-the-month, training and skill-building, and
+      pathways to expanded roles (committee membership, team
+      leadership, board candidacy).
+  - title: Departure Procedures
+    prompt: >
+      Process for ending a volunteer relationship (voluntary or
+      involuntary): notification, exit interview, return of
+      property, system de-provisioning, reference policy, and
+      pathways to re-engage in the future.
+  - title: Key Contacts and Resources
+    prompt: >
+      Directory of key contacts: volunteer coordinator, role
+      supervisors, HR, safety officer, executive director,
+      after-hours line, and external resources (Employee
+      Assistance Program if applicable, crisis lines for
+      beneficiary referrals).
+    output_format: bullets
+export:
+  - markdown
+  - pdf
+  - docx

@@ -1,0 +1,68 @@
+id: compliance-register-base-v1
+name: Compliance Obligations Register
+type: base
+description: Regulatory and contractual compliance obligations register with owner, evidence, control, and review cadence
+industry:
+  - finance
+  - legal
+  - healthcare
+profile:
+  - compliance-officer
+  - risk-manager
+  - auditor
+sections:
+  - title: Obligation Records
+    prompt: >
+      Per obligation: obligation ID, source (regulation,
+      contract, internal policy, certification scheme),
+      jurisdiction, citation (statute / clause / standard
+      reference), summary description, applicability
+      (always / triggered by activity / threshold), and
+      the effective date.
+  - title: Ownership and Accountability
+    prompt: >
+      Per obligation: the accountable executive, the
+      responsible operational owner, the supporting team,
+      and the escalation path for issues. Identify any
+      delegated authority and the documented delegation
+      reference.
+  - title: Controls and Evidence
+    prompt: >
+      Mapping of obligations to the controls that satisfy
+      them. For each control: design description, operating
+      frequency (continuous / daily / monthly / annual),
+      automation status, evidence type (log, attestation,
+      report, screenshot), and the evidence repository
+      location.
+    output_format: table
+  - title: Compliance Status
+    prompt: >
+      Current status per obligation: compliant / at risk /
+      non-compliant. For non-compliant, the gap
+      description, the planned remediation, the owner,
+      and the target compliance date. For at-risk, the
+      monitoring trigger.
+  - title: Review and Attestation Cadence
+    prompt: >
+      Per obligation: review cadence, last review date,
+      next review date, attesting officer, and the form
+      of attestation (signature, certificate, internal
+      audit conclusion).
+  - title: Change Management
+    prompt: >
+      How regulatory changes are monitored (subscription
+      services, regulator notifications, trade
+      associations) and how the register is updated when
+      obligations change. Cadence for the change-impact
+      assessment.
+  - title: Reporting and Audit Trail
+    prompt: >
+      How compliance status is reported (board, audit
+      committee, risk committee, business owners),
+      including dashboards and KPIs (% compliant,
+      remediation aging, repeat findings). The audit
+      trail retention requirements per regulation.
+    output_format: table
+export:
+  - markdown
+  - csv

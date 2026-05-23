@@ -1,0 +1,31 @@
+id: prd-v1-pt
+name: Documento de Requisitos do Produto
+type: document
+description: PRD padrão com problema, solução, escopo e critérios de sucesso (versão em português)
+locale: pt
+sections:
+  - title: Declaração do Problema
+    prompt: >
+      Resuma o problema central que este produto aborda,
+      citando material de origem relevante. Responda em português.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Solução Proposta
+    prompt: >
+      Descreva a solução proposta, referenciando restrições
+      técnicas e estado da arte das fontes. Responda em português.
+  - title: Escopo
+    prompt: >
+      Defina o que está no escopo e fora do escopo para a
+      versão inicial. Responda em português.
+  - title: Critérios de Sucesso
+    prompt: >
+      Liste critérios de sucesso mensuráveis com metas. Responda em português.
+  - title: Riscos e Mitigações
+    prompt: >
+      Identifique riscos e mitigações propostas, citando
+      material de origem quando aplicável. Responda em português.
+export:
+  - markdown
+  - html

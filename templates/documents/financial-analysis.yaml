@@ -1,0 +1,93 @@
+id: financial-analysis-v1
+name: Financial Analysis
+type: document
+description: Company financial analysis with ratio analysis, trend analysis, peer comparison, and credit / equity view
+industry:
+  - finance
+profile:
+  - analyst
+  - credit-officer
+  - equity-research
+sections:
+  - title: Company and Reporting Period
+    prompt: >
+      Company name, ticker (if listed), industry classification (GICS
+      / NAICS), reporting period analyzed (most recent quarter and
+      LTM, plus three years annual), the basis of preparation (IFRS
+      / US GAAP / local GAAP), and the source documents (10-K,
+      10-Q, audited financials).
+    required_sources:
+      - type: local
+        min: 1
+  - title: Income Statement Summary
+    prompt: >
+      Table of revenue, cost of revenue, gross profit, operating
+      expenses by category, operating income, EBITDA, net interest
+      expense, pre-tax income, tax, and net income for the last three
+      years and LTM. Compute year-over-year growth rates and margin
+      trends.
+    output_format: table
+  - title: Balance Sheet Summary
+    prompt: >
+      Table of cash and equivalents, AR, inventory, other current
+      assets, PP&E, intangibles, total assets, AP, accrued expenses,
+      short-term debt, long-term debt, other liabilities, total
+      liabilities, and shareholders' equity. Highlight any material
+      changes in capital structure.
+    output_format: table
+  - title: Cash Flow Summary
+    prompt: >
+      Table of cash flow from operations, investing, and financing
+      activities, with free cash flow (CFO − CapEx) computed
+      explicitly. Reconcile net income to CFO and identify the
+      principal non-cash items and working capital movements.
+    output_format: table
+  - title: Ratio Analysis
+    prompt: >
+      Compute and interpret the standard ratio set across three
+      years: liquidity (current ratio, quick ratio), leverage
+      (debt/EBITDA, debt/equity, interest coverage), profitability
+      (gross / operating / net margin, ROE, ROIC, ROA), efficiency
+      (asset turnover, DSO, DIO, DPO, cash conversion cycle),
+      coverage (EBITDA/interest, FCCR).
+    output_format: table
+  - title: Peer Comparison
+    prompt: >
+      Identify 3-5 peer companies with the same business model and
+      similar scale. Tabulate the key metrics side-by-side for the
+      most recent year: revenue, growth, gross margin, EBITDA margin,
+      net income margin, ROIC, leverage, and trading multiples.
+      Identify where the subject over- or under-performs.
+    output_format: table
+  - title: Trend Analysis and Drivers
+    prompt: >
+      Three-year trend narrative: what is growing or shrinking, the
+      revenue mix shift, margin compression or expansion drivers,
+      capex intensity changes, and working-capital trends. Tie each
+      observed trend to an underlying business driver.
+  - title: Forecast and Sensitivities
+    prompt: >
+      Construct a three-year forward forecast with base / upside /
+      downside scenarios. Identify the two or three most material
+      assumptions (revenue growth, gross margin, capex) and tornado-
+      chart the impact of ±10% variations.
+  - title: Risk Considerations
+    prompt: >
+      Identify the principal financial risks: customer concentration,
+      supplier concentration, foreign-exchange exposure, refinancing
+      risk, regulatory exposure, off-balance-sheet items, related-
+      party transactions, and any accounting red flags (revenue
+      recognition, capitalization policies, working-capital
+      manipulation).
+  - title: Conclusion
+    prompt: >
+      Two-paragraph conclusion: (1) the company's financial health
+      assessment in plain language; (2) the analyst's view for the
+      intended audience (credit officer: rating recommendation;
+      equity analyst: buy/hold/sell with price target; M&A buyer:
+      go-no-go).
+export:
+  - markdown
+  - pdf
+  - docx
+  - xlsx

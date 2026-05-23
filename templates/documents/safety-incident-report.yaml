@@ -1,0 +1,90 @@
+id: safety-incident-report-v1
+name: Workplace Safety Incident Report
+type: document
+description: Workplace safety incident report with root cause analysis, regulatory reporting determination, and corrective actions
+industry:
+  - manufacturing
+  - healthcare
+  - construction
+profile:
+  - safety-officer
+  - supervisor
+  - hr-manager
+sections:
+  - title: Incident Identification
+    prompt: >
+      Incident date, time, exact location (facility, building,
+      department, equipment), incident classification (first aid,
+      medical treatment, restricted duty, lost time, fatality,
+      near-miss, property damage), and the report author.
+  - title: People Involved
+    prompt: >
+      For each person involved (injured worker, witnesses, first
+      responders, supervisors): name (or employee ID for
+      de-identified template), role, length of service, training
+      currency, PPE in use at the time, and any pre-existing
+      conditions disclosed.
+    output_format: table
+  - title: Description of the Incident
+    prompt: >
+      Narrative description of what happened in chronological order:
+      activities leading up to the incident, the immediate event,
+      and the response. Include exact equipment involved, materials
+      handled, environmental conditions, and the work-task context.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Injury and Damage Assessment
+    prompt: >
+      For injuries: body part, nature of injury, treatment provided
+      (on-site first aid, transport to clinic, hospital admission),
+      treating clinician, and expected recovery. For property
+      damage or environmental release: equipment damaged, estimated
+      cost, environmental media affected, quantities involved.
+  - title: Root Cause Analysis
+    prompt: >
+      Perform root cause analysis using 5-Whys, fishbone, or
+      TapRooT methodology. Distinguish immediate causes (unsafe act,
+      unsafe condition) from underlying causes (training,
+      supervision, equipment design, procedure adequacy,
+      organizational factors).
+  - title: Regulatory Reportability
+    prompt: >
+      Determine the regulatory reportability: OSHA recordable
+      criteria, OSHA 8-hour fatality / hospitalization rule,
+      EPA spill reporting thresholds, DOT hazmat reporting, state
+      workers' compensation, and any contract-specific obligations.
+      State the determination, the agency, and the report
+      deadline.
+    output_format: table
+  - title: Immediate Corrective Actions
+    prompt: >
+      List the actions taken immediately to contain the hazard and
+      prevent recurrence: equipment lockout, area barricade, work
+      stoppage, communication to affected workers, and any
+      temporary controls in place pending permanent fix.
+  - title: Long-Term Preventive Actions
+    prompt: >
+      Recommended preventive actions targeting the root causes:
+      engineering controls (design change, guarding, ventilation),
+      administrative controls (procedure update, training,
+      signage), PPE upgrades, supervisory practices, or
+      organizational changes. Owner, target date, and verification
+      method per action.
+    output_format: table
+  - title: Communication and Lessons Learned
+    prompt: >
+      Plan for communicating lessons learned: toolbox talks,
+      safety bulletins, training updates, and any sister-site
+      notifications. Identify the audience and channel for each.
+  - title: Approval and Closure
+    prompt: >
+      Sign-offs: investigating officer, department manager, safety
+      officer, and the senior site executive (for serious incidents).
+      State the closure criteria, the actual closure date, and the
+      record retention period (typically 5 years under OSHA 29 CFR
+      1904 for occupational injuries).
+export:
+  - markdown
+  - pdf
+  - docx

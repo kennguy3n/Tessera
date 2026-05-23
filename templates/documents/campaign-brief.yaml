@@ -1,0 +1,90 @@
+id: campaign-brief-v1
+name: Marketing Campaign Brief
+type: document
+description: Marketing campaign brief with objectives, audience, channels, creative, KPIs, and timeline
+industry:
+  - creative
+profile:
+  - marketing-manager
+  - brand-manager
+  - agency-account-director
+sections:
+  - title: Campaign Overview
+    prompt: >
+      Campaign name, brand / product, launch date, end date,
+      campaign type (brand awareness, demand generation, product
+      launch, retention, loyalty), total budget, and the
+      campaign sponsor.
+  - title: Strategic Context
+    prompt: >
+      Why this campaign, why now: business situation, market
+      opportunity, competitive context, the marketing role in the
+      broader business plan, and how this campaign connects to
+      prior and future campaigns.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Objectives and Success Metrics
+    prompt: >
+      Primary and secondary objectives in SMART format. Per
+      objective, the success metric (lift in awareness, MQL count,
+      pipeline created, CAC payback, retention rate, share-of-
+      voice), the target threshold, and the measurement
+      methodology.
+    output_format: table
+  - title: Audience and Insight
+    prompt: >
+      Target audience definition (demographic, psychographic,
+      behavioral, account-based segments), the consumer insight
+      that the creative will leverage (the truth about the
+      audience that makes the message resonate), and the cultural
+      context.
+  - title: Single-Minded Proposition
+    prompt: >
+      The one thing the audience must remember after exposure.
+      Phrased in plain language, ideally one sentence. State the
+      proof points that substantiate the proposition.
+  - title: Channel and Media Plan
+    prompt: >
+      Channels (paid, owned, earned), the role of each in the
+      funnel, the budget allocation, the expected reach and
+      frequency, and the flighting (continuous, pulsed,
+      front-loaded). Identify the lead measurement source per
+      channel.
+    output_format: table
+  - title: Creative Direction
+    prompt: >
+      The creative platform / "big idea", tonal direction, mood
+      reference, mandatory elements (logo, call-to-action,
+      regulatory language), brand voice considerations, and any
+      reasons the campaign should DEVIATE from the standard brand
+      norms. Brief the agency or in-house creative.
+  - title: Asset Inventory
+    prompt: >
+      List of deliverables: video lengths and aspect ratios,
+      static images and dimensions, audio cuts, landing-page copy,
+      email versions, in-store materials. Per asset: owner,
+      review path, due date, and final format/spec.
+    output_format: table
+  - title: Timeline and Milestones
+    prompt: >
+      Campaign Gantt: strategic brief approved → creative concepts
+      → concept selection → production → review and approvals →
+      media plan finalized → trafficking → launch → optimization
+      windows → wrap report. Identify dependencies.
+  - title: Risks and Mitigations
+    prompt: >
+      Risks: brand safety, cultural sensitivities, regulatory
+      review (FDA, FTC, GDPR), supply / inventory readiness for
+      product campaigns, talent / influencer reputational risk,
+      and operational risks (channel outages, geopolitical
+      events). Mitigation per risk.
+  - title: Approvals and Stakeholders
+    prompt: >
+      Stakeholder map: RACI for each major decision (concept,
+      creative production, media plan, legal sign-off, launch).
+      Approval chain, with names and timing expectations.
+export:
+  - markdown
+  - pdf
+  - docx

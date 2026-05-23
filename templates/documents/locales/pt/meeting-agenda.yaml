@@ -1,0 +1,43 @@
+id: meeting-agenda-v1-pt
+name: Pauta da Reunião
+type: document
+description: Pauta estruturada com objetivos, participantes, tópicos e cronograma (versão em português)
+locale: pt
+sections:
+  - title: Visão Geral da Reunião
+    prompt: >
+      Capture o título, data, horário, local/link de vídeo da reunião
+      e um objetivo de uma linha. Referencie a fonte de agendamento, se houver.
+      Responda em português.
+  - title: Participantes
+    prompt: >
+      Liste participantes obrigatórios e opcionais com seus papéis ou
+      filiações. Anote leituras prévias que devem consumir. Responda em português.
+  - title: Objetivos
+    prompt: >
+      Enumere 2-5 resultados específicos que a reunião deve alcançar.
+      Cada um deve ser mensurável (decisão tomada / artefato produzido).
+      Responda em português.
+  - title: Itens da Pauta
+    prompt: >
+      Para cada item da pauta, capture tópico, responsável, tempo alocado,
+      resultado desejado e quaisquer links de leitura prévia. Responda em português.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Decisões Necessárias
+    prompt: >
+      Liste as decisões que devem ser tomadas durante a reunião.
+      Cada uma deve referenciar o item de pauta relevante. Responda em português.
+  - title: Leituras Prévias
+    prompt: >
+      Link para material de origem que os participantes devem revisar antes.
+      Responda em português.
+  - title: Acompanhamentos
+    prompt: >
+      Reserve espaço para itens de ação capturados durante a reunião,
+      a serem preenchidos após a reunião. Responda em português.
+export:
+  - markdown
+  - html
+  - pdf

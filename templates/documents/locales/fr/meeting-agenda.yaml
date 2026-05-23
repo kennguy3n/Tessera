@@ -1,0 +1,38 @@
+id: meeting-agenda-v1-fr
+name: Ordre du Jour de Réunion
+type: document
+description: Ordre du jour structuré avec objectifs, participants, sujets et durées (version française)
+locale: fr
+sections:
+  - title: Aperçu de la réunion
+    prompt: >
+      Saisissez le titre, la date, l'heure, le lieu ou le lien
+      visio et un objectif d'une ligne. Répondez en français.
+  - title: Participants
+    prompt: >
+      Listez les participants requis et optionnels avec leurs
+      rôles. Indiquez toute lecture préalable. Répondez en français.
+  - title: Objectifs
+    prompt: >
+      Énumérez de 2 à 5 résultats spécifiques que la réunion
+      doit atteindre. Chacun doit être mesurable (décision prise
+      ou artefact produit). Répondez en français.
+  - title: Points à l'ordre du jour
+    prompt: >
+      Pour chaque point, saisissez le sujet, le responsable, le
+      temps alloué, le résultat souhaité et les liens de lecture
+      préalable. Répondez en français.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Décisions requises
+    prompt: >
+      Listez explicitement les décisions à prendre lors de la
+      réunion et qui les applique. Répondez en français.
+  - title: Prochaines étapes
+    prompt: >
+      Anticipez les prochaines étapes, les points de suivi et la
+      prochaine réunion ou jalon. Répondez en français.
+export:
+  - markdown
+  - html

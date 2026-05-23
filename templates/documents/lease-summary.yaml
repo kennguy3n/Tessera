@@ -1,0 +1,93 @@
+id: lease-summary-v1
+name: Commercial Lease Summary
+type: document
+description: Commercial lease abstract with key terms, obligations, renewal options, and red flags
+industry:
+  - real-estate
+  - legal
+profile:
+  - asset-manager
+  - attorney
+  - broker
+sections:
+  - title: Lease Identification
+    prompt: >
+      Landlord legal name, tenant legal name (and guarantor if any),
+      property address, premises description (suite number,
+      rentable square feet, usable square feet, load factor),
+      lease execution date, and the lease type (NNN, modified
+      gross, full service).
+  - title: Term and Possession
+    prompt: >
+      Lease commencement date, rent commencement date, expiration
+      date, total term length, options to extend (number of
+      options, length of each, notice required, rent during
+      option period), and any landlord delivery conditions
+      (TI work, vacant possession).
+    required_sources:
+      - type: local
+        min: 1
+  - title: Rent and Escalations
+    prompt: >
+      Base rent schedule by year ($/year, $/sqft annual, monthly
+      payment), escalations (fixed % or CPI with floor/ceiling),
+      free-rent / abatement period (with conditions for
+      recapture), and any percentage rent (retail) with breakpoint
+      and rate.
+    output_format: table
+  - title: Operating Expenses and Pass-Throughs
+    prompt: >
+      Treatment of operating expenses, real estate taxes, insurance,
+      and utilities. For modified gross or NNN leases: base year,
+      grossing-up provisions for partial occupancy, expense
+      exclusions (capital improvements, marketing, leasing
+      commissions), and the audit right with cure / payment
+      mechanics.
+  - title: Tenant Improvements and Allowances
+    prompt: >
+      Tenant improvement allowance ($ total, $/sqft), unused
+      allowance treatment (forfeit / convert to rent), the
+      construction process (turnkey, allowance with tenant
+      construction), permit responsibility, and the depreciation
+      ownership of improvements at expiration.
+  - title: Permitted Use and Restrictions
+    prompt: >
+      Permitted use language, restrictions (hours of operation,
+      hazardous materials, signage, alterations requiring landlord
+      consent), exclusivity (retail), continuous operation
+      covenants (retail), and any radius restriction on competing
+      tenant locations.
+  - title: Maintenance, Repairs, and Compliance
+    prompt: >
+      Allocation of maintenance and repair obligations between
+      landlord and tenant — by building system (roof, structure,
+      HVAC, plumbing, electrical, life safety) and by area
+      (premises, common area, parking). ADA compliance allocation
+      and any required compliance work.
+    output_format: table
+  - title: Assignment, Subletting, and Recapture
+    prompt: >
+      Standard for landlord consent to assignment / sublet
+      (objective, reasonable, discretionary), permitted transfers
+      (affiliate, change of control, merger), recapture rights,
+      profit-sharing on sublet, and any release of the prior
+      tenant on assignment.
+  - title: Default, Remedies, and Surrender
+    prompt: >
+      Monetary and non-monetary default triggers, notice and cure
+      periods, landlord remedies (acceleration, distraint,
+      reletting, mitigation), tenant remedies (self-help, abatement
+      conditions), surrender condition at expiration, and removal
+      / restoration obligations.
+  - title: Special Provisions and Red Flags
+    prompt: >
+      Anything unusual: termination rights (tenant or landlord),
+      relocation rights, expansion rights (ROFR, ROFO),
+      contraction options, exclusivity violations, demolition
+      clauses, environmental indemnities, holdover penalty,
+      and personal guaranty terms. Flag clauses requiring
+      attention before counter-signature.
+export:
+  - markdown
+  - pdf
+  - docx

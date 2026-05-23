@@ -1,0 +1,88 @@
+id: content-calendar-v1
+name: Content Calendar
+type: document
+description: Editorial / content calendar with channels, topics, owners, deadlines, and performance review
+industry:
+  - creative
+profile:
+  - content-strategist
+  - marketing-manager
+  - social-media-manager
+sections:
+  - title: Calendar Identification
+    prompt: >
+      Brand or product, time horizon (Q1 FY25, Jan 2026, Week 12,
+      etc.), team owning the calendar, primary strategic objective
+      this calendar supports, and any anchor campaigns or product
+      launches the calendar aligns to.
+  - title: Audience and Brand Positioning
+    prompt: >
+      Reaffirm the target audience segments, the brand voice
+      attributes, and the unique value proposition the content
+      should consistently reinforce. Reference the brand
+      guidelines document.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Content Pillars and Themes
+    prompt: >
+      Define the 3-5 content pillars for the period (e.g.,
+      thought leadership, customer stories, product education,
+      community spotlights) and the ratio of pieces per pillar.
+      Identify the seasonal or campaign themes that overlay the
+      pillars.
+  - title: Channel Strategy
+    prompt: >
+      Channels in scope (blog, newsletter, LinkedIn, X, Instagram,
+      TikTok, YouTube, podcast, webinar). For each, the audience
+      mismatch to be filled, the cadence, the content formats best
+      suited, and the owner.
+    output_format: table
+  - title: Calendar Schedule
+    prompt: >
+      Day-by-day or week-by-week schedule: publish date, channel,
+      content title, format (long-form blog, short-form social,
+      video, image, livestream), content pillar, key message,
+      owner, status (concept → draft → in review → approved →
+      scheduled → published).
+    output_format: table
+  - title: Asset Production Plan
+    prompt: >
+      For each scheduled piece: the writer / producer, the editor,
+      the designer, the legal / compliance reviewer (where
+      applicable), the asset specs (image dimensions, video length,
+      caption character limits), and the production deadline
+      working backwards from publish.
+  - title: SEO and Distribution
+    prompt: >
+      For long-form content: target keywords, search volume,
+      difficulty, internal link plan, and meta description draft.
+      For all content: planned cross-promotion across channels,
+      paid amplification budget allocation, and influencer or
+      partner repost plan.
+  - title: KPIs and Success Criteria
+    prompt: >
+      Per-channel KPIs (impressions, engagement rate, click-through,
+      conversion, qualified pipeline) and the period targets.
+      Identify the leading indicators and lagging indicators that
+      will be reviewed at the mid-point and end of the period.
+    output_format: table
+  - title: Review and Retrospective
+    prompt: >
+      Cadence for content reviews (weekly stand-up, mid-period
+      check-in, end-of-period retrospective). The format and
+      participants. The questions the retrospective will answer:
+      what performed best, what underperformed, what to start /
+      stop / continue.
+  - title: Compliance and Brand Safety
+    prompt: >
+      Reminders on brand safety: required disclaimers, regulatory
+      considerations (FDA, FTC endorsement guidelines, GDPR,
+      accessibility / WCAG), reserved language to avoid, image
+      rights and model releases, and the escalation path for
+      sensitive topics.
+export:
+  - markdown
+  - pdf
+  - docx
+  - xlsx

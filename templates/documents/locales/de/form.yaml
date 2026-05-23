@@ -1,0 +1,43 @@
+id: form-v1-de
+name: Formular
+type: document
+description: Ausfüllbares Formular mit Abschnitten für Titel, Beschreibung, Felder und Einreichungsanweisungen (deutsche Version)
+locale: de
+sections:
+  - title: Titel und Beschreibung des Formulars
+    prompt: >
+      Erfassen Sie den Titel des Formulars, eine kurze
+      Zweckangabe und den Kontext, den der Befragte vor dem
+      Ausfüllen benötigt. Antworten Sie auf Deutsch.
+  - title: Angaben zum Befragten
+    prompt: >
+      Erfassen Sie die Identifikationsdaten des Befragten
+      (Name, E-Mail, Rolle, Organisation) und das Datum der
+      Einreichung. Antworten Sie auf Deutsch.
+  - title: Formularfelder
+    prompt: >
+      Definieren Sie jedes Feld, das das Formular erfasst. Für
+      jedes Feld notieren Sie die Beschriftung, den Eingabetyp
+      (Text, Langtext, Einfach-/Mehrfachauswahl, Datum,
+      Kontrollkästchen, Zahl, Datei-Upload), ob es erforderlich
+      ist und etwaige Standardwerte oder Optionslisten. Antworten Sie auf Deutsch.
+  - title: Validierung und bedingte Logik
+    prompt: >
+      Beschreiben Sie Validierungsregeln (erforderlich, Regex,
+      Min/Max, zulässige Werte) und bedingte Anzeige-/
+      Ausblendlogik zwischen Feldern. Antworten Sie auf Deutsch.
+  - title: Einreichungsanweisungen
+    prompt: >
+      Erklären Sie, wie das ausgefüllte Formular eingereicht
+      wird, wer es prüft, die erwartete Bearbeitungszeit und
+      wie der Befragte über das Ergebnis informiert wird. Antworten Sie auf Deutsch.
+  - title: Datenschutz und Aufbewahrung
+    prompt: >
+      Geben Sie an, wie die Formulardaten gespeichert werden,
+      wer Zugriff hat und wie lange sie aufbewahrt werden,
+      bevor sie gelöscht oder anonymisiert werden. Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

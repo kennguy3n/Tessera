@@ -1,0 +1,88 @@
+id: audit-findings-v1
+name: Internal Audit Findings
+type: document
+description: Internal audit findings with severity, root cause, remediation plan, and management response
+industry:
+  - finance
+  - legal
+profile:
+  - auditor
+  - compliance-officer
+sections:
+  - title: Audit Identification
+    prompt: >
+      Audit title, audit area / process under review, audit period
+      covered, audit team (lead, fieldwork, reviewer), audit sponsor
+      (typically Audit Committee), engagement code, and report
+      issuance date.
+  - title: Background and Scope
+    prompt: >
+      Describe the process or area audited, why it was included in
+      the audit plan (risk-based, regulatory, special request,
+      cyclical), the entities and locations in scope, and any
+      exclusions with rationale.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Audit Objectives
+    prompt: >
+      State the audit objectives in plain language: the questions
+      this audit will answer (e.g., "Are journal-entry controls
+      operating effectively?", "Is segregation of duties enforced
+      in the vendor master file?", "Are travel expenses approved
+      in accordance with policy?"). Tie each objective to a control
+      framework reference.
+  - title: Methodology
+    prompt: >
+      Document the audit methodology: walkthroughs, control design
+      assessment, sample selection method (statistical vs.
+      judgmental), sample size and rationale, test procedures, use
+      of data analytics / CAATs, and the work of any internal
+      experts or co-source providers.
+  - title: Findings Detail
+    prompt: >
+      For each finding, provide: finding ID, severity (Critical /
+      High / Medium / Low), control owner, criteria (the requirement
+      or policy), condition (what was observed), cause (why the
+      gap exists), effect (the risk or consequence if unremediated),
+      and the evidence reference. One row per finding.
+    output_format: table
+  - title: Root Cause Analysis
+    prompt: >
+      For each Critical or High finding, document the root cause
+      using 5-Whys or fishbone analysis: people (training,
+      capacity), process (workflow, hand-offs), technology
+      (system limitations, configuration), policy (gaps,
+      ambiguity), or external (vendor, regulatory change).
+      Identify systemic patterns across findings.
+  - title: Management Action Plan
+    prompt: >
+      Per finding: management response (agree / partially agree /
+      disagree with rationale), corrective action committed, action
+      owner, target completion date, validation method (re-perform
+      / inspection / monitoring), and the secondary control for
+      interim mitigation.
+    output_format: table
+  - title: Repeat and Aging Findings
+    prompt: >
+      Identify any findings repeated from prior audits or
+      previously committed actions past their target date. For
+      each, document the original finding date, the prior
+      remediation plan, the gap, and any escalation to the Audit
+      Committee.
+  - title: Overall Audit Opinion
+    prompt: >
+      State the overall audit opinion: Satisfactory / Needs
+      Improvement / Unsatisfactory. Provide a one-paragraph
+      rationale linking the opinion to the count, severity, and
+      pervasiveness of findings.
+  - title: Audit Committee Reporting
+    prompt: >
+      Specify what will be reported to the Audit Committee:
+      executive summary, full report, dashboard slide, or
+      consent agenda item. Note any findings escalated outside
+      the normal cadence and the rationale for escalation.
+export:
+  - markdown
+  - pdf
+  - docx

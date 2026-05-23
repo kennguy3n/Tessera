@@ -1,0 +1,58 @@
+id: crm-base-v1
+name: CRM (Contacts, Companies, Deals)
+type: base
+description: Lightweight CRM base with contacts, companies, deals, activities, and pipeline stages
+profile:
+  - sales-ops
+  - account-executive
+  - founder
+sections:
+  - title: Companies
+    prompt: >
+      Company records with: legal name, domain, industry,
+      employee count, annual revenue band, region,
+      account tier (strategic / enterprise / mid-market /
+      SMB), account owner, and the lifecycle stage
+      (target / engaged / customer / churned).
+  - title: Contacts
+    prompt: >
+      Contact records with: full name, title, email, phone,
+      LinkedIn URL, the company they belong to, role on the
+      buying committee (economic buyer / champion / user /
+      blocker), and the most recent touch date.
+  - title: Deals and Pipeline Stages
+    prompt: >
+      Deal records with: deal name, company, primary
+      contact, amount, currency, expected close date,
+      probability, current pipeline stage (Lead /
+      Qualified / Proposal / Negotiation / Closed-Won /
+      Closed-Lost), source, and competitor (if known).
+    output_format: table
+  - title: Activities and Notes
+    prompt: >
+      Activity log: date, type (call / email / meeting /
+      demo / proposal sent / contract sent / signature),
+      outcome, owner, the related contact and deal, and
+      free-form notes summarizing the substance.
+  - title: Forecast Roll-Up
+    prompt: >
+      Roll-up of pipeline by stage with weighted forecast
+      (amount × probability), per-rep summary, per-quarter
+      summary, and a comparison vs. quota or plan.
+    output_format: table
+  - title: Lead Routing and SLA
+    prompt: >
+      Define the lead routing rules (round-robin, by
+      territory, by industry, by named account), the SLA
+      for first response (e.g., MQL → first touch within
+      5 business hours), and the escalation when SLA is
+      missed.
+  - title: Hygiene and Governance
+    prompt: >
+      Data-hygiene rules: required fields per stage,
+      duplicate detection, ownership-transfer policy,
+      retention / archival, and the audit cadence to
+      check completeness and accuracy.
+export:
+  - markdown
+  - csv

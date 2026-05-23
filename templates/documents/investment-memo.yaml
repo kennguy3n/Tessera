@@ -1,0 +1,86 @@
+id: investment-memo-v1
+name: Investment Memo
+type: document
+description: Investment thesis memo with deal terms, valuation, market analysis, and risk-adjusted recommendation
+industry:
+  - finance
+profile:
+  - investor
+  - analyst
+  - portfolio-manager
+sections:
+  - title: Deal Summary
+    prompt: >
+      Company name, sector, geography, deal type (Seed / Series A-D /
+      Growth / Buyout / Public), proposed investment amount, ownership
+      stake, round structure (pre-money, post-money, option pool),
+      lead vs. follow-on, board observer/seat rights, and the
+      recommendation (invest / pass / further diligence).
+  - title: Investment Thesis
+    prompt: >
+      Three-to-five sentence investment thesis articulating WHY this
+      company will produce outsize returns: market timing, defensible
+      moat, team-market fit, capital efficiency, exit potential. The
+      thesis should make a falsifiable claim a future investor can
+      test against actual outcomes.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Company Overview
+    prompt: >
+      Founding date, headcount, founder backgrounds, product
+      description, business model (transactional / subscription /
+      marketplace / advertising), revenue model and pricing,
+      go-to-market, and key customers or design partners.
+  - title: Market Analysis
+    prompt: >
+      Define the addressable market: bottom-up TAM (users × ARPU),
+      SAM, and SOM with the assumptions stated explicitly. Identify
+      market growth drivers, the timing thesis (why now), and
+      competitive dynamics (incumbents, alternatives, new entrants).
+  - title: Traction and Unit Economics
+    prompt: >
+      Quantify the traction: ARR or revenue (LTM, growth rate), gross
+      margin trend, CAC, LTV, LTV/CAC, payback period, net dollar
+      retention, magic number, burn rate, and runway. Identify the
+      one or two metrics where this company outperforms its peer set
+      and explain why.
+    output_format: table
+  - title: Team Assessment
+    prompt: >
+      Profile the founding team: relevant prior experience, key
+      complementary skills, the unique insight that gave them
+      conviction to start this company, founder-investor fit (have
+      they raised before, how did they perform), and key hires made
+      or planned for the next 18 months.
+  - title: Valuation and Round Construction
+    prompt: >
+      Walk the valuation: comparable transactions, public-market
+      comparables, DCF (if applicable), and the founders' ask. Note
+      the implied revenue or ARR multiple. Lay out the round
+      structure: lead investor, syndicate, allocation, pro rata
+      rights, and the cap table pre- and post-money.
+  - title: Risks and Mitigants
+    prompt: >
+      Identify the top five risks: market, technical, team,
+      regulatory, financial. For each, rate likelihood × impact and
+      describe the mitigant (existing safeguard or planned action).
+      Be specific — generic risk lists do not aid decision-making.
+    output_format: table
+  - title: Diligence Plan
+    prompt: >
+      Outstanding diligence items: customer references, technical
+      review, financial audit, background checks, market expert
+      interviews, legal IP review. For each, identify the owner and
+      target completion date before the close.
+  - title: Recommendation and Conditions
+    prompt: >
+      State the recommendation: invest at terms / invest with
+      conditions / pass. List any conditions precedent to close
+      (specific milestones, board composition, restructured cap
+      table, IP assignment), the post-investment monitoring plan,
+      and the expected exit scenario(s) with timing.
+export:
+  - markdown
+  - pdf
+  - docx

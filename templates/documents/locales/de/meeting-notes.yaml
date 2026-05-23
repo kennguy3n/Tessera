@@ -1,0 +1,38 @@
+id: meeting-notes-v1-de
+name: Besprechungsprotokoll
+type: document
+description: Protokoll mit Entscheidungen, Aktionen, Risiken und nächsten Schritten (deutsche Version)
+locale: de
+sections:
+  - title: Zusammenfassung
+    prompt: >
+      Einabsatz-Zusammenfassung der Besprechung: Was wurde auf
+      hoher Ebene diskutiert und das Gesamtergebnis. Antworten Sie auf Deutsch.
+  - title: Diskussionsnotizen
+    prompt: >
+      Themenweise Notizen, die wichtige Punkte, geteilte
+      Perspektiven und den Kontext, der Entscheidungen geprägt
+      hat, erfassen. Antworten Sie auf Deutsch.
+  - title: Entscheidungen
+    prompt: >
+      Listen Sie die getroffenen Entscheidungen, die Begründung,
+      den Verantwortlichen und Folgebedingungen auf. Verweisen
+      Sie auf relevante Quellen. Antworten Sie auf Deutsch.
+  - title: Maßnahmen
+    prompt: >
+      Maßnahmen mit Verantwortlichem, Fälligkeitsdatum und
+      Akzeptanzkriterien. Jede muss messbar sein. Antworten Sie auf Deutsch.
+  - title: Risiken und offene Fragen
+    prompt: >
+      Erfassen Sie die genannten Risiken, offene Fragen, die
+      Nachverfolgung benötigen, und wer jede Frage verfolgt. Antworten Sie auf Deutsch.
+  - title: Nächste Schritte
+    prompt: >
+      Skizzieren Sie, was als Nächstes geschieht, einschließlich
+      des Datums der nächsten Besprechung und des Auslösers
+      für den nächsten Kontrollpunkt. Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

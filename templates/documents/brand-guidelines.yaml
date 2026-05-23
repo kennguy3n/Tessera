@@ -1,0 +1,91 @@
+id: brand-guidelines-v1
+name: Brand Guidelines
+type: document
+description: Brand identity guide covering voice, visual identity, and usage rules
+industry:
+  - creative
+profile:
+  - brand-manager
+  - designer
+  - marketing-manager
+sections:
+  - title: Brand Story and Promise
+    prompt: >
+      The brand's origin story, the founders' problem-thesis, the
+      brand's purpose (the change it seeks to create in the
+      world), and the promise it makes to customers. One page,
+      written in the brand's voice — not a marketing pitch.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Mission, Vision, and Values
+    prompt: >
+      Mission (what we do today), vision (the future we are
+      working toward), and 3-5 values (the principles that guide
+      decisions). For each value, two or three sentences of
+      operating definition so it's actionable, not just a poster.
+  - title: Audience and Personas
+    prompt: >
+      Describe the primary and secondary audiences with personas:
+      demographic profile, jobs-to-be-done, pain points, channels
+      they consume, language they use, and how they perceive the
+      category. Two to four personas typically.
+  - title: Brand Voice and Tone
+    prompt: >
+      Voice attributes (3-5 adjectives describing how the brand
+      sounds, e.g., "confident, plainspoken, generous"). For each
+      attribute, examples of what it sounds like and what it does
+      NOT sound like (the "we are X / we are NOT Y" pattern).
+      Tone modulation across contexts (apology, product launch,
+      ad copy, internal memo).
+  - title: Logo and Wordmark
+    prompt: >
+      Approved logo lockups (primary, secondary, monochrome,
+      reversed), clearspace and minimum size requirements,
+      forbidden modifications (no stretching, no recoloring, no
+      effects), and the file formats provided (SVG, PNG, EPS,
+      favicon).
+  - title: Color Palette
+    prompt: >
+      Primary, secondary, and accent colors with hex / RGB / CMYK
+      / Pantone values, accessible color contrast pairs (WCAG AA
+      ratio ≥ 4.5:1 for body text), and the usage rules (when to
+      use which color, percentage allocation guidance).
+    output_format: table
+  - title: Typography
+    prompt: >
+      Primary and secondary typefaces with weights, license
+      ownership (Google Fonts, Adobe Fonts, licensed foundry,
+      bespoke), heading and body type-scale (h1-h6, body, caption,
+      legal), web fallback stack, and special use (data tables,
+      monospace for code).
+    output_format: table
+  - title: Imagery and Illustration
+    prompt: >
+      Photography style guidance (subject matter, lighting,
+      composition, color treatment, model representation),
+      illustration system (style, palette, line weight), iconography
+      (stroke vs. fill, weight, corner radius), and rules for AI-
+      generated imagery use.
+  - title: Voice in Action — Sample Copy
+    prompt: >
+      Sample copy across formats: tagline, value proposition,
+      homepage hero, product description, error message, customer
+      support reply, and social-media caption. Each shows the
+      voice attributes applied in context.
+  - title: Co-Branding and Partnership Rules
+    prompt: >
+      Rules for partner / co-branded use: logo lockup hierarchy,
+      approval workflow, permitted contexts, prohibited
+      associations (competitors, regulated categories), and
+      contract requirements before public association.
+  - title: Governance and Approvals
+    prompt: >
+      Who owns the brand internally, the approval workflow for
+      new applications, the escalation path for exceptions, the
+      asset-library URL, and the cadence for guidelines review.
+      Contact for clarification or asset requests.
+export:
+  - markdown
+  - pdf
+  - docx

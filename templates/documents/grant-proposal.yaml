@@ -1,0 +1,89 @@
+id: grant-proposal-v1
+name: Grant Proposal
+type: document
+description: Grant application with problem statement, methodology, work plan, budget, and evaluation plan
+industry:
+  - government
+  - nonprofit
+  - education
+profile:
+  - grant-writer
+  - program-manager
+  - researcher
+sections:
+  - title: Cover Page and Abstract
+    prompt: >
+      Applicant organization, project title, funding opportunity
+      and CFDA / FOA number, requested amount, project period,
+      principal investigator / project director, authorizing
+      official, and a 250-word abstract usable in the public award
+      announcement.
+  - title: Statement of Need
+    prompt: >
+      Establish the problem the project addresses: who is affected,
+      the scale and severity of the need, supporting data and
+      citations, and the gap in existing services or knowledge.
+      Tie the need directly to the funder's stated priorities.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Project Description and Goals
+    prompt: >
+      State the project's overarching goal, specific objectives
+      (SMART format), the target population and inclusion criteria,
+      the geographic service area, and the project's theory of
+      change connecting activities to outcomes.
+  - title: Methodology and Activities
+    prompt: >
+      Describe the planned activities, why they are evidence-based
+      (cite the supporting research or prior pilots), the staffing
+      model, partner organizations, and how the project will reach
+      the target population.
+  - title: Work Plan and Timeline
+    prompt: >
+      Quarterly or monthly work plan: activity, milestone, deliverable,
+      responsible role, and dependencies. Include start-up activities,
+      the project execution phase, and the close-out / sustainability
+      period.
+    output_format: table
+  - title: Organizational Capacity
+    prompt: >
+      Describe the applicant organization's mission, history,
+      relevant prior projects, key personnel qualifications, and
+      organizational infrastructure (financial systems, HR,
+      reporting). Address any capacity gaps and how they will be
+      filled.
+  - title: Evaluation Plan
+    prompt: >
+      Logic model linking inputs → activities → outputs → outcomes
+      → impact. Identify the performance measures (process and
+      outcome), data collection methods, frequency, the
+      evaluator (internal or third-party), and how findings will
+      be used for continuous improvement.
+  - title: Budget and Budget Justification
+    prompt: >
+      Itemized budget by category (personnel, fringe, travel,
+      equipment, supplies, contractual, other, indirect) with
+      year-by-year amounts. Provide a written justification for
+      every line item, calculation method (e.g., FTE × salary ×
+      months × fringe rate), and the basis for any cost-share or
+      matching funds.
+    output_format: table
+  - title: Sustainability Plan
+    prompt: >
+      How the project will be sustained beyond the grant period:
+      diversified funding strategy, fee-for-service revenue,
+      partnerships, policy advocacy for ongoing public support,
+      and which project elements will continue versus sunset.
+  - title: Required Attachments
+    prompt: >
+      Checklist of required attachments per the funding opportunity:
+      letters of support, MOUs / MOAs with partners, IRS
+      determination letter, audited financials, board roster,
+      indirect-cost rate agreement, biosketches for key personnel,
+      and any data-management plan.
+    output_format: bullets
+export:
+  - markdown
+  - pdf
+  - docx

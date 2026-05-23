@@ -1,0 +1,32 @@
+id: budget-v1-de
+name: Budget
+type: sheet
+description: Budgettabelle mit Kategorien, Posten, Ist vs. Plan und Abweichung (deutsche Version)
+locale: de
+sections:
+  - title: Budgetübersicht
+    prompt: >
+      Geben Sie einen Überblick über das Gesamtbudget mit
+      geplanten Ausgaben, bisherigen tatsächlichen Ausgaben und
+      prognostizierter Abweichung. Antworten Sie auf Deutsch.
+  - title: Kategorien
+    prompt: >
+      Schlüsseln Sie das Budget nach Kategorien (Personal,
+      Infrastruktur, Software, Marketing usw.) mit geplanten
+      und tatsächlichen Beträgen auf. Antworten Sie auf Deutsch.
+  - title: Posten
+    prompt: >
+      Detaillieren Sie einzelne Posten innerhalb jeder Kategorie.
+      Geben Sie Lieferant, Betrag, Häufigkeit und Status an. Antworten Sie auf Deutsch.
+  - title: Abweichungsanalyse
+    prompt: >
+      Analysieren Sie Abweichungen zwischen geplanten und
+      tatsächlichen Ausgaben. Erklären Sie wesentliche
+      Abweichungen und Gegenmaßnahmen. Antworten Sie auf Deutsch.
+  - title: Prognose
+    prompt: >
+      Projizieren Sie die verbleibenden Ausgaben für den Zeitraum
+      und kennzeichnen Sie Budgetrisiken. Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - csv

@@ -1,0 +1,32 @@
+id: sop-v1-pt
+name: Procedimento Operacional Padrão
+type: document
+description: Procedimento operacional passo a passo com papéis, pré-requisitos e etapas de verificação (versão em português)
+locale: pt
+sections:
+  - title: Propósito
+    prompt: >
+      Indique o propósito deste procedimento e quando ele deve ser
+      seguido. Responda em português.
+  - title: Escopo
+    prompt: >
+      Defina a quem este procedimento se aplica e sob quais
+      circunstâncias. Responda em português.
+  - title: Pré-requisitos
+    prompt: >
+      Liste todos os pré-requisitos, ferramentas, acessos e permissões
+      necessários antes de iniciar este procedimento. Responda em português.
+  - title: Etapas do Procedimento
+    prompt: >
+      Forneça instruções detalhadas passo a passo. Numere cada etapa.
+      Inclua resultados esperados para cada etapa. Responda em português.
+  - title: Verificação
+    prompt: >
+      Descreva como verificar se o procedimento foi concluído com sucesso.
+      Responda em português.
+  - title: Resolução de Problemas
+    prompt: >
+      Liste problemas comuns e suas resoluções. Responda em português.
+export:
+  - markdown
+  - html

@@ -1,0 +1,79 @@
+id: case-intake-v1
+name: Client Case Intake
+type: document
+description: Law-firm client intake with matter description, conflicts check, engagement terms, and fee structure
+industry:
+  - legal
+profile:
+  - attorney
+  - paralegal
+  - intake-coordinator
+sections:
+  - title: Prospective Client Information
+    prompt: >
+      Capture the prospective client's full legal name (individual,
+      entity, or both), preferred contact information, primary
+      contact role, opposing party (or counterparty), and how the
+      client was referred to the firm.
+  - title: Matter Description
+    prompt: >
+      Summarize the legal matter in plain language: type of matter
+      (litigation, transactional, regulatory, advisory), jurisdiction,
+      key dates and deadlines (statute of limitations, filing
+      deadlines, closing dates), and the desired outcome.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Conflicts Check
+    prompt: >
+      Identify all parties to be conflicts-checked: client, adverse
+      parties, related affiliates, principals, and material witnesses.
+      Document the firm's conflicts database results, any matches
+      requiring review, and the disposition (no conflict / waiver
+      required / decline representation).
+    output_format: bullets
+  - title: Engagement Scope
+    prompt: >
+      Define the scope of representation: what is in scope, what is
+      expressly out of scope, and the deliverable(s) expected.
+      Address whether the engagement is limited-scope, full-service,
+      ongoing counsel, or a one-time matter.
+  - title: Fee Structure and Retainer
+    prompt: >
+      State the fee structure: hourly (with rates by timekeeper),
+      flat fee, contingency (with percentages and tiers), hybrid, or
+      success fee. Identify the retainer amount, replenishment terms,
+      anticipated expenses (filing fees, expert witnesses, e-discovery
+      vendors), and billing cadence.
+    output_format: table
+  - title: Engagement Letter Terms
+    prompt: >
+      Summarize the engagement letter's key provisions: scope, fees,
+      arbitration / dispute resolution clause, withdrawal rights,
+      file-retention policy, communication preferences, and any
+      special provisions (joint representation, common-interest
+      privilege, hold-harmless).
+  - title: Risk Assessment
+    prompt: >
+      Identify matter-specific risks: collectibility, reputational
+      exposure, jurisdictional novelty, parallel proceedings,
+      governmental scrutiny, and any required disclosures (e.g.,
+      Rule 11 obligations, OFAC sanctions screening). Rate each
+      risk and identify mitigants.
+  - title: Staffing and Resources
+    prompt: >
+      Propose the engagement team: lead attorney, associates,
+      paralegals, and any specialist support (litigation finance,
+      e-discovery, foreign counsel). Estimate hours and total fees
+      to the next material milestone.
+    output_format: table
+  - title: Internal Approvals
+    prompt: >
+      Record the internal approval workflow: practice-group head
+      sign-off, business intake committee (if required), conflicts
+      partner clearance, and finance approval for non-standard fee
+      arrangements. Capture approval dates and approver names.
+export:
+  - markdown
+  - pdf
+  - docx

@@ -1,0 +1,31 @@
+id: prd-v1-de
+name: Produktanforderungsdokument
+type: document
+description: Standard-PRD mit Problem, Lösung, Umfang und Erfolgskriterien (deutsche Version)
+locale: de
+sections:
+  - title: Problemstellung
+    prompt: >
+      Fassen Sie das Kernproblem zusammen, das dieses Produkt
+      adressiert, und zitieren Sie relevante Quellen. Antworten Sie auf Deutsch.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Vorgeschlagene Lösung
+    prompt: >
+      Beschreiben Sie die vorgeschlagene Lösung und verweisen Sie
+      auf technische Einschränkungen und den Stand der Technik. Antworten Sie auf Deutsch.
+  - title: Umfang
+    prompt: >
+      Definieren Sie, was im Umfang der ersten Version enthalten
+      ist und was ausgeschlossen wird. Antworten Sie auf Deutsch.
+  - title: Erfolgskriterien
+    prompt: >
+      Listen Sie messbare Erfolgskriterien mit Zielwerten auf. Antworten Sie auf Deutsch.
+  - title: Risiken und Gegenmaßnahmen
+    prompt: >
+      Identifizieren Sie Risiken und vorgeschlagene Gegenmaßnahmen,
+      zitieren Sie Quellen, wo dies anwendbar ist. Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - html

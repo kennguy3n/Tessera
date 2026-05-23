@@ -1,0 +1,33 @@
+id: budget-v1-es
+name: Presupuesto
+type: sheet
+description: Hoja de cálculo de presupuesto con categorías, líneas de partida, real vs. planificado y desviaciones (versión en español)
+locale: es
+sections:
+  - title: Resumen del presupuesto
+    prompt: >
+      Ofrezca una visión general del presupuesto total,
+      incluyendo el gasto planificado, el gasto real hasta la
+      fecha y la desviación proyectada. Responda en español.
+  - title: Categorías
+    prompt: >
+      Desglose el presupuesto por categoría (personal,
+      infraestructura, software, marketing, etc.) con importes
+      planificados y reales. Responda en español.
+  - title: Líneas de partida
+    prompt: >
+      Detalle líneas individuales dentro de cada categoría.
+      Incluya proveedor, importe, frecuencia y estado.
+      Responda en español.
+  - title: Análisis de desviaciones
+    prompt: >
+      Analice las desviaciones entre el gasto planificado y el
+      real. Explique las desviaciones significativas y las
+      medidas correctivas. Responda en español.
+  - title: Pronóstico
+    prompt: >
+      Proyecte el gasto restante del período y señale cualquier
+      riesgo presupuestario. Responda en español.
+export:
+  - markdown
+  - csv

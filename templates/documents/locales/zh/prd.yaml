@@ -1,0 +1,30 @@
+id: prd-v1-zh
+name: 产品需求文档
+type: document
+description: 包含问题、解决方案、范围和成功标准的标准产品需求文档（中文版）
+locale: zh
+sections:
+  - title: 问题陈述
+    prompt: >
+      总结本产品所解决的核心问题，并引用相关来源材料。
+      请用中文回答。
+    required_sources:
+      - type: local
+        min: 1
+  - title: 拟议解决方案
+    prompt: >
+      描述拟议的解决方案，引用技术约束和来源中的现有技术。
+      请用中文回答。
+  - title: 范围
+    prompt: >
+      明确首次发布的范围内和范围外内容。请用中文回答。
+  - title: 成功标准
+    prompt: >
+      列出带有目标值的可衡量成功标准。请用中文回答。
+  - title: 风险与缓解措施
+    prompt: >
+      识别风险和拟议的缓解措施，适当时引用来源材料。
+      请用中文回答。
+export:
+  - markdown
+  - html

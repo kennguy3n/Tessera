@@ -1,0 +1,61 @@
+id: incident-tracker-base-v1
+name: Incident Tracker
+type: base
+description: Incident / outage tracker with severity, status, timeline, root cause, and post-mortem linkage
+profile:
+  - sre
+  - support-manager
+  - product-manager
+sections:
+  - title: Incident Records
+    prompt: >
+      Per incident: incident ID, title, severity (SEV-1 /
+      SEV-2 / SEV-3), status (open / investigating /
+      identified / mitigated / closed), service / system
+      affected, opened-at, mitigated-at, closed-at,
+      incident commander, and the public communication
+      status.
+  - title: Impact Assessment
+    prompt: >
+      Quantify impact: customers affected, requests
+      affected, error rate, downtime minutes, revenue
+      impact estimate, SLA breach status. State the
+      detection method (alert / customer report /
+      manual / synthetic check).
+  - title: Timeline
+    prompt: >
+      Chronological event log per incident: timestamp,
+      actor, action / observation. Capture both system
+      events (deploy, alert fire, mitigation applied) and
+      human events (escalation, war-room joined,
+      communication sent).
+  - title: Root Cause and Contributing Factors
+    prompt: >
+      For each closed incident, the proximate cause, the
+      root cause(s), and the contributing factors
+      (technical, process, organizational). Categorize
+      using a standard taxonomy (config / deploy / data /
+      infra / external dependency / human).
+  - title: Corrective Actions
+    prompt: >
+      Action items derived from the incident: owner,
+      action description, severity / priority, target due
+      date, tracking ticket, status. Link to the same
+      action item from related incidents.
+    output_format: table
+  - title: Post-Mortem Linkage
+    prompt: >
+      Per SEV-1 / SEV-2 incident: link to the post-mortem
+      document, the review date, the participants, and
+      whether the post-mortem follow-ups have closed.
+      Blameless framing is the default.
+  - title: Trend and Metrics
+    prompt: >
+      Reliability metrics: count of incidents by month
+      and severity, MTTR (mean time to recovery) trend,
+      MTTD (detection time), repeat-cause patterns, and
+      services with the highest incident density.
+    output_format: table
+export:
+  - markdown
+  - csv

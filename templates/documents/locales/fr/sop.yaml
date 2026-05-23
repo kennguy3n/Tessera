@@ -1,0 +1,34 @@
+id: sop-v1-fr
+name: Procédure Opératoire Standard
+type: document
+description: Procédure étape par étape avec rôles, prérequis et étapes de vérification (version française)
+locale: fr
+sections:
+  - title: Objectif
+    prompt: >
+      Indiquez l'objectif de cette procédure et quand elle doit
+      être suivie. Répondez en français.
+  - title: Périmètre
+    prompt: >
+      Définissez à qui s'applique cette procédure et dans
+      quelles circonstances. Répondez en français.
+  - title: Prérequis
+    prompt: >
+      Listez tous les prérequis, outils, accès et permissions
+      nécessaires avant de commencer. Répondez en français.
+  - title: Étapes de la procédure
+    prompt: >
+      Fournissez des instructions détaillées étape par étape.
+      Numérotez chaque étape et incluez les résultats attendus.
+      Répondez en français.
+  - title: Vérification
+    prompt: >
+      Décrivez comment vérifier que la procédure a été
+      complétée avec succès. Répondez en français.
+  - title: Dépannage
+    prompt: >
+      Listez les problèmes courants et leurs résolutions.
+      Répondez en français.
+export:
+  - markdown
+  - html

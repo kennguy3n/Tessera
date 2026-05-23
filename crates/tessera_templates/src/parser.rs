@@ -16,22 +16,47 @@ pub fn parse_template_file(path: &Path) -> Result<Template> {
 
 pub fn load_template_by_id(template_dir: &str, template_id: &str) -> Result<Template> {
     let base = Path::new(template_dir);
-    let subdirs = ["documents", "slides", "sheets", "bases"];
+    // Recurse over every template-category directory. We list the
+    // categories explicitly (rather than walking `template_dir` as a
+    // single tree) so unrelated subdirectories like `grammars/` are
+    // never opened. `walkdir::WalkDir` then visits every nested
+    // `locales/<locale>/` directory so localized variants are
+    // reachable by id without an additional lookup step.
+    //
+    // The category list mirrors `RUST_TEMPLATE_DIRS` /
+    // `TEMPLATE_CATEGORIES` in the smoke suites — keep these three
+    // lists in sync when adding a new category.
+    let subdirs = [
+        "documents",
+        "slides",
+        "sheets",
+        "bases",
+        "infographics",
+        "landing_pages",
+    ];
     for subdir in &subdirs {
         let dir = base.join(subdir);
         if !dir.is_dir() {
             continue;
         }
-        for entry in std::fs::read_dir(&dir).map_err(Error::Io)? {
-            let entry = entry.map_err(Error::Io)?;
+        for entry in walkdir::WalkDir::new(&dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+        {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("yaml")
-                || path.extension().and_then(|e| e.to_str()) == Some("yml")
-            {
-                if let Ok(tmpl) = parse_template_file(&path) {
-                    if tmpl.id == template_id {
-                        return Ok(tmpl);
-                    }
+            if !path.is_file() {
+                continue;
+            }
+            if !matches!(
+                path.extension().and_then(|e| e.to_str()),
+                Some("yaml" | "yml")
+            ) {
+                continue;
+            }
+            if let Ok(tmpl) = parse_template_file(path) {
+                if tmpl.id == template_id {
+                    return Ok(tmpl);
                 }
             }
         }

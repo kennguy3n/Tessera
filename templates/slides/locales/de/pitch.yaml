@@ -1,0 +1,49 @@
+id: pitch-v1-de
+name: Pitch Deck
+type: slides
+description: Gründer-/Vertriebs-Pitch-Deck mit Problem, Lösung, Markt, Traktion, Team und Anfrage (deutsche Version)
+locale: de
+format: marp
+theme: gaia
+paginate: true
+sections:
+  - title: Aufhänger
+    prompt: >
+      Eröffnen Sie mit einem einzigen Satz mit hoher Wirkung
+      über die Chance. Beginnen Sie mit dem Problem oder der
+      Schlagzeilenkennzahl. Antworten Sie auf Deutsch.
+  - title: Problem
+    prompt: >
+      Beschreiben Sie das Problem in konkreter, am Kunden
+      verankerter Sprache. Quantifizieren Sie den Schmerz
+      (Kosten, Zeit, Abwanderung), wo möglich. Antworten Sie auf Deutsch.
+  - title: Lösung
+    prompt: >
+      Erklären Sie die Lösung prägnant. Heben Sie die
+      besondere Fähigkeit hervor, die sie funktionieren lässt. Antworten Sie auf Deutsch.
+  - title: Markt und Traktion
+    prompt: >
+      Dimensionieren Sie den Markt (TAM/SAM/SOM) und berichten
+      Sie die aktuelle Traktion (Nutzer, ARR, Wachstumsrate).
+      Zitieren Sie Quellen. Antworten Sie auf Deutsch.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Geschäftsmodell und Wettbewerb
+    prompt: >
+      Beschreiben Sie, wie Umsatz erzielt wird und wie sich das
+      Angebot von Alternativen unterscheidet. Antworten Sie auf Deutsch.
+  - title: Team
+    prompt: >
+      Stellen Sie Gründer und Schlüsselmitglieder mit Rolle,
+      Erfahrung und Nachweis der Relevanz vor. Antworten Sie auf Deutsch.
+  - title: Die Anfrage
+    prompt: >
+      Geben Sie den Finanzierungsbetrag, die Mittelverwendung
+      und die freigeschalteten Meilensteine an. Enden Sie mit
+      Momentum. Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

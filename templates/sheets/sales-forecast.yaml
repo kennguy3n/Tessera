@@ -1,0 +1,77 @@
+id: sales-forecast-v1
+name: Sales Forecast
+type: sheet
+description: Sales forecast workbook with historical trend, seasonality, scenario sensitivity, and actuals tracking
+industry:
+  - retail
+  - finance
+profile:
+  - sales-ops
+  - finance-analyst
+  - cfo
+sections:
+  - title: Forecast Identification
+    prompt: >
+      Forecast scope (product line, channel, region), period
+      covered (monthly buckets across 12-24 months), currency,
+      version (e.g., FY26 budget v3), forecaster, and the
+      governance committee that owns the number.
+  - title: Historical Baseline
+    prompt: >
+      Three years of historical monthly sales (units and revenue)
+      with year-over-year growth rates. Identify any one-time
+      events (channel launch, large customer onboarded, COVID
+      impact) that distort the comparison and adjust as needed.
+    output_format: table
+  - title: Seasonality and Trend Decomposition
+    prompt: >
+      Decompose history into trend, seasonality (monthly
+      indices), and residual. Surface the seasonality pattern
+      (holiday concentration, back-to-school, fiscal year-end)
+      and the trend slope. Note the methodology (additive vs.
+      multiplicative).
+  - title: Driver Assumptions
+    prompt: >
+      Document the forecast drivers: market growth, distribution
+      expansion, pricing, promotional activity, new product
+      launches, channel mix shifts, FX, and competitive
+      dynamics. Each assumption with a numeric magnitude and the
+      evidence source.
+    output_format: table
+  - title: Base / Upside / Downside Scenarios
+    prompt: >
+      Three-scenario forecast: base case (most likely),
+      upside (drivers go well), downside (drivers struggle).
+      State the probability the team assigns to each. Calculate
+      the expected value and the spread.
+    output_format: table
+  - title: Channel and Segment Detail
+    prompt: >
+      Forecast by channel (DTC, retail, wholesale, marketplace,
+      international), by customer segment (enterprise, SMB,
+      consumer), and by product line. Roll up to the
+      consolidated total and reconcile any allocations.
+  - title: Capacity and Constraint Checks
+    prompt: >
+      Sanity-check the forecast against constraints: supply
+      capacity, hiring plan, marketing spend, working capital,
+      and customer concentration limits. Flag any forecast
+      months that exceed a constraint.
+  - title: Actuals vs. Forecast Tracking
+    prompt: >
+      Reserve columns for monthly actuals as the period
+      unfolds: forecast, actuals, variance ($), variance (%),
+      revised full-year forecast, and commentary on the
+      variance driver. Establish the cadence for forecast
+      re-set (monthly / quarterly).
+    output_format: table
+  - title: Risks to Plan
+    prompt: >
+      Risks that could materially shift the forecast: customer
+      churn, supplier delay, regulatory change, competitive
+      pricing action, macro shifts. For each, the expected
+      impact and the trigger event the team will monitor.
+export:
+  - markdown
+  - csv
+  - xlsx

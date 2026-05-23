@@ -1,0 +1,80 @@
+id: board-update-deck-v1
+name: Board of Directors Update
+type: slides
+description: Quarterly board update covering performance, financials, strategy, talent, risks, and asks
+profile:
+  - ceo
+  - cfo
+  - executive
+sections:
+  - title: Title and Quarter
+    prompt: >
+      Title slide with company name, fiscal quarter, fiscal
+      year, board meeting date, and the presenter. List the
+      attendees and any non-board invitees.
+  - title: Executive Summary
+    prompt: >
+      One-slide TL;DR: the headline (we beat / we missed / we
+      pivoted), the three things the board needs to know, the
+      asks of the board, and the overall risk posture (green
+      / yellow / red).
+    required_sources:
+      - type: local
+        min: 1
+  - title: Quarterly Performance
+    prompt: >
+      KPI dashboard: revenue, growth rate, gross margin,
+      EBITDA / cash burn, runway, key product metrics
+      (DAU / NPS / retention), pipeline coverage. Each
+      metric: actual vs. plan, year-over-year delta, and a
+      one-line explanation of the variance.
+    output_format: table
+  - title: Financial Detail
+    prompt: >
+      P&L, balance sheet, and cash-flow highlights. Cash
+      position, burn rate, runway in months, planned use of
+      remaining cash, and any anticipated need for capital.
+      Quote the underlying audited or reviewed source.
+  - title: Strategic Progress
+    prompt: >
+      Status of the annual / multi-year strategic priorities.
+      For each priority: this quarter's milestone, what was
+      delivered, what slipped, and the recovery plan for any
+      slippage.
+  - title: Product and Customer
+    prompt: >
+      Product launches this quarter, key customer wins and
+      losses, churn analysis, NPS / CSAT trend, and the
+      product roadmap for the next two quarters at strategic
+      grain (not feature lists).
+  - title: Talent and Organization
+    prompt: >
+      Org health: hiring plan progress, key leadership hires,
+      regrettable attrition, succession planning, and any
+      D&I / culture metrics the board has chosen to track.
+      Flag executive gaps or risks.
+  - title: Risks and Mitigations
+    prompt: >
+      Top five enterprise risks: description, likelihood,
+      impact, mitigation in flight, and the residual risk.
+      Distinguish board-level risks (existential, strategic)
+      from operational risks the team is handling.
+    output_format: table
+  - title: Asks and Decisions Required
+    prompt: >
+      Explicit list of asks and decisions for the board:
+      approve the budget revision, ratify an offer letter,
+      authorize a financing, approve a strategic
+      partnership, accept a related-party transaction.
+      Each ask with the recommended action.
+  - title: Appendix
+    prompt: >
+      Reference materials available in appendix: full
+      financials, hiring scorecard, customer logo wall,
+      committee reports (audit, compensation, nominating),
+      and any management-letter responses.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

@@ -1,0 +1,43 @@
+id: form-v1-es
+name: Formulario
+type: document
+description: Formulario rellenable con secciones para título, descripción, campos e instrucciones de envío (versión en español)
+locale: es
+sections:
+  - title: Título y descripción del formulario
+    prompt: >
+      Capture el título del formulario, una breve declaración de
+      propósito y el contexto que el encuestado necesita antes de
+      completarlo. Responda en español.
+  - title: Información del encuestado
+    prompt: >
+      Recopile los datos de identificación del encuestado
+      (nombre, correo, rol, organización) y la fecha de envío.
+      Responda en español.
+  - title: Campos del formulario
+    prompt: >
+      Defina cada campo que recopila el formulario. Para cada uno
+      registre la etiqueta, el tipo de entrada (texto, texto largo,
+      selección única o múltiple, fecha, casilla de verificación,
+      número, carga de archivos), si es obligatorio y los valores
+      predeterminados o lista de opciones. Responda en español.
+  - title: Validación y lógica condicional
+    prompt: >
+      Describa las reglas de validación (obligatorio, regex,
+      mín./máx., valores permitidos) y cualquier lógica
+      condicional de mostrar/ocultar entre campos. Responda en español.
+  - title: Instrucciones de envío
+    prompt: >
+      Explique cómo enviar el formulario completado, quién lo
+      revisa, el tiempo de respuesta esperado y cómo se notificará
+      al encuestado el resultado. Responda en español.
+  - title: Privacidad y retención
+    prompt: >
+      Indique cómo se almacenan los datos del formulario, quién
+      puede acceder a ellos y cuánto tiempo se conservan antes de
+      ser eliminados o anonimizados. Responda en español.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

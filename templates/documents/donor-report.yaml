@@ -1,0 +1,79 @@
+id: donor-report-v1
+name: Donor Impact Report
+type: document
+description: Donor impact report with program outcomes, beneficiary stories, financial stewardship, and acknowledgment
+industry:
+  - nonprofit
+profile:
+  - development-director
+  - executive-director
+  - communications-manager
+sections:
+  - title: Cover and Greeting
+    prompt: >
+      Donor's name (or category for general report), organization
+      name, reporting period, and a personalized greeting from the
+      executive director. State the total gift amount and its
+      restrictions (general operating, program-restricted,
+      endowment, capital).
+  - title: Mission and Year in Review
+    prompt: >
+      Restate the organization's mission and provide a 2-3 paragraph
+      summary of the reporting period's accomplishments tied to the
+      mission. Lead with the most concrete, beneficiary-focused
+      outcome.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Impact Metrics
+    prompt: >
+      Headline impact metrics for the period: people served, program
+      outputs (workshops held, meals served, hours of services),
+      outcome measures (employment placements, housing stability,
+      health outcomes), and the methodology behind each. Compare to
+      prior year and to the multi-year strategic plan target.
+    output_format: table
+  - title: Beneficiary Stories
+    prompt: >
+      Two or three short stories illustrating the difference the
+      donor's support made in real people's lives. Use first names
+      or pseudonyms with consent. Include the situation, the
+      intervention, and the outcome — keeping the focus on the
+      beneficiary's agency, not the organization's heroism.
+  - title: Program Highlights
+    prompt: >
+      Brief description of each major program funded by the gift,
+      with key milestones from the period, any program innovations,
+      partnerships formed, and population reached. Tie each
+      program to specific mission outcomes.
+  - title: Financial Stewardship
+    prompt: >
+      Use-of-funds summary showing how the donor's gift was spent
+      by category (program, fundraising, management & general),
+      organizational expense ratios with peer / sector benchmarks,
+      and any earned-income or matching support leveraged by the
+      gift.
+    output_format: table
+  - title: Recognition and Acknowledgment
+    prompt: >
+      Recognition appropriate to the donor's wishes: naming
+      opportunities realized, honor / memorial dedications, society
+      membership, and any tribute placement (annual report, donor
+      wall, program brochure). Honor any anonymity request
+      explicitly.
+  - title: Forward Look
+    prompt: >
+      Preview the organization's plans for the coming year:
+      strategic priorities, capacity expansion, new programs, and
+      the funding need. Identify specific giving opportunities
+      that align with the donor's interests as known.
+  - title: Closing and Contact
+    prompt: >
+      Sincere closing from a named senior staff member with
+      direct contact information (phone, email). Invite the
+      donor to engage further: site visit, advisory role,
+      introductions to peers, planned-giving conversation.
+export:
+  - markdown
+  - pdf
+  - docx

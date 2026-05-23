@@ -1,0 +1,63 @@
+id: infographic-timeline-v1
+name: Timeline Infographic
+type: infographic
+description: Historical or project timeline infographic with milestones, dates, and context
+profile:
+  - communications
+  - marketing
+  - educator
+sections:
+  - title: Title and Subject
+    prompt: >
+      The timeline's title (e.g., "A Decade of Our Mission",
+      "Project Apollo: 1961-1972", "Our Customer
+      Onboarding Journey") and the subject framing in 1-2
+      sentences. Identify the start and end of the
+      timeline horizon.
+  - title: Visual Layout
+    prompt: >
+      Choose the timeline layout: horizontal axis with
+      milestones above and below the line, vertical with
+      cards on alternating sides, or radial. State the
+      reasoning given the number of milestones, the
+      density of dates, and the publication medium
+      (slide, poster, web, print).
+  - title: Milestones
+    prompt: >
+      Per milestone: exact date or date range, milestone
+      title, one-paragraph description, the people /
+      organizations involved, the source citation, and a
+      visual hint (icon family, image asset reference).
+      Aim for 5-12 milestones — fewer and the timeline
+      feels empty, more and it becomes unreadable.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Context and Causation
+    prompt: >
+      Short narrative connecting the milestones — what
+      caused each, what each enabled. The infographic
+      should tell a story, not just list dates.
+  - title: Quantitative Anchors
+    prompt: >
+      Optional data overlays: a metric line that tracks
+      across the timeline (subscriber count, revenue,
+      patents filed, climate measurement). Specify the
+      data source, scale, and any axis breaks.
+  - title: Accessibility
+    prompt: >
+      Alt-text for each visual element, the readable text
+      alternative for the timeline (a numbered list
+      version), color choices meeting WCAG AA, and any
+      printable / monochrome variant for non-color
+      contexts.
+  - title: Distribution and Format
+    prompt: >
+      Target output formats and dimensions: PDF / PNG /
+      SVG / interactive web. The typography, color
+      scheme, and any branding overlay. State the
+      anticipated distribution channels.
+export:
+  - markdown
+  - html
+  - pdf

@@ -1,0 +1,78 @@
+id: investor-update-deck-v1
+name: Investor Update
+type: slides
+description: Monthly or quarterly investor update covering metrics, wins, losses, lowlights, asks, and runway
+profile:
+  - founder
+  - ceo
+  - cfo
+sections:
+  - title: Header
+    prompt: >
+      Title with the company name, the reporting period (e.g.,
+      "October 2025 Investor Update"), and the founder's
+      one-line summary of the period (e.g., "Closed our
+      first $1M ARR customer, hired a head of sales").
+  - title: Highlights
+    prompt: >
+      Three to five highlights from the period in punchy
+      sentences. Each highlight is concrete and verifiable
+      (numbers, names, milestones) — not vibes. Lead with
+      the most impressive.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Lowlights and Misses
+    prompt: >
+      Honesty about what didn't go well: missed targets,
+      churned customers, failed initiatives, talent issues.
+      Investors trust founders who share lowlights and
+      respect those who don't. State what was learned and
+      the corrective action.
+  - title: Key Metrics
+    prompt: >
+      KPI table with actual vs. target vs. last period:
+      revenue / ARR, growth rate, gross margin, burn,
+      runway, customer count, churn / NDR, headcount, and
+      one or two product KPIs unique to this business.
+    output_format: table
+  - title: Customer Story
+    prompt: >
+      One paragraph profiling a customer (new win, expansion,
+      saved-from-churn). Their problem, how the product
+      helped, the measurable outcome, and any quotable
+      testimonial.
+  - title: Product Progress
+    prompt: >
+      Shipped this period: features, integrations, platform
+      capability. Coming next: roadmap items investors should
+      anticipate. Tie product progress to the metrics it is
+      meant to move.
+  - title: Hiring and Team
+    prompt: >
+      Hires made (name, role, prior company), open roles
+      and target close, planned departures. Mention any
+      culture or operational changes.
+  - title: Cash and Runway
+    prompt: >
+      Cash position at period end, monthly burn rate, runway
+      in months, and the trigger for the next fundraise. If
+      raising soon, mention the target round size and
+      milestones planned for the close.
+  - title: Asks
+    prompt: >
+      Specific asks of investors: introductions (named
+      target customers, candidates, advisors, downstream
+      investors), feedback on a strategic choice, advice on
+      a hard problem. Make the ask scoped enough to act on.
+    output_format: bullets
+  - title: Sign-Off
+    prompt: >
+      Founder's sign-off with name, contact, and any
+      reminders (next update date, board meeting
+      reminder, planned visit / dinner).
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

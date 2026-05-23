@@ -1,0 +1,35 @@
+id: sop-v1-es
+name: Procedimiento Operativo Estándar
+type: document
+description: Procedimiento operativo paso a paso con roles, requisitos previos y pasos de verificación (versión en español)
+locale: es
+sections:
+  - title: Propósito
+    prompt: >
+      Indique el propósito de este procedimiento y cuándo
+      debe seguirse. Responda en español.
+  - title: Alcance
+    prompt: >
+      Defina a quién se aplica este procedimiento y en qué
+      circunstancias. Responda en español.
+  - title: Requisitos previos
+    prompt: >
+      Enumere todos los requisitos previos, herramientas,
+      accesos y permisos necesarios antes de comenzar.
+      Responda en español.
+  - title: Pasos del procedimiento
+    prompt: >
+      Proporcione instrucciones detalladas paso a paso.
+      Numere cada paso e incluya los resultados esperados.
+      Responda en español.
+  - title: Verificación
+    prompt: >
+      Describa cómo verificar que el procedimiento se completó
+      con éxito. Responda en español.
+  - title: Resolución de problemas
+    prompt: >
+      Enumere los problemas comunes y sus soluciones.
+      Responda en español.
+export:
+  - markdown
+  - html

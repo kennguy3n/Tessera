@@ -1,0 +1,90 @@
+id: hipaa-incident-report-v1
+name: HIPAA Incident Report
+type: document
+description: HIPAA Privacy / Security incident report with discovery timeline, affected PHI, risk assessment, and remediation
+industry:
+  - healthcare
+  - legal
+profile:
+  - privacy-officer
+  - security-officer
+  - compliance-officer
+sections:
+  - title: Incident Summary
+    prompt: >
+      One-paragraph executive summary of the suspected or confirmed
+      incident. State whether it has been classified as an Incident
+      (still under investigation) or a Breach (45 CFR §164.402
+      determination complete), the discovery method, the affected
+      systems, and the current containment status.
+  - title: Discovery and Timeline
+    prompt: >
+      Construct a numbered timeline of events from initial occurrence
+      through discovery, containment, internal escalation, and (if
+      applicable) external notification. Include date, time (with
+      timezone), the role/individual taking the action, and the source
+      record (ticket, log, witness statement).
+    output_format: numbered_list
+    required_sources:
+      - type: local
+        min: 1
+  - title: Affected Individuals and PHI Categories
+    prompt: >
+      State the count of affected individuals (or the upper-bound
+      estimate during ongoing investigation). Categorize the PHI
+      involved: demographic, medical history, lab/imaging results,
+      prescriptions, billing/insurance, mental health, substance use
+      (42 CFR Part 2), genetic, or other sensitive categories. Note
+      whether the data was encrypted, paper, electronic, or in-transit.
+  - title: Risk Assessment (45 CFR §164.402)
+    prompt: >
+      Document the four-factor risk assessment required by the HITECH
+      Act: (1) the nature and extent of the PHI involved, including
+      types of identifiers and likelihood of re-identification; (2) the
+      unauthorized person who used or received the PHI; (3) whether the
+      PHI was actually acquired or viewed; (4) the extent to which risk
+      has been mitigated. Conclude with the breach-vs-incident
+      determination and the rationale.
+  - title: Root Cause Analysis
+    prompt: >
+      Identify the root cause(s): technical (misconfiguration,
+      vulnerability), human (training gap, malicious insider, social
+      engineering), process (missing workflow, weak access controls),
+      or third party (business associate failure). Use a 5-Whys or
+      fishbone analysis.
+  - title: Containment and Remediation Actions
+    prompt: >
+      List the immediate containment steps already taken (account
+      disable, system isolation, password rotation, backup restore)
+      and the planned remediation (technical controls, policy update,
+      training, contract amendment, sanctions). For each action, give
+      an owner and a target completion date.
+    output_format: bullets
+  - title: Notification Requirements and Status
+    prompt: >
+      State whether the incident triggers individual notification (within
+      60 days), HHS OCR notification (60 days for breaches < 500, no
+      later than 60 days following calendar-year end for breaches < 500
+      cumulative; immediate for breaches ≥ 500), media notification
+      (≥ 500 individuals in a state/jurisdiction), business associate
+      notification, and any state-specific obligations (e.g., HITECH
+      preemption analysis). For each, give the notification date or the
+      planned target.
+    output_format: table
+  - title: Lessons Learned and Policy Updates
+    prompt: >
+      Capture what the incident teaches the organization about its
+      controls, training, monitoring, and incident response. List
+      specific policy, procedure, or technology changes resulting from
+      the incident. Tie each change to the root cause it addresses.
+  - title: Approval and Closure
+    prompt: >
+      Record sign-off from the Privacy Officer, Security Officer,
+      and (where applicable) General Counsel. State the closure
+      criteria, the actual closure date, and the retention period for
+      the incident record (typically 6 years from creation or last
+      modification under HIPAA).
+export:
+  - markdown
+  - pdf
+  - docx

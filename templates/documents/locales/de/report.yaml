@@ -1,0 +1,39 @@
+id: report-v1-de
+name: Bericht
+type: document
+description: Analytischer Bericht mit Ergebnissen, Analyse und Empfehlungen (deutsche Version)
+locale: de
+sections:
+  - title: Zusammenfassung
+    prompt: >
+      Fassen Sie die wichtigsten Erkenntnisse und Empfehlungen
+      dieses Berichts zusammen. Antworten Sie auf Deutsch.
+  - title: Methodik
+    prompt: >
+      Beschreiben Sie die Methodik für Datenerhebung und
+      Analyse. Antworten Sie auf Deutsch.
+  - title: Erkenntnisse
+    prompt: >
+      Präsentieren Sie die wichtigsten Erkenntnisse, gestützt
+      auf Daten aus den Quellen. Fügen Sie relevante Statistiken
+      und Belege bei. Antworten Sie auf Deutsch.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Analyse
+    prompt: >
+      Liefern Sie eine detaillierte Analyse der Erkenntnisse.
+      Identifizieren Sie Muster, Trends und Implikationen. Antworten Sie auf Deutsch.
+  - title: Empfehlungen
+    prompt: >
+      Listen Sie umsetzbare Empfehlungen basierend auf der
+      Analyse auf. Priorisieren Sie nach Wirkung und
+      Umsetzbarkeit. Antworten Sie auf Deutsch.
+  - title: Anhang
+    prompt: >
+      Fügen Sie unterstützende Daten, Referenzen und ergänzendes
+      Material bei. Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - html
+  - csv

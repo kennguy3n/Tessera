@@ -202,24 +202,94 @@ export:
 ```
 templates/
 ├── documents/
-│   ├── prd.yaml
-│   ├── proposal.yaml
-│   ├── sop.yaml
-│   ├── report.yaml
-│   └── memo.yaml
+│   ├── prd.yaml                 # generic PRD
+│   ├── proposal.yaml            # generic proposal
+│   ├── sop.yaml                 # standard operating procedure
+│   ├── report.yaml              # analytical report
+│   ├── memo.yaml
+│   ├── meeting-agenda.yaml
+│   ├── meeting-notes.yaml
+│   ├── task-list.yaml
+│   ├── form.yaml
+│   │
+│   ├── clinical-protocol.yaml   # ┐ industry-specific variants
+│   ├── patient-care-plan.yaml   # │ (healthcare, legal, education,
+│   ├── legal-brief.yaml         # │  government, finance,
+│   ├── contract-summary.yaml    # │  manufacturing, retail,
+│   ├── lesson-plan.yaml         # │  nonprofit, creative,
+│   ├── course-syllabus.yaml     # │  real estate)
+│   ├── policy-brief.yaml        # │
+│   ├── grant-proposal.yaml      # │  Each carries `industry:` and
+│   ├── investment-memo.yaml     # │  optionally `profile:` tags so
+│   ├── audit-findings.yaml      # │  the CreatePage industry filter
+│   ├── quality-control-report   # │  surfaces them per user.
+│   ├── content-calendar.yaml    # │
+│   ├── brand-guidelines.yaml    # │  See README.md "Industry
+│   ├── campaign-brief.yaml      # │  coverage" for the full list.
+│   ├── property-analysis.yaml   # │
+│   └── …                        # ┘
+│   │
+│   └── locales/                 # nine non-English locales × top 10
+│       ├── es/                  # templates (PRD, proposal, SOP,
+│       ├── fr/                  # report, meeting agenda, meeting
+│       ├── de/                  # notes, task list, form). Section
+│       ├── ja/                  # titles + prompts translated;
+│       ├── zh/                  # prompts ask the model to respond
+│       ├── pt/                  # in the target language. Ids share
+│       ├── ko/                  # the base id with a `-<locale>`
+│       ├── ar/                  # suffix (e.g. `prd-v1-es`).
+│       └── hi/
 ├── slides/
-│   ├── qbr.yaml
+│   ├── qbr.yaml                 # baseline corporate decks
 │   ├── strategy.yaml
-│   └── review.yaml
+│   ├── review.yaml
+│   ├── training.yaml
+│   ├── pitch.yaml               # founder / sales pitch deck
+│   ├── onboarding.yaml          # employee onboarding deck
+│   ├── sales-enablement.yaml    # sales enablement / demo deck
+│   ├── board-update.yaml        # board quarterly update
+│   ├── investor-update.yaml     # monthly / quarterly investor update
+│   ├── workshop.yaml            # workshop / facilitation deck
+│   └── locales/                 # localized pitch deck (es..hi)
 ├── sheets/
 │   ├── budget.yaml
 │   ├── scorecard.yaml
-│   └── roadmap.yaml
-└── bases/
-    ├── vendor-register.yaml
-    ├── risk-register.yaml
-    └── decision-log.yaml
+│   ├── roadmap.yaml
+│   ├── tracker.yaml
+│   ├── inventory.yaml
+│   ├── product-catalog.yaml     # retail / e-commerce
+│   ├── sales-forecast.yaml      # retail / e-commerce
+│   └── locales/                 # localized budget (es..hi)
+├── bases/
+│   ├── vendor-register.yaml
+│   ├── risk-register.yaml
+│   ├── decision-log.yaml
+│   ├── roadmap.yaml
+│   ├── asset-inventory.yaml
+│   ├── crm.yaml                 # simple CRM with pipeline stages
+│   ├── incident-tracker.yaml    # severity / status / resolution
+│   ├── employee-directory.yaml  # HR org directory
+│   └── compliance-register.yaml # obligations + evidence + owner
+├── infographics/
+│   ├── comparison.yaml          # legacy visual schema
+│   ├── process-flow.yaml        # legacy visual schema
+│   ├── stats-overview.yaml      # legacy visual schema
+│   ├── timeline.yaml            # canonical schema
+│   ├── org-chart.yaml           # canonical schema
+│   └── kpi-dashboard.yaml       # canonical schema
+└── landing_pages/
+    ├── saas-product.yaml        # legacy visual schema
+    ├── nonprofit.yaml           # nonprofit / cause landing
+    ├── event.yaml               # event / conference registration
+    └── portfolio.yaml           # personal / agency portfolio
 ```
+
+The registry is enforced by
+`crates/tessera_templates/tests/bundled_templates.rs`, which discovers
+every YAML on the filesystem, parses + validates it, asserts unique
+ids, checks that every locale variant lives in a matching
+`locales/<code>/` directory, and verifies that every supported
+non-English locale ships the full canonical 10-template set.
 
 ---
 

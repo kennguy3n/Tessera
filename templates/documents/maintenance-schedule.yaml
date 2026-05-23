@@ -1,0 +1,83 @@
+id: maintenance-schedule-v1
+name: Equipment Maintenance Schedule
+type: document
+description: Preventive maintenance plan with intervals, procedures, parts, and reliability tracking
+industry:
+  - manufacturing
+profile:
+  - reliability-engineer
+  - maintenance-manager
+sections:
+  - title: Asset Identification
+    prompt: >
+      Asset / equipment name, asset tag or ID, manufacturer, model,
+      serial number, installation date, location (plant, line, cell),
+      criticality classification (A / B / C based on production
+      impact and safety), and the responsible maintenance crew.
+  - title: Maintenance Strategy
+    prompt: >
+      State the maintenance strategy for this asset: reactive,
+      time-based preventive, condition-based, predictive
+      (vibration / oil analysis / thermography), or reliability-
+      centered. Justify the choice given the asset's criticality
+      and failure modes.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Failure Mode and Effects Analysis (FMEA)
+    prompt: >
+      List the known and anticipated failure modes for this asset:
+      failure mode description, cause, effect on operation, severity
+      (S), occurrence (O), detection (D), and the resulting RPN
+      (Risk Priority Number = S × O × D). Sort by descending RPN.
+    output_format: table
+  - title: PM Tasks and Intervals
+    prompt: >
+      Tabulate the preventive-maintenance tasks: task name, frequency
+      (daily / weekly / monthly / quarterly / annually / hours-based),
+      estimated labor (crew size × duration), required skill / craft,
+      production downtime required, and the SOP reference document.
+    output_format: table
+  - title: Lubrication Schedule
+    prompt: >
+      Lubrication chart: lubrication points, lubricant type and
+      specification, quantity, frequency, application method
+      (manual, automatic, oil-mist), and the inspection criteria
+      for lubricant condition.
+  - title: Spare Parts and BOM
+    prompt: >
+      Critical spare parts with part number, supplier, lead time,
+      min / max stock levels, current on-hand quantity, and the
+      total annual demand. Flag any single-source items or long-
+      lead parts that warrant safety stock.
+    output_format: table
+  - title: Tools, Skills, and Safety
+    prompt: >
+      Required tools and special equipment, required certifications
+      and training for assigned technicians (LOTO, fall protection,
+      confined space, electrical safety), and the safety hazards
+      that must be controlled before the work.
+  - title: Performance Tracking and KPIs
+    prompt: >
+      Reliability KPIs to track: MTBF (Mean Time Between Failures),
+      MTTR (Mean Time To Repair), schedule compliance,
+      PM compliance rate, percent corrective vs. preventive work,
+      and equipment OEE contribution. Baseline values and target
+      values per KPI.
+    output_format: table
+  - title: Maintenance History Summary
+    prompt: >
+      Summary of recent maintenance history (last 12 months):
+      total PM hours, total corrective hours, top failure modes
+      observed, parts consumed by cost, and any patterns suggesting
+      the PM plan needs revision.
+  - title: Review and Revision Cycle
+    prompt: >
+      Maintenance plan review cycle (typically annually), the
+      criteria for triggering an off-cycle revision (failure trend,
+      new manufacturer bulletin, design change), the reviewer
+      roster, and the approval workflow.
+export:
+  - markdown
+  - pdf
+  - docx
