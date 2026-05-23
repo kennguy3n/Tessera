@@ -35,7 +35,11 @@ use tessera_core::{ArtifactType, SourceId, SourceType};
 /// A stub exporter that ignored its input would fail the assertions
 /// below.
 fn sample_document() -> Artifact {
-    let mut artifact = Artifact::new("Phase smoke document".to_string(), ArtifactType::Document, None);
+    let mut artifact = Artifact::new(
+        "Phase smoke document".to_string(),
+        ArtifactType::Document,
+        None,
+    );
     artifact.update_content(
         "# Phase smoke heading\n\
          \n\
@@ -150,7 +154,10 @@ fn pdf_export_emits_a_non_empty_payload() {
         !out.is_empty(),
         "pdf exporter must produce a non-empty payload"
     );
-    let preview = String::from_utf8_lossy(&out).chars().take(2048).collect::<String>();
+    let preview = String::from_utf8_lossy(&out)
+        .chars()
+        .take(2048)
+        .collect::<String>();
     assert!(
         preview.contains("%PDF") || preview.contains("Phase smoke"),
         "pdf exporter must emit either a PDF magic header or fallback text containing the document title; first 2048 bytes were: {preview:?}"
@@ -227,11 +234,7 @@ fn evidence_pack_builds_a_zip_envelope_with_provided_artifact() {
         .expect("tempdir paths are utf-8 on supported platforms")
         .to_string();
 
-    let res = tessera_export::evidence_pack::build_evidence_pack(
-        &artifact,
-        &citations,
-        &path_str,
-    );
+    let res = tessera_export::evidence_pack::build_evidence_pack(&artifact, &citations, &path_str);
     assert!(
         res.is_ok(),
         "evidence_pack::build_evidence_pack returned an error: {res:?}"
@@ -243,8 +246,7 @@ fn evidence_pack_builds_a_zip_envelope_with_provided_artifact() {
     let read = f.read(&mut head).expect("read pack magic");
     assert_eq!(read, 4, "evidence pack must be at least 4 bytes long");
     assert_eq!(
-        &head,
-        b"PK\x03\x04",
+        &head, b"PK\x03\x04",
         "evidence_pack::build_evidence_pack must emit a ZIP envelope (PK\\x03\\x04), got: {head:?}"
     );
 }

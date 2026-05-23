@@ -97,10 +97,9 @@ fn every_bundled_template_parses_validates_and_has_required_fields() {
         let rel = path.strip_prefix(&root).unwrap_or(path);
         let display = rel.display();
 
-        let tmpl = parse_template_file(path)
-            .unwrap_or_else(|e| panic!("failed to parse {display}: {e}"));
-        validate_template(&tmpl)
-            .unwrap_or_else(|e| panic!("failed to validate {display}: {e}"));
+        let tmpl =
+            parse_template_file(path).unwrap_or_else(|e| panic!("failed to parse {display}: {e}"));
+        validate_template(&tmpl).unwrap_or_else(|e| panic!("failed to validate {display}: {e}"));
 
         assert!(!tmpl.id.is_empty(), "{display} has empty id");
         assert!(!tmpl.name.is_empty(), "{display} has empty name");
@@ -242,8 +241,7 @@ fn registry_loads_every_bundled_template() {
             .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()));
         rust_modelled_ids.insert(tmpl.id);
     }
-    let loaded_ids: HashSet<String> =
-        registry.list().iter().map(|t| t.id.clone()).collect();
+    let loaded_ids: HashSet<String> = registry.list().iter().map(|t| t.id.clone()).collect();
 
     let missing: Vec<&String> = rust_modelled_ids.difference(&loaded_ids).collect();
     assert!(
