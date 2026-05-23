@@ -30,10 +30,15 @@ import * as marpRenderer from "../../services/marpRenderer";
 import * as iconResolver from "../../services/iconResolver";
 import * as editors from "../../editors";
 
-// Repository root — three levels up from this file
-// (apps/desktop/renderer/src/__tests__/smoke -> apps/desktop/renderer/src ->
-// apps/desktop -> apps -> <root>). We resolve via __dirname rather than
-// hardcoding so the test runs the same on every contributor's box.
+// Repository root — six directory levels up from this test file.
+// The file lives at:
+//   apps/desktop/renderer/src/__tests__/smoke/phaseVerification.test.ts
+// so resolving six `..` segments walks back through, in order:
+//   smoke -> __tests__ -> src -> renderer -> desktop -> apps -> <root>.
+// We resolve via __dirname rather than hardcoding so the test runs the
+// same on every contributor's box. If the test file is ever relocated
+// (e.g. promoted to a top-level tests/ directory), this count and the
+// comment must be updated together.
 const REPO_ROOT = resolve(__dirname, "..", "..", "..", "..", "..", "..");
 const TEMPLATES_DIR = join(REPO_ROOT, "templates");
 
@@ -118,24 +123,66 @@ function loadBundledTemplates(): BundledTemplate[] {
  * Pull a scalar value out of a YAML document by looking for a
  * top-level (non-indented) line matching `<key>:`. Returns the value
  * with surrounding quotes stripped, or null if the key is absent.
+ *
+ * The unquoted-comment-stripping rule mirrors YAML 1.2 §6.6: a `#`
+ * only begins a comment when preceded by whitespace (or appears at
+ * the start of the line). So `id: foo#bar` is the literal value
+ * `foo#bar`, while `id: foo # comment` is the literal value `foo`
+ * with a trailing comment. A naïve lazy-regex like `(.*?)\s*(?:#.*)?$`
+ * would incorrectly truncate `id: foo#bar` to `foo`, because the lazy
+ * quantifier prefers the shortest match that still lets the optional
+ * comment tail succeed.
+ *
+ * We instead split the line manually on `<key>:` and use a small
+ * state machine to find the start of a real comment, honouring both
+ * single- and double-quoted scalars (where `#` is literal).
  */
 function extractTopLevelScalar(body: string, key: string): string | null {
   const lines = body.split(/\r?\n/);
-  const re = new RegExp(`^${key}:\\s*(.*?)\\s*(?:#.*)?$`);
+  const prefix = `${key}:`;
   for (const line of lines) {
     // Top-level keys begin in column 0; indented occurrences belong to
     // nested mappings and must be ignored.
     if (/^\s/.test(line)) continue;
-    const m = re.exec(line);
-    if (!m) continue;
-    let v = m[1];
-    if (
-      (v.startsWith('"') && v.endsWith('"')) ||
-      (v.startsWith("'") && v.endsWith("'"))
-    ) {
-      v = v.slice(1, -1);
+    if (!line.startsWith(prefix)) continue;
+    // Skip the `<key>:` then trim only the inter-token whitespace —
+    // do NOT consume trailing whitespace yet, because the unquoted
+    // value may legitimately contain a `#` that is not a comment.
+    let rest = line.slice(prefix.length);
+    // Eat single space/tab run after the colon. Anything beyond a
+    // single column of inter-token whitespace is unusual for our
+    // bundled templates but YAML permits it.
+    rest = rest.replace(/^[\t ]+/, "");
+    // Quoted scalar — the value lives between the quotes and any
+    // trailing text on the line (including `#`) is comment.
+    if (rest.startsWith('"') || rest.startsWith("'")) {
+      const quote = rest[0];
+      // Find the matching closing quote. YAML 1.2 double-quoted
+      // scalars support C-style escapes; for our limited use case
+      // (template ids and types) we don't need full escape handling
+      // — a closing quote that isn't preceded by `\\` is sufficient.
+      let i = 1;
+      while (i < rest.length) {
+        if (rest[i] === "\\" && quote === '"') {
+          i += 2;
+          continue;
+        }
+        if (rest[i] === quote) break;
+        i += 1;
+      }
+      if (i >= rest.length) {
+        // Unterminated quoted scalar — treat as no match rather
+        // than guessing.
+        continue;
+      }
+      return rest.slice(1, i);
     }
-    return v;
+    // Unquoted scalar — strip a trailing comment only when the `#`
+    // is preceded by ASCII whitespace, per YAML 1.2 §6.6. A `#`
+    // adjacent to a non-whitespace character is literal.
+    const commentRe = /\s+#.*$/;
+    const stripped = rest.replace(commentRe, "");
+    return stripped.trimEnd();
   }
   return null;
 }
@@ -166,26 +213,113 @@ function extractCategoryTemplateIds(): Set<string> {
     "utf8",
   );
 
-  // Slice from `const CATEGORIES` to the matching `};` so we only see
-  // ids inside the constant, not template-string ids that happen to
-  // appear later in the file (e.g. fallback messages).
+  // Slice from `const CATEGORIES` to the matching closing brace so we
+  // only see ids inside the constant, not template-string ids that
+  // happen to appear later in the file (e.g. fallback messages).
   const start = source.indexOf("const CATEGORIES");
   if (start === -1) {
     throw new Error("CATEGORIES constant not found in CreatePage.tsx");
   }
-  // Find the closing `};` after start. We track brace depth from the
-  // first `{` after `const CATEGORIES`.
+  // Find the closing `}` after `start`. We track brace depth from the
+  // first `{` after `const CATEGORIES`, BUT we must skip braces that
+  // appear inside JS/TS lexical constructs that contain syntactic
+  // noise — namely string literals (single-quoted, double-quoted,
+  // backtick template literals with `${...}` interpolations) AND
+  // single-line / multi-line comments. The simpler "count every `{`
+  // and `}`" approach worked by accident for the original CATEGORIES
+  // block, but a comment like `// they're the first thing` would
+  // confuse a half-aware string-skipping lexer into entering a
+  // never-closed single-quote state. The state machine below covers
+  // the five JS/TS productions that can contain `{`/`}` without
+  // meaning them: line comment, block comment, single-quoted string,
+  // double-quoted string, and template literal (with nested code via
+  // `${...}`).
   let depth = 0;
   let i = source.indexOf("{", start);
   let end = -1;
+  type LexState = "code" | "sl_comment" | "ml_comment" | "sq" | "dq" | "bt";
+  let state: LexState = "code";
+  // Track template-literal interpolation nesting depth so a `}` that
+  // closes a `${...}` doesn't get charged against the outer brace
+  // counter.
+  const templateInterpStack: number[] = [];
   for (; i < source.length; i++) {
     const ch = source[i];
-    if (ch === "{") depth += 1;
-    else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        end = i + 1;
-        break;
+    const next = source[i + 1];
+    if (state === "code") {
+      if (ch === "/" && next === "/") {
+        state = "sl_comment";
+        i += 1;
+        continue;
+      }
+      if (ch === "/" && next === "*") {
+        state = "ml_comment";
+        i += 1;
+        continue;
+      }
+      if (ch === "'") {
+        state = "sq";
+      } else if (ch === '"') {
+        state = "dq";
+      } else if (ch === "`") {
+        state = "bt";
+      } else if (ch === "{") {
+        depth += 1;
+      } else if (ch === "}") {
+        // A `}` here either closes a `${...}` interpolation (returning
+        // us to the surrounding template literal) or closes a real
+        // brace pair in code.
+        if (templateInterpStack.length > 0) {
+          const interpDepth = templateInterpStack[templateInterpStack.length - 1];
+          if (depth === interpDepth) {
+            templateInterpStack.pop();
+            state = "bt";
+            continue;
+          }
+        }
+        depth -= 1;
+        if (depth === 0) {
+          end = i + 1;
+          break;
+        }
+      }
+    } else if (state === "sl_comment") {
+      // Line comment terminates at the next newline.
+      if (ch === "\n") {
+        state = "code";
+      }
+    } else if (state === "ml_comment") {
+      // Block comment terminates at the matching `*/`.
+      if (ch === "*" && next === "/") {
+        state = "code";
+        i += 1;
+      }
+    } else if (state === "sq" || state === "dq") {
+      // Inside a non-template string: respect backslash escapes and
+      // stop on the matching closing quote.
+      if (ch === "\\") {
+        i += 1; // skip the escaped character
+        continue;
+      }
+      if ((state === "sq" && ch === "'") || (state === "dq" && ch === '"')) {
+        state = "code";
+      }
+    } else {
+      // state === "bt" — inside a template literal. `${` starts a
+      // code-mode interpolation that ends at the matching `}`.
+      if (ch === "\\") {
+        i += 1;
+        continue;
+      }
+      if (ch === "`") {
+        state = "code";
+      } else if (ch === "$" && next === "{") {
+        // Step past the `${`, push the brace depth at which the
+        // interpolation opened, and re-enter code mode.
+        i += 1;
+        depth += 1;
+        templateInterpStack.push(depth);
+        state = "code";
       }
     }
   }
