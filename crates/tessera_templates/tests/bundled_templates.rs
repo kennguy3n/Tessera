@@ -614,6 +614,20 @@ fn locale_from_relative_path(relative: &Path) -> String {
 
 /// Map a discovered path back to the first directory component under
 /// `templates/`. Used to derive the expected `ArtifactType`.
+///
+/// IMPORTANT: the match arms below MUST stay in sync with
+/// `tessera_templates::TEMPLATE_CATEGORIES` in `src/lib.rs`. Adding a
+/// new category there without adding a match arm here (and a paired
+/// arm in `expected_artifact_type` below) panics this test on the
+/// first YAML the new category ships. The match exists in its
+/// long-hand form rather than being indexed off `TEMPLATE_CATEGORIES`
+/// because we need a `&'static str` return type so the failure
+/// messages can interpolate the category name without dragging a
+/// lifetime parameter through the call site — `TEMPLATE_CATEGORIES`
+/// is already `&'static [&'static str]`, but mapping through it at
+/// runtime would force `'static` borrow gymnastics that obscure the
+/// test logic. The explicit panic message makes drift obvious; the
+/// sync requirement is the trade-off.
 fn category_for(path: &Path) -> &'static str {
     let root = workspace_templates_root();
     let relative = path
@@ -640,6 +654,11 @@ fn category_for(path: &Path) -> &'static str {
     }
 }
 
+/// Map a canonical category name to the `ArtifactType` every YAML in
+/// that category MUST declare. Pairs with `category_for` above and
+/// MUST be kept in sync with `tessera_templates::TEMPLATE_CATEGORIES`.
+/// See the doc comment on `category_for` for the rationale behind the
+/// explicit match instead of an iterator over `TEMPLATE_CATEGORIES`.
 fn expected_artifact_type(category: &str) -> ArtifactType {
     match category {
         "documents" => ArtifactType::Document,
