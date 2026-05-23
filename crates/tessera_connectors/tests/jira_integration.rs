@@ -71,9 +71,7 @@ async fn full_lifecycle_authenticate_discovers_cloud_id_then_lists_issues() {
 
     // 3. List issues via /ex/jira/{cloud}/rest/api/3/search.
     Mock::given(method("GET"))
-        .and(path(
-            "/api/ex/jira/cloud-tenant-1/rest/api/3/search",
-        ))
+        .and(path("/api/ex/jira/cloud-tenant-1/rest/api/3/search"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "issues": [
                 {

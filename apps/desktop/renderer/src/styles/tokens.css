@@ -77,6 +77,7 @@
   --color-relevance-medium-bg: rgba(245, 158, 11, 0.16);
   --color-relevance-low-fg: #b91c1c;
   --color-relevance-low-bg: rgba(239, 68, 68, 0.14);
+  --color-priority-high: #c2410c;
 }
 
 /* Phase 9 Task 18 — Dark theme overrides.
@@ -127,6 +128,7 @@
   --color-relevance-medium-bg: rgba(245, 158, 11, 0.22);
   --color-relevance-low-fg: #fca5a5;
   --color-relevance-low-bg: rgba(239, 68, 68, 0.22);
+  --color-priority-high: #fb923c;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -159,5 +161,6 @@
     --color-relevance-medium-bg: rgba(245, 158, 11, 0.22);
     --color-relevance-low-fg: #fca5a5;
     --color-relevance-low-bg: rgba(239, 68, 68, 0.22);
+    --color-priority-high: #fb923c;
   }
 }

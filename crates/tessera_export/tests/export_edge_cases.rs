@@ -218,10 +218,16 @@ fn html_unicode_body_html_escapes_special_chars_but_keeps_non_ascii() {
     let mut artifact = Artifact::new("Unicode <Title>".into(), ArtifactType::Document, None);
     artifact.update_content("日本語 with <script> tag and & ampersand and \"quote\"".into());
     let out = export_html(&artifact, &[]);
-    assert!(out.contains("日本語"), "unicode body must survive, got:\n{out}");
+    assert!(
+        out.contains("日本語"),
+        "unicode body must survive, got:\n{out}"
+    );
     // Title rendered as <h1> — must NOT contain literal `<Title>`
     // (would mean it wasn't escaped).
-    assert!(out.contains("Unicode &lt;Title&gt;"), "title must be escaped");
+    assert!(
+        out.contains("Unicode &lt;Title&gt;"),
+        "title must be escaped"
+    );
     // Body's `<script>` must be escaped.
     assert!(
         out.contains("&lt;script&gt;"),
@@ -260,7 +266,8 @@ fn csv_unicode_title_with_embedded_quote_is_escaped_via_doubling() {
 fn mermaid_adjacent_blocks_extract_independently() {
     // Two fenced blocks separated only by a single newline — the
     // extractor must surface BOTH, not merge them into one.
-    let content = "```mermaid\nflowchart LR\nA-->B\n```\n```mermaid\npie\n\"A\" : 50\n\"B\" : 50\n```\n";
+    let content =
+        "```mermaid\nflowchart LR\nA-->B\n```\n```mermaid\npie\n\"A\" : 50\n\"B\" : 50\n```\n";
     let blocks = mermaid::extract_blocks(content);
     assert_eq!(blocks.len(), 2, "expected 2 blocks, got {blocks:?}");
     assert!(blocks[0].dsl.contains("flowchart"));
@@ -310,9 +317,7 @@ fn mermaid_html_export_emits_one_div_per_block_and_one_runtime_script() {
 
 #[test]
 fn mermaid_pdf_placeholder_strips_dsl_and_keeps_diagram_type() {
-    let block = &mermaid::extract_blocks(
-        "```mermaid\nflowchart LR\nA-->B\n```\n",
-    )[0];
+    let block = &mermaid::extract_blocks("```mermaid\nflowchart LR\nA-->B\n```\n")[0];
     let placeholder = mermaid::to_pdf_placeholder(block);
     assert!(
         !placeholder.contains("A-->B"),
@@ -344,8 +349,7 @@ fn evidence_pack_with_zero_citations_still_produces_valid_zip() {
     let output = dir.path().join("evidence.zip");
     let artifact = Artifact::new("No Citations".into(), ArtifactType::Document, None);
 
-    build_evidence_pack(&artifact, &[], output.to_str().unwrap())
-        .expect("build_evidence_pack");
+    build_evidence_pack(&artifact, &[], output.to_str().unwrap()).expect("build_evidence_pack");
 
     let file = std::fs::File::open(&output).unwrap();
     let mut archive = zip::ZipArchive::new(file).expect("zip parses");
@@ -396,13 +400,7 @@ fn evidence_pack_dedupes_source_excerpts_across_repeated_source_ids() {
     let file = std::fs::File::open(&output).unwrap();
     let mut archive = zip::ZipArchive::new(file).expect("zip parses");
     let source_entries: Vec<String> = (0..archive.len())
-        .map(|i| {
-            archive
-                .by_index(i)
-                .unwrap()
-                .name()
-                .to_string()
-        })
+        .map(|i| archive.by_index(i).unwrap().name().to_string())
         .filter(|n| n.starts_with("sources/"))
         .collect();
     assert_eq!(
@@ -423,8 +421,7 @@ fn evidence_pack_unicode_source_title_round_trips_through_excerpt() {
     let output = dir.path().join("unicode.zip");
     let artifact = Artifact::new("ユニコード Test".into(), ArtifactType::Document, None);
 
-    build_evidence_pack(&artifact, &[citation.clone()], output.to_str().unwrap())
-        .expect("build");
+    build_evidence_pack(&artifact, &[citation.clone()], output.to_str().unwrap()).expect("build");
 
     let file = std::fs::File::open(&output).unwrap();
     let mut archive = zip::ZipArchive::new(file).expect("zip parses");

@@ -146,16 +146,17 @@ async fn full_lifecycle_authenticate_list_via_team_then_download() {
     let mut connector = FigmaConnector::with_base_url(&server.uri());
     let tokens = connector.authenticate(&auth_config()).await.expect("auth");
     assert_eq!(tokens.access_token, "figma-access-token");
-    assert_eq!(
-        tokens.refresh_token.as_deref(),
-        Some("figma-refresh-token"),
-    );
+    assert_eq!(tokens.refresh_token.as_deref(), Some("figma-refresh-token"),);
     assert_eq!(connector.status(), ConnectorStatus::Connected);
 
     // Set the team id and walk.
     connector.set_team_id("team-77");
     let files = connector.list_files(None).await.expect("list");
-    assert_eq!(files.len(), 2, "expected one file per project, got {files:?}");
+    assert_eq!(
+        files.len(),
+        2,
+        "expected one file per project, got {files:?}"
+    );
     assert!(files.iter().any(|f| f.id == "FILE_AAA"));
     assert!(files.iter().any(|f| f.id == "FILE_BBB"));
 
@@ -205,9 +206,11 @@ async fn list_files_with_project_id_skips_team_projects_fetch() {
     // gets hit.
     Mock::given(method("GET"))
         .and(path("/v1/teams/team-tripwire/projects"))
-        .respond_with(ResponseTemplate::new(500).set_body_string(
-            "TRIPWIRE: list_files(Some(...)) must skip the team-projects fetch",
-        ))
+        .respond_with(
+            ResponseTemplate::new(500).set_body_string(
+                "TRIPWIRE: list_files(Some(...)) must skip the team-projects fetch",
+            ),
+        )
         .expect(0)
         .mount(&server)
         .await;

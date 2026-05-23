@@ -134,10 +134,7 @@ async fn full_lifecycle_authenticate_list_download_revoke() {
         "expected db-002 in {files:?}",
     );
 
-    let bytes = connector
-        .download_file("page-001")
-        .await
-        .expect("download");
+    let bytes = connector.download_file("page-001").await.expect("download");
     let body = String::from_utf8(bytes).unwrap();
     assert!(
         body.contains("Overview"),
@@ -358,10 +355,7 @@ async fn sync_changes_full_walk_surfaces_deletions_via_set_diff() {
         .await
         .expect("sync_changes");
     assert!(
-        result
-            .removed
-            .iter()
-            .any(|id| id == "page-99"),
+        result.removed.iter().any(|id| id == "page-99"),
         "expected page-99 in removed list, got {:?}",
         result.removed,
     );

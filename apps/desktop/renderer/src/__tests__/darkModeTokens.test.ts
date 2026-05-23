@@ -65,20 +65,29 @@ function collectTokenRefs(): Set<string> {
   return refs;
 }
 
-function collectDeclaredTokens(scope: "root" | "dark"): Set<string> {
+function collectDeclaredTokens(
+  scope: "root" | "dark" | "media-dark",
+): Set<string> {
   const text = readFileSync(TOKENS_CSS, "utf8");
-  const selector =
-    scope === "root"
-      ? /:root\s*\{([\s\S]*?)\n\}/
-      : /\[data-theme="dark"\]\s*\{([\s\S]*?)\n\}/;
-  const block = text.match(selector);
-  if (!block) {
+  let blockText: string | undefined;
+  if (scope === "root") {
+    blockText = text.match(/:root\s*\{([\s\S]*?)\n\}/)?.[1];
+  } else if (scope === "dark") {
+    blockText = text.match(/\[data-theme="dark"\]\s*\{([\s\S]*?)\n\}/)?.[1];
+  } else {
+    // The @media block wraps an inner `:root:not([data-theme=…])`
+    // selector — extract just the inner declarations.
+    blockText = text.match(
+      /@media \(prefers-color-scheme: dark\)\s*\{[\s\S]*?\{([\s\S]*?)\n  \}/,
+    )?.[1];
+  }
+  if (!blockText) {
     throw new Error(`tokens.css is missing the ${scope} selector`);
   }
   const declared = new Set<string>();
   const re = /(--color-[a-z0-9-]+)\s*:/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(block[1])) !== null) {
+  while ((m = re.exec(blockText)) !== null) {
     declared.add(m[1]);
   }
   return declared;
@@ -103,6 +112,29 @@ describe("dark-mode CSS variable enforcement", () => {
           .map((n) => `  ${n}`)
           .join("\n")}`,
     ).toEqual([]);
+  });
+
+  it("[data-theme=\"dark\"] and @media (prefers-color-scheme: dark) declare the same tokens", () => {
+    // Devin Review flagged that the explicit-Dark scope and the
+    // System-Dark media query block are duplicated, and a future
+    // patch could update one without the other — silently giving
+    // users in System-Dark different colors than users in Dark.
+    // This test pins that the two blocks declare the EXACT SAME
+    // set of tokens. (We don't compare the *values* because
+    // they're identical by design — anyone diffing this test will
+    // be reminded to copy the value to both blocks.)
+    const dark = collectDeclaredTokens("dark");
+    const media = collectDeclaredTokens("media-dark");
+    const onlyInDark = [...dark].filter((t) => !media.has(t));
+    const onlyInMedia = [...media].filter((t) => !dark.has(t));
+    expect(
+      { onlyInDark, onlyInMedia },
+      `[data-theme="dark"] and @media (prefers-color-scheme: dark) ` +
+        `must declare the same token set. Tokens that appear in one ` +
+        `but not the other:\n  only in [data-theme]: ${JSON.stringify(
+          onlyInDark,
+        )}\n  only in @media: ${JSON.stringify(onlyInMedia)}`,
+    ).toEqual({ onlyInDark: [], onlyInMedia: [] });
   });
 
   it("every primary palette / surface / text token is overridden in [data-theme=\"dark\"]", () => {

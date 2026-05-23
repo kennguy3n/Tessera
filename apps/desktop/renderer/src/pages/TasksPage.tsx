@@ -85,9 +85,15 @@ function priorityColor(p: string): string {
     case "critical":
       return "var(--color-danger, #b91c1c)";
     case "high":
-      // Was a bare `#c2410c` (orange-700) which broke in dark mode
-      // — use the warning token so dark theme can override it.
-      return "var(--color-warning, #c2410c)";
+      // Was a bare `#c2410c` (orange-700) which broke in dark mode.
+      // We use a dedicated `--color-priority-high` token (not
+      // `--color-warning`) because `--color-warning` is #f59e0b
+      // (amber) in light mode — switching to it would silently
+      // shift the existing high-priority badge from orange-700 to
+      // amber-500. The dedicated token preserves orange-700 in
+      // light and uses orange-400 (`#fb923c`) in dark for contrast
+      // on the dark bg.
+      return "var(--color-priority-high, #c2410c)";
     case "medium":
       return "var(--color-primary)";
     default:

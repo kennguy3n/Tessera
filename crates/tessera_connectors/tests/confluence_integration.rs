@@ -66,9 +66,7 @@ async fn full_lifecycle_authenticate_discovers_cloud_id_then_lists_pages() {
         .await;
 
     Mock::given(method("GET"))
-        .and(path(
-            "/api/ex/confluence/cloud-c1/wiki/api/v2/pages",
-        ))
+        .and(path("/api/ex/confluence/cloud-c1/wiki/api/v2/pages"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "results": [
                 {
@@ -208,7 +206,11 @@ async fn list_files_paginates_via_links_next_cursor() {
     connector.set_access_token("AT", 3600, "cloud-1");
 
     let files = connector.list_files(None).await.expect("list");
-    assert_eq!(files.len(), 2, "expected both pages to surface, got {files:?}");
+    assert_eq!(
+        files.len(),
+        2,
+        "expected both pages to surface, got {files:?}"
+    );
     assert_eq!(files[0].id, "p-1");
     assert_eq!(files[1].id, "p-2");
 }
