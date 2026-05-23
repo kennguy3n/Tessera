@@ -19,7 +19,11 @@ import { createEmptyTokenUsage } from "../tokenCounter";
 import { resolveProviderEndpoint } from "../externalProviderStream";
 import { listExternalProviderModels } from "../externalProviderModels";
 import * as secretsVault from "../secretsVault";
-import type { SettingsData } from "../../shared/types";
+import type {
+  ExternalProviderListModelsDraftOverrides,
+  SettingsData,
+} from "../../shared/types";
+import { EXTERNAL_PROVIDER_TYPES } from "../../shared/types";
 import {
   ExternalProviderApiKeySchema,
   ExternalProviderConfigSchema,
@@ -109,6 +113,41 @@ async function testExternalProviderConnection(
   }
 }
 
+/**
+ * Best-effort parser for the optional `draft overrides` payload sent
+ * by the renderer's "List models" button. Unknown fields, wrong
+ * types, and missing fields are all silently dropped — the caller
+ * merges the resulting partial against the persisted config.
+ *
+ * Validation rules:
+ *   - `apiUrl`: must be a string (we accept any string here because
+ *     the same trim/empty/format-check runs downstream in the
+ *     handler and in `resolveProviderModelsEndpoint`).
+ *   - `providerType`: must be one of `EXTERNAL_PROVIDER_TYPES`.
+ *     Unrecognised types are dropped, NOT rejected — this lets a
+ *     newer renderer (with a future provider type the main process
+ *     doesn't know about) degrade gracefully rather than failing
+ *     the whole list-models call.
+ */
+export function parseListModelsOverrides(
+  raw: unknown,
+): ExternalProviderListModelsDraftOverrides {
+  if (raw === null || typeof raw !== "object") return {};
+  const obj = raw as Record<string, unknown>;
+  const out: ExternalProviderListModelsDraftOverrides = {};
+  if (typeof obj.apiUrl === "string") {
+    out.apiUrl = obj.apiUrl;
+  }
+  if (
+    typeof obj.providerType === "string" &&
+    (EXTERNAL_PROVIDER_TYPES as readonly string[]).includes(obj.providerType)
+  ) {
+    out.providerType =
+      obj.providerType as ExternalProviderListModelsDraftOverrides["providerType"];
+  }
+  return out;
+}
+
 export function registerSettingsHandlers(): void {
   idempotentHandle("settings:get", async () => {
     const config = loadConfig();
@@ -192,32 +231,77 @@ export function registerSettingsHandlers(): void {
     },
   );
 
-  idempotentHandle("externalProvider:listModels", async () => {
-    const config = loadConfig();
-    const provider = config.externalProvider;
-    if (!provider || !provider.enabled) {
-      return { ok: false, kind: "error", error: "External provider is disabled" };
-    }
-    if (!provider.apiUrl.trim()) {
-      return { ok: false, kind: "error", error: "API URL is required" };
-    }
-    if (!secretsVault.hasSecret(provider.apiKeyRef)) {
-      return {
-        ok: false,
-        kind: "error",
-        error: "API key has not been stored",
+  idempotentHandle(
+    "externalProvider:listModels",
+    // Accept an optional draft-overrides payload so the renderer's
+    // "List models" button works against the user's IN-FLIGHT
+    // form state — not the last-saved on-disk config. Without
+    // this, a user who pasted a new `apiUrl` (or switched
+    // `providerType` between openai_compatible and anthropic)
+    // would see the model list for the OLD provider, even though
+    // the form they're looking at points elsewhere. That mismatch
+    // is the exact failure mode flagged by Devin Review.
+    //
+    // The API key is intentionally NOT part of the overrides
+    // payload — we keep secrets out of IPC payloads as a hard
+    // rule. To list models against a NEW API key, the user must
+    // save the key first (the form distinguishes "set a new key"
+    // from "clear the key"); the listing then proceeds against
+    // the persisted vault entry.
+    async (_evt, rawOverrides?: unknown) => {
+      const config = loadConfig();
+      const baseProvider = config.externalProvider;
+      if (!baseProvider || !baseProvider.enabled) {
+        return {
+          ok: false,
+          kind: "error",
+          error: "External provider is disabled",
+        };
+      }
+
+      // Validate overrides defensively — the renderer is trusted
+      // but we never want a malformed payload to crash the
+      // handler. Untrusted-shape fields are dropped silently and
+      // the persisted value is used as-is for that field.
+      const overrides = parseListModelsOverrides(rawOverrides);
+      const provider: ExternalProviderConfig = {
+        ...baseProvider,
+        ...(overrides.apiUrl !== undefined
+          ? { apiUrl: overrides.apiUrl }
+          : {}),
+        ...(overrides.providerType !== undefined
+          ? { providerType: overrides.providerType }
+          : {}),
       };
-    }
-    const apiKey = secretsVault.getSecret(provider.apiKeyRef);
-    if (!apiKey) {
-      return {
-        ok: false,
-        kind: "error",
-        error: "API key has not been stored",
-      };
-    }
-    return await listExternalProviderModels(provider, apiKey);
-  });
+
+      if (!provider.apiUrl.trim()) {
+        return {
+          ok: false,
+          kind: "error",
+          error: "API URL is required",
+        };
+      }
+      // The API key is always looked up against the PERSISTED
+      // `apiKeyRef` — this is what enforces the "no plaintext keys
+      // over IPC" invariant noted above.
+      if (!secretsVault.hasSecret(baseProvider.apiKeyRef)) {
+        return {
+          ok: false,
+          kind: "error",
+          error: "API key has not been stored",
+        };
+      }
+      const apiKey = secretsVault.getSecret(baseProvider.apiKeyRef);
+      if (!apiKey) {
+        return {
+          ok: false,
+          kind: "error",
+          error: "API key has not been stored",
+        };
+      }
+      return await listExternalProviderModels(provider, apiKey);
+    },
+  );
 
   idempotentHandle("externalProvider:getTokenUsage", async () => {
     const config = loadConfig();

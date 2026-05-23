@@ -1,3 +1,5 @@
+import type { ExternalProviderTokenUsage } from "../shared/types";
+
 /**
  * Token-usage estimator and cumulative accumulator for the optional
  * external LLM provider.
@@ -98,9 +100,17 @@ export function estimateTokens(text: string): number {
 
 /**
  * Cumulative token-usage record. Stored verbatim in `AppConfig` as
- * the `externalProviderTokenUsage` field. The field is persisted
- * across launches so the user sees a real "tokens used this month"
- * number, not a per-session counter that resets on restart.
+ * the `externalProviderTokenUsage` field, persisted across
+ * launches so the user sees a real "tokens used this month"
+ * number rather than a per-session counter that resets on restart.
+ *
+ * The canonical declaration lives in `apps/desktop/shared/types.ts`
+ * so the renderer (typed off `window.tessera.externalProvider`)
+ * and the main process see the EXACT same shape — TypeScript's
+ * structural typing would gloss over a drift in field names,
+ * which would silently break the IPC handshake. Re-exporting from
+ * the canonical module here keeps `tokenCounter.ts`'s public API
+ * stable while eliminating that drift risk.
  *
  * `lastResetDate` is an ISO-8601 timestamp string (not a `Date`
  * object) so it survives JSON round-trips. The renderer formats it
@@ -114,17 +124,7 @@ export function estimateTokens(text: string): number {
  * stored shape via zod's `.catch()` heal-on-load policy in
  * `config.ts`.
  */
-export interface ExternalProviderTokenUsage {
-  /** Cumulative input/prompt tokens since `lastResetDate`. */
-  totalPromptTokens: number;
-  /** Cumulative output/response tokens since `lastResetDate`. */
-  totalCompletionTokens: number;
-  /** ISO-8601 timestamp when the counter was last reset (or first
-   *  created). Render-side display uses
-   *  `new Date(lastResetDate).toLocaleDateString()` for the
-   *  "used since May 23" label. */
-  lastResetDate: string;
-}
+export type { ExternalProviderTokenUsage };
 
 /**
  * Construct a fresh, empty usage record with the current

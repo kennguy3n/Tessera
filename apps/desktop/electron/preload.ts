@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   AddCitationRequest,
   ExternalProviderConfigInput,
+  ExternalProviderListModelsDraftOverrides,
   ModelDownloadProgress,
   ReplaceCitationRequest,
   SaveDialogOptions,
@@ -246,7 +247,8 @@ const api: TesseraApi = {
     set: (provider: ExternalProviderConfigInput, apiKey: string | null) =>
       ipcRenderer.invoke("externalProvider:set", provider, apiKey),
     test: () => ipcRenderer.invoke("externalProvider:test"),
-    listModels: () => ipcRenderer.invoke("externalProvider:listModels"),
+    listModels: (overrides?: ExternalProviderListModelsDraftOverrides) =>
+      ipcRenderer.invoke("externalProvider:listModels", overrides),
     getTokenUsage: () => ipcRenderer.invoke("externalProvider:getTokenUsage"),
     resetTokenUsage: () =>
       ipcRenderer.invoke("externalProvider:resetTokenUsage"),

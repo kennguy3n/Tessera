@@ -108,8 +108,28 @@ export default function ExternalProviderCard() {
     setBusy(true);
     setStatus({ kind: "idle" });
     try {
+      // Pass the in-flight form state (apiUrl + providerType) to
+      // the main process so the listing operates against what the
+      // user is CURRENTLY editing, not the last-saved on-disk
+      // config. This avoids the "I changed the URL, clicked List,
+      // got the old provider's models" confusion that Devin
+      // Review flagged. The API key is intentionally NOT
+      // overridable here — the persisted vault entry is the only
+      // source of plaintext-key truth (see comment on the IPC
+      // handler in `electron/ipc/settings.ts`).
+      //
+      // `provider` may be null between mount and first refresh()
+      // settling; we send `undefined` overrides in that window
+      // and the handler falls back to the persisted config.
       const result: ExternalProviderListModelsResult =
-        await window.tessera.externalProvider.listModels();
+        await window.tessera.externalProvider.listModels(
+          provider
+            ? {
+                apiUrl: provider.apiUrl,
+                providerType: provider.providerType,
+              }
+            : undefined,
+        );
       if (result.ok) {
         setAvailableModels(result.models);
       } else if (result.kind === "unsupported") {
@@ -124,7 +144,7 @@ export default function ExternalProviderCard() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [provider]);
 
   const onResetTokenUsage = useCallback(async () => {
     try {

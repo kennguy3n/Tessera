@@ -292,6 +292,26 @@ export type ExternalProviderListModelsResult =
   | { ok: false; kind: "error"; error: string };
 
 /**
+ * Optional draft-state overrides accepted by
+ * `externalProvider:listModels`. Lets the renderer's "List models"
+ * button operate against in-flight form state (apiUrl /
+ * providerType) without forcing the user to save first. The
+ * main-process handler merges these atop the persisted
+ * `externalProvider` config — fields left undefined inherit the
+ * saved value.
+ *
+ * `apiKey` is intentionally NOT settable here: the IPC layer
+ * keeps plaintext keys out of the wire, and the persisted vault
+ * entry (looked up via `apiKeyRef`) is always used for the actual
+ * HTTP call. To list models against a NEW key, the user must save
+ * the key first.
+ */
+export interface ExternalProviderListModelsDraftOverrides {
+  apiUrl?: string;
+  providerType?: ExternalProviderType;
+}
+
+/**
  * Cumulative external-provider token usage. The shape and units are
  * documented in `electron/tokenCounter.ts`. Lives in `AppConfig` so
  * it survives launches; the renderer reads it via
@@ -731,8 +751,15 @@ export interface ExternalProviderApi {
   /** List available models from the configured OpenAI-compatible
    *  provider via `GET /v1/models`. Anthropic providers return
    *  `{ ok: false, kind: "unsupported" }`; network/HTTP errors
-   *  return `{ ok: false, kind: "error", error }`. */
-  listModels: () => Promise<ExternalProviderListModelsResult>;
+   *  return `{ ok: false, kind: "error", error }`.
+   *
+   *  Accepts optional `overrides` so the renderer can list models
+   *  against IN-FLIGHT form state (apiUrl, providerType) without
+   *  saving first. The persisted `apiKeyRef` is always used for
+   *  the actual HTTP call — plaintext keys never travel over IPC. */
+  listModels: (
+    overrides?: ExternalProviderListModelsDraftOverrides,
+  ) => Promise<ExternalProviderListModelsResult>;
   /** Read the cumulative external-provider token-usage counter.
    *  See `electron/tokenCounter.ts` for the heuristic and rationale. */
   getTokenUsage: () => Promise<ExternalProviderTokenUsage>;

@@ -8,17 +8,16 @@ import {
   THEMES,
   type ExportFormat,
   type ExternalProviderType,
+  type ExternalProviderTokenUsage,
   type Theme,
 } from "../shared/types";
 
-// Re-export so call sites that already pull `ExternalProviderType` from
-// `./config` keep working without churn. The canonical declaration lives
-// in `apps/desktop/shared/types.ts` so the IPC wire shape
-// (`ExternalProviderConfigInput`) and the on-disk config shape
-// (`ExternalProviderConfig`) cannot drift apart.
-export type { ExternalProviderType };
-import type { ExternalProviderTokenUsage } from "../shared/types";
-export type { ExternalProviderTokenUsage };
+// Re-export so call sites that already pull these types from
+// `./config` keep working without churn. The canonical
+// declarations live in `apps/desktop/shared/types.ts` so the IPC
+// wire shape (`ExternalProviderConfigInput`) and the on-disk
+// config shape (`ExternalProviderConfig`) cannot drift apart.
+export type { ExternalProviderType, ExternalProviderTokenUsage };
 
 export interface ExternalProviderConfig {
   enabled: boolean;

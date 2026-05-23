@@ -211,6 +211,25 @@ export function registerModelHandlers(): void {
       // final cumulative value.
       const promptTokens = estimateTokens(parsed.prompt);
       let completionTokens = 0;
+      // Tracks whether the upstream stream body actually opened
+      // (i.e. the provider began emitting deltas). Pre-stream
+      // failures — HTTP 401/403/400, retry-exhausted 502/503/504,
+      // DNS errors, TLS errors — surface as a throw from
+      // `streamExternalProvider` BEFORE any emit callback runs. In
+      // those cases the upstream provider never processed the
+      // prompt and the user was never billed, so we MUST NOT
+      // inflate the cumulative-usage counter by `promptTokens`. A
+      // user who misconfigures their API key and repeatedly retries
+      // would otherwise see the counter climb without any actual
+      // provider spend, making the "used since <date>" display
+      // misleading.
+      //
+      // Conversely, ANY emit callback (even one with empty content
+      // for framing-only deltas) proves the body opened — at that
+      // point the provider has accepted the request, the prompt
+      // was processed, and we count `promptTokens` regardless of
+      // whether the stream subsequently completes cleanly.
+      let streamOpened = false;
       try {
         await streamExternalProvider(
           {
@@ -222,6 +241,7 @@ export function registerModelHandlers(): void {
             signal: controller.signal,
           },
           (chunk: ExternalProviderStreamChunk) => {
+            streamOpened = true;
             if (chunk.content.length > 0) {
               completionTokens += estimateTokens(chunk.content);
               sendToken({ token: chunk.content, done: false });
@@ -236,26 +256,29 @@ export function registerModelHandlers(): void {
           sendToken({ token: "", done: true });
           sentDone = true;
         }
-        // Persist the cumulative usage delta. This runs even on
-        // mid-stream failure (network drop, abort) so a partial
-        // completion still counts the tokens the user actually
-        // received — they were billed for those tokens by the
-        // upstream provider regardless of whether the stream
-        // completed cleanly. Errors during the config write are
-        // swallowed because (1) the disk write is best-effort
-        // for an informational counter and (2) propagating them
-        // would mask the original generation error.
-        try {
-          const current = loadConfig();
-          const previous: ExternalProviderTokenUsage =
-            current.externalProviderTokenUsage;
-          const next = accumulateTokenUsage(previous, {
-            promptTokens,
-            completionTokens,
-          });
-          updateConfig({ externalProviderTokenUsage: next });
-        } catch {
-          // Best-effort; see comment above.
+        // Persist the cumulative usage delta ONLY if the upstream
+        // body actually opened. This runs even on mid-stream
+        // failure (network drop, abort) so a partial completion
+        // still counts the tokens the user actually received —
+        // they were billed for those tokens by the upstream
+        // provider regardless of whether the stream completed
+        // cleanly. Errors during the config write are swallowed
+        // because (1) the disk write is best-effort for an
+        // informational counter and (2) propagating them would
+        // mask the original generation error.
+        if (streamOpened) {
+          try {
+            const current = loadConfig();
+            const previous: ExternalProviderTokenUsage =
+              current.externalProviderTokenUsage;
+            const next = accumulateTokenUsage(previous, {
+              promptTokens,
+              completionTokens,
+            });
+            updateConfig({ externalProviderTokenUsage: next });
+          } catch {
+            // Best-effort; see comment above.
+          }
         }
       }
       return;
