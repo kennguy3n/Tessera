@@ -110,6 +110,26 @@ jobs:
       - name: Build
         run: cargo build --all-targets
 
+      # Catches the release-mode profile divergence: `.github/workflows/
+      # release.yml` builds with `cargo build --release --all-targets`,
+      # and `#[cfg(debug_assertions)]`-gated code can compile or behave
+      # differently between debug and release. Without this step, a PR
+      # adding `cfg(debug_assertions)` code that fails to compile in
+      # release mode would pass CI and only blow up when the maintainer
+      # pushes a `v*` tag — far too late.
+      #
+      # We run only on ubuntu-22.04 (the required gate) to avoid
+      # tripling the cargo cache warmup cost on the macos-13 / windows-
+      # 2022 matrix legs; Rust release-mode compilation is portable
+      # enough that an ubuntu-only check catches the divergence in
+      # practice. If a contributor introduces a release-mode-only
+      # *target* (e.g. a darwin-only proc-macro) the release workflow
+      # itself still runs the full per-platform release build, so the
+      # gap is bounded.
+      - name: Build (release mode)
+        if: matrix.os == 'ubuntu-22.04'
+        run: cargo build --release --all-targets
+
       - name: Test
         run: cargo test --all
 
@@ -149,12 +169,26 @@ jobs:
       # are not always installed on platforms other than the one the lockfile
       # was generated on. Rollup ships per-platform native binaries as
       # optionalDependencies, so we explicitly install the host-matching one.
+      # We pick the package by ${{ runner.arch }} rather than hardcoding the
+      # x64 variant so that bumping the matrix to a future ARM64 windows or
+      # macOS image (e.g. macos-14+) doesn't silently install the wrong
+      # binary and break the build with a confusing "Cannot find module"
+      # error — the release workflow and PowerShell preflight already do this.
       - name: Install platform-specific Rollup binary (Windows)
         if: matrix.os == 'windows-2022'
-        run: npm install --no-save --no-package-lock @rollup/rollup-win32-x64-msvc
+        shell: bash
+        run: |
+          case "${{ runner.arch }}" in
+            ARM64) npm install --no-save --no-package-lock @rollup/rollup-win32-arm64-msvc ;;
+            *)     npm install --no-save --no-package-lock @rollup/rollup-win32-x64-msvc ;;
+          esac
       - name: Install platform-specific Rollup binary (macOS)
-        if: matrix.os == 'macos-13'
-        run: npm install --no-save --no-package-lock @rollup/rollup-darwin-x64
+        if: startsWith(matrix.os, 'macos-')
+        run: |
+          case "${{ runner.arch }}" in
+            ARM64) npm install --no-save --no-package-lock @rollup/rollup-darwin-arm64 ;;
+            *)     npm install --no-save --no-package-lock @rollup/rollup-darwin-x64 ;;
+          esac
 
       - name: Lint
         run: npm run lint --workspace=apps/desktop
@@ -164,6 +198,28 @@ jobs:
 
       - name: Test
         run: npm run test --workspace=apps/desktop
+
+      # Run the actual Vite/TS build so configuration regressions
+      # (broken `vite.config.ts`, missing entry point, electron main
+      # tsconfig drift, etc.) are caught on every PR instead of only
+      # at preflight or release-tag time. `tsc --noEmit` (the
+      # type-check step above) catches typing errors but does NOT
+      # exercise Vite's plugin pipeline, asset resolution, or the
+      # electron main/preload tsconfig, so a maintainer could land
+      # a green PR whose `npm run build` is broken — which would then
+      # silently propagate to anyone running `scripts/preflight.sh` or
+      # a release tag push. The root `npm run build` script forwards
+      # to `npm run build --workspace=apps/desktop` and is the same
+      # command run by the `Build all` step in
+      # `.github/workflows/release.yml` and by both preflight scripts
+      # (line numbers omitted intentionally — they drift every time
+      # those files are edited and the comment goes stale; cross-
+      # reference by step name instead). This CI step now exercises
+      # the identical command path. Kept after `Test` so a failing
+      # build never masks a test signal (tests run first; build runs
+      # once tests pass).
+      - name: Build
+        run: npm run build
 
   # Single aggregator check. This is the one to require in branch
   # protection on `main`; everything else is conditional or advisory.

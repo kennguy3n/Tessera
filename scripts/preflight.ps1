@@ -1,0 +1,507 @@
+<#
+.SYNOPSIS
+    Tessera pre-release preflight (Windows / PowerShell).
+
+.DESCRIPTION
+    Runs every gate that CI runs before a tagged release, plus an
+    `electron-builder --dir` dry-pack so packaging regressions are
+    caught before a `v*` tag is pushed (which would trigger the real
+    release workflow). Each step is wrapped so a failure surfaces
+    the failing step's name and the script exits non-zero — no
+    silent skips.
+
+.PARAMETER SkipPackage
+    Skip the electron-builder --dir dry-pack step. Useful on
+    constrained machines or CI legs that can't run
+    electron-builder; CI does its own packaging in the release
+    workflow either way.
+
+.PARAMETER Version
+    Override the version string used in the final "ready to tag"
+    summary; defaults to the `version` field in package.json.
+
+.EXAMPLE
+    .\scripts\preflight.ps1
+    Run the full preflight against the current working copy.
+
+.EXAMPLE
+    $env:TESSERA_PREFLIGHT_SKIP_PACKAGE = '1'; .\scripts\preflight.ps1
+    Same as above, but skip the electron-builder dry-pack.
+
+.NOTES
+    Exit codes:
+      0       — every step passed; safe to tag the printed version.
+      non-zero — the first failing step's exit code.
+#>
+[CmdletBinding()]
+param(
+    [switch]$SkipPackage,
+    [string]$Version
+)
+
+# Stop on any error so the per-step wrapper below can surface the
+# failure location cleanly. We deliberately turn this *off* for
+# individual step bodies and re-check $LASTEXITCODE ourselves so
+# the failure banner has the correct step name.
+$ErrorActionPreference = 'Stop'
+
+# Mirror the CI workflow's global RUSTFLAGS (the workflow-level
+# `env:` block in .github/workflows/ci.yml). Without this,
+# `cargo test --all` (and any plain `cargo build` it triggers) would
+# only emit warnings while CI treats those same warnings as errors —
+# a release-day surprise we exist to prevent. We append rather than
+# overwrite so a developer's pre-existing RUSTFLAGS (e.g. for
+# target-cpu tuning) is preserved.
+# PowerShell 5.1 lacks the `??` null-coalescing operator, so we
+# explicitly normalise an unset env var to the empty string before
+# concatenating. The Trim() ensures we don't leave a leading space
+# when RUSTFLAGS was previously unset.
+$existingRustflags = if ($env:RUSTFLAGS) { $env:RUSTFLAGS } else { '' }
+# Detect whether the user already has `-D warnings` in their RUSTFLAGS
+# so we don't emit `... -D warnings -D warnings`. rustc deduplicates
+# flags so the repeat is harmless, but it makes CI logs noisy and the
+# dedup is essentially free.
+#
+# rustc accepts BOTH the spaced form `-D warnings` and the spaceless
+# form `-Dwarnings`, so the regex uses `\s*` (zero-or-more whitespace
+# between `-D` and `warnings`) to match either. Token boundaries on
+# the outside (`(^|\s)` and `(\s|$)`) still prevent false positives
+# on e.g. `-D warnings-as-deny` (trailing `-` is not whitespace) or
+# `-Dfoowarnings` (the `D` would need to be preceded by `foo`, which
+# isn't whitespace).
+if ($existingRustflags -match '(^|\s)-D\s*warnings(\s|$)') {
+    $env:RUSTFLAGS = $existingRustflags
+} else {
+    $env:RUSTFLAGS = ("{0} -D warnings" -f $existingRustflags).Trim()
+}
+
+# Always run from the repo root so relative paths in cargo / npm /
+# electron-builder resolve correctly even when the script is invoked
+# from a subdirectory.
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$RepoRoot  = (Resolve-Path (Join-Path $ScriptDir '..')).Path
+Set-Location $RepoRoot
+
+# Fail-fast on non-Windows hosts. PowerShell Core (`pwsh`) runs on
+# macOS and Linux, so a maintainer who has both shells available could
+# accidentally invoke `pwsh scripts/preflight.ps1` on a non-Windows
+# box. The Rollup workaround below is hard-coded to install
+# `@rollup/rollup-win32-*-msvc`, the architecture-detection block uses
+# `$env:PROCESSOR_ARCHITECTURE` / `$env:PROCESSOR_ARCHITEW6432`
+# (Windows-only environment variables — null/empty on macOS/Linux), and
+# every step assumes Windows path separators / line endings / shell
+# semantics. None of those assumptions hold on macOS/Linux, so the
+# script would silently install the wrong native binary and the
+# subsequent `vite build` would fail several minutes later with a
+# confusing "Cannot find module @rollup/rollup-win32-x64-msvc" error
+# (or, worse on Linux ARM64, install a binary that can't even be
+# loaded by the host loader). Surfacing the mismatch up front saves
+# the wait and points to the right tool — the bash sibling
+# (`scripts/preflight.sh`) has the inverse guard at the top, rejecting
+# Windows-flavoured bash (Git Bash / MSYS / Cygwin) with a pointer back
+# to this script.
+#
+# `$IsWindows` is the canonical platform indicator on PowerShell Core
+# (introduced in PS6), but it does NOT exist on Windows PowerShell 5.1
+# (the OS-shipped default on Windows 10/11). On 5.1 the `$IsWindows`
+# variable is genuinely $null, NOT $false — so a naive `if (-not
+# $IsWindows)` check would incorrectly reject Windows PowerShell 5.1.
+# We test `$null -ne $IsWindows -and -not $IsWindows` so the guard
+# only fires when we KNOW we're on macOS/Linux. On Windows PowerShell
+# 5.1 the variable is $null and the guard correctly falls through.
+if ($null -ne $IsWindows -and -not $IsWindows) {
+    Write-Host ''
+    Write-Host 'preflight.ps1 is the Windows entrypoint; it is not supported on macOS / Linux.' -ForegroundColor Red
+    Write-Host ''
+    Write-Host 'Run the bash sibling instead:'
+    Write-Host ''
+    Write-Host '    bash scripts/preflight.sh'
+    Write-Host ''
+    Write-Host '(see RELEASING.md for the full preflight workflow).'
+    exit 2
+}
+
+# ----------------------------------------------------------------------
+# Output helpers
+# ----------------------------------------------------------------------
+
+# Use Write-Host with colours for interactive sessions; on CI (no
+# host UI) PowerShell still honours -ForegroundColor on most agents
+# and gracefully degrades elsewhere.
+function Write-StepHeader {
+    param([int]$Index, [int]$Total, [string]$Label, [string]$Command)
+    Write-Host ''
+    Write-Host ("[{0}/{1}] {2}" -f $Index, $Total, $Label) -ForegroundColor Cyan
+    Write-Host ("    {0}" -f $Command) -ForegroundColor DarkGray
+}
+
+function Write-Success {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor Green
+}
+
+function Write-Failure {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor Red
+}
+
+# ----------------------------------------------------------------------
+# Step model
+# ----------------------------------------------------------------------
+
+# Each step is a hashtable with a label and a script block. We
+# collect them up front so the step headers can show "1/N" /
+# "2/N" / ... correctly even when SkipPackage is set.
+$Steps = New-Object System.Collections.Generic.List[hashtable]
+
+function Add-Step {
+    # The Action scriptblock is expected to invoke at most ONE native
+    # command (cargo / npm / npx). Invoke-AllSteps reads
+    # $LASTEXITCODE after the block to decide pass/fail — which means
+    # only the *last* native command in a multi-command Action would
+    # contribute to that decision, exactly mirroring bash's behaviour
+    # without `-e`. The bash side of this preflight runs each step
+    # under `bash -e -o pipefail -c` so `cmd1; cmd2` fails on cmd1;
+    # there is no equivalent one-line PowerShell knob, so the rule
+    # is enforced socially: if you genuinely need to chain native
+    # commands inside a single step, write the Action as
+    #
+    #   { cmd1 args; if ($LASTEXITCODE -ne 0) { return }
+    #     cmd2 args }
+    #
+    # so the second command is gated on the first's success. The
+    # final $LASTEXITCODE the runner checks will then either be the
+    # first command's non-zero exit (failure) or the second's zero
+    # exit (success).
+    param(
+        [string]$Label,
+        [string]$Command,
+        [ScriptBlock]$Action
+    )
+    $Steps.Add(@{
+        Label   = $Label
+        Command = $Command
+        Action  = $Action
+    }) | Out-Null
+}
+
+function Invoke-AllSteps {
+    $total = $Steps.Count
+    for ($i = 0; $i -lt $total; $i++) {
+        $step  = $Steps[$i]
+        $index = $i + 1
+        Write-StepHeader -Index $index -Total $total -Label $step.Label -Command $step.Command
+
+        # Reset $LASTEXITCODE before invoking the step. $LASTEXITCODE
+        # is a session-wide variable that only native processes update
+        # — if a future step's Action ran only PowerShell cmdlets (no
+        # cargo/npm/npx), the post-step check below would otherwise
+        # read the leftover code from the *previous* step's native
+        # command and either declare a clean step failed or a failed
+        # step clean. Resetting here keeps the contract simple: a
+        # step is "successful" iff every native command in its Action
+        # exited 0 (or there were no native commands and no
+        # terminating errors).
+        $global:LASTEXITCODE = 0
+
+        # Disable -ErrorActionPreference 'Stop' inside the step
+        # so we can detect non-zero exit codes from native
+        # processes (cargo / npm / npx) ourselves rather than
+        # having PowerShell short-circuit.
+        $prevPref = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        # Track whether the dispatched command actually launched. A
+        # command-not-found (e.g. cargo is not installed) raises a
+        # CommandNotFoundException without ever updating
+        # $LASTEXITCODE, so without this guard the bash version
+        # (which sees exit 127 from `bash -o pipefail -c`) would be
+        # strictly more robust than the PowerShell one.
+        $stepFailure = $null
+        try {
+            & $step.Action
+        }
+        catch [System.Management.Automation.CommandNotFoundException] {
+            $stepFailure = $_
+        }
+        catch {
+            # Re-surface any other terminating error from the step
+            # body so we can convert it to a non-zero exit. Without
+            # this catch, ErrorActionPreference='Continue' inside
+            # the step would let unhandled exceptions bubble
+            # straight out of the script with no failure banner.
+            $stepFailure = $_
+        }
+        finally {
+            $ErrorActionPreference = $prevPref
+        }
+
+        if ($null -ne $stepFailure) {
+            Write-Host ''
+            Write-Failure (
+                "FAILED at step {0}/{1}: {2} ({3})" -f $index, $total, $step.Label, $stepFailure.Exception.Message
+            )
+            # Use 127 to mirror bash's command-not-found exit code
+            # when that's what we caught; fall back to 1 for any
+            # other terminating error.
+            $exitCode = if ($stepFailure.Exception -is [System.Management.Automation.CommandNotFoundException]) { 127 } else { 1 }
+            exit $exitCode
+        }
+
+        $code = $LASTEXITCODE
+        if ($null -eq $code) { $code = 0 }
+        if ($code -ne 0) {
+            Write-Host ''
+            Write-Failure (
+                "FAILED at step {0}/{1}: {2} (exit {3})" -f $index, $total, $step.Label, $code
+            )
+            exit $code
+        }
+    }
+}
+
+# ----------------------------------------------------------------------
+# Version detection
+# ----------------------------------------------------------------------
+
+# Returns $true if $Value is a usable version string (non-empty and
+# not the JSON sentinels `undefined` / `null` that ConvertFrom-Json
+# would surface if package.json lacked a `version` field).
+function Test-VersionUsable {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    return ($Value -notin @('undefined', 'null'))
+}
+
+function Resolve-Version {
+    # Precedence (highest to lowest):
+    #   1. `-Version` CLI parameter — explicit, scoped to a single
+    #      invocation; if the maintainer typed it on the command line
+    #      they meant it for THIS run.
+    #   2. `$env:TESSERA_PREFLIGHT_VERSION` — shell-scoped, less
+    #      explicit than a CLI arg but still a deliberate override.
+    #   3. `package.json` `version` field — the source of truth.
+    #   4. Placeholder `X.Y.Z` — only reached if package.json is
+    #      missing or malformed; the build steps would fail loudly
+    #      well before the summary line is printed.
+    #
+    # The bash script omits step 1 (POSIX shells don't support named
+    # parameters cleanly), so its precedence is 2 → 3 → 4. Adding a
+    # CLI arg to bash would mean recreating `getopts` boilerplate
+    # for a script that runs maybe once per release; the slight
+    # asymmetry is deliberate. The mental model holds either way:
+    # "most explicit wins, falling back to package.json".
+    #
+    # `$PSBoundParameters` here would scope to *this* function (which
+    # declares no parameters), not the script. The script-level
+    # `-Version` parameter is reachable via the parent scope because
+    # PowerShell functions inherit the caller's variables — so we test
+    # the variable itself rather than the (empty) function-local
+    # PSBoundParameters.
+    if (Test-VersionUsable $script:Version) {
+        return $script:Version
+    }
+    if (Test-VersionUsable $env:TESSERA_PREFLIGHT_VERSION) {
+        return $env:TESSERA_PREFLIGHT_VERSION
+    }
+    try {
+        $pkg = Get-Content -Raw -Path (Join-Path $RepoRoot 'package.json') | ConvertFrom-Json
+        if ($pkg.PSObject.Properties.Name -contains 'version') {
+            $candidate = [string]$pkg.version
+            if (Test-VersionUsable $candidate) { return $candidate }
+        }
+    }
+    catch {
+        # Fall through to the placeholder; the build steps will fail
+        # loudly if package.json is genuinely missing or malformed.
+    }
+    return 'X.Y.Z'
+}
+
+# ----------------------------------------------------------------------
+# Step registration
+# ----------------------------------------------------------------------
+
+# 1) Rust formatting check — same command the CI workflow runs in
+#    the "Check formatting" step of the `rust` job.
+Add-Step `
+    -Label   'Rust format check (cargo fmt --all -- --check)' `
+    -Command 'cargo fmt --all -- --check' `
+    -Action  { cargo fmt --all -- --check }
+
+# 2) Rust clippy with warnings-as-errors — same command the CI
+#    workflow runs in the "Clippy" step of the `rust` job
+#    (RUSTFLAGS="-D warnings" is set globally in the workflow's
+#    top-level `env:` block; we propagate it above).
+Add-Step `
+    -Label   'Rust clippy (cargo clippy --all-targets --all-features -- -D warnings)' `
+    -Command 'cargo clippy --all-targets --all-features -- -D warnings' `
+    -Action  { cargo clippy --all-targets --all-features -- -D warnings }
+
+# 3) Rust workspace build (debug profile) — same `cargo build
+#    --all-targets` step CI runs in the `rust` job at
+#    `.github/workflows/ci.yml` (the "Build" step). `cargo test --all`
+#    (step 5 below) does an implicit build of the *test* targets, but
+#    it doesn't exercise every non-test target the way `--all-targets`
+#    does: bench harnesses, examples, and the main binary path can
+#    compile-fail in ways that pure `cargo test` never observes.
+#    Running the explicit build here keeps preflight in lock-step with
+#    CI's step sequence and matches the bash sibling
+#    (`scripts/preflight.sh`).
+Add-Step `
+    -Label   'Rust build (cargo build --all-targets)' `
+    -Command 'cargo build --all-targets' `
+    -Action  { cargo build --all-targets }
+
+# 4) Rust workspace build (release profile) — mirrors CI's
+#    `Build (release mode)` step which runs
+#    `cargo build --release --all-targets`. CI runs this because the
+#    release workflow ships release-mode binaries, and
+#    `#[cfg(debug_assertions)]`-gated code can compile or behave
+#    differently between debug (step 3 above) and release. Without
+#    this step, a `cfg(debug_assertions)` regression introduced by a
+#    maintainer running preflight locally would pass step 3, fall
+#    through every desktop step below, and only blow up at `v*` tag
+#    push time — too late.
+#
+#    Preflight runs ALL gates CI runs (the script's intro is explicit
+#    about this), so we run the release build here too rather than
+#    relying on CI to catch it. Matches the bash sibling.
+Add-Step `
+    -Label   'Rust build (release: cargo build --release --all-targets)' `
+    -Command 'cargo build --release --all-targets' `
+    -Action  { cargo build --release --all-targets }
+
+# 5) Rust workspace tests.
+Add-Step `
+    -Label   'Rust tests (cargo test --all)' `
+    -Command 'cargo test --all' `
+    -Action  { cargo test --all }
+
+# 6) Desktop renderer / Electron lint.
+Add-Step `
+    -Label   'Desktop lint (npm run lint --workspace=apps/desktop)' `
+    -Command 'npm run lint --workspace=apps/desktop' `
+    -Action  { npm run lint --workspace=apps/desktop }
+
+# 7) Desktop TypeScript type-check.
+Add-Step `
+    -Label   'Desktop type-check (npm run type-check --workspace=apps/desktop)' `
+    -Command 'npm run type-check --workspace=apps/desktop' `
+    -Action  { npm run type-check --workspace=apps/desktop }
+
+# 8) Desktop unit / component tests (Vitest).
+Add-Step `
+    -Label   'Desktop tests (npm run test --workspace=apps/desktop)' `
+    -Command 'npm run test --workspace=apps/desktop' `
+    -Action  { npm run test --workspace=apps/desktop }
+
+# 9) Workaround for npm/cli#4828: Rollup ships per-platform native
+#    binaries as optionalDependencies (e.g. `@rollup/rollup-win32-x64-msvc`),
+#    and `npm ci` does NOT always install the binary matching the
+#    current host when the lockfile was generated on a different OS.
+#    The Vite-driven `npm run build` step below depends on Rollup at
+#    runtime, so without the host-matching binary the build fails with
+#    a confusing "Cannot find module @rollup/rollup-<plat>-<arch>"
+#    error. The CI workflow at .github/workflows/ci.yml runs the
+#    equivalent `npm install --no-save --no-package-lock` for the
+#    Windows and macOS legs — we mirror that here so the preflight
+#    behaves identically when invoked on a Windows release-prep box.
+#
+#    See https://github.com/npm/cli/issues/4828 for the underlying
+#    npm bug; this workaround can be removed once that issue is
+#    resolved and the minimum supported npm version is bumped.
+#
+#    PowerShell's `$env:PROCESSOR_ARCHITECTURE` reports the *current
+#    process's* architecture, which is `x86` for 32-bit PowerShell on
+#    a 64-bit host. To get the host arch reliably we check
+#    `PROCESSOR_ARCHITEW6432` (set by WoW64 when running 32-bit on
+#    64-bit) before falling back to `PROCESSOR_ARCHITECTURE`.
+# Arch mapping mirrors `.github/workflows/ci.yml`'s `case` on
+# `${{ runner.arch }}`: ARM64 → win32-arm64-msvc, everything else →
+# win32-x64-msvc. The `default` branch covers exotic / 32-bit / unknown
+# arch strings (e.g. `x86` on legacy WoW64 PowerShell hosts that lack
+# `PROCESSOR_ARCHITEW6432`) by installing the x64 binary, which is the
+# fallback CI uses too — it's better than skipping the install and
+# letting `vite build` fail several minutes later with a confusing
+# "Cannot find module" error. On a genuinely 32-bit host the x64 binary
+# won't load either, but the error message will then be clearer
+# ("module is not a valid Win32 application" vs. "module not found")
+# and the maintainer will know to switch to a 64-bit Windows runner —
+# which is what they'd need to ship Electron-x64 builds anyway.
+$hostArchRaw = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+switch ($hostArchRaw) {
+    'ARM64' { $rollupHostBinary = '@rollup/rollup-win32-arm64-msvc' }
+    default { $rollupHostBinary = '@rollup/rollup-win32-x64-msvc' }
+}
+if ($rollupHostBinary) {
+    # IMPORTANT: do NOT close over `$rollupHostBinary` from the Action
+    # script block. PowerShell script blocks resolve variables
+    # dynamically at invocation time, not at definition time — so a
+    # naive `{ npm install ... $rollupHostBinary }` would re-resolve
+    # the name through the scope chain inside Invoke-AllSteps. Today
+    # nothing shadows the name, but a future maintainer adding a
+    # local `$rollupHostBinary` inside Invoke-AllSteps (or refactoring
+    # this script into a module that re-uses the name) would silently
+    # change which package gets installed. The bash sibling
+    # (scripts/preflight.sh) avoids this by expanding the variable
+    # at registration time into a plain string command — we do the
+    # same here so the two scripts have identical robustness
+    # properties. The Action body now holds a pre-built script block
+    # with the package name baked in as a literal, which is also why
+    # we build it via `[ScriptBlock]::Create(...)` rather than a
+    # `{ ... }` literal: the literal would still defer lookup.
+    $rollupInstallCmd  = "npm install --no-save --no-package-lock $rollupHostBinary"
+    $rollupInstallBlock = [ScriptBlock]::Create($rollupInstallCmd)
+    Add-Step `
+        -Label   ("Install host Rollup binary ({0})" -f $rollupHostBinary) `
+        -Command $rollupInstallCmd `
+        -Action  $rollupInstallBlock
+}
+
+# 10) Build the bundle electron-builder will consume so the
+#    dry-pack runs against current artefacts, not a stale one.
+#
+#    We invoke the *root-level* `npm run build` script (which today
+#    forwards to `npm run build --workspace=apps/desktop` via the
+#    `build` entry in the top-level package.json) rather than calling
+#    the workspace directly. This keeps the PowerShell preflight in
+#    lock-step with .github/workflows/release.yml (the `Build all`
+#    step also runs the root `npm run build`) and with the bash
+#    sibling scripts/preflight.sh. The earlier `lint` / `type-check` /
+#    `test` steps remain workspace-scoped because
+#    .github/workflows/ci.yml runs them workspace-scoped in the
+#    typescript job's lint/type-check/test steps; only the
+#    desktop build was asymmetric, and the fix lives here. If the
+#    root `build` script later grows additional steps (e.g.
+#    `npm run build:native && npm run build --workspace=apps/desktop`
+#    once apps/desktop/package.json's placeholder `build:native` is
+#    promoted into the chain), preflight will automatically exercise
+#    them too, instead of letting the new step surface only on
+#    release day.
+Add-Step `
+    -Label   'Desktop build (npm run build)' `
+    -Command 'npm run build' `
+    -Action  { npm run build }
+
+# 11) electron-builder dry-pack. `--dir` skips installer creation
+#    but still assembles the full app bundle, catching packaging
+#    regressions before a release tag is pushed.
+$skip = $SkipPackage -or ($env:TESSERA_PREFLIGHT_SKIP_PACKAGE -eq '1')
+if (-not $skip) {
+    Add-Step `
+        -Label   'Electron bundle dry-pack (electron-builder --dir)' `
+        -Command 'npx --no electron-builder --config packaging/electron-builder.yml --dir' `
+        -Action  { npx --no electron-builder --config packaging/electron-builder.yml --dir }
+}
+
+# ----------------------------------------------------------------------
+# Run
+# ----------------------------------------------------------------------
+
+$detectedVersion = Resolve-Version
+Write-Host ("Tessera preflight — version v{0}" -f $detectedVersion) -ForegroundColor Cyan
+
+Invoke-AllSteps
+
+Write-Host ''
+Write-Success ("Preflight passed — ready to tag v{0}" -f $detectedVersion)

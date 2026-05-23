@@ -28,19 +28,57 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Workflow-level env so RUSTFLAGS applies to EVERY cargo / build-time
+# Rust invocation, not just the explicit `cargo build --release
+# --all-targets` step below. This matches:
+#   * `.github/workflows/ci.yml` which exports RUSTFLAGS at the
+#     workflow-level `env:` block so all of `cargo fmt`,
+#     `cargo clippy`, `cargo build`, and `cargo test --all` get
+#     `-D warnings` consistently;
+#   * `scripts/preflight.sh` and `scripts/preflight.ps1` which both
+#     `export RUSTFLAGS` globally near the top of the script for
+#     the same reason.
+#
+# Line numbers for those siblings are intentionally omitted: cross-
+# file line references drift on every edit and bot reviews flag
+# them as stale within a few iterations — cross-reference by step /
+# block name instead.
+#
+# Today the only Rust-touching step in this workflow is the explicit
+# `Build Rust workspace` step below — but `apps/desktop/package.json`'s
+# `build:native` script is a placeholder for a future napi-rs invocation
+# that WILL run during `npm run build`. When that happens, scoping
+# RUSTFLAGS to only the `cargo build` step would create a confusing
+# asymmetry: preflight would fail on a warning that the release workflow
+# would silently pass. Hoisting to workflow-level avoids that trap and
+# keeps the four gates (CI, release, bash preflight, pwsh preflight) in
+# lock-step on Rust warning posture.
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
 jobs:
   build:
     name: Build (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
+        # NOTE: previous revisions of this workflow carried an `artifact`
+        # field per matrix entry (e.g. `dist/Tessera-*.AppImage ...`).
+        # No step ever consumed it — the upload step uses the static
+        # `path: dist/` and the GitHub-release step uses its own
+        # hardcoded glob list at the bottom of this job — so the field
+        # was dead documentation that could mislead a future maintainer
+        # into thinking it gated which files get attached. The actual
+        # per-platform filtering happens implicitly via the glob list:
+        # each runner only produces files matching a subset of
+        # `*.AppImage / *.deb / *.rpm / *.dmg / *.exe / *.zip`, and
+        # softprops/action-gh-release skips patterns with no matches.
+        # Removed to keep the matrix honest.
         include:
           - os: ubuntu-22.04
-            artifact: "dist/Tessera-*.AppImage dist/Tessera_*.deb dist/Tessera-*.rpm"
           - os: macos-13
-            artifact: "dist/Tessera-*.dmg"
           - os: windows-2022
-            artifact: "dist/Tessera Setup *.exe"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -60,24 +98,132 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.88
 
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
       - name: Install dependencies
         run: npm ci
 
+      # Workaround for npm/cli#4828: optional native deps in
+      # package-lock.json are not always installed on platforms
+      # other than the one the lockfile was generated on. Rollup
+      # ships per-platform native binaries as optionalDependencies,
+      # and the lockfile in this repo currently only carries the
+      # Linux entries — so `npm ci` on the macos-13 or windows-2022
+      # runners leaves `node_modules/@rollup/rollup-darwin-x64` and
+      # `node_modules/@rollup/rollup-win32-x64-msvc` missing, and
+      # the subsequent `vite build` (inside `npm run build`) fails
+      # with a confusing "Cannot find module @rollup/rollup-<plat>-<arch>"
+      # error. The CI workflow (.github/workflows/ci.yml) carries
+      # the same fix; preflight scripts mirror it too. Once
+      # https://github.com/npm/cli/issues/4828 ships and the
+      # minimum supported npm in CONTRIBUTING.md is bumped past
+      # the fix, all three of these workaround steps can be deleted.
+      # Pick the Windows package by ${{ runner.arch }} so the matrix
+      # can grow an ARM64 windows leg later without resurrecting this
+      # hardcoded x64 binary. PowerShell preflight already does this
+      # via $env:PROCESSOR_ARCHITECTURE; matching it here keeps the
+      # four gates (CI, release, bash preflight, pwsh preflight) in
+      # lock-step.
+      - name: Install platform-specific Rollup binary (Windows)
+        if: matrix.os == 'windows-2022'
+        shell: bash
+        run: |
+          case "${{ runner.arch }}" in
+            ARM64) npm install --no-save --no-package-lock @rollup/rollup-win32-arm64-msvc ;;
+            *)     npm install --no-save --no-package-lock @rollup/rollup-win32-x64-msvc ;;
+          esac
+      # Same future-proofing for macOS: ${{ runner.arch }} returns X64
+      # on macos-13 today but ARM64 on macos-14+. Without this branch,
+      # bumping the matrix to a newer macOS image would silently
+      # install the wrong Rollup binary and break the build. The bash
+      # preflight script does the equivalent host-arch detection via
+      # `uname -m` on lines 309-315.
+      - name: Install platform-specific Rollup binary (macOS)
+        if: startsWith(matrix.os, 'macos-')
+        run: |
+          case "${{ runner.arch }}" in
+            ARM64) npm install --no-save --no-package-lock @rollup/rollup-darwin-arm64 ;;
+            *)     npm install --no-save --no-package-lock @rollup/rollup-darwin-x64 ;;
+          esac
+
+      # Belt-and-suspenders validation: the release workflow only
+      # triggers on `v*` tag pushes, and RELEASING.md step 1 directs
+      # the maintainer to confirm `main` is green before tagging — but
+      # a tag can be pushed against any commit, not necessarily the
+      # CI-validated tip. Building the Rust workspace here catches the
+      # "tag pushed against an unvalidated SHA" failure mode early,
+      # before electron-builder packages a bundle that ships a broken
+      # native dependency tree.
+      #
+      # IMPORTANT: this uses `--release` while CI's `Build` step in
+      # `.github/workflows/ci.yml` builds in debug mode. This is
+      # intentional — the
+      # release workflow ships release-mode binaries, so we want to
+      # exercise the exact build profile that ends up in the DMG/EXE/
+      # AppImage. The two profiles can diverge in one specific case:
+      # code gated on `#[cfg(debug_assertions)]` (or its negation) will
+      # behave differently between the two modes. Today the workspace
+      # has no such gates, so the property "CI green implies release
+      # green" holds. The CI rust job below ALSO runs a
+      # `cargo build --release --all-targets` step on the ubuntu-22.04
+      # leg (the required gate) so a debug_assertions-conditional
+      # regression introduced in a future PR would be caught at PR
+      # time rather than tag-push time. If a contributor later
+      # introduces a `cfg(debug_assertions)` gate, please keep that CI
+      # release-mode build green — it's the only gate that prevents
+      # "PR passes CI / tag push fails release.yml" surprises.
+      #
+      # RUSTFLAGS=-D warnings is supplied via the workflow-level `env:`
+      # block above (so it also reaches any future `build:native` /
+      # napi-rs invocation that runs during `npm run build`); we don't
+      # repeat it here.
+      - name: Build Rust workspace
+        run: cargo build --release --all-targets
+
       - name: Build all
-        # The repo's `package.json` already defines a top-level
-        # `build` script that compiles the Rust bridge, the
-        # renderer, and the Electron main process.
+        # The repo's `package.json` `build` script forwards to
+        # `npm run build --workspace=apps/desktop`, which runs
+        #   tsc -p tsconfig.node.json  (compiles vite.config.ts etc.)
+        #   vite build                  (bundles the React renderer)
+        #   tsc -p tsconfig.electron.json (compiles main + preload)
+        # i.e. it's purely TypeScript / Vite — the Rust crates are
+        # built separately by the `Build Rust workspace` step above
+        # (which mirrors the equivalent CI step). The napi-rs bridge
+        # addon is produced by the `build:native` script. That script
+        # is currently a placeholder; when the real napi-rs toolchain
+        # lands, `build:native` should be invoked *before* this step
+        # so the resulting `.node` artifact is in place for
+        # electron-builder's packaging stage to pick up.
         run: npm run build
 
       - name: Package with electron-builder
         # `--config packaging/electron-builder.yml` keeps the
         # packaging metadata co-located with the platform-specific
-        # entitlements/icons. We invoke it directly through `npx`
-        # to avoid pinning a global install in package.json.
+        # entitlements/icons. We invoke it through `npx` so it picks
+        # up the workspace-pinned binary from `node_modules/.bin/`
+        # (declared as a devDependency of `apps/desktop` so it lands
+        # in the root `node_modules/.bin` via npm workspace hoisting).
+        # `--no` (npm 10+ canonical, equivalent to the legacy
+        # `--no-install` flag) mirrors `scripts/preflight.sh` /
+        # `scripts/preflight.ps1`: if the pinned binary somehow isn't
+        # present we'd rather fail loudly than have npx silently fetch
+        # a floating version into its cache and publish a release built
+        # by an untested binary. The preceding `npm ci` step is what
+        # guarantees the pinned version is on disk.
         # Code-signing certificates are picked up from env if set
         # (CSC_LINK / CSC_KEY_PASSWORD), but unsigned builds still
         # produce installable artifacts.
-        run: npx electron-builder --config packaging/electron-builder.yml --publish never
+        run: npx --no electron-builder --config packaging/electron-builder.yml --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -124,12 +270,24 @@ jobs:
           else
             log="$(git log --pretty=format:'- %s (%h)' "${prev}..${tag}")"
           fi
+          # Use a per-run random heredoc delimiter so a commit subject
+          # can never collide with it. The previous fixed delimiter
+          # (`TESSERA_EOF`) happened to be safe only because the
+          # `--pretty=format:'- %s (%h)'` line shape ensured no line
+          # could ever equal the literal token — but that's a fragile
+          # contract: anyone tweaking the format string later (e.g. to
+          # `%s` for terser notes) would reintroduce a truncation /
+          # output-injection risk. The GitHub-documented pattern is a
+          # random delimiter derived from `uuidgen`, which is part of
+          # `util-linux` on every ubuntu-* runner image.
+          # See: https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#multiline-strings
+          delimiter="ghadelimiter_$(uuidgen)"
           {
-            echo "body<<TESSERA_EOF"
+            echo "body<<${delimiter}"
             echo "## Tessera ${tag}"
             echo
             echo "$log"
-            echo "TESSERA_EOF"
+            echo "${delimiter}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Update GitHub Release
