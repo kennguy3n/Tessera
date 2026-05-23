@@ -67,6 +67,23 @@ export function useEmbeddingProgress(
     // `0` (and any value `<= 0`) as "never started" so the
     // default-initialised counter doesn't trigger a poll.
     if (generation <= 0) return;
+
+    // Reset the snapshot at the start of every new generation. This
+    // is structural — it makes the generation-cycle invariant
+    // explicit: each new run starts from a known-null state, then
+    // polling populates it. Without this reset, the React render
+    // immediately following the `generation` bump would briefly
+    // surface the *previous* generation's terminal snapshot
+    // (e.g. a stale `Done` from a successful prior re-embed)
+    // before the first poll lands. In production the Rust side's
+    // `mark_starting()` pre-flight reset usually wins the race
+    // because the bridge runs synchronously on the JS main thread
+    // before the worker thread is dispatched, but relying solely on
+    // that ordering would be fragile if the bridge is ever
+    // reordered or moved off the main thread. Clearing here is the
+    // belt to that suspenders.
+    setSnap(null);
+
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 

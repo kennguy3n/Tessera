@@ -5,7 +5,7 @@ use tessera_core::{SharedConnection, SourceId};
 
 use crate::embedding::{EmbeddingProvider, HashTrickEmbedding};
 use crate::hybrid::{HybridSearchConfig, HybridSearchConfigInput};
-use crate::indexer::Indexer;
+use crate::indexer::{BackfillOutcome, Indexer};
 use crate::progress::{
     finish_embedding, mark_embedding_failed, EmbeddingProgressSnapshot, EmbeddingProgressTracker,
     ProgressSnapshot, ProgressTracker,
@@ -123,11 +123,17 @@ impl SourceManager {
     ///     denominator is visible to the renderer on the very first
     ///     poll instead of being unknown until the first batch lands.
     ///   * Flips status to `Done` on normal completion (including the
-    ///     empty-corpus / no-embedder cases), and `Failed` with the
-    ///     error message on whole-pass failure (e.g. the DB connection
-    ///     died). Per-chunk failures continue to be non-fatal and only
-    ///     increment the `failed` counter so the corpus's other
-    ///     chunks still get embedded.
+    ///     empty-corpus / no-embedder cases), `Failed` with a
+    ///     stall-specific error message when the indexer reports a
+    ///     stall ([`BackfillOutcome::Stalled`] — every chunk in a
+    ///     batch failed, indicating the embedder is broken), and
+    ///     `Failed` with the underlying error message on whole-pass
+    ///     infrastructure failure (e.g. the DB connection died).
+    ///
+    ///   * Per-chunk failures continue to be non-fatal as long as
+    ///     *some* chunks in the batch succeed — they only increment
+    ///     the `failed` counter so the corpus's other chunks still
+    ///     get embedded.
     pub fn backfill_embeddings_tracked(&self, batch_size: usize) -> Result<usize> {
         let Some(embedder) = &self.embedder else {
             // No embedder attached → nothing to do, but flip the
@@ -144,9 +150,28 @@ impl SourceManager {
             .indexer
             .backfill_embeddings_with_progress(&self.store, batch_size, slot)
         {
-            Ok(total) => {
+            Ok(BackfillOutcome::Completed { embedded }) => {
                 finish_embedding(slot);
-                Ok(total)
+                Ok(embedded)
+            }
+            Ok(BackfillOutcome::Stalled {
+                embedded,
+                stalled_batch_len,
+            }) => {
+                // The indexer's stall detector tripped — every chunk
+                // in a single batch failed. Surface to the user as a
+                // failure (with the partial-progress counters intact)
+                // rather than a clean Done state with N silent
+                // failures. The `embedded` count is still returned so
+                // the bridge can echo the partial-progress number to
+                // the renderer; the renderer reads `status=Failed`
+                // plus `last_error` from the next progress poll and
+                // renders the failure banner.
+                let err_msg = format!(
+                    "backfill stalled: every chunk in a {stalled_batch_len}-chunk batch failed to embed (embedder may be broken; check sidecar logs)"
+                );
+                mark_embedding_failed(slot, &err_msg);
+                Ok(embedded)
             }
             Err(e) => {
                 mark_embedding_failed(slot, &e.to_string());
@@ -798,5 +823,210 @@ mod tests {
         // model_id is recorded as "none" so the UI can distinguish
         // the no-embedder case from a real run.
         assert_eq!(snap.model_id.as_deref(), Some("none"));
+    }
+
+    /// Embedding provider that fails on every call. Used to verify
+    /// the manager flips status to `Failed` (not `Done`) when the
+    /// indexer's stall detector trips on an all-failed batch.
+    struct AlwaysFailEmbedder {
+        model_id: String,
+        dim: usize,
+    }
+
+    impl crate::embedding::EmbeddingProvider for AlwaysFailEmbedder {
+        fn model_id(&self) -> &str {
+            &self.model_id
+        }
+        fn dim(&self) -> usize {
+            self.dim
+        }
+        fn embed(&self, _input: &str) -> Result<Vec<f32>> {
+            Err(Error::Database(
+                "AlwaysFailEmbedder rejects every input on purpose".into(),
+            ))
+        }
+    }
+
+    #[test]
+    fn tracked_backfill_flips_to_failed_when_indexer_stalls() {
+        // Regression test for Devin Review finding: when every chunk
+        // in a batch fails to embed, the indexer's stall detector
+        // breaks the loop and returns `Ok(BackfillOutcome::Stalled)`.
+        // The manager MUST flip status to Failed (not Done) so the
+        // renderer shows the failure banner with a useful error
+        // message instead of "Re-embed complete" with N silent
+        // failures.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.txt"),
+            "alpha bravo charlie delta echo foxtrot golf hotel india",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("b.txt"),
+            "juliet kilo lima mike november oscar papa quebec romeo",
+        )
+        .unwrap();
+
+        let store = SourceStore::open_in_memory().unwrap();
+        let mut manager = SourceManager {
+            store,
+            indexer: Indexer::new(&[]),
+            progress: Arc::new(ProgressTracker::new()),
+            embedding_progress: Arc::new(EmbeddingProgressTracker::new()),
+            embedder: None,
+            hybrid_config: Mutex::new(HybridSearchConfig::default()),
+        };
+        manager
+            .add_local_folder(dir.path().to_str().unwrap())
+            .unwrap();
+
+        // Now attach a perpetually-failing embedder. The index pass
+        // populated `chunks` but left `chunk_embeddings` empty (no
+        // embedder was attached), so backfill has real work to do.
+        let bad: Arc<dyn EmbeddingProvider> = Arc::new(AlwaysFailEmbedder {
+            model_id: "always-fail-v0".to_string(),
+            dim: 32,
+        });
+        manager.indexer = Indexer::new(&[]).with_embedder(Arc::clone(&bad));
+        manager.embedder = Some(Arc::clone(&bad));
+
+        let pre_count = manager
+            .store
+            .count_chunks_missing_embedding(bad.model_id())
+            .unwrap();
+        assert!(pre_count > 0, "expected chunks to be missing embeddings");
+
+        // Run the tracked backfill. The embedder rejects every input
+        // so the first batch's `batch_progress` will be 0 → stall
+        // detector trips → indexer returns Stalled.
+        let embedded = manager.backfill_embeddings_tracked(4).unwrap();
+
+        // The bridge gets `embedded=0` echoed back so the renderer's
+        // banner can show "embedded 0 of N".
+        assert_eq!(
+            embedded, 0,
+            "no chunks should have been embedded by AlwaysFailEmbedder"
+        );
+
+        let snap = manager.embedding_progress();
+        // Critical assertion: status is Failed, NOT Done. This is the
+        // exact bug the indexer's stall path used to hide by calling
+        // finish_embedding on the way out.
+        assert_eq!(
+            snap.status,
+            EmbeddingStatus::Failed,
+            "stall must surface as Failed so the renderer shows the failure banner, \
+             not Done (which would say 'Re-embed complete' over N silent failures)"
+        );
+        assert_eq!(snap.embedded, 0);
+        // `failed` should reflect the chunks the indexer fed to the
+        // embedder in the stalled batch — at least all `pre_count`
+        // chunks for this short-text test, where the chunker emits
+        // one chunk per file and both fit in the first batch.
+        assert!(
+            snap.failed >= pre_count,
+            "got failed={}, pre_count={}",
+            snap.failed,
+            pre_count
+        );
+        let err = snap.last_error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("stalled"),
+            "last_error should mention the stall; got {err:?}"
+        );
+        assert!(
+            err.contains("embedder may be broken"),
+            "last_error should hint at the root cause; got {err:?}"
+        );
+        // model_id stays populated so the renderer can still show
+        // which model was being targeted when the stall fired.
+        assert_eq!(snap.model_id.as_deref(), Some("always-fail-v0"));
+    }
+
+    #[test]
+    fn tracked_backfill_keeps_done_status_when_some_chunks_succeed_some_fail() {
+        // Counterpart to the stall test: as long as SOME chunks
+        // succeed in a batch, the loop must terminate via the clean
+        // `Completed` path. The manager should flip status to Done
+        // (not Failed) with the partial-failure count surfaced in
+        // `failed`. The user sees a "Re-embed complete" card with a
+        // non-zero failure count, which is the intentional
+        // partial-success UX.
+        struct EvenIndexFailEmbedder {
+            model_id: String,
+            dim: usize,
+            count: Arc<Mutex<usize>>,
+        }
+        impl crate::embedding::EmbeddingProvider for EvenIndexFailEmbedder {
+            fn model_id(&self) -> &str {
+                &self.model_id
+            }
+            fn dim(&self) -> usize {
+                self.dim
+            }
+            fn embed(&self, _input: &str) -> Result<Vec<f32>> {
+                let mut n = self.count.lock().unwrap();
+                let i = *n;
+                *n += 1;
+                if i.is_multiple_of(2) {
+                    Err(Error::Database("simulated even-index failure".into()))
+                } else {
+                    Ok(vec![0.0; self.dim])
+                }
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.txt"),
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("b.txt"),
+            "kilo lima mike november oscar papa quebec romeo sierra tango",
+        )
+        .unwrap();
+
+        let store = SourceStore::open_in_memory().unwrap();
+        let mut manager = SourceManager {
+            store,
+            indexer: Indexer::new(&[]),
+            progress: Arc::new(ProgressTracker::new()),
+            embedding_progress: Arc::new(EmbeddingProgressTracker::new()),
+            embedder: None,
+            hybrid_config: Mutex::new(HybridSearchConfig::default()),
+        };
+        manager
+            .add_local_folder(dir.path().to_str().unwrap())
+            .unwrap();
+
+        let flaky: Arc<dyn EmbeddingProvider> = Arc::new(EvenIndexFailEmbedder {
+            model_id: "even-fail-v0".to_string(),
+            dim: 16,
+            count: Arc::new(Mutex::new(0)),
+        });
+        manager.indexer = Indexer::new(&[]).with_embedder(Arc::clone(&flaky));
+        manager.embedder = Some(Arc::clone(&flaky));
+
+        let embedded = manager.backfill_embeddings_tracked(4).unwrap();
+        assert!(
+            embedded > 0,
+            "some chunks should succeed under EvenIndexFailEmbedder"
+        );
+
+        let snap = manager.embedding_progress();
+        // Partial-success is still Done — the failure count is the
+        // signal, not the status. This matches the indexing
+        // pipeline's existing partial-failure UX.
+        assert_eq!(snap.status, EmbeddingStatus::Done);
+        assert!(snap.embedded > 0);
+        assert!(snap.failed > 0);
+        assert!(
+            snap.last_error.is_none(),
+            "Done with per-chunk failures should not populate last_error \
+             (that's reserved for whole-pass / stall failures)"
+        );
     }
 }

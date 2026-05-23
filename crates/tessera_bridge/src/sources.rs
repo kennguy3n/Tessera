@@ -364,7 +364,7 @@ pub fn update_hybrid_search_config(
     update: HybridSearchConfigUpdate,
 ) -> BridgeResult<HybridSearchConfigInfo> {
     // Translate the renderer-friendly toggle into the `f64::INFINITY`
-    // sentinel that the core crate uses. Three cases matter:
+    // sentinel that the core crate uses. Four cases matter:
     //   1. `Some(false)`  → force disable, halflife → INFINITY
     //      (any accompanying numeric halflife is dropped: the toggle
     //       wins so we never end up with a "decay-on" effective
@@ -375,19 +375,45 @@ pub fn update_hybrid_search_config(
     //      previously disabled), in which case fall back to the
     //      documented 30-day default so the renderer never has to
     //      pre-load a halflife when re-enabling.
-    //   3. `None`         → don't touch the flag. Pass whatever
-    //      halflife the renderer sent (could be `None`).
+    //   3. `None` + caller sent a finite halflife while current
+    //      state has decay disabled → DROP the halflife. Without
+    //      this guard, a future caller writing
+    //      `{ recencyDecayEnabled: None, recencyHalflifeSecs: Some(30d) }`
+    //      against a decay-off state would silently re-enable decay
+    //      via the finite-halflife back door (the JSON wire layer
+    //      can't represent `INFINITY`, so the bridge's effective
+    //      `recency_decay_enabled` is computed from `is_finite()`).
+    //      Requiring an explicit `Some(true)` to enable decay keeps
+    //      the wire-level semantics aligned with caller intent and
+    //      prevents the API surface from drifting between "don't
+    //      touch the flag" and "I'm setting halflife but not the
+    //      toggle". Devin Review flagged this gap on PR #25.
+    //   4. `None`         → otherwise, pass whatever halflife the
+    //      renderer sent (could be `None`).
+    let current_decay_enabled = manager
+        .get_hybrid_config()
+        .recency_halflife_secs
+        .is_finite();
     let mut effective_halflife = update.recency_halflife_secs;
-    if matches!(update.recency_decay_enabled, Some(false)) {
-        effective_halflife = Some(f64::INFINITY);
-    } else if matches!(update.recency_decay_enabled, Some(true))
-        && update.recency_halflife_secs.is_none()
-        && !manager
-            .get_hybrid_config()
-            .recency_halflife_secs
-            .is_finite()
-    {
-        effective_halflife = Some(tessera_sources::hybrid::DEFAULT_RECENCY_HALFLIFE_SECS);
+    match update.recency_decay_enabled {
+        Some(false) => {
+            effective_halflife = Some(f64::INFINITY);
+        }
+        Some(true) => {
+            if update.recency_halflife_secs.is_none() && !current_decay_enabled {
+                effective_halflife = Some(tessera_sources::hybrid::DEFAULT_RECENCY_HALFLIFE_SECS);
+            }
+        }
+        None => {
+            if !current_decay_enabled && update.recency_halflife_secs.is_some_and(f64::is_finite) {
+                // Decay is currently off and the caller didn't ask to
+                // enable it — refuse to silently re-enable via a
+                // finite halflife. Drop the halflife so the patch is
+                // a no-op on this field. The toggle (still `None`)
+                // doesn't touch the underlying INFINITY value.
+                effective_halflife = None;
+            }
+        }
     }
 
     let patch = HybridSearchConfigInput {
@@ -638,5 +664,112 @@ mod tests {
         assert!((after.bm25_weight - before.bm25_weight).abs() < 1e-9);
         assert!((after.vector_weight - before.vector_weight).abs() < 1e-9);
         assert_eq!(after.recency_decay_enabled, before.recency_decay_enabled);
+    }
+
+    #[test]
+    fn bridge_update_hybrid_search_config_does_not_silently_re_enable_decay() {
+        // Regression test for Devin Review finding on PR #25: when a
+        // caller sends `recency_decay_enabled: None` (don't touch
+        // toggle) together with `recency_halflife_secs: Some(finite)`
+        // against a manager whose current state has decay DISABLED
+        // (halflife = INFINITY), the bridge must NOT silently
+        // re-enable decay by overwriting the halflife with the
+        // caller's finite value. Re-enable must be explicit via
+        // `recency_decay_enabled: Some(true)`.
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+
+        // Step 1: explicitly disable decay. The internal halflife is
+        // now `f64::INFINITY` (sentinel for "decay off").
+        update_hybrid_search_config(
+            &manager,
+            HybridSearchConfigUpdate {
+                recency_decay_enabled: Some(false),
+                ..HybridSearchConfigUpdate::default()
+            },
+        )
+        .unwrap();
+        let pre = get_hybrid_search_config(&manager).unwrap();
+        assert!(!pre.recency_decay_enabled);
+        assert!(
+            pre.recency_halflife_secs.is_none(),
+            "decay-off should serialise as `None` on the wire (INFINITY is not JSON-representable)"
+        );
+
+        // Step 2: send a finite halflife with no toggle. The caller
+        // probably MEANT to enable decay but forgot the flag. The
+        // safe behaviour is to drop the halflife and keep the toggle
+        // off — making the caller's intent explicit instead of
+        // letting an undeclared side effect flip a security-relevant
+        // setting.
+        let want_halflife = 7.0 * 24.0 * 60.0 * 60.0; // 7 days
+        let after = update_hybrid_search_config(
+            &manager,
+            HybridSearchConfigUpdate {
+                recency_decay_enabled: None,
+                recency_halflife_secs: Some(want_halflife),
+                ..HybridSearchConfigUpdate::default()
+            },
+        )
+        .unwrap();
+
+        // Decay must still be DISABLED.
+        assert!(
+            !after.recency_decay_enabled,
+            "bridge silently re-enabled decay; recency_decay_enabled became true \
+             even though the caller did not set the toggle"
+        );
+        assert!(
+            after.recency_halflife_secs.is_none(),
+            "halflife should still serialise as `None` (decay off); got {:?}",
+            after.recency_halflife_secs
+        );
+
+        // Step 3: by contrast, an EXPLICIT enable with the same
+        // halflife should be honored. This proves the guard isn't
+        // over-broad — it only prevents the silent path.
+        let enabled = update_hybrid_search_config(
+            &manager,
+            HybridSearchConfigUpdate {
+                recency_decay_enabled: Some(true),
+                recency_halflife_secs: Some(want_halflife),
+                ..HybridSearchConfigUpdate::default()
+            },
+        )
+        .unwrap();
+        assert!(enabled.recency_decay_enabled);
+        let returned = enabled
+            .recency_halflife_secs
+            .expect("halflife should be Some when decay is enabled");
+        assert!((returned - want_halflife).abs() < 1.0);
+    }
+
+    #[test]
+    fn bridge_update_hybrid_search_config_passes_through_halflife_when_decay_is_already_on() {
+        // Counterpart to the silent-re-enable test: when decay is
+        // already ON (halflife is finite), a caller sending
+        // `recency_decay_enabled: None` plus a new finite halflife
+        // must STILL be allowed to adjust the halflife. The guard
+        // only kicks in when current decay is OFF — adjusting the
+        // halflife with decay already on doesn't change the toggle.
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        // Sanity: fresh manager has decay enabled (finite default).
+        let pre = get_hybrid_search_config(&manager).unwrap();
+        assert!(pre.recency_decay_enabled);
+
+        let new_halflife = 14.0 * 24.0 * 60.0 * 60.0;
+        let after = update_hybrid_search_config(
+            &manager,
+            HybridSearchConfigUpdate {
+                recency_decay_enabled: None,
+                recency_halflife_secs: Some(new_halflife),
+                ..HybridSearchConfigUpdate::default()
+            },
+        )
+        .unwrap();
+        assert!(after.recency_decay_enabled);
+        let returned = after
+            .recency_halflife_secs
+            .expect("halflife should be Some when decay is enabled");
+        assert!((returned - new_halflife).abs() < 1.0);
     }
 }

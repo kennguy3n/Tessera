@@ -363,17 +363,21 @@ impl Indexer {
     /// `finish_embedding` (success path) or `mark_embedding_failed`
     /// (whole-pass failure).
     ///
-    /// Returns the same `usize` "chunks embedded successfully" total as
-    /// `backfill_embeddings` so existing callers that only care about
-    /// the count can use this path interchangeably.
+    /// Returns a [`BackfillOutcome`] that distinguishes a clean drain
+    /// (loop exited because the work-set was empty or the last partial
+    /// batch was processed normally) from a stall (every chunk in a
+    /// batch failed, indicating the embedder is broken). The caller
+    /// uses this to flip the public progress status to `Done` vs.
+    /// `Failed` — the indexer itself only signals which exit path
+    /// fired and leaves the UX decision to the manager.
     pub fn backfill_embeddings_with_progress(
         &self,
         store: &SourceStore,
         batch_size: usize,
         progress_slot: &std::sync::Mutex<EmbeddingProgressSnapshot>,
-    ) -> Result<usize> {
+    ) -> Result<BackfillOutcome> {
         let Some(embedder) = &self.embedder else {
-            return Ok(0);
+            return Ok(BackfillOutcome::Completed { embedded: 0 });
         };
         let model_id = embedder.model_id().to_string();
         let dim = embedder.dim();
@@ -413,18 +417,80 @@ impl Indexer {
                 }
             }
             if batch_progress == 0 {
+                // Every chunk in this batch failed. Even with the
+                // exclude-list optimisation, this can happen if the
+                // embedder is fundamentally broken (e.g. backing model
+                // file was unloaded, sidecar crashed) and every fresh
+                // chunk pulled from the DB hits the same fault. We
+                // surface this to the caller as a `Stalled` outcome
+                // rather than a clean `Completed` so the manager can
+                // flip the user-facing progress status to `Failed` —
+                // showing "Re-embed complete" with `embedded=0,
+                // failed=N` would be misleading.
                 eprintln!(
                     "[tessera_sources] tracked backfill stalled: {} chunks failed to embed in a single batch, aborting to avoid infinite loop",
                     batch.len()
                 );
-                break;
+                return Ok(BackfillOutcome::Stalled {
+                    embedded: total,
+                    stalled_batch_len: batch.len(),
+                });
             }
             permanent_failures.extend(batch_failures);
             if batch.len() < batch_size {
                 break;
             }
         }
-        Ok(total)
+        Ok(BackfillOutcome::Completed { embedded: total })
+    }
+}
+
+/// Exit signal from [`Indexer::backfill_embeddings_with_progress`].
+///
+/// The tracked variant of the backfill loop has two distinct
+/// successful exit paths and the caller (the [`SourceManager`])
+/// needs to flip the public embedding-progress status to a
+/// different state for each:
+///
+///   * `Completed` → the loop drained the work-set normally. Status
+///     should flip to `Done`. Per-chunk failures along the way are
+///     non-fatal and already counted in the progress snapshot, so
+///     the renderer can render “`embedded` / `total_chunks` with
+///     `failed` failures” on `Done`.
+///   * `Stalled` → the stall-detector tripped: every chunk in a
+///     single batch failed to embed. The most likely cause is that
+///     the embedder is broken (model file unloaded, sidecar dead,
+///     wrong API key on a remote provider). Status should flip to
+///     `Failed` so the renderer shows the failure banner instead of
+///     “complete with N failures”. The `embedded` count is preserved
+///     so the renderer can still show partial progress made before
+///     the stall.
+///
+/// `Err(_)` (whole-pass infrastructure failure, e.g. SQLite write
+/// error) is reported separately via the outer `Result` and bypasses
+/// this enum entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackfillOutcome {
+    Completed {
+        embedded: usize,
+    },
+    Stalled {
+        embedded: usize,
+        /// Length of the batch in which every chunk failed. Surfaced
+        /// in the failure message so users can correlate with their
+        /// configured batch size.
+        stalled_batch_len: usize,
+    },
+}
+
+impl BackfillOutcome {
+    /// Number of chunks newly embedded in this pass, regardless of
+    /// which exit path fired.
+    pub fn embedded(self) -> usize {
+        match self {
+            BackfillOutcome::Completed { embedded } => embedded,
+            BackfillOutcome::Stalled { embedded, .. } => embedded,
+        }
     }
 }
 

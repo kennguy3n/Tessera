@@ -314,6 +314,26 @@ impl Task for BackfillEmbeddingsTask {
 /// outset. The worker thread's subsequent `start(total, model)` call
 /// inside `compute()` overwrites `total_chunks` / `model_id` with the
 /// real numbers once it has computed them.
+///
+/// **IPC ordering invariant (why pre-flight reset is sufficient)**:
+/// Electron's IPC layer processes messages from a given renderer
+/// channel strictly in-order on the main process. The renderer's
+/// `sources:backfillEmbeddings` IPC arrives BEFORE any subsequent
+/// `sources:getEmbeddingProgress` IPC issued by the same renderer
+/// because both go through the same `ipcMain.handle` queue in the
+/// same WebContents. So `mark_starting()` (synchronous, on the main
+/// thread, before this function returns the `AsyncTask`) is
+/// guaranteed to complete before the renderer's first poll for the
+/// new generation is dispatched. The `AsyncTask::resolve` value
+/// (the `Promise` we hand back to JS) is awaited by the IPC handler
+/// in `ipc/sources.ts`, but the actual `compute()` body — which
+/// flips status back to `Running` with real counters and then
+/// drains the backfill loop — runs on a libuv worker thread that
+/// can race the renderer's polling. That's exactly the race the
+/// pre-flight `mark_starting()` defuses: it guarantees the
+/// renderer's first observable poll sees `Running` with zeroed
+/// counters instead of the previous generation's stale terminal
+/// state, regardless of which thread wins the lock race after.
 #[napi]
 pub fn bridge_backfill_embeddings(
     batch_size: Option<u32>,
