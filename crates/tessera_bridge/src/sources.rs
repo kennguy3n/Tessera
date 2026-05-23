@@ -1,11 +1,22 @@
+use std::sync::Arc;
+
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tessera_core::SourceId;
+use tessera_sources::hybrid::{HybridSearchConfig, HybridSearchConfigInput};
 use tessera_sources::manager::SourceManager;
+use tessera_sources::progress::{EmbeddingProgressTracker, EmbeddingStatus};
 use tessera_sources::search::SearchResult;
 use tessera_sources::source::Source;
 
 use crate::{BridgeError, BridgeResult};
+
+/// Default batch size for embedding backfill. Picked large enough
+/// that a 10k-chunk corpus completes in a small number of iterations
+/// of the inner SQL query, but small enough that a transient
+/// embedder failure (network blip on a hosted embedder) only loses
+/// progress on at most one batch's worth of work.
+const DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE: usize = 64;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
@@ -185,6 +196,243 @@ pub fn get_indexing_progress(
     })
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct EmbeddingProgressInfo {
+    pub status: String,
+    pub total_chunks: u32,
+    pub embedded: u32,
+    pub failed: u32,
+    pub model_id: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct BackfillEmbeddingsResult {
+    /// Number of chunks newly embedded by this call. If the index
+    /// already has up-to-date embeddings for the active model, this
+    /// is 0 and `progress.status` flips Idle → Done immediately.
+    pub embedded: u32,
+    pub progress: EmbeddingProgressInfo,
+}
+
+/// Wire shape for [`HybridSearchConfig`] crossing the napi boundary.
+/// We deliberately don't derive this directly from `HybridSearchConfig`
+/// because `recency_halflife_secs` uses a custom JSON-null
+/// representation for the `f64::INFINITY` "no decay" sentinel — at
+/// the napi boundary we instead surface that as an explicit
+/// `recency_decay_enabled: false` flag so the TS renderer can render
+/// the toggle without learning about `INFINITY`.
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct HybridSearchConfigInfo {
+    pub bm25_weight: f64,
+    pub vector_weight: f64,
+    pub rrf_k: f64,
+    /// `true` when the active config applies temporal recency decay,
+    /// `false` when decay is disabled (internally
+    /// `recency_halflife_secs == f64::INFINITY`).
+    pub recency_decay_enabled: bool,
+    /// Half-life in seconds when `recency_decay_enabled == true`.
+    /// `None` when decay is disabled — the value is unobservable in
+    /// that mode so the renderer should keep its last-known value
+    /// rather than reset the slider to a placeholder.
+    pub recency_halflife_secs: Option<f64>,
+    pub candidate_pool_size: u32,
+}
+
+impl From<&HybridSearchConfig> for HybridSearchConfigInfo {
+    fn from(c: &HybridSearchConfig) -> Self {
+        let decay_enabled = c.recency_halflife_secs.is_finite();
+        Self {
+            bm25_weight: c.bm25_weight,
+            vector_weight: c.vector_weight,
+            rrf_k: c.rrf_k,
+            recency_decay_enabled: decay_enabled,
+            recency_halflife_secs: decay_enabled.then_some(c.recency_halflife_secs),
+            candidate_pool_size: u32::try_from(c.candidate_pool_size).unwrap_or(u32::MAX),
+        }
+    }
+}
+
+/// Wire shape for partial-update patches from the renderer.
+///
+/// Mirrors [`HybridSearchConfigInput`] but expresses "disable decay"
+/// as an explicit `recency_decay_enabled: Some(false)` toggle rather
+/// than asking the renderer to pass `f64::INFINITY` (which it can't
+/// represent in JSON). The translation back into the Rust input
+/// shape lives in [`update_hybrid_search_config`].
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[napi(object)]
+pub struct HybridSearchConfigUpdate {
+    pub bm25_weight: Option<f64>,
+    pub vector_weight: Option<f64>,
+    pub rrf_k: Option<f64>,
+    /// `Some(true)` → enable decay (use the accompanying
+    /// `recency_halflife_secs` if provided, else keep current);
+    /// `Some(false)` → disable decay (sets internal halflife to
+    /// `f64::INFINITY`); `None` → don't touch the flag.
+    pub recency_decay_enabled: Option<bool>,
+    pub recency_halflife_secs: Option<f64>,
+    pub candidate_pool_size: Option<u32>,
+}
+
+fn embedding_status_str(status: EmbeddingStatus) -> String {
+    match status {
+        EmbeddingStatus::Idle => "idle".to_string(),
+        EmbeddingStatus::Running => "running".to_string(),
+        EmbeddingStatus::Done => "done".to_string(),
+        EmbeddingStatus::Failed => "failed".to_string(),
+    }
+}
+
+fn snapshot_to_info(
+    snap: tessera_sources::progress::EmbeddingProgressSnapshot,
+) -> EmbeddingProgressInfo {
+    EmbeddingProgressInfo {
+        status: embedding_status_str(snap.status),
+        total_chunks: u32::try_from(snap.total_chunks).unwrap_or(u32::MAX),
+        embedded: u32::try_from(snap.embedded).unwrap_or(u32::MAX),
+        failed: u32::try_from(snap.failed).unwrap_or(u32::MAX),
+        model_id: snap.model_id,
+        last_error: snap.last_error,
+    }
+}
+
+/// Trigger an embedding backfill pass over chunks that don't yet
+/// have an embedding for the active model. Returns the number of
+/// newly-embedded chunks plus a snapshot of the progress tracker so
+/// the caller can render the final state without a follow-up poll.
+///
+/// Idempotent: a second call with an up-to-date index does no work
+/// and reports `embedded=0, status=Done`.
+pub fn backfill_embeddings(
+    manager: &SourceManager,
+    batch_size: Option<u32>,
+) -> BridgeResult<BackfillEmbeddingsResult> {
+    let batch = batch_size
+        .map(|n| usize::try_from(n).unwrap_or(DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE))
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_EMBEDDING_BACKFILL_BATCH_SIZE);
+    let embedded = manager
+        .backfill_embeddings_tracked(batch)
+        .map_err(BridgeError::Core)?;
+    Ok(BackfillEmbeddingsResult {
+        embedded: u32::try_from(embedded).unwrap_or(u32::MAX),
+        progress: snapshot_to_info(manager.embedding_progress()),
+    })
+}
+
+/// Lightweight poll for the renderer. The progress tracker stays
+/// alive past the end of a backfill pass — `status=Done` plus the
+/// final counters are what the renderer uses to dismiss the progress
+/// banner.
+pub fn get_embedding_progress(manager: &SourceManager) -> BridgeResult<EmbeddingProgressInfo> {
+    Ok(snapshot_to_info(manager.embedding_progress()))
+}
+
+/// Read the latest snapshot directly from a shared progress tracker,
+/// bypassing the outer [`SourceManager`] mutex. Used by the napi
+/// bridge while a backfill is in flight: the backfill itself holds
+/// the `SourceManager` lock on a worker thread, and we still want
+/// `bridge_get_embedding_progress` calls on the JS main thread to
+/// return cheap real-time counters rather than queueing up behind
+/// the DB writes.
+///
+/// Callers obtain the `Arc` via [`SourceManager::embedding_progress_handle`]
+/// at init time and cache it for the lifetime of the bridge.
+pub fn get_embedding_progress_from_tracker(
+    tracker: &Arc<EmbeddingProgressTracker>,
+) -> EmbeddingProgressInfo {
+    snapshot_to_info(tracker.snapshot())
+}
+
+/// Hand the renderer the current effective hybrid retrieval config
+/// (e.g. for populating the Settings page on first render).
+pub fn get_hybrid_search_config(manager: &SourceManager) -> BridgeResult<HybridSearchConfigInfo> {
+    Ok(HybridSearchConfigInfo::from(&manager.get_hybrid_config()))
+}
+
+/// Apply a partial-update patch from the renderer. Validation lives
+/// in the core crate (see [`HybridSearchConfig::apply_patch`]); this
+/// function just translates the wire shape into the input shape and
+/// surfaces validation errors as `BridgeError::InvalidArgs` so the
+/// IPC layer can echo them to the renderer's form-field state.
+pub fn update_hybrid_search_config(
+    manager: &SourceManager,
+    update: HybridSearchConfigUpdate,
+) -> BridgeResult<HybridSearchConfigInfo> {
+    // Translate the renderer-friendly toggle into the `f64::INFINITY`
+    // sentinel that the core crate uses. Four cases matter:
+    //   1. `Some(false)`  → force disable, halflife → INFINITY
+    //      (any accompanying numeric halflife is dropped: the toggle
+    //       wins so we never end up with a "decay-on" effective
+    //       config when the user clicked "off").
+    //   2. `Some(true)`   → enable decay. If the user gave a finite
+    //      halflife, use it. Otherwise, leave the existing halflife
+    //      alone — unless the existing value is INFINITY (decay was
+    //      previously disabled), in which case fall back to the
+    //      documented 30-day default so the renderer never has to
+    //      pre-load a halflife when re-enabling.
+    //   3. `None` + caller sent a finite halflife while current
+    //      state has decay disabled → DROP the halflife. Without
+    //      this guard, a future caller writing
+    //      `{ recencyDecayEnabled: None, recencyHalflifeSecs: Some(30d) }`
+    //      against a decay-off state would silently re-enable decay
+    //      via the finite-halflife back door (the JSON wire layer
+    //      can't represent `INFINITY`, so the bridge's effective
+    //      `recency_decay_enabled` is computed from `is_finite()`).
+    //      Requiring an explicit `Some(true)` to enable decay keeps
+    //      the wire-level semantics aligned with caller intent and
+    //      prevents the API surface from drifting between "don't
+    //      touch the flag" and "I'm setting halflife but not the
+    //      toggle". Devin Review flagged this gap on PR #25.
+    //   4. `None`         → otherwise, pass whatever halflife the
+    //      renderer sent (could be `None`).
+    let current_decay_enabled = manager
+        .get_hybrid_config()
+        .recency_halflife_secs
+        .is_finite();
+    let mut effective_halflife = update.recency_halflife_secs;
+    match update.recency_decay_enabled {
+        Some(false) => {
+            effective_halflife = Some(f64::INFINITY);
+        }
+        Some(true) => {
+            if update.recency_halflife_secs.is_none() && !current_decay_enabled {
+                effective_halflife = Some(tessera_sources::hybrid::DEFAULT_RECENCY_HALFLIFE_SECS);
+            }
+        }
+        None => {
+            if !current_decay_enabled && update.recency_halflife_secs.is_some_and(f64::is_finite) {
+                // Decay is currently off and the caller didn't ask to
+                // enable it — refuse to silently re-enable via a
+                // finite halflife. Drop the halflife so the patch is
+                // a no-op on this field. The toggle (still `None`)
+                // doesn't touch the underlying INFINITY value.
+                effective_halflife = None;
+            }
+        }
+    }
+
+    let patch = HybridSearchConfigInput {
+        bm25_weight: update.bm25_weight,
+        vector_weight: update.vector_weight,
+        rrf_k: update.rrf_k,
+        recency_halflife_secs: effective_halflife,
+        candidate_pool_size: update.candidate_pool_size.map(|n| n as usize),
+    };
+    let new_cfg = manager.update_hybrid_config(&patch).map_err(|e| match e {
+        // Validation errors live in `Error::InvalidConfig`; surface
+        // them as `InvalidArgs` so the IPC handler can render them
+        // as a 400-equivalent rather than a 500-equivalent.
+        tessera_core::error::Error::InvalidConfig(msg) => BridgeError::InvalidArgs(msg),
+        other => BridgeError::Core(other),
+    })?;
+    Ok(HybridSearchConfigInfo::from(&new_cfg))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,5 +481,295 @@ mod tests {
         std::fs::write(dir.path().join("new.txt"), "new content").unwrap();
         let updated = reindex_source(&manager, &info.id).unwrap();
         assert!(updated.file_count >= 1);
+    }
+
+    #[test]
+    fn bridge_backfill_embeddings_is_idempotent_with_default_embedder() {
+        // The default in-memory manager attaches a HashTrick embedder,
+        // so a fresh add_local_folder already populates embeddings.
+        // The first call to bridge_backfill_embeddings is therefore a
+        // no-op, but it must still flip the tracker to Done.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hello world").unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        add_local_folder(&manager, dir.path().to_str().unwrap()).unwrap();
+
+        let result = backfill_embeddings(&manager, None).unwrap();
+        // No missing chunks → embedded=0, status=done.
+        assert_eq!(result.embedded, 0);
+        assert_eq!(result.progress.status, "done");
+
+        // A repeat call is still safe and still ends Done.
+        let again = backfill_embeddings(&manager, Some(4)).unwrap();
+        assert_eq!(again.embedded, 0);
+        assert_eq!(again.progress.status, "done");
+    }
+
+    #[test]
+    fn bridge_get_embedding_progress_starts_idle() {
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let snap = get_embedding_progress(&manager).unwrap();
+        assert_eq!(snap.status, "idle");
+        assert_eq!(snap.total_chunks, 0);
+        assert_eq!(snap.embedded, 0);
+        assert_eq!(snap.failed, 0);
+    }
+
+    #[test]
+    fn get_embedding_progress_from_tracker_reflects_manager_state() {
+        // The tracker handle handed out by `embedding_progress_handle`
+        // is the same `Arc` that the manager records progress against,
+        // so reads through it must agree with reads that go through
+        // the manager API.
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let tracker = manager.embedding_progress_handle();
+
+        let from_tracker = get_embedding_progress_from_tracker(&tracker);
+        let from_manager = get_embedding_progress(&manager).unwrap();
+        assert_eq!(from_tracker.status, from_manager.status);
+        assert_eq!(from_tracker.total_chunks, from_manager.total_chunks);
+        assert_eq!(from_tracker.embedded, from_manager.embedded);
+        assert_eq!(from_tracker.failed, from_manager.failed);
+
+        // Run a backfill against an empty index — flips Idle → Done.
+        // Both read paths must now report `done` without contending
+        // for the same lock.
+        let _ = backfill_embeddings(&manager, None).unwrap();
+        let from_tracker = get_embedding_progress_from_tracker(&tracker);
+        assert_eq!(from_tracker.status, "done");
+    }
+
+    #[test]
+    fn bridge_get_hybrid_search_config_returns_default_with_decay_enabled() {
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let cfg = get_hybrid_search_config(&manager).unwrap();
+        // Default config: bm25=1, vector=1, decay enabled with 30-day half-life.
+        assert!((cfg.bm25_weight - 1.0).abs() < 1e-9);
+        assert!((cfg.vector_weight - 1.0).abs() < 1e-9);
+        assert!(cfg.recency_decay_enabled);
+        let halflife = cfg
+            .recency_halflife_secs
+            .expect("decay enabled → halflife Some");
+        let thirty_days = 30.0 * 24.0 * 60.0 * 60.0;
+        assert!((halflife - thirty_days).abs() < 1.0);
+    }
+
+    #[test]
+    fn bridge_update_hybrid_search_config_can_disable_decay() {
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let updated = update_hybrid_search_config(
+            &manager,
+            HybridSearchConfigUpdate {
+                recency_decay_enabled: Some(false),
+                // Decay-off must win over any numeric halflife — verify
+                // by sending a deliberately-suspicious value alongside.
+                recency_halflife_secs: Some(99_999_999.0),
+                ..HybridSearchConfigUpdate::default()
+            },
+        )
+        .unwrap();
+        assert!(!updated.recency_decay_enabled);
+        // When decay is off, the renderer should not see a halflife
+        // number — the wire shape is `None` so the form keeps its
+        // last-known value rather than showing 99999999.
+        assert!(updated.recency_halflife_secs.is_none());
+
+        // And the underlying manager should reflect the disabled state.
+        let live = get_hybrid_search_config(&manager).unwrap();
+        assert!(!live.recency_decay_enabled);
+    }
+
+    #[test]
+    fn bridge_update_hybrid_search_config_can_re_enable_decay_with_default_halflife() {
+        // Disable decay → halflife=INFINITY internally. Then send
+        // `recency_decay_enabled: Some(true)` with no halflife: the
+        // bridge should choose the documented default (30 days)
+        // rather than leave INFINITY in place.
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        update_hybrid_search_config(
+            &manager,
+            HybridSearchConfigUpdate {
+                recency_decay_enabled: Some(false),
+                ..HybridSearchConfigUpdate::default()
+            },
+        )
+        .unwrap();
+        let re_enabled = update_hybrid_search_config(
+            &manager,
+            HybridSearchConfigUpdate {
+                recency_decay_enabled: Some(true),
+                ..HybridSearchConfigUpdate::default()
+            },
+        )
+        .unwrap();
+        assert!(re_enabled.recency_decay_enabled);
+        let halflife = re_enabled
+            .recency_halflife_secs
+            .expect("decay re-enabled → halflife Some");
+        let thirty_days = 30.0 * 24.0 * 60.0 * 60.0;
+        assert!((halflife - thirty_days).abs() < 1.0);
+    }
+
+    #[test]
+    fn bridge_update_hybrid_search_config_can_re_enable_decay_with_explicit_halflife() {
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        update_hybrid_search_config(
+            &manager,
+            HybridSearchConfigUpdate {
+                recency_decay_enabled: Some(false),
+                ..HybridSearchConfigUpdate::default()
+            },
+        )
+        .unwrap();
+        let want_halflife = 7.0 * 24.0 * 60.0 * 60.0;
+        let updated = update_hybrid_search_config(
+            &manager,
+            HybridSearchConfigUpdate {
+                recency_decay_enabled: Some(true),
+                recency_halflife_secs: Some(want_halflife),
+                ..HybridSearchConfigUpdate::default()
+            },
+        )
+        .unwrap();
+        assert!(updated.recency_decay_enabled);
+        assert!((updated.recency_halflife_secs.unwrap() - want_halflife).abs() < 1.0);
+    }
+
+    #[test]
+    fn bridge_update_hybrid_search_config_rejects_invalid_weights_as_invalid_args() {
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let err = update_hybrid_search_config(
+            &manager,
+            HybridSearchConfigUpdate {
+                bm25_weight: Some(-1.0),
+                ..HybridSearchConfigUpdate::default()
+            },
+        )
+        .unwrap_err();
+        match err {
+            BridgeError::InvalidArgs(msg) => {
+                assert!(msg.contains("bm25_weight"), "msg: {msg}");
+            }
+            other => panic!("expected InvalidArgs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bridge_update_hybrid_search_config_with_empty_patch_is_noop() {
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let before = get_hybrid_search_config(&manager).unwrap();
+        let after =
+            update_hybrid_search_config(&manager, HybridSearchConfigUpdate::default()).unwrap();
+        // Empty patch → config unchanged.
+        assert!((after.bm25_weight - before.bm25_weight).abs() < 1e-9);
+        assert!((after.vector_weight - before.vector_weight).abs() < 1e-9);
+        assert_eq!(after.recency_decay_enabled, before.recency_decay_enabled);
+    }
+
+    #[test]
+    fn bridge_update_hybrid_search_config_does_not_silently_re_enable_decay() {
+        // Regression test for Devin Review finding on PR #25: when a
+        // caller sends `recency_decay_enabled: None` (don't touch
+        // toggle) together with `recency_halflife_secs: Some(finite)`
+        // against a manager whose current state has decay DISABLED
+        // (halflife = INFINITY), the bridge must NOT silently
+        // re-enable decay by overwriting the halflife with the
+        // caller's finite value. Re-enable must be explicit via
+        // `recency_decay_enabled: Some(true)`.
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+
+        // Step 1: explicitly disable decay. The internal halflife is
+        // now `f64::INFINITY` (sentinel for "decay off").
+        update_hybrid_search_config(
+            &manager,
+            HybridSearchConfigUpdate {
+                recency_decay_enabled: Some(false),
+                ..HybridSearchConfigUpdate::default()
+            },
+        )
+        .unwrap();
+        let pre = get_hybrid_search_config(&manager).unwrap();
+        assert!(!pre.recency_decay_enabled);
+        assert!(
+            pre.recency_halflife_secs.is_none(),
+            "decay-off should serialise as `None` on the wire (INFINITY is not JSON-representable)"
+        );
+
+        // Step 2: send a finite halflife with no toggle. The caller
+        // probably MEANT to enable decay but forgot the flag. The
+        // safe behaviour is to drop the halflife and keep the toggle
+        // off — making the caller's intent explicit instead of
+        // letting an undeclared side effect flip a security-relevant
+        // setting.
+        let want_halflife = 7.0 * 24.0 * 60.0 * 60.0; // 7 days
+        let after = update_hybrid_search_config(
+            &manager,
+            HybridSearchConfigUpdate {
+                recency_decay_enabled: None,
+                recency_halflife_secs: Some(want_halflife),
+                ..HybridSearchConfigUpdate::default()
+            },
+        )
+        .unwrap();
+
+        // Decay must still be DISABLED.
+        assert!(
+            !after.recency_decay_enabled,
+            "bridge silently re-enabled decay; recency_decay_enabled became true \
+             even though the caller did not set the toggle"
+        );
+        assert!(
+            after.recency_halflife_secs.is_none(),
+            "halflife should still serialise as `None` (decay off); got {:?}",
+            after.recency_halflife_secs
+        );
+
+        // Step 3: by contrast, an EXPLICIT enable with the same
+        // halflife should be honored. This proves the guard isn't
+        // over-broad — it only prevents the silent path.
+        let enabled = update_hybrid_search_config(
+            &manager,
+            HybridSearchConfigUpdate {
+                recency_decay_enabled: Some(true),
+                recency_halflife_secs: Some(want_halflife),
+                ..HybridSearchConfigUpdate::default()
+            },
+        )
+        .unwrap();
+        assert!(enabled.recency_decay_enabled);
+        let returned = enabled
+            .recency_halflife_secs
+            .expect("halflife should be Some when decay is enabled");
+        assert!((returned - want_halflife).abs() < 1.0);
+    }
+
+    #[test]
+    fn bridge_update_hybrid_search_config_passes_through_halflife_when_decay_is_already_on() {
+        // Counterpart to the silent-re-enable test: when decay is
+        // already ON (halflife is finite), a caller sending
+        // `recency_decay_enabled: None` plus a new finite halflife
+        // must STILL be allowed to adjust the halflife. The guard
+        // only kicks in when current decay is OFF — adjusting the
+        // halflife with decay already on doesn't change the toggle.
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        // Sanity: fresh manager has decay enabled (finite default).
+        let pre = get_hybrid_search_config(&manager).unwrap();
+        assert!(pre.recency_decay_enabled);
+
+        let new_halflife = 14.0 * 24.0 * 60.0 * 60.0;
+        let after = update_hybrid_search_config(
+            &manager,
+            HybridSearchConfigUpdate {
+                recency_decay_enabled: None,
+                recency_halflife_secs: Some(new_halflife),
+                ..HybridSearchConfigUpdate::default()
+            },
+        )
+        .unwrap();
+        assert!(after.recency_decay_enabled);
+        let returned = after
+            .recency_halflife_secs
+            .expect("halflife should be Some when decay is enabled");
+        assert!((returned - new_halflife).abs() < 1.0);
     }
 }

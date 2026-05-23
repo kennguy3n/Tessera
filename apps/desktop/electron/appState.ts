@@ -8,8 +8,12 @@ import type {
   ArtifactInfo,
   ArtifactVersionInfo,
   AutomationInfo,
+  BackfillEmbeddingsResult,
   CitationInfo,
+  EmbeddingProgressInfo,
   ExportResult,
+  HybridSearchConfigInfo,
+  HybridSearchConfigUpdate,
   IndexingProgressInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
@@ -28,7 +32,11 @@ export type {
   ArtifactInfo,
   ArtifactVersionInfo,
   AutomationInfo,
+  BackfillEmbeddingsResult,
   CitationInfo,
+  EmbeddingProgressInfo,
+  HybridSearchConfigInfo,
+  HybridSearchConfigUpdate,
   IndexedFileInfo,
   IndexingProgressInfo,
   ReplaceCitationRequest,
@@ -61,6 +69,30 @@ export interface NativeBridge {
   bridgeGetSourceDetail(sourceId: string): SourceDetailInfo;
   bridgeReindexSource(sourceId: string): SourceInfo;
   bridgeGetIndexingProgress(sourceId: string): IndexingProgressInfo;
+  /**
+   * Trigger an embedding backfill pass over every chunk missing an
+   * embedding for the active model. The Rust side is idempotent —
+   * a second call against an up-to-date index reports `embedded=0`.
+   * Pass `null` (or omit) to let the bridge pick its default batch
+   * size.
+   *
+   * **Returns a `Promise`** — the Rust napi function is declared as
+   * `AsyncTask<BackfillEmbeddingsTask>` so the heavy DB / embedding
+   * work runs on a libuv worker thread (Node's built-in thread
+   * pool) rather than blocking the JS main thread. The IPC handler
+   * at `ipc/sources.ts:135` and every other consumer MUST `await`
+   * the result; a non-awaited access (e.g.
+   * `bridge.bridgeBackfillEmbeddings(null).embedded`) would silently
+   * read `.embedded` off the Promise and get `undefined`.
+   */
+  bridgeBackfillEmbeddings(
+    batchSize?: number | null,
+  ): Promise<BackfillEmbeddingsResult>;
+  bridgeGetEmbeddingProgress(): EmbeddingProgressInfo;
+  bridgeGetHybridSearchConfig(): HybridSearchConfigInfo;
+  bridgeUpdateHybridSearchConfig(
+    update: HybridSearchConfigUpdate,
+  ): HybridSearchConfigInfo;
   bridgeCreateArtifact(
     title: string,
     artifactType: string,

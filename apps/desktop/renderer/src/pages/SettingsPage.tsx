@@ -4,6 +4,7 @@ import Card from "../components/Card";
 import Button from "../components/Button";
 import ModelRuntimeCard from "../components/ModelRuntimeCard";
 import ExternalProviderCard from "../components/ExternalProviderCard";
+import HybridSearchCard from "../components/HybridSearchCard";
 import { useSettings, useUpdateSetting } from "../hooks/useSettings";
 import {
   EXPORT_FORMATS,
@@ -152,6 +153,8 @@ export default function SettingsPage() {
         <ModelRuntimeCard />
 
         <ExternalProviderCard />
+
+        <HybridSearchCard />
 
         <Card>
           <h3 style={{ marginBottom: "var(--spacing-md)" }}>Export</h3>

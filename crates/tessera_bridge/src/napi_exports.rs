@@ -1,5 +1,7 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use napi::bindgen_prelude::AsyncTask;
+use napi::{Env, Task};
 use napi_derive::napi;
 
 use tessera_artifacts::automations::AutomationStore;
@@ -9,6 +11,7 @@ use tessera_audit::logger::AuditLogger;
 use tessera_citations::tracker::CitationTracker;
 use tessera_core::open_shared_with_key;
 use tessera_sources::manager::SourceManager;
+use tessera_sources::progress::EmbeddingProgressTracker;
 
 use crate::artifacts;
 use crate::automations;
@@ -65,6 +68,13 @@ struct AppState {
     task_store: Mutex<TaskStore>,
     automation_store: Mutex<AutomationStore>,
     template_dir: String,
+    /// Cached `Arc` clone of the embedding-progress tracker that
+    /// lives inside `source_manager`. Read by
+    /// `bridge_get_embedding_progress` without locking the
+    /// `source_manager` mutex, so progress polls succeed even while
+    /// a `bridge_backfill_embeddings` `AsyncTask` is in flight on a
+    /// libuv worker thread holding the `source_manager` lock.
+    embedding_progress: Arc<EmbeddingProgressTracker>,
 }
 
 /// Initialise the bridge. `db_key`, when non-empty, is a 64-character
@@ -124,6 +134,8 @@ pub fn init_bridge(
     let automation_store = AutomationStore::with_shared_conn(conn)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
+    let embedding_progress = source_manager.embedding_progress_handle();
+
     APP_STATE
         .set(AppState {
             source_manager: Mutex::new(source_manager),
@@ -133,6 +145,7 @@ pub fn init_bridge(
             task_store: Mutex::new(task_store),
             automation_store: Mutex::new(automation_store),
             template_dir,
+            embedding_progress,
         })
         .map_err(|_| napi::Error::from_reason("Bridge already initialized"))?;
 
@@ -278,6 +291,158 @@ pub fn bridge_get_indexing_progress(
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     sources::get_indexing_progress(&mgr, &source_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// `napi::Task` that runs `backfill_embeddings_tracked` on a libuv
+/// worker thread instead of the Node main thread. The whole point
+/// of running off-main is that the JS event loop stays responsive
+/// during a long backfill — in particular, `bridge_get_embedding_progress`
+/// polls scheduled by the renderer's `useEmbeddingProgress` hook
+/// must actually be served while the worker thread is locking the
+/// `SourceManager` mutex.
+///
+/// That's why the progress polls (see `bridge_get_embedding_progress`
+/// below) read from `AppState.embedding_progress` directly rather
+/// than re-locking the source manager: the worker thread holds the
+/// outer manager lock for the duration of the backfill, but the
+/// inner `EmbeddingProgressTracker` has its own mutex so concurrent
+/// reads return the in-flight counters in microseconds.
+pub struct BackfillEmbeddingsTask {
+    batch_size: Option<u32>,
+}
+
+impl Task for BackfillEmbeddingsTask {
+    type Output = sources::BackfillEmbeddingsResult;
+    type JsValue = sources::BackfillEmbeddingsResult;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        // `state()` returns `&'static AppState`, which is `Send`
+        // because every field is either `Sync` (the mutexes), `Send`
+        // (the cloned `Arc`), or owned `String`. The worker thread
+        // can safely lock the source manager here without
+        // contending with main-thread napi callbacks for the same
+        // physical SQLite connection — the inner per-connection
+        // mutex serialises writes, exactly as the synchronous code
+        // path did.
+        let s = state()?;
+        let mgr = s
+            .source_manager
+            .lock()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        sources::backfill_embeddings(&mgr, self.batch_size)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(output)
+    }
+}
+
+/// Triggers an embedding backfill pass over every chunk that doesn't
+/// yet have an embedding for the active provider's model. Returns
+/// the number of newly-embedded chunks and a snapshot of the
+/// progress tracker (so the renderer doesn't need an extra round
+/// trip to render the final state).
+///
+/// Pass `None` for `batch_size` to use the bridge-default; the
+/// renderer doesn't need to know the value. Idempotent — a second
+/// call against an up-to-date index reports `embedded=0`.
+///
+/// **Async**: returns a `Promise` from JS. The heavy DB / embedding
+/// work runs on a libuv worker thread (Node's built-in thread pool)
+/// so the JS event loop stays free to serve `getEmbeddingProgress`
+/// polls from the renderer's progress UI.
+///
+/// **Pre-flight tracker reset (race fix)**: before constructing the
+/// `AsyncTask`, this function calls `embedding_progress.mark_starting()`
+/// *on the JS main thread*. The point is to flip the snapshot to
+/// `Running` BEFORE the renderer can issue its first
+/// `bridge_get_embedding_progress` poll. Without this, the worker
+/// thread's `backfill_embeddings_tracked → tracker.start()` call would
+/// race with the renderer's polling loop: a poll arriving before the
+/// worker had acquired the `SourceManager` lock would see the previous
+/// run's terminal status (`Done`/`Failed`), and the React hook would
+/// treat that as "this backfill already finished" and stop polling —
+/// meaning the user never sees any in-flight progress for the new
+/// pass. By eagerly resetting the snapshot synchronously here, every
+/// observable poll for the new generation sees `Running` from the
+/// outset. The worker thread's subsequent `start(total, model)` call
+/// inside `compute()` overwrites `total_chunks` / `model_id` with the
+/// real numbers once it has computed them.
+///
+/// **IPC ordering invariant (why pre-flight reset is sufficient)**:
+/// Electron's IPC layer processes messages from a given renderer
+/// channel strictly in-order on the main process. The renderer's
+/// `sources:backfillEmbeddings` IPC arrives BEFORE any subsequent
+/// `sources:getEmbeddingProgress` IPC issued by the same renderer
+/// because both go through the same `ipcMain.handle` queue in the
+/// same WebContents. So `mark_starting()` (synchronous, on the main
+/// thread, before this function returns the `AsyncTask`) is
+/// guaranteed to complete before the renderer's first poll for the
+/// new generation is dispatched. The `AsyncTask::resolve` value
+/// (the `Promise` we hand back to JS) is awaited by the IPC handler
+/// in `ipc/sources.ts`, but the actual `compute()` body — which
+/// flips status back to `Running` with real counters and then
+/// drains the backfill loop — runs on a libuv worker thread that
+/// can race the renderer's polling. That's exactly the race the
+/// pre-flight `mark_starting()` defuses: it guarantees the
+/// renderer's first observable poll sees `Running` with zeroed
+/// counters instead of the previous generation's stale terminal
+/// state, regardless of which thread wins the lock race after.
+#[napi]
+pub fn bridge_backfill_embeddings(
+    batch_size: Option<u32>,
+) -> napi::Result<AsyncTask<BackfillEmbeddingsTask>> {
+    let s = state()?;
+    s.embedding_progress.mark_starting();
+    Ok(AsyncTask::new(BackfillEmbeddingsTask { batch_size }))
+}
+
+/// Lightweight poll for the renderer. Always returns the latest
+/// snapshot of the embedding-progress tracker — `status=Done` plus
+/// the final counters are what the renderer uses to dismiss the
+/// progress banner after a `bridge_backfill_embeddings` call.
+///
+/// Reads from `AppState.embedding_progress` directly so the call
+/// stays cheap even while a `BackfillEmbeddingsTask` is holding the
+/// `source_manager` mutex on a worker thread.
+#[napi]
+pub fn bridge_get_embedding_progress() -> napi::Result<sources::EmbeddingProgressInfo> {
+    let s = state()?;
+    Ok(sources::get_embedding_progress_from_tracker(
+        &s.embedding_progress,
+    ))
+}
+
+/// Returns the current effective hybrid retrieval config so the
+/// renderer's Settings page can populate its initial form state.
+#[napi]
+pub fn bridge_get_hybrid_search_config() -> napi::Result<sources::HybridSearchConfigInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::get_hybrid_search_config(&mgr).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Apply a partial-update patch to the hybrid retrieval config.
+/// Returns the new effective config so the renderer can echo it
+/// back into its form state (e.g. to display the clamped value if
+/// validation rounded something). Validation errors surface as
+/// `napi::Error` so the renderer can show them inline next to the
+/// offending field.
+#[napi]
+pub fn bridge_update_hybrid_search_config(
+    update: sources::HybridSearchConfigUpdate,
+) -> napi::Result<sources::HybridSearchConfigInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::update_hybrid_search_config(&mgr, update)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 

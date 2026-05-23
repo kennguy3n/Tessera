@@ -13,16 +13,24 @@ import {
   loadConfig,
   updateConfig,
   DEFAULT_EXTERNAL_PROVIDER,
+  DEFAULT_HYBRID_SEARCH_CONFIG,
   type ExternalProviderConfig,
+  type HybridSearchConfigPersisted,
 } from "../config";
 import { resolveProviderEndpoint } from "../externalProviderStream";
 import * as secretsVault from "../secretsVault";
-import type { SettingsData } from "../../shared/types";
+import type {
+  HybridSearchConfigInfo,
+  HybridSearchConfigUpdate,
+  SettingsData,
+} from "../../shared/types";
 import {
   ExternalProviderApiKeySchema,
   ExternalProviderConfigSchema,
+  HybridSearchConfigUpdateSchema,
   SettingsUpdateSchema,
 } from "./schemas";
+import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
 
 /**
  * Best-effort audit shim for `settings:*` and `externalProvider:*`
@@ -273,6 +281,60 @@ export function registerSettingsHandlers(): void {
     },
   );
 
+  // ----- Hybrid retrieval config -----
+  //
+  // Three-way coherence: (1) the persisted JSON on disk
+  // (`config.hybridSearchConfig`), (2) the live `HybridSearchConfig`
+  // in the Rust `SourceManager` (mutable via
+  // `bridge_update_hybrid_search_config`), and (3) the renderer's
+  // form state (echoes whatever the bridge returns).
+  //
+  // The bridge is the source of truth at runtime — it owns the
+  // validation, the live state used by every search call, and the
+  // mutex around updates. We persist its effective state back to
+  // disk after every update so a restart replays the user's choices
+  // through `replayPersistedHybridSearchConfigToBridge` below.
+  idempotentHandle("settings:getHybridSearchConfig", async () => {
+    const bridge = getBridge();
+    if (bridge) {
+      // Bridge wins — its in-memory state is the source of truth at
+      // runtime. The renderer should see exactly what the search
+      // engine will use.
+      return bridge.bridgeGetHybridSearchConfig();
+    }
+    // Pre-bridge fallback so the Settings page renders without
+    // throwing during the brief startup window where the bridge is
+    // still initialising. The values come from disk so they're
+    // user-meaningful (vs. all-zeros placeholders).
+    return persistedToInfo(loadConfig().hybridSearchConfig);
+  });
+
+  idempotentHandle(
+    "settings:updateHybridSearchConfig",
+    async (_event, update: unknown) => {
+      defaultRateLimiter.consume(
+        "settings:updateHybridSearchConfig",
+        RATE_LIMIT_PROFILES["settings:updateHybridSearchConfig"],
+      );
+      const parsed = HybridSearchConfigUpdateSchema.parse(update);
+      const bridge = getBridge();
+      if (!bridge) {
+        throw new Error("Native bridge not available");
+      }
+      // The bridge returns the new effective config (post-validation),
+      // including any clamping the Rust side applied. Persist *that*
+      // to disk — not `parsed` — so the disk shape always equals what
+      // the live engine is using. Persistence happens before we
+      // return so a crash between the bridge update and the disk
+      // write is recoverable (next launch will re-read whatever we
+      // managed to commit to disk).
+      const effective: HybridSearchConfigInfo =
+        bridge.bridgeUpdateHybridSearchConfig(parsed as HybridSearchConfigUpdate);
+      updateConfig({ hybridSearchConfig: infoToPersisted(effective) });
+      return effective;
+    },
+  );
+
   idempotentHandle("externalProvider:test", async () => {
     const config = loadConfig();
     const provider = config.externalProvider;
@@ -299,4 +361,140 @@ export function registerSettingsHandlers(): void {
       };
     }
   });
+}
+
+// ---- Hybrid retrieval config — disk ↔ bridge translation helpers ----
+//
+// The disk uses `recencyDecayEnabled: boolean + recencyHalflifeSecs:
+// number` (a number is always present, even when decay is disabled,
+// because JSON cannot represent the `Infinity` sentinel the Rust side
+// uses). The bridge surfaces the same disabled state as
+// `recencyDecayEnabled: false + recencyHalflifeSecs: null`. The two
+// helpers below keep that translation in one place so the IPC handlers
+// can ignore the distinction.
+
+function persistedToInfo(
+  p: HybridSearchConfigPersisted,
+): HybridSearchConfigInfo {
+  return {
+    bm25Weight: p.bm25Weight,
+    vectorWeight: p.vectorWeight,
+    rrfK: p.rrfK,
+    recencyDecayEnabled: p.recencyDecayEnabled,
+    recencyHalflifeSecs: p.recencyDecayEnabled ? p.recencyHalflifeSecs : null,
+    candidatePoolSize: p.candidatePoolSize,
+  };
+}
+
+function infoToPersisted(
+  info: HybridSearchConfigInfo,
+): HybridSearchConfigPersisted {
+  // When decay is disabled the bridge sets `recencyHalflifeSecs` to
+  // null. We need a number on disk (because zod's `.finite().min(1)`
+  // would reject null), so we keep the user's previously-persisted
+  // halflife if available, otherwise fall back to the documented
+  // 30-day default. This means a user who toggles decay off and then
+  // back on without changing the halflife sees their original value
+  // restored.
+  let halflife = info.recencyHalflifeSecs;
+  if (halflife === null) {
+    const prior = loadConfig().hybridSearchConfig.recencyHalflifeSecs;
+    halflife = Number.isFinite(prior) && prior >= 1
+      ? prior
+      : DEFAULT_HYBRID_SEARCH_CONFIG.recencyHalflifeSecs;
+  }
+  return {
+    bm25Weight: info.bm25Weight,
+    vectorWeight: info.vectorWeight,
+    rrfK: info.rrfK,
+    recencyDecayEnabled: info.recencyDecayEnabled,
+    recencyHalflifeSecs: halflife,
+    candidatePoolSize: info.candidatePoolSize,
+  };
+}
+
+/**
+ * Replay the persisted hybrid retrieval config into the Rust
+ * `SourceManager` on app startup so the user's choices survive a
+ * restart. Called once from `appState.ts` after the bridge becomes
+ * available, before any UI is shown.
+ *
+ * Defensive: if the persisted config has identical values to the
+ * Rust default we skip the replay (a) to avoid unnecessary work
+ * on the very common fresh-install path and (b) to limit log noise.
+ * A future-version disk shape that adds a field we don't recognise
+ * will be passed through unchanged by the loose schema, but the
+ * `updateConfig` after the next `settings:updateHybridSearchConfig`
+ * call will discard the unknown field, which is acceptable: we
+ * never want stale unknowns to win over user intent.
+ *
+ * **Dual contract — callers MUST be aware of both outcomes.**
+ *
+ *  1. **Side effect on bridge rejection.** When the persisted
+ *     config violates the bridge's validation rules (negative
+ *     weights, non-finite halflife, etc.), this function calls
+ *     `updateConfig` to **reset disk to the documented default**
+ *     before rethrowing. The reset is intentional: the next launch
+ *     must not loop on the same invalid config. A successful return
+ *     leaves disk unchanged; a thrown return rewrites disk to the
+ *     default. Callers that want to inspect disk after this function
+ *     returns/throws should re-read via `loadConfig()`.
+ *
+ *  2. **Throws on bridge rejection.** The bridge error is
+ *     re-thrown so the caller can log it and surface a warning to
+ *     the user. The `hybridSearchConfigIpc.test.ts` integration
+ *     test (`hybridSearchConfigIpc.test.ts:replay…rejects…`) pins
+ *     this contract: a malformed persisted config produces both the
+ *     disk reset AND a thrown error. Callers MUST wrap this call in
+ *     `try / catch` or the entire main-process bootstrap aborts.
+ *
+ * Today there is exactly one production callsite at
+ * `apps/desktop/electron/main.ts` which already wraps this in a
+ * try/catch and logs `bridge.replayHybridSearchConfig.failed`. Any
+ * future callsite (e.g. a hypothetical "reset search config" menu
+ * command) must do the same.
+ */
+export function replayPersistedHybridSearchConfigToBridge(): void {
+  const bridge = getBridge();
+  if (!bridge) {
+    return;
+  }
+  const persisted = loadConfig().hybridSearchConfig;
+  // Skip if the persisted shape is the documented default — the
+  // bridge already starts with that config so the replay is a
+  // no-op. This avoids the work AND the audit-log entry.
+  const isDefault =
+    persisted.bm25Weight === DEFAULT_HYBRID_SEARCH_CONFIG.bm25Weight &&
+    persisted.vectorWeight === DEFAULT_HYBRID_SEARCH_CONFIG.vectorWeight &&
+    persisted.rrfK === DEFAULT_HYBRID_SEARCH_CONFIG.rrfK &&
+    persisted.recencyDecayEnabled ===
+      DEFAULT_HYBRID_SEARCH_CONFIG.recencyDecayEnabled &&
+    persisted.recencyHalflifeSecs ===
+      DEFAULT_HYBRID_SEARCH_CONFIG.recencyHalflifeSecs &&
+    persisted.candidatePoolSize ===
+      DEFAULT_HYBRID_SEARCH_CONFIG.candidatePoolSize;
+  if (isDefault) {
+    return;
+  }
+  const update: HybridSearchConfigUpdate = {
+    bm25Weight: persisted.bm25Weight,
+    vectorWeight: persisted.vectorWeight,
+    rrfK: persisted.rrfK,
+    recencyDecayEnabled: persisted.recencyDecayEnabled,
+    recencyHalflifeSecs: persisted.recencyHalflifeSecs,
+    candidatePoolSize: persisted.candidatePoolSize,
+  };
+  try {
+    bridge.bridgeUpdateHybridSearchConfig(update);
+  } catch (e) {
+    // The persisted config came from us, so a validation failure
+    // here means the on-disk file was hand-edited (or written by a
+    // newer Tessera version with looser bounds). Reset to the
+    // documented default rather than crash the app — the user can
+    // re-tune in Settings.
+    updateConfig({
+      hybridSearchConfig: { ...DEFAULT_HYBRID_SEARCH_CONFIG },
+    });
+    throw e;
+  }
 }

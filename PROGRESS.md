@@ -484,32 +484,137 @@ boundary, structured logging, release workflow).
 
 ---
 
-## Phase 10 — Template & artifact expansion (industry / profile / language coverage)
+## Phase 10 — Production hardening & documentation
 
-**Status:** `DONE`
+**Status:** `IN PROGRESS`
 
-**Goal:** Grow the bundled template registry from the original ~36
+**Goal:** Convert Tessera from feature-complete-MVP to release-ready
+shipping product. Closes the production-hardening, security, and
+UX gaps that surfaced after Phase 9: hybrid retrieval becomes
+transparent and configurable; the security surface (CSP, password
+vault, rate limiter, export path safety, IPC audit) is fully
+documented and instrumented; the external LLM provider gets SSE
+streaming + retry + token counting + model listing + cancellation
+UX; the bundled template catalog grows to >170 templates across
+ten industries and ten locales; and every top-level doc reflects
+the shipped surface end-to-end.
+
+### Block table
+
+*Tasks marked `DONE` shipped in earlier PRs (#17 / #19 / #20 / #21 /
+#22 / #23) and are listed for completeness. The full task list,
+including the IN PROGRESS rows, mirrors the engineering brief that
+opens this phase.*
+
+| Block | Item | Status |
+|---|---|---|
+| A | Task 1 — PROGRESS.md Phase 10 section + 2026-05-23 changelog entry | `IN PROGRESS` |
+| A | Task 2 — PHASES.md Phase 10 row | `IN PROGRESS` |
+| A | Task 3 — ARCHITECTURE.md mermaid diagram, recommended-stack table, repo-layout tree, security subsection, hybrid-retrieval description | `IN PROGRESS` |
+| A | Task 4 — README.md security-and-hardening section, stack-summary table, hybrid-retrieval bullet, SSE-streaming note, repo-layout fix | `IN PROGRESS` |
+| A | Task 5 — PROPOSAL.md consistency sweep (surfaces, artifact types, connectors, templates, retrieval description, links) | `IN PROGRESS` |
+| A | Task 6 — CONTRIBUTING.md testing expectations + security-regression-test pointers + smoke-suite reference | `IN PROGRESS` |
+| A | Task 7 — docs/IPC_AUDIT.md cross-reference vs. `apps/desktop/electron/ipc/` + autoUpdater channels | `IN PROGRESS` |
+| B | Task 8 — `sources:backfillEmbeddings` IPC + bridge method + SourceDetailPage "Re-embed" button | `IN PROGRESS` |
+| B | Task 9 — `ProgressTracker` embedding-phase counters + `sources:getEmbeddingProgress` IPC + renderer progress bar | `IN PROGRESS` |
+| B | Task 10 — Hybrid-search config UI in Settings (hybrid toggle, recency half-life) + `hybridSearchConfig` persistence + IPC | `IN PROGRESS` |
+| B | Task 11 — `CitationPanel` relevance display (percentage + tier badge) | `IN PROGRESS` |
+| B | Task 12 — Hybrid-retrieval end-to-end integration test (exact-match, typo, substring, empty, recency, BM25-only) | `IN PROGRESS` |
+| C | Task 13 — `getOrCreateDbKeyAsync` integrates password vault as DB-key wrap fallback; one-time migration for existing plaintext DBs | `IN PROGRESS` |
+| C | Task 14 — IPC rate limiter (`ipc/rateLimiter.ts`) | `DONE` (PR #17) |
+| C | Task 15 — Export-path containment (`exportPathSafety.ts`) | `DONE` (PR #17) |
+| C | Task 16 — Extracted-item XSS hardening: HTML-escape `text` + `sourceCitation` in `extractedItemValidation.ts` | `IN PROGRESS` |
+| C | Task 17 — Audit-trail completeness sweep across `ipc/`: source / artifact / citation / connector / model / settings events | `IN PROGRESS` |
+| D | Task 18 — External provider connect-failure retry with exponential backoff (1s / 2s / 4s) + `Retry-After` on 429; no retry on 4xx | `IN PROGRESS` |
+| D | Task 19 — Token-counting utility + cumulative usage in `config.ts` + Settings display + reset button | `IN PROGRESS` |
+| D | Task 20 — `externalProvider:listModels` IPC + model-dropdown UI with graceful fallback | `IN PROGRESS` |
+| D | Task 21 — Streaming cancellation UX: visible "Stop generating" button in `ArtifactEditorPage` + lifecycle transitions | `IN PROGRESS` |
+| E | Task 22 — Connector wiremock integration tests for OneDrive / Notion / Jira / Confluence / Figma (Rust crate) | `IN PROGRESS` |
+| E | Task 23 — Export module edge-case tests (empty, very long, Unicode, Mermaid, icon tokens, evidence pack) | `IN PROGRESS` |
+| E | Task 24 — Editor component vitest coverage (Document / Slide / Sheet / Base / Infographic / LandingPage) | `IN PROGRESS` |
+| E | Task 25 — Accessibility audit (focus trap, aria-labelledby, aria-current, htmlFor, Re-embed + Stop labels) | `IN PROGRESS` |
+| E | Task 26 — Dark-mode CSS-variable enforcement + regression test | `IN PROGRESS` |
+| F | Task 27 — Home page: real recent-artifacts (sorted by modified) + source status counts + quick actions | `IN PROGRESS` |
+| F | Task 28 — Template validation on load: required-field + section-prompt + export-format checks; audit-log validation failures | `IN PROGRESS` |
+| F | Task 29 — Source comparison: structured result (common / unique-to-A / unique-to-B) + `ComparisonResultModal` | `IN PROGRESS` |
+| F | Task 30 — Scheduler resilience (tick failure, concurrency, drain) | `DONE` (PR #17) |
+| G | Release readiness — RELEASING.md, preflight scripts, README platform table | `DONE` (PR #21) |
+| G | Phase-tracking smoke suite + phase-exit checklist in CONTRIBUTING.md | `DONE` (PR #22) |
+| H | Template & artifact expansion (industries / profiles / locales — 173 templates, ten BCP-47 locales) | `DONE` (PR #23) |
+
+### Block H — Template & artifact expansion (shipped in PR #23)
+
+Grows the bundled template registry from the original ~36
 English-only corporate-tech templates to >170 templates that cover
-ten industries, multiple user profiles, and ten BCP-47 locales (English
-plus nine localized variants).
-
-### Build
+ten industries, multiple user profiles, and ten BCP-47 locales
+(English plus nine localized variants).
 
 | Item | Status |
 |---|---|
-| A | Add `locale`, `industry`, `profile` fields to the YAML schema, the Rust `Template` struct, and the TypeScript `Template` interface | `DONE` |
-| B | Industry-specific document templates — Healthcare (4), Legal (4), Education (4), Government (4), Finance (4), Manufacturing (3), Retail (2), Nonprofit (2), Creative / Marketing (3), Real Estate (2) | `DONE` |
-| C | New slide decks — onboarding, sales enablement, board update, investor update, workshop | `DONE` |
-| D | New base templates — CRM, incident tracker, employee directory, compliance register | `DONE` |
-| E | New infographics — timeline, org chart, KPI dashboard | `DONE` |
-| F | New landing pages — nonprofit cause, event / conference, personal & agency portfolio | `DONE` |
-| G | New sheet templates — product catalog, sales forecast | `DONE` |
-| H | Localized variants of the top 10 templates (PRD, Proposal, SOP, Report, Meeting agenda, Meeting notes, Task list, Form, Budget, Pitch) in nine languages: `es`, `fr`, `de`, `ja`, `zh`, `pt`, `ko`, `ar`, `hi` — 90 files total | `DONE` |
-| I | CreatePage industry + locale filter dropdowns; cards re-resolve to the localized id when a non-English locale is selected | `DONE` |
-| J | Smoke registry test (`crates/tessera_templates/tests/bundled_templates.rs`) discovers every template, validates parse + schema, enforces unique ids, locale-directory consistency, and the canonical-set invariant for every supported locale | `DONE` |
-| K | README industry-coverage and language-support tables, PROPOSAL template-catalog update, PROGRESS phase entry | `DONE` |
+| Add `locale`, `industry`, `profile` fields to the YAML schema, the Rust `Template` struct, and the TypeScript `Template` interface | `DONE` |
+| Industry-specific document templates — Healthcare (4), Legal (4), Education (4), Government (4), Finance (4), Manufacturing (3), Retail (2), Nonprofit (2), Creative / Marketing (3), Real Estate (2) | `DONE` |
+| New slide decks — onboarding, sales enablement, board update, investor update, workshop | `DONE` |
+| New base templates — CRM, incident tracker, employee directory, compliance register | `DONE` |
+| New infographics — timeline, org chart, KPI dashboard | `DONE` |
+| New landing pages — nonprofit cause, event / conference, personal & agency portfolio | `DONE` |
+| New sheet templates — product catalog, sales forecast | `DONE` |
+| Localized variants of the top 10 templates (PRD, Proposal, SOP, Report, Meeting agenda, Meeting notes, Task list, Form, Budget, Pitch) in nine languages: `es`, `fr`, `de`, `ja`, `zh`, `pt`, `ko`, `ar`, `hi` — 90 files total | `DONE` |
+| CreatePage industry + locale filter dropdowns; cards re-resolve to the localized id when a non-English locale is selected | `DONE` |
+| Smoke registry test (`crates/tessera_templates/tests/bundled_templates.rs`) discovers every template, validates parse + schema, enforces unique ids, locale-directory consistency, and the canonical-set invariant for every supported locale | `DONE` |
+| README industry-coverage and language-support tables, PROPOSAL template-catalog update, PROGRESS phase entry | `DONE` |
 
 ### Exit criteria
+
+- [ ] Every doc (PROPOSAL, ARCHITECTURE, README, PROGRESS, PHASES,
+      CONTRIBUTING, docs/IPC_AUDIT) describes the same set of
+      surfaces, artifact types, connectors, export formats, security
+      controls, and external-provider features — no contradictions.
+- [ ] Repo-layout tree references `landing_pages/` (the on-disk
+      directory name) everywhere, never `landingpages/`.
+- [ ] Hybrid retrieval is configurable from Settings (toggle + recency
+      half-life), embeddings can be backfilled from the UI, progress
+      is observable, and `CitationPanel` shows relevance as a tiered
+      percentage badge.
+- [ ] `getOrCreateDbKeyAsync` keeps the DB key encrypted on keyring-less
+      platforms by wrapping with the password vault; existing plaintext
+      DBs migrate transparently on first password-vault-backed launch.
+- [ ] Extracted-item validation HTML-escapes every renderer-bound
+      string field; XSS regression tests cover `<script>`, on-event
+      attributes, `javascript:` / `data:` URIs.
+- [ ] Every IPC handler that mutates state writes an audit event
+      via `tessera_audit`; the missing-event audit table in this
+      document lists zero outstanding rows.
+- [ ] External provider retries on transient HTTP (408 / 429 / 5xx)
+      with exponential backoff, never retries on 400 / 401 / 403, and
+      respects `Retry-After` on 429.
+- [ ] Token usage accumulates across sessions, displays in the
+      External Provider card, and can be reset.
+- [ ] OpenAI-compatible providers expose a `GET /v1/models` driven
+      dropdown; Anthropic and unknown endpoints fall back to the
+      manual model-name input gracefully.
+- [ ] A visible "Stop generating" button in `ArtifactEditorPage`
+      cancels both local sidecar and external provider streams.
+- [ ] Every connector ships wiremock-backed integration tests for
+      OAuth refresh / listing / incremental sync / disconnect / 401 /
+      429 / 500 paths.
+- [ ] Every export module ships edge-case tests (empty body, >100 KB
+      body, Unicode + emoji + RTL, Mermaid blocks, icon tokens).
+- [ ] Every editor mounts cleanly under vitest with auto-save IPC
+      asserted.
+- [ ] Every modal traps focus, exposes `aria-labelledby`, restores
+      focus on close, and dismisses on Escape; every form input has
+      an associated label; sidebar uses `aria-current`.
+- [ ] No renderer component leaks hardcoded hex colors in either
+      theme (snapshot / assertion-based regression test).
+- [ ] HomePage shows real recent-artifact + source-status data; the
+      empty state is distinguishable from a loading state.
+- [ ] Template validation runs on load; failures are surfaced in the
+      audit log; the 173-template registry has zero validation
+      errors.
+- [ ] Source comparison returns a structured `{ common, uniqueToA,
+      uniqueToB }` result and renders through `ComparisonResultModal`.
+
+#### Template & artifact expansion exit criteria *(Block H, shipped in PR #23)*
 
 - [x] Every YAML file under `templates/` parses through
       `tessera_templates::parser::parse_template_file` and validates
@@ -547,11 +652,122 @@ plus nine localized variants).
 
 ## Changelog
 
-### 2026-05-23 (Phase 10 — template & artifact expansion)
-- **Schema additions**: `locale` (BCP-47), `industry[]`, `profile[]` added
-  to the YAML schema, the `Template` Rust struct, and the renderer
-  `Template` interface. `default_locale()` returns `"en"`; existing
-  templates round-trip unchanged.
+### 2026-05-23 (Phase 10 — production hardening & documentation)
+
+This changelog entry covers every PR merged since Phase 9 closed
+(PRs #17 / #19 / #20 / #21 / #22 / #23) plus the in-flight Phase 10
+production-hardening work. See the Phase 10 block table above for
+the per-task tracker.
+
+**PR #17 — WS10 security hardening (merged)**
+- **Password vault fallback** (`apps/desktop/electron/passwordVault.ts`,
+  `vaultCrypto.ts`, `passwordPromptPreload.ts`,
+  `passwordPromptChannels.ts`). Adds a PBKDF2-SHA256 (600 000
+  iterations) + AES-256-GCM encryption fallback for platforms where
+  Electron's `safeStorage` cannot reach an OS keyring (headless
+  Linux, certain CI runners). The vault is unlocked by an
+  ephemeral `BrowserWindow` loaded via `data:text/html` with
+  `sandbox: true`; its preload exposes only a single
+  `tesseraPasswordPrompt` API onto two `ipcMain.on` channels
+  (`password-vault:submit`, `password-vault:cancel`) that are torn
+  down on prompt close.
+- **CSP per-connector image-source allow-list**
+  (`apps/desktop/electron/cspImageSources.ts`). Replaces the prior
+  wildcard `https:` image source with an explicit allow-list keyed
+  off the connected providers (Google Drive, OneDrive, Notion,
+  Jira, Confluence, Figma each map to their CDN hosts).
+- **IPC rate limiter** (`apps/desktop/electron/ipc/rateLimiter.ts`).
+  Token-bucket limiter applied to expensive IPC channels
+  (search, generate, indexing actions) so a compromised renderer
+  cannot exhaust the main process.
+- **Export-path containment** (`apps/desktop/electron/exportPathSafety.ts`).
+  Every renderer-initiated file write is constrained to a
+  user-controlled directory; absolute paths outside the allow-list
+  are rejected at the IPC boundary.
+- **Extracted-item schema validation**
+  (`apps/desktop/electron/extractedItemValidation.ts`). Zod-shape
+  validation on every batch of tasks / decisions / risks the bridge
+  surfaces; malformed items are dropped and audited.
+- **Auto-updater** (`apps/desktop/electron/autoUpdater.ts`). Wraps
+  `electron-updater` and exposes
+  `updates:status` / `updates:check` / `updates:install` /
+  `updates:getAutoUpdateEnabled` / `updates:setAutoUpdateEnabled`.
+  Renderer subscribes to `updates:status` for ambient toast UX.
+- **Encrypted DB key management** (`apps/desktop/electron/dbKey.ts`).
+  `getOrCreateDbKey` reads / writes the SQLCipher key blob through
+  `safeStorage`; throws `EncryptionUnavailableError` on platforms
+  with no keyring. (The Phase 10 in-flight Task 13 wires the
+  password vault as the long-term fix for that error path so the
+  DB stays encrypted on keyringless platforms too.)
+- **Modular IPC split**: `apps/desktop/electron/ipc.ts` split into
+  `apps/desktop/electron/ipc/{sources,artifacts,model,runtime,
+  citations,settings,templates,tasks,automations,connectors,dialog,
+  context,rateLimiter,schemas,validate,shared,register}.ts` with a
+  `connectors/` subdirectory for the per-provider handlers. The
+  `idempotentHandle` helper (`register.ts`) makes every channel
+  safe to re-register under vitest's `vi.resetModules()`.
+- **Scheduler resilience** (`apps/desktop/electron/scheduler.ts`).
+  Tick failures, concurrency limits, and `will-quit` drain were all
+  pinned with regression tests so the scheduler cannot leak running
+  jobs across an app close.
+
+**PR #19 — WS11 external LLM provider SSE streaming (merged)**
+- **Real SSE parser** (`apps/desktop/electron/externalProviderStream.ts`).
+  `streamExternalProvider` consumes the chunked SSE response from
+  OpenAI-compatible and Anthropic endpoints, parses `data:` events
+  incrementally, and emits per-token deltas through
+  `webContents.send("model:token", …)`. Cancellation via an
+  external `AbortController` is propagated through to the underlying
+  `fetch`.
+- **Adapter wiring**: `tessera_runtime` `ExternalAdapter` (Phase 9)
+  now routes through the new streaming surface; the local
+  llama.cpp sidecar path and the external path expose the same
+  per-token API to the renderer.
+
+**PR #20 — WS3 hybrid retrieval (merged)**
+- **`crates/tessera_sources/src/embedding.rs`**: introduces the
+  `EmbeddingProvider` trait, `HashTrickEmbedding` default offline
+  provider (signed feature hashing à la Weinberger et al. 2009 over
+  character n-grams 3..=5, dim=256), `cosine_similarity` /
+  `encode_vec` / `decode_vec` helpers. The provider exposes a
+  stable `model_id` that includes every parameter that, if changed,
+  would invalidate stored vectors.
+- **`crates/tessera_sources/src/hybrid.rs`**: introduces the
+  `HybridSearchConfig` struct (BM25 weight, vector weight, RRF k,
+  recency half-life, candidate-pool size), `rrf_contribution`,
+  `recency_multiplier`, `fuse_rankings`, `rank_chunks_by_cosine`,
+  and the top-level `hybrid_search` entry point. The combiner is
+  Reciprocal Rank Fusion (Cormack 2009, k=60) on top of a true
+  half-life recency decay (`2^(-Δt/halflife)`) — pinned by the
+  `recency_one_halflife_is_half` regression test.
+- **Search relevance**: `SearchEngine::search_with_mode` now
+  returns bounded `(0, 1]` RRF-derived relevance scores instead of
+  the prior unbounded BM25 raw scores.
+
+**PR #21 — Release readiness (merged)**
+- **Release tooling**: `RELEASING.md`, preflight script
+  (`preflight.sh` / `preflight.ps1`) that mirrors the CI Rollup
+  platform-binary workaround, JSON-aware bash version detection,
+  symmetric platform guard for PowerShell.
+- **README platform availability**: macOS / Windows / Linux all
+  marked Available; Releases-page link added.
+
+**PR #22 — Phase tracking smoke suite (merged)**
+- **Smoke suite**:
+  `apps/desktop/renderer/src/__tests__/smoke/phaseVerification.test.ts`,
+  `crates/tessera_connectors/tests/phase_smoke_connectors.rs`,
+  `crates/tessera_export/tests/phase_smoke_export.rs`,
+  `crates/tessera_templates/tests/phase_smoke_templates.rs`. Asserts
+  that every claimed feature is backed by importable / callable
+  code, not just docs.
+- **CONTRIBUTING.md phase-exit checklist**: five-item gate that has
+  to pass before a phase flips to `DONE` in `PROGRESS.md`.
+
+**PR #23 — WS3 template & artifact expansion (merged)**
+- **Schema additions**: `locale` (BCP-47), `industry[]`, `profile[]`
+  added to the YAML schema, the `Template` Rust struct, and the
+  renderer `Template` interface. `default_locale()` returns `"en"`;
+  existing templates round-trip unchanged.
 - **Industry templates**: 32 new document / sheet templates tagged
   for healthcare, legal, education, government, finance,
   manufacturing, retail, nonprofit, creative / marketing, and real
@@ -592,6 +808,14 @@ plus nine localized variants).
 - **Docs**: README artifact-types table refreshed, new "Industry
   coverage" and "Language support" sections added; PROPOSAL.md
   template-catalog updated.
+
+**Phase 10 in-flight (this PR onwards)**
+- Block A documentation catchup: PROGRESS / PHASES / ARCHITECTURE
+  / README / PROPOSAL / CONTRIBUTING / docs/IPC_AUDIT updated to
+  describe every surface listed above.
+- Blocks B–F shipping as separate PRs (see block table) covering
+  hybrid retrieval UX, security hardening completion, external
+  provider hardening, testing & quality, feature polish.
 
 ### 2026-05-21 (Phase 9)
 - **Block A — Missing templates**: Five new YAML templates landed

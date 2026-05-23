@@ -104,6 +104,17 @@ export class RateLimiter {
  *   *start* attempts to 1 every 5s as a safety net).
  * - `sources:search` — 10 per second (debounce is in renderer, this
  *   is defense-in-depth).
+ * - `sources:backfillEmbeddings` — 1 every 10s. Backfill walks the
+ *   whole chunks table and runs the embedder on every missing row;
+ *   a clicky user mashing the Re-embed button could otherwise queue
+ *   up multiple concurrent passes. The Rust side is also idempotent
+ *   so a second click is at worst a no-op, but rate-limiting saves
+ *   the spurious round trips and gives the user predictable UI
+ *   feedback ("you can re-click in 10 seconds").
+ * - `settings:updateHybridSearchConfig` — 5 per second. The Settings
+ *   slider can fire many updates as the user drags it; rate-limiting
+ *   prevents the IPC channel from becoming a bottleneck while still
+ *   letting interactive feedback flow through.
  */
 export const RATE_LIMIT_PROFILES = {
   "connectors:authenticate": {
@@ -122,6 +133,15 @@ export const RATE_LIMIT_PROFILES = {
     tokensPerInterval: 10,
     intervalMs: 1_000,
     burst: 20,
+  },
+  "sources:backfillEmbeddings": {
+    tokensPerInterval: 1,
+    intervalMs: 10_000,
+  },
+  "settings:updateHybridSearchConfig": {
+    tokensPerInterval: 5,
+    intervalMs: 1_000,
+    burst: 10,
   },
 } satisfies Record<string, RateLimitConfig>;
 

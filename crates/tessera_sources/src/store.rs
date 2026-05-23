@@ -677,6 +677,34 @@ impl SourceStore {
         Ok(rows)
     }
 
+    /// Cheap count of how many chunks are missing an embedding for
+    /// the given `model_id`. Used by
+    /// `SourceManager::backfill_embeddings_tracked` to seed the
+    /// progress denominator before the long-running embed loop starts,
+    /// so the renderer can show a determinate `embedded / total` bar
+    /// from the first poll.
+    ///
+    /// Separate from [`chunks_missing_embedding`] (which materialises
+    /// every chunk's content) because the count case only needs an
+    /// index-only scan via `COUNT(*)` — for a 100k-chunk corpus this
+    /// is ~100x cheaper than building a Vec of the same length.
+    pub fn count_chunks_missing_embedding(&self, model_id: &str) -> Result<u64> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT COUNT(*)
+                 FROM chunks c
+                 LEFT JOIN chunk_embeddings e
+                    ON e.chunk_id = c.id AND e.model_id = ?1
+                 WHERE e.chunk_id IS NULL",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let count: i64 = stmt
+            .query_row([model_id], |row| row.get(0))
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(count.max(0) as u64)
+    }
+
     /// Look up `last_modified` ages in seconds (relative to `now`)
     /// for a list of chunk ids. Chunks whose `last_modified` cannot
     /// be parsed get age 0 (treated as fresh) — defensive choice so
@@ -1132,6 +1160,65 @@ mod tests {
         assert_eq!(
             with_exclude_ids, expected,
             "exclude set must not perturb the ascending-id contract"
+        );
+    }
+
+    #[test]
+    fn count_chunks_missing_embedding_matches_vec_path() {
+        // The count path uses a separate SQL statement (`SELECT
+        // COUNT(*)` vs. `SELECT c.id, c.content`) so we explicitly
+        // pin that it returns the same answer as the materialising
+        // path. This is the contract the bridge layer relies on
+        // to seed the progress denominator.
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/counts".to_string());
+        store.add_source(&source).unwrap();
+
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/counts/doc.txt", "h", "2026-01-01")
+            .unwrap();
+
+        // Insert 7 chunks; none have embeddings yet.
+        let chunks: Vec<_> = (0..7)
+            .map(|i| crate::chunker::Chunk {
+                source_path: "/tmp/counts/doc.txt".to_string(),
+                chunk_index: i,
+                byte_offset: i * 100,
+                content: format!("body {i}"),
+                hash: format!("h{i}"),
+            })
+            .collect();
+        store.insert_chunks(file_id, &chunks).unwrap();
+
+        let model_id = "embed-test-v1";
+
+        // Cross-check the count against the Vec path.
+        let vec_len = store
+            .chunks_missing_embedding(model_id, 1024)
+            .unwrap()
+            .len() as u64;
+        let count = store.count_chunks_missing_embedding(model_id).unwrap();
+        assert_eq!(count, 7);
+        assert_eq!(count, vec_len);
+
+        // Embed three of the seven chunks. The count must drop to 4
+        // while the model_id we just used disappears from the
+        // missing set; a *different* model_id still sees all 7.
+        let materialised = store.chunks_missing_embedding(model_id, 3).unwrap();
+        for (id, _content) in &materialised {
+            store
+                .upsert_chunk_embedding(*id, model_id, 4, &[0u8; 16])
+                .unwrap();
+        }
+        let count_after = store.count_chunks_missing_embedding(model_id).unwrap();
+        assert_eq!(count_after, 4);
+
+        let other_count = store
+            .count_chunks_missing_embedding("different-model-v1")
+            .unwrap();
+        assert_eq!(
+            other_count, 7,
+            "embeddings for one model must not satisfy the missing count for another"
         );
     }
 }

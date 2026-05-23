@@ -1,6 +1,7 @@
 import { app, BrowserWindow, safeStorage, session } from "electron";
 import * as path from "path";
 import { registerIpcHandlers } from "./ipc";
+import { replayPersistedHybridSearchConfigToBridge } from "./ipc/settings";
 import { loadConfig, saveWindowState } from "./config";
 import { initAppState } from "./appState";
 import { detectComputeBackends } from "./modelManagement";
@@ -504,6 +505,22 @@ app.whenReady().then(async () => {
   // boot sequence did). See the doc comment at the top of this
   // callback for the full ordering rationale.
   await initAppState();
+  // Replay the persisted hybrid retrieval config into the live Rust
+  // `SourceManager`. Must run AFTER `initAppState` brings the
+  // bridge up (block-c's await on `initAppState` is what makes
+  // that ordering deterministic — block-b's original placement
+  // before `initAppState` raced against the bridge being ready
+  // and silently no-op'd via `getBridge() === null`). A failure
+  // is logged but not fatal: the user can re-tune in Settings,
+  // the live engine simply uses its compiled defaults.
+  try {
+    replayPersistedHybridSearchConfigToBridge();
+  } catch (err) {
+    console.warn(
+      "[Tessera] Failed to replay persisted hybrid search config:",
+      err,
+    );
+  }
   // Start the automations scheduler. Runs in the main process and
   // ticks every 30s, dispatching due `Schedule` automations directly
   // against the native bridge (i.e. without bouncing through the
