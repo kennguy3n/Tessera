@@ -8,6 +8,7 @@
  * in the OS keychain via `secretsVault`.
  */
 import { idempotentHandle } from "./register";
+import { getBridge } from "../appState";
 import {
   loadConfig,
   updateConfig,
@@ -21,7 +22,6 @@ import { createEmptyTokenUsage } from "../tokenCounter";
 import { resolveProviderEndpoint } from "../externalProviderStream";
 import { listExternalProviderModels } from "../externalProviderModels";
 import * as secretsVault from "../secretsVault";
-import { getBridge } from "../appState";
 import type {
   ExternalProviderListModelsDraftOverrides,
   HybridSearchConfigInfo,
@@ -36,6 +36,37 @@ import {
   SettingsUpdateSchema,
 } from "./schemas";
 import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
+
+/**
+ * Best-effort audit shim for `settings:*` and `externalProvider:*`
+ * handlers (Phase 10 / Task 17).
+ *
+ * Three deliberate properties:
+ *
+ *   1. **Best-effort.** A failure to append to the audit store
+ *      must never prevent the user-visible setting change from
+ *      taking effect — the renderer already wrote to the on-disk
+ *      JSON via `updateConfig` and forcing an unhandled rejection
+ *      back through `idempotentHandle` would surface as a confusing
+ *      "settings failed to save" toast in the UI.
+ *   2. **No secret leakage.** Callers always pass the audit
+ *      *value* as a stringified scalar or as a count of array
+ *      elements (see `auditSettingsField` overloads below). We
+ *      never log the API key, the API URL contents, or the raw
+ *      ignore/watch pattern bodies — only the field name and a
+ *      benign value envelope.
+ *   3. **Bridge may not be ready.** During the brief window
+ *      between IPC registration and bridge init, `getBridge()`
+ *      returns `null`. `bridge?.bridgeLogSettingsChanged` then
+ *      short-circuits to `undefined` without throwing.
+ */
+function auditSettingsField(field: string, value: string): void {
+  try {
+    getBridge()?.bridgeLogSettingsChanged(field, value);
+  } catch {
+    // best-effort — see doc comment above
+  }
+}
 
 /**
  * Issue a minimal request against the configured external LLM provider
@@ -177,6 +208,27 @@ export function registerSettingsHandlers(): void {
     // writer.
     updateConfig(parsed);
     const persisted = loadConfig();
+    // Phase 10 / Task 17: emit one audit row per field the renderer
+    // actually sent. The schema marks every field optional, so
+    // iterating the parsed object's own keys captures exactly the
+    // delta the renderer requested. Array fields are logged by
+    // length rather than verbatim because the patterns themselves
+    // can encode user glob choices that aren't useful in an audit
+    // (and the per-pattern length is bounded but the array length
+    // bound — 10_000 — would produce a multi-MB log row).
+    if (parsed.theme !== undefined) auditSettingsField("theme", parsed.theme);
+    if (parsed.defaultExportFormat !== undefined)
+      auditSettingsField("defaultExportFormat", parsed.defaultExportFormat);
+    if (parsed.ignorePatterns !== undefined)
+      auditSettingsField(
+        "ignorePatterns",
+        `${parsed.ignorePatterns.length} pattern(s)`,
+      );
+    if (parsed.watchPatterns !== undefined)
+      auditSettingsField(
+        "watchPatterns",
+        `${parsed.watchPatterns.length} pattern(s)`,
+      );
     return {
       theme: persisted.theme,
       defaultExportFormat: persisted.defaultExportFormat,
@@ -230,6 +282,37 @@ export function registerSettingsHandlers(): void {
       } else {
         secretsVault.storeSecret(merged.apiKeyRef, parsedApiKey);
       }
+
+      // Phase 10 / Task 17: emit one audit row per externalProvider
+      // field that's auditable without leaking secrets. The API
+      // URL and the API key reference are deliberately NOT logged
+      // verbatim — `apiKeyRef` is a stable identifier whose value
+      // is implementation detail (it indexes into the OS keychain;
+      // logging it would tie the audit row to a specific keychain
+      // slot in a way an auditor doesn't need). The API URL
+      // contents can include private endpoints, so we log only
+      // whether the provider is enabled / what type it is / what
+      // model the user picked.
+      auditSettingsField(
+        "externalProvider.enabled",
+        merged.enabled ? "true" : "false",
+      );
+      auditSettingsField(
+        "externalProvider.providerType",
+        merged.providerType,
+      );
+      auditSettingsField("externalProvider.modelName", merged.modelName);
+      // The API-key write itself is auditable — whether the user
+      // stored, cleared, or left the key alone is a security-
+      // relevant transition. Logging the action (store / clear /
+      // unchanged) does NOT leak the secret.
+      const apiKeyAction =
+        parsedApiKey === null
+          ? "unchanged"
+          : parsedApiKey === ""
+            ? "cleared"
+            : "stored";
+      auditSettingsField("externalProvider.apiKey", apiKeyAction);
 
       return {
         ...merged,
@@ -397,6 +480,54 @@ export function registerSettingsHandlers(): void {
       const effective: HybridSearchConfigInfo =
         bridge.bridgeUpdateHybridSearchConfig(parsed as HybridSearchConfigUpdate);
       updateConfig({ hybridSearchConfig: infoToPersisted(effective) });
+      // Phase 10 / Task 17: hybrid retrieval is part of the user's
+      // surface for tuning *what their data is searched for*, so a
+      // change here is security-relevant in the same way a change
+      // to `ignorePatterns` or `theme` is. We audit the EFFECTIVE
+      // (post-clamp) values returned by the bridge — not the raw
+      // user input — so the audit row reflects what the live
+      // engine is actually using. Devin Review (round 2 on PR #26)
+      // flagged the gap; closing it here keeps every settings-
+      // mutating IPC channel auditable.
+      //
+      // Each field is logged as its own row so an operator's audit
+      // query (`WHERE field LIKE 'hybridSearch.%'`) can attribute
+      // a specific change to a specific timestamp without parsing
+      // a composite value blob. Numbers are stringified to match
+      // the `bridgeLogSettingsChanged(field, value)` contract;
+      // booleans are normalised to `"true"` / `"false"` and the
+      // `null` half-life (decay disabled) becomes the literal
+      // `"disabled"` so the audit row is unambiguous.
+      auditSettingsField(
+        "hybridSearch.bm25Weight",
+        String(effective.bm25Weight),
+      );
+      auditSettingsField(
+        "hybridSearch.vectorWeight",
+        String(effective.vectorWeight),
+      );
+      auditSettingsField("hybridSearch.rrfK", String(effective.rrfK));
+      auditSettingsField(
+        "hybridSearch.recencyDecayEnabled",
+        effective.recencyDecayEnabled ? "true" : "false",
+      );
+      auditSettingsField(
+        "hybridSearch.recencyHalflifeSecs",
+        effective.recencyHalflifeSecs === null
+          ? "disabled"
+          : String(effective.recencyHalflifeSecs),
+      );
+      // `candidatePoolSize` is the size of the BM25+vector candidate
+      // pool the engine retrieves before RRF fusion. It is a mutable
+      // search-tuning parameter that ships in `HybridSearchConfigInfo`
+      // alongside the other five tracked fields, so omitting it here
+      // would break the contract documented above ("Each field is
+      // logged as its own row"). Devin Review (round 3 on PR #26)
+      // flagged the omission.
+      auditSettingsField(
+        "hybridSearch.candidatePoolSize",
+        String(effective.candidatePoolSize),
+      );
       return effective;
     },
   );

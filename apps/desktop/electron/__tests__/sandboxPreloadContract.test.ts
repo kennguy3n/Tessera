@@ -39,6 +39,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import * as ts from "typescript";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ELECTRON_ROOT = path.resolve(HERE, "..");
@@ -90,8 +91,111 @@ describe("sandboxed preload contract: passwordPromptChannels.ts", () => {
   });
 });
 
+/**
+ * Strip JS line and block comments from a source string while
+ * preserving line positions and column offsets, so `indexOf`-based
+ * substring searches against the result always hit a CODE token,
+ * never a JSDoc reference.
+ *
+ * Phase 10 / Task 13 added rich JSDoc references to
+ * `maybeInitPasswordVault()` and `installContentSecurityPolicy()`
+ * INSIDE the `app.whenReady().then(async () => { ... })` body —
+ * those references appear textually BEFORE the actual call sites,
+ * which broke the four "X before Y" ordering tests below. The
+ * correct long-term fix is to make these structural-ordering
+ * assertions operate on CODE only, so new documentation comments
+ * never produce a false regression.
+ *
+ * # Implementation
+ *
+ * Driven by the TypeScript compiler's own scanner
+ * (`ts.createScanner`), which is the canonical tokeniser for the
+ * language and correctly handles every quoting / template-literal
+ * edge case that a hand-rolled state machine misses, including:
+ *
+ *   - **Nested template literals.** `` `a ${`b ${c} d`} e` `` — the
+ *     inner `${...}` substitution is a real expression in which
+ *     another template literal can appear. A hand-rolled
+ *     "copy chars until matching backtick" parser would misread
+ *     the first inner backtick as ending the outer template.
+ *   - **Tagged templates** (`html`raw`), where the tag name is
+ *     ordinary identifier code.
+ *   - **Regex literals** containing `/` and `*`, which a naive
+ *     parser could misread as starting a comment.
+ *   - **Hashbang** prefixes (`#!/usr/bin/env node`) at file start.
+ *   - **Escape sequences** like `\``, `\${`, `\u{1f600}`, etc.
+ *
+ * For every token returned by the scanner that is a comment
+ * (`SyntaxKind.SingleLineCommentTrivia` or `MultiLineCommentTrivia`),
+ * we replace that span in the output with an equal-length run of
+ * spaces, preserving every embedded newline so line/column offsets
+ * for downstream `indexOf` searches are unchanged. Non-comment
+ * tokens (identifiers, strings, templates, regexes, punctuation,
+ * whitespace) are copied through verbatim.
+ */
+function stripJsComments(src: string): string {
+  // Parse the source with TypeScript's full parser (NOT the
+  // standalone scanner). The standalone scanner can lose sync
+  // when it encounters backticks INSIDE line comments — without
+  // parser-driven context, it doesn't know whether a `/` starts
+  // a regex or a divide, and a misclassified token can leak
+  // the scanner into a template-literal state that swallows
+  // hundreds of lines and exposes comment contents as
+  // identifiers. The full parser is grounded in the grammar and
+  // can't be tricked this way.
+  //
+  // After parsing, walk every node and enumerate its leading
+  // and trailing comment ranges via the official
+  // `ts.getLeadingCommentRanges` / `ts.getTrailingCommentRanges`
+  // API. These APIs are the canonical TypeScript way to map
+  // comments and correctly handle every edge case the language
+  // defines.
+  const sourceFile = ts.createSourceFile(
+    "main.ts",
+    src,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ false,
+    ts.ScriptKind.TS,
+  );
+  const seen = new Set<string>();
+  const ranges: Array<{ pos: number; end: number }> = [];
+  const collect = (pos: number, ranges_: ts.CommentRange[] | undefined): void => {
+    if (!ranges_) return;
+    for (const r of ranges_) {
+      const key = `${r.pos}:${r.end}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      ranges.push({ pos: r.pos, end: r.end });
+    }
+  };
+  const visit = (node: ts.Node): void => {
+    collect(node.pos, ts.getLeadingCommentRanges(src, node.pos));
+    collect(node.end, ts.getTrailingCommentRanges(src, node.end));
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  // Also pick up file-level leading trivia attached to position 0.
+  collect(0, ts.getLeadingCommentRanges(src, 0));
+
+  const chars = src.split("");
+  for (const { pos, end } of ranges) {
+    for (let i = pos; i < end; i += 1) {
+      // Preserve newlines so block comments split across many
+      // lines don't collapse line numbers — `indexOf` offsets
+      // for downstream searches stay stable.
+      if (chars[i] !== "\n") chars[i] = " ";
+    }
+  }
+  return chars.join("");
+}
+
 describe("CSP session handler hoist: main.ts", () => {
-  const source = readFileSync(MAIN_TS, "utf-8").replace(/\r\n/g, "\n");
+  const rawSource = readFileSync(MAIN_TS, "utf-8").replace(/\r\n/g, "\n");
+  // `source` is the comment-stripped view used for structural
+  // ordering assertions. The few tests that explicitly want to
+  // observe documentation (e.g. the "defines ... as a module-level
+  // function" regex on line 97 below) read from `rawSource`.
+  const source = stripJsComments(rawSource);
 
   it("defines `installContentSecurityPolicy` as a module-level function", () => {
     expect(source).toMatch(/function\s+installContentSecurityPolicy\s*\(\s*\)\s*:\s*void/);

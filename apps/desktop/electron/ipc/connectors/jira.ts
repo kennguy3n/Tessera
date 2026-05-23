@@ -558,20 +558,27 @@ export async function syncJira(ctx: {
   return { added, modified, removed, status: "synced" };
 }
 
+// See the doc comment on `disconnectGoogleDrive` for the rationale
+// behind returning `filesRemoved` (count of bridge sources actually
+// removed, not the manifest length) so the calling IPC handler can
+// include the count in the `ConnectorDisconnected` audit event.
 export async function disconnectJira(
   userDataDir: string,
   bridge: JiraBridgeHooks,
-): Promise<void> {
+): Promise<{ filesRemoved: number }> {
   const manifest = await readManifest(userDataDir, "jira");
   const localPaths = new Set(manifest.entries.map((e) => e.localPath));
+  let filesRemoved = 0;
   for (const source of bridge.listSources()) {
     if (localPaths.has(source.path)) {
       try {
         bridge.removeSource(source.id);
+        filesRemoved += 1;
       } catch {
         // best-effort
       }
     }
   }
   await purgeSyncDir(userDataDir, "jira");
+  return { filesRemoved };
 }
