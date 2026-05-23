@@ -60,10 +60,16 @@ $existingRustflags = if ($env:RUSTFLAGS) { $env:RUSTFLAGS } else { '' }
 # Detect whether the user already has `-D warnings` in their RUSTFLAGS
 # so we don't emit `... -D warnings -D warnings`. rustc deduplicates
 # flags so the repeat is harmless, but it makes CI logs noisy and the
-# dedup is essentially free. The regex matches on token boundaries
-# (`(^|\s)-D\s+warnings(\s|$)`) so we don't false-positive on e.g.
-# `-D warnings-as-deny` or any future flag that prefixes `warnings`.
-if ($existingRustflags -match '(^|\s)-D\s+warnings(\s|$)') {
+# dedup is essentially free.
+#
+# rustc accepts BOTH the spaced form `-D warnings` and the spaceless
+# form `-Dwarnings`, so the regex uses `\s*` (zero-or-more whitespace
+# between `-D` and `warnings`) to match either. Token boundaries on
+# the outside (`(^|\s)` and `(\s|$)`) still prevent false positives
+# on e.g. `-D warnings-as-deny` (trailing `-` is not whitespace) or
+# `-Dfoowarnings` (the `D` would need to be preceded by `foo`, which
+# isn't whitespace).
+if ($existingRustflags -match '(^|\s)-D\s*warnings(\s|$)') {
     $env:RUSTFLAGS = $existingRustflags
 } else {
     $env:RUSTFLAGS = ("{0} -D warnings" -f $existingRustflags).Trim()
@@ -382,8 +388,8 @@ $skip = $SkipPackage -or ($env:TESSERA_PREFLIGHT_SKIP_PACKAGE -eq '1')
 if (-not $skip) {
     Add-Step `
         -Label   'Electron bundle dry-pack (electron-builder --dir)' `
-        -Command 'npx --no-install electron-builder --config packaging/electron-builder.yml --dir' `
-        -Action  { npx --no-install electron-builder --config packaging/electron-builder.yml --dir }
+        -Command 'npx --no electron-builder --config packaging/electron-builder.yml --dir' `
+        -Action  { npx --no electron-builder --config packaging/electron-builder.yml --dir }
 }
 
 # ----------------------------------------------------------------------

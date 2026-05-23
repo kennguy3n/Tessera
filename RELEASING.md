@@ -37,9 +37,9 @@ before they reach the release workflow.
 > ```
 > `electron-builder` is declared as a `devDependency` of
 > `apps/desktop`, so `npm ci` is what puts the pinned binary on disk.
-> The packaging step uses `npx --no-install electron-builder ...`,
+> The packaging step uses `npx --no electron-builder ...`,
 > which intentionally fails if the binary isn't already present —
-> see step 8 below for the rationale.
+> see step 9 below for the rationale.
 
 **Linux / macOS:**
 
@@ -76,14 +76,14 @@ The script runs:
    per-run "[N/M]" banners show 8 steps on Linux and 9 on
    macOS/Windows.
 8. `npm run build --workspace=apps/desktop`
-9. `npx --no-install electron-builder --config packaging/electron-builder.yml --dir`
+9. `npx --no electron-builder --config packaging/electron-builder.yml --dir`
 
-   The `--no-install` flag prevents npx from silently downloading a
-   different electron-builder version into the npx cache if the
-   workspace one is missing; the preflight script fails loudly in
-   that case so the maintainer can install the missing dependency
-   deliberately rather than ship an installer built by a
-   floating-version binary.
+   The `--no` flag (npm 10+ canonical form, equivalent to the legacy
+   `--no-install`) prevents npx from silently downloading a different
+   electron-builder version into the npx cache if the workspace one
+   is missing; the preflight script fails loudly in that case so the
+   maintainer can install the missing dependency deliberately rather
+   than ship an installer built by a floating-version binary.
 
 A successful run ends with:
 

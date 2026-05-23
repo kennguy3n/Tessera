@@ -39,11 +39,16 @@ set -euo pipefail
 # RUSTFLAGS — if so we leave the value untouched rather than emitting
 # `... -D warnings -D warnings`. rustc deduplicates flags so the
 # duplicate is harmless, but the noisy string shows up in CI logs and
-# in `cargo` error messages, and the dedup is cheap. We match on the
-# token boundaries (`(^| )-D warnings($| )`) rather than a bare
-# substring so we don't false-positive on e.g. `-D warnings-as-deny`
-# or any future tooling that prefixes the flag.
-if [[ "${RUSTFLAGS:-}" =~ (^|[[:space:]])-D[[:space:]]+warnings([[:space:]]|$) ]]; then
+# in `cargo` error messages, and the dedup is cheap.
+#
+# rustc accepts BOTH the spaced form `-D warnings` and the spaceless
+# form `-Dwarnings`, so the regex uses `[[:space:]]*` (zero-or-more
+# whitespace between `-D` and `warnings`) to match either. Token
+# boundaries on the outside (`(^|[[:space:]])` and `([[:space:]]|$)`)
+# still prevent false positives on e.g. `-D warnings-as-deny` (the
+# trailing `-` is not whitespace) or `-Dfoowarnings` (the `D` would
+# need to be preceded by `foo`, which isn't whitespace).
+if [[ "${RUSTFLAGS:-}" =~ (^|[[:space:]])-D[[:space:]]*warnings([[:space:]]|$) ]]; then
   # Already contains `-D warnings` — keep the existing value as-is,
   # but make sure it's exported so the subshell inherits it.
   export RUSTFLAGS
@@ -59,6 +64,29 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
+
+# Fail-fast on Windows-flavoured `bash` (Git Bash / MSYS2 / Cygwin).
+# The supported entrypoint on Windows is `scripts/preflight.ps1` —
+# RELEASING.md directs Windows users there, the Rollup workaround
+# below only knows about Darwin uname strings, and the
+# Windows-specific Rollup binary (`@rollup/rollup-win32-x64-msvc`)
+# is installed by the PowerShell sibling. Without this guard, a
+# Windows user running `bash scripts/preflight.sh` from Git Bash
+# would see the Rollup step silently skipped (the `case` statement
+# defaults to empty for `MINGW64_NT-*` / `MSYS_NT-*` / `CYGWIN_NT-*`),
+# then hit a confusing "Cannot find module @rollup/rollup-win32-x64-msvc"
+# error several minutes later during `vite build`. Surfacing the
+# mismatch up front saves the wait and points to the right tool.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    printf '%spreflight.sh is not supported on Windows.%s\n' \
+      "${C_BOLD:-}" "${C_RESET:-}" >&2
+    printf 'Run the PowerShell sibling instead:\n\n' >&2
+    printf '    powershell -ExecutionPolicy Bypass -File scripts\\preflight.ps1\n\n' >&2
+    printf '(or `.\\scripts\\preflight.ps1` from a PowerShell prompt).\n' >&2
+    exit 2
+    ;;
+esac
 
 # ----------------------------------------------------------------------
 # Output helpers
@@ -289,8 +317,16 @@ register_step "Desktop build (npm run build --workspace=apps/desktop)" \
 #    files, broken extraResources, native asar issues) before
 #    pushing a release tag.
 if [[ "${TESSERA_PREFLIGHT_SKIP_PACKAGE:-0}" != "1" ]]; then
+  # `--no` is the npm 10+ canonical form of "refuse to install if the
+  # binary isn't already present" (`npm exec --help` documents it as
+  # the opposite of `--yes`). The historical `--no-install` flag from
+  # standalone-npx (pre-npm 7) is still accepted today as a backward-
+  # compat alias, but some intermediate npm versions silently ignored
+  # it, so the canonical form is safer for long-lived scripts. The
+  # release workflow at .github/workflows/release.yml and the
+  # PowerShell sibling at scripts/preflight.ps1 carry the same change.
   register_step "Electron bundle dry-pack (electron-builder --dir)" \
-    "npx --no-install electron-builder --config packaging/electron-builder.yml --dir"
+    "npx --no electron-builder --config packaging/electron-builder.yml --dir"
 fi
 
 # ----------------------------------------------------------------------

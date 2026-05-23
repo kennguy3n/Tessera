@@ -117,7 +117,8 @@ jobs:
         # up the workspace-pinned binary from `node_modules/.bin/`
         # (declared as a devDependency of `apps/desktop` so it lands
         # in the root `node_modules/.bin` via npm workspace hoisting).
-        # `--no-install` mirrors `scripts/preflight.sh` /
+        # `--no` (npm 10+ canonical, equivalent to the legacy
+        # `--no-install` flag) mirrors `scripts/preflight.sh` /
         # `scripts/preflight.ps1`: if the pinned binary somehow isn't
         # present we'd rather fail loudly than have npx silently fetch
         # a floating version into its cache and publish a release built
@@ -126,7 +127,7 @@ jobs:
         # Code-signing certificates are picked up from env if set
         # (CSC_LINK / CSC_KEY_PASSWORD), but unsigned builds still
         # produce installable artifacts.
-        run: npx --no-install electron-builder --config packaging/electron-builder.yml --publish never
+        run: npx --no electron-builder --config packaging/electron-builder.yml --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
