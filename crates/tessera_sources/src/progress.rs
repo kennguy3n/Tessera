@@ -252,6 +252,54 @@ impl EmbeddingProgressTracker {
         &self.inner
     }
 
+    /// Pre-flight reset called *before* a backfill is dispatched to a
+    /// worker thread. Flips status to `Running` and zeroes the
+    /// counters, but does NOT require `total_chunks` / `model_id` —
+    /// the worker thread will overwrite those via [`start`] once it
+    /// has acquired its locks and computed the real numbers.
+    ///
+    /// The reason this method exists, despite [`start`] doing
+    /// strictly more, is a race condition in the napi bridge's
+    /// `AsyncTask` flow:
+    ///
+    /// 1. The renderer clicks "Re-embed" — the IPC handler calls
+    ///    `bridge_backfill_embeddings`, which immediately returns
+    ///    an `AsyncTask` to be scheduled on a libuv worker thread.
+    /// 2. The renderer simultaneously bumps the polling generation
+    ///    and starts hitting `bridge_get_embedding_progress` on the
+    ///    JS main thread.
+    /// 3. Before the worker thread has had a chance to acquire the
+    ///    `SourceManager` lock and call [`start`], the first poll
+    ///    response observes the *previous* run's terminal state
+    ///    (`Done` or `Failed`) — because that's still what's in the
+    ///    snapshot from last time.
+    /// 4. The renderer's `useEmbeddingProgress` hook treats `Done`
+    ///    /`Failed` as terminal and stops polling. The user never
+    ///    sees the in-flight progress for the new backfill.
+    ///
+    /// Calling `mark_starting` synchronously on the main thread
+    /// *before* the napi function returns the `AsyncTask` flips the
+    /// snapshot to `Running` so any poll that races with the worker
+    /// thread's `start()` sees an in-progress run rather than the
+    /// stale terminal status. The worker thread's subsequent
+    /// `start()` will overwrite `total_chunks` and `model_id` with
+    /// the real values once it knows them.
+    pub fn mark_starting(&self) {
+        let mut s = self.inner.lock().expect("embedding tracker poisoned");
+        *s = EmbeddingProgressSnapshot {
+            status: EmbeddingStatus::Running,
+            total_chunks: 0,
+            embedded: 0,
+            failed: 0,
+            // Leave `model_id` empty — the worker thread will populate
+            // it via [`start`] once it has read the active provider.
+            // Until then the renderer's progress card just shows
+            // generic "starting" copy without a model label.
+            model_id: None,
+            last_error: None,
+        };
+    }
+
     /// Read-only snapshot for the IPC poll loop.
     pub fn snapshot(&self) -> EmbeddingProgressSnapshot {
         self.inner
@@ -477,6 +525,85 @@ mod tests {
         let _slot2 = t.start(3, "hash-trick-v1@256");
         let snap = t.snapshot();
         assert_eq!(snap.status, EmbeddingStatus::Running);
+        assert!(snap.last_error.is_none());
+    }
+
+    #[test]
+    fn embedding_mark_starting_resets_terminal_state_without_total_or_model() {
+        // Regression test for the race fixed by introducing
+        // `mark_starting`: the napi bridge calls this method on the
+        // JS main thread *before* dispatching the backfill `AsyncTask`
+        // to a worker thread, so the very first
+        // `bridge_get_embedding_progress` poll from the renderer
+        // doesn't observe the previous run's terminal status (`Done`
+        // / `Failed`) and prematurely give up.
+        let t = EmbeddingProgressTracker::new();
+
+        // Simulate a prior run that finished `Done` with non-zero
+        // counters and a populated model id.
+        let slot = t.start(7, "hash-trick-v1@256");
+        for _ in 0..7 {
+            record_chunk_embedded(slot);
+        }
+        finish_embedding(slot);
+        let prior = t.snapshot();
+        assert_eq!(prior.status, EmbeddingStatus::Done);
+        assert_eq!(prior.embedded, 7);
+        assert_eq!(prior.model_id.as_deref(), Some("hash-trick-v1@256"));
+
+        // Now the user clicks "Re-embed" again — the napi bridge
+        // calls mark_starting() before returning the AsyncTask.
+        t.mark_starting();
+        let after = t.snapshot();
+
+        // The snapshot must look like an in-progress run with zeroed
+        // counters so the renderer's hook doesn't trip the
+        // terminal-state guard. We deliberately do NOT require
+        // total_chunks / model_id at this stage — the worker thread
+        // will fill those in via the usual start() call when it gets
+        // around to it.
+        assert_eq!(after.status, EmbeddingStatus::Running);
+        assert_eq!(after.embedded, 0);
+        assert_eq!(after.failed, 0);
+        assert_eq!(after.total_chunks, 0);
+        assert!(after.model_id.is_none());
+        assert!(after.last_error.is_none());
+    }
+
+    #[test]
+    fn embedding_mark_starting_overwrites_failed_state_and_clears_error() {
+        let t = EmbeddingProgressTracker::new();
+        let slot = t.start(3, "hash-trick-v1@256");
+        mark_embedding_failed(slot, "embedder crashed");
+
+        let pre = t.snapshot();
+        assert_eq!(pre.status, EmbeddingStatus::Failed);
+        assert_eq!(pre.last_error.as_deref(), Some("embedder crashed"));
+
+        // mark_starting must wipe the prior error so the renderer
+        // doesn't render a stale "embedder crashed" banner while the
+        // new pass is starting up.
+        t.mark_starting();
+        let post = t.snapshot();
+        assert_eq!(post.status, EmbeddingStatus::Running);
+        assert!(post.last_error.is_none());
+    }
+
+    #[test]
+    fn embedding_mark_starting_then_full_start_yields_normal_running_state() {
+        // The contract is: napi main thread calls mark_starting(),
+        // then worker thread later calls start(N, model). The final
+        // snapshot must look exactly like a normal start() — no
+        // ghost values from mark_starting bleeding through.
+        let t = EmbeddingProgressTracker::new();
+        t.mark_starting();
+        let _slot = t.start(42, "hash-trick-v1@256");
+        let snap = t.snapshot();
+        assert_eq!(snap.status, EmbeddingStatus::Running);
+        assert_eq!(snap.total_chunks, 42);
+        assert_eq!(snap.embedded, 0);
+        assert_eq!(snap.failed, 0);
+        assert_eq!(snap.model_id.as_deref(), Some("hash-trick-v1@256"));
         assert!(snap.last_error.is_none());
     }
 

@@ -75,10 +75,19 @@ export interface NativeBridge {
    * a second call against an up-to-date index reports `embedded=0`.
    * Pass `null` (or omit) to let the bridge pick its default batch
    * size.
+   *
+   * **Returns a `Promise`** — the Rust napi function is declared as
+   * `AsyncTask<BackfillEmbeddingsTask>` so the heavy DB / embedding
+   * work runs on a libuv worker thread (Node's built-in thread
+   * pool) rather than blocking the JS main thread. The IPC handler
+   * at `ipc/sources.ts:135` and every other consumer MUST `await`
+   * the result; a non-awaited access (e.g.
+   * `bridge.bridgeBackfillEmbeddings(null).embedded`) would silently
+   * read `.embedded` off the Promise and get `undefined`.
    */
   bridgeBackfillEmbeddings(
     batchSize?: number | null,
-  ): BackfillEmbeddingsResult;
+  ): Promise<BackfillEmbeddingsResult>;
   bridgeGetEmbeddingProgress(): EmbeddingProgressInfo;
   bridgeGetHybridSearchConfig(): HybridSearchConfigInfo;
   bridgeUpdateHybridSearchConfig(

@@ -132,7 +132,15 @@ function makeBridge(initial: HybridSearchConfigInfo): {
       // assert on properties the production bridge will never
       // populate. We still take `batchSize` as an argument so the
       // call-args assertions (`toHaveBeenCalledWith(32)`) work.
-      (_batchSize?: number | null): BackfillEmbeddingsResult => ({
+      //
+      // **Returns a Promise** — the production napi function is
+      // declared `AsyncTask<BackfillEmbeddingsTask>`, which
+      // translates to `Promise<BackfillEmbeddingsResult>` on the
+      // JS side. The mock matches that shape so any future caller
+      // that forgets to `await` (and silently reads a field off
+      // the Promise) will fail in tests the same way it would in
+      // production.
+      async (_batchSize?: number | null): Promise<BackfillEmbeddingsResult> => ({
         embedded: 7,
         progress: {
           status: "done",

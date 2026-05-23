@@ -22,10 +22,36 @@ import type { EmbeddingProgressInfo } from "../types/ipc";
  * flips, the counter is a different value every click, so the effect
  * re-fires deterministically.
  *
+ * **Stale-terminal-state guard (polling-termination only)**: when a
+ * new poll cycle starts, the very first response can race with the
+ * bridge's worker thread — the renderer may poll before the worker
+ * has called `tracker.start()`, observing the *previous* run's
+ * `done`/`failed` status. Without a guard, the effect would treat
+ * that stale terminal status as "this run is already over" and stop
+ * polling immediately, never showing the new run's progress.
+ *
+ * The Rust bridge fixes this at the source by calling
+ * `mark_starting()` synchronously on the JS main thread before
+ * returning the `AsyncTask` (see `napi_exports.rs::bridge_backfill_embeddings`).
+ * As a belt-and-suspenders defence, this hook *also* refuses to
+ * treat `done`/`failed` as a stop signal until it has observed at
+ * least one `running` response for the current generation. So even
+ * if a future change to the Rust side regresses the pre-flight
+ * reset, the hook keeps polling until it has witnessed a real
+ * running→terminal transition.
+ *
+ * The guard intentionally affects **polling termination only**, not
+ * rendering — every response (including a stale terminal) is
+ * surfaced to the caller via `setSnap`, so renderers can always
+ * show *something* to the user. With Rust's `mark_starting` in
+ * place, the first observed status is `running` with zeroed
+ * counters and there is no visible stale-state flicker in
+ * production; the guard is purely a regression backstop.
+ *
  * Polling stops automatically when the tracker reports `done` or
- * `failed`. The hook returns the most recent snapshot, or `null`
- * until the first response arrives — callers render an "idle"
- * placeholder until then.
+ * `failed` *after* having seen `running`. The hook returns the most
+ * recent snapshot, or `null` until the first response arrives —
+ * callers render an "idle" placeholder until then.
  *
  * Pass `generation = 0` (or any value where the caller hasn't yet
  * decided to start polling) to keep the hook quiescent.
@@ -44,14 +70,34 @@ export function useEmbeddingProgress(
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
+    // Per-generation flag: did we ever see the tracker in `running`
+    // for this cycle? Until we do, `done`/`failed` responses must
+    // be from a previous run that the bridge hasn't reset yet —
+    // keep polling rather than giving up. See the stale-terminal-
+    // state guard discussion in the module docstring.
+    let observedRunning = false;
+
     const tick = async () => {
       if (cancelled) return;
       try {
         const next = await window.tessera.sources.getEmbeddingProgress();
         if (cancelled) return;
+        if (next.status === "running") {
+          observedRunning = true;
+        }
+        // Always surface the snapshot — rendering is decoupled from
+        // termination so the caller can show *something* on every
+        // poll. With Rust's `mark_starting` pre-flight reset, the
+        // first observed status is `running` with zeroed counters,
+        // so there is no user-visible stale-state flicker in
+        // production. The defence-in-depth `observedRunning` guard
+        // below only governs whether to stop polling.
         setSnap(next);
-        if (next.status === "done" || next.status === "failed") {
-          return; // terminal state; stop polling for this generation
+        if (
+          (next.status === "done" || next.status === "failed") &&
+          observedRunning
+        ) {
+          return; // terminal state for this generation; stop polling
         }
       } catch {
         // Swallow — the bridge may not yet be initialised when the

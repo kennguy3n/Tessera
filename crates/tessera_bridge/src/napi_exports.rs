@@ -297,9 +297,30 @@ impl Task for BackfillEmbeddingsTask {
 /// work runs on a libuv worker thread (Node's built-in thread pool)
 /// so the JS event loop stays free to serve `getEmbeddingProgress`
 /// polls from the renderer's progress UI.
+///
+/// **Pre-flight tracker reset (race fix)**: before constructing the
+/// `AsyncTask`, this function calls `embedding_progress.mark_starting()`
+/// *on the JS main thread*. The point is to flip the snapshot to
+/// `Running` BEFORE the renderer can issue its first
+/// `bridge_get_embedding_progress` poll. Without this, the worker
+/// thread's `backfill_embeddings_tracked → tracker.start()` call would
+/// race with the renderer's polling loop: a poll arriving before the
+/// worker had acquired the `SourceManager` lock would see the previous
+/// run's terminal status (`Done`/`Failed`), and the React hook would
+/// treat that as "this backfill already finished" and stop polling —
+/// meaning the user never sees any in-flight progress for the new
+/// pass. By eagerly resetting the snapshot synchronously here, every
+/// observable poll for the new generation sees `Running` from the
+/// outset. The worker thread's subsequent `start(total, model)` call
+/// inside `compute()` overwrites `total_chunks` / `model_id` with the
+/// real numbers once it has computed them.
 #[napi]
-pub fn bridge_backfill_embeddings(batch_size: Option<u32>) -> AsyncTask<BackfillEmbeddingsTask> {
-    AsyncTask::new(BackfillEmbeddingsTask { batch_size })
+pub fn bridge_backfill_embeddings(
+    batch_size: Option<u32>,
+) -> napi::Result<AsyncTask<BackfillEmbeddingsTask>> {
+    let s = state()?;
+    s.embedding_progress.mark_starting();
+    Ok(AsyncTask::new(BackfillEmbeddingsTask { batch_size }))
 }
 
 /// Lightweight poll for the renderer. Always returns the latest

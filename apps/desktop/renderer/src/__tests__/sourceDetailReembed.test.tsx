@@ -224,6 +224,38 @@ describe("SourceDetailPage Re-embed button", () => {
     //   (b) `getEmbeddingProgress` is polled at least twice in the
     //       second cycle (i.e. the polling effect actually restarted
     //       after the first cycle terminated).
+    // Per-click cycle, the hook must observe running → done. We
+    // model this by tracking poll order across both clicks: each
+    // cycle's first poll is running, second is done. The hook's
+    // stale-terminal guard requires observing running before
+    // terminating, so this sequence lets the effect terminate
+    // cleanly after each cycle.
+    let pollCount = 0;
+    window.tessera.sources.getEmbeddingProgress = vi.fn().mockImplementation(
+      async () => {
+        pollCount += 1;
+        // Odd polls = running, even polls = done. So each cycle
+        // (running → done) is two polls.
+        if (pollCount % 2 === 1) {
+          return {
+            status: "running" as const,
+            totalChunks: 5,
+            embedded: 2,
+            failed: 0,
+            modelId: "hash-trick-v1",
+            lastError: null,
+          };
+        }
+        return {
+          status: "done" as const,
+          totalChunks: 5,
+          embedded: 5,
+          failed: 0,
+          modelId: "hash-trick-v1",
+          lastError: null,
+        };
+      },
+    );
     window.tessera.sources.backfillEmbeddings = vi.fn().mockResolvedValue({
       embedded: 5,
       progress: {
@@ -235,14 +267,6 @@ describe("SourceDetailPage Re-embed button", () => {
         lastError: null,
       },
     });
-    window.tessera.sources.getEmbeddingProgress = vi.fn().mockResolvedValue({
-      status: "done",
-      totalChunks: 5,
-      embedded: 5,
-      failed: 0,
-      modelId: "hash-trick-v1",
-      lastError: null,
-    });
     renderWithRoute();
     const button = await screen.findByTestId("reembed-button");
 
@@ -253,9 +277,14 @@ describe("SourceDetailPage Re-embed button", () => {
     await waitFor(() => {
       expect((button as HTMLButtonElement).disabled).toBe(false);
     });
-    const pollsAfterFirstClick = vi.mocked(
-      window.tessera.sources.getEmbeddingProgress,
-    ).mock.calls.length;
+    // Wait for the first cycle to terminate cleanly — i.e. the
+    // hook saw running then done and stopped polling. We pin this
+    // by observing that pollCount has reached at least 2 (one
+    // running, one done) and then settles.
+    await waitFor(() => {
+      expect(pollCount).toBeGreaterThanOrEqual(2);
+    });
+    const pollsAfterFirstClick = pollCount;
 
     fireEvent.click(button);
     await waitFor(() => {
@@ -266,21 +295,49 @@ describe("SourceDetailPage Re-embed button", () => {
     // restart (the bug we're guarding against), this count would
     // stay equal to `pollsAfterFirstClick`.
     await waitFor(() => {
-      expect(
-        vi.mocked(window.tessera.sources.getEmbeddingProgress).mock.calls.length,
-      ).toBeGreaterThan(pollsAfterFirstClick);
+      expect(pollCount).toBeGreaterThan(pollsAfterFirstClick);
     });
   });
 
   it("shows a failed-state banner when the embedding tracker reports `status: failed`", async () => {
-    window.tessera.sources.getEmbeddingProgress = vi.fn().mockResolvedValue({
-      status: "failed",
-      totalChunks: 10,
-      embedded: 3,
-      failed: 1,
-      modelId: "hash-trick-v1",
-      lastError: "embedder crashed",
-    });
+    // Realistic mock sequence: the bridge's `mark_starting()`
+    // pre-flight reset means the first poll always sees `running`
+    // with zero counters, then the worker thread does its work and
+    // either succeeds or fails. The hook's stale-terminal guard
+    // (`observedRunning` flag) refuses to commit a terminal snapshot
+    // until it has witnessed at least one `running` response —
+    // exactly to defend against accidentally rendering the previous
+    // run's stale terminal state. So this test's mock has to step
+    // through the same `running → failed` transition the real
+    // bridge would produce, otherwise the guard correctly refuses
+    // to surface the failure (because, from the hook's perspective,
+    // an immediate `failed` is indistinguishable from "previous run
+    // ended Failed and the bridge hasn't reset yet"). See
+    // `useEmbeddingProgress` for the full discussion.
+    let pollCount = 0;
+    window.tessera.sources.getEmbeddingProgress = vi.fn().mockImplementation(
+      async () => {
+        pollCount += 1;
+        if (pollCount === 1) {
+          return {
+            status: "running",
+            totalChunks: 0,
+            embedded: 0,
+            failed: 0,
+            modelId: null,
+            lastError: null,
+          };
+        }
+        return {
+          status: "failed",
+          totalChunks: 10,
+          embedded: 3,
+          failed: 1,
+          modelId: "hash-trick-v1",
+          lastError: "embedder crashed",
+        };
+      },
+    );
     window.tessera.sources.backfillEmbeddings = vi.fn().mockResolvedValue({
       embedded: 3,
       progress: {
@@ -299,5 +356,87 @@ describe("SourceDetailPage Re-embed button", () => {
       expect(screen.getByText(/Re-embed failed/i)).toBeInTheDocument();
       expect(screen.getByText(/embedder crashed/i)).toBeInTheDocument();
     });
+  });
+
+  it("suppresses a stale terminal snapshot until the new run reaches `running` (race-fix regression)", async () => {
+    // Regression test for the second-pass Devin Review finding:
+    // when the renderer polls `getEmbeddingProgress` before the
+    // bridge's worker thread has called `tracker.start()` for the
+    // new run, the first response can be the *previous* run's
+    // terminal status (`done` / `failed`). Without the hook's
+    // stale-terminal guard, the renderer would render that as the
+    // current run and stop polling. With the guard, the hook
+    // refuses to commit any terminal snapshot to render-state
+    // until it has observed at least one `running` response,
+    // keeping the poll loop alive until the worker thread finishes
+    // resetting state.
+    let pollCount = 0;
+    window.tessera.sources.getEmbeddingProgress = vi.fn().mockImplementation(
+      async () => {
+        pollCount += 1;
+        // Poll 1: race — see previous run's stale `done` snapshot
+        if (pollCount === 1) {
+          return {
+            status: "done",
+            totalChunks: 5,
+            embedded: 5,
+            failed: 0,
+            modelId: "hash-trick-v1",
+            lastError: null,
+          };
+        }
+        // Poll 2: worker thread has caught up; tracker now Running
+        if (pollCount === 2) {
+          return {
+            status: "running",
+            totalChunks: 10,
+            embedded: 2,
+            failed: 0,
+            modelId: "hash-trick-v1",
+            lastError: null,
+          };
+        }
+        // Poll 3+: backfill complete with REAL new-run counters
+        return {
+          status: "done",
+          totalChunks: 10,
+          embedded: 10,
+          failed: 0,
+          modelId: "hash-trick-v1",
+          lastError: null,
+        };
+      },
+    );
+    window.tessera.sources.backfillEmbeddings = vi.fn().mockResolvedValue({
+      embedded: 10,
+      progress: {
+        status: "done",
+        totalChunks: 10,
+        embedded: 10,
+        failed: 0,
+        modelId: "hash-trick-v1",
+        lastError: null,
+      },
+    });
+    renderWithRoute();
+    const button = await screen.findByTestId("reembed-button");
+    fireEvent.click(button);
+    // The final card must show the NEW run's counters (10/10), not
+    // the stale previous-run counters (5/5). If the guard regressed,
+    // the renderer would render `5 / 5 chunks` from poll 1 and
+    // never reach the real result. We need a longer timeout than
+    // the default 1000ms because the hook polls every 500ms and we
+    // need at least three polls (stale done → running → fresh done)
+    // to terminate the cycle cleanly.
+    await waitFor(
+      () => {
+        expect(screen.getByText(/10 \/ 10/)).toBeInTheDocument();
+      },
+      { timeout: 4000 },
+    );
+    expect(screen.queryByText(/5 \/ 5/)).not.toBeInTheDocument();
+    // And the poller must have actually polled multiple times
+    // (i.e. it didn't quit on poll 1's stale `done`).
+    expect(pollCount).toBeGreaterThanOrEqual(3);
   });
 });
