@@ -89,17 +89,22 @@ vi.mock("../secretsVault", () => ({
 }));
 
 type EmitCb = (chunk: { content: string }) => void;
+type OnBodyOpenedCb = () => void;
 
 const streamExternalProviderMock = vi.fn<
   (
     opts: unknown,
     emit: EmitCb,
+    onBodyOpened?: OnBodyOpenedCb,
   ) => Promise<void>
 >();
 
 vi.mock("../externalProviderStream", () => ({
-  streamExternalProvider: (opts: unknown, emit: EmitCb) =>
-    streamExternalProviderMock(opts, emit),
+  streamExternalProvider: (
+    opts: unknown,
+    emit: EmitCb,
+    onBodyOpened?: OnBodyOpenedCb,
+  ) => streamExternalProviderMock(opts, emit, onBodyOpened),
 }));
 
 // Token counter — use the real module so the heuristic stays under
@@ -127,7 +132,8 @@ function invokeGenerate(prompt: string): Promise<void> {
         // safeRendererSender so we don't have to fabricate a
         // BrowserWindow. The token-usage path runs identically
         // either way because the streamOpened gate keys off the
-        // emit callback, not off the renderer send.
+        // `onBodyOpened` callback passed to `streamExternalProvider`,
+        // not off the renderer send.
         isDestroyed: () => true,
       },
     },
@@ -176,14 +182,17 @@ describe("model:generate — streamOpened gate", () => {
     expect(persistedUsage.totalCompletionTokens).toBe(0);
   });
 
-  it("mid-stream failure (emit fires, THEN throws) DOES persist what was received", async () => {
-    // The stream emits one chunk, then fails. Tokens already
-    // delivered must count — the user was billed for them upstream
-    // regardless of the eventual error.
-    streamExternalProviderMock.mockImplementation(async (_opts, emit) => {
-      emit({ content: "partial answer received" });
-      throw new Error("ECONNRESET mid-stream");
-    });
+  it("mid-stream failure (body-opened fires, emit fires, THEN throws) DOES persist what was received", async () => {
+    // The stream opens the body, emits one chunk, then fails.
+    // Tokens already delivered must count — the user was billed
+    // for them upstream regardless of the eventual error.
+    streamExternalProviderMock.mockImplementation(
+      async (_opts, emit, onBodyOpened) => {
+        onBodyOpened?.();
+        emit({ content: "partial answer received" });
+        throw new Error("ECONNRESET mid-stream");
+      },
+    );
 
     await expect(invokeGenerate("a prompt")).rejects.toThrow(
       "ECONNRESET mid-stream",
@@ -196,17 +205,74 @@ describe("model:generate — streamOpened gate", () => {
     expect(persistedUsage.totalCompletionTokens).toBeGreaterThan(0);
   });
 
-  it("framing-only first chunk (empty content) still opens the stream and counts the prompt", async () => {
-    // Some providers emit a framing-only first delta (e.g.
-    // OpenAI's role-assignment chunk: `{ delta: { role: "assistant" } }`).
-    // Empty `content` must still mark the stream as opened —
-    // otherwise the user pays for a successful generation that
-    // wraps a framing-only first chunk + an immediate
-    // finish_reason and the counter records zero.
-    streamExternalProviderMock.mockImplementation(async (_opts, emit) => {
-      emit({ content: "" }); // framing-only
-      emit({ content: "real content arrives" });
-    });
+  it("body opens but only framing-only deltas arrive before error — prompt tokens STILL count (Devin Review round 6 BUG_002)", async () => {
+    // Regression for Devin Review round 6: the gate was originally
+    // keyed on the `emit` callback firing, but `dispatchOpenAIEvent`
+    // and `dispatchAnthropicEvent` filter framing-only events
+    // (role-only deltas, content_block_start, message_start, ping)
+    // BEFORE calling emit — see `externalProviderStream.ts` lines
+    // 304/330. A provider that sends a role-assignment chunk
+    // (counted upstream, billed) and then errors before any
+    // non-empty content would NOT trigger emit — so the gate would
+    // wrongly leave `streamOpened = false` and the prompt-token
+    // count would never be persisted.
+    //
+    // The fix re-architected the gate to fire on the `onBodyOpened`
+    // callback that `streamExternalProvider` invokes once the body
+    // is confirmed open, INDEPENDENT of SSE content filtering. This
+    // test simulates the framing-only-then-error scenario exactly:
+    // body opens, no emit fires, then the stream throws.
+    streamExternalProviderMock.mockImplementation(
+      async (_opts, _emit, onBodyOpened) => {
+        onBodyOpened?.();
+        // No emit() call — simulates a real provider that sent only
+        // role-only / framing events before erroring.
+        throw new Error("ECONNRESET after framing-only delta");
+      },
+    );
+
+    await expect(invokeGenerate("a prompt")).rejects.toThrow(
+      "ECONNRESET after framing-only delta",
+    );
+
+    expect(updateConfigMock).toHaveBeenCalledTimes(1);
+    // Prompt tokens MUST count because the body opened (upstream
+    // accepted the request and billed for the prompt).
+    expect(persistedUsage.totalPromptTokens).toBeGreaterThan(0);
+    // Completion tokens are zero because no content was delivered
+    // — the user didn't receive any tokens from this generation.
+    expect(persistedUsage.totalCompletionTokens).toBe(0);
+  });
+
+  it("body NEVER opens (onBodyOpened never fires) — no usage write", async () => {
+    // Companion to the framing-only test above: if the upstream
+    // throws BEFORE the body opens (HTTP 401, retry exhaustion, DNS
+    // failure), `onBodyOpened` must never fire and the counter
+    // must not move. This is the standard pre-stream-failure
+    // scenario but pinned to the new architectural contract.
+    streamExternalProviderMock.mockImplementation(
+      async (_opts, _emit, _onBodyOpened) => {
+        // Do NOT call onBodyOpened. Throw a pre-stream error.
+        throw new Error("HTTP 403 Forbidden");
+      },
+    );
+
+    await expect(invokeGenerate("a prompt")).rejects.toThrow(
+      "HTTP 403 Forbidden",
+    );
+
+    expect(updateConfigMock).not.toHaveBeenCalled();
+    expect(persistedUsage.totalPromptTokens).toBe(0);
+    expect(persistedUsage.totalCompletionTokens).toBe(0);
+  });
+
+  it("clean completion: body-opened fires, then content arrives, prompt+completion both count", async () => {
+    streamExternalProviderMock.mockImplementation(
+      async (_opts, emit, onBodyOpened) => {
+        onBodyOpened?.();
+        emit({ content: "real content arrives" });
+      },
+    );
 
     await invokeGenerate("a prompt");
 
@@ -215,11 +281,14 @@ describe("model:generate — streamOpened gate", () => {
     expect(persistedUsage.totalCompletionTokens).toBeGreaterThan(0);
   });
 
-  it("clean completion persists both prompt and completion tokens", async () => {
-    streamExternalProviderMock.mockImplementation(async (_opts, emit) => {
-      emit({ content: "hello world" });
-      emit({ content: " and more tokens" });
-    });
+  it("two-chunk clean completion persists both prompt and completion tokens", async () => {
+    streamExternalProviderMock.mockImplementation(
+      async (_opts, emit, onBodyOpened) => {
+        onBodyOpened?.();
+        emit({ content: "hello world" });
+        emit({ content: " and more tokens" });
+      },
+    );
 
     await invokeGenerate("a prompt");
 
@@ -245,11 +314,14 @@ describe("model:generate — streamOpened gate", () => {
     // whitespace-collapse normalisation in `estimateTokens`). A
     // regression that reintroduces per-chunk summing would push
     // this assertion from 3 back to 5.
-    streamExternalProviderMock.mockImplementation(async (_opts, emit) => {
-      emit({ content: "Hello" });
-      emit({ content: ", " });
-      emit({ content: "world" });
-    });
+    streamExternalProviderMock.mockImplementation(
+      async (_opts, emit, onBodyOpened) => {
+        onBodyOpened?.();
+        emit({ content: "Hello" });
+        emit({ content: ", " });
+        emit({ content: "world" });
+      },
+    );
 
     await invokeGenerate("a prompt");
 
@@ -280,9 +352,12 @@ describe("model:generate — streamOpened gate", () => {
       lastResetDate: new Date("2025-01-01T00:00:00.000Z").toISOString(),
     };
 
-    streamExternalProviderMock.mockImplementation(async (_opts, emit) => {
-      emit({ content: text });
-    });
+    streamExternalProviderMock.mockImplementation(
+      async (_opts, emit, onBodyOpened) => {
+        onBodyOpened?.();
+        emit({ content: text });
+      },
+    );
     await invokeGenerate("a prompt");
     const singleChunkCompletion = persistedUsage.totalCompletionTokens;
 
@@ -293,13 +368,16 @@ describe("model:generate — streamOpened gate", () => {
       lastResetDate: new Date("2025-01-01T00:00:00.000Z").toISOString(),
     };
 
-    streamExternalProviderMock.mockImplementation(async (_opts, emit) => {
-      // Split into 2-char chunks. The Anthropic delta protocol does
-      // exactly this in practice for short token chunks.
-      for (let i = 0; i < text.length; i += 2) {
-        emit({ content: text.slice(i, i + 2) });
-      }
-    });
+    streamExternalProviderMock.mockImplementation(
+      async (_opts, emit, onBodyOpened) => {
+        onBodyOpened?.();
+        // Split into 2-char chunks. The Anthropic delta protocol does
+        // exactly this in practice for short token chunks.
+        for (let i = 0; i < text.length; i += 2) {
+          emit({ content: text.slice(i, i + 2) });
+        }
+      },
+    );
     await invokeGenerate("a prompt");
     const manyChunkCompletion = persistedUsage.totalCompletionTokens;
 

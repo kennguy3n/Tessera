@@ -264,23 +264,31 @@ export function registerModelHandlers(): void {
       // whether the response arrived as one chunk or fifty.
       let completionText = "";
       // Tracks whether the upstream stream body actually opened
-      // (i.e. the provider began emitting deltas). Pre-stream
-      // failures — HTTP 401/403/400, retry-exhausted 502/503/504,
-      // DNS errors, TLS errors — surface as a throw from
-      // `streamExternalProvider` BEFORE any emit callback runs. In
-      // those cases the upstream provider never processed the
-      // prompt and the user was never billed, so we MUST NOT
-      // inflate the cumulative-usage counter by `promptTokens`. A
-      // user who misconfigures their API key and repeatedly retries
-      // would otherwise see the counter climb without any actual
-      // provider spend, making the "used since <date>" display
-      // misleading.
+      // (i.e. the provider returned a 2xx response and we have a
+      // readable body). Pre-stream failures — HTTP 401/403/400,
+      // retry-exhausted 5xx, DNS errors, TLS errors — surface as a
+      // throw from `streamExternalProvider` BEFORE the body-opened
+      // callback runs. In those cases the upstream provider never
+      // processed the prompt and the user was never billed, so we
+      // MUST NOT inflate the cumulative-usage counter by
+      // `promptTokens`. A user who misconfigures their API key and
+      // repeatedly retries would otherwise see the counter climb
+      // without any actual provider spend, making the "used since
+      // <date>" display misleading.
       //
-      // Conversely, ANY emit callback (even one with empty content
-      // for framing-only deltas) proves the body opened — at that
-      // point the provider has accepted the request, the prompt
-      // was processed, and we count `promptTokens` regardless of
-      // whether the stream subsequently completes cleanly.
+      // The flag is set via the third `streamExternalProvider`
+      // argument (the `onBodyOpened` callback), NOT via the emit
+      // callback — the SSE dispatchers in `externalProviderStream.ts`
+      // intentionally filter framing-only events (role-only deltas,
+      // content_block_start, message_start, ping) BEFORE calling
+      // emit, so a provider that accepts the request and then errors
+      // mid-stream without ever emitting non-empty content would NOT
+      // trigger emit even though the prompt was processed and
+      // billed. Hooking the gate to the body-opened signal in
+      // `streamExternalProvider` instead of the emit-content path
+      // captures the architectural ground truth: "the upstream
+      // accepted the request" → "count the prompt tokens", regardless
+      // of subsequent SSE shape.
       let streamOpened = false;
       try {
         await streamExternalProvider(
@@ -293,11 +301,17 @@ export function registerModelHandlers(): void {
             signal: controller.signal,
           },
           (chunk: ExternalProviderStreamChunk) => {
-            streamOpened = true;
             if (chunk.content.length > 0) {
               completionText += chunk.content;
               sendToken({ token: chunk.content, done: false });
             }
+          },
+          () => {
+            // Fires exactly once when the HTTP body is confirmed
+            // open in `streamExternalProvider`. See the comment block
+            // above for why this is the correct gate (instead of the
+            // emit callback).
+            streamOpened = true;
           },
         );
       } finally {

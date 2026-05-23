@@ -359,6 +359,51 @@ describe("externalProviderStream — buildStreamRequest wire format", () => {
     expect(req.url).toBe("https://api.openai.com/v1/chat/completions");
   });
 
+  it("does NOT double `/v1` when the user pastes a bare `/v1` apiUrl (Devin Review round 6 BUG_003)", () => {
+    // Regression for Devin Review round 6 BUG_003: a user who pastes
+    // the bare version prefix `https://api.openai.com/v1` previously
+    // ended up routed to `https://api.openai.com/v1/v1/chat/completions`
+    // because the existing `endsWith("/v1/chat/completions")` and
+    // `endsWith("/chat/completions")` checks didn't match. The fix
+    // strips a bare-`/v1` suffix in a shared normaliser
+    // (`stripBareV1Suffix`) BEFORE any longer-suffix check runs.
+    const req = buildStreamRequest({
+      provider: mkProvider({ apiUrl: "https://api.openai.com/v1" }),
+      apiKey: "sk",
+      prompt: "x",
+    });
+    expect(req.url).toBe("https://api.openai.com/v1/chat/completions");
+  });
+
+  it("does NOT double `/v1` for Anthropic when the user pastes a bare `/v1` apiUrl", () => {
+    // Companion regression for the Anthropic branch: a paste of
+    // `https://api.anthropic.com/v1` must resolve to
+    // `https://api.anthropic.com/v1/messages`, not
+    // `https://api.anthropic.com/v1/v1/messages`. The
+    // `stripBareV1Suffix` normaliser is provider-type-agnostic.
+    const req = buildStreamRequest({
+      provider: mkProvider({
+        providerType: "anthropic",
+        apiUrl: "https://api.anthropic.com/v1",
+      }),
+      apiKey: "sk-ant",
+      prompt: "x",
+    });
+    expect(req.url).toBe("https://api.anthropic.com/v1/messages");
+  });
+
+  it("trims trailing slashes AND bare `/v1` before suffixing", () => {
+    // The user could paste `https://api.openai.com/v1/` with a
+    // trailing slash. The trailing-slash strip must run first so the
+    // bare-`/v1` detector sees the canonical form.
+    const req = buildStreamRequest({
+      provider: mkProvider({ apiUrl: "https://api.openai.com/v1/" }),
+      apiKey: "sk",
+      prompt: "x",
+    });
+    expect(req.url).toBe("https://api.openai.com/v1/chat/completions");
+  });
+
   it("uses per-request maxTokens / temperature overrides when supplied", () => {
     const req = buildStreamRequest({
       provider: mkProvider({ maxTokens: 256, temperature: 0.4 }),

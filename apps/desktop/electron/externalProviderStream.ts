@@ -402,7 +402,18 @@ interface BuildRequestResult {
 export function resolveProviderEndpoint(
   provider: ExternalProviderConfig,
 ): string {
-  const apiUrl = provider.apiUrl.replace(/\/+$/, "");
+  // Normalise trailing slashes AND a bare `/v1` version prefix
+  // before any suffix-matching. Without the bare-`/v1` strip a user
+  // who pastes `https://api.openai.com/v1` (just the version, no
+  // further path) ends up with `https://api.openai.com/v1/v1/chat/
+  // completions` because none of the longer `endsWith` checks below
+  // match. The strip is safe because every longer composition that
+  // CONTAINS `/v1` as a sub-path (`/v1/chat/completions`,
+  // `/v1/messages`, `/v1/models`) is matched by a more-specific
+  // `endsWith` BEFORE this normalisation could falsely truncate it
+  // — see `stripBareV1Suffix` and the ordering invariant in its
+  // doc.
+  const apiUrl = stripBareV1Suffix(provider.apiUrl.replace(/\/+$/, ""));
   if (provider.providerType === "anthropic") {
     // The `/v1/messages` form is the only documented Anthropic
     // Messages endpoint; older `/v1/complete` is for the legacy
@@ -417,6 +428,31 @@ export function resolveProviderEndpoint(
     apiUrl.endsWith("/v1/chat/completions") ||
     apiUrl.endsWith("/chat/completions");
   return endsWithCompletions ? apiUrl : `${apiUrl}/v1/chat/completions`;
+}
+
+/**
+ * Strip a bare `/v1` version-prefix suffix from a normalised
+ * (trailing-slash-trimmed) apiUrl. Used by both
+ * {@link resolveProviderEndpoint} and
+ * {@link resolveProviderModelsEndpoint} to handle the
+ * `https://api.openai.com/v1` paste form without producing a
+ * doubled `…/v1/v1/…` composition.
+ *
+ * Strict semantics: only strips the suffix when the apiUrl ends
+ * with EXACTLY `/v1` (i.e. the next-to-last segment is the host
+ * or some intermediate path — there's no trailing `/messages`,
+ * `/chat/completions`, `/models`, etc.). This is the only form
+ * that produces the duplication bug; any longer composition that
+ * happens to contain `/v1` as a non-terminal segment is left
+ * untouched.
+ *
+ * Callers must apply this AFTER the trailing-slash strip (so
+ * `…/v1/` is treated the same as `…/v1`) and BEFORE any
+ * longer-suffix `endsWith` check (so the result of this strip
+ * cleanly composes with the standard append-suffix branch).
+ */
+function stripBareV1Suffix(apiUrl: string): string {
+  return apiUrl.endsWith("/v1") ? apiUrl.slice(0, -"/v1".length) : apiUrl;
 }
 
 /**
@@ -451,12 +487,22 @@ export function resolveProviderModelsEndpoint(
   // If the user pasted a `…/v1/chat/completions` or
   // `…/chat/completions` URL, strip the suffix so we can append the
   // `/models` path below without composing
-  // `…/chat/completions/v1/models`.
+  // `…/chat/completions/v1/models`. Check the longer suffix first
+  // — the shorter `/chat/completions` is a structural superset of
+  // `/v1/chat/completions`, and matching it first would only strip
+  // the inner `/chat/completions`, leaving a dangling `/v1`.
   if (apiUrl.endsWith("/v1/chat/completions")) {
     apiUrl = apiUrl.slice(0, -"/v1/chat/completions".length);
   } else if (apiUrl.endsWith("/chat/completions")) {
     apiUrl = apiUrl.slice(0, -"/chat/completions".length);
   }
+  // After stripping any chat-completions suffix, ALSO strip a bare
+  // `/v1` version-prefix suffix. Without this, a user who pastes
+  // `https://api.openai.com/v1` would end up with
+  // `https://api.openai.com/v1/v1/models` because the existing
+  // longer-suffix `endsWith` checks for `/v1/models` / `/models`
+  // don't match. See `stripBareV1Suffix` for the ordering invariant.
+  apiUrl = stripBareV1Suffix(apiUrl);
   if (
     apiUrl.endsWith("/v1/models") ||
     apiUrl.endsWith("/models")
@@ -770,10 +816,36 @@ async function openExternalProviderStream(
  * deliberately does NOT inject that sentinel because the IPC layer
  * already has its own `sentDone` bookkeeping that needs to stay
  * authoritative for both local and external paths.
+ *
+ * # Body-opened signal (optional)
+ *
+ * The optional `onBodyOpened` callback fires EXACTLY ONCE, the
+ * moment the HTTP response body is confirmed open
+ * (`openedResponse` is set, before SSE parsing begins). Callers
+ * use this as the architectural ground truth for "the upstream
+ * provider accepted the request and the prompt was processed" —
+ * independent of whether the SSE body ever produces a non-empty
+ * content delta. The `emit` callback is NOT a valid substitute for
+ * this signal because the SSE dispatchers in this module
+ * (`dispatchOpenAIEvent` line 304, `dispatchAnthropicEvent` line
+ * 330) intentionally filter out role-only deltas, content_block_
+ * start, message_start, ping, and other framing-only events
+ * BEFORE calling emit. A provider that sends a role-assignment
+ * chunk and then errors mid-stream would therefore never trigger
+ * emit, but the prompt has unambiguously been processed and the
+ * user has unambiguously been billed.
+ *
+ * The token-usage accountant in `ipc/model.ts` uses this to gate
+ * `promptTokens` persistence: pre-stream failures (HTTP 401/403,
+ * retry-exhausted 5xx, DNS errors, TLS errors) all throw BEFORE
+ * `onBodyOpened` fires, so the counter never inflates on a
+ * misconfigured-API-key retry storm. See the long comment near
+ * the gate in `ipc/model.ts` for the full motivation.
  */
 export async function streamExternalProvider(
   inputs: ExternalProviderStreamInputs,
   emit: (chunk: ExternalProviderStreamChunk) => void,
+  onBodyOpened?: () => void,
 ): Promise<void> {
   const req = buildStreamRequest(inputs);
   // Retry loop for the pre-stream HTTP exchange. `attempt` is
@@ -822,6 +894,27 @@ export async function streamExternalProvider(
   const reader = res.body?.getReader();
   if (!reader) {
     throw new Error("External provider response had no body to stream");
+  }
+
+  // Fire the body-opened signal exactly once now that we have a
+  // confirmed-open response WITH a readable body. We fire AFTER the
+  // reader-acquired guard above (line 822-825) because a response
+  // with no body is not actually "open" in the streaming-contract
+  // sense — it's a degenerate edge case (provider sent headers but
+  // no body) and the user has effectively gotten a pre-stream
+  // failure. Firing only after this point guarantees the
+  // architectural invariant the caller relies on: if
+  // `onBodyOpened` fired, the SSE parser is about to run AND the
+  // upstream provider has accepted the request. Surrounded in a
+  // try/catch because a caller-supplied callback that throws
+  // should NOT abort the stream — the caller's gate-update is
+  // their problem, not ours.
+  if (onBodyOpened) {
+    try {
+      onBodyOpened();
+    } catch {
+      // Caller-supplied callback errors are swallowed; see comment.
+    }
   }
 
   const decoder = new TextDecoder("utf-8");

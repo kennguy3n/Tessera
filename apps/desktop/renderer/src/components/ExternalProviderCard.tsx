@@ -156,7 +156,18 @@ export default function ExternalProviderCard() {
     } finally {
       setBusy(false);
     }
-  }, [provider]);
+    // Narrow deps to ONLY the two `provider` fields this callback
+    // actually reads (`apiUrl` and `providerType`) instead of the
+    // whole `provider` object. The previous `[provider]` dep caused
+    // the callback to recreate on every keystroke in any form field
+    // (`modelName`, `maxTokens`, `temperature`, etc.) because
+    // `setField` produces a new object via spread — which in turn
+    // re-rendered the "List models" Button with a new `onClick`
+    // reference on every character typed elsewhere. With the
+    // narrowed dep the callback identity is stable across edits to
+    // unrelated fields, and the Button only re-renders when one of
+    // the two fields the callback actually reads changes.
+  }, [provider?.apiUrl, provider?.providerType]);
 
   const onResetTokenUsage = useCallback(async () => {
     // Bracket the async IPC with the same `busy` flag the sibling
