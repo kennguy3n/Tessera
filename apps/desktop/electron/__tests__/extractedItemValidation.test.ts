@@ -20,9 +20,10 @@
  *      drop a validator branch.
  */
 import { describe, it, expect, vi } from "vitest";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import {
-  escapeExtractedHtml,
   validateExtractedItems,
   type ExtractedItem,
 } from "../extractedItemValidation";
@@ -199,173 +200,107 @@ describe("validateExtractedItems", () => {
 });
 
 // =====================================================================
-// Phase 10 / Task 16 — XSS hardening at the validation seam
+// Phase 10 / Task 16 — XSS / prompt-injection handling
 // =====================================================================
 //
 // `extractedItem.text` and `extractedItem.sourceCitation` are
 // derived from LLM-extracted content, which is a known
 // prompt-injection attack surface: malicious source data can
 // instruct the model to embed `<script>` / `<img onerror=>` /
-// `javascript:` payloads in the extracted fields. The renderer
-// historically rendered these fields as React text (which React
-// escapes), but the validation seam should NOT depend on the
-// renderer's choice of render path. Pin the contract that every
-// item returned from `validateExtractedItems` has HTML-safe
-// `text` and `sourceCitation` regardless of what the renderer
-// does with them.
-describe("validateExtractedItems — XSS hardening (Phase 10 / Task 16)", () => {
-  it("escapes <script> tags in the text field", () => {
+// `javascript:` payloads in the extracted fields.
+//
+// The validator returns the raw extracted strings unchanged —
+// pre-escaping at the validation seam would double-escape in every
+// current renderer (which uses JSX text expressions, auto-escaped
+// by React). See the doc block at the top of
+// `extractedItemValidation.ts` for the full rationale. These tests
+// pin two invariants:
+//   (a) the validator passes strings through untouched, even for
+//       known XSS payloads;
+//   (b) when those payloads are rendered via the actual JSX text
+//       expression used in `SourceDetailPage.tsx`, no executable
+//       HTML materialises (no `<script>` / `<img>` / `<iframe>`
+//       elements in the rendered DOM).
+describe("validateExtractedItems — XSS pass-through + render-time safety (Phase 10 / Task 16)", () => {
+  it("passes <script> tags through unchanged (renderer auto-escapes)", () => {
+    const payload = "<script>alert(1)</script>";
     const out = validateExtractedItems(
-      [
-        {
-          ...VALID,
-          text: "<script>alert(1)</script>",
-        },
-      ],
+      [{ ...VALID, text: payload }],
       opts(),
     );
     expect(out).toHaveLength(1);
-    expect(out[0].text).toBe("&lt;script&gt;alert(1)&lt;/script&gt;");
-    // No raw `<` survives — pin the security property structurally,
-    // not just via the literal string match.
-    expect(out[0].text).not.toMatch(/[<>]/);
+    expect(out[0].text).toBe(payload);
   });
 
-  it("escapes <img onerror=...> in the text field", () => {
+  it("passes <img onerror=...> through unchanged", () => {
+    const payload = '<img src=x onerror="alert(\'pwn\')">';
     const out = validateExtractedItems(
-      [
-        {
-          ...VALID,
-          text: '<img src=x onerror="alert(\'pwn\')">',
-        },
-      ],
+      [{ ...VALID, text: payload }],
       opts(),
     );
     expect(out).toHaveLength(1);
-    // Both the `<` / `>` and the embedded `"` / `'` are escaped,
-    // because the field could land inside an HTML attribute via
-    // a future renderer feature (e.g. tooltip / aria-label).
-    expect(out[0].text).toBe(
-      "&lt;img src=x onerror=&quot;alert(&#39;pwn&#39;)&quot;&gt;",
-    );
-    expect(out[0].text).not.toMatch(/[<>"']/);
+    expect(out[0].text).toBe(payload);
   });
 
-  it("escapes javascript: URI payloads in the text field", () => {
-    // A `javascript:` URI is only dangerous when piped into an
-    // `href` / `src` attribute, but we still escape the
-    // surrounding HTML structure so an embedded
-    // `<a href="javascript:...">` is rendered as inert text.
+  it("passes javascript: URI payloads through unchanged", () => {
+    const payload = '<a href="javascript:alert(1)">click</a>';
     const out = validateExtractedItems(
-      [
-        {
-          ...VALID,
-          text: '<a href="javascript:alert(1)">click</a>',
-        },
-      ],
+      [{ ...VALID, text: payload }],
       opts(),
     );
     expect(out).toHaveLength(1);
-    expect(out[0].text).toBe(
-      "&lt;a href=&quot;javascript:alert(1)&quot;&gt;click&lt;/a&gt;",
-    );
-    expect(out[0].text).not.toMatch(/<a /);
+    expect(out[0].text).toBe(payload);
   });
 
-  it("escapes data: URI payloads in the sourceCitation field", () => {
-    // A `data:text/html;base64,...` URI in an iframe src is a
-    // well-known XSS vector. Same defense as the javascript: case:
-    // escape the HTML structure around it so the URI cannot reach
-    // an actual `src` attribute on the renderer side.
+  it("passes data: URI payloads through unchanged in sourceCitation", () => {
+    const payload = '<iframe src="data:text/html,<script>1</script>">';
+    const out = validateExtractedItems(
+      [{ ...VALID, sourceCitation: payload }],
+      opts(),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].sourceCitation).toBe(payload);
+  });
+
+  it("does NOT escape ampersands / apostrophes (avoids double-escape in React JSX text)", () => {
+    // The previous implementation pre-escaped these characters at
+    // the validation seam, which caused visible double-escape
+    // artifacts in the renderer (`AT&T memo` → displayed as
+    // `AT&amp;T memo`). Pin the corrected pass-through behaviour
+    // so a future regression to the pre-escape design fails CI.
     const out = validateExtractedItems(
       [
         {
           ...VALID,
-          sourceCitation: '<iframe src="data:text/html,<script>1</script>">',
+          text: "Tom & Jerry & friends",
+          sourceCitation: "AT&T memo, Johnson & Johnson Q4'25",
         },
       ],
       opts(),
     );
     expect(out).toHaveLength(1);
+    expect(out[0].text).toBe("Tom & Jerry & friends");
     expect(out[0].sourceCitation).toBe(
-      "&lt;iframe src=&quot;data:text/html,&lt;script&gt;1&lt;/script&gt;&quot;&gt;",
+      "AT&T memo, Johnson & Johnson Q4'25",
     );
   });
 
-  it("double-escapes pre-escaped HTML entities (input is treated as plain text)", () => {
-    // Contract: the validation seam treats inputs as untrusted
-    // plain text. A pre-existing `&amp;` in the input becomes
-    // `&amp;amp;` on the way out — this is the SAFE behaviour
-    // (idempotent under repeated escape). If we tried to be
-    // "smart" and detect already-escaped content, an attacker
-    // could craft an input that looks pre-escaped but bypasses
-    // re-escaping (e.g. `&lt;script&gt;alert(1)&lt;/script&gt;`
-    // would not be re-escaped, and a future renderer change to
-    // `dangerouslySetInnerHTML` would then execute it).
+  it("preserves plain (non-HTML) text unchanged (Unicode / emoji / RTL)", () => {
+    const text = "Plain ASCII text 🎉 with emoji and عربي RTL";
+    const sourceCitation = "Section 3.2 — para 4";
     const out = validateExtractedItems(
-      [{ ...VALID, text: "Tom & Jerry", sourceCitation: "AT&T memo" }],
+      [{ ...VALID, text, sourceCitation }],
       opts(),
     );
     expect(out).toHaveLength(1);
-    expect(out[0].text).toBe("Tom &amp; Jerry");
-    expect(out[0].sourceCitation).toBe("AT&amp;T memo");
-
-    // Now feed the previous output back in — pin that we double-escape.
-    const second = validateExtractedItems(
-      [
-        {
-          ...VALID,
-          text: out[0].text,
-          sourceCitation: out[0].sourceCitation,
-        },
-      ],
-      opts(),
-    );
-    expect(second[0].text).toBe("Tom &amp;amp; Jerry");
-    expect(second[0].sourceCitation).toBe("AT&amp;amp;T memo");
+    expect(out[0].text).toBe(text);
+    expect(out[0].sourceCitation).toBe(sourceCitation);
   });
 
-  it("preserves plain (non-HTML) text unchanged", () => {
-    // The happy path: ordinary text with no HTML metacharacters
-    // is returned verbatim. Pins that we don't accidentally
-    // mangle Unicode, emoji, RTL text, etc.
-    const out = validateExtractedItems(
-      [
-        {
-          ...VALID,
-          text: "Plain ASCII text 🎉 with emoji and عربي RTL",
-          sourceCitation: "Section 3.2 — para 4",
-        },
-      ],
-      opts(),
-    );
-    expect(out).toHaveLength(1);
-    expect(out[0].text).toBe(
-      "Plain ASCII text 🎉 with emoji and عربي RTL",
-    );
-    expect(out[0].sourceCitation).toBe("Section 3.2 — para 4");
-  });
-
-  it("escapes the apostrophe so attribute-injection via <a title='..'> is blocked", () => {
-    // Apostrophe escaping defends against `<a title='...'>`-style
-    // attribute contexts where a stray `'` would close the
-    // attribute and inject new attributes / handlers.
-    const out = validateExtractedItems(
-      [{ ...VALID, text: "It's a 'test' with quotes" }],
-      opts(),
-    );
-    expect(out).toHaveLength(1);
-    expect(out[0].text).toBe(
-      "It&#39;s a &#39;test&#39; with quotes",
-    );
-    expect(out[0].text).not.toMatch(/'/);
-  });
-
-  it("logs warnings BEFORE escaping (so the operator sees the original payload)", () => {
-    // Drop-reason logging must reflect the original input so an
+  it("logs warnings with the original (unmangled) payload", () => {
+    // Drop-reason logging reflects the original input so an
     // operator debugging "why is this item dropping?" sees the
-    // un-escaped value. The escape only applies to the surviving
-    // items in the return path.
+    // un-mangled value.
     const warn = vi.fn();
     validateExtractedItems(
       [
@@ -378,33 +313,48 @@ describe("validateExtractedItems — XSS hardening (Phase 10 / Task 16)", () => 
     const msg = warn.mock.calls[0][0] as string;
     expect(msg).toContain('itemType="<script>"');
   });
-});
 
-describe("escapeExtractedHtml — unit", () => {
-  it("escapes the five HTML-significant characters", () => {
-    expect(escapeExtractedHtml("&<>\"'")).toBe(
-      "&amp;&lt;&gt;&quot;&#39;",
-    );
-  });
-
-  it("processes & before < / > / \" / ' so emitted entities are not re-escaped", () => {
-    // If `&` were replaced LAST, an input like `<` would first
-    // become `&lt;`, then `&` would be replaced producing
-    // `&amp;lt;`. Pin the correct ordering structurally — feed
-    // an input whose escaped form would diverge under wrong
-    // ordering.
-    expect(escapeExtractedHtml("<")).toBe("&lt;");
-    expect(escapeExtractedHtml("&lt;")).toBe("&amp;lt;");
-  });
-
-  it("returns the empty string unchanged", () => {
-    expect(escapeExtractedHtml("")).toBe("");
-  });
-
-  it("is pure (no mutation of input string semantics)", () => {
-    const original = "<b>hi</b>";
-    const escaped = escapeExtractedHtml(original);
-    expect(original).toBe("<b>hi</b>");
-    expect(escaped).toBe("&lt;b&gt;hi&lt;/b&gt;");
+  it("renders XSS payloads as inert text via React JSX (render-site auto-escape)", () => {
+    // Mirror the SourceDetailPage render path exactly: render the
+    // validated item's `text` and `sourceCitation` as JSX text
+    // expressions. This pins the actual XSS defense (React's
+    // auto-escape) without depending on `dangerouslySetInnerHTML`
+    // or any other code that bypasses the safe text path.
+    const payloads = [
+      "<script>alert(1)</script>",
+      '<img src=x onerror="alert(\'pwn\')">',
+      '<iframe src="data:text/html,<script>1</script>">',
+      '<a href="javascript:alert(1)">click</a>',
+      "<svg onload=alert(1)>",
+    ];
+    for (const payload of payloads) {
+      const out = validateExtractedItems(
+        [{ ...VALID, text: payload, sourceCitation: payload }],
+        opts(),
+      );
+      const html = renderToStaticMarkup(
+        React.createElement(
+          "li",
+          null,
+          out[0].text,
+          " (",
+          out[0].sourceCitation,
+          ")",
+        ),
+      );
+      // No executable element materialises in the rendered DOM —
+      // every angle bracket is escaped to its entity form by React.
+      expect(html).not.toMatch(/<script/i);
+      expect(html).not.toMatch(/<img[\s>]/i);
+      expect(html).not.toMatch(/<iframe/i);
+      expect(html).not.toMatch(/<svg/i);
+      // And the inner `<a href=javascript:...>` cannot escape its
+      // JSX text context either.
+      expect(html).not.toMatch(/<a\s/i);
+      // The escape entities ARE present, proving React did the
+      // escaping (so the contract relies on a verifiable mechanism,
+      // not just absence of evidence).
+      expect(html).toMatch(/&lt;/);
+    }
   });
 });

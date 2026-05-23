@@ -39,67 +39,62 @@ import type { ExtractedItem } from "../shared/types";
 export type { ExtractedItem };
 
 /**
- * Minimal HTML escape for the `text` and `sourceCitation` fields
- * before the validated `ExtractedItem` reaches the renderer.
+ * XSS / prompt-injection handling for the `text` and `sourceCitation`
+ * fields.
  *
- * # Why this lives at the validation seam
+ * # Why we do NOT escape here
  *
- * The renderer renders extracted items as plain React text by
- * default (`<li>{item.text}</li>`-shaped JSX), which React itself
- * escapes via its `setTextContent` codepath. But there are two
- * realistic future regressions we want to defend against
- * structurally:
+ * An earlier revision of this module pre-escaped these fields at
+ * the validation seam, intending to make them "HTML-safe by
+ * default" before they reached the renderer. That approach is
+ * actively wrong for the actual render path in `SourceDetailPage.tsx`
+ * (and every other current consumer): React renders the fields as
+ * JSX text expressions (`{item.text}`, `{item.sourceCitation}`),
+ * which DOM-binds via `setTextContent` / `createTextNode` and
+ * auto-escapes the five HTML-significant characters. Pre-escaping
+ * at the validation seam therefore produces visible double-escape
+ * artifacts in the UI — e.g. `"AT&T memo"` would be displayed as
+ * the literal string `"AT&amp;T memo"` instead of `"AT&T memo"`.
+ * The same regression hits apostrophes (`"It's done"` →
+ * `"It&#39;s done"`), comparison operators in extracted text
+ * (`"x < 10"` → `"x &lt; 10"`), and quotes inside citations
+ * (`'"Q4 earnings" report.pdf'`).
  *
- *   1. **A future maintainer adds a `dangerouslySetInnerHTML` /
- *      `Markdown` render path** for the `text` field (e.g. to
- *      surface inline `**bold**` or `> quote` from the LLM
- *      extractor), at which point the field is no longer escaped
- *      by React and a model-prompt-injection attack can inject
- *      `<script>` / `<img onerror>` / `javascript:` URIs through
- *      the source content into the renderer. This is a well-known
- *      attack surface for LLM-extracted content.
- *   2. **The renderer pipes `sourceCitation` into a markdown
- *      tooltip or an `<a href>` attribute** (the field is a
- *      free-form citation string, so this is a natural future
- *      enhancement). HTML-escaping it at the validation seam means
- *      the renderer never has to remember which fields are
- *      pre-escaped.
+ * # Where the XSS defense actually lives
  *
- * Escaping at the validation seam means BOTH the React text path
- * (idempotent — `&amp;amp;` would only appear if React itself
- * regressed on its escape) and any future `dangerouslySetInnerHTML`
- * path are safe by default. The renderer can rely on a single
- * invariant: "every string that came through `validateExtractedItems`
- * is safe to drop into HTML without further escaping".
+ * 1. **Render-site auto-escape (today's defense).** Every current
+ *    consumer renders these fields via JSX text expressions, which
+ *    React auto-escapes — so an LLM-injected payload like
+ *    `<script>alert(1)</script>` or `<img onerror=stealCookies()>`
+ *    appears in the DOM as inert text, not as executable HTML. The
+ *    `xss / prompt injection passthrough` describe block in
+ *    `extractedItemValidation.test.ts` pins this contract by
+ *    rendering a hardcoded XSS-payload `ExtractedItem` through
+ *    React's own renderer and asserting that no `<script>` /
+ *    `<img>` / `<iframe>` element materialises.
+ * 2. **Defense in depth for future `dangerouslySetInnerHTML` /
+ *    attribute-construction paths.** If a future maintainer adds
+ *    a markdown render path for `text` or builds an `<a href>` /
+ *    `<img src>` from `sourceCitation`, the escape MUST happen at
+ *    the construction site (not here), because:
+ *      - HTML attribute escaping has different rules from text
+ *        content escaping (e.g. `\`` matters in attributes, `/`
+ *        matters in `<script>` text);
+ *      - `href` / `src` need URL-scheme allow-listing
+ *        (`javascript:` / `data:` blocking) on top of HTML escape;
+ *      - markdown render paths typically run their own escape and
+ *        would double-encode if we pre-escaped here.
+ *    The construction-site escape is also where the existing
+ *    `escapeHtml` helpers in `passwordVault.ts` /
+ *    `providerOAuth.ts` / `LandingPageEditor.tsx` live, by the
+ *    same principle.
  *
- * # Escape set
- *
- * Mirrors the existing `escapeHtml` in `passwordVault.ts` /
- * `providerOAuth.ts` / `LandingPageEditor.tsx` so the contract is
- * consistent across the codebase. Escapes the five HTML-significant
- * characters: `&`, `<`, `>`, `"`, `'`. Order is significant —
- * `&` MUST be replaced first so that subsequent replacements
- * (which all emit `&...;` entities) don't get re-escaped.
- *
- * # Double-escape avoidance
- *
- * `escapeExtractedHtml("&amp;")` returns `"&amp;amp;"`, NOT `"&amp;"`.
- * This is the correct behaviour: the contract is "the input is
- * untrusted plain text" and the output is "HTML-safe text". If a
- * caller has already pre-escaped, that's a caller-side bug — the
- * validation seam is a fresh-input boundary. The test suite
- * pins this with an explicit "&amp;amp;" assertion so a future
- * "smart" double-escape-prevention refactor cannot regress the
- * invariant silently.
+ * In short: the validation seam returns the raw extracted strings
+ * unchanged, and the renderer is responsible for context-appropriate
+ * escaping. The test suite pins both the pass-through invariant AND
+ * the render-time-safety invariant so a regression on either side
+ * fails CI.
  */
-export function escapeExtractedHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 /**
  * `console.warn`-shaped sink. Tests inject a recording fake so we can
@@ -164,21 +159,13 @@ export function validateExtractedItems(
       dropReasons.push(`bad-confidence=${JSON.stringify(rec.confidence)}`);
       continue;
     }
-    // HTML-escape both string fields at the validation seam so the
-    // renderer can treat them as HTML-safe regardless of which
-    // rendering path it uses today or in the future
-    // (`{text}` JSX text, `dangerouslySetInnerHTML`, a markdown
-    // tooltip, an `<a href>` derived from `sourceCitation`, etc.).
-    // See the doc comment on `escapeExtractedHtml` for the full
-    // rationale and the test suite for the XSS attack surface
-    // we're defending against (e.g. `<script>`, `<img onerror>`,
-    // `javascript:` URIs from prompt-injected source content).
-    items.push({
-      itemType,
-      text: escapeExtractedHtml(text),
-      sourceCitation: escapeExtractedHtml(sourceCitation),
-      confidence,
-    });
+    // Pass the strings through unchanged. XSS defense for current
+    // consumers comes from React's JSX text auto-escape; a future
+    // `dangerouslySetInnerHTML` / HTML-attribute consumer must
+    // escape at the construction site. See the doc block above for
+    // why pre-escaping here is incorrect (it double-escapes in
+    // every current render path).
+    items.push({ itemType, text, sourceCitation, confidence });
   }
 
   if (dropReasons.length === 0) {

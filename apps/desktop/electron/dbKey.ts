@@ -249,11 +249,17 @@ export function getOrCreateDbKey(): string {
   // unencrypted bridge, because there is no encrypted state to lose.
   if (!safeStorage.isEncryptionAvailable()) {
     // Use `keyringUnavailableSentence()` here, NOT
-    // `encryptionUnavailableReason()`. The latter appends a
-    // password-vault recovery hint, but the password vault does NOT
-    // wrap the SQLCipher database key (see `maybeInitPasswordVault`
-    // KNOWN LIMITATION in `main.ts`). Showing the vault-recovery
-    // hint here would send the user down an unrecoverable path.
+    // `encryptionUnavailableReason()`. The vault-recovery hint
+    // applies to the async {@link getOrCreateDbKeyAsync} entry
+    // point (which DOES wrap the SQLCipher key under the vault on
+    // keyringless platforms — see Phase 10 / Task 13). The sync
+    // entry point is reachable only from callers that have
+    // statically opted out of the vault (tests; the async-side
+    // fall-through for non-TSPV blobs) so showing the
+    // vault-recovery hint here would send those callers down a
+    // recovery path that does not apply to them. Async callers
+    // running with an active vault will have already chosen the
+    // vault-wrap branch upstream and never enter this function.
     throw new EncryptionUnavailableError(keyringUnavailableSentence());
   }
   // First launch — generate, wrap, persist.

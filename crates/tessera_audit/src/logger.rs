@@ -260,15 +260,11 @@ mod tests {
             .details
             .contains("66666666-7777-8888-9999-aaaaaaaaaaaa"));
 
-        let started = logger
-            .query_by_type(&AuditEventType::ModelStarted)
-            .unwrap();
+        let started = logger.query_by_type(&AuditEventType::ModelStarted).unwrap();
         assert_eq!(started.len(), 1);
         assert!(started[0].details.contains("/models/llama-3.gguf"));
 
-        let stopped = logger
-            .query_by_type(&AuditEventType::ModelStopped)
-            .unwrap();
+        let stopped = logger.query_by_type(&AuditEventType::ModelStopped).unwrap();
         assert_eq!(stopped.len(), 1);
         assert!(stopped[0].details.contains("user-requested"));
     }
