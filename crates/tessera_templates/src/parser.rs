@@ -23,18 +23,11 @@ pub fn load_template_by_id(template_dir: &str, template_id: &str) -> Result<Temp
     // `locales/<locale>/` directory so localized variants are
     // reachable by id without an additional lookup step.
     //
-    // The category list mirrors `RUST_TEMPLATE_DIRS` /
-    // `TEMPLATE_CATEGORIES` in the smoke suites — keep these three
-    // lists in sync when adding a new category.
-    let subdirs = [
-        "documents",
-        "slides",
-        "sheets",
-        "bases",
-        "infographics",
-        "landing_pages",
-    ];
-    for subdir in &subdirs {
+    // The category list is the canonical `crate::TEMPLATE_CATEGORIES`
+    // constant — `tests/bundled_templates.rs` and any future tooling
+    // that walks the template tree share the same source of truth, so
+    // adding a category is a one-line edit at the crate root.
+    for subdir in crate::TEMPLATE_CATEGORIES {
         let dir = base.join(subdir);
         if !dir.is_dir() {
             continue;

@@ -23,6 +23,11 @@ use tessera_core::types::ArtifactType;
 use tessera_templates::parser::parse_template_file;
 use tessera_templates::template::Template;
 use tessera_templates::validator::validate_template;
+// `TEMPLATE_CATEGORIES` is the canonical list of `templates/<category>/`
+// roots — see `crates/tessera_templates/src/lib.rs`. The runtime parser
+// and this test both consume it so there is exactly one list to update
+// when adding a new category.
+use tessera_templates::TEMPLATE_CATEGORIES;
 
 /// Some legacy visual templates (infographics + the SaaS landing page)
 /// ship with a richer, type-specific schema that uses `heading:` instead
@@ -56,19 +61,6 @@ fn is_legacy_visual_template(path: &Path) -> bool {
         .iter()
         .any(|s| relative_str == *s)
 }
-
-/// Template categories rooted at `templates/<category>/`. Keep this
-/// list in sync with the parser's `load_template_by_id` subdirectory
-/// list and the smoke-suite `RUST_TEMPLATE_DIRS`. If you add a new
-/// category, add it here AND there.
-const TEMPLATE_CATEGORIES: &[&str] = &[
-    "documents",
-    "slides",
-    "sheets",
-    "bases",
-    "infographics",
-    "landing_pages",
-];
 
 /// BCP-47 locales the WS3 expansion ships localized variants in.
 /// `en` is the implicit default for every English-source template;
