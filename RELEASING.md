@@ -52,7 +52,14 @@ The script runs:
 5. `npm run type-check --workspace=apps/desktop`
 6. `npm run test --workspace=apps/desktop`
 7. `npm run build --workspace=apps/desktop`
-8. `npx electron-builder --config packaging/electron-builder.yml --dir`
+8. `npx --no-install electron-builder --config packaging/electron-builder.yml --dir`
+
+   The `--no-install` flag prevents npx from silently downloading a
+   different electron-builder version into the npx cache if the
+   workspace one is missing; the preflight script fails loudly in
+   that case so the maintainer can install the missing dependency
+   deliberately rather than ship an installer built by a
+   floating-version binary.
 
 A successful run ends with:
 

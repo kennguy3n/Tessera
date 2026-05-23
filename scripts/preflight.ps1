@@ -119,6 +119,18 @@ function Invoke-AllSteps {
         $index = $i + 1
         Write-StepHeader -Index $index -Total $total -Label $step.Label -Command $step.Command
 
+        # Reset $LASTEXITCODE before invoking the step. $LASTEXITCODE
+        # is a session-wide variable that only native processes update
+        # — if a future step's Action ran only PowerShell cmdlets (no
+        # cargo/npm/npx), the post-step check below would otherwise
+        # read the leftover code from the *previous* step's native
+        # command and either declare a clean step failed or a failed
+        # step clean. Resetting here keeps the contract simple: a
+        # step is "successful" iff every native command in its Action
+        # exited 0 (or there were no native commands and no
+        # terminating errors).
+        $global:LASTEXITCODE = 0
+
         # Disable -ErrorActionPreference 'Stop' inside the step
         # so we can detect non-zero exit codes from native
         # processes (cargo / npm / npx) ourselves rather than
