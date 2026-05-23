@@ -70,6 +70,47 @@ pub struct TemplateSection {
     pub prompt: String,
     #[serde(default)]
     pub required_sources: Vec<RequiredSource>,
+    /// Maximum tokens the LLM should generate for this section. Mirrors
+    /// the `max_tokens` field on the JSON Schema and gives the runtime
+    /// a per-section budget for streaming generation. `None` falls back
+    /// to the engine's default. Range is checked by
+    /// `validator::validate_template`, not at deserialize time, so that
+    /// authors get a useful error message rather than a silent failure.
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    /// Expected output structure for this section. Drives both the
+    /// generation prompt (e.g. asking for a Markdown table for `Table`)
+    /// and the post-generation validator (which can reject prose where
+    /// a bulleted list was requested). Defaults to `None`, which means
+    /// "free-form prose, no structural assertion".
+    #[serde(default)]
+    pub output_format: Option<SectionOutputFormat>,
+}
+
+/// Structural shape the LLM is asked to produce for a single section.
+/// Mirrors the `output_format` enum in `schemas/template.schema.json`.
+/// Renaming a variant here is a breaking schema change — bump
+/// `schema_version` on every template that references the old name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SectionOutputFormat {
+    /// Free-form prose paragraphs. The renderer treats the section body
+    /// as Markdown without any structural assertion.
+    Prose,
+    /// Bullet list. The renderer asserts that the section body is a
+    /// Markdown unordered list and rejects non-list output.
+    Bullets,
+    /// Ordered (numbered) list with one item per line. Used when
+    /// sequence matters — e.g. step-by-step SOPs.
+    NumberedList,
+    /// Markdown table. The renderer expects pipe-delimited rows; the
+    /// generator is prompted to emit a header row plus at least one
+    /// data row.
+    Table,
+    /// Structured JSON object. The renderer parses the section body as
+    /// JSON and routes it to the downstream artifact-typed renderer
+    /// (sheet rows, base records, etc.).
+    Json,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

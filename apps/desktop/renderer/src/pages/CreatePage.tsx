@@ -54,6 +54,7 @@ const INDUSTRY_OPTIONS: { value: string; label: string }[] = [
   { value: "nonprofit", label: "Nonprofit" },
   { value: "creative", label: "Creative / Marketing" },
   { value: "real-estate", label: "Real Estate" },
+  { value: "construction", label: "Construction" },
 ];
 
 /**
@@ -285,6 +286,18 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
       name: "Workshop Deck",
       description: "Workshop facilitation deck with exercises and debrief",
     },
+    {
+      id: "board-update-deck-v1",
+      name: "Board Update",
+      description:
+        "Quarterly board update covering performance, financials, strategy, risks",
+    },
+    {
+      id: "investor-update-deck-v1",
+      name: "Investor Update",
+      description:
+        "Monthly or quarterly investor update with metrics, wins, lowlights, asks",
+    },
     // Visuals — existing rich infographic/landing-page YAMLs
     {
       id: "infographic-stats-overview-v1",
@@ -441,7 +454,7 @@ const CATEGORIES: Record<string, CategoryItem[]> = {
       id: "safety-incident-report-v1",
       name: "Safety Incident Report",
       description: "Workplace safety incident with root cause, OSHA reporting",
-      industry: ["manufacturing", "healthcare"],
+      industry: ["manufacturing", "healthcare", "construction"],
     },
     // Analyze — Manufacturing / Real Estate
     {

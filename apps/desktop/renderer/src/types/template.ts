@@ -39,4 +39,25 @@ export interface TemplateSection {
     type: string;
     min: number;
   }[];
+  /**
+   * Maximum tokens the LLM should generate for this section. Mirrors
+   * the YAML `max_tokens` field and the Rust `TemplateSection.max_tokens`
+   * struct field. The JSON Schema constrains this to `[50, 16384]`;
+   * out-of-range values are rejected by the Rust validator before the
+   * template reaches the renderer.
+   */
+  maxTokens?: number;
+  /**
+   * Expected output structure for this section. Drives both the
+   * generation prompt and the post-generation validator. Values mirror
+   * the YAML `output_format` enum: `"prose"`, `"bullets"`,
+   * `"numbered_list"`, `"table"`, or `"json"`. Missing means free-form
+   * prose with no structural assertion.
+   */
+  outputFormat?:
+    | "prose"
+    | "bullets"
+    | "numbered_list"
+    | "table"
+    | "json";
 }

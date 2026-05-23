@@ -38,6 +38,17 @@ pub fn validate_template(template: &Template) -> Result<()> {
                 "section {i} prompt is required"
             )));
         }
+        // The JSON Schema declares max_tokens in [50, 16384]. We mirror
+        // that here so authors get a sensible error message instead of
+        // a silent failure when the runtime later requests a huge
+        // budget.
+        if let Some(max_tokens) = section.max_tokens {
+            if !(50..=16_384).contains(&max_tokens) {
+                return Err(Error::TemplateValidation(format!(
+                    "section {i} max_tokens {max_tokens} is out of range (50..=16384)"
+                )));
+            }
+        }
     }
 
     if template.export.is_empty() {

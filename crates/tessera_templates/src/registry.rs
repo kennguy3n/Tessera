@@ -38,12 +38,34 @@ impl TemplateRegistry {
                 continue;
             }
             match parse_template_file(file_path) {
-                Ok(template) => {
-                    if validate_template(&template).is_ok() {
-                        registry.templates.push(template);
+                Ok(template) => match validate_template(&template) {
+                    Ok(()) => registry.templates.push(template),
+                    Err(e) => {
+                        // The template parsed but failed semantic
+                        // validation (missing sections, invalid
+                        // max_tokens, etc.). Skip it so the rest of the
+                        // registry still loads, but surface the error
+                        // so the operator can fix the offending file.
+                        eprintln!(
+                            "[tessera_templates] template at {} failed validation: {e}",
+                            file_path.display()
+                        );
                     }
+                },
+                Err(e) => {
+                    // YAML couldn't deserialize into the canonical
+                    // Template struct. The 4 known legacy visual
+                    // templates fall into this bucket today (different
+                    // section schema); see
+                    // `LEGACY_VISUAL_SCHEMA_TEMPLATES` in
+                    // `bundled_templates.rs`. Other parse failures
+                    // here indicate a typo or schema drift — we surface
+                    // them rather than swallow silently.
+                    eprintln!(
+                        "[tessera_templates] skipping unparseable template at {}: {e}",
+                        file_path.display()
+                    );
                 }
-                Err(_) => continue,
             }
         }
 

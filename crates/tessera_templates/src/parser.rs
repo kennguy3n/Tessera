@@ -54,9 +54,28 @@ pub fn load_template_by_id(template_dir: &str, template_id: &str) -> Result<Temp
             ) {
                 continue;
             }
-            if let Ok(tmpl) = parse_template_file(path) {
-                if tmpl.id == template_id {
-                    return Ok(tmpl);
+            match parse_template_file(path) {
+                Ok(tmpl) => {
+                    if tmpl.id == template_id {
+                        return Ok(tmpl);
+                    }
+                }
+                Err(e) => {
+                    // Don't fail the whole lookup just because one YAML
+                    // file is corrupted — the target template may still
+                    // live in a sibling file. But surface the parse
+                    // error so an unrelated typo doesn't silently mask
+                    // a working template. This used to be a silent
+                    // `if let Ok` swallow; the walkdir migration in WS3
+                    // expanded the search set to every localized
+                    // variant, making silent swallowing much more
+                    // dangerous (a broken `prd-v1-ja` would mask
+                    // nothing visible to the user). Mirrors the
+                    // `eprintln!` convention used in tessera_sources.
+                    eprintln!(
+                        "[tessera_templates] skipping malformed template at {}: {e}",
+                        path.display()
+                    );
                 }
             }
         }
