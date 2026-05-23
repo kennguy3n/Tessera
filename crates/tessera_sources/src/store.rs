@@ -619,12 +619,39 @@ impl SourceStore {
                 .collect();
             format!(" AND c.id NOT IN ({})", placeholders.join(", "))
         };
+        // `ORDER BY c.id` makes the iteration order deterministic
+        // and stable across repeated calls with the same exclude set.
+        // Correctness doesn't depend on the order — the upsert is
+        // idempotent and successful embeddings drop out of the
+        // left-join filter on the next pass — but pinning it serves
+        // two real benefits:
+        //
+        //   1. **Debuggability.** A backfill stall logged with the
+        //      first-batch chunk ids reproduces byte-for-byte across
+        //      restarts; without ORDER BY the implicit rowid order
+        //      can shift if a vacuum / autovacuum reshuffles the
+        //      btree leaves, making "embed chunk 4711 keeps failing"
+        //      bug reports impossible to reproduce.
+        //
+        //   2. **Stall detector tractability.** The in-loop
+        //      stall detector in `backfill_embeddings` decides whether
+        //      to bail by comparing the chunk-id set returned by
+        //      successive iterations. Deterministic order means the
+        //      set comparison reduces to a vec-equality check at
+        //      worst — and to a "first id same?" check in the
+        //      common case — instead of always paying the
+        //      HashSet-build cost.
+        //
+        // ORDER BY happens *before* LIMIT, so the cost is bounded by
+        // the index on `chunks.id` (the SQLite rowid alias) rather
+        // than by the size of the corpus.
         let sql = format!(
             "SELECT c.id, c.content
              FROM chunks c
              LEFT JOIN chunk_embeddings e
                 ON e.chunk_id = c.id AND e.model_id = ?1
              WHERE e.chunk_id IS NULL{exclude_placeholders}
+             ORDER BY c.id ASC
              LIMIT ?2"
         );
         let mut stmt = conn
@@ -1017,6 +1044,94 @@ mod tests {
         assert_eq!(
             leftover, 0,
             "deleting a chunk must cascade-remove its chunk_embeddings rows"
+        );
+    }
+
+    #[test]
+    fn chunks_missing_embedding_excluding_returns_ascending_chunk_id() {
+        // Regression for ANALYSIS_0005: the SELECT in
+        // `chunks_missing_embedding_excluding` previously had no
+        // ORDER BY clause, relying on SQLite's implicit rowid order.
+        // That ordering is an implementation detail and can shift
+        // when the btree is reshuffled (autovacuum, page-split
+        // rebalances), so a backfill stall reproducer logged with
+        // the first-batch chunk ids would have been impossible to
+        // reproduce on a later run.
+        //
+        // This test pins the contract: ascending `chunks.id`,
+        // stable across repeated calls with the same exclude set.
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/ordering".to_string());
+        store.add_source(&source).unwrap();
+
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/ordering/doc.txt", "h", "2026-01-01")
+            .unwrap();
+
+        // Insert five chunks. SQLite will assign them rowids 1..=5
+        // in insertion order; we intentionally do NOT sort the
+        // input list — the ORDER BY in the query is what pins the
+        // output order, not the insertion order.
+        let chunks: Vec<_> = (0..5)
+            .map(|i| crate::chunker::Chunk {
+                source_path: "/tmp/ordering/doc.txt".to_string(),
+                chunk_index: i,
+                byte_offset: i * 100,
+                content: format!("chunk body {i}"),
+                hash: format!("hash{i}"),
+            })
+            .collect();
+        store.insert_chunks(file_id, &chunks).unwrap();
+
+        let model_id = "test-embed-v1";
+
+        // First call: no excludes. Should return all 5 ids in
+        // ascending order.
+        let first = store
+            .chunks_missing_embedding_excluding(model_id, 100, &[])
+            .unwrap();
+        let first_ids: Vec<i64> = first.iter().map(|(id, _)| *id).collect();
+        assert_eq!(first_ids.len(), 5, "expected all 5 chunks unembedded");
+        for w in first_ids.windows(2) {
+            assert!(
+                w[0] < w[1],
+                "chunks_missing_embedding_excluding output must be ascending; saw {w:?}"
+            );
+        }
+
+        // Repeat the same call 20 times to make sure the ordering
+        // is truly stable, not just "happened to be ascending once".
+        // Without ORDER BY this would still typically pass on a
+        // freshly-built table, so the windowing assertion above is
+        // the real meat — but pinning stability across iterations
+        // catches any future "let's optimise this with a hash
+        // join" regression that would shuffle the rows.
+        for _ in 0..20 {
+            let again = store
+                .chunks_missing_embedding_excluding(model_id, 100, &[])
+                .unwrap();
+            let again_ids: Vec<i64> = again.iter().map(|(id, _)| *id).collect();
+            assert_eq!(
+                again_ids, first_ids,
+                "chunks_missing_embedding_excluding must be order-stable across repeated calls"
+            );
+        }
+
+        // With excludes: pulling out the middle chunk must keep
+        // the remaining four in ascending order.
+        let middle = first_ids[2];
+        let with_excludes = store
+            .chunks_missing_embedding_excluding(model_id, 100, &[middle])
+            .unwrap();
+        let with_exclude_ids: Vec<i64> = with_excludes.iter().map(|(id, _)| *id).collect();
+        let expected: Vec<i64> = first_ids
+            .iter()
+            .copied()
+            .filter(|id| *id != middle)
+            .collect();
+        assert_eq!(
+            with_exclude_ids, expected,
+            "exclude set must not perturb the ascending-id contract"
         );
     }
 }
