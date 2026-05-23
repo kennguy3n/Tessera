@@ -116,6 +116,82 @@ fn every_bundled_template_parses_and_validates() {
     }
 }
 
+/// The published `schemas/template.schema.json` is the contract that
+/// external template authors validate against. The Rust deserializer
+/// silently ignores unknown YAML fields, so a YAML that drifts away
+/// from the schema (e.g. by adding a new visual-hint field like
+/// `icon_suggestion` without declaring it in the schema, or using a
+/// pre-canonical field like `heading:` instead of `title:`) would
+/// still load at runtime but would reject template authors who run
+/// the YAML through any JSON Schema validator. This test pins the
+/// schema and the on-disk YAML files to the same vocabulary so they
+/// can never drift apart.
+///
+/// History: this test was added in WS3 R11 after the legacy visual
+/// templates (`templates/infographics/*.yaml`,
+/// `templates/landing_pages/saas-product.yaml`) were migrated from
+/// pre-canonical `heading:` schema to canonical `title:` schema in
+/// R10. The migration kept the visual-hint fields (`layout`,
+/// `default_icon_set`, `color_scheme`, `icon_suggestion`) on those
+/// files, and at the time the schema still declared
+/// `additionalProperties: false` without listing those fields — so
+/// external schema validators would have rejected those YAMLs. R11
+/// fixed the schema and this test now guards against the same drift
+/// recurring.
+#[test]
+fn every_bundled_template_validates_against_json_schema() {
+    let schema_path = workspace_templates_root()
+        .parent()
+        .expect("templates root has a parent")
+        .join("schemas/template.schema.json");
+    let schema_raw = std::fs::read_to_string(&schema_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read JSON schema at {}: {e}",
+            schema_path.display()
+        )
+    });
+    let schema_json: serde_json::Value = serde_json::from_str(&schema_raw)
+        .unwrap_or_else(|e| panic!("Schema at {} is not valid JSON: {e}", schema_path.display()));
+    let compiled = jsonschema::JSONSchema::options()
+        .with_draft(jsonschema::Draft::Draft7)
+        .compile(&schema_json)
+        .unwrap_or_else(|e| panic!("Failed to compile JSON schema: {e}"));
+
+    let mut failures: Vec<String> = Vec::new();
+    for path in discover_all_templates() {
+        let display = display_path(&path);
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("Failed to read {display}: {e}"));
+        // YAML -> serde_json::Value so the validator can consume it.
+        // `serde_yaml::from_str` to a generic value, then transcode.
+        let yaml_value: serde_yaml::Value = serde_yaml::from_str(&raw)
+            .unwrap_or_else(|e| panic!("YAML parse error in {display}: {e}"));
+        let json_value: serde_json::Value = serde_json::to_value(&yaml_value)
+            .unwrap_or_else(|e| panic!("YAML->JSON transcode error in {display}: {e}"));
+        // Collect the per-instance error strings eagerly while the
+        // `json_value` borrow is still live. The validator iterator
+        // borrows `&json_value`, so it cannot escape this scope —
+        // `let detail: Vec<String> = ...` materializes the messages
+        // immediately and lets the borrow drop.
+        let detail: Vec<String> = match compiled.validate(&json_value) {
+            Ok(()) => continue,
+            Err(errors) => errors
+                .map(|e| format!("  - at `{}`: {e}", e.instance_path))
+                .collect(),
+        };
+        failures.push(format!("{display}:\n{}", detail.join("\n")));
+    }
+    assert!(
+        failures.is_empty(),
+        "JSON schema validation failed for {} template(s):\n\n{}\n\n\
+         Either (a) update the YAML to comply with the published schema, \
+         or (b) declare the new field in schemas/template.schema.json and \
+         update the Rust `Template` struct.",
+        failures.len(),
+        failures.join("\n\n")
+    );
+}
+
 /// Every template id MUST be globally unique across the whole registry.
 /// Localized variants follow the convention `<base-id>-<locale>` (e.g.
 /// `prd-v1-es`) so they get distinct ids automatically. A collision

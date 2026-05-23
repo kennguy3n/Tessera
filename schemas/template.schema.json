@@ -95,6 +95,24 @@
     "marp_template": {
       "type": "string",
       "description": "Optional raw Marp markdown body. When present the template engine can emit Marp output directly without re-rendering from sections."
+    },
+    "layout": {
+      "type": "string",
+      "description": "Visual-template layout hint consumed by the infographic / landing-page renderer (e.g. 'grid', 'vertical', 'horizontal'). The canonical `Template` deserializer ignores this field, but it is part of the documented YAML vocabulary so authors validating against this schema do not get false rejections on legacy visual templates such as `templates/infographics/comparison.yaml`."
+    },
+    "default_icon_set": {
+      "type": "string",
+      "description": "Visual-template hint declaring the default icon library for the renderer (e.g. 'phosphor', 'lucide'). Mirrors the per-section `icon_suggestion` field. Ignored by the canonical Rust deserializer but reserved for visual renderers."
+    },
+    "color_scheme": {
+      "type": "object",
+      "description": "Visual-template color palette hint. Reserved keys are `primary`, `secondary`, `accent`, but renderers may declare additional swatches. Ignored by the canonical Rust deserializer.",
+      "properties": {
+        "primary": { "type": "string" },
+        "secondary": { "type": "string" },
+        "accent": { "type": "string" }
+      },
+      "additionalProperties": { "type": "string" }
     }
   },
   "additionalProperties": false,
@@ -130,6 +148,10 @@
           "type": "string",
           "enum": ["prose", "bullets", "numbered_list", "table", "json"],
           "description": "Expected output structure for this section"
+        },
+        "icon_suggestion": {
+          "type": "string",
+          "description": "Visual-template hint suggesting an icon name (from the parent template's `default_icon_set`) for renderers that surface per-section iconography (e.g. infographics). Ignored by the canonical Rust deserializer but reserved for visual renderers."
         }
       },
       "additionalProperties": false
