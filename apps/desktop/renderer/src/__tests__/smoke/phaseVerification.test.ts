@@ -232,12 +232,40 @@ function extractTopLevelScalar(body: string, key: string): string | null {
       }
       return decoded.join("");
     }
-    // Unquoted scalar — strip a trailing comment only when the `#`
-    // is preceded by ASCII whitespace, per YAML 1.2 §6.6. A `#`
-    // adjacent to a non-whitespace character is literal.
+    // Unquoted scalar.
+    //
+    // Two YAML 1.2 §6.6 sub-cases need separate handling:
+    //
+    //   (a) `<key>:<ws>#…` — the `#` is at the start of the value
+    //       region (no inter-token whitespace before it). Per YAML
+    //       1.2 §6.6, a `#` that is preceded by ASCII whitespace
+    //       (which we already stripped above with the
+    //       `replace(/^[\t ]+/, "")`) begins a comment, so the entire
+    //       value region is a comment and the scalar's value is YAML
+    //       null. We return null rather than the literal comment
+    //       string so callers can distinguish "key absent" from
+    //       "key present with null value".
+    //
+    //   (b) `<key>:<ws><non-#…> [<ws>#…]` — a normal unquoted scalar,
+    //       with an optional trailing comment. The comment-strip
+    //       regex `/\s+#.*$/` peels off only the genuine trailing
+    //       comment because YAML 1.2 §6.6 requires the `#` to be
+    //       preceded by whitespace; a `#` adjacent to non-whitespace
+    //       (e.g. `id: foo#bar`) stays literal.
+    //
+    // Devin Review round-10 flagged the round-9 implementation as
+    // returning `"# comment"` literally for case (a), which (while
+    // not exercised by any real bundled template — every shipped
+    // template has a non-empty id) would confuse any future caller.
+    // The explicit branch here is the long-term-correct fix.
+    if (rest.startsWith("#")) return null;
     const commentRe = /\s+#.*$/;
-    const stripped = rest.replace(commentRe, "");
-    return stripped.trimEnd();
+    const stripped = rest.replace(commentRe, "").trimEnd();
+    // A YAML mapping entry with no value (`id:` followed by nothing
+    // or only whitespace) is YAML null. Mirror case (a)'s null
+    // return to keep the contract uniform.
+    if (stripped.length === 0) return null;
+    return stripped;
   }
   return null;
 }
@@ -544,10 +572,33 @@ function extractCategoriesBlock(): string {
     "utf8",
   );
 
-  const decl = source.indexOf("const CATEGORIES");
-  if (decl === -1) {
-    throw new Error("CATEGORIES constant not found in CreatePage.tsx");
+  // Anchored, multi-line regex: `const CATEGORIES` MUST appear at the
+  // start of a line, and the next non-whitespace token MUST be `:` (a
+  // TS type annotation) or `=` (a direct assignment). The previous
+  // implementation used `source.indexOf("const CATEGORIES")`, which
+  // Devin Review round-10 correctly flagged as fragile: it would
+  // false-match against a TS declaration like
+  // `const CATEGORIES_METADATA = ...` (same prefix, different
+  // identifier), or against a comment line like
+  // `// const CATEGORIES — legacy registry`. Today CreatePage.tsx
+  // has exactly one match, but the smoke suite is supposed to be
+  // defensive against future maintenance, not optimistic about it.
+  //
+  // The `m` flag makes `^` match start-of-line (so indented
+  // occurrences inside comments / functions don't qualify), the `\b`
+  // after `CATEGORIES` enforces a word boundary (so
+  // `CATEGORIES_METADATA` is excluded), and `[:=]` requires the next
+  // non-whitespace token to be a type-annotation or assignment
+  // operator. We capture nothing — only the match position is used.
+  const declRe = /^const CATEGORIES\b[ \t]*[:=]/m;
+  const declMatch = declRe.exec(source);
+  if (declMatch === null) {
+    throw new Error(
+      "CATEGORIES constant not found in CreatePage.tsx — " +
+        "expected a top-level `const CATEGORIES ...:` or `... =` declaration",
+    );
   }
+  const decl = declMatch.index;
   // Skip past the `=` so any `{` characters in the type annotation are
   // outside our scan window.
   const eqIdx = source.indexOf("=", decl);
@@ -637,15 +688,26 @@ interface CategoryEntry {
  *   - An identifier event at depth 1 records the candidate key. A
  *     later identifier at the same depth replaces it (e.g. a
  *     shorthand-property declaration `foo,` with no colon following).
+ *   - A string event at depth 1 ALSO records a candidate key, when
+ *     not already awaiting a value. This supports object literals
+ *     with QUOTED property keys (`{ "id": "v" }` or `{ 'id': 'v' }`)
+ *     in addition to the unquoted-identifier form (`{ id: "v" }`).
+ *     CreatePage.tsx today uses unquoted keys exclusively, but a
+ *     future refactor (or copy-paste from JSON) could introduce
+ *     quoted keys; Devin Review round-10 flagged the previous
+ *     identifier-only behaviour as a silent gap, and the long-term
+ *     fix is to accept both. The string-event handler distinguishes
+ *     "this string is a candidate KEY" (not awaiting after a colon)
+ *     from "this string is the VALUE for the pending key" (awaiting)
+ *     via the `awaitingValueAfterColon` flag.
  *   - A colon event at the candidate's depth marks us as awaiting a
  *     string value.
  *   - A string event at the candidate's depth, while awaiting, is the
  *     value. Record it (first-occurrence-wins so a re-declared key
  *     keeps the first value — re-declaration is a lint error in
  *     CreatePage.tsx anyway), then clear pending state.
- *   - Any open / close brace or a string seen WITHOUT awaiting clears
- *     pending state — the value was not a string, or the candidate
- *     was a free-standing identifier.
+ *   - Any open / close brace clears pending state — the value was a
+ *     nested object, not a string.
  */
 function extractObjectProperties(
   slice: string,
@@ -669,7 +731,11 @@ function extractObjectProperties(
         awaitingValueAfterColon = false;
         return;
       }
-      // New identifier at top depth — replaces any pending key.
+      // New identifier at top depth — replaces any pending key. If we
+      // were awaiting a string value, the actual value turned out to
+      // be a bare identifier (e.g. `true` / `null` / a referenced
+      // variable). That's not a string we can decode, so we abandon
+      // the previous pair and treat this identifier as the next key.
       pendingKey = name;
       pendingKeyDepth = depth;
       awaitingValueAfterColon = false;
@@ -680,21 +746,33 @@ function extractObjectProperties(
       }
     },
     onStringLiteral: (_pos, decoded, _quote, _endPos, depth) => {
+      if (depth !== 1) {
+        // Nested-string values (e.g. inside an array or nested object)
+        // can't be top-level properties of THIS object. Drop pending
+        // state so they don't get accidentally captured as a value.
+        pendingKey = null;
+        awaitingValueAfterColon = false;
+        return;
+      }
       if (
         awaitingValueAfterColon &&
         pendingKey !== null &&
-        depth === pendingKeyDepth &&
-        want.has(pendingKey) &&
-        result[pendingKey] === null
+        depth === pendingKeyDepth
       ) {
-        // First occurrence wins so that, e.g., a property re-declared
-        // illegally (`{ id: "a", id: "b" }`) records the first value.
-        result[pendingKey] = decoded;
+        if (want.has(pendingKey) && result[pendingKey] === null) {
+          // First occurrence wins so that, e.g., a property re-declared
+          // illegally (`{ id: "a", id: "b" }`) records the first value.
+          result[pendingKey] = decoded;
+        }
+        pendingKey = null;
+        awaitingValueAfterColon = false;
+        return;
       }
-      // A string clears pending state regardless of whether it was
-      // captured: if it wasn't awaited, it's a stray string elsewhere
-      // in the slice; if it was, we're done with this property.
-      pendingKey = null;
+      // Not awaiting a value — this string is a candidate KEY for the
+      // `"key": value` quoted-key form. Replace any previous pending
+      // key (mirrors the identifier-replacement semantics above).
+      pendingKey = decoded;
+      pendingKeyDepth = depth;
       awaitingValueAfterColon = false;
     },
     onOpen: () => {
@@ -1044,5 +1122,85 @@ describe("phase verification — internal helper invariants", () => {
     const props = extractObjectProperties(slice, ["id", "name"]);
     expect(props.id).toBe("real");
     expect(props.name).toBe("real-name");
+  });
+
+  test("extractObjectProperties supports quoted property keys (round-10 #0002)", () => {
+    // Devin Review round-10 flagged that the previous identifier-only
+    // implementation would silently skip an entry whose keys were
+    // quoted (`{ "id": "v" }`) — common when JSON-shaped object
+    // literals are pasted into a TS file. The lexer now also accepts
+    // a depth-1 string literal as a candidate KEY when not awaiting a
+    // value after a colon.
+    const dq = `{ "id": "double-id", "name": "double-name" }`;
+    const dqProps = extractObjectProperties(dq, ["id", "name"]);
+    expect(dqProps.id).toBe("double-id");
+    expect(dqProps.name).toBe("double-name");
+
+    const sq = `{ 'id': 'single-id', 'name': 'single-name' }`;
+    const sqProps = extractObjectProperties(sq, ["id", "name"]);
+    expect(sqProps.id).toBe("single-id");
+    expect(sqProps.name).toBe("single-name");
+
+    // Mixed quoted + unquoted keys in the same object.
+    const mixed = `{ "id": "q-id", name: "u-name" }`;
+    const mixedProps = extractObjectProperties(mixed, ["id", "name"]);
+    expect(mixedProps.id).toBe("q-id");
+    expect(mixedProps.name).toBe("u-name");
+
+    // A nested quoted-key object must not leak into the parent.
+    const nested = `{
+      id: "outer",
+      meta: { "name": "inner-imposter" },
+      name: "outer-real",
+    }`;
+    const nestedProps = extractObjectProperties(nested, ["id", "name"]);
+    expect(nestedProps.id).toBe("outer");
+    expect(nestedProps.name).toBe("outer-real");
+  });
+
+  test("extractTopLevelScalar returns null for comment-only values (round-10 #0001)", () => {
+    // Devin Review round-10 flagged that `extractTopLevelScalar` would
+    // return the literal string `"# only a comment"` for an input
+    // where the value region is entirely a YAML comment. Per
+    // YAML 1.2 §6.6 that's a null scalar; the round-10 fix adds an
+    // explicit start-of-line `#` branch and an empty-after-strip
+    // branch, both returning null.
+    expect(extractTopLevelScalar("id: # only a comment\n", "id")).toBeNull();
+    // Indented `#` (after the colon, still no preceding non-# tokens)
+    // also indicates a comment-only value.
+    expect(extractTopLevelScalar("id:   # leading whitespace then comment\n", "id")).toBeNull();
+    // No value at all → YAML null.
+    expect(extractTopLevelScalar("id:\n", "id")).toBeNull();
+    // Trailing-whitespace-only value → also YAML null.
+    expect(extractTopLevelScalar("id:    \n", "id")).toBeNull();
+    // A non-empty value with a trailing comment still extracts the
+    // value (regression guard for the existing happy path).
+    expect(extractTopLevelScalar("id: foo  # trailing comment\n", "id")).toBe("foo");
+    // A `#` adjacent to a non-whitespace token is literal per YAML §6.6.
+    expect(extractTopLevelScalar("id: foo#bar\n", "id")).toBe("foo#bar");
+  });
+
+  test("extractCategoriesBlock rejects unanchored matches (round-10 #0004)", () => {
+    // The replacement regex `/^const CATEGORIES\b[ \t]*[:=]/m` only
+    // matches a top-level declaration. We can't fault-inject directly
+    // (the helper reads CreatePage.tsx from disk), but we can verify
+    // the regex itself rejects the false-match patterns called out in
+    // the finding: `const CATEGORIES_METADATA` (underscore suffix,
+    // word boundary fails), and a comment line `// const CATEGORIES`
+    // (not at start of line).
+    const declRe = /^const CATEGORIES\b[ \t]*[:=]/m;
+    expect(declRe.test("const CATEGORIES: Record<string, X> = {}")).toBe(true);
+    expect(declRe.test("const CATEGORIES = {}")).toBe(true);
+    expect(declRe.test("const CATEGORIES_METADATA = {}")).toBe(false);
+    expect(declRe.test("// const CATEGORIES — legacy registry")).toBe(false);
+    expect(declRe.test("  const CATEGORIES = {}")).toBe(false); // indented → not top level
+    // Multi-line case: a decoy comment ABOVE the real declaration
+    // must not block the legitimate match.
+    const realistic =
+      "// const CATEGORIES — used to live here\n" +
+      "const CATEGORIES: Record<string, X> = {}\n";
+    const m = declRe.exec(realistic);
+    expect(m).not.toBeNull();
+    expect(m && m.index).toBe(realistic.indexOf("const CATEGORIES:"));
   });
 });
