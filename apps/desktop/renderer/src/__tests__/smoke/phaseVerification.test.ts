@@ -659,7 +659,26 @@ function extractCategoriesBlock(): string {
   if (eqIdx === -1) {
     throw new Error("CATEGORIES declaration is missing the `=` assignment token");
   }
-  const openIdx = source.indexOf("{", eqIdx);
+  // Find the opening `{` of the object literal via a real lexer scan
+  // rather than a plain `source.indexOf("{", eqIdx)`. Devin Review
+  // round-12 #0001 flagged the indexOf approach as fragile against a
+  // comment containing `{` placed between `=` and the actual object
+  // literal (e.g. `const CATEGORIES: ... = // { see docs\n{...}`).
+  // CreatePage.tsx doesn't have such a comment today, but the smoke
+  // suite is supposed to be defensive against future maintenance, not
+  // optimistic about it. lexJs already knows how to skip comments,
+  // strings, and template literals — the onOpen callback fires on the
+  // FIRST real `{` it encounters in code state at the new depth=1,
+  // which by construction is the opening brace of the object literal.
+  let openIdx = -1;
+  lexJs(source, eqIdx + 1, {
+    onOpen: (pos, depth) => {
+      if (depth === 1) {
+        openIdx = pos;
+        return true;
+      }
+    },
+  });
   if (openIdx === -1) {
     throw new Error("CATEGORIES declaration is missing the opening `{`");
   }

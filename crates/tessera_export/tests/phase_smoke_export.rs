@@ -141,7 +141,28 @@ fn csv_export_emits_a_comma_separated_table() {
     );
 }
 
-#[cfg(feature = "pdf")]
+// The pdf / docx / xlsx tests below previously wore
+// `#[cfg(feature = "pdf"|"docx"|"xlsx")]` attributes, but Devin Review
+// round-12 #0003 correctly flagged those guards as misleading: those
+// three features are declared as empty arrays in `Cargo.toml`
+// (`pdf = []`, `docx = []`, `xlsx = []`) and only listed in `default`,
+// so they don't actually gate any code or dependency. The corresponding
+// `export_pdf` / `export_docx` / `export_xlsx` functions are
+// unconditionally compiled regardless of which features are enabled.
+//
+// The only feature in this crate that genuinely gates code is `typst`
+// (which enables the Typst-based PDF renderer); the PDF exporter has a
+// printable-text fallback when `typst` is disabled, so it remains
+// callable in either configuration.
+//
+// We therefore drop the no-op `#[cfg(feature = ...)]` guards and let
+// these tests run unconditionally. Removing them strengthens the smoke
+// suite (every exporter is now always exercised when the test runs)
+// and removes the misleading impression that they could be meaningfully
+// disabled with a feature flag. If the `pdf` / `docx` / `xlsx` feature
+// flags ever start gating real code in the library crate, the tests
+// here should grow a matching cfg attribute at the same time.
+
 #[test]
 fn pdf_export_emits_a_non_empty_payload() {
     let artifact = sample_document();
@@ -164,7 +185,6 @@ fn pdf_export_emits_a_non_empty_payload() {
     );
 }
 
-#[cfg(feature = "docx")]
 #[test]
 fn docx_export_emits_a_docx_zip_envelope() {
     let artifact = sample_document();
@@ -179,7 +199,6 @@ fn docx_export_emits_a_docx_zip_envelope() {
     );
 }
 
-#[cfg(feature = "xlsx")]
 #[test]
 fn xlsx_export_emits_an_xlsx_zip_envelope() {
     let artifact = sample_sheet();
