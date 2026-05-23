@@ -632,7 +632,8 @@ impl SourceStore {
             .map_err(|e| Error::Database(e.to_string()))?;
         // Build the parameter list: ?1 = model_id, ?2 = limit,
         // ?3.. = exclude IDs in order.
-        let mut params_vec: Vec<rusqlite::types::Value> = Vec::with_capacity(2 + exclude_chunk_ids.len());
+        let mut params_vec: Vec<rusqlite::types::Value> =
+            Vec::with_capacity(2 + exclude_chunk_ids.len());
         params_vec.push(rusqlite::types::Value::Text(model_id.to_string()));
         params_vec.push(rusqlite::types::Value::Integer(limit as i64));
         for id in exclude_chunk_ids {

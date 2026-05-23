@@ -479,7 +479,9 @@ mod tests {
         // ranking with at least two positions.
         // `search_broad` uses OR semantics so we get hits from
         // multiple chunks — necessary to exercise rank > 1.
-        let results = engine.search_broad("Tessera encrypted meeting", 10).unwrap();
+        let results = engine
+            .search_broad("Tessera encrypted meeting", 10)
+            .unwrap();
         assert!(
             results.len() >= 2,
             "test needs at least two hits to exercise rank ordering"
