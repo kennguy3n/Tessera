@@ -90,7 +90,37 @@ function installContentSecurityPolicy(): void {
   });
 }
 
+/**
+ * Open the main application window.
+ *
+ * Idempotent on the `mainWindow` module-level reference: if a main
+ * window already exists and has not been closed (its `closed` handler
+ * nulls the reference), return without creating a second one.
+ *
+ * This idempotency is load-bearing for the macOS dock-click recovery
+ * path: the `app.on("activate", ...)` listener is registered BEFORE
+ * `await maybeInitPasswordVault()` so a dock click during the
+ * password prompt is not silently dropped. If the activate listener
+ * fires during the brief window between the prompt closing and
+ * `whenReady` resuming, it calls `createWindow()` early — which then
+ * makes the subsequent unconditional `createWindow()` call at the
+ * end of `whenReady` a safe no-op. Without this guard, the early
+ * activate would leave the user with a duplicate main window.
+ *
+ * Note: the password-prompt window is a separate `BrowserWindow`
+ * that does NOT touch `mainWindow`, so the check here correctly
+ * distinguishes "main window already open" from "any window open".
+ */
 function createWindow(): void {
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    // Already open from a previous call (e.g. activate listener
+    // fired first). Bring it to the foreground so the user-visible
+    // result of "click dock icon" is consistent with the macOS
+    // expectation of bringing the app's window forward.
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    return;
+  }
   const config = loadConfig();
 
   mainWindow = new BrowserWindow({
@@ -399,6 +429,30 @@ app.whenReady().then(async () => {
   // Installed AFTER the CSP header so the listener is in place
   // before any WebContents starts loading.
   installCSPDevtoolsLogger();
+  // Install the macOS `activate` listener BEFORE `await
+  // maybeInitPasswordVault()`. Rationale: on macOS, if the user
+  // dismisses the password prompt and clicks the dock icon during
+  // the brief window between the rejection propagating and
+  // `createWindow()` running below, the click is dispatched
+  // synchronously by Cocoa. Without the listener already installed,
+  // the click is silently dropped — the app appears hung until the
+  // main window auto-opens moments later. Registering the listener
+  // here makes the recovery path bullet-proof.
+  //
+  // Safety while the password prompt is open: the prompt is itself a
+  // `BrowserWindow`, so `BrowserWindow.getAllWindows().length === 0`
+  // is false and the listener no-ops. The duplicate-window race is
+  // also closed by `createWindow()` checking the existing-window set
+  // before constructing a new one (see `createWindow` docstring) —
+  // so even if Cocoa fires `activate` after the prompt closes but
+  // before this `whenReady` callback resumes, the handler safely
+  // creates the main window early; the `createWindow()` call below
+  // then finds it already open and returns.
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
+  });
   await maybeInitPasswordVault();
   registerIpcHandlers();
   // Start the automations scheduler. Runs in the main process and
@@ -439,11 +493,12 @@ app.whenReady().then(async () => {
     }
   });
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
-  });
+  // Note: the `app.on("activate", ...)` listener is registered
+  // EARLIER in this `whenReady` callback (before `await
+  // maybeInitPasswordVault()`) so the dock-click recovery path is
+  // live throughout the password prompt. Keeping it hoisted there
+  // — not duplicated here — is intentional. See the comment block
+  // at the registration site.
 });
 
 app.on("window-all-closed", () => {

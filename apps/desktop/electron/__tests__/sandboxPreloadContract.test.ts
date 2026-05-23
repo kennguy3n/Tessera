@@ -167,4 +167,71 @@ describe("CSP session handler hoist: main.ts", () => {
       "installContentSecurityPolicy() must be called BEFORE maybeInitPasswordVault() so the CSP is in place before any window opens",
     ).toBeLessThan(promptIdx);
   });
+
+  it("registers app.on('activate', ...) BEFORE await maybeInitPasswordVault in app.whenReady", () => {
+    // macOS dock-click recovery invariant: if the user dismisses the
+    // password prompt and then clicks the dock icon during the brief
+    // window between the prompt closing and `whenReady` resuming,
+    // Cocoa dispatches `activate` synchronously. With no listener
+    // registered yet, the click is silently dropped — the app
+    // appears hung until the main window auto-opens. Pinning the
+    // registration order here prevents a future refactor from
+    // moving the `app.on("activate", ...)` block back below the
+    // `await` and re-introducing the race.
+    //
+    // `createWindow()` is idempotent on the module-level `mainWindow`
+    // ref (see its docstring), so a duplicate call from the early
+    // activate path + the late unconditional call at the end of
+    // `whenReady` is safe — the second call no-ops.
+    //
+    // Match against the full source rather than a non-greedy
+    // whenReady-block regex: the hoisted `app.on("activate", () => {
+    // ... });` now appears INSIDE the whenReady callback, and a
+    // non-greedy `[\s\S]*?\}\);` would stop at the first inner
+    // `});` (the activate close) and clip away the
+    // `await maybeInitPasswordVault()` line. Using `source.indexOf`
+    // directly is robust to future nested arrow-function bodies.
+    const whenReadyIdx = source.indexOf("app.whenReady()");
+    expect(whenReadyIdx, "could not find app.whenReady() in main.ts").toBeGreaterThan(-1);
+    const activateIdx = source.indexOf('app.on("activate"', whenReadyIdx);
+    const awaitPromptIdx = source.indexOf("await maybeInitPasswordVault()", whenReadyIdx);
+    expect(activateIdx, "could not find app.on('activate', ...) after app.whenReady()").toBeGreaterThan(-1);
+    expect(awaitPromptIdx, "could not find 'await maybeInitPasswordVault()' after app.whenReady()").toBeGreaterThan(-1);
+    expect(
+      activateIdx,
+      "app.on(\"activate\", ...) must be registered BEFORE await maybeInitPasswordVault() so a dock click during the password prompt is not silently dropped on macOS",
+    ).toBeLessThan(awaitPromptIdx);
+  });
+
+  it("createWindow is idempotent on the mainWindow reference", () => {
+    // The hoisted activate listener (see test above) plus the
+    // unconditional `createWindow()` call at the end of `whenReady`
+    // can both run in a single startup — if the activate listener
+    // fires during the prompt-close → whenReady-resume window. The
+    // function's idempotency is what makes this safe: regressing it
+    // would let a duplicate main window appear on the recovery
+    // path. Pin the guard by source-shape match.
+    const createWindowBody = source.match(/function\s+createWindow\s*\(\s*\)\s*:\s*void\s*\{[\s\S]*?\n\}\n/);
+    expect(createWindowBody, "could not find createWindow body").toBeTruthy();
+    if (!createWindowBody) return;
+    const body = createWindowBody[0];
+    // The early-return clause must reference `mainWindow !== null`
+    // AND `isDestroyed()` (so a closed-and-nulled window correctly
+    // falls through to creating a fresh one).
+    expect(
+      body,
+      "createWindow() must check `mainWindow !== null && !mainWindow.isDestroyed()` and early-return so the activate-listener early-fire path doesn't create a duplicate window",
+    ).toMatch(/mainWindow\s*!==\s*null\s*&&\s*!mainWindow\.isDestroyed\(\)/);
+    // And the guard must precede the `new BrowserWindow(` call, not
+    // come after it, so the early-return actually short-circuits
+    // window creation.
+    const guardIdx = body.search(/mainWindow\s*!==\s*null\s*&&\s*!mainWindow\.isDestroyed\(\)/);
+    const newWindowIdx = body.indexOf("new BrowserWindow(");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(newWindowIdx).toBeGreaterThan(-1);
+    expect(
+      guardIdx,
+      "the idempotency guard must run BEFORE `new BrowserWindow(...)` so the early-return actually prevents the duplicate window",
+    ).toBeLessThan(newWindowIdx);
+  });
 });

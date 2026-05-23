@@ -164,8 +164,12 @@ extra scrutiny.
 These channels are `ipcMain.on` (not `ipcMain.handle`) and are
 **transient**: they are registered by `passwordVault.ts` only while
 the password-prompt `BrowserWindow` is open at app startup, and torn
-down via `ipcMain.removeAllListeners(channel)` as soon as the user
-submits, cancels, or closes the window. The prompt loads via
+down via `ipcMain.removeListener(channel, handler)` as soon as the user
+submits, cancels, or closes the window. The handler-targeted
+`removeListener` is deliberate (not `removeAllListeners`): it removes
+only the specific listener installed by the prompt's setup, so any
+listener a future caller registers on the same channel name (e.g. a
+test harness) is preserved. The prompt loads via
 `data:text/html;charset=utf-8,…` (no `file://` or `http(s)://`), and
 its preload (`passwordPromptPreload.ts`) only exposes a single
 `tesseraPasswordPrompt` API that forwards the user input to these
