@@ -168,6 +168,23 @@ impl SourceManager {
         self.embedding_progress.snapshot()
     }
 
+    /// Returns a clone of the shared `Arc<EmbeddingProgressTracker>`
+    /// so callers (most importantly the napi bridge) can read progress
+    /// snapshots WITHOUT having to acquire the outer `SourceManager`
+    /// mutex. This matters during a worker-thread backfill: the
+    /// backfill itself holds the `SourceManager` lock for the duration
+    /// of its DB writes, and a progress poll that also tried to lock
+    /// the manager would queue up behind the backfill and never get
+    /// to read the in-progress counters.
+    ///
+    /// The tracker has its own internal `Mutex` so concurrent readers
+    /// only briefly contend with the worker thread's `record_*` calls.
+    /// In practice that means progress polls return in microseconds
+    /// regardless of how much work the backfill is doing.
+    pub fn embedding_progress_handle(&self) -> Arc<EmbeddingProgressTracker> {
+        Arc::clone(&self.embedding_progress)
+    }
+
     pub fn add_local_folder(&self, path: &str) -> Result<Source> {
         let folder_path = Path::new(path);
         if !folder_path.is_dir() {
@@ -503,6 +520,29 @@ mod tests {
         assert_eq!(snap.failed, 0);
         assert!(snap.model_id.is_none());
         assert!(snap.last_error.is_none());
+    }
+
+    #[test]
+    fn embedding_progress_handle_shares_state_with_manager() {
+        // The handle is the same `Arc` the manager mutates internally,
+        // so reads through the handle must observe the same state as
+        // reads through `manager.embedding_progress()`. The bridge
+        // relies on this invariant to skip the `source_manager` lock
+        // during progress polls.
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let handle = manager.embedding_progress_handle();
+        let initial = handle.snapshot();
+        assert_eq!(initial.status, EmbeddingStatus::Idle);
+
+        // Run a no-op backfill (no embedder attached) to flip the
+        // state. The handle observes the transition because it
+        // points at the same `EmbeddingProgressTracker` instance.
+        let _ = manager.backfill_embeddings_tracked(64).unwrap();
+        let after = handle.snapshot();
+        let via_manager = manager.embedding_progress();
+        assert_eq!(after.status, via_manager.status);
+        assert_eq!(after.total_chunks, via_manager.total_chunks);
+        assert_eq!(after.embedded, via_manager.embedded);
     }
 
     #[test]

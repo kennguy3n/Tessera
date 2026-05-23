@@ -344,6 +344,32 @@ function infoToPersisted(
  * `updateConfig` after the next `settings:updateHybridSearchConfig`
  * call will discard the unknown field, which is acceptable: we
  * never want stale unknowns to win over user intent.
+ *
+ * **Dual contract — callers MUST be aware of both outcomes.**
+ *
+ *  1. **Side effect on bridge rejection.** When the persisted
+ *     config violates the bridge's validation rules (negative
+ *     weights, non-finite halflife, etc.), this function calls
+ *     `updateConfig` to **reset disk to the documented default**
+ *     before rethrowing. The reset is intentional: the next launch
+ *     must not loop on the same invalid config. A successful return
+ *     leaves disk unchanged; a thrown return rewrites disk to the
+ *     default. Callers that want to inspect disk after this function
+ *     returns/throws should re-read via `loadConfig()`.
+ *
+ *  2. **Throws on bridge rejection.** The bridge error is
+ *     re-thrown so the caller can log it and surface a warning to
+ *     the user. The `hybridSearchConfigIpc.test.ts` integration
+ *     test (`hybridSearchConfigIpc.test.ts:replay…rejects…`) pins
+ *     this contract: a malformed persisted config produces both the
+ *     disk reset AND a thrown error. Callers MUST wrap this call in
+ *     `try / catch` or the entire main-process bootstrap aborts.
+ *
+ * Today there is exactly one production callsite at
+ * `apps/desktop/electron/main.ts` which already wraps this in a
+ * try/catch and logs `bridge.replayHybridSearchConfig.failed`. Any
+ * future callsite (e.g. a hypothetical "reset search config" menu
+ * command) must do the same.
  */
 export function replayPersistedHybridSearchConfigToBridge(): void {
   const bridge = getBridge();

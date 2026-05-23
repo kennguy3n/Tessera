@@ -21,10 +21,10 @@ function seedConfig(overrides: Partial<{
     candidatePoolSize: 0,
     ...overrides,
   };
-  window.tessera.sources.getHybridSearchConfig = vi
+  window.tessera.settings.getHybridSearchConfig = vi
     .fn()
     .mockResolvedValue(base);
-  window.tessera.sources.updateHybridSearchConfig = vi
+  window.tessera.settings.updateHybridSearchConfig = vi
     .fn()
     .mockImplementation(async (patch) => ({
       ...base,
@@ -55,7 +55,7 @@ describe("HybridSearchCard", () => {
     expect(
       await screen.findByRole("heading", { name: "Search" }),
     ).toBeInTheDocument();
-    expect(window.tessera.sources.getHybridSearchConfig).toHaveBeenCalledTimes(
+    expect(window.tessera.settings.getHybridSearchConfig).toHaveBeenCalledTimes(
       1,
     );
     // Slider shows the 30-day default once the config loads.
@@ -91,7 +91,7 @@ describe("HybridSearchCard", () => {
     fireEvent.change(slider, { target: { value: "7" } });
     expect(screen.getByText(/7 days/i)).toBeInTheDocument();
     expect(
-      window.tessera.sources.updateHybridSearchConfig,
+      window.tessera.settings.updateHybridSearchConfig,
     ).not.toHaveBeenCalled();
   });
 
@@ -106,7 +106,7 @@ describe("HybridSearchCard", () => {
     fireEvent.click(saveButton);
     await waitFor(() => {
       expect(
-        window.tessera.sources.updateHybridSearchConfig,
+        window.tessera.settings.updateHybridSearchConfig,
       ).toHaveBeenCalledWith(
         expect.objectContaining({
           recencyHalflifeSecs: 14 * DAY,
@@ -125,7 +125,7 @@ describe("HybridSearchCard", () => {
     fireEvent.click(screen.getByTestId("hybrid-save"));
     await waitFor(() => {
       expect(
-        window.tessera.sources.updateHybridSearchConfig,
+        window.tessera.settings.updateHybridSearchConfig,
       ).toHaveBeenCalledWith(
         expect.objectContaining({ vectorWeight: 0 }),
       );
@@ -144,7 +144,7 @@ describe("HybridSearchCard", () => {
     fireEvent.click(screen.getByTestId("hybrid-save"));
     await waitFor(() => {
       const mockFn = vi.mocked(
-        window.tessera.sources.updateHybridSearchConfig,
+        window.tessera.settings.updateHybridSearchConfig,
       );
       const lastCall = mockFn.mock.calls.at(-1);
       expect(lastCall).toBeDefined();
@@ -162,7 +162,7 @@ describe("HybridSearchCard", () => {
 
   it("renders an error banner if the bridge call rejects on save", async () => {
     seedConfig();
-    window.tessera.sources.updateHybridSearchConfig = vi
+    window.tessera.settings.updateHybridSearchConfig = vi
       .fn()
       .mockRejectedValue(new Error("rate-limited"));
     render(<HybridSearchCard />);
@@ -190,7 +190,7 @@ describe("HybridSearchCard", () => {
   });
 
   it("shows a friendly error banner if the initial config read rejects, but still renders the form with defaults", async () => {
-    window.tessera.sources.getHybridSearchConfig = vi
+    window.tessera.settings.getHybridSearchConfig = vi
       .fn()
       .mockRejectedValue(new Error("bridge offline"));
     render(<HybridSearchCard />);

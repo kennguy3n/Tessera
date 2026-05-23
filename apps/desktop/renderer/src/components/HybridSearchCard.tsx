@@ -62,7 +62,7 @@ export default function HybridSearchCard() {
     let cancelled = false;
     (async () => {
       try {
-        const info = await window.tessera.sources.getHybridSearchConfig();
+        const info = await window.tessera.settings.getHybridSearchConfig();
         if (!cancelled) {
           seed(info);
         }
@@ -85,7 +85,7 @@ export default function HybridSearchCard() {
     setSaving(true);
     setError(null);
     try {
-      const info = await window.tessera.sources.updateHybridSearchConfig({
+      const info = await window.tessera.settings.updateHybridSearchConfig({
         // When the user disables hybrid mode we set vectorWeight to 0
         // (per spec). Re-enabling restores `bm25Weight` parity so the
         // weights are balanced; the user can tune them later through

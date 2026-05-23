@@ -20,17 +20,21 @@ export default function SourceDetailPage() {
   const [extracting, setExtracting] = useState(false);
   const [reembedding, setReembedding] = useState(false);
   const [reembedError, setReembedError] = useState<string | null>(null);
-  const [reembedJustFinished, setReembedJustFinished] = useState(false);
-  // The embedding backfill tracker is workspace-global, so this
-  // poller doesn't take the source id — but we only run it while a
-  // backfill we initiated is in flight (or just finished, so the
-  // summary line stays visible briefly). Rate-limiting the
+  // Monotonic counter that bumps on each Re-embed click so the
+  // polling effect inside `useEmbeddingProgress` re-fires even when
+  // the previous pass already reached terminal status. A boolean
+  // "active" flag would fail to retrigger on the second click
+  // because React batches the inline state updates inside
+  // `handleReembed` and the effect dep `[active]` may stay `true`
+  // across the click boundary. See `useEmbeddingProgress` for the
+  // full rationale.
+  const [reembedGeneration, setReembedGeneration] = useState(0);
+  // The embedding backfill tracker is workspace-global, so the
+  // poller doesn't take a source id. Rate-limiting the
   // `sources:backfillEmbeddings` IPC means a click-mashing user
   // won't trigger multiple overlapping passes; the button is also
   // disabled while `reembedding === true`.
-  const embeddingProgress = useEmbeddingProgress(
-    reembedding || reembedJustFinished,
-  );
+  const embeddingProgress = useEmbeddingProgress(reembedGeneration);
 
   const handleReindex = async () => {
     if (!id) return;
@@ -55,20 +59,22 @@ export default function SourceDetailPage() {
       return;
     }
     setReembedError(null);
-    setReembedJustFinished(false);
     setReembedding(true);
+    // Bump the generation so the polling effect re-fires even if
+    // the previous backfill already finished. The counter is
+    // monotonic; old values are never reused so each Re-embed
+    // click maps to a unique `useEffect` cycle inside the hook.
+    setReembedGeneration((g) => g + 1);
     try {
       await api.sources.backfillEmbeddings();
     } catch (err) {
       setReembedError(err instanceof Error ? err.message : String(err));
     } finally {
       setReembedding(false);
-      // Keep the progress banner visible for a moment so the user
-      // sees the final embedded/failed counts before it dismisses.
-      setReembedJustFinished(true);
-      // The poller stops itself on terminal status; we just need the
-      // active flag to keep the snapshot in render-state until the
-      // user navigates away.
+      // The poller stops itself once it observes `status=done` or
+      // `status=failed`. The final snapshot stays in the hook's
+      // state and continues rendering as the "summary" line until
+      // the user navigates away or clicks Re-embed again.
     }
   };
 
@@ -209,10 +215,18 @@ export default function SourceDetailPage() {
             </p>
           </Card>
         )}
-        {embeddingProgress &&
+        {!reembedError &&
+          embeddingProgress &&
           (embeddingProgress.status === "running" ||
             embeddingProgress.status === "done") &&
           embeddingProgress.totalChunks > 0 && (
+            // Guard on `!reembedError` so a synchronous IPC
+            // rejection (e.g. rate-limit thrown from the IPC layer
+            // BEFORE the backfill bridge is even called) doesn't
+            // leave a stale "Re-embed complete: 10/10 chunks"
+            // success card visible alongside the new error banner.
+            // The progress card only makes sense when the most
+            // recent click actually reached the bridge.
             <Card data-testid="embedding-progress-card">
               <h3 className="card-title">
                 {embeddingProgress.status === "done"
@@ -257,14 +271,21 @@ export default function SourceDetailPage() {
               />
             </Card>
           )}
-        {embeddingProgress && embeddingProgress.status === "failed" && (
-          <Card>
-            <p role="alert" style={{ color: "var(--color-error)" }}>
-              Re-embed failed:{" "}
-              {embeddingProgress.lastError ?? "unknown error"}
-            </p>
-          </Card>
-        )}
+        {!reembedError &&
+          embeddingProgress &&
+          embeddingProgress.status === "failed" && (
+            // Same `!reembedError` guard as the success card: if
+            // the most recent click was rejected by the IPC layer,
+            // suppress the tracker's stale `failed` snapshot from
+            // a prior backfill so the new error banner is the
+            // single source of truth for the failure.
+            <Card>
+              <p role="alert" style={{ color: "var(--color-error)" }}>
+                Re-embed failed:{" "}
+                {embeddingProgress.lastError ?? "unknown error"}
+              </p>
+            </Card>
+          )}
         {reembedError && (
           <Card>
             <p

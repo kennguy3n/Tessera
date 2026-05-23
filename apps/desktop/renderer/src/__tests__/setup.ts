@@ -80,9 +80,12 @@ const mockApi = {
       lastError: null,
     }),
     backfillEmbeddings: vi.fn().mockResolvedValue({
+      // Match the real bridge's `BackfillEmbeddingsResult` shape
+      // exactly — `embedded` + `progress` only. The earlier mock
+      // also synthesised `failed` and `batchSize` fields that
+      // don't exist on the real type; Devin Review flagged that
+      // as a footgun for the renderer code.
       embedded: 0,
-      failed: 0,
-      batchSize: 64,
       progress: {
         status: "done",
         totalChunks: 0,
@@ -99,22 +102,6 @@ const mockApi = {
       failed: 0,
       modelId: null,
       lastError: null,
-    }),
-    getHybridSearchConfig: vi.fn().mockResolvedValue({
-      bm25Weight: 1.0,
-      vectorWeight: 1.0,
-      rrfK: 60.0,
-      recencyDecayEnabled: true,
-      recencyHalflifeSecs: 30 * 24 * 60 * 60,
-      candidatePoolSize: 0,
-    }),
-    updateHybridSearchConfig: vi.fn().mockResolvedValue({
-      bm25Weight: 1.0,
-      vectorWeight: 1.0,
-      rrfK: 60.0,
-      recencyDecayEnabled: true,
-      recencyHalflifeSecs: 30 * 24 * 60 * 60,
-      candidatePoolSize: 0,
     }),
   },
   artifacts: {
@@ -251,6 +238,26 @@ const mockApi = {
       defaultExportFormat: "markdown",
       ignorePatterns: [".git", "node_modules"],
       watchPatterns: ["**/*.md"],
+    }),
+    // Hybrid search config lives on `settings` (not `sources`)
+    // because the channel name is `settings:*` and the handler is
+    // registered in `registerSettingsHandlers`. See `SettingsApi`
+    // in `shared/types.ts` for the full rationale.
+    getHybridSearchConfig: vi.fn().mockResolvedValue({
+      bm25Weight: 1.0,
+      vectorWeight: 1.0,
+      rrfK: 60.0,
+      recencyDecayEnabled: true,
+      recencyHalflifeSecs: 30 * 24 * 60 * 60,
+      candidatePoolSize: 0,
+    }),
+    updateHybridSearchConfig: vi.fn().mockResolvedValue({
+      bm25Weight: 1.0,
+      vectorWeight: 1.0,
+      rrfK: 60.0,
+      recencyDecayEnabled: true,
+      recencyHalflifeSecs: 30 * 24 * 60 * 60,
+      candidatePoolSize: 0,
     }),
   },
   externalProvider: {

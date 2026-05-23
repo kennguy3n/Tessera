@@ -553,10 +553,40 @@ export type AppConfigPartial = Omit<Partial<AppConfig>, "externalProvider"> & {
 /**
  * Apply a partial update to the on-disk config.
  *
- * Top-level fields are shallow-merged. The nested
- * {@link ExternalProviderConfig} is merged field-by-field so
- * passing only a subset of provider fields is safe; anyone wanting
- * to fully replace the provider can pass the complete object.
+ * **Merge semantics — read this before adding nested config types.**
+ *
+ * Top-level fields are shallow-merged via spread. Nested objects
+ * are handled in two different ways depending on the field:
+ *
+ *  - `externalProvider` is the only nested object that is
+ *    *field-by-field* merged. If you pass
+ *    `updateConfig({ externalProvider: { enabled: true } })` only
+ *    `enabled` is overwritten; everything else (apiUrl, apiKeyRef,
+ *    modelName, etc.) keeps its existing value. This is the
+ *    behaviour callsites historically relied on, so we preserve it.
+ *
+ *  - **Every other nested object — including `hybridSearchConfig` —
+ *    is REPLACED, not merged.** Passing
+ *    `updateConfig({ hybridSearchConfig: { vectorWeight: 0.5 } })`
+ *    would clobber `bm25Weight`, `rrfK`, `recencyDecayEnabled`,
+ *    `recencyHalflifeSecs`, and `candidatePoolSize` to whatever the
+ *    object literal omitted (which usually means `undefined` and
+ *    then the schema-level defaults take over on reload). All
+ *    production callers pass a **complete** `HybridSearchConfig`
+ *    object so this is safe in practice, but a future caller
+ *    writing `updateConfig({ hybridSearchConfig: { vectorWeight }})`
+ *    would silently reset everything else. The IPC handler at
+ *    `ipc/settings.ts:settings:updateHybridSearchConfig` always
+ *    composes a complete object before calling `updateConfig`, so
+ *    it is the canonical pattern.
+ *
+ *    If you ever add a callsite that needs a partial update for a
+ *    nested object other than `externalProvider`, either (a) extend
+ *    the merge logic below to handle the new field with explicit
+ *    field-by-field merging, or (b) compose the full object at the
+ *    call site before calling `updateConfig`. **Do not** rely on
+ *    spread-style partial updates working — they will only work for
+ *    `externalProvider`.
  *
  * **Ownership transfer.** Any nested array or object reference in
  * `partial` (e.g. `partial.ignorePatterns`, `partial.externalProvider`)

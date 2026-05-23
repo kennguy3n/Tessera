@@ -708,17 +708,6 @@ export interface SourceApi {
   ) => Promise<BackfillEmbeddingsResult>;
   /** Lightweight poll for the active backfill pass. */
   getEmbeddingProgress: () => Promise<EmbeddingProgressInfo>;
-  /** Fetch the current effective hybrid retrieval config. */
-  getHybridSearchConfig: () => Promise<HybridSearchConfigInfo>;
-  /**
-   * Apply a partial-update patch to the hybrid retrieval config.
-   * Returns the new effective config so the renderer can echo it
-   * back into its form state. Validation errors reject the entire
-   * patch (transactional).
-   */
-  updateHybridSearchConfig: (
-    update: HybridSearchConfigUpdate,
-  ) => Promise<HybridSearchConfigInfo>;
 }
 
 export interface ArtifactApi {
@@ -778,6 +767,25 @@ export interface CitationApi {
 export interface SettingsApi {
   get: () => Promise<SettingsData>;
   update: (settings: Partial<SettingsData>) => Promise<SettingsData>;
+  /**
+   * Fetch the current effective hybrid retrieval config. Lives on
+   * `SettingsApi` (not `SourceApi`) because the channel name is
+   * `settings:getHybridSearchConfig` and the handler is registered
+   * inside `registerSettingsHandlers()` — keeping the IPC channel
+   * namespace, the handler module, and the preload surface aligned
+   * to one mental model ("hybrid search is a global setting")
+   * makes the handler easy to find from any of those entry points.
+   */
+  getHybridSearchConfig: () => Promise<HybridSearchConfigInfo>;
+  /**
+   * Apply a partial-update patch to the hybrid retrieval config.
+   * Returns the new effective config so the renderer can echo it
+   * back into its form state. Validation errors reject the entire
+   * patch (transactional).
+   */
+  updateHybridSearchConfig: (
+    update: HybridSearchConfigUpdate,
+  ) => Promise<HybridSearchConfigInfo>;
 }
 
 export interface ExternalProviderApi {

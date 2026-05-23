@@ -1,9 +1,11 @@
+use std::sync::Arc;
+
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tessera_core::SourceId;
 use tessera_sources::hybrid::{HybridSearchConfig, HybridSearchConfigInput};
 use tessera_sources::manager::SourceManager;
-use tessera_sources::progress::EmbeddingStatus;
+use tessera_sources::progress::{EmbeddingProgressTracker, EmbeddingStatus};
 use tessera_sources::search::SearchResult;
 use tessera_sources::source::Source;
 
@@ -330,6 +332,22 @@ pub fn get_embedding_progress(manager: &SourceManager) -> BridgeResult<Embedding
     Ok(snapshot_to_info(manager.embedding_progress()))
 }
 
+/// Read the latest snapshot directly from a shared progress tracker,
+/// bypassing the outer [`SourceManager`] mutex. Used by the napi
+/// bridge while a backfill is in flight: the backfill itself holds
+/// the `SourceManager` lock on a worker thread, and we still want
+/// `bridge_get_embedding_progress` calls on the JS main thread to
+/// return cheap real-time counters rather than queueing up behind
+/// the DB writes.
+///
+/// Callers obtain the `Arc` via [`SourceManager::embedding_progress_handle`]
+/// at init time and cache it for the lifetime of the bridge.
+pub fn get_embedding_progress_from_tracker(
+    tracker: &Arc<EmbeddingProgressTracker>,
+) -> EmbeddingProgressInfo {
+    snapshot_to_info(tracker.snapshot())
+}
+
 /// Hand the renderer the current effective hybrid retrieval config
 /// (e.g. for populating the Settings page on first render).
 pub fn get_hybrid_search_config(manager: &SourceManager) -> BridgeResult<HybridSearchConfigInfo> {
@@ -469,6 +487,30 @@ mod tests {
         assert_eq!(snap.total_chunks, 0);
         assert_eq!(snap.embedded, 0);
         assert_eq!(snap.failed, 0);
+    }
+
+    #[test]
+    fn get_embedding_progress_from_tracker_reflects_manager_state() {
+        // The tracker handle handed out by `embedding_progress_handle`
+        // is the same `Arc` that the manager records progress against,
+        // so reads through it must agree with reads that go through
+        // the manager API.
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let tracker = manager.embedding_progress_handle();
+
+        let from_tracker = get_embedding_progress_from_tracker(&tracker);
+        let from_manager = get_embedding_progress(&manager).unwrap();
+        assert_eq!(from_tracker.status, from_manager.status);
+        assert_eq!(from_tracker.total_chunks, from_manager.total_chunks);
+        assert_eq!(from_tracker.embedded, from_manager.embedded);
+        assert_eq!(from_tracker.failed, from_manager.failed);
+
+        // Run a backfill against an empty index — flips Idle → Done.
+        // Both read paths must now report `done` without contending
+        // for the same lock.
+        let _ = backfill_embeddings(&manager, None).unwrap();
+        let from_tracker = get_embedding_progress_from_tracker(&tracker);
+        assert_eq!(from_tracker.status, "done");
     }
 
     #[test]

@@ -1,5 +1,7 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use napi::bindgen_prelude::AsyncTask;
+use napi::{Env, Task};
 use napi_derive::napi;
 
 use tessera_artifacts::automations::AutomationStore;
@@ -9,6 +11,7 @@ use tessera_audit::logger::AuditLogger;
 use tessera_citations::tracker::CitationTracker;
 use tessera_core::open_shared_with_key;
 use tessera_sources::manager::SourceManager;
+use tessera_sources::progress::EmbeddingProgressTracker;
 
 use crate::artifacts;
 use crate::automations;
@@ -43,6 +46,13 @@ struct AppState {
     task_store: Mutex<TaskStore>,
     automation_store: Mutex<AutomationStore>,
     template_dir: String,
+    /// Cached `Arc` clone of the embedding-progress tracker that
+    /// lives inside `source_manager`. Read by
+    /// `bridge_get_embedding_progress` without locking the
+    /// `source_manager` mutex, so progress polls succeed even while
+    /// a `bridge_backfill_embeddings` `AsyncTask` is in flight on a
+    /// libuv worker thread holding the `source_manager` lock.
+    embedding_progress: Arc<EmbeddingProgressTracker>,
 }
 
 /// Initialise the bridge. `db_key`, when non-empty, is a 64-character
@@ -102,6 +112,8 @@ pub fn init_bridge(
     let automation_store = AutomationStore::with_shared_conn(conn)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
+    let embedding_progress = source_manager.embedding_progress_handle();
+
     APP_STATE
         .set(AppState {
             source_manager: Mutex::new(source_manager),
@@ -111,6 +123,7 @@ pub fn init_bridge(
             task_store: Mutex::new(task_store),
             automation_store: Mutex::new(automation_store),
             template_dir,
+            embedding_progress,
         })
         .map_err(|_| napi::Error::from_reason("Bridge already initialized"))?;
 
@@ -225,6 +238,51 @@ pub fn bridge_get_indexing_progress(
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+/// `napi::Task` that runs `backfill_embeddings_tracked` on a libuv
+/// worker thread instead of the Node main thread. The whole point
+/// of running off-main is that the JS event loop stays responsive
+/// during a long backfill — in particular, `bridge_get_embedding_progress`
+/// polls scheduled by the renderer's `useEmbeddingProgress` hook
+/// must actually be served while the worker thread is locking the
+/// `SourceManager` mutex.
+///
+/// That's why the progress polls (see `bridge_get_embedding_progress`
+/// below) read from `AppState.embedding_progress` directly rather
+/// than re-locking the source manager: the worker thread holds the
+/// outer manager lock for the duration of the backfill, but the
+/// inner `EmbeddingProgressTracker` has its own mutex so concurrent
+/// reads return the in-flight counters in microseconds.
+pub struct BackfillEmbeddingsTask {
+    batch_size: Option<u32>,
+}
+
+impl Task for BackfillEmbeddingsTask {
+    type Output = sources::BackfillEmbeddingsResult;
+    type JsValue = sources::BackfillEmbeddingsResult;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        // `state()` returns `&'static AppState`, which is `Send`
+        // because every field is either `Sync` (the mutexes), `Send`
+        // (the cloned `Arc`), or owned `String`. The worker thread
+        // can safely lock the source manager here without
+        // contending with main-thread napi callbacks for the same
+        // physical SQLite connection — the inner per-connection
+        // mutex serialises writes, exactly as the synchronous code
+        // path did.
+        let s = state()?;
+        let mgr = s
+            .source_manager
+            .lock()
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        sources::backfill_embeddings(&mgr, self.batch_size)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(output)
+    }
+}
+
 /// Triggers an embedding backfill pass over every chunk that doesn't
 /// yet have an embedding for the active provider's model. Returns
 /// the number of newly-embedded chunks and a snapshot of the
@@ -234,31 +292,30 @@ pub fn bridge_get_indexing_progress(
 /// Pass `None` for `batch_size` to use the bridge-default; the
 /// renderer doesn't need to know the value. Idempotent — a second
 /// call against an up-to-date index reports `embedded=0`.
+///
+/// **Async**: returns a `Promise` from JS. The heavy DB / embedding
+/// work runs on a libuv worker thread (Node's built-in thread pool)
+/// so the JS event loop stays free to serve `getEmbeddingProgress`
+/// polls from the renderer's progress UI.
 #[napi]
-pub fn bridge_backfill_embeddings(
-    batch_size: Option<u32>,
-) -> napi::Result<sources::BackfillEmbeddingsResult> {
-    let s = state()?;
-    let mgr = s
-        .source_manager
-        .lock()
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::backfill_embeddings(&mgr, batch_size)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+pub fn bridge_backfill_embeddings(batch_size: Option<u32>) -> AsyncTask<BackfillEmbeddingsTask> {
+    AsyncTask::new(BackfillEmbeddingsTask { batch_size })
 }
 
 /// Lightweight poll for the renderer. Always returns the latest
 /// snapshot of the embedding-progress tracker — `status=Done` plus
 /// the final counters are what the renderer uses to dismiss the
 /// progress banner after a `bridge_backfill_embeddings` call.
+///
+/// Reads from `AppState.embedding_progress` directly so the call
+/// stays cheap even while a `BackfillEmbeddingsTask` is holding the
+/// `source_manager` mutex on a worker thread.
 #[napi]
 pub fn bridge_get_embedding_progress() -> napi::Result<sources::EmbeddingProgressInfo> {
     let s = state()?;
-    let mgr = s
-        .source_manager
-        .lock()
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::get_embedding_progress(&mgr).map_err(|e| napi::Error::from_reason(e.to_string()))
+    Ok(sources::get_embedding_progress_from_tracker(
+        &s.embedding_progress,
+    ))
 }
 
 /// Returns the current effective hybrid retrieval config so the

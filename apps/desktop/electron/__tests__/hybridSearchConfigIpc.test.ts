@@ -123,10 +123,17 @@ function makeBridge(initial: HybridSearchConfigInfo): {
       return { ...current.value };
     }),
     bridgeBackfillEmbeddings: vi.fn(
-      (batchSize?: number | null): BackfillEmbeddingsResult => ({
+      // The bridge's real `BackfillEmbeddingsResult` exposes
+      // exactly two fields: `embedded` (count of newly-embedded
+      // chunks) and `progress` (the wrapped tracker snapshot).
+      // The chosen batch size is intentionally not surfaced — the
+      // renderer doesn't have a use for that detail. The mock
+      // matches that shape exactly so tests can't accidentally
+      // assert on properties the production bridge will never
+      // populate. We still take `batchSize` as an argument so the
+      // call-args assertions (`toHaveBeenCalledWith(32)`) work.
+      (_batchSize?: number | null): BackfillEmbeddingsResult => ({
         embedded: 7,
-        failed: 0,
-        batchSize: batchSize ?? 64,
         progress: {
           status: "done",
           totalChunks: 7,
@@ -299,8 +306,10 @@ describe("hybrid search config IPC", () => {
     registerSourcesHandlers();
     const handler = getHandler("sources:backfillEmbeddings");
     const result = (await handler({}, 32)) as BackfillEmbeddingsResult;
+    // The meaningful assertion is the bridge call args, not the
+    // returned counts (the mock returns a fixed `embedded: 7`).
     expect(result.embedded).toBe(7);
-    expect(result.batchSize).toBe(32);
+    expect(result.progress.status).toBe("done");
     expect(bridge.bridgeBackfillEmbeddings).toHaveBeenCalledWith(32);
   });
 

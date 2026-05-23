@@ -175,10 +175,6 @@ const api: TesseraApi = {
       ),
     getEmbeddingProgress: () =>
       ipcRenderer.invoke("sources:getEmbeddingProgress"),
-    getHybridSearchConfig: () =>
-      ipcRenderer.invoke("settings:getHybridSearchConfig"),
-    updateHybridSearchConfig: (update: HybridSearchConfigUpdate) =>
-      ipcRenderer.invoke("settings:updateHybridSearchConfig", update),
   },
   artifacts: {
     create: (title: string, artifactType: string, templateId?: string) =>
@@ -256,6 +252,15 @@ const api: TesseraApi = {
     get: () => ipcRenderer.invoke("settings:get"),
     update: (settings: Partial<SettingsData>) =>
       ipcRenderer.invoke("settings:update", settings),
+    // Hybrid retrieval config: channel name (`settings:*`),
+    // handler registration (`registerSettingsHandlers`), and
+    // preload surface (`window.tessera.settings`) all agree that
+    // search tuning is a global setting. See `SettingsApi` in
+    // `shared/types.ts` for the rationale.
+    getHybridSearchConfig: () =>
+      ipcRenderer.invoke("settings:getHybridSearchConfig"),
+    updateHybridSearchConfig: (update: HybridSearchConfigUpdate) =>
+      ipcRenderer.invoke("settings:updateHybridSearchConfig", update),
   },
   externalProvider: {
     get: () => ipcRenderer.invoke("externalProvider:get"),
