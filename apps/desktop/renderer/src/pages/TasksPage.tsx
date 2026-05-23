@@ -85,7 +85,9 @@ function priorityColor(p: string): string {
     case "critical":
       return "var(--color-danger, #b91c1c)";
     case "high":
-      return "#c2410c";
+      // Was a bare `#c2410c` (orange-700) which broke in dark mode
+      // — use the warning token so dark theme can override it.
+      return "var(--color-warning, #c2410c)";
     case "medium":
       return "var(--color-primary)";
     default:

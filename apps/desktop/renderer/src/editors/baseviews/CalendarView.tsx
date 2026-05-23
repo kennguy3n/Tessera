@@ -318,7 +318,7 @@ function MonthGrid({
                   style={{
                     fontSize: "0.7rem",
                     background: "var(--color-primary, #7C3AED)",
-                    color: "#fff",
+                    color: "var(--color-text-on-primary, #fff)",
                     padding: "0.125rem 0.375rem",
                     borderRadius: "0.25rem",
                     whiteSpace: "nowrap",
@@ -422,7 +422,7 @@ function WeekStrip({
                     style={{
                       fontSize: "0.75rem",
                       background: "var(--color-primary, #7C3AED)",
-                      color: "#fff",
+                      color: "var(--color-text-on-primary, #fff)",
                       padding: "0.125rem 0.375rem",
                       borderRadius: "0.25rem",
                     }}

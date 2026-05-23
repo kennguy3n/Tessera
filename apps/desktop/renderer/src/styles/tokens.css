@@ -43,6 +43,40 @@
   --transition-normal: 250ms ease;
   --color-bg-secondary: #f3f4f6;
   --color-danger: #ef4444;
+
+  /* Phase 10 Task 26 — alias tokens.
+   *
+   * Several renderer components historically referenced tokens that
+   * never existed in this file, e.g. `var(--color-surface, #f9fafb)`
+   * and `var(--color-bg, #fff)`. The fallback fired in both light
+   * AND dark mode, leaving those surfaces white-on-dark. We now
+   * declare each alias explicitly here AND in the dark overrides
+   * below so dark mode actually flips them. Adding canonical
+   * names rather than search-and-replacing every call site keeps
+   * the diff small and lets external themes that target these names
+   * (e.g. theme packs) keep working.
+   */
+  --color-bg: var(--color-bg-page);
+  --color-bg-elevated: var(--color-bg-page);
+  --color-bg-muted: var(--color-bg-secondary);
+  --color-bg-subtle: var(--color-bg-surface);
+  --color-surface: var(--color-bg-surface);
+  --color-surface-hover: var(--color-border-light);
+  --color-surface-soft: var(--color-bg-secondary);
+  --color-text: var(--color-text-body);
+  --color-muted: var(--color-text-secondary);
+  --color-primary-soft: var(--color-primary-light);
+  --color-danger-bg: #fee2e2;
+  --color-danger-light: #fecaca;
+  --color-danger-subtle: #fef2f2;
+  --color-success-bg: #d1fae5;
+  --color-success-subtle: #ecfdf5;
+  --color-relevance-high-fg: #15803d;
+  --color-relevance-high-bg: rgba(34, 197, 94, 0.16);
+  --color-relevance-medium-fg: #b45309;
+  --color-relevance-medium-bg: rgba(245, 158, 11, 0.16);
+  --color-relevance-low-fg: #b91c1c;
+  --color-relevance-low-bg: rgba(239, 68, 68, 0.14);
 }
 
 /* Phase 9 Task 18 — Dark theme overrides.
@@ -73,6 +107,26 @@
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.6);
   --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.7);
   --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.8);
+
+  /* Phase 10 Task 26 — dark overrides for alias tokens whose
+   * fallback colors would otherwise stay light. The plain
+   * `var(--token)` references above re-evaluate to whatever the
+   * primary tokens point to in this scope, so most aliases inherit
+   * dark values for free. The bg-tinted / subtle backgrounds need
+   * explicit overrides because their light values mix the brand
+   * with white, which doesn't read on a dark surface.
+   */
+  --color-danger-bg: #7f1d1d;
+  --color-danger-light: #991b1b;
+  --color-danger-subtle: #450a0a;
+  --color-success-bg: #064e3b;
+  --color-success-subtle: #022c22;
+  --color-relevance-high-fg: #4ade80;
+  --color-relevance-high-bg: rgba(34, 197, 94, 0.24);
+  --color-relevance-medium-fg: #fbbf24;
+  --color-relevance-medium-bg: rgba(245, 158, 11, 0.22);
+  --color-relevance-low-fg: #fca5a5;
+  --color-relevance-low-bg: rgba(239, 68, 68, 0.22);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -93,5 +147,17 @@
     --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.6);
     --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.7);
     --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.8);
+
+    --color-danger-bg: #7f1d1d;
+    --color-danger-light: #991b1b;
+    --color-danger-subtle: #450a0a;
+    --color-success-bg: #064e3b;
+    --color-success-subtle: #022c22;
+    --color-relevance-high-fg: #4ade80;
+    --color-relevance-high-bg: rgba(34, 197, 94, 0.24);
+    --color-relevance-medium-fg: #fbbf24;
+    --color-relevance-medium-bg: rgba(245, 158, 11, 0.22);
+    --color-relevance-low-fg: #fca5a5;
+    --color-relevance-low-bg: rgba(239, 68, 68, 0.22);
   }
 }
