@@ -389,7 +389,33 @@ export async function runConnectorSync(
     throw err;
   }
   try {
-    return await runSync(ctx, provider, token, ctx.userDataDir(), options);
+    const result = await runSync(ctx, provider, token, ctx.userDataDir(), options);
+    // Phase 10 / Task 17: log the sync delta counts on the `"synced"`
+    // path only. The `"offline"` status returned below reflects a
+    // transient network failure (no actual sync work happened) so an
+    // audit row for it would pollute reports with noise.
+    //
+    // This audit lives inside `runConnectorSync` — NOT inside the
+    // individual IPC handlers — so EVERY caller is audited
+    // automatically: the new `connectors:sync` handler in this file
+    // AND the legacy `connectors:gdrive:sync` handler in
+    // `connectorsLegacy.ts` (still reachable from the renderer via
+    // `preload.ts`'s `gdrive:sync` channel), AND any future channel
+    // that delegates to this shared wrapper. Devin Review (round 2
+    // on PR #26) flagged this gap when the audit lived in the
+    // handler; moving it here closes it structurally instead of
+    // requiring every future caller to remember to add the wrap.
+    if (result.status === "synced") {
+      safeAudit(ctx, (b) =>
+        b.bridgeLogConnectorSynced(
+          provider,
+          result.added,
+          result.modified,
+          result.removed,
+        ),
+      );
+    }
+    return result;
   } catch (err) {
     if (isNetworkError(err)) {
       ctx.log.warn("connector sync hit network failure", {
@@ -604,24 +630,11 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
     "connectors:sync",
     async (_event, providerRaw: unknown): Promise<ConnectorSyncResult> => {
       const provider = assertProvider(providerRaw, "provider");
-      const result = await runConnectorSync(ctx, provider);
-      // Phase 10 / Task 17: audit the sync delta counts on the
-      // `"synced"` path only. The `"offline"` status reflects a
-      // transient network failure (no actual sync work happened) so
-      // an audit row for it would pollute reports with noise. The
-      // `result` from a successful sync already carries the
-      // per-provider added / modified / removed counts.
-      if (result.status === "synced") {
-        safeAudit(ctx, (b) =>
-          b.bridgeLogConnectorSynced(
-            provider,
-            result.added,
-            result.modified,
-            result.removed,
-          ),
-        );
-      }
-      return result;
+      // The audit row for successful syncs is emitted by
+      // `runConnectorSync` itself so the legacy `connectors:gdrive:sync`
+      // handler (also routed through `runConnectorSync`) gets audited
+      // automatically. See the doc comment in `runConnectorSync`.
+      return await runConnectorSync(ctx, provider);
     },
   );
 }

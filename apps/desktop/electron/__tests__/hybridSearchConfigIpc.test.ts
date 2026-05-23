@@ -90,11 +90,17 @@ function makeBridge(initial: HybridSearchConfigInfo): {
     bridgeUpdateHybridSearchConfig: ReturnType<typeof vi.fn>;
     bridgeBackfillEmbeddings: ReturnType<typeof vi.fn>;
     bridgeGetEmbeddingProgress: ReturnType<typeof vi.fn>;
+    bridgeLogSettingsChanged: ReturnType<typeof vi.fn>;
   };
   current: { value: HybridSearchConfigInfo };
 } {
   const current = { value: { ...initial } };
   const bridge = {
+    // Phase 10 / Task 17 audit pass-through. The
+    // `settings:updateHybridSearchConfig` handler routes an audit row
+    // per effective field through `bridgeLogSettingsChanged`; the
+    // mock just records calls so tests can assert the rows.
+    bridgeLogSettingsChanged: vi.fn(),
     bridgeGetHybridSearchConfig: vi.fn(() => ({ ...current.value })),
     bridgeUpdateHybridSearchConfig: vi.fn((patch: HybridSearchConfigUpdate) => {
       // Mimic the Rust side's "patch returns effective config" contract.
@@ -292,6 +298,83 @@ describe("hybrid search config IPC", () => {
     await expect(handler({}, { rrfK: 0 })).rejects.toThrow();
     await expect(handler({}, { bogus: 1 })).rejects.toThrow();
     expect(bridge.bridgeUpdateHybridSearchConfig).not.toHaveBeenCalled();
+  });
+
+  it("settings:updateHybridSearchConfig emits per-field audit rows for the effective post-clamp config", async () => {
+    // Devin Review (round 2 on PR #26) flagged that the hybrid
+    // config update IPC bypassed `bridgeLogSettingsChanged`. The
+    // hybrid weights and recency tuning are part of the user's
+    // search-tuning surface, so a mutation here is security-
+    // relevant in the same way `theme` or `ignorePatterns` are.
+    // This test pins the audit contract: one row per effective
+    // field, values stringified, `null` halflife normalised to
+    // `"disabled"` (decay-off) instead of the literal `"null"`.
+    const { bridge } = makeBridge({
+      ...DEFAULT_HYBRID_SEARCH_CONFIG,
+      bm25Weight: 1.0,
+      vectorWeight: 1.0,
+      rrfK: 60.0,
+      recencyDecayEnabled: true,
+      recencyHalflifeSecs: 30 * 24 * 60 * 60,
+    });
+    stubBridge = bridge;
+    registerSettingsHandlers();
+    const handler = getHandler("settings:updateHybridSearchConfig");
+    await handler({}, {
+      bm25Weight: 0.8,
+      vectorWeight: 0.6,
+      rrfK: 75.0,
+      recencyHalflifeSecs: 14 * 24 * 60 * 60,
+    } satisfies HybridSearchConfigUpdate);
+    const calls = bridge.bridgeLogSettingsChanged.mock.calls;
+    // Audit a row for each of the five tracked fields. The order
+    // matches the handler's emission order so future maintainers
+    // can grep-trace the audit feed back to the field rather than
+    // chasing a synthetic Set.
+    expect(calls).toEqual([
+      ["hybridSearch.bm25Weight", "0.8"],
+      ["hybridSearch.vectorWeight", "0.6"],
+      ["hybridSearch.rrfK", "75"],
+      ["hybridSearch.recencyDecayEnabled", "true"],
+      [
+        "hybridSearch.recencyHalflifeSecs",
+        String(14 * 24 * 60 * 60),
+      ],
+    ]);
+  });
+
+  it("settings:updateHybridSearchConfig audit row for decay-off uses the literal 'disabled', not 'null'", async () => {
+    // Companion to the audit test above. When the user toggles
+    // decay off, the bridge surfaces `recencyHalflifeSecs: null`
+    // and the audit row would otherwise read `"null"` which is
+    // ambiguous (a number-shaped audit value vs. a sentinel).
+    // The handler normalises null → `"disabled"` for clarity.
+    const { bridge } = makeBridge({
+      ...DEFAULT_HYBRID_SEARCH_CONFIG,
+      recencyDecayEnabled: true,
+      recencyHalflifeSecs: 30 * 24 * 60 * 60,
+    });
+    stubBridge = bridge;
+    registerSettingsHandlers();
+    const handler = getHandler("settings:updateHybridSearchConfig");
+    await handler({}, { recencyDecayEnabled: false });
+    const calls = bridge.bridgeLogSettingsChanged.mock.calls;
+    const halflifeRow = calls.find(
+      (c: [string, string]) =>
+        c[0] === "hybridSearch.recencyHalflifeSecs",
+    );
+    expect(halflifeRow).toEqual([
+      "hybridSearch.recencyHalflifeSecs",
+      "disabled",
+    ]);
+    const decayRow = calls.find(
+      (c: [string, string]) =>
+        c[0] === "hybridSearch.recencyDecayEnabled",
+    );
+    expect(decayRow).toEqual([
+      "hybridSearch.recencyDecayEnabled",
+      "false",
+    ]);
   });
 
   it("settings:updateHybridSearchConfig rate-limits aggressive updates beyond burst", async () => {

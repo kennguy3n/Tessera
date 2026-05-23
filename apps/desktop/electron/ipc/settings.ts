@@ -331,6 +331,43 @@ export function registerSettingsHandlers(): void {
       const effective: HybridSearchConfigInfo =
         bridge.bridgeUpdateHybridSearchConfig(parsed as HybridSearchConfigUpdate);
       updateConfig({ hybridSearchConfig: infoToPersisted(effective) });
+      // Phase 10 / Task 17: hybrid retrieval is part of the user's
+      // surface for tuning *what their data is searched for*, so a
+      // change here is security-relevant in the same way a change
+      // to `ignorePatterns` or `theme` is. We audit the EFFECTIVE
+      // (post-clamp) values returned by the bridge — not the raw
+      // user input — so the audit row reflects what the live
+      // engine is actually using. Devin Review (round 2 on PR #26)
+      // flagged the gap; closing it here keeps every settings-
+      // mutating IPC channel auditable.
+      //
+      // Each field is logged as its own row so an operator's audit
+      // query (`WHERE field LIKE 'hybridSearch.%'`) can attribute
+      // a specific change to a specific timestamp without parsing
+      // a composite value blob. Numbers are stringified to match
+      // the `bridgeLogSettingsChanged(field, value)` contract;
+      // booleans are normalised to `"true"` / `"false"` and the
+      // `null` half-life (decay disabled) becomes the literal
+      // `"disabled"` so the audit row is unambiguous.
+      auditSettingsField(
+        "hybridSearch.bm25Weight",
+        String(effective.bm25Weight),
+      );
+      auditSettingsField(
+        "hybridSearch.vectorWeight",
+        String(effective.vectorWeight),
+      );
+      auditSettingsField("hybridSearch.rrfK", String(effective.rrfK));
+      auditSettingsField(
+        "hybridSearch.recencyDecayEnabled",
+        effective.recencyDecayEnabled ? "true" : "false",
+      );
+      auditSettingsField(
+        "hybridSearch.recencyHalflifeSecs",
+        effective.recencyHalflifeSecs === null
+          ? "disabled"
+          : String(effective.recencyHalflifeSecs),
+      );
       return effective;
     },
   );
