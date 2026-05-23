@@ -453,8 +453,36 @@ app.whenReady().then(async () => {
       createWindow();
     }
   });
-  await maybeInitPasswordVault();
+  // Register IPC handlers BEFORE the password-vault prompt awaits,
+  // so that even if Cocoa fires `activate` and the listener above
+  // synchronously creates the main window early (see the comment on
+  // the listener for when that can happen), the renderer it loads
+  // will find every `ipcRenderer.invoke(...)` channel already wired
+  // and will not see "No handler registered for 'foo'" errors.
+  //
+  // This is a defense-in-depth move: today, the standard JS
+  // microtask ordering guarantees that the microtask continuation
+  // after the password-vault await (which used to call
+  // `registerIpcHandlers`) runs to completion BEFORE any pending
+  // macrotask like `activate` is dispatched, so the race window is
+  // zero. But if a future refactor adds a second `await` between
+  // the password-vault step and IPC registration, that ordering
+  // guarantee breaks silently and the renderer can load against a
+  // half-wired IPC surface. Pinning IPC registration before the
+  // password-vault await closes that latent hazard structurally
+  // instead of relying on the event-loop contract.
+  //
+  // Safety: `registerIpcHandlers` only calls
+  // `ipcMain.handle(channel, …)` for each IPC route — it does NOT
+  // read from `passwordVault`, `tokenVault`, or `secretsVault` at
+  // registration time. The vault-aware paths inside each handler
+  // consult vault state lazily when the handler is invoked, so
+  // moving registration above the vault prompt does not break the
+  // "vault is ready before handlers run" invariant — it only
+  // strengthens the "handlers are registered before any renderer
+  // can call them" invariant.
   registerIpcHandlers();
+  await maybeInitPasswordVault();
   // Start the automations scheduler. Runs in the main process and
   // ticks every 30s, dispatching due `Schedule` automations directly
   // against the native bridge (i.e. without bouncing through the

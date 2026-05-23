@@ -152,16 +152,20 @@ describe("CSP session handler hoist: main.ts", () => {
     // a session-level invariant — a future switch from `data:` to
     // `file:` for the prompt would automatically pick up the CSP
     // without any further wiring.
-    const whenReadyBlock = source.match(
-      /app\.whenReady\(\)\.then\(async \(\) => \{[\s\S]*?\}\);/,
-    );
-    expect(whenReadyBlock).toBeTruthy();
-    if (!whenReadyBlock) return;
-    const body = whenReadyBlock[0];
-    const cspIdx = body.indexOf("installContentSecurityPolicy()");
-    const promptIdx = body.indexOf("maybeInitPasswordVault()");
-    expect(cspIdx).toBeGreaterThan(-1);
-    expect(promptIdx).toBeGreaterThan(-1);
+    //
+    // Anchor on the full source (`indexOf` from the `app.whenReady()`
+    // start) rather than a non-greedy `[\s\S]*?\}\);` whenReady-body
+    // regex: the body now contains nested arrow-function blocks
+    // (e.g. `app.on("activate", () => { ... });` is registered
+    // INSIDE the `whenReady` callback) and the non-greedy variant
+    // would clip at the first inner `});` and miss the
+    // `await maybeInitPasswordVault()` call.
+    const whenReadyIdx = source.indexOf("app.whenReady()");
+    expect(whenReadyIdx, "could not find app.whenReady() in main.ts").toBeGreaterThan(-1);
+    const cspIdx = source.indexOf("installContentSecurityPolicy()", whenReadyIdx);
+    const promptIdx = source.indexOf("maybeInitPasswordVault()", whenReadyIdx);
+    expect(cspIdx, "could not find installContentSecurityPolicy() after app.whenReady()").toBeGreaterThan(-1);
+    expect(promptIdx, "could not find maybeInitPasswordVault() after app.whenReady()").toBeGreaterThan(-1);
     expect(
       cspIdx,
       "installContentSecurityPolicy() must be called BEFORE maybeInitPasswordVault() so the CSP is in place before any window opens",
@@ -200,6 +204,39 @@ describe("CSP session handler hoist: main.ts", () => {
     expect(
       activateIdx,
       "app.on(\"activate\", ...) must be registered BEFORE await maybeInitPasswordVault() so a dock click during the password prompt is not silently dropped on macOS",
+    ).toBeLessThan(awaitPromptIdx);
+  });
+
+  it("registers IPC handlers BEFORE await maybeInitPasswordVault in app.whenReady", () => {
+    // Defense-in-depth invariant for the early-activate path: the
+    // hoisted `app.on("activate", ...)` listener may synchronously
+    // call `createWindow()` BEFORE the `await maybeInitPasswordVault()`
+    // continuation runs. If `createWindow()` loads the renderer
+    // against a half-wired IPC surface (because `registerIpcHandlers`
+    // hadn't run yet), every `ipcRenderer.invoke(...)` from the
+    // renderer fails with "No handler registered for 'foo'". Today
+    // the JS microtask ordering happens to prevent this (the await
+    // continuation runs to completion before any pending macrotask
+    // like `activate` is dispatched), but a future refactor adding a
+    // second `await` between the vault step and IPC registration
+    // would silently re-introduce the race. Pinning the order at the
+    // source level makes the invariant explicit and refactor-proof.
+    //
+    // `registerIpcHandlers()` only calls `ipcMain.handle(...)` — it
+    // does not read vault state at registration time. The
+    // vault-aware paths inside individual handlers consult vault
+    // state lazily when invoked, so moving registration above the
+    // vault prompt does not break the "vault is ready before
+    // handler runs" invariant.
+    const whenReadyIdx = source.indexOf("app.whenReady()");
+    expect(whenReadyIdx, "could not find app.whenReady() in main.ts").toBeGreaterThan(-1);
+    const registerIdx = source.indexOf("registerIpcHandlers()", whenReadyIdx);
+    const awaitPromptIdx = source.indexOf("await maybeInitPasswordVault()", whenReadyIdx);
+    expect(registerIdx, "could not find registerIpcHandlers() after app.whenReady()").toBeGreaterThan(-1);
+    expect(awaitPromptIdx, "could not find 'await maybeInitPasswordVault()' after app.whenReady()").toBeGreaterThan(-1);
+    expect(
+      registerIdx,
+      "registerIpcHandlers() must run BEFORE await maybeInitPasswordVault() so a renderer loaded via the early-activate path finds every IPC channel already wired",
     ).toBeLessThan(awaitPromptIdx);
   });
 
