@@ -114,6 +114,33 @@ describe("dbKey", () => {
     expect(fs.existsSync(path.join(hoisted.userData.value, "db.key"))).toBe(false);
   });
 
+  it("getOrCreateDbKey error message does NOT mention the password-vault recovery path", () => {
+    // The DB key chain deliberately does NOT support the password
+    // vault as a fallback: the SQLCipher cipher key is wrapped by
+    // safeStorage directly, not by the password-derived vault key
+    // (see KNOWN LIMITATION block next to `maybeInitPasswordVault`
+    // in `main.ts`). Telling the user to "restart and enter a vault
+    // password" on this path would send them down an unrecoverable
+    // route, because the password vault cannot decrypt the on-disk
+    // `db.key` blob. Pin the absence of that hint here so a future
+    // refactor that re-wires `dbKey.ts` to `encryptionUnavailableReason()`
+    // (which DOES include the hint) cannot regress this contract
+    // silently.
+    safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
+    try {
+      getOrCreateDbKey();
+      expect.fail("expected getOrCreateDbKey to throw");
+    } catch (err) {
+      const msg = (err as Error).message;
+      expect(msg).not.toMatch(/vault password/i);
+      expect(msg).not.toMatch(/enter a .*password/i);
+      // And it DOES include the diagnosis + a real recovery hint
+      // for whichever platform the test is running on, so the
+      // message remains user-actionable.
+      expect(msg).toMatch(/Encryption not available/);
+    }
+  });
+
   it("EncryptionUnavailableError is distinct from plain Error", () => {
     // Critical for appState.ts's two-tier catch: the
     // `instanceof EncryptionUnavailableError` check decides

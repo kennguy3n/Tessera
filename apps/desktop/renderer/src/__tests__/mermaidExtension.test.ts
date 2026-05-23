@@ -20,17 +20,23 @@ beforeAll(() => {
   }
 });
 
-// Each `new Editor({...})` boots ProseMirror's `DOMObserver`, which
-// schedules a `setTimeout` that accesses `document` ~50 ms later. If the
-// editor is not destroyed and vitest tears down the jsdom environment
-// between test files, the pending timer fires against the torn-down
-// document and surfaces as
-//   `ReferenceError: document is not defined`
-// at `EditorView.domSelection` — an unhandled error on Windows CI that
-// passes locally because the teardown ordering happens to fire the
-// timer before jsdom is gone. Tracking every editor in `liveEditors`
-// and calling `.destroy()` in `afterEach` cancels those timers
-// deterministically.
+// Track every editor created in a test so we can destroy them in
+// afterEach. Without this teardown, ProseMirror's `DOMObserver` keeps
+// a pending `setTimeout` referencing `document`; once vitest tears
+// down jsdom between test files the timer fires against the
+// torn-down environment and surfaces as:
+//
+//   ReferenceError: document is not defined
+//     at EditorView.get root [as root]
+//     at EditorView.domSelection
+//     at DOMObserver.flush
+//     at Timeout._onTimeout
+//
+// On Windows CI this fires often enough to fail the job (vitest
+// reports "1 error" alongside the 712 passing tests). Calling
+// `editor.destroy()` flushes the observer's timer and clears the
+// editor's references to the jsdom document so the timer doesn't
+// outlive the test environment.
 const liveEditors: Editor[] = [];
 
 function makeEditor() {
