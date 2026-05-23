@@ -806,6 +806,135 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     vi.useRealTimers();
   });
 
+  it("per-attempt timeout fires when the upstream never responds — treated as retryable, second attempt succeeds (Devin Review round 7)", async () => {
+    // Regression for Devin Review round 7 (ANALYSIS_006): the
+    // streaming path previously had no per-attempt timeout, so a
+    // slow-but-responsive upstream would hang attempt 1 forever and
+    // the retry budget was effectively meaningless. The fix wires
+    // `provider.timeoutSecs * 1000` into `openExternalProviderStream`
+    // via a forked AbortController that distinguishes user-cancel
+    // from per-attempt timeout. This test pins the success path: a
+    // first attempt that never resolves, then the timer fires, then
+    // a second attempt that returns a real body.
+    vi.useFakeTimers();
+    let attemptCount = 0;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((_input, init) => {
+        attemptCount += 1;
+        if (attemptCount === 1) {
+          // Never resolves on its own; only the per-attempt timer
+          // abort will reject this. Mirrors a real upstream that
+          // accepts the connection but never sends headers.
+          return new Promise((_resolve, reject) => {
+            const sig = init?.signal as AbortSignal | undefined;
+            sig?.addEventListener("abort", () => {
+              reject(new DOMException("Aborted", "AbortError"));
+            });
+          });
+        }
+        return Promise.resolve(makeSuccessResponse());
+      });
+    const streamPromise = streamExternalProvider(
+      {
+        provider: mkProvider({ timeoutSecs: 2, maxRetries: 3 }),
+        apiKey: "sk",
+        prompt: "hi",
+      },
+      () => {},
+    );
+    // Advance past the per-attempt timeout (2s) to trigger the
+    // timer abort. Then advance through the inter-attempt backoff
+    // (1s = `retryDelayMs(1)`) so the second attempt fires.
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(1000);
+    await streamPromise;
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    fetchSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("per-attempt timeout exhausts retry budget — error message reflects timeout, not HTTP status (Devin Review round 7)", async () => {
+    // Companion to the success path: when EVERY attempt times out,
+    // the retry-exhausted error must say `pre-stream timeout`
+    // (with the configured timeoutMs) so the user can see the
+    // distinction from an HTTP failure. Pinning the message shape
+    // is important because users / log aggregators rely on it to
+    // tell upstream-slow apart from upstream-failing.
+    vi.useFakeTimers();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((_input, init) => {
+        return new Promise((_resolve, reject) => {
+          const sig = init?.signal as AbortSignal | undefined;
+          sig?.addEventListener("abort", () => {
+            reject(new DOMException("Aborted", "AbortError"));
+          });
+        });
+      });
+    const streamPromise = streamExternalProvider(
+      {
+        provider: mkProvider({ timeoutSecs: 2, maxRetries: 1 }),
+        apiKey: "sk",
+        prompt: "hi",
+      },
+      () => {},
+    );
+    const rejection = expect(streamPromise).rejects.toThrow(
+      /pre-stream timeout \(2000ms\) after 2 attempts/,
+    );
+    // Attempt 1: 2s timeout, then 1s backoff, then attempt 2 with
+    // its own 2s timeout.
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(2000);
+    await rejection;
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    fetchSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("user-cancel during a hung request propagates AbortError, NOT a retryable timeout (Devin Review round 7)", async () => {
+    // The critical safety property of the timeout work: the user's
+    // Stop button must always win over the per-attempt timer. If
+    // both signals are aborted, we MUST surface AbortError so the
+    // retry loop terminates immediately rather than swallowing the
+    // user's cancel and dispatching another attempt. The fix
+    // distinguishes the two abort sources in the catch block by
+    // checking `signal?.aborted` BEFORE checking the internal
+    // attemptController.
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((_input, init) => {
+        return new Promise((_resolve, reject) => {
+          const sig = init?.signal as AbortSignal | undefined;
+          sig?.addEventListener("abort", () => {
+            reject(new DOMException("Aborted", "AbortError"));
+          });
+        });
+      });
+    const streamPromise = streamExternalProvider(
+      {
+        provider: mkProvider({ timeoutSecs: 60, maxRetries: 3 }),
+        apiKey: "sk",
+        prompt: "hi",
+        signal: controller.signal,
+      },
+      () => {},
+    );
+    const rejection = expect(streamPromise).rejects.toThrow(/Aborted/);
+    // Cancel BEFORE the per-attempt timeout fires (60s configured,
+    // we only advance by 1s).
+    await vi.advanceTimersByTimeAsync(1000);
+    controller.abort();
+    await rejection;
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    fetchSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
   it("AbortSignal during backoff delay rejects immediately with AbortError", async () => {
     vi.useFakeTimers();
     const controller = new AbortController();

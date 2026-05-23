@@ -407,12 +407,14 @@ export function resolveProviderEndpoint(
   // who pastes `https://api.openai.com/v1` (just the version, no
   // further path) ends up with `https://api.openai.com/v1/v1/chat/
   // completions` because none of the longer `endsWith` checks below
-  // match. The strip is safe because every longer composition that
-  // CONTAINS `/v1` as a sub-path (`/v1/chat/completions`,
-  // `/v1/messages`, `/v1/models`) is matched by a more-specific
-  // `endsWith` BEFORE this normalisation could falsely truncate it
-  // — see `stripBareV1Suffix` and the ordering invariant in its
-  // doc.
+  // match. The strip is safe because `stripBareV1Suffix` only
+  // matches URLs ending in EXACTLY `/v1` — any longer composition
+  // that CONTAINS `/v1` as a sub-path (`/v1/chat/completions`,
+  // `/v1/messages`, `/v1/models`) does not end with bare `/v1` and
+  // is therefore left untouched by the strip. The subsequent
+  // `endsWith` checks then handle those longer forms correctly. See
+  // the strict-semantics block on `stripBareV1Suffix` for the full
+  // invariant.
   const apiUrl = stripBareV1Suffix(provider.apiUrl.replace(/\/+$/, ""));
   if (provider.providerType === "anthropic") {
     // The `/v1/messages` form is the only documented Anthropic
@@ -735,51 +737,152 @@ function delayWithAbort(
  * subsequent failure is treated as mid-stream and is NOT retried
  * — we don't want to silently re-deliver tokens the renderer has
  * already shown to the user.
+ *
+ * # Per-attempt timeout
+ *
+ * `timeoutMs` is the upper bound on how long this single attempt
+ * waits for the upstream HTTP exchange to start producing a body.
+ * It is wired through `provider.timeoutSecs` (schema-validated to
+ * `1..=600` seconds in `electron/ipc/schemas.ts`). The timeout
+ * fires via a per-attempt `AbortController` whose signal is forked
+ * with the user's outer cancel signal so we can distinguish the
+ * two abort sources:
+ *
+ *   - **User cancel**: the user-provided `signal` aborts. We
+ *     propagate the `AbortError` upward so the caller's retry loop
+ *     terminates immediately (cancelling mid-retry is the whole
+ *     point of the Stop Generation button).
+ *   - **Per-attempt timeout**: only our internal controller
+ *     aborts. We return a `{ kind: "timeout" }` retryable
+ *     sentinel so the caller's loop can back off and re-attempt
+ *     (a slow-but-responsive upstream is exactly the case the
+ *     retry budget exists to handle).
+ *
+ * Without this distinction the retry budget is effectively
+ * useless against a slow-but-responsive upstream — attempt 1
+ * would hang forever waiting for the response, and the retry
+ * loop would never reach attempts 2…N. This was the gap Devin
+ * Review round 7 surfaced: `timeoutSecs` was wired into
+ * `testExternalProviderConnection` and (with a fixed 10 s)
+ * `listExternalProviderModels`, but the streaming path relied
+ * solely on the user's Stop button.
  */
 interface OpenedResponse {
   readonly status: "opened";
   readonly response: Response;
 }
-interface RetryableStatus {
+/** Pre-stream attempt completed but the upstream returned a
+ *  retryable HTTP status (408/429/500/502/503/504). */
+interface RetryableHttp {
   readonly status: "retryable";
+  readonly kind: "http";
   readonly httpStatus: number;
   readonly retryAfterMs: number | undefined;
   readonly bodyPreview: string;
 }
+/** Pre-stream attempt timed out before the upstream produced a
+ *  response body. The user did NOT cancel — this is a transient
+ *  upstream slowness that the retry loop should back off and
+ *  re-attempt. */
+interface RetryableTimeout {
+  readonly status: "retryable";
+  readonly kind: "timeout";
+  readonly timeoutMs: number;
+}
+type RetryableStatus = RetryableHttp | RetryableTimeout;
 async function openExternalProviderStream(
   req: BuildRequestResult,
   signal: AbortSignal | undefined,
+  timeoutMs: number,
 ): Promise<OpenedResponse | RetryableStatus> {
-  const res = await fetch(req.url, {
-    method: "POST",
-    headers: req.headers,
-    body: req.body,
-    signal,
-  });
-  if (res.ok) {
-    return { status: "opened", response: res };
+  // Per-attempt cancel source: aborts EITHER when the user clicks
+  // Stop (via `signal`) OR when the per-attempt timer fires. We use
+  // a single composite controller so the `fetch` call sees one
+  // unified signal, then distinguish the two sources in the catch
+  // block by checking which underlying signal is aborted.
+  const attemptController = new AbortController();
+  const timer = setTimeout(() => attemptController.abort(), timeoutMs);
+
+  // Forward an already-aborted user signal immediately so we don't
+  // even kick off a request. Without this guard a user who clicks
+  // Stop during a backoff delay would still consume one wasted
+  // attempt before the retry loop saw the abort.
+  if (signal?.aborted) {
+    clearTimeout(timer);
+    throw new DOMException("Aborted", "AbortError");
   }
-  if (RETRYABLE_HTTP_STATUS_CODES.has(res.status)) {
-    // Drain the body so the connection can be reused and so we can
-    // include a preview in the eventual user-visible error (if the
-    // retry chain exhausts). Errors here are swallowed because the
-    // status code is the authoritative signal, not the body shape.
-    const bodyPreview = await res.text().catch(() => "");
-    const retryAfterMs = parseRetryAfter(res.headers.get("retry-after"));
-    return {
-      status: "retryable",
-      httpStatus: res.status,
-      retryAfterMs,
-      bodyPreview,
-    };
+
+  // Forward a LATER user-cancel into our composite controller so
+  // `fetch` aborts immediately even though we passed it the
+  // composite signal (not the user's signal directly). Cleanup in
+  // `finally` so we don't leak the listener after the attempt
+  // resolves.
+  const forwardUserAbort = (): void => attemptController.abort();
+  signal?.addEventListener("abort", forwardUserAbort, { once: true });
+
+  try {
+    const res = await fetch(req.url, {
+      method: "POST",
+      headers: req.headers,
+      body: req.body,
+      signal: attemptController.signal,
+    });
+    if (res.ok) {
+      return { status: "opened", response: res };
+    }
+    if (RETRYABLE_HTTP_STATUS_CODES.has(res.status)) {
+      // Drain the body so the connection can be reused and so we can
+      // include a preview in the eventual user-visible error (if the
+      // retry chain exhausts). Errors here are swallowed because the
+      // status code is the authoritative signal, not the body shape.
+      const bodyPreview = await res.text().catch(() => "");
+      const retryAfterMs = parseRetryAfter(res.headers.get("retry-after"));
+      return {
+        status: "retryable",
+        kind: "http",
+        httpStatus: res.status,
+        retryAfterMs,
+        bodyPreview,
+      };
+    }
+    // Non-retryable client error (400/401/403/404/422/…). Surface
+    // immediately so the user sees the real problem without 7 s of
+    // pointless retry delay.
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `External provider HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`,
+    );
+  } catch (e) {
+    // The fetch threw — distinguish user-cancel from per-attempt
+    // timeout from genuine network-level failure (DNS, TLS,
+    // connection-refused). The order of checks matters: user
+    // intent takes priority over the timer, so a user-cancel that
+    // arrives during a hung request must propagate the AbortError
+    // upward rather than silently being mapped to a retryable
+    // timeout.
+    if (signal?.aborted) {
+      throw e;
+    }
+    // Only our internal timer fired — transient slowness from the
+    // upstream. Return a retryable sentinel so the caller's loop
+    // can back off and try again.
+    if (attemptController.signal.aborted) {
+      return {
+        status: "retryable",
+        kind: "timeout",
+        timeoutMs,
+      };
+    }
+    // Genuine network-level failure (DNS, TLS, connection-refused).
+    // Surface immediately — these are typically misconfiguration,
+    // not transient slowness, and retrying just wastes the budget.
+    // The existing line 549–554 comment block in this file
+    // documents the same design choice for the streaming half.
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", forwardUserAbort);
   }
-  // Non-retryable client error (400/401/403/404/422/…). Surface
-  // immediately so the user sees the real problem without 7 s of
-  // pointless retry delay.
-  const text = await res.text().catch(() => "");
-  throw new Error(
-    `External provider HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`,
-  );
 }
 
 /**
@@ -857,10 +960,24 @@ export async function streamExternalProvider(
   // `electron/ipc/schemas.ts` and `electron/config.ts`'s loader, so
   // it is safe to use directly here without a re-clamp.
   const maxRetries = inputs.provider.maxRetries;
+  // `provider.timeoutSecs` is schema-clamped to `1..=600` in
+  // `electron/ipc/schemas.ts`, so we can convert directly without a
+  // re-clamp. The per-attempt timer applies to the PRE-STREAM
+  // exchange only — once the body opens (return value of
+  // `openExternalProviderStream`) we are mid-stream and the timer
+  // is cleared in `openExternalProviderStream`'s finally block.
+  // SSE reads after that point are bounded by the user's Stop
+  // signal, not by the configured timeout (a long-running
+  // legitimate streaming response can exceed `timeoutSecs`).
+  const timeoutMs = inputs.provider.timeoutSecs * 1000;
   let openedResponse: Response | undefined;
   let lastRetryable: RetryableStatus | undefined;
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    const outcome = await openExternalProviderStream(req, inputs.signal);
+    const outcome = await openExternalProviderStream(
+      req,
+      inputs.signal,
+      timeoutMs,
+    );
     if (outcome.status === "opened") {
       openedResponse = outcome.response;
       break;
@@ -873,20 +990,40 @@ export async function streamExternalProvider(
     // `attempt + 1` is the 1-indexed retry number we are about to
     // perform: attempt=0 → about to do retry 1 → wait `retryDelayMs(1)`.
     const baseDelay = retryDelayMs(attempt + 1);
-    // Honour `Retry-After` for the upcoming wait, but never wait
-    // LESS than the exponential schedule (so a server-sent
-    // `Retry-After: 0` can't trick us into a tight retry loop).
-    const delay = Math.max(baseDelay, outcome.retryAfterMs ?? 0);
+    // Honour `Retry-After` for the upcoming wait when the outcome
+    // is an HTTP retryable (only HTTP outcomes carry a
+    // `retryAfterMs` field). A timeout outcome has no server-sent
+    // back-off hint, so it uses the exponential schedule directly.
+    // We never wait LESS than the exponential schedule (so a
+    // server-sent `Retry-After: 0` can't trick us into a tight
+    // retry loop).
+    const retryAfterMs =
+      outcome.kind === "http" ? outcome.retryAfterMs ?? 0 : 0;
+    const delay = Math.max(baseDelay, retryAfterMs);
     await delayWithAbort(delay, inputs.signal);
   }
 
   if (!openedResponse) {
     // The retry chain exhausted without opening a body. Surface the
-    // last transient status to the user; the body preview helps
-    // diagnose provider-side rate-limit / outage messages.
+    // last transient status to the user; for HTTP failures the
+    // body preview helps diagnose provider-side rate-limit / outage
+    // messages, for timeouts we show the configured timeout so the
+    // user can see whether they need to raise it. Attempts count
+    // appears mid-message (`… after N attempts`) before any tail
+    // body preview so error monitoring / log aggregation can
+    // structure-match against the prefix without false-positives on
+    // attacker-controlled body text.
     const last = lastRetryable as RetryableStatus;
+    const summary =
+      last.kind === "http"
+        ? `HTTP ${last.httpStatus}`
+        : `pre-stream timeout (${last.timeoutMs}ms)`;
+    const detail =
+      last.kind === "http" && last.bodyPreview
+        ? `: ${last.bodyPreview.slice(0, 200)}`
+        : "";
     throw new Error(
-      `External provider HTTP ${last.httpStatus} after ${maxRetries + 1} attempts${last.bodyPreview ? `: ${last.bodyPreview.slice(0, 200)}` : ""}`,
+      `External provider ${summary} after ${maxRetries + 1} attempts${detail}`,
     );
   }
 
