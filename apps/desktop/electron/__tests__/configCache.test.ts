@@ -29,6 +29,7 @@ vi.mock("electron", () => ({
 }));
 
 import {
+  type AppConfig,
   DEFAULT_EXTERNAL_PROVIDER,
   _clearConfigCacheForTests,
   loadConfig,
@@ -316,6 +317,60 @@ describe("config cache", () => {
     // `mergedProvider` from the previously-frozen one.
     updateConfig({ externalProvider: { enabled: true } });
     expect(loadConfig().externalProvider.enabled).toBe(true);
+  });
+
+  it("deep-freezes nested objects preserved through .loose() passthrough", () => {
+    // Regression test for the freeze-recursion contract. `AppConfigSchema`
+    // uses `.loose()` to forward-preserve unknown top-level keys, so a
+    // future Tessera version writing a nested config like
+    // `{ experimentalFeatures: { caching: { ttl_seconds: 3600 } } }`
+    // round-trips through this version intact. The pre-recursion freeze
+    // helper only walked one level deep — it would have frozen
+    // `experimentalFeatures` but left `caching` mutable, allowing a
+    // caller doing
+    //   `cfg.experimentalFeatures.caching.ttl_seconds = 0`
+    // to silently corrupt every other reader's cached view of that
+    // field. A fully recursive freeze closes that gap by ensuring every
+    // node in the reachable graph is frozen before the cache hands it
+    // out.
+    fs.writeFileSync(
+      configPath(),
+      JSON.stringify({
+        // Top-level unknown key with nested structure, preserved by
+        // `.loose()` on AppConfigSchema.
+        experimentalFeatures: {
+          caching: {
+            ttl_seconds: 3600,
+            tags: ["fast", "warm"],
+          },
+        },
+      }),
+    );
+
+    const cfg = loadConfig() as AppConfig & {
+      experimentalFeatures: {
+        caching: { ttl_seconds: number; tags: string[] };
+      };
+    };
+
+    // Top-level passthrough survived.
+    expect(cfg.experimentalFeatures).toBeDefined();
+    expect(cfg.experimentalFeatures.caching).toBeDefined();
+    expect(cfg.experimentalFeatures.caching.ttl_seconds).toBe(3600);
+
+    // Every node in the nested graph is frozen.
+    expect(Object.isFrozen(cfg.experimentalFeatures)).toBe(true);
+    expect(Object.isFrozen(cfg.experimentalFeatures.caching)).toBe(true);
+    expect(Object.isFrozen(cfg.experimentalFeatures.caching.tags)).toBe(true);
+
+    // Mutation at the deepest level throws — this is the property
+    // shallow-freeze would have failed to enforce.
+    expect(() => {
+      cfg.experimentalFeatures.caching.ttl_seconds = 0;
+    }).toThrow(TypeError);
+    expect(() => {
+      cfg.experimentalFeatures.caching.tags.push("hot");
+    }).toThrow(TypeError);
   });
 
   it("survives 100 reads when the config file disappears mid-flight", () => {

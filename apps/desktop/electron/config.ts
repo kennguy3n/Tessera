@@ -174,8 +174,26 @@ const AppConfigSchema = z
       .array(z.string().max(1024))
       .max(10_000)
       .catch(() => [...DEFAULT_CONFIG.watchPatterns]),
-    lastOpenedArtifacts: z.array(z.string().max(1024)).max(1024).catch([]),
-    sourcePaths: z.array(z.string().max(4096)).max(10_000).catch([]),
+    // `.catch(() => [])` (factory) rather than `.catch([])` (literal):
+    // zod returns the SAME array reference on every heal when given a
+    // literal, while `freezeConfig` immediately freezes whichever array
+    // it sees. A subsequent `.catch()` consumer would then receive an
+    // already-frozen empty array — harmless today, but the moment a
+    // future contributor changes the fallback to a populated default
+    // (e.g. `.catch(["recent.md"])`) the shared reference becomes a
+    // footgun: every load that heals this field gets the SAME array,
+    // mutations leak across cache instances, and the first `Object.freeze`
+    // poisons every subsequent load. Factory functions remove the
+    // class of issue structurally and match the `ignorePatterns` /
+    // `watchPatterns` pattern above.
+    lastOpenedArtifacts: z
+      .array(z.string().max(1024))
+      .max(1024)
+      .catch(() => []),
+    sourcePaths: z
+      .array(z.string().max(4096))
+      .max(10_000)
+      .catch(() => []),
     externalProvider: ExternalProviderConfigOnDiskSchema,
     autoUpdate: z.boolean().catch(true),
   })
@@ -240,43 +258,71 @@ let cachedConfig: AppConfig | null = null;
 let cachedPath: string | null = null;
 
 /**
- * Deep-freeze an AppConfig (and every nested object/array) so the
- * cached value can be returned by reference without risk of a caller
- * accidentally mutating it. `Object.freeze` is shallow, so we walk
- * one level into nested objects (`externalProvider`) and arrays
- * (`ignorePatterns`, `watchPatterns`, `lastOpenedArtifacts`,
- * `sourcePaths`) and freeze each.
+ * Deep-freeze an arbitrary value, recursing into every nested object
+ * and array so the entire reachable graph is immutable.
  *
- * There is intentionally NO top-level `Object.isFrozen(config)`
- * short-circuit: a partially-frozen config (top frozen, children
- * unfrozen) is a state no production path produces today, but if a
- * future refactor ever does, skipping children based on the
- * top-level state would silently leak unfrozen mutable references
- * through the cache. Per-property `Object.isFrozen` checks below
- * already make the work idempotent for the common case (everything
- * already frozen) — `Object.freeze` on an already-frozen object is
- * a no-op, so the only real cost of always iterating is one
- * `Object.keys` call per `freezeConfig` invocation.
+ * Why fully recursive (not just one level):
+ *
+ *   `AppConfigSchema` uses `.loose()` (zod 4's `.passthrough()`) to
+ *   preserve unknown top-level keys for cross-version forward-compat.
+ *   A future Tessera version writing a richer config — e.g.
+ *   `{ experimentalFeatures: { caching: { ttl_seconds: 3600 } } }` —
+ *   would have that nested `caching` object preserved through the
+ *   load. A one-level freeze would freeze `experimentalFeatures` but
+ *   leave `caching` mutable, and a caller doing
+ *   `cfg.experimentalFeatures.caching.ttl_seconds = 0` would silently
+ *   corrupt every other reader's cached view without a TypeError.
+ *
+ *   Deep recursion ensures the freeze barrier matches the cache
+ *   contract advertised by `loadConfig`: the returned config is
+ *   IMMUTABLE in full, not just at the top level. Callers that need
+ *   a mutable copy already spread (`{ ...loadConfig() }`) — the
+ *   shallow-copy idiom only restores mutability at the top level,
+ *   which matches the documented contract.
+ *
+ * Cycle handling: a `WeakSet` of in-flight references prevents the
+ * walker from infinite-looping on a self-referential graph. JSON.parse
+ * cannot produce cycles, but a future code path that mutates a healed
+ * config in place (e.g. `cfg.parent = cfg`) before caching it would
+ * otherwise stack-overflow. The cost is one `WeakSet` per freeze call.
+ *
+ * Idempotency: `Object.freeze` on an already-frozen object is a no-op,
+ * and `Object.isFrozen` short-circuits the descent at each subtree.
+ * Calling `freezeConfig(loadConfig())` from a caller is therefore safe
+ * and effectively free.
  */
-function freezeConfig(config: AppConfig): AppConfig {
-  Object.freeze(config); // no-op if already frozen
-  for (const key of Object.keys(config) as (keyof AppConfig)[]) {
-    const value = config[key];
-    if (
-      value !== null &&
-      typeof value === "object" &&
-      !Object.isFrozen(value)
-    ) {
-      // Nested objects (`externalProvider`) and arrays
-      // (`ignorePatterns`, etc.) are one level deep — none of them
-      // contain further nested objects today. If a future field adds
-      // deeper structure (e.g. `connectors: { gdrive: { ... } }`)
-      // this needs to recurse fully; promoted to a proper recursive
-      // helper at that point.
-      Object.freeze(value);
+function deepFreeze<T>(value: T, seen: WeakSet<object>): T {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  const obj = value as unknown as object;
+  if (seen.has(obj)) {
+    return value;
+  }
+  seen.add(obj);
+  if (Object.isFrozen(obj)) {
+    return value;
+  }
+  // Freeze the parent BEFORE recursing into children so a cycle that
+  // walks back to this node sees it as frozen and stops. Without this
+  // ordering a `{ a: { b: parent } }` graph would re-enter the parent
+  // before `Object.freeze(parent)` ran and the `seen` short-circuit
+  // would be the only thing preventing infinite recursion.
+  Object.freeze(obj);
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      deepFreeze(item, seen);
+    }
+  } else {
+    for (const key of Object.keys(obj)) {
+      deepFreeze((obj as Record<string, unknown>)[key], seen);
     }
   }
-  return config;
+  return value;
+}
+
+function freezeConfig(config: AppConfig): AppConfig {
+  return deepFreeze(config, new WeakSet<object>());
 }
 
 /**
