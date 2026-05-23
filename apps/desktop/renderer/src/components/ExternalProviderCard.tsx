@@ -159,6 +159,15 @@ export default function ExternalProviderCard() {
   }, [provider]);
 
   const onResetTokenUsage = useCallback(async () => {
+    // Bracket the async IPC with the same `busy` flag the sibling
+    // handlers (`onSave`, `onTest`, `onListModels`) use. Even though
+    // the operation is idempotent (`createEmptyTokenUsage()` just
+    // writes zeros + current timestamp), bracketing it (a) disables
+    // every other button in the card for the duration so a user
+    // can't kick off a Save while a reset is mid-flight, and (b)
+    // visually matches the sibling controls so a reviewer reading
+    // the four callbacks finds them all structured the same way.
+    setBusy(true);
     try {
       const fresh = await window.tessera.externalProvider.resetTokenUsage();
       setTokenUsage(fresh);
@@ -168,6 +177,8 @@ export default function ExternalProviderCard() {
         kind: "error",
         message: e instanceof Error ? e.message : String(e),
       });
+    } finally {
+      setBusy(false);
     }
   }, []);
 

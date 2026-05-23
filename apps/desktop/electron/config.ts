@@ -628,12 +628,20 @@ export type AppConfigPartial = Omit<
  * Top-level fields are shallow-merged via spread. Nested objects
  * are handled in two different ways depending on the field:
  *
- *  - `externalProvider` is the only nested object that is
- *    *field-by-field* merged. If you pass
+ *  - `externalProvider` and `externalProviderTokenUsage` are
+ *    *field-by-field* merged. Passing
  *    `updateConfig({ externalProvider: { enabled: true } })` only
- *    `enabled` is overwritten; everything else (apiUrl, apiKeyRef,
- *    modelName, etc.) keeps its existing value. This is the
- *    behaviour callsites historically relied on, so we preserve it.
+ *    overwrites `enabled` (every other field — apiUrl, apiKeyRef,
+ *    modelName, etc. — keeps its existing value), and similarly
+ *    `updateConfig({ externalProviderTokenUsage: { totalPromptTokens
+ *    : n } })` only touches that field. This is the behaviour the
+ *    `model:generate`-finally-block accumulator and the
+ *    `externalProvider:resetTokenUsage` handler rely on so they can
+ *    write a single counter without re-reading the entire usage
+ *    record. Each field-by-field-merged type needs its own dedicated
+ *    branch in the implementation below (see the `mergedProvider` /
+ *    `mergedUsage` destructure), so adding a new such type is an
+ *    explicit change — there is no generic "merge if nested" path.
  *
  *  - **Every other nested object — including `hybridSearchConfig` —
  *    is REPLACED, not merged.** Passing
@@ -651,12 +659,13 @@ export type AppConfigPartial = Omit<
  *    it is the canonical pattern.
  *
  *    If you ever add a callsite that needs a partial update for a
- *    nested object other than `externalProvider`, either (a) extend
- *    the merge logic below to handle the new field with explicit
- *    field-by-field merging, or (b) compose the full object at the
- *    call site before calling `updateConfig`. **Do not** rely on
- *    spread-style partial updates working — they will only work for
- *    `externalProvider`.
+ *    nested object outside the explicit field-by-field set
+ *    (`externalProvider`, `externalProviderTokenUsage`), either
+ *    (a) extend the merge logic below to handle the new field with
+ *    its own dedicated branch, or (b) compose the full object at
+ *    the call site before calling `updateConfig`. **Do not** rely
+ *    on spread-style partial updates working — they only work for
+ *    the explicit field-by-field-merged types listed above.
  *
  * **Ownership transfer.** Any nested array or object reference in
  * `partial` (e.g. `partial.ignorePatterns`, `partial.externalProvider`)
