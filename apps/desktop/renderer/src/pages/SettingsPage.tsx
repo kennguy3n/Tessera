@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useId } from "react";
 import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
 import Button from "../components/Button";
@@ -29,6 +29,16 @@ const EXPORT_FORMAT_LABELS: Record<ExportFormat, string> = {
 export default function SettingsPage() {
   const { settings, loading, refresh } = useSettings();
   const { update } = useUpdateSetting();
+  // Stable per-instance ids so the sibling-pattern labels in this page
+  // can be wired to their inputs via htmlFor for screen-reader
+  // accessibility. Without these the four labels (Theme, Watch
+  // Patterns, Ignore Patterns, Default Export Format) render as
+  // orphan <label> elements that don't focus the input on click and
+  // are not announced as the input's accessible name.
+  const themeId = useId();
+  const watchPatternsId = useId();
+  const ignorePatternsId = useId();
+  const exportFormatId = useId();
   const [theme, setTheme] = useState(settings.theme);
   const [defaultExportFormat, setDefaultExportFormat] = useState(
     settings.defaultExportFormat,
@@ -84,6 +94,7 @@ export default function SettingsPage() {
           <h3 style={{ marginBottom: "var(--spacing-md)" }}>General</h3>
           <div style={{ marginBottom: "var(--spacing-md)" }}>
             <label
+              htmlFor={themeId}
               style={{
                 display: "block",
                 fontSize: "var(--font-size-sm)",
@@ -95,6 +106,7 @@ export default function SettingsPage() {
               Theme
             </label>
             <select
+              id={themeId}
               className="input"
               value={theme}
               onChange={(e) => setTheme(e.target.value as Theme)}
@@ -112,6 +124,7 @@ export default function SettingsPage() {
           <h3 style={{ marginBottom: "var(--spacing-md)" }}>Sources</h3>
           <div style={{ marginBottom: "var(--spacing-md)" }}>
             <label
+              htmlFor={watchPatternsId}
               style={{
                 display: "block",
                 fontSize: "var(--font-size-sm)",
@@ -123,6 +136,7 @@ export default function SettingsPage() {
               Watch Patterns
             </label>
             <input
+              id={watchPatternsId}
               className="input"
               value={watchPatterns}
               onChange={(e) => setWatchPatterns(e.target.value)}
@@ -131,6 +145,7 @@ export default function SettingsPage() {
           </div>
           <div>
             <label
+              htmlFor={ignorePatternsId}
               style={{
                 display: "block",
                 fontSize: "var(--font-size-sm)",
@@ -142,6 +157,7 @@ export default function SettingsPage() {
               Ignore Patterns
             </label>
             <input
+              id={ignorePatternsId}
               className="input"
               value={ignorePatterns}
               onChange={(e) => setIgnorePatterns(e.target.value)}
@@ -160,6 +176,7 @@ export default function SettingsPage() {
           <h3 style={{ marginBottom: "var(--spacing-md)" }}>Export</h3>
           <div>
             <label
+              htmlFor={exportFormatId}
               style={{
                 display: "block",
                 fontSize: "var(--font-size-sm)",
@@ -171,6 +188,7 @@ export default function SettingsPage() {
               Default Export Format
             </label>
             <select
+              id={exportFormatId}
               className="input"
               value={defaultExportFormat}
               onChange={(e) =>
