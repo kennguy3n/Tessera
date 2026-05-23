@@ -202,14 +202,23 @@ pub fn bridge_get_source_detail(source_id: String) -> napi::Result<sources::Sour
 #[napi]
 pub fn bridge_reindex_source(source_id: String) -> napi::Result<sources::SourceInfo> {
     let s = state()?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_source_reindexed(&source_id);
-    }
     let mgr = s
         .source_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::reindex_source(&mgr, &source_id).map_err(|e| napi::Error::from_reason(e.to_string()))
+    let info = sources::reindex_source(&mgr, &source_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the reindex commits (matches the contract for
+    // `bridge_add_citation` below): a failed reindex must not
+    // leave a phantom row claiming the source was reindexed. The
+    // per-store lock is dropped first so the audit logger lock is
+    // acquired last per the documented one-way ordering (logger →
+    // source → artifact → citation).
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_source_reindexed(&source_id);
+    }
+    Ok(info)
 }
 
 /// Returns the latest indexing progress snapshot. Safe to poll on
@@ -237,15 +246,21 @@ pub fn bridge_create_artifact(
     template_id: Option<String>,
 ) -> napi::Result<artifacts::ArtifactInfo> {
     let s = state()?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_artifact_created(&title);
-    }
     let mgr = s
         .artifact_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    artifacts::create_artifact(&mgr, &title, &artifact_type, template_id.as_deref())
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let info = artifacts::create_artifact(&mgr, &title, &artifact_type, template_id.as_deref())
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the artifact has been persisted so a failed
+    // create (e.g. invalid template id, lock contention) doesn't
+    // leave a phantom "created" row. Matches the contract for
+    // every other artifact lifecycle event in this file.
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_created(&title);
+    }
+    Ok(info)
 }
 
 #[napi]
@@ -254,15 +269,19 @@ pub fn bridge_update_artifact_content(
     content: String,
 ) -> napi::Result<artifacts::ArtifactInfo> {
     let s = state()?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_artifact_updated(&artifact_id);
-    }
     let mgr = s
         .artifact_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    artifacts::update_artifact_content(&mgr, &artifact_id, &content)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let info = artifacts::update_artifact_content(&mgr, &artifact_id, &content)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the update commits to avoid phantom rows on
+    // failed updates (e.g. bad UUID, lock contention).
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_updated(&artifact_id);
+    }
+    Ok(info)
 }
 
 #[napi]
@@ -288,15 +307,20 @@ pub fn bridge_list_artifacts() -> napi::Result<Vec<artifacts::ArtifactInfo>> {
 #[napi]
 pub fn bridge_delete_artifact(artifact_id: String) -> napi::Result<()> {
     let s = state()?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_artifact_deleted(&artifact_id);
-    }
     let mgr = s
         .artifact_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     artifacts::delete_artifact(&mgr, &artifact_id)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the delete commits — a failed delete (e.g. bad
+    // UUID, FK constraint, lock contention) must not leave a
+    // phantom row claiming the artifact was deleted.
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_deleted(&artifact_id);
+    }
+    Ok(())
 }
 
 // --- Export ---
@@ -337,9 +361,6 @@ pub fn bridge_export_artifact_to_file(
     content_override: Option<String>,
 ) -> napi::Result<()> {
     let s = state()?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_artifact_exported(&artifact_id, &format);
-    }
     let art_mgr = s
         .artifact_manager
         .lock()
@@ -356,7 +377,18 @@ pub fn bridge_export_artifact_to_file(
         &path,
         content_override.as_deref(),
     )
-    .map_err(|e| napi::Error::from_reason(e.to_string()))
+    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the export commits to disk so a failed write
+    // (permission denied, path-safety violation, format
+    // unsupported) never produces a phantom row claiming the
+    // artifact was exported. Per-store locks are dropped first to
+    // keep the documented logger-last ordering.
+    drop(tracker);
+    drop(art_mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_exported(&artifact_id, &format);
+    }
+    Ok(())
 }
 
 // --- Templates ---
@@ -556,14 +588,6 @@ pub fn bridge_restore_version(
     version_number: u32,
 ) -> napi::Result<artifacts::ArtifactInfo> {
     let s = state()?;
-    // Version restore is semantically an artifact update — the
-    // content snapshot at `version_number` is rewritten into the
-    // canonical artifact row. Audit it as `ArtifactUpdated` so a
-    // future compliance review sees the lineage ("this artifact was
-    // rolled back at <time>") rather than a silent overwrite.
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_artifact_updated(&artifact_id);
-    }
     let mgr = s
         .artifact_manager
         .lock()
@@ -574,7 +598,21 @@ pub fn bridge_restore_version(
     let restored = mgr
         .restore_version(&aid, version_number)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    Ok(artifacts::artifact_to_info(&restored))
+    let info = artifacts::artifact_to_info(&restored);
+    // Audit AFTER the restore commits. Version restore is
+    // semantically an artifact update — the content snapshot at
+    // `version_number` is rewritten into the canonical artifact
+    // row. Audit it as `ArtifactUpdated` so a future compliance
+    // review sees the lineage ("this artifact was rolled back at
+    // <time>") rather than a silent overwrite. Logging AFTER the
+    // restore (rather than before) ensures a failed restore (bad
+    // UUID, missing version, lock contention) never produces a
+    // phantom rollback row.
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_updated(&artifact_id);
+    }
+    Ok(info)
 }
 
 // --- Artifact Generation ---
@@ -701,13 +739,6 @@ pub fn bridge_compare_sources(
     let result = tessera_artifacts::comparison::compare_sources(&chunks_a, &chunks_b);
     let content = result.to_markdown("Source A", "Source B");
 
-    // Audit the comparison-artifact creation under the same
-    // `ArtifactCreated` event type used by `bridge_create_artifact`
-    // so reports counting created artifacts don't undercount
-    // comparison results.
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_artifact_created("Source Comparison");
-    }
     let art = art_mgr
         .create(
             "Source Comparison".to_string(),
@@ -721,7 +752,20 @@ pub fn bridge_compare_sources(
     let updated = art_mgr
         .get(&art.id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    Ok(artifacts::artifact_to_info(&updated))
+    let info = artifacts::artifact_to_info(&updated);
+    // Audit AFTER the comparison artifact has been persisted under
+    // the same `ArtifactCreated` event type used by
+    // `bridge_create_artifact` so reports counting created
+    // artifacts don't undercount comparison results. Logging AFTER
+    // ensures a failed comparison (chunk fetch error, content
+    // generation panic, persist failure) never produces a phantom
+    // "Source Comparison" audit row.
+    drop(art_mgr);
+    drop(src_mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_created("Source Comparison");
+    }
+    Ok(info)
 }
 
 #[napi]
@@ -730,12 +774,6 @@ pub fn bridge_export_evidence_pack(
     output_path: String,
 ) -> napi::Result<String> {
     let s = state()?;
-    // The evidence pack is a ZIP export — record it under the
-    // shared `ArtifactExported` event type so an auditor sees every
-    // form of export (file format + evidence pack) in one query.
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_artifact_exported(&artifact_id, "evidence_pack");
-    }
     let art_mgr = s
         .artifact_manager
         .lock()
@@ -754,8 +792,25 @@ pub fn bridge_export_evidence_pack(
 
     let citation_list = tracker.list_for_artifact(&aid).unwrap_or_default();
 
-    tessera_export::evidence_pack::build_evidence_pack(&artifact, &citation_list, &output_path)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    let zip_path = tessera_export::evidence_pack::build_evidence_pack(
+        &artifact,
+        &citation_list,
+        &output_path,
+    )
+    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the ZIP has been built and written. The evidence
+    // pack is a ZIP export — record it under the shared
+    // `ArtifactExported` event type so an auditor sees every form
+    // of export (file format + evidence pack) in one query.
+    // Logging AFTER ensures a failed pack build (missing artifact,
+    // disk full, path-safety violation) never produces a phantom
+    // export row.
+    drop(tracker);
+    drop(art_mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_exported(&artifact_id, "evidence_pack");
+    }
+    Ok(zip_path)
 }
 
 // --- Tasks ---

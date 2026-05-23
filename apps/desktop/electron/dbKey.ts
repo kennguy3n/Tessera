@@ -36,25 +36,52 @@
  *    `safeStorage.decryptString` to recover the hex key, pass it to
  *    `initBridge(dbPath, templateDir, hexKey)`.
  *
+ * # Two persistence paths
+ *
+ * As of Phase 10 / Task 13 there are TWO supported on-disk
+ * encodings for `<userData>/db.key`:
+ *
+ *   1. **safeStorage-wrapped** (the historical default; produced
+ *      whenever `safeStorage.isEncryptionAvailable()` is true at
+ *      first-launch). The wrapped blob has no magic prefix and is
+ *      decrypted with `safeStorage.decryptString`.
+ *   2. **Password-vault-wrapped** (new in Phase 10 / Task 13;
+ *      produced when `safeStorage` is unavailable AND the user has
+ *      unlocked the password vault). The wrapped blob is AES-256-GCM
+ *      ciphertext under a PBKDF2-SHA256 key derived from the
+ *      vault password, with a `TSPV` magic prefix so the two
+ *      encodings can be disambiguated at read time.
+ *
+ * Callers should prefer the async {@link getOrCreateDbKeyAsync}
+ * entrypoint; it dispatches on the magic prefix and falls through
+ * to {@link getOrCreateDbKey} for safeStorage-wrapped blobs. The
+ * synchronous {@link getOrCreateDbKey} is retained for tests and
+ * for paths where the vault is statically known to be unused.
+ *
  * # Failure modes
  *
- * - **`safeStorage` unavailable** (Linux headless / no keyring
- *   daemon): {@link getOrCreateDbKey} throws with a
- *   user-actionable message from {@link keyringUnavailableSentence}.
- *   We deliberately use `keyringUnavailableSentence()` here rather
- *   than `encryptionUnavailableReason()` because the password vault
- *   does NOT wrap the SQLCipher database key (see the KNOWN
- *   LIMITATION block in `main.ts` next to `maybeInitPasswordVault`):
- *   showing the user a "restart and enter a vault password" hint
- *   on this path would send them down an unrecoverable route. The
- *   current launch path in `appState.ts` catches and falls through
- *   to an unencrypted bridge so the app remains usable.
+ * - **`safeStorage` unavailable** AND **vault inactive** (Linux
+ *   headless / no keyring daemon / user cancelled the vault prompt):
+ *   {@link getOrCreateDbKey} throws with a user-actionable message
+ *   from {@link keyringUnavailableSentence};
+ *   {@link getOrCreateDbKeyAsync} throws
+ *   {@link EncryptionUnavailableError} on first launch (callers in
+ *   `appState.ts` catch and fall through to an unencrypted bridge
+ *   so the app remains usable).
+ * - **`safeStorage` unavailable** AND **vault active**:
+ *   {@link getOrCreateDbKeyAsync} wraps a fresh 256-bit key with
+ *   the cached vault password key and persists the blob with the
+ *   `TSPV` magic prefix. Subsequent launches reproduce the wrap by
+ *   prompting for the vault password before
+ *   {@link getOrCreateDbKeyAsync} runs (see the boot sequence in
+ *   `main.ts`).
  * - **`db.key` exists but won't decrypt** (e.g. the user copied
- *   their `userData` directory to a different machine): we surface
- *   the underlying `safeStorage.decryptString` error verbatim. The
- *   app cannot recover the database without the original keyring;
- *   the only path forward is restoring from backup or deleting both
- *   `tessera.db` and `db.key` (accepting data loss).
+ *   their `userData` directory to a different machine, or the vault
+ *   password is wrong): we surface the underlying decrypt error
+ *   verbatim. The app cannot recover the database without the
+ *   original keyring / vault password; the only path forward is
+ *   restoring from backup or deleting both `tessera.db` and
+ *   `db.key` (accepting data loss).
  * - **`db.key` exists but is corrupted / zero-length**: same path
  *   as decrypt failure — surface and fail loudly rather than silently
  *   regenerating, which would render `tessera.db` permanently
