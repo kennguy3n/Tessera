@@ -364,7 +364,10 @@ pub fn update_hybrid_search_config(
         effective_halflife = Some(f64::INFINITY);
     } else if matches!(update.recency_decay_enabled, Some(true))
         && update.recency_halflife_secs.is_none()
-        && !manager.get_hybrid_config().recency_halflife_secs.is_finite()
+        && !manager
+            .get_hybrid_config()
+            .recency_halflife_secs
+            .is_finite()
     {
         effective_halflife = Some(tessera_sources::hybrid::DEFAULT_RECENCY_HALFLIFE_SECS);
     }
@@ -476,7 +479,9 @@ mod tests {
         assert!((cfg.bm25_weight - 1.0).abs() < 1e-9);
         assert!((cfg.vector_weight - 1.0).abs() < 1e-9);
         assert!(cfg.recency_decay_enabled);
-        let halflife = cfg.recency_halflife_secs.expect("decay enabled → halflife Some");
+        let halflife = cfg
+            .recency_halflife_secs
+            .expect("decay enabled → halflife Some");
         let thirty_days = 30.0 * 24.0 * 60.0 * 60.0;
         assert!((halflife - thirty_days).abs() < 1.0);
     }
@@ -585,11 +590,8 @@ mod tests {
     fn bridge_update_hybrid_search_config_with_empty_patch_is_noop() {
         let manager = SourceManager::new_in_memory(&[]).unwrap();
         let before = get_hybrid_search_config(&manager).unwrap();
-        let after = update_hybrid_search_config(
-            &manager,
-            HybridSearchConfigUpdate::default(),
-        )
-        .unwrap();
+        let after =
+            update_hybrid_search_config(&manager, HybridSearchConfigUpdate::default()).unwrap();
         // Empty patch → config unchanged.
         assert!((after.bm25_weight - before.bm25_weight).abs() < 1e-9);
         assert!((after.vector_weight - before.vector_weight).abs() < 1e-9);

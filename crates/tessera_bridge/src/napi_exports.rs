@@ -258,8 +258,7 @@ pub fn bridge_get_embedding_progress() -> napi::Result<sources::EmbeddingProgres
         .source_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::get_embedding_progress(&mgr)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    sources::get_embedding_progress(&mgr).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 /// Returns the current effective hybrid retrieval config so the
@@ -271,8 +270,7 @@ pub fn bridge_get_hybrid_search_config() -> napi::Result<sources::HybridSearchCo
         .source_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::get_hybrid_search_config(&mgr)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+    sources::get_hybrid_search_config(&mgr).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 /// Apply a partial-update patch to the hybrid retrieval config.

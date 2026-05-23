@@ -1204,9 +1204,7 @@ mod tests {
         // Embed three of the seven chunks. The count must drop to 4
         // while the model_id we just used disappears from the
         // missing set; a *different* model_id still sees all 7.
-        let materialised = store
-            .chunks_missing_embedding(model_id, 3)
-            .unwrap();
+        let materialised = store.chunks_missing_embedding(model_id, 3).unwrap();
         for (id, _content) in &materialised {
             store
                 .upsert_chunk_embedding(*id, model_id, 4, &[0u8; 16])

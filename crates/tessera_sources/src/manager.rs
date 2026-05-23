@@ -7,8 +7,8 @@ use crate::embedding::{EmbeddingProvider, HashTrickEmbedding};
 use crate::hybrid::{HybridSearchConfig, HybridSearchConfigInput};
 use crate::indexer::Indexer;
 use crate::progress::{
-    finish_embedding, mark_embedding_failed, EmbeddingProgressSnapshot,
-    EmbeddingProgressTracker, ProgressSnapshot, ProgressTracker,
+    finish_embedding, mark_embedding_failed, EmbeddingProgressSnapshot, EmbeddingProgressTracker,
+    ProgressSnapshot, ProgressTracker,
 };
 use crate::search::{SearchEngine, SearchResult};
 use crate::source::Source;
@@ -575,8 +575,7 @@ mod tests {
         // Now attach the default embedder so backfill has something to
         // populate. We rebuild only the indexer + embedder; the store
         // stays the same so the chunks survive.
-        let embedder: Arc<dyn EmbeddingProvider> =
-            Arc::new(HashTrickEmbedding::default_config());
+        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(HashTrickEmbedding::default_config());
         manager.indexer = Indexer::new(&[]).with_embedder(Arc::clone(&embedder));
         manager.embedder = Some(Arc::clone(&embedder));
 
@@ -660,9 +659,7 @@ mod tests {
         // Even though vector_weight=2.0 was valid, the whole patch
         // must be rejected together — `apply_patch` is transactional.
         assert!((after.vector_weight - before.vector_weight).abs() < 1e-9);
-        assert!(
-            (after.recency_halflife_secs - before.recency_halflife_secs).abs() < 1e-9
-        );
+        assert!((after.recency_halflife_secs - before.recency_halflife_secs).abs() < 1e-9);
     }
 
     #[test]

@@ -936,9 +936,7 @@ mod tests {
         };
         let _ = cfg.apply_patch(&patch).unwrap_err();
         assert!((cfg.vector_weight - before.vector_weight).abs() < F64_EPS);
-        assert!(
-            (cfg.recency_halflife_secs - before.recency_halflife_secs).abs() < F64_EPS
-        );
+        assert!((cfg.recency_halflife_secs - before.recency_halflife_secs).abs() < F64_EPS);
     }
 
     #[test]
