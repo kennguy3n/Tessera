@@ -197,68 +197,45 @@ function extractTopLevelScalar(body: string, key: string): string | null {
 }
 
 /**
- * Read `CreatePage.tsx` from disk and return the literal source of the
- * `const CATEGORIES … = { … }` object, sliced from the leading `const`
- * keyword to the matching closing brace (inclusive).
+ * Lex `source` from `startIdx` as JS/TS code, tracking brace depth
+ * across the five lexical productions that can contain `{` / `}`
+ * without semantic meaning: line comments (`// …`), block comments
+ * (`/* … *\/`), single-quoted strings, double-quoted strings, and
+ * template literals (including their `${…}` interpolations).
  *
- * We deliberately do a text-based extraction rather than importing
- * CATEGORIES directly, for two reasons:
+ * Real braces — i.e. `{` / `}` encountered in code state, NOT the
+ * boundary braces of a template-literal interpolation — fire the
+ * `onOpen` / `onClose` callbacks. `onClose` may return `true` to stop
+ * the walk; this lets callers slice out an enclosing block as soon as
+ * the matching closing brace is seen.
  *
- *   1. CreatePage.tsx imports a number of React components that pull in
- *      Electron-only paths (e.g. the IPC types) — running it in vitest's
- *      jsdom environment is brittle in a way the rest of the test
- *      framework already accommodates, but pulling it in here for a
- *      static check would force every CreatePage refactor to also pass
- *      its full jsdom render harness.
- *
- *   2. The text-based check catches BOTH the registered id AND the case
- *      where someone deletes the CATEGORIES entry but leaves the YAML
- *      around (or vice versa).
- *
- * The hard work is finding the *matching* closing brace — a naive
- * brace counter would mis-balance the moment a `{` or `}` appears
- * inside a string literal, comment, or template literal interpolation.
- * The state machine below covers those cases; the
- * `extractCategoryTemplateIds` and `extractCategoryEntries` helpers
- * then run their own regex passes over the returned block.
+ * Both `extractCategoriesBlock` and `extractCategoryEntries` share
+ * this helper to avoid the two-copies-of-90-lines maintenance hazard:
+ * every fix to the lexer (e.g. the `${…}` depth-decrement repair in
+ * the previous round) only has to be made in one place, and any
+ * future regression in one caller would by construction affect both.
  */
-function extractCategoriesBlock(): string {
-  const source = readFileSync(
-    join(REPO_ROOT, "apps", "desktop", "renderer", "src", "pages", "CreatePage.tsx"),
-    "utf8",
-  );
+interface LexJsCallbacks {
+  /** Fired when a real `{` is seen in code state. `depth` is the new depth (post-increment). */
+  onOpen?: (pos: number, depth: number) => void;
+  /** Fired when a real `}` is seen in code state (NOT a `${…}` closer). `depth` is the depth
+   *  the closing brace is balancing against (i.e. the depth just *before* the decrement, equal
+   *  to the depth at which the matching `{` opened). Return `true` to stop walking. */
+  onClose?: (pos: number, depth: number) => boolean | void;
+}
 
-  // Slice from `const CATEGORIES` to the matching closing brace so we
-  // only see ids inside the constant, not template-string ids that
-  // happen to appear later in the file (e.g. fallback messages).
-  const start = source.indexOf("const CATEGORIES");
-  if (start === -1) {
-    throw new Error("CATEGORIES constant not found in CreatePage.tsx");
-  }
-  // Find the closing `}` after `start`. We track brace depth from the
-  // first `{` after `const CATEGORIES`, BUT we must skip braces that
-  // appear inside JS/TS lexical constructs that contain syntactic
-  // noise — namely string literals (single-quoted, double-quoted,
-  // backtick template literals with `${...}` interpolations) AND
-  // single-line / multi-line comments. The simpler "count every `{`
-  // and `}`" approach worked by accident for the original CATEGORIES
-  // block, but a comment like `// they're the first thing` would
-  // confuse a half-aware string-skipping lexer into entering a
-  // never-closed single-quote state. The state machine below covers
-  // the five JS/TS productions that can contain `{`/`}` without
-  // meaning them: line comment, block comment, single-quoted string,
-  // double-quoted string, and template literal (with nested code via
-  // `${...}`).
+function lexJsBraces(
+  source: string,
+  startIdx: number,
+  cb: LexJsCallbacks,
+): void {
   let depth = 0;
-  let i = source.indexOf("{", start);
-  let end = -1;
   type LexState = "code" | "sl_comment" | "ml_comment" | "sq" | "dq" | "bt";
   let state: LexState = "code";
-  // Track template-literal interpolation nesting depth so a `}` that
-  // closes a `${...}` doesn't get charged against the outer brace
-  // counter.
+  // Stack of `${…}` interpolation depths so a `}` that closes an
+  // interpolation doesn't fire onClose against the outer brace counter.
   const templateInterpStack: number[] = [];
-  for (; i < source.length; i++) {
+  for (let i = startIdx; i < source.length; i++) {
     const ch = source[i];
     const next = source[i + 1];
     if (state === "code") {
@@ -280,20 +257,20 @@ function extractCategoriesBlock(): string {
         state = "bt";
       } else if (ch === "{") {
         depth += 1;
+        cb.onOpen?.(i, depth);
       } else if (ch === "}") {
-        // A `}` here either closes a `${...}` interpolation (returning
-        // us to the surrounding template literal) or closes a real
-        // brace pair in code.
-        //
-        // For the interpolation case we must decrement `depth` *before*
-        // `continue`-ing back into template-literal mode: the matching
-        // `${` opener incremented `depth` and pushed it onto
-        // `templateInterpStack` so that other `{` / `}` pairs inside
-        // the interpolation could balance against the same counter
-        // (handling things like `${ x ? { a:1 } : { b:2 } }`). Once we
-        // see the closing `}` we have to undo that opener's bump,
-        // otherwise every interpolation permanently inflates `depth`
-        // by one and the lexer never finds the CATEGORIES-closing `}`.
+        // Two cases:
+        //   1. This `}` closes a `${…}` interpolation — the opener
+        //      pushed onto templateInterpStack so that braces inside
+        //      the interpolation could balance against the same
+        //      counter (e.g. `${ x ? { a:1 } : { b:2 } }`). Undo the
+        //      opener's depth bump and return to template-literal mode.
+        //      Do NOT fire onClose: this is a lexical boundary, not a
+        //      semantic brace.
+        //   2. Otherwise, a real `}` in code. Decrement depth, fire
+        //      onClose with the pre-decrement depth (= depth at which
+        //      the matching `{` opened). If the callback signals stop,
+        //      return immediately.
         if (templateInterpStack.length > 0) {
           const interpDepth = templateInterpStack[templateInterpStack.length - 1];
           if (depth === interpDepth) {
@@ -303,36 +280,29 @@ function extractCategoriesBlock(): string {
             continue;
           }
         }
+        const closingDepth = depth;
         depth -= 1;
-        if (depth === 0) {
-          end = i + 1;
-          break;
-        }
+        if (cb.onClose?.(i, closingDepth)) return;
       }
     } else if (state === "sl_comment") {
-      // Line comment terminates at the next newline.
       if (ch === "\n") {
         state = "code";
       }
     } else if (state === "ml_comment") {
-      // Block comment terminates at the matching `*/`.
       if (ch === "*" && next === "/") {
         state = "code";
         i += 1;
       }
     } else if (state === "sq" || state === "dq") {
-      // Inside a non-template string: respect backslash escapes and
-      // stop on the matching closing quote.
       if (ch === "\\") {
-        i += 1; // skip the escaped character
+        i += 1;
         continue;
       }
       if ((state === "sq" && ch === "'") || (state === "dq" && ch === '"')) {
         state = "code";
       }
     } else {
-      // state === "bt" — inside a template literal. `${` starts a
-      // code-mode interpolation that ends at the matching `}`.
+      // state === "bt" — inside a template literal.
       if (ch === "\\") {
         i += 1;
         continue;
@@ -341,7 +311,10 @@ function extractCategoriesBlock(): string {
         state = "code";
       } else if (ch === "$" && next === "{") {
         // Step past the `${`, push the brace depth at which the
-        // interpolation opened, and re-enter code mode.
+        // interpolation opened, and re-enter code mode. This brace is
+        // counted (so braces inside the interpolation balance against
+        // the same counter), but the open itself is a lexical
+        // boundary — do NOT fire onOpen.
         i += 1;
         depth += 1;
         templateInterpStack.push(depth);
@@ -349,12 +322,77 @@ function extractCategoriesBlock(): string {
       }
     }
   }
+}
+
+/**
+ * Read `CreatePage.tsx` from disk and return the literal source of the
+ * `const CATEGORIES … = { … }` object, sliced from the leading `const`
+ * keyword to the matching closing brace (inclusive).
+ *
+ * We deliberately do a text-based extraction rather than importing
+ * CATEGORIES directly, for two reasons:
+ *
+ *   1. CreatePage.tsx imports a number of React components that pull in
+ *      Electron-only paths (e.g. the IPC types) — running it in vitest's
+ *      jsdom environment is brittle in a way the rest of the test
+ *      framework already accommodates, but pulling it in here for a
+ *      static check would force every CreatePage refactor to also pass
+ *      its full jsdom render harness.
+ *
+ *   2. The text-based check catches BOTH the registered id AND the case
+ *      where someone deletes the CATEGORIES entry but leaves the YAML
+ *      around (or vice versa).
+ *
+ * Finding the *matching* closing brace requires a real JS/TS lexer; a
+ * naive brace counter would mis-balance the moment a `{` or `}`
+ * appears inside a string literal, comment, or template literal
+ * interpolation. The shared `lexJsBraces` helper covers those cases.
+ *
+ * Anchoring on the `=` token rather than the first `{` after `const
+ * CATEGORIES` keeps the scan robust against future type-annotation
+ * refactors. The current declaration is
+ * `const CATEGORIES: Record<string, CategoryItem[]> = { … }` — no
+ * braces in the type — but if a future maintainer inlined the entry
+ * type (`Record<string, { id: string; … }[]>`), a `source.indexOf("{")`
+ * anchor would start counting from the type's `{` and slice the wrong
+ * range. Anchoring on the `=` puts us unambiguously at the value side.
+ */
+function extractCategoriesBlock(): string {
+  const source = readFileSync(
+    join(REPO_ROOT, "apps", "desktop", "renderer", "src", "pages", "CreatePage.tsx"),
+    "utf8",
+  );
+
+  const start = source.indexOf("const CATEGORIES");
+  if (start === -1) {
+    throw new Error("CATEGORIES constant not found in CreatePage.tsx");
+  }
+  // Skip past the `=` so any `{` characters in the type annotation are
+  // outside our scan window.
+  const eqIdx = source.indexOf("=", start);
+  if (eqIdx === -1) {
+    throw new Error("CATEGORIES declaration is missing the `=` assignment token");
+  }
+  const openIdx = source.indexOf("{", eqIdx);
+  if (openIdx === -1) {
+    throw new Error("CATEGORIES declaration is missing the opening `{`");
+  }
+
+  let end = -1;
+  lexJsBraces(source, openIdx, {
+    onClose: (pos, depth) => {
+      // depth === 1 means this `}` closes the outermost `{` of the
+      // CATEGORIES object literal.
+      if (depth === 1) {
+        end = pos + 1;
+        return true;
+      }
+    },
+  });
   if (end === -1) {
     throw new Error("CATEGORIES constant did not close cleanly");
   }
-  const block = source.slice(start, end);
-
-  return block;
+  return source.slice(start, end);
 }
 
 /**
@@ -413,98 +451,31 @@ function extractCategoryEntries(): CategoryEntry[] {
   const block = extractCategoriesBlock();
   const out: CategoryEntry[] = [];
 
-  // The CATEGORIES block begins with `const CATEGORIES … = {` so the
-  // outermost `{` opens at depth = 1, each category-array `[` does
-  // not change brace depth, and each entry-object `{` opens at
-  // depth = 2. We reuse the same lexer state machine from
-  // extractCategoriesBlock and additionally emit `{ … }` slices at
-  // depth = 2.
-  let depth = 0;
-  type LexState = "code" | "sl_comment" | "ml_comment" | "sq" | "dq" | "bt";
-  let state: LexState = "code";
-  const templateInterpStack: number[] = [];
-  const entryStarts: number[] = []; // stack of `{` positions for in-flight entry objects
-  for (let i = 0; i < block.length; i++) {
-    const ch = block[i];
-    const next = block[i + 1];
-    if (state === "code") {
-      if (ch === "/" && next === "/") {
-        state = "sl_comment";
-        i += 1;
-        continue;
+  // The CATEGORIES block begins with `{` (its outermost brace, opened
+  // at depth = 1), each category-array `[` does not change brace
+  // depth, and each entry-object `{` opens at depth = 2. We delegate
+  // to the shared lexer and react only at depth = 2.
+  const entryStarts: number[] = [];
+  lexJsBraces(block, 0, {
+    onOpen: (pos, depth) => {
+      if (depth === 2) entryStarts.push(pos);
+    },
+    onClose: (pos, depth) => {
+      if (depth !== 2 || entryStarts.length === 0) return;
+      const startPos = entryStarts.pop()!;
+      const slice = block.slice(startPos, pos + 1);
+      const idMatch = /\bid:\s*(["'])([A-Za-z0-9_-]+)\1/.exec(slice);
+      // `name` is a free-form string — allow C-style escapes inside
+      // double-quoted values and treat the closing quote as the one
+      // not preceded by `\`. The greedy-but-safe `(?:\\.|[^\\])*?`
+      // inner pattern handles `"They\"re here"` correctly.
+      const nameMatch = /\bname:\s*(["'])((?:\\.|[^\\])*?)\1/.exec(slice);
+      if (idMatch && nameMatch) {
+        const lineNumber = block.slice(0, startPos).split(/\r?\n/).length;
+        out.push({ id: idMatch[2], name: nameMatch[2], line: lineNumber });
       }
-      if (ch === "/" && next === "*") {
-        state = "ml_comment";
-        i += 1;
-        continue;
-      }
-      if (ch === "'") {
-        state = "sq";
-      } else if (ch === '"') {
-        state = "dq";
-      } else if (ch === "`") {
-        state = "bt";
-      } else if (ch === "{") {
-        depth += 1;
-        if (depth === 2) entryStarts.push(i);
-      } else if (ch === "}") {
-        if (templateInterpStack.length > 0) {
-          const interpDepth = templateInterpStack[templateInterpStack.length - 1];
-          if (depth === interpDepth) {
-            templateInterpStack.pop();
-            depth -= 1;
-            state = "bt";
-            continue;
-          }
-        }
-        if (depth === 2 && entryStarts.length > 0) {
-          const startPos = entryStarts.pop()!;
-          const slice = block.slice(startPos, i + 1);
-          const idMatch = /\bid:\s*(["'])([A-Za-z0-9_-]+)\1/.exec(slice);
-          // `name` is a free-form string — allow C-style escapes inside
-          // double-quoted values and treat the closing quote as the one
-          // not preceded by `\`. The greedy-but-safe `(?:\\.|[^\\])*?`
-          // inner pattern handles `"They\"re here"` correctly.
-          const nameMatch = /\bname:\s*(["'])((?:\\.|[^\\])*?)\1/.exec(slice);
-          if (idMatch && nameMatch) {
-            const lineNumber = block.slice(0, startPos).split(/\r?\n/).length;
-            out.push({ id: idMatch[2], name: nameMatch[2], line: lineNumber });
-          }
-        }
-        depth -= 1;
-      }
-    } else if (state === "sl_comment") {
-      if (ch === "\n") {
-        state = "code";
-      }
-    } else if (state === "ml_comment") {
-      if (ch === "*" && next === "/") {
-        state = "code";
-        i += 1;
-      }
-    } else if (state === "sq" || state === "dq") {
-      if (ch === "\\") {
-        i += 1;
-        continue;
-      }
-      if ((state === "sq" && ch === "'") || (state === "dq" && ch === '"')) {
-        state = "code";
-      }
-    } else {
-      if (ch === "\\") {
-        i += 1;
-        continue;
-      }
-      if (ch === "`") {
-        state = "code";
-      } else if (ch === "$" && next === "{") {
-        i += 1;
-        depth += 1;
-        templateInterpStack.push(depth);
-        state = "code";
-      }
-    }
-  }
+    },
+  });
   return out;
 }
 
