@@ -150,27 +150,40 @@ fn state() -> napi::Result<&'static AppState> {
 #[napi]
 pub fn bridge_add_local_folder(path: String) -> napi::Result<sources::SourceInfo> {
     let s = state()?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_source_added(&path);
-    }
     let mgr = s
         .source_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::add_local_folder(&mgr, &path).map_err(|e| napi::Error::from_reason(e.to_string()))
+    let info = sources::add_local_folder(&mgr, &path)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the add commits (sequential non-overlapping
+    // acquisition; pattern B in the file-level comment). A failed
+    // add (invalid path, permission denied, duplicate source,
+    // FS error) must not leave a phantom "SourceAdded" row.
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_source_added(&path);
+    }
+    Ok(info)
 }
 
 #[napi]
 pub fn bridge_add_local_file(path: String) -> napi::Result<sources::SourceInfo> {
     let s = state()?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_source_added(&path);
-    }
     let mgr = s
         .source_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::add_local_file(&mgr, &path).map_err(|e| napi::Error::from_reason(e.to_string()))
+    let info = sources::add_local_file(&mgr, &path)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the add commits (pattern B). Same rationale as
+    // `bridge_add_local_folder` above: phantom-row prevention on
+    // every audit-emitting source-add path.
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_source_added(&path);
+    }
+    Ok(info)
 }
 
 #[napi]
@@ -186,14 +199,21 @@ pub fn bridge_list_sources() -> napi::Result<Vec<sources::SourceInfo>> {
 #[napi]
 pub fn bridge_remove_source(source_id: String) -> napi::Result<()> {
     let s = state()?;
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_source_removed(&source_id);
-    }
     let mgr = s
         .source_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    sources::remove_source(&mgr, &source_id).map_err(|e| napi::Error::from_reason(e.to_string()))
+    sources::remove_source(&mgr, &source_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    // Audit AFTER the remove commits (pattern B). A failed remove
+    // (bad source_id, FK constraint, lock contention) must not
+    // leave a phantom "SourceRemoved" row claiming the source was
+    // removed when it still exists in the source table.
+    drop(mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_source_removed(&source_id);
+    }
+    Ok(())
 }
 
 #[napi]

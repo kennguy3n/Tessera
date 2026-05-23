@@ -39,6 +39,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import * as ts from "typescript";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ELECTRON_ROOT = path.resolve(HERE, "..");
@@ -105,76 +106,87 @@ describe("sandboxed preload contract: passwordPromptChannels.ts", () => {
  * assertions operate on CODE only, so new documentation comments
  * never produce a false regression.
  *
- * The approach is intentionally minimal: replace each comment with
- * an equal-length run of spaces (preserving newlines for line-
- * comments, preserving all newlines inside block comments). This
- * keeps every `source.indexOf(...)` offset valid for downstream
- * positional comparisons and error messages.
+ * # Implementation
  *
- * Quoted strings are preserved verbatim — if a quoted string ever
- * contained a `//` token (e.g. a URL in a literal), it would
- * legitimately be code. The implementation walks character-by-
- * character with a tiny state machine rather than using a single
- * regex because regex alternation can't distinguish `//` inside a
- * string from `//` starting a line comment in the general case.
+ * Driven by the TypeScript compiler's own scanner
+ * (`ts.createScanner`), which is the canonical tokeniser for the
+ * language and correctly handles every quoting / template-literal
+ * edge case that a hand-rolled state machine misses, including:
+ *
+ *   - **Nested template literals.** `` `a ${`b ${c} d`} e` `` — the
+ *     inner `${...}` substitution is a real expression in which
+ *     another template literal can appear. A hand-rolled
+ *     "copy chars until matching backtick" parser would misread
+ *     the first inner backtick as ending the outer template.
+ *   - **Tagged templates** (`html`raw`), where the tag name is
+ *     ordinary identifier code.
+ *   - **Regex literals** containing `/` and `*`, which a naive
+ *     parser could misread as starting a comment.
+ *   - **Hashbang** prefixes (`#!/usr/bin/env node`) at file start.
+ *   - **Escape sequences** like `\``, `\${`, `\u{1f600}`, etc.
+ *
+ * For every token returned by the scanner that is a comment
+ * (`SyntaxKind.SingleLineCommentTrivia` or `MultiLineCommentTrivia`),
+ * we replace that span in the output with an equal-length run of
+ * spaces, preserving every embedded newline so line/column offsets
+ * for downstream `indexOf` searches are unchanged. Non-comment
+ * tokens (identifiers, strings, templates, regexes, punctuation,
+ * whitespace) are copied through verbatim.
  */
 function stripJsComments(src: string): string {
-  const out: string[] = [];
-  let i = 0;
-  const n = src.length;
-  while (i < n) {
-    const c = src[i];
-    const c2 = i + 1 < n ? src[i + 1] : "";
-    if (c === '"' || c === "'" || c === "`") {
-      // String/template literal — copy until matching close,
-      // respecting backslash escapes (templates can contain
-      // newlines, which we preserve).
-      const quote = c;
-      out.push(c);
-      i += 1;
-      while (i < n) {
-        const k = src[i];
-        if (k === "\\" && i + 1 < n) {
-          out.push(src[i], src[i + 1]);
-          i += 2;
-          continue;
-        }
-        out.push(k);
-        i += 1;
-        if (k === quote) break;
-      }
-      continue;
+  // Parse the source with TypeScript's full parser (NOT the
+  // standalone scanner). The standalone scanner can lose sync
+  // when it encounters backticks INSIDE line comments — without
+  // parser-driven context, it doesn't know whether a `/` starts
+  // a regex or a divide, and a misclassified token can leak
+  // the scanner into a template-literal state that swallows
+  // hundreds of lines and exposes comment contents as
+  // identifiers. The full parser is grounded in the grammar and
+  // can't be tricked this way.
+  //
+  // After parsing, walk every node and enumerate its leading
+  // and trailing comment ranges via the official
+  // `ts.getLeadingCommentRanges` / `ts.getTrailingCommentRanges`
+  // API. These APIs are the canonical TypeScript way to map
+  // comments and correctly handle every edge case the language
+  // defines.
+  const sourceFile = ts.createSourceFile(
+    "main.ts",
+    src,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ false,
+    ts.ScriptKind.TS,
+  );
+  const seen = new Set<string>();
+  const ranges: Array<{ pos: number; end: number }> = [];
+  const collect = (pos: number, ranges_: ts.CommentRange[] | undefined): void => {
+    if (!ranges_) return;
+    for (const r of ranges_) {
+      const key = `${r.pos}:${r.end}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      ranges.push({ pos: r.pos, end: r.end });
     }
-    if (c === "/" && c2 === "/") {
-      // Line comment — consume up to (but not including) the
-      // newline, replacing each char with a space so column
-      // positions for downstream tokens stay aligned.
-      while (i < n && src[i] !== "\n") {
-        out.push(" ");
-        i += 1;
-      }
-      continue;
+  };
+  const visit = (node: ts.Node): void => {
+    collect(node.pos, ts.getLeadingCommentRanges(src, node.pos));
+    collect(node.end, ts.getTrailingCommentRanges(src, node.end));
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  // Also pick up file-level leading trivia attached to position 0.
+  collect(0, ts.getLeadingCommentRanges(src, 0));
+
+  const chars = src.split("");
+  for (const { pos, end } of ranges) {
+    for (let i = pos; i < end; i += 1) {
+      // Preserve newlines so block comments split across many
+      // lines don't collapse line numbers — `indexOf` offsets
+      // for downstream searches stay stable.
+      if (chars[i] !== "\n") chars[i] = " ";
     }
-    if (c === "/" && c2 === "*") {
-      // Block comment — consume up to and including `*/`,
-      // preserving every newline and replacing other chars with
-      // spaces.
-      out.push("  ");
-      i += 2;
-      while (i < n && !(src[i] === "*" && i + 1 < n && src[i + 1] === "/")) {
-        out.push(src[i] === "\n" ? "\n" : " ");
-        i += 1;
-      }
-      if (i < n) {
-        out.push("  ");
-        i += 2;
-      }
-      continue;
-    }
-    out.push(c);
-    i += 1;
   }
-  return out.join("");
+  return chars.join("");
 }
 
 describe("CSP session handler hoist: main.ts", () => {
