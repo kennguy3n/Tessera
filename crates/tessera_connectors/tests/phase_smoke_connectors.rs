@@ -25,50 +25,56 @@
 //! repo root invokes `cargo test -p tessera_connectors --test
 //! phase_smoke_connectors` for a focused, fast-feedback run.
 //!
-//! ## Roster source of truth (partial)
+//! ## Roster source of truth
 //!
 //! The list of shipping connectors lives in exactly one place — the
 //! `tessera_connectors::for_each_connector!` macro in `src/lib.rs` —
-//! and BOTH the in-crate unit tests (`src/traits.rs`) AND the
-//! identical-shape checks in this smoke suite expand the same macro.
-//! Specifically, `every_connector_implements_remote_connector` and
-//! `connector_provider_names_are_stable` below are macro-driven, so
-//! adding a 7th connector updates the macro and those two checks
-//! automatically cover it. Earlier rounds of this PR had each test
-//! maintain its own hand-typed list, which Devin Review correctly
-//! flagged as a duplication hazard (drift between the two copies
-//! would have gone unnoticed until CI ran both).
+//! and ALL three checks in this smoke suite expand from that macro,
+//! along with the in-crate unit tests in `src/traits.rs`:
 //!
-//! The async lifecycle-method check
-//! (`every_connector_exposes_authenticate_sync_revoke` below) is
-//! deliberately NOT macro-driven. The `_smoke_gdrive` ...
-//! `_smoke_figma` wrappers each thread provider-specific argument
-//! shapes through `authenticate` / `sync_changes` / `revoke`, and
-//! those shapes vary per connector (e.g. Jira silently records the
-//! Atlassian cloud-id; Notion's `sync_changes` takes a
-//! `known_file_ids` set; etc. — see `src/traits.rs` for why a
-//! uniform action trait was rejected). A macro that tried to expand
-//! a uniform body would have to fall back to `Default::default()` for
-//! every argument, which would defeat the point of having
-//! type-checked signature wrappers in the first place. So adding a
-//! 7th connector requires (a) extending `for_each_connector!`, (b)
-//! writing a matching `_smoke_<provider>` wrapper here, AND (c)
-//! adding its name to the `stringify!` list in
-//! `every_connector_exposes_authenticate_sync_revoke`. The doc on
-//! `for_each_connector!` (lib.rs) calls this out explicitly so
-//! future maintainers don't get tripped up.
+//!   * `every_connector_implements_remote_connector` — macro-driven
+//!     trait-impl assertion (the trait covers the read-only summary
+//!     surface only — see `src/traits.rs` for the rationale).
+//!   * `connector_provider_names_are_stable` — macro-driven
+//!     provider-name pinning.
+//!   * `every_connector_exposes_authenticate_sync_revoke` —
+//!     macro-driven lifecycle-method shape check. Each invocation of
+//!     `for_each_connector!` emits an anonymous `const _: () = {...}`
+//!     block whose body type-checks calls to `authenticate`,
+//!     `sync_changes`, and `revoke` on the connector type. The block
+//!     is never executed; cargo type-checks it as part of compiling
+//!     the test crate.
+//!
+//! Adding a 7th connector therefore requires a single edit: extend
+//! `for_each_connector!` in `src/lib.rs`. All three checks (and the
+//! in-crate trait-impl + provider-name + fresh-state checks in
+//! `src/traits.rs`) automatically grow to cover it. Forgetting to
+//! implement any of the lifecycle methods on the new connector is a
+//! compile error pointing at the new connector type.
+//!
+//! Earlier rounds of this PR had each test maintain its own
+//! hand-typed list, which Devin Review correctly flagged as a
+//! duplication hazard (drift between the two copies would have gone
+//! unnoticed until CI ran both). An intermediate round shipped
+//! macro-driven trait/provider-name checks but kept the lifecycle
+//! wrappers hand-written + listed via `stringify!`. The bot then
+//! correctly flagged that `stringify!` does not force compilation of
+//! the referenced functions, so a missing 7th-connector wrapper
+//! could slip through. The current round closes that gap by making
+//! the lifecycle check itself macro-driven.
 
 use std::collections::HashSet;
 
-use tessera_connectors::{
-    for_each_connector, AuthConfig, ConfluenceConnector, ConnectorResult, FigmaConnector,
-    GoogleDriveConnector, JiraConnector, NotionConnector, OneDriveConnector, RemoteConnector,
-    SyncResult,
-};
-// `StoredTokens` lives in the `types` submodule and is not currently
-// re-exported at the crate root. We import it via its module path so
-// this smoke test doesn't have to wait on a re-export landing.
+// The macro-expanded checks below path-qualify each connector type via
+// `$crate::...`, so individual connector types don't need to be in scope
+// here. We do still need `AuthConfig`, `ConnectorResult`, `SyncResult`,
+// `RemoteConnector`, and `StoredTokens` in scope because they appear
+// unqualified in the macro's expansion body. `StoredTokens` lives in the
+// `types` submodule and is not currently re-exported at the crate root.
 use tessera_connectors::types::StoredTokens;
+use tessera_connectors::{
+    for_each_connector, AuthConfig, ConnectorResult, RemoteConnector, SyncResult,
+};
 
 /// Compile-time assertion that the given type implements the
 /// `RemoteConnector` trait. Inlined into a doc-test-like pattern so
@@ -95,147 +101,83 @@ fn every_connector_implements_remote_connector() {
 }
 
 // ----------------------------------------------------------------------
-// Lifecycle-method smoke wrappers.
+// Lifecycle-method smoke check.
 //
-// Each `_smoke_*` async fn below takes a mutable connector reference
-// plus the OAuth-lifecycle args and threads them straight through to
-// the corresponding method. The wrappers exist purely so `cargo test`
-// has to type-check them — they are NEVER called at runtime, so no
-// OAuth, no network, no side effects.
+// The `RemoteConnector` trait deliberately covers only the read-only
+// summary surface (provider name, status, last sync time, file count
+// — see `src/traits.rs` for the rationale). The OAuth lifecycle
+// methods `authenticate` / `sync_changes` / `revoke` live as inherent
+// methods on each concrete connector because they have provider-shaped
+// arg sets (Jira records cloud-id internally, Notion takes a
+// `known_file_ids` set, etc.).
 //
-// If any connector method goes missing, gets renamed, or has its
-// signature changed, the matching wrapper fails to compile and the
-// smoke suite breaks with a useful "method not found" error pointing
-// at the offending connector.
+// That means the macro-driven trait-impl check above does NOT verify
+// the lifecycle surface — adding a 7th connector to
+// `for_each_connector!` while forgetting to define its lifecycle
+// methods would not fail to compile from the trait-impl test alone.
+//
+// To close that gap we generate a per-connector compile-time check
+// from the SAME `for_each_connector!` macro. Each invocation emits an
+// anonymous `const _: () = { ... }` block containing an async fn whose
+// body calls `authenticate` / `sync_changes` / `revoke` on the
+// connector type. The async fn is never called at runtime (no OAuth,
+// no network), but cargo still has to TYPE-CHECK it as part of
+// compiling the test crate — and type-checking the call sites pins
+// the method names AND their argument shapes for every connector
+// listed in the macro. Adding a 7th connector to the macro therefore
+// automatically extends the lifecycle check; forgetting to define
+// `authenticate` (etc.) on the new connector becomes a "method not
+// found" compile error pointing at the new connector type.
 // ----------------------------------------------------------------------
 
-#[allow(dead_code)]
-async fn _smoke_gdrive(
-    c: &mut GoogleDriveConnector,
-    cfg: &AuthConfig,
-    tok: Option<&str>,
-    known: &HashSet<String>,
-) -> (
-    ConnectorResult<StoredTokens>,
-    ConnectorResult<SyncResult>,
-    ConnectorResult<()>,
-) {
-    (
-        c.authenticate(cfg).await,
-        c.sync_changes(tok, known).await,
-        c.revoke().await,
-    )
+macro_rules! smoke_check_lifecycle {
+    ($t:ty, $n:literal) => {
+        // `const _: () = { ... }` is the canonical Rust idiom for a
+        // compile-time-only block: the body is type-checked, but the
+        // const is never read. Multiple `_`-named consts at module
+        // scope are legal, so the macro can expand this once per
+        // connector without naming collisions.
+        const _: () = {
+            #[allow(dead_code)]
+            async fn check_lifecycle(
+                c: &mut $t,
+                cfg: &AuthConfig,
+                tok: Option<&str>,
+                known: &HashSet<String>,
+            ) -> (
+                ConnectorResult<StoredTokens>,
+                ConnectorResult<SyncResult>,
+                ConnectorResult<()>,
+            ) {
+                (
+                    c.authenticate(cfg).await,
+                    c.sync_changes(tok, known).await,
+                    c.revoke().await,
+                )
+            }
+        };
+    };
 }
-
-#[allow(dead_code)]
-async fn _smoke_onedrive(
-    c: &mut OneDriveConnector,
-    cfg: &AuthConfig,
-    tok: Option<&str>,
-    known: &HashSet<String>,
-) -> (
-    ConnectorResult<StoredTokens>,
-    ConnectorResult<SyncResult>,
-    ConnectorResult<()>,
-) {
-    (
-        c.authenticate(cfg).await,
-        c.sync_changes(tok, known).await,
-        c.revoke().await,
-    )
-}
-
-#[allow(dead_code)]
-async fn _smoke_notion(
-    c: &mut NotionConnector,
-    cfg: &AuthConfig,
-    tok: Option<&str>,
-    known: &HashSet<String>,
-) -> (
-    ConnectorResult<StoredTokens>,
-    ConnectorResult<SyncResult>,
-    ConnectorResult<()>,
-) {
-    (
-        c.authenticate(cfg).await,
-        c.sync_changes(tok, known).await,
-        c.revoke().await,
-    )
-}
-
-#[allow(dead_code)]
-async fn _smoke_jira(
-    c: &mut JiraConnector,
-    cfg: &AuthConfig,
-    tok: Option<&str>,
-    known: &HashSet<String>,
-) -> (
-    ConnectorResult<StoredTokens>,
-    ConnectorResult<SyncResult>,
-    ConnectorResult<()>,
-) {
-    (
-        c.authenticate(cfg).await,
-        c.sync_changes(tok, known).await,
-        c.revoke().await,
-    )
-}
-
-#[allow(dead_code)]
-async fn _smoke_confluence(
-    c: &mut ConfluenceConnector,
-    cfg: &AuthConfig,
-    tok: Option<&str>,
-    known: &HashSet<String>,
-) -> (
-    ConnectorResult<StoredTokens>,
-    ConnectorResult<SyncResult>,
-    ConnectorResult<()>,
-) {
-    (
-        c.authenticate(cfg).await,
-        c.sync_changes(tok, known).await,
-        c.revoke().await,
-    )
-}
-
-#[allow(dead_code)]
-async fn _smoke_figma(
-    c: &mut FigmaConnector,
-    cfg: &AuthConfig,
-    tok: Option<&str>,
-    known: &HashSet<String>,
-) -> (
-    ConnectorResult<StoredTokens>,
-    ConnectorResult<SyncResult>,
-    ConnectorResult<()>,
-) {
-    (
-        c.authenticate(cfg).await,
-        c.sync_changes(tok, known).await,
-        c.revoke().await,
-    )
-}
+for_each_connector!(smoke_check_lifecycle);
 
 #[test]
 fn every_connector_exposes_authenticate_sync_revoke() {
-    // The actual verification happens at compile time — the six
-    // wrappers above each invoke `authenticate`, `sync_changes`,
-    // and `revoke`. If any of those methods go missing or change
-    // shape, this test fails to compile with a clear error pointing
-    // at the offending connector.
+    // The actual verification happens at compile time, in the
+    // anonymous `const _: () = { ... }` blocks emitted above by
+    // `for_each_connector!(smoke_check_lifecycle)`. If any of the
+    // three lifecycle methods (`authenticate` / `sync_changes` /
+    // `revoke`) goes missing on any connector type listed in the
+    // macro, the test crate fails to compile with a clear error
+    // pointing at the offending connector.
     //
-    // This `#[test]` body itself just exists so `cargo test --list`
-    // surfaces the suite as a named target, so reviewers can see
-    // explicitly that the smoke check ran.
-    let _ = stringify!(
-        _smoke_gdrive,
-        _smoke_onedrive,
-        _smoke_notion,
-        _smoke_jira,
-        _smoke_confluence,
-        _smoke_figma,
-    );
+    // This `#[test]` body itself exists only so `cargo test --list`
+    // surfaces the lifecycle check as a named target, so reviewers
+    // can see explicitly that the smoke check ran. It is intentionally
+    // a no-op — `let _ = ();` is more honest than `stringify!(...)`
+    // would be, since stringify! suggests a list-of-functions
+    // contract while the real contract is the macro-generated
+    // const-blocks above.
+    let _ = ();
 }
 
 /// Pin the stable provider-name identifiers used as registry keys.

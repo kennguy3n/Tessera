@@ -139,10 +139,22 @@ mod tests {
             };
         }
         crate::for_each_connector!(push);
-        // The macro is the source of truth for the count; we don't
-        // hardcode 6 here because adding a 7th connector should pass
-        // this test without an unrelated edit.
-        assert!(!connectors.is_empty());
+        // Floor — the macro is the source of truth for the upper end
+        // of the count, but we DO want to catch the failure mode where
+        // the macro gets accidentally emptied (or trimmed to one
+        // connector) during a refactor. Six connectors were the
+        // PROGRESS.md Phase 7/8 deliverable, so anything below that is
+        // a regression. A `>= 6` floor lets the macro grow to a 7th
+        // connector without an unrelated edit here, while still
+        // catching the "macro accidentally lost all but one connector"
+        // case Devin Review correctly flagged when this assertion was
+        // weakened to `!is_empty()`.
+        assert!(
+            connectors.len() >= 6,
+            "expected at least the 6 shipping connectors from PROGRESS.md \
+             Phase 7/8, found {}; check `for_each_connector!` in src/lib.rs",
+            connectors.len(),
+        );
         for c in &connectors {
             assert_eq!(c.status(), ConnectorStatus::Disconnected);
         }

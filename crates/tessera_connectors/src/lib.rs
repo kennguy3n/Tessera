@@ -26,40 +26,51 @@ pub use types::{AuthConfig, ConnectorStatus, RemoteFile, SyncResult};
 
 /// Expand `$inner` once per shipping connector with `(<Type>, <stable
 /// provider name>)` as arguments. This is the single source of truth
-/// for the connector roster *for the checks whose body is identical
-/// across connectors* — specifically:
+/// for the connector roster across the entire crate. Adding a 7th
+/// connector is a single edit here in this macro; every check that
+/// expands `for_each_connector!` automatically grows to cover it.
 ///
-///   * compile-time `assert_impl::<T: RemoteConnector>()` (every
-///     connector implements the summary trait),
-///   * provider-name pinning (`<T>::new().provider_name() == "..."`),
-///   * fresh-state invariants (`<T>::new()` is Disconnected, etc.).
+/// Current callers (all gated on a single update to this macro):
 ///
-/// Adding a 7th connector updates the macro and the three checks
-/// above automatically cover it.
+///   * `src/traits.rs::tests::every_connector_implements_remote_connector`
+///     — compile-time `assert_impl::<T: RemoteConnector>()` for the
+///     read-only summary trait.
+///   * `src/traits.rs::tests::provider_names_are_stable` — pins
+///     `<T>::new().provider_name() == $n` for each connector.
+///   * `src/traits.rs::tests::fresh_state_is_disconnected` — pins
+///     fresh-construction invariants (status, last_sync_time,
+///     file_count).
+///   * `tests/phase_smoke_connectors.rs::every_connector_implements_remote_connector`
+///     — external mirror of the trait-impl check.
+///   * `tests/phase_smoke_connectors.rs::connector_provider_names_are_stable`
+///     — external mirror of the provider-name pinning.
+///   * `tests/phase_smoke_connectors.rs::every_connector_exposes_authenticate_sync_revoke`
+///     — macro-driven lifecycle-method shape check. Each invocation
+///     emits an anonymous `const _: () = { async fn check_lifecycle(
+///     c: &mut $t, …) { c.authenticate(...).await; c.sync_changes(
+///     ...).await; c.revoke().await; } };` block. The block is
+///     never executed; cargo type-checks it as part of compiling the
+///     test crate, which pins both the method names AND their
+///     argument shapes for every connector listed here.
 ///
-/// **What this macro deliberately does NOT cover.** The async
-/// lifecycle-method smoke check
-/// (`every_connector_exposes_authenticate_sync_revoke`, in
-/// `tests/phase_smoke_connectors.rs`) is still implemented as six
-/// hand-written `_smoke_*` wrappers, one per connector. Those
-/// wrappers can't be macro-expanded because each connector's
-/// `authenticate` / `sync_changes` / `revoke` methods have
-/// provider-specific argument shapes — e.g. `JiraConnector::authenticate`
-/// silently records the user's Atlassian cloud-id while
-/// `GoogleDriveConnector::authenticate` does not, and
-/// `NotionConnector::sync_changes` takes a `known_file_ids` set that
-/// some other connectors don't — see `src/traits.rs` for the full
-/// rationale on why a uniform action trait was rejected. Adding a
-/// 7th connector therefore still requires (a) extending this macro
-/// AND (b) hand-writing a matching `_smoke_<provider>` wrapper in
-/// the smoke test (and appending its name to the `stringify!` list
-/// in `every_connector_exposes_authenticate_sync_revoke`).
+/// Forgetting to implement any of the read-only trait methods, the
+/// `new() / provider_name()` constructor pattern, or any of the
+/// three lifecycle methods on a newly-added connector becomes a
+/// compile error pointing at the new type.
+///
+/// Note that the `RemoteConnector` trait deliberately covers only
+/// the read-only summary surface; the lifecycle methods are inherent
+/// methods on each concrete connector because they have
+/// provider-shaped argument sets (Jira records cloud-id internally,
+/// Notion takes a `known_file_ids` set, etc. — see `src/traits.rs`
+/// for the rationale). That's why the lifecycle check has to be
+/// macro-driven rather than relying on the trait alone.
 ///
 /// `$inner` is the *name* of another `macro_rules!` macro that takes
 /// `($t:ty, $n:literal)`. We can't accept a closure here because
 /// some callers — notably the compile-time `assert_impl::<T>()`
-/// invocations — need access to the type as a TYPE token, not as a
-/// runtime value.
+/// invocations and the lifecycle async-fn — need access to the type
+/// as a TYPE token, not as a runtime value.
 ///
 /// # Example
 ///

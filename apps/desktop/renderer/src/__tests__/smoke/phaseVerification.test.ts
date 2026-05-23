@@ -519,10 +519,19 @@ interface CategoryEntry {
  * whose values are bare identifiers, numbers, arrays, nested objects,
  * or template literals return `null` (the entry simply has no recorded
  * value for that key). For our use case the picker entries' `id` and
- * `name` are always quoted strings, so the limited support is
- * sufficient. Decoding mirrors the YAML-side `extractTopLevelScalar`
- * convention: double-quoted strings use C-style `\` escapes;
- * single-quoted strings use only the `''` literal-quote escape.
+ * `name` are always quoted strings, so the limited support is sufficient.
+ *
+ * Escape decoding follows JavaScript / TypeScript semantics (NOT YAML):
+ * both single- and double-quoted strings honour `\` as the escape
+ * character. So `"O\"Reilly"` decodes to `O"Reilly` and `'O\'Reilly'`
+ * decodes to `O'Reilly`. Adjacent quotes (`'O''Reilly'`) are NOT an
+ * escape in JavaScript — they are two separate string literals back
+ * to back, which is a syntax error inside an object literal. An
+ * earlier round of this helper used the YAML `''` convention by
+ * accident; Devin Review flagged the mismatch and we corrected it
+ * here. The companion YAML scalar extractor (`extractTopLevelScalar`)
+ * legitimately uses the `''` convention because it parses YAML
+ * documents, not JS.
  */
 function extractObjectProperties(
   slice: string,
@@ -611,28 +620,35 @@ function extractObjectProperties(
           i -= 1;
           continue;
         }
-        // Read the string literal honouring single/double-quote escape
-        // conventions; same logic as extractTopLevelScalar above. We
-        // ALWAYS consume the string regardless of whether the key is
-        // wanted — even unwanted string values must be skipped past so
-        // that any `{` / `}` characters inside the value don't perturb
-        // the brace-depth counter that drives top-level detection.
+        // Read the string literal honouring JavaScript escape
+        // conventions. Both single- and double-quoted strings treat
+        // `\` as the escape character (e.g. `\'`, `\"`, `\n`, `\\`).
+        // We pass the escaped character through verbatim rather than
+        // doing full ECMA-262 §12.8.4 escape-sequence substitution
+        // because:
+        //   * the only escapes that meaningfully appear in CATEGORIES
+        //     are `\'` and `\"` (quote inside the same-quote string),
+        //     both of which pass-through gives the correct decoded
+        //     character;
+        //   * fuller escapes (`\n`, `\uXXXX`, etc.) on a picker entry
+        //     `name` field would be unusual and have no current call
+        //     site, so any decode-time loss is theoretical.
+        // We ALWAYS consume the string regardless of whether the key
+        // is wanted — even unwanted string values must be skipped past
+        // so that any `{` / `}` characters inside the value don't
+        // perturb the brace-depth counter that drives top-level
+        // detection.
         let j = i + 1;
         const decoded: string[] = [];
         let terminated = false;
         while (j < slice.length) {
           const c = slice[j];
-          if (c === "\\" && quote === '"') {
+          if (c === "\\") {
             if (j + 1 < slice.length) decoded.push(slice[j + 1]);
             j += 2;
             continue;
           }
           if (c === quote) {
-            if (quote === "'" && slice[j + 1] === "'") {
-              decoded.push("'");
-              j += 2;
-              continue;
-            }
             terminated = true;
             break;
           }
@@ -963,16 +979,25 @@ describe("phase verification — internal helper invariants", () => {
     expect(props.name).toBe("outer-real");
   });
 
-  test("extractObjectProperties handles single-quoted '' escapes correctly", () => {
-    // YAML 1.2 §7.3.2 — '' is a literal single quote. Tessera doesn't
-    // currently use this pattern for CATEGORIES names, but a future
-    // localisation that adds e.g. a French entry name `O''Reilly` must
-    // still decode to `O'Reilly`. The helper shares the same decode
-    // rules as the YAML scalar extractor above, so we lock that
-    // symmetry down here.
-    const slice = `{ id: "a", name: 'O''Reilly' }`;
+  test("extractObjectProperties handles single-quoted \\' escapes (JS semantics)", () => {
+    // JS string literal semantics — `\'` inside a single-quoted string
+    // is the escape for a literal `'`. Tessera doesn't currently use
+    // this pattern in CATEGORIES (today every name uses double quotes),
+    // but a future localisation that adds e.g. a French entry name
+    // would write it as either `"L'Étranger"` (double-quoted, no
+    // escape needed) or `'L\'Étranger'` (single-quoted with escape).
+    // The walker has to decode the second form correctly.
+    //
+    // Devin Review round-8 flagged that an earlier version of this
+    // helper used the YAML `''` convention by accident — adjacent
+    // single quotes are NOT a JS escape, they are two separate string
+    // literals, which is a syntax error inside an object literal.
+    // The companion YAML scalar extractor (`extractTopLevelScalar`)
+    // legitimately uses `''` because it parses YAML, but this helper
+    // parses JavaScript.
+    const slice = `{ id: "a", name: 'L\\'Étranger' }`;
     const props = extractObjectProperties(slice, ["id", "name"]);
-    expect(props.name).toBe("O'Reilly");
+    expect(props.name).toBe("L'Étranger");
   });
 
   test("extractObjectProperties handles double-quoted backslash escapes", () => {
