@@ -298,47 +298,65 @@ Add-Step `
     -Command 'cargo clippy --all-targets --all-features -- -D warnings' `
     -Action  { cargo clippy --all-targets --all-features -- -D warnings }
 
-# 3) Rust workspace build — same `cargo build --all-targets` step CI
-#    runs in the `rust` job at `.github/workflows/ci.yml:110-111`
-#    (with a separate `cargo build --release --all-targets` step at
-#    `ci.yml:129-131` covering the debug-vs-release profile divergence),
-#    BEFORE the test step. `cargo test --all` (step 4 below) does an
-#    implicit build of the *test* targets, but it doesn't exercise
-#    every non-test target the way `--all-targets` does: bench
-#    harnesses, examples, and the main binary path can compile-fail
-#    in ways that pure `cargo test` never observes. Running the
-#    explicit build here keeps preflight in lock-step with CI's step
-#    sequence and matches the bash sibling (`scripts/preflight.sh`).
+# 3) Rust workspace build (debug profile) — same `cargo build
+#    --all-targets` step CI runs in the `rust` job at
+#    `.github/workflows/ci.yml` (the "Build" step). `cargo test --all`
+#    (step 5 below) does an implicit build of the *test* targets, but
+#    it doesn't exercise every non-test target the way `--all-targets`
+#    does: bench harnesses, examples, and the main binary path can
+#    compile-fail in ways that pure `cargo test` never observes.
+#    Running the explicit build here keeps preflight in lock-step with
+#    CI's step sequence and matches the bash sibling
+#    (`scripts/preflight.sh`).
 Add-Step `
     -Label   'Rust build (cargo build --all-targets)' `
     -Command 'cargo build --all-targets' `
     -Action  { cargo build --all-targets }
 
-# 4) Rust workspace tests.
+# 4) Rust workspace build (release profile) — mirrors CI's
+#    `Build (release mode)` step which runs
+#    `cargo build --release --all-targets`. CI runs this because the
+#    release workflow ships release-mode binaries, and
+#    `#[cfg(debug_assertions)]`-gated code can compile or behave
+#    differently between debug (step 3 above) and release. Without
+#    this step, a `cfg(debug_assertions)` regression introduced by a
+#    maintainer running preflight locally would pass step 3, fall
+#    through every desktop step below, and only blow up at `v*` tag
+#    push time — too late.
+#
+#    Preflight runs ALL gates CI runs (the script's intro is explicit
+#    about this), so we run the release build here too rather than
+#    relying on CI to catch it. Matches the bash sibling.
+Add-Step `
+    -Label   'Rust build (release: cargo build --release --all-targets)' `
+    -Command 'cargo build --release --all-targets' `
+    -Action  { cargo build --release --all-targets }
+
+# 5) Rust workspace tests.
 Add-Step `
     -Label   'Rust tests (cargo test --all)' `
     -Command 'cargo test --all' `
     -Action  { cargo test --all }
 
-# 5) Desktop renderer / Electron lint.
+# 6) Desktop renderer / Electron lint.
 Add-Step `
     -Label   'Desktop lint (npm run lint --workspace=apps/desktop)' `
     -Command 'npm run lint --workspace=apps/desktop' `
     -Action  { npm run lint --workspace=apps/desktop }
 
-# 6) Desktop TypeScript type-check.
+# 7) Desktop TypeScript type-check.
 Add-Step `
     -Label   'Desktop type-check (npm run type-check --workspace=apps/desktop)' `
     -Command 'npm run type-check --workspace=apps/desktop' `
     -Action  { npm run type-check --workspace=apps/desktop }
 
-# 7) Desktop unit / component tests (Vitest).
+# 8) Desktop unit / component tests (Vitest).
 Add-Step `
     -Label   'Desktop tests (npm run test --workspace=apps/desktop)' `
     -Command 'npm run test --workspace=apps/desktop' `
     -Action  { npm run test --workspace=apps/desktop }
 
-# 8) Workaround for npm/cli#4828: Rollup ships per-platform native
+# 9) Workaround for npm/cli#4828: Rollup ships per-platform native
 #    binaries as optionalDependencies (e.g. `@rollup/rollup-win32-x64-msvc`),
 #    and `npm ci` does NOT always install the binary matching the
 #    current host when the lockfile was generated on a different OS.
@@ -359,11 +377,22 @@ Add-Step `
 #    a 64-bit host. To get the host arch reliably we check
 #    `PROCESSOR_ARCHITEW6432` (set by WoW64 when running 32-bit on
 #    64-bit) before falling back to `PROCESSOR_ARCHITECTURE`.
+# Arch mapping mirrors `.github/workflows/ci.yml`'s `case` on
+# `${{ runner.arch }}`: ARM64 → win32-arm64-msvc, everything else →
+# win32-x64-msvc. The `default` branch covers exotic / 32-bit / unknown
+# arch strings (e.g. `x86` on legacy WoW64 PowerShell hosts that lack
+# `PROCESSOR_ARCHITEW6432`) by installing the x64 binary, which is the
+# fallback CI uses too — it's better than skipping the install and
+# letting `vite build` fail several minutes later with a confusing
+# "Cannot find module" error. On a genuinely 32-bit host the x64 binary
+# won't load either, but the error message will then be clearer
+# ("module is not a valid Win32 application" vs. "module not found")
+# and the maintainer will know to switch to a 64-bit Windows runner —
+# which is what they'd need to ship Electron-x64 builds anyway.
 $hostArchRaw = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
 switch ($hostArchRaw) {
-    'AMD64' { $rollupHostBinary = '@rollup/rollup-win32-x64-msvc' }
     'ARM64' { $rollupHostBinary = '@rollup/rollup-win32-arm64-msvc' }
-    default { $rollupHostBinary = '' }
+    default { $rollupHostBinary = '@rollup/rollup-win32-x64-msvc' }
 }
 if ($rollupHostBinary) {
     # IMPORTANT: do NOT close over `$rollupHostBinary` from the Action
@@ -390,18 +419,19 @@ if ($rollupHostBinary) {
         -Action  $rollupInstallBlock
 }
 
-# 9) Build the bundle electron-builder will consume so the
+# 10) Build the bundle electron-builder will consume so the
 #    dry-pack runs against current artefacts, not a stale one.
 #
 #    We invoke the *root-level* `npm run build` script (which today
 #    forwards to `npm run build --workspace=apps/desktop` via the
 #    `build` entry in the top-level package.json) rather than calling
 #    the workspace directly. This keeps the PowerShell preflight in
-#    lock-step with .github/workflows/release.yml (release.yml:163
-#    also runs the root `npm run build`) and with the bash sibling
-#    scripts/preflight.sh. The earlier `lint` / `type-check` / `test`
-#    steps remain workspace-scoped because .github/workflows/ci.yml
-#    runs those workspace-scoped (lines 194 / 197 / 200); only the
+#    lock-step with .github/workflows/release.yml (the `Build all`
+#    step also runs the root `npm run build`) and with the bash
+#    sibling scripts/preflight.sh. The earlier `lint` / `type-check` /
+#    `test` steps remain workspace-scoped because
+#    .github/workflows/ci.yml runs them workspace-scoped in the
+#    typescript job's lint/type-check/test steps; only the
 #    desktop build was asymmetric, and the fix lives here. If the
 #    root `build` script later grows additional steps (e.g.
 #    `npm run build:native && npm run build --workspace=apps/desktop`
@@ -414,7 +444,7 @@ Add-Step `
     -Command 'npm run build' `
     -Action  { npm run build }
 
-# 10) electron-builder dry-pack. `--dir` skips installer creation
+# 11) electron-builder dry-pack. `--dir` skips installer creation
 #    but still assembles the full app bundle, catching packaging
 #    regressions before a release tag is pushed.
 $skip = $SkipPackage -or ($env:TESSERA_PREFLIGHT_SKIP_PACKAGE -eq '1')

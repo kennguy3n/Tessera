@@ -31,11 +31,18 @@ concurrency:
 # Workflow-level env so RUSTFLAGS applies to EVERY cargo / build-time
 # Rust invocation, not just the explicit `cargo build --release
 # --all-targets` step below. This matches:
-#   * `.github/workflows/ci.yml:18` which exports RUSTFLAGS at the
-#     workflow level so all of `cargo fmt`, `cargo clippy`, `cargo build`,
-#     and `cargo test --all` get `-D warnings` consistently;
-#   * `scripts/preflight.sh:51-59` and `scripts/preflight.ps1:72-76`
-#     which `export RUSTFLAGS` globally for the same reason.
+#   * `.github/workflows/ci.yml` which exports RUSTFLAGS at the
+#     workflow-level `env:` block so all of `cargo fmt`,
+#     `cargo clippy`, `cargo build`, and `cargo test --all` get
+#     `-D warnings` consistently;
+#   * `scripts/preflight.sh` and `scripts/preflight.ps1` which both
+#     `export RUSTFLAGS` globally near the top of the script for
+#     the same reason.
+#
+# Line numbers for those siblings are intentionally omitted: cross-
+# file line references drift on every edit and bot reviews flag
+# them as stale within a few iterations — cross-reference by step /
+# block name instead.
 #
 # Today the only Rust-touching step in this workflow is the explicit
 # `Build Rust workspace` step below — but `apps/desktop/package.json`'s
@@ -158,8 +165,9 @@ jobs:
       # before electron-builder packages a bundle that ships a broken
       # native dependency tree.
       #
-      # IMPORTANT: this uses `--release` while CI (.github/workflows/
-      # ci.yml:111) builds in debug mode. This is intentional — the
+      # IMPORTANT: this uses `--release` while CI's `Build` step in
+      # `.github/workflows/ci.yml` builds in debug mode. This is
+      # intentional — the
       # release workflow ships release-mode binaries, so we want to
       # exercise the exact build profile that ends up in the DMG/EXE/
       # AppImage. The two profiles can diverge in one specific case:

@@ -250,40 +250,64 @@ register_step "Rust format check (cargo fmt --all -- --check)" \
 register_step "Rust clippy (cargo clippy --all-targets --all-features -- -D warnings)" \
   "cargo clippy --all-targets --all-features -- -D warnings"
 
-# 3) Rust workspace build — same `cargo build --all-targets` step CI
-#    runs in the `rust` job at `.github/workflows/ci.yml:110-111`
-#    (with a separate `cargo build --release --all-targets` step at
-#    `ci.yml:129-131` covering the debug-vs-release profile divergence),
-#    BEFORE the test step. `cargo test --all` (step 4 below) does an
-#    implicit build of the *test* targets, but it doesn't exercise
-#    every non-test target the way `--all-targets` does: bench
-#    harnesses, examples, and the main binary path can compile-fail
-#    in ways that pure `cargo test` never observes (e.g. a build
-#    script that compiles a fixture only under `cfg(test)`). Running
-#    the explicit build here keeps preflight in lock-step with CI's
-#    step sequence and ensures a clippy- or build-script-level
+# 3) Rust workspace build (debug profile) — same `cargo build
+#    --all-targets` command CI runs in the `rust` job's "Build"
+#    step (`.github/workflows/ci.yml`; line numbers omitted because
+#    they drift on every workflow edit). `cargo test --all`
+#    (step 5 below) does an implicit build of the *test* targets, but
+#    it doesn't exercise every non-test target the way `--all-targets`
+#    does: bench harnesses, examples, and the main binary path can
+#    compile-fail in ways that pure `cargo test` never observes (e.g.
+#    a build script that compiles a fixture only under `cfg(test)`).
+#    Running the explicit build here keeps preflight in lock-step with
+#    CI's step sequence and ensures a clippy- or build-script-level
 #    regression surfaces under the same flag set CI uses.
 register_step "Rust build (cargo build --all-targets)" \
   "cargo build --all-targets"
 
-# 4) Rust workspace tests — mirrors `npm run test:rust` and the CI
+# 4) Rust workspace build (release profile) — mirrors CI's
+#    `Build (release mode)` step in the `rust` job, which runs
+#    `cargo build --release --all-targets` on the ubuntu-22.04
+#    matrix leg.
+#    CI runs this step because the release workflow ships release-
+#    mode binaries, and `#[cfg(debug_assertions)]`-gated code can
+#    compile or behave differently between debug (step 3 above) and
+#    release. Without this step, a `cfg(debug_assertions)` regression
+#    introduced by a maintainer running the preflight locally would
+#    pass step 3, fall through every desktop step below, and only
+#    blow up at `v*` tag push time — too late.
+#
+#    Because preflight runs ALL gates CI runs (the script's intro
+#    docstring is explicit about this), we run the release build
+#    here too rather than relying on CI to catch it. The marginal
+#    cost (release-profile codegen on top of a warm cargo cache) is
+#    bounded by cargo's incremental compilation. The maintainer's
+#    `target/release` cache is reused across runs so the warm-cache
+#    cost is small; the cold-cache cost is bounded by the time
+#    `cargo build --release --all-targets` takes once on the host,
+#    which is the same cost CI pays per PR — a maintainer who runs
+#    preflight before a release should be willing to pay it.
+register_step "Rust build (release: cargo build --release --all-targets)" \
+  "cargo build --release --all-targets"
+
+# 5) Rust workspace tests — mirrors `npm run test:rust` and the CI
 #    Rust matrix. We run with `--all` so every crate's tests execute.
 register_step "Rust tests (cargo test --all)" \
   "cargo test --all"
 
-# 5) Desktop renderer / Electron lint — same command CI runs.
+# 6) Desktop renderer / Electron lint — same command CI runs.
 register_step "Desktop lint (npm run lint --workspace=apps/desktop)" \
   "npm run lint --workspace=apps/desktop"
 
-# 6) Desktop TypeScript type-check.
+# 7) Desktop TypeScript type-check.
 register_step "Desktop type-check (npm run type-check --workspace=apps/desktop)" \
   "npm run type-check --workspace=apps/desktop"
 
-# 7) Desktop unit / component tests (Vitest).
+# 8) Desktop unit / component tests (Vitest).
 register_step "Desktop tests (npm run test --workspace=apps/desktop)" \
   "npm run test --workspace=apps/desktop"
 
-# 8) Workaround for npm/cli#4828: Rollup ships per-platform native
+# 9) Workaround for npm/cli#4828: Rollup ships per-platform native
 #    binaries as optionalDependencies (e.g. `@rollup/rollup-darwin-arm64`),
 #    and `npm ci` does NOT always install the binary matching the
 #    current host when the lockfile was generated on a different OS.
@@ -307,11 +331,11 @@ register_step "Desktop tests (npm run test --workspace=apps/desktop)" \
 #        Linux-specific lockfile bugs that CI is supposed to catch.
 #      * RELEASING.md documents this as a macOS/Windows-only step;
 #        keeping the script in lock-step with the docs avoids
-#        confusing maintainers ("docs say 9 steps on Linux but I see
-#        10"). Linux: 9 steps (fmt/clippy/build/test → desktop
-#        lint/type-check/test → desktop build → electron dry-pack).
-#        macOS/Windows: 10 steps (Rollup workaround slots in before
-#        the desktop build).
+#        confusing maintainers ("docs say 10 steps on Linux but I
+#        see 11"). Linux: 10 steps (fmt/clippy/build/release-build/
+#        test → desktop lint/type-check/test → desktop build →
+#        electron dry-pack). macOS/Windows: 11 steps (Rollup
+#        workaround slots in before the desktop build).
 #
 #    The package name follows the convention
 #    `@rollup/rollup-<plat>-<arch>[-<libc>]`. We pick it from
@@ -347,11 +371,14 @@ fi
 #    (which currently forwards to `npm run build --workspace=apps/desktop`
 #    via the `build` entry in the top-level package.json) rather than
 #    targeting the workspace directly. This keeps preflight in lock-step
-#    with `.github/workflows/release.yml` (which runs the same root
-#    `npm run build` at release.yml:163). The earlier `lint` /
-#    `type-check` / `test` steps stay workspace-scoped because
-#    `.github/workflows/ci.yml` runs them workspace-scoped (lines
-#    194 / 197 / 200); only the desktop build is asymmetric, and the
+#    with `.github/workflows/release.yml` (whose `Build all` step runs
+#    the same root `npm run build`). The earlier `lint` / `type-check`
+#    / `test` steps stay workspace-scoped because
+#    `.github/workflows/ci.yml` runs them workspace-scoped in the
+#    typescript job (the lint / type-check / test steps; line numbers
+#    omitted intentionally — they drift on every workflow edit and
+#    cross-file line references go stale fast); only the desktop
+#    build is asymmetric, and the
 #    fix lives here. If the root `build` script later grows additional
 #    steps (e.g. is changed to
 #    `npm run build:native && npm run build --workspace=apps/desktop`

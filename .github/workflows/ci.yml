@@ -210,10 +210,14 @@ jobs:
       # silently propagate to anyone running `scripts/preflight.sh` or
       # a release tag push. The root `npm run build` script forwards
       # to `npm run build --workspace=apps/desktop` and is the same
-      # command run by `.github/workflows/release.yml:111` and by both
-      # preflight scripts, so this CI step now exercises the identical
-      # command path. Kept after `Test` so a failing build never masks
-      # a test signal (tests run first; build runs once tests pass).
+      # command run by the `Build all` step in
+      # `.github/workflows/release.yml` and by both preflight scripts
+      # (line numbers omitted intentionally — they drift every time
+      # those files are edited and the comment goes stale; cross-
+      # reference by step name instead). This CI step now exercises
+      # the identical command path. Kept after `Test` so a failing
+      # build never masks a test signal (tests run first; build runs
+      # once tests pass).
       - name: Build
         run: npm run build
 
