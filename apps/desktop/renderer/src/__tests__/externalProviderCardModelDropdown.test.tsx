@@ -345,4 +345,53 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute("title", "Provide an API URL first");
   });
+
+  it("surfaces a deep failure from Test connection via setStatus instead of silently un-busying (round 14 ANALYSIS_001)", async () => {
+    // Devin Review round 14 ANALYSIS_001 flagged that `onTest` was the
+    // only handler in this file using `try/finally` instead of the
+    // sibling pattern `try/catch/finally`. If the IPC channel itself
+    // failed (bridge serialization error, contextIsolation violation,
+    // the IPC handler throwing before its own try/catch wraps the
+    // result), the rejected promise would propagate unhandled while
+    // the finally block ran `setBusy(false)` — leaving the button
+    // re-enabled but with no error message displayed to the user.
+    // The fix adds a `catch` block matching the sibling pattern.
+    //
+    // This test pins the new behavior by making the IPC mock reject
+    // (the realistic "deep failure" scenario) and asserting the
+    // surfaced error message reaches the DOM rather than the test
+    // throwing the unhandled rejection. With the pre-fix code, the
+    // rejection would escape the component and React Testing
+    // Library's `act` wrapper would surface it as an uncaught error.
+    const user = userEvent.setup();
+    const tessera = window.tessera;
+    tessera.externalProvider.get = vi.fn().mockResolvedValue({
+      enabled: true,
+      providerType: "openai_compatible",
+      apiUrl: "https://api.openai.com",
+      apiKeyRef: "tessera.external_provider.primary",
+      modelName: "gpt-4o-mini",
+      maxTokens: 1024,
+      temperature: 0.7,
+      timeoutSecs: 60,
+      maxRetries: 2,
+      hasApiKey: true,
+    });
+    tessera.externalProvider.test = vi
+      .fn()
+      .mockRejectedValue(new Error("bridge serialization broke"));
+    render(<ExternalProviderCard />);
+    await waitFor(() => {
+      expect(screen.getByText("Test connection")).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Test connection"));
+    // Wait for the rejection to be caught and the error to surface.
+    await waitFor(() => {
+      expect(
+        screen.getByText("bridge serialization broke"),
+      ).toBeInTheDocument();
+    });
+    // The button must also re-enable via the finally block.
+    expect(screen.getByText("Test connection")).not.toBeDisabled();
+  });
 });

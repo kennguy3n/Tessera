@@ -339,6 +339,23 @@ export default function ExternalProviderCard() {
       } else {
         setStatus({ kind: "error", message: result.error });
       }
+    } catch (e) {
+      // Match the defense-in-depth pattern of every sibling handler
+      // (`onSave`, `onListModels`, `onResetTokenUsage`) so a deep
+      // failure — bridge serialization error, contextIsolation
+      // violation, the IPC handler itself throwing before its own
+      // try/catch can wrap it — surfaces visibly instead of leaving
+      // the button silently un-busied with no feedback. The IPC
+      // handler at `electron/ipc/settings.ts` already wraps its body
+      // in a try/catch and returns a typed result, so this `catch`
+      // is the renderer-side belt to the handler-side suspenders.
+      // Devin Review round 14 ANALYSIS_001 flagged the pre-existing
+      // inconsistency: every other handler in this file uses
+      // try/catch/finally, only `onTest` used try/finally.
+      setStatus({
+        kind: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setBusy(false);
     }
