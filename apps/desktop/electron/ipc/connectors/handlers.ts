@@ -29,7 +29,7 @@
  *     else).
  */
 
-import { ipcMain } from "electron";
+import { idempotentHandle } from "../register";
 
 import type { IpcContext } from "../context";
 import { assertProvider, assertString } from "../validate";
@@ -415,38 +415,23 @@ async function runDisconnect(
   }
 }
 
-/** IPC channels owned by this module — kept in one list so the
- * idempotency guard below cannot drift out of sync with the
- * `ipcMain.handle()` calls that follow. If a new channel is added,
- * append its name here too. */
-const CONNECTOR_IPC_CHANNELS = [
-  "connectors:authenticate",
-  "connectors:disconnect",
-  "connectors:status",
-  "connectors:getRedirectUri",
-  "connectors:getAllRedirectUris",
-  "connectors:sync",
-] as const;
-
 export function registerConnectorHandlers(ctx: IpcContext): void {
-  // Remove any previously-registered handlers before re-registering.
-  // `ipcMain.handle()` throws "Attempted to register a second handler
-  // for '<channel>'" if the channel already has one, so this guard is
-  // what lets `registerIpcHandlers()` be safely re-invoked from a
-  // test harness, a hot-reload path, or future code that re-runs
-  // `main.ts` bootstrap. Mirrors the `registerAutoUpdaterIpc` pattern
-  // in `autoUpdater.ts`.
-  for (const channel of CONNECTOR_IPC_CHANNELS) {
-    ipcMain.removeHandler(channel);
-  }
-
-  ipcMain.handle(
+  // Every `idempotentHandle(...)` below does its own
+  // `ipcMain.removeHandler` first, so re-importing this module (test
+  // harness or future hot-reload) no longer needs a separate
+  // per-channel cleanup loop.
+  idempotentHandle(
     "connectors:authenticate",
+    // Electron IPC delivers every argument as `unknown` at runtime — the
+    // `assertProvider` / `assertString` calls below are what produce a
+    // narrowed `string`. Typing the handler parameters as `unknown`
+    // matches that reality and keeps this module consistent with every
+    // other refactored handler in the WS6 split.
     async (
       _event,
-      providerRaw: string,
-      clientIdRaw: string,
-      clientSecretRaw: string,
+      providerRaw: unknown,
+      clientIdRaw: unknown,
+      clientSecretRaw: unknown,
     ): Promise<ConnectorStatusInfo> => {
       const provider = assertProvider(providerRaw, "provider");
       const clientId = assertString(clientIdRaw, "clientId", { maxLen: 512 });
@@ -500,9 +485,9 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "connectors:disconnect",
-    async (_event, providerRaw: string): Promise<ConnectorStatusInfo> => {
+    async (_event, providerRaw: unknown): Promise<ConnectorStatusInfo> => {
       const provider = assertProvider(providerRaw, "provider");
       let stored: ReturnType<typeof ctx.tokenVault.getTokens> = null;
       try {
@@ -535,9 +520,9 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "connectors:status",
-    async (_event, providerRaw: string): Promise<ConnectorStatusInfo> => {
+    async (_event, providerRaw: unknown): Promise<ConnectorStatusInfo> => {
       const provider = assertProvider(providerRaw, "provider");
       const hasTokens = ctx.tokenVault.hasTokens(provider);
       return {
@@ -548,9 +533,9 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "connectors:getRedirectUri",
-    async (_event, providerRaw: string): Promise<string> => {
+    async (_event, providerRaw: unknown): Promise<string> => {
       // Single source of truth for the loopback redirect URI: the
       // OAuth config in `providerOAuth.ts`. The Settings UI fetches
       // this via IPC so the URI it tells the user to register in the
@@ -566,16 +551,16 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "connectors:getAllRedirectUris",
     async (): Promise<Record<string, string>> => {
       return getRedirectUriMap();
     },
   );
 
-  ipcMain.handle(
+  idempotentHandle(
     "connectors:sync",
-    async (_event, providerRaw: string): Promise<ConnectorSyncResult> => {
+    async (_event, providerRaw: unknown): Promise<ConnectorSyncResult> => {
       const provider = assertProvider(providerRaw, "provider");
       return runConnectorSync(ctx, provider);
     },

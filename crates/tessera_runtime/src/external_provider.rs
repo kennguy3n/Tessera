@@ -187,9 +187,42 @@ mod http_impl {
     use serde_json::json;
     use std::time::Duration;
 
+    /// Build a reqwest client with a full-request timeout for
+    /// non-streaming use. Appropriate for `generate()` where the
+    /// entire response body arrives in one shot — capping total
+    /// wall-clock time is what we want.
     fn build_client(timeout: Duration) -> reqwest::Result<reqwest::Client> {
         reqwest::Client::builder()
             .timeout(timeout)
+            .user_agent("tessera/0.1 (external-provider)")
+            .build()
+    }
+
+    /// Build a reqwest client for the streaming `stream()` path.
+    ///
+    /// Critically, this uses `connect_timeout` (cap on the time spent
+    /// establishing the TCP/TLS handshake) rather than `timeout`
+    /// (cap on the *entire* request including the SSE body). The
+    /// streaming response delivers tokens incrementally over the
+    /// generation lifetime — for any non-trivial prompt this routinely
+    /// exceeds the default `timeout_secs` (60s). If we used `.timeout`
+    /// here, the timer would fire mid-stream and `bytes_stream().next()`
+    /// would yield a transport error, silently truncating the
+    /// generation and losing every subsequently-emitted token.
+    ///
+    /// Connection-establishment failures are still bounded by the
+    /// same `timeout_secs` value, so the user still gets a fast
+    /// failure if the provider endpoint is unreachable; only the
+    /// streaming-body phase is uncapped. Wall-clock control over the
+    /// in-progress stream is delegated to the caller's
+    /// `AbortController` / `tokio::select!` cancellation surface,
+    /// mirroring how the TypeScript adapter (`externalProviderStream.ts`)
+    /// has always behaved — it uses no fetch timeout and relies on
+    /// the caller's `AbortSignal`. The two adapters now agree on the
+    /// timeout policy.
+    fn build_streaming_client(connect_timeout: Duration) -> reqwest::Result<reqwest::Client> {
+        reqwest::Client::builder()
+            .connect_timeout(connect_timeout)
             .user_agent("tessera/0.1 (external-provider)")
             .build()
     }
@@ -396,7 +429,16 @@ mod http_impl {
 
         inputs.config.validate()?;
 
-        let client = build_client(Duration::from_secs(inputs.config.timeout_secs))
+        // Critical: `build_streaming_client` caps `connect_timeout`
+        // (TCP/TLS handshake duration) but does NOT cap the overall
+        // request — long streams must be allowed to deliver tokens
+        // for the full generation lifetime. Using `build_client`
+        // here would arm reqwest's full-request `.timeout()` and
+        // kill any stream that runs past `timeout_secs` (default
+        // 60s), losing every subsequently-emitted token. See
+        // `build_streaming_client` docstring for the full rationale
+        // and the parity with the TypeScript streaming adapter.
+        let client = build_streaming_client(Duration::from_secs(inputs.config.timeout_secs))
             .map_err(|e| format!("http client init failed: {e}"))?;
 
         let mut body = match inputs.config.provider_type {
@@ -989,15 +1031,17 @@ mod http_tests {
             api_key,
             request: &req,
         };
-        let chunks: std::sync::Arc<std::sync::Mutex<Vec<GenerateChunk>>> =
-            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let sink = std::sync::Arc::clone(&chunks);
-        stream(inputs, move |c| {
-            sink.lock().unwrap().push(c);
-        })
-        .await?;
-        let result = std::mem::take(&mut *chunks.lock().unwrap());
-        Ok(result)
+        // `stream` runs the emit closure synchronously inline on the
+        // single tokio task driving this test, so a plain `&mut Vec`
+        // capture in an `FnMut` closure is enough — no Arc/Mutex
+        // synchronization is required. Keeping this helper minimal
+        // makes the test surface easier to reason about and avoids
+        // implying (via the previous Arc<Mutex<...>> shape) that the
+        // streaming adapter fans out the emit callback across
+        // threads, which it does not.
+        let mut chunks: Vec<GenerateChunk> = Vec::new();
+        stream(inputs, |c| chunks.push(c)).await?;
+        Ok(chunks)
     }
 
     /// Mount an SSE response. wiremock's `set_body_raw` ships the

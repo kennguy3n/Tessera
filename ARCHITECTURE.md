@@ -364,7 +364,7 @@ The full registry lives in `sidecars/models.json`. `available_models_for_platfor
 |---|---|
 | Local-first storage | All data stored on-device by default |
 | Explicit source access | User authorizes each source connection |
-| Encrypted storage | SQLCipher with per-scope encryption keys |
+| Encrypted storage | SQLCipher (via rusqlite `bundled-sqlcipher-vendored-openssl`). 256-bit raw key generated on first launch (`crypto.randomBytes(32)`), wrapped via Electron `safeStorage` (Keychain on macOS, DPAPI on Windows, libsecret on Linux), persisted at `<userData>/db.key`, applied with `PRAGMA key = "x'<hex>'"` at bridge init. Existing plaintext databases are transparently re-encrypted in place via `sqlcipher_export` on first launch with a key. See `apps/desktop/electron/dbKey.ts` and `crates/tessera_core/src/db.rs` for the full chain. |
 | Safe renderer | No direct file, token, or model access from renderer |
 | Secure IPC | Typed, validated messages between renderer and main process |
 | Token vault | OAuth tokens stored in OS keychain, never exposed to renderer |

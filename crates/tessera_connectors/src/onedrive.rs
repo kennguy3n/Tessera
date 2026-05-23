@@ -515,14 +515,12 @@ impl OneDriveConnector {
         result.new_change_token = delta_link;
         result.has_more = false;
         self.last_sync = Some(Utc::now());
-        // Net file delta — same accounting model as gdrive.
-        self.file_count = if result.added.len() >= result.removed.len() {
-            self.file_count
-                .saturating_add((result.added.len() - result.removed.len()) as u64)
-        } else {
-            self.file_count
-                .saturating_sub((result.removed.len() - result.added.len()) as u64)
-        };
+        // NET file-count via the shared `SyncResult::apply_to_file_count`
+        // helper. Microsoft Graph's `/delta` endpoint reliably surfaces
+        // both adds and removes, so this is the connector where the NET
+        // semantics actually decrement in practice (file was deleted in
+        // OneDrive → sync surfaces the removal → count drops).
+        self.file_count = result.apply_to_file_count(self.file_count);
         self.status = ConnectorStatus::Connected;
 
         Ok(result)
@@ -555,6 +553,21 @@ impl OneDriveConnector {
 impl Default for OneDriveConnector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl crate::traits::RemoteConnector for OneDriveConnector {
+    fn provider_name(&self) -> &'static str {
+        OneDriveConnector::provider_name(self)
+    }
+    fn status(&self) -> ConnectorStatus {
+        OneDriveConnector::status(self)
+    }
+    fn last_sync_time(&self) -> Option<DateTime<Utc>> {
+        OneDriveConnector::last_sync_time(self)
+    }
+    fn file_count(&self) -> u64 {
+        OneDriveConnector::file_count(self)
     }
 }
 
