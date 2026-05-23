@@ -1086,6 +1086,16 @@ export async function streamExternalProvider(
   const res = openedResponse;
   const reader = res.body?.getReader();
   if (!reader) {
+    // Detach the user-cancel forwarder before throwing — we never
+    // reach the body-reading try/finally that normally invokes
+    // `cleanupBodyForwarder()`, so without this the listener leaks
+    // on the user's outer signal for the full lifetime of the
+    // controller (often the entire renderer session, since the
+    // controller is reused across generations in `ipc/model.ts`).
+    // The trigger condition (HTTP 200 OK with no body) is rare in
+    // practice but the `res.body?.getReader()` guard explicitly
+    // exists for it, so the cleanup must mirror the guard.
+    cleanupBodyForwarder?.();
     throw new Error("External provider response had no body to stream");
   }
 

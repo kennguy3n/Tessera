@@ -959,6 +959,64 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     vi.useRealTimers();
   });
 
+  it("detaches user-cancel forwarder when response body is missing (Devin Review round 9 BUG_001)", async () => {
+    // Devin Review round 9 surfaced a listener-leak on the rare
+    // "200 OK with no body" path: `openExternalProviderStream`
+    // transfers listener ownership to the caller via
+    // `cleanupBodyForwarder`, but the body-reading try/finally
+    // (which normally invokes that cleanup) is only entered AFTER
+    // `res.body?.getReader()` returns a non-null reader. When the
+    // upstream returns a 200 with no body, the function throws
+    // before the try/finally, leaking the forwarder on the user's
+    // AbortSignal.
+    //
+    // Pin the fix by intercepting add/removeEventListener on the
+    // user's signal: count net `abort`-listener installations and
+    // assert the implementation's forwarder was detached before
+    // the throw. Without the round-9 fix this count is +1 (leak);
+    // with the fix it is 0.
+    const controller = new AbortController();
+    let netAbortListeners = 0;
+    const origAdd = controller.signal.addEventListener.bind(controller.signal);
+    const origRemove = controller.signal.removeEventListener.bind(controller.signal);
+    controller.signal.addEventListener = (
+      type: string,
+      listener: EventListenerOrEventListenerObject | null,
+      options?: AddEventListenerOptions | boolean,
+    ) => {
+      if (type === "abort") netAbortListeners += 1;
+      return origAdd(type, listener, options);
+    };
+    controller.signal.removeEventListener = (
+      type: string,
+      listener: EventListenerOrEventListenerObject | null,
+      options?: EventListenerOptions | boolean,
+    ) => {
+      if (type === "abort") netAbortListeners -= 1;
+      return origRemove(type, listener, options);
+    };
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    await expect(
+      streamExternalProvider(
+        {
+          provider: mkProvider(),
+          apiKey: "sk",
+          prompt: "hi",
+          signal: controller.signal,
+        },
+        () => {},
+      ),
+    ).rejects.toThrow(/no body to stream/);
+    // The implementation must have detached the forwarder before
+    // throwing. Net listener delta should be 0 \u2014 every
+    // addEventListener("abort", ...) on the user signal must be
+    // matched by a removeEventListener("abort", ...).
+    expect(netAbortListeners).toBe(0);
+    fetchSpy.mockRestore();
+  });
+
   it("user-cancel mid-stream aborts the body reader (Devin Review round 8 BUG_001)", async () => {
     // Devin Review round 8 surfaced a regression: after the round 7
     // per-attempt-timeout refactor split fetch onto a per-attempt
