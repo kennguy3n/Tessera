@@ -116,6 +116,102 @@ fn every_bundled_template_parses_and_validates() {
     }
 }
 
+/// Every template id referenced by the renderer's `CATEGORIES` constant
+/// in `apps/desktop/renderer/src/pages/CreatePage.tsx` MUST resolve to
+/// a real YAML file under `templates/`. Otherwise a typo (e.g.
+/// `crm-base-v1` vs `crm-v1`) would only surface at runtime when the
+/// user clicks the card and the bridge returns `Ok(None)`, falling
+/// back to a stub artifact with no usable template.
+///
+/// The reverse is not a requirement: localized variants
+/// (`prd-v1-es`, `prd-v1-ja`, ...) exist on disk without separate UI
+/// cards because the CreatePage locale filter resolves them at the
+/// base id via the bridge.
+///
+/// History: this test was added in WS3 R12 after Devin Review flagged
+/// (`ANALYSIS_0003`) that the TS-side `CATEGORIES` ids had no
+/// compile-time or test-time cross-check with the on-disk registry.
+/// The test reads CreatePage.tsx as plain text and extracts every
+/// `id: "..."` literal inside the `CATEGORIES` block; if the renderer
+/// is later refactored away from a literal-id constant, update the
+/// parsing logic here to match.
+#[test]
+fn create_page_categories_only_reference_real_template_ids() {
+    let create_page_path = workspace_templates_root()
+        .parent()
+        .expect("templates root has a parent")
+        .join("apps/desktop/renderer/src/pages/CreatePage.tsx");
+    if !create_page_path.is_file() {
+        // CreatePage.tsx is part of the desktop renderer; absence
+        // here means the test is running in a stripped-down checkout
+        // (e.g. a Rust-only crate publish). Don't fail in that
+        // configuration — the desktop CI tier catches missing files.
+        return;
+    }
+
+    let raw = std::fs::read_to_string(&create_page_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {e}", create_page_path.display()));
+
+    // Find the `const CATEGORIES` block and parse every `id: "..."` literal
+    // inside it. The block ends at the next top-level `const ` declaration
+    // — CreatePage.tsx places `CATEGORIES` near the top of the file with
+    // other top-level constants, so this scope is well-defined.
+    let block_start = raw
+        .find("const CATEGORIES")
+        .expect("CreatePage.tsx is missing the `const CATEGORIES` declaration");
+    let after_start = &raw[block_start..];
+    // The next top-level `const ` after CATEGORIES defines its end.
+    // Look for `\nconst ` (newline-anchored) so we don't trip on
+    // `const` inside function bodies.
+    let block_end_rel = after_start[1..]
+        .find("\nconst ")
+        .map_or(after_start.len(), |i| i + 1);
+    let block = &after_start[..block_end_rel];
+
+    // Extract every `id: "<value>"` literal. The CreatePage convention
+    // uses double-quoted strings; if that ever changes, broaden the
+    // pattern. Use a tiny ad-hoc scanner instead of pulling in a regex
+    // crate as a dev-dep — the input format is fully under our control.
+    let mut referenced_ids: HashSet<String> = HashSet::new();
+    for line in block.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("id: \"") {
+            if let Some(end) = rest.find('"') {
+                referenced_ids.insert(rest[..end].to_string());
+            }
+        }
+    }
+    assert!(
+        !referenced_ids.is_empty(),
+        "Failed to extract any `id: \"...\"` literals from the CreatePage \
+         CATEGORIES block — the scraping heuristic is probably stale. \
+         Update `create_page_categories_only_reference_real_template_ids` \
+         to match the current CreatePage.tsx structure."
+    );
+
+    // Build the set of real on-disk ids from the parsed YAMLs.
+    let mut on_disk_ids: HashSet<String> = HashSet::new();
+    for path in discover_all_templates() {
+        let tmpl = parse_template_file(&path)
+            .unwrap_or_else(|e| panic!("Failed to parse {}: {e}", display_path(&path)));
+        on_disk_ids.insert(tmpl.id);
+    }
+
+    let missing: Vec<&String> = referenced_ids
+        .iter()
+        .filter(|id| !on_disk_ids.contains(*id))
+        .collect();
+
+    assert!(
+        missing.is_empty(),
+        "CreatePage.tsx CATEGORIES references {} template id(s) that do \
+         not exist on disk: {:?}\n\nEither fix the typo in CreatePage.tsx \
+         or add the missing YAML(s) under templates/<category>/.",
+        missing.len(),
+        missing
+    );
+}
+
 /// The published `schemas/template.schema.json` is the contract that
 /// external template authors validate against. The Rust deserializer
 /// silently ignores unknown YAML fields, so a YAML that drifts away

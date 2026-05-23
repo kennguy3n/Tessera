@@ -64,9 +64,9 @@
     },
     "locale": {
       "type": "string",
-      "pattern": "^[a-z]{2,3}(-[A-Z][a-zA-Z]+)?(-[A-Z]{2})?$",
+      "pattern": "^[a-z]{2,3}(-[A-Z][a-zA-Z]+)?(-([A-Z]{2}|[0-9]{3}))?$",
       "default": "en",
-      "description": "BCP-47 language tag for the template's section titles and prompts. Defaults to 'en' when omitted. Localized template variants live under `templates/<category>/locales/<locale>/` and share the same base id with a locale suffix (e.g. `prd-v1-es`, `prd-v1-ja`)."
+      "description": "BCP-47 language tag for the template's section titles and prompts. Defaults to 'en' when omitted. Localized template variants live under `templates/<category>/locales/<locale>/` and share the same base id with a locale suffix (e.g. `prd-v1-es`, `prd-v1-ja`). The pattern accepts 2-3 letter language codes, optional 4-letter ISO 15924 script subtags (e.g. `zh-Hans`), and optional region subtags that are either ISO 3166-1 alpha-2 (e.g. `pt-BR`) or UN M.49 numeric (e.g. `es-419`)."
     },
     "industry": {
       "type": "array",
