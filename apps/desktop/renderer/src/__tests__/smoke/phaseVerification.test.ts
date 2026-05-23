@@ -197,9 +197,12 @@ function extractTopLevelScalar(body: string, key: string): string | null {
 }
 
 /**
- * Parse `CreatePage.tsx` and extract the set of template ids referenced
- * by the CATEGORIES constant. We deliberately do a text-based extraction
- * rather than importing CATEGORIES directly, for two reasons:
+ * Read `CreatePage.tsx` from disk and return the literal source of the
+ * `const CATEGORIES … = { … }` object, sliced from the leading `const`
+ * keyword to the matching closing brace (inclusive).
+ *
+ * We deliberately do a text-based extraction rather than importing
+ * CATEGORIES directly, for two reasons:
  *
  *   1. CreatePage.tsx imports a number of React components that pull in
  *      Electron-only paths (e.g. the IPC types) — running it in vitest's
@@ -212,11 +215,14 @@ function extractTopLevelScalar(body: string, key: string): string | null {
  *      where someone deletes the CATEGORIES entry but leaves the YAML
  *      around (or vice versa).
  *
- * The regex matches `id: "..."` and `id: '...'` inside the CATEGORIES
- * literal. False positives are ruled out by anchoring on the leading
- * `{` of each object literal entry below.
+ * The hard work is finding the *matching* closing brace — a naive
+ * brace counter would mis-balance the moment a `{` or `}` appears
+ * inside a string literal, comment, or template literal interpolation.
+ * The state machine below covers those cases; the
+ * `extractCategoryTemplateIds` and `extractCategoryEntries` helpers
+ * then run their own regex passes over the returned block.
  */
-function extractCategoryTemplateIds(): Set<string> {
+function extractCategoriesBlock(): string {
   const source = readFileSync(
     join(REPO_ROOT, "apps", "desktop", "renderer", "src", "pages", "CreatePage.tsx"),
     "utf8",
@@ -278,10 +284,21 @@ function extractCategoryTemplateIds(): Set<string> {
         // A `}` here either closes a `${...}` interpolation (returning
         // us to the surrounding template literal) or closes a real
         // brace pair in code.
+        //
+        // For the interpolation case we must decrement `depth` *before*
+        // `continue`-ing back into template-literal mode: the matching
+        // `${` opener incremented `depth` and pushed it onto
+        // `templateInterpStack` so that other `{` / `}` pairs inside
+        // the interpolation could balance against the same counter
+        // (handling things like `${ x ? { a:1 } : { b:2 } }`). Once we
+        // see the closing `}` we have to undo that opener's bump,
+        // otherwise every interpolation permanently inflates `depth`
+        // by one and the lexer never finds the CATEGORIES-closing `}`.
         if (templateInterpStack.length > 0) {
           const interpDepth = templateInterpStack[templateInterpStack.length - 1];
           if (depth === interpDepth) {
             templateInterpStack.pop();
+            depth -= 1;
             state = "bt";
             continue;
           }
@@ -337,21 +354,158 @@ function extractCategoryTemplateIds(): Set<string> {
   }
   const block = source.slice(start, end);
 
+  return block;
+}
+
+/**
+ * Parse the CATEGORIES block once and return the de-duplicated set of
+ * template ids referenced. The id pattern is intentionally permissive
+ * (`[A-Za-z0-9_-]+`): any string-shaped id is captured so that the
+ * downstream cross-check ("every CATEGORIES id maps to a real bundled
+ * template") raises a real, loud test failure when a contributor
+ * sneaks in an id that violates the bundled-template `[a-z0-9][a-z0-9-]*`
+ * convention. A stricter extraction regex here would *silently* drop
+ * the non-conforming id and let the cross-check give a false pass.
+ *
+ * The leading `["']` is captured into group 1 and the trailing `\1`
+ * backreference enforces that the closing quote matches the opening
+ * one — a hand-edit like `id: "foo'` (open double, close single)
+ * won't false-positive.
+ */
+function extractCategoryTemplateIds(): Set<string> {
+  const block = extractCategoriesBlock();
   const ids = new Set<string>();
-  // The leading `["']` is captured into group 1 and the trailing
-  // `\1` backreference enforces that the closing quote matches the
-  // opening one — a future maintainer who hand-edits CATEGORIES into
-  // `id: "foo'` won't get a false positive. The id pattern itself
-  // is constrained to the same `[a-z0-9][a-z0-9-]*` shape that the
-  // bundled-template loader enforces, so accidental matches against
-  // longer string literals elsewhere in CreatePage.tsx (e.g. badge
-  // names like "workflow") are ruled out structurally.
-  const re = /\bid:\s*(["'])([a-z0-9][a-z0-9-]*)\1/g;
+  const re = /\bid:\s*(["'])([A-Za-z0-9_-]+)\1/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(block)) !== null) {
     ids.add(m[2]);
   }
   return ids;
+}
+
+/**
+ * Parse the CATEGORIES block as a list of `(id, name)` tuples, one per
+ * entry object literal. Used by the "no accidental copy-paste" check
+ * below to surface intra-category duplication that the `Set<string>`
+ * existence test would silently swallow.
+ *
+ * The same template id may legitimately appear multiple times in
+ * CATEGORIES (e.g. `report-v1` shows up four times in the Analyze tab:
+ * three workflow re-listings with distinct `name` fields plus the
+ * regular tile). What is NOT legitimate is the same `(id, name)`
+ * tuple appearing twice — that's always a copy-paste bug, since each
+ * picker entry must carry a distinct human-facing label.
+ *
+ * Entry boundaries are found by tokenising the block with the same
+ * lexer that finds the outer CATEGORIES close, then walking the
+ * token stream looking for `{ … }` runs at depth = 2 (the object
+ * literal for an individual picker entry, one level below the array
+ * for its category).
+ */
+interface CategoryEntry {
+  id: string;
+  name: string;
+  /** 1-indexed line number within the CATEGORIES block (for diagnostics). */
+  line: number;
+}
+
+function extractCategoryEntries(): CategoryEntry[] {
+  const block = extractCategoriesBlock();
+  const out: CategoryEntry[] = [];
+
+  // The CATEGORIES block begins with `const CATEGORIES … = {` so the
+  // outermost `{` opens at depth = 1, each category-array `[` does
+  // not change brace depth, and each entry-object `{` opens at
+  // depth = 2. We reuse the same lexer state machine from
+  // extractCategoriesBlock and additionally emit `{ … }` slices at
+  // depth = 2.
+  let depth = 0;
+  type LexState = "code" | "sl_comment" | "ml_comment" | "sq" | "dq" | "bt";
+  let state: LexState = "code";
+  const templateInterpStack: number[] = [];
+  const entryStarts: number[] = []; // stack of `{` positions for in-flight entry objects
+  for (let i = 0; i < block.length; i++) {
+    const ch = block[i];
+    const next = block[i + 1];
+    if (state === "code") {
+      if (ch === "/" && next === "/") {
+        state = "sl_comment";
+        i += 1;
+        continue;
+      }
+      if (ch === "/" && next === "*") {
+        state = "ml_comment";
+        i += 1;
+        continue;
+      }
+      if (ch === "'") {
+        state = "sq";
+      } else if (ch === '"') {
+        state = "dq";
+      } else if (ch === "`") {
+        state = "bt";
+      } else if (ch === "{") {
+        depth += 1;
+        if (depth === 2) entryStarts.push(i);
+      } else if (ch === "}") {
+        if (templateInterpStack.length > 0) {
+          const interpDepth = templateInterpStack[templateInterpStack.length - 1];
+          if (depth === interpDepth) {
+            templateInterpStack.pop();
+            depth -= 1;
+            state = "bt";
+            continue;
+          }
+        }
+        if (depth === 2 && entryStarts.length > 0) {
+          const startPos = entryStarts.pop()!;
+          const slice = block.slice(startPos, i + 1);
+          const idMatch = /\bid:\s*(["'])([A-Za-z0-9_-]+)\1/.exec(slice);
+          // `name` is a free-form string — allow C-style escapes inside
+          // double-quoted values and treat the closing quote as the one
+          // not preceded by `\`. The greedy-but-safe `(?:\\.|[^\\])*?`
+          // inner pattern handles `"They\"re here"` correctly.
+          const nameMatch = /\bname:\s*(["'])((?:\\.|[^\\])*?)\1/.exec(slice);
+          if (idMatch && nameMatch) {
+            const lineNumber = block.slice(0, startPos).split(/\r?\n/).length;
+            out.push({ id: idMatch[2], name: nameMatch[2], line: lineNumber });
+          }
+        }
+        depth -= 1;
+      }
+    } else if (state === "sl_comment") {
+      if (ch === "\n") {
+        state = "code";
+      }
+    } else if (state === "ml_comment") {
+      if (ch === "*" && next === "/") {
+        state = "code";
+        i += 1;
+      }
+    } else if (state === "sq" || state === "dq") {
+      if (ch === "\\") {
+        i += 1;
+        continue;
+      }
+      if ((state === "sq" && ch === "'") || (state === "dq" && ch === '"')) {
+        state = "code";
+      }
+    } else {
+      if (ch === "\\") {
+        i += 1;
+        continue;
+      }
+      if (ch === "`") {
+        state = "code";
+      } else if (ch === "$" && next === "{") {
+        i += 1;
+        depth += 1;
+        templateInterpStack.push(depth);
+        state = "code";
+      }
+    }
+  }
+  return out;
 }
 
 describe("phase verification — rendering services", () => {
@@ -454,6 +608,42 @@ describe("phase verification — bundled template registry", () => {
     expect(
       missing,
       `CreatePage.tsx CATEGORIES references template ids with no matching YAML: ${missing.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  test("CATEGORIES entries have unique (id, name) tuples", () => {
+    // A given template id is allowed to appear in CATEGORIES multiple
+    // times — e.g. `report-v1` is intentionally re-listed in the
+    // Analyze tab as three workflow shortcuts plus the regular tile,
+    // each with a distinct `name` describing the user-facing affordance.
+    // What is NOT allowed is the same (id, name) tuple repeating: that
+    // would always be a copy-paste accident, since two picker entries
+    // with identical labels would be indistinguishable to the user.
+    //
+    // The Set<string>-based "every id maps to bundled" test above
+    // silently de-duplicates such pairs, so we run a dedicated check
+    // here that surfaces them.
+    const entries = extractCategoryEntries();
+    expect(
+      entries.length,
+      "expected extractCategoryEntries to find at least one CATEGORIES entry — has the CreatePage.tsx layout changed?",
+    ).toBeGreaterThan(0);
+    const seen = new Map<string, number>();
+    const duplicates: string[] = [];
+    for (const entry of entries) {
+      const key = `${entry.id}|${entry.name}`;
+      const previousLine = seen.get(key);
+      if (previousLine !== undefined) {
+        duplicates.push(
+          `(id="${entry.id}", name="${entry.name}") at block lines ${previousLine} and ${entry.line}`,
+        );
+        continue;
+      }
+      seen.set(key, entry.line);
+    }
+    expect(
+      duplicates,
+      `CreatePage.tsx CATEGORIES contains duplicate (id, name) tuples — almost certainly copy-paste errors:\n  ${duplicates.join("\n  ")}`,
     ).toEqual([]);
   });
 });
