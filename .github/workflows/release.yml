@@ -28,6 +28,28 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Workflow-level env so RUSTFLAGS applies to EVERY cargo / build-time
+# Rust invocation, not just the explicit `cargo build --release
+# --all-targets` step below. This matches:
+#   * `.github/workflows/ci.yml:18` which exports RUSTFLAGS at the
+#     workflow level so all of `cargo fmt`, `cargo clippy`, `cargo build`,
+#     and `cargo test --all` get `-D warnings` consistently;
+#   * `scripts/preflight.sh:51-59` and `scripts/preflight.ps1:72-76`
+#     which `export RUSTFLAGS` globally for the same reason.
+#
+# Today the only Rust-touching step in this workflow is the explicit
+# `Build Rust workspace` step below — but `apps/desktop/package.json`'s
+# `build:native` script is a placeholder for a future napi-rs invocation
+# that WILL run during `npm run build`. When that happens, scoping
+# RUSTFLAGS to only the `cargo build` step would create a confusing
+# asymmetry: preflight would fail on a warning that the release workflow
+# would silently pass. Hoisting to workflow-level avoids that trap and
+# keeps the four gates (CI, release, bash preflight, pwsh preflight) in
+# lock-step on Rust warning posture.
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
 jobs:
   build:
     name: Build (${{ matrix.os }})
@@ -134,17 +156,31 @@ jobs:
       # CI-validated tip. Building the Rust workspace here catches the
       # "tag pushed against an unvalidated SHA" failure mode early,
       # before electron-builder packages a bundle that ships a broken
-      # native dependency tree. This mirrors `.github/workflows/ci.yml`
-      # which builds with `cargo build --all-targets`; we keep the
-      # exact flag set so a clippy- or build-script-level regression
-      # surfaces here the same way it would surface in CI.
+      # native dependency tree.
+      #
+      # IMPORTANT: this uses `--release` while CI (.github/workflows/
+      # ci.yml:111) builds in debug mode. This is intentional — the
+      # release workflow ships release-mode binaries, so we want to
+      # exercise the exact build profile that ends up in the DMG/EXE/
+      # AppImage. The two profiles can diverge in one specific case:
+      # code gated on `#[cfg(debug_assertions)]` (or its negation) will
+      # behave differently between the two modes. Today the workspace
+      # has no such gates, so the property "CI green implies release
+      # green" holds. The CI rust job below ALSO runs a
+      # `cargo build --release --all-targets` step on the ubuntu-22.04
+      # leg (the required gate) so a debug_assertions-conditional
+      # regression introduced in a future PR would be caught at PR
+      # time rather than tag-push time. If a contributor later
+      # introduces a `cfg(debug_assertions)` gate, please keep that CI
+      # release-mode build green — it's the only gate that prevents
+      # "PR passes CI / tag push fails release.yml" surprises.
+      #
+      # RUSTFLAGS=-D warnings is supplied via the workflow-level `env:`
+      # block above (so it also reaches any future `build:native` /
+      # napi-rs invocation that runs during `npm run build`); we don't
+      # repeat it here.
       - name: Build Rust workspace
         run: cargo build --release --all-targets
-        env:
-          # Match CI's `-D warnings` posture so a release-day rebuild
-          # of an out-of-date Cargo.lock can't silently introduce a
-          # warning that CI would have rejected.
-          RUSTFLAGS: "-D warnings"
 
       - name: Build all
         # The repo's `package.json` `build` script forwards to

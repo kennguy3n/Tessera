@@ -110,6 +110,26 @@ jobs:
       - name: Build
         run: cargo build --all-targets
 
+      # Catches the release-mode profile divergence: `.github/workflows/
+      # release.yml` builds with `cargo build --release --all-targets`,
+      # and `#[cfg(debug_assertions)]`-gated code can compile or behave
+      # differently between debug and release. Without this step, a PR
+      # adding `cfg(debug_assertions)` code that fails to compile in
+      # release mode would pass CI and only blow up when the maintainer
+      # pushes a `v*` tag — far too late.
+      #
+      # We run only on ubuntu-22.04 (the required gate) to avoid
+      # tripling the cargo cache warmup cost on the macos-13 / windows-
+      # 2022 matrix legs; Rust release-mode compilation is portable
+      # enough that an ubuntu-only check catches the divergence in
+      # practice. If a contributor introduces a release-mode-only
+      # *target* (e.g. a darwin-only proc-macro) the release workflow
+      # itself still runs the full per-platform release build, so the
+      # gap is bounded.
+      - name: Build (release mode)
+        if: matrix.os == 'ubuntu-22.04'
+        run: cargo build --release --all-targets
+
       - name: Test
         run: cargo test --all
 

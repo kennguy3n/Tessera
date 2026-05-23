@@ -299,7 +299,9 @@ Add-Step `
     -Action  { cargo clippy --all-targets --all-features -- -D warnings }
 
 # 3) Rust workspace build — same `cargo build --all-targets` step CI
-#    runs in the `rust` job at `.github/workflows/ci.yml:110-111`,
+#    runs in the `rust` job at `.github/workflows/ci.yml:110-111`
+#    (with a separate `cargo build --release --all-targets` step at
+#    `ci.yml:129-131` covering the debug-vs-release profile divergence),
 #    BEFORE the test step. `cargo test --all` (step 4 below) does an
 #    implicit build of the *test* targets, but it doesn't exercise
 #    every non-test target the way `--all-targets` does: bench
@@ -399,7 +401,7 @@ if ($rollupHostBinary) {
 #    also runs the root `npm run build`) and with the bash sibling
 #    scripts/preflight.sh. The earlier `lint` / `type-check` / `test`
 #    steps remain workspace-scoped because .github/workflows/ci.yml
-#    runs those workspace-scoped (lines 174 / 177 / 180); only the
+#    runs those workspace-scoped (lines 194 / 197 / 200); only the
 #    desktop build was asymmetric, and the fix lives here. If the
 #    root `build` script later grows additional steps (e.g.
 #    `npm run build:native && npm run build --workspace=apps/desktop`
