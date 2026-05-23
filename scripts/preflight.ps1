@@ -100,6 +100,24 @@ function Write-Failure {
 $Steps = New-Object System.Collections.Generic.List[hashtable]
 
 function Add-Step {
+    # The Action scriptblock is expected to invoke at most ONE native
+    # command (cargo / npm / npx). Invoke-AllSteps reads
+    # $LASTEXITCODE after the block to decide pass/fail — which means
+    # only the *last* native command in a multi-command Action would
+    # contribute to that decision, exactly mirroring bash's behaviour
+    # without `-e`. The bash side of this preflight runs each step
+    # under `bash -e -o pipefail -c` so `cmd1; cmd2` fails on cmd1;
+    # there is no equivalent one-line PowerShell knob, so the rule
+    # is enforced socially: if you genuinely need to chain native
+    # commands inside a single step, write the Action as
+    #
+    #   { cmd1 args; if ($LASTEXITCODE -ne 0) { return }
+    #     cmd2 args }
+    #
+    # so the second command is gated on the first's success. The
+    # final $LASTEXITCODE the runner checks will then either be the
+    # first command's non-zero exit (failure) or the second's zero
+    # exit (success).
     param(
         [string]$Label,
         [string]$Command,

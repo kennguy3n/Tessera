@@ -64,9 +64,19 @@ jobs:
         run: npm ci
 
       - name: Build all
-        # The repo's `package.json` already defines a top-level
-        # `build` script that compiles the Rust bridge, the
-        # renderer, and the Electron main process.
+        # The repo's `package.json` `build` script forwards to
+        # `npm run build --workspace=apps/desktop`, which runs
+        #   tsc -p tsconfig.node.json  (compiles vite.config.ts etc.)
+        #   vite build                  (bundles the React renderer)
+        #   tsc -p tsconfig.electron.json (compiles main + preload)
+        # i.e. it's purely TypeScript / Vite — the Rust crates are
+        # built separately by `cargo build` (run via `cargo test --all`
+        # during the Test job in CI) and the napi-rs bridge addon is
+        # produced by the `build:native` script. That script is
+        # currently a placeholder; when the real napi-rs toolchain
+        # lands, `build:native` should be invoked *before* this step
+        # so the resulting `.node` artifact is in place for
+        # electron-builder's packaging stage to pick up.
         run: npm run build
 
       - name: Package with electron-builder

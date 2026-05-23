@@ -104,11 +104,25 @@ run_steps() {
     local cmd="${PREFLIGHT_STEP_COMMANDS[$i]}"
     printf '\n%s[%d/%d] %s%s\n' "${C_BOLD}" "${STEP_INDEX}" "${STEP_TOTAL}" "${label}" "${C_RESET}"
     printf '%s    %s%s\n' "${C_DIM}" "${cmd}" "${C_RESET}"
-    # `set -e` would abort the whole script on the first failure
-    # before we can print the failure banner, so we explicitly
-    # disable it for the duration of the step and check $? ourselves.
+    # `set -e` in the *parent* shell would abort the script on the
+    # first failure before we can print the failure banner, so we
+    # explicitly disable it for the duration of the step and check
+    # the subshell's exit code ourselves.
+    #
+    # The subshell, however, gets `-e -o pipefail`:
+    #   * `-o pipefail` makes a piped step (e.g. `foo | grep`) fail
+    #     when any element of the pipeline fails, not just the last.
+    #   * `-e` makes a multi-statement step (e.g. `cmd1; cmd2`) fail
+    #     as soon as the first statement returns non-zero, instead of
+    #     silently masking it and reporting only the final exit code.
+    # Without `-e`, a step like `cargo build; cargo test` would let a
+    # broken build slip through if the (separate, unrelated) test run
+    # later happened to succeed — a class of bug the preflight gate
+    # exists to prevent. Today every step is a single command so the
+    # behaviour change is theoretical, but adding it now guarantees
+    # the property holds for any step a future maintainer adds.
     set +e
-    bash -o pipefail -c "${cmd}"
+    bash -e -o pipefail -c "${cmd}"
     local rc=$?
     set -e
     if [[ "${rc}" -ne 0 ]]; then
