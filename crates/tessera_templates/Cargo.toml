@@ -18,6 +18,12 @@ walkdir = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# Used by `tests/bundled_templates.rs::every_bundled_template_validates_against_json_schema`
+# to enforce that the published `schemas/template.schema.json` and the
+# on-disk YAML files cannot drift apart. `default-features = false`
+# disables the optional HTTP remote-$ref resolver (and its reqwest /
+# hyper tree) — the local file-system schema needs no network access.
+jsonschema = { version = "0.17", default-features = false }
 
 [lints]
 workspace = true

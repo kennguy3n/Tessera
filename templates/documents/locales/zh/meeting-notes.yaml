@@ -1,0 +1,41 @@
+id: meeting-notes-v1-zh
+name: 会议记录
+type: document
+description: 包含决定事项和行动项的会议期间或会后记录的结构化笔记（中文版）
+locale: zh
+sections:
+  - title: 会议元数据
+    prompt: >
+      记录会议标题、日期、出席与缺席者、主持人和记录员。
+      如有议程请引用。请用中文回答。
+    required_sources:
+      - type: local
+        min: 0
+  - title: 概要
+    prompt: >
+      一段式会议总结——高层次讨论内容和整体结果。请用中文回答。
+  - title: 讨论笔记
+    prompt: >
+      按议题记录的笔记，包括提出的关键观点、分享的视角
+      和影响决策的上下文。请用中文回答。
+  - title: 决定事项
+    prompt: >
+      列出所做决定、理由、负责人以及任何条件或后续事项。
+      引用相关来源材料。请用中文回答。
+  - title: 行动项
+    prompt: >
+      包含负责人、截止日期和验收标准的行动项。
+      每项必须可衡量。请用中文回答。
+  - title: 风险与未解决问题
+    prompt: >
+      捕获提出的风险、需要跟进的未解决问题，以及负责追踪每项的人员。
+      请用中文回答。
+  - title: 后续步骤
+    prompt: >
+      概述接下来发生的事情，包括下次会议日期（如有），
+      以及下个检查点的触发条件。请用中文回答。
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

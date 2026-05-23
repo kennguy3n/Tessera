@@ -1,0 +1,44 @@
+id: task-list-v1-de
+name: Aufgabenliste
+type: document
+description: Priorisierte Aufgabenliste mit Verantwortlichen, Fälligkeiten und Abhängigkeiten (deutsche Version)
+locale: de
+sections:
+  - title: Kontext
+    prompt: >
+      Ein Absatz Kontext für diese Aufgabenliste: Welche
+      Initiative oder welches Projekt sie unterstützt und der
+      aktuelle Status. Antworten Sie auf Deutsch.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Kritischer Pfad
+    prompt: >
+      Listen Sie die Aufgaben auf, die termingerecht
+      abgeschlossen werden müssen, damit das Gesamtvorhaben
+      gelingt. Jede mit Verantwortlichem und Fälligkeitsdatum. Antworten Sie auf Deutsch.
+  - title: In Bearbeitung
+    prompt: >
+      Aktuell laufende Aufgaben mit Verantwortlichem, aktuellem
+      Status, Blockern und erwartetem Abschluss. Antworten Sie auf Deutsch.
+  - title: Als Nächstes
+    prompt: >
+      Aufgaben in der Warteschlange für den nächsten Sprint
+      oder Zyklus, mit Prioritätsrangfolge und Verantwortlichem. Antworten Sie auf Deutsch.
+  - title: Backlog
+    prompt: >
+      Aufgaben mit niedrigerer Priorität, die noch nicht geplant
+      sind, mit Priorität und grober Aufwandsschätzung. Antworten Sie auf Deutsch.
+  - title: Erledigt
+    prompt: >
+      Kürzlich abgeschlossene Aufgaben, mit Abschlussdatum und
+      Ergebniszusammenfassung zur Nachverfolgbarkeit. Antworten Sie auf Deutsch.
+  - title: Notizen und Abhängigkeiten
+    prompt: >
+      Abhängigkeiten zwischen Aufgaben, Entscheidungen, die die
+      Priorisierung betreffen, und Blocker, die eskaliert werden
+      müssen. Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - html
+  - csv

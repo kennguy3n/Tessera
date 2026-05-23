@@ -1,0 +1,71 @@
+id: patient-care-plan-v1
+name: Patient Care Plan
+type: document
+description: Nursing care plan using the ADPIE framework (Assessment, Diagnosis, Planning, Implementation, Evaluation)
+industry:
+  - healthcare
+profile:
+  - nurse
+  - case-manager
+sections:
+  - title: Patient Identification and Context
+    prompt: >
+      Record the patient's medical record number, admission date, primary
+      and secondary diagnoses, code status, allergies, and isolation
+      precautions. Note the responsible attending, primary nurse, and any
+      consulted services. Use only de-identified examples when authoring
+      this template for training.
+  - title: Assessment
+    prompt: >
+      Document the focused nursing assessment: cardiovascular,
+      respiratory, neurological, gastrointestinal, genitourinary,
+      integumentary, musculoskeletal, psychosocial, and pain assessment
+      findings. Quote vital signs, intake/output, weights, and any
+      assistive devices in use. Use SBAR format where relevant.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Nursing Diagnoses
+    prompt: >
+      List the prioritized NANDA-I nursing diagnoses in PES format
+      (Problem, Etiology, Signs/Symptoms). Order by acuity — actual
+      diagnoses before risk diagnoses, life-threatening before
+      psychosocial. Each diagnosis should be supported by the
+      assessment data above.
+    output_format: bullets
+  - title: Goals and Expected Outcomes
+    prompt: >
+      For each nursing diagnosis, write SMART goals (Specific,
+      Measurable, Achievable, Relevant, Time-bound) with both short-term
+      (24-48h) and long-term (discharge) targets. Tie each outcome to a
+      NOC indicator where applicable.
+  - title: Nursing Interventions
+    prompt: >
+      List the planned nursing interventions for each diagnosis,
+      organized as: independent, dependent (requires order), and
+      collaborative (with other disciplines). Specify frequency, route,
+      and the rationale grounded in nursing evidence (cite NIC or
+      practice guidelines).
+    output_format: bullets
+  - title: Patient and Family Education
+    prompt: >
+      Outline the patient and family teaching plan: topic, learning
+      objectives, teaching method, materials provided, language, and
+      teach-back verification. Note any cultural, literacy, or
+      cognitive considerations.
+  - title: Discharge Planning
+    prompt: >
+      Identify discharge needs early in the admission: home medications
+      and reconciliation, equipment (oxygen, walker, home health),
+      follow-up appointments, transportation, social work consult
+      triggers, and red-flag symptoms the patient must call about.
+  - title: Evaluation and Plan Revision
+    prompt: >
+      Document outcome evaluation against each goal at the planned
+      review interval. Identify which interventions were effective,
+      which goals were partially met or unmet, and the rationale for
+      continuing, modifying, or discontinuing each intervention.
+export:
+  - markdown
+  - pdf
+  - docx

@@ -1,0 +1,113 @@
+id: pitch-v1-zh
+name: 路演幻灯片
+type: slides
+description: 包含问题、解决方案、市场、增长、团队和请求的创始人/销售路演幻灯片（中文版）
+locale: zh
+format: marp
+theme: gaia
+paginate: true
+sections:
+  - title: 开场吸引
+    prompt: >
+      用一句关于机会的高影响力陈述开场。从问题或头条指标切入。请用中文回答。
+  - title: 问题
+    prompt: >
+      用具体的、以客户为基础的语言描述问题。
+      尽可能量化痛点（成本、时间、流失率）。请用中文回答。
+  - title: 解决方案
+    prompt: >
+      简洁地解释解决方案。突出使其成功运作的神奇能力。请用中文回答。
+  - title: 市场与增长
+    prompt: >
+      量化市场规模（TAM/SAM/SOM）并报告当前增长情况（用户、ARR、
+      增长率）。使用来源数据。请用中文回答。
+    required_sources:
+      - type: local
+        min: 1
+  - title: 商业模式与竞争
+    prompt: >
+      描述如何赚取收入以及产品如何与替代方案区分开。请用中文回答。
+  - title: 团队
+    prompt: >
+      介绍创始人/关键团队成员的角色、经验和相关性证明。请用中文回答。
+  - title: 请求
+    prompt: >
+      说明融资金额、资金用途和将解锁的里程碑。以势头结束。请用中文回答。
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf
+marp_template: |
+  ---
+  marp: true
+  theme: gaia
+  paginate: true
+  class: lead
+  ---
+
+  # {{ company_name }}
+  ## {{ one_liner }}
+
+  <!-- 目光交流；停顿；让钩子落地 -->
+
+  ---
+
+  ## 问题
+
+  > {{ problem_statement }}
+
+  - **现状：** {{ status_quo }}
+  - **成本：** {{ pain_metric }}
+
+  ---
+
+  ## 我们的解决方案
+
+  ### {{ solution_headline }}
+
+  {{ solution_description }}
+
+  ```mermaid
+  flowchart LR
+    Today([现状]) --> {{ company_name }}([我们的解决方案]) --> Outcome([{{ outcome }}])
+  ```
+
+  ---
+
+  ## 市场与增长
+
+  | 指标 | 值 |
+  |---|---|
+  | TAM | {{ tam }} |
+  | SAM | {{ sam }} |
+  | SOM | {{ som }} |
+  | MRR / 用户 | {{ traction }} |
+  | 增长（环比月度） | {{ growth }} |
+
+  ---
+
+  ## 商业模式
+
+  - **定价：** {{ pricing }}
+  - **CAC / LTV：** {{ cac_ltv }}
+  - **选择我们的理由：** {{ moat }}
+
+  ---
+
+  ## 团队
+
+  - **{{ founder_1_name }}** — {{ founder_1_role }} — {{ founder_1_bio }}
+  - **{{ founder_2_name }}** — {{ founder_2_role }} — {{ founder_2_bio }}
+
+  ---
+
+  ## 请求
+
+  融资 **{{ raise_amount }}** 以：
+
+  1. {{ use_of_funds_1 }}
+  2. {{ use_of_funds_2 }}
+  3. {{ use_of_funds_3 }}
+
+  <!-- 以下一个里程碑结束 -->

@@ -1,0 +1,36 @@
+id: proposal-v1-pt
+name: Proposta
+type: document
+description: Proposta comercial ou de projeto com resumo executivo, abordagem, cronograma e orçamento (versão em português)
+locale: pt
+sections:
+  - title: Resumo Executivo
+    prompt: >
+      Forneça uma visão geral concisa da proposta, incluindo a oportunidade,
+      a abordagem recomendada e os resultados esperados. Responda em português.
+  - title: Contexto
+    prompt: >
+      Descreva o contexto e os antecedentes que levaram a esta proposta.
+      Referencie material de origem relevante. Responda em português.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Abordagem Proposta
+    prompt: >
+      Detalhe a abordagem recomendada, a metodologia e as principais atividades.
+      Responda em português.
+  - title: Cronograma
+    prompt: >
+      Descreva o cronograma do projeto com os principais marcos e entregas.
+      Responda em português.
+  - title: Orçamento
+    prompt: >
+      Apresente o orçamento estimado com itens detalhados e justificativas.
+      Responda em português.
+  - title: Resultados Esperados
+    prompt: >
+      Descreva os resultados esperados e como o sucesso será medido.
+      Responda em português.
+export:
+  - markdown
+  - html

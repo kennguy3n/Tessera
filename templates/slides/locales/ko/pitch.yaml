@@ -1,0 +1,119 @@
+id: pitch-v1-ko
+name: 피치 덱
+type: slides
+description: 문제, 솔루션, 시장, 성과, 팀 및 요청이 포함된 창업자/영업 피치 덱 (한국어 버전)
+locale: ko
+format: marp
+theme: gaia
+paginate: true
+sections:
+  - title: 후크
+    prompt: >
+      기회에 대한 한 문장의 강력한 임팩트로 시작하십시오. 문제 또는
+      대표 지표로 이끌어 가십시오. 한국어로 답변해 주십시오.
+  - title: 문제
+    prompt: >
+      고객 중심의 구체적인 언어로 문제를 설명하십시오.
+      가능한 경우 고통(비용, 시간, 이탈)을 정량화하십시오.
+      한국어로 답변해 주십시오.
+  - title: 솔루션
+    prompt: >
+      솔루션을 간결하게 설명하십시오. 솔루션이 작동하게 만드는 마법
+      같은 기능을 강조하십시오. 한국어로 답변해 주십시오.
+  - title: 시장 및 성과
+    prompt: >
+      시장 규모(TAM/SAM/SOM)를 측정하고 현재 성과(사용자, ARR,
+      성장률)를 보고하십시오. 출처를 사용하십시오. 한국어로 답변해 주십시오.
+    required_sources:
+      - type: local
+        min: 1
+  - title: 비즈니스 모델 및 경쟁
+    prompt: >
+      수익이 어떻게 발생하는지, 그리고 제품이 대안과 어떻게 차별화되는지
+      설명하십시오. 한국어로 답변해 주십시오.
+  - title: 팀
+    prompt: >
+      창업자/핵심 팀원의 역할, 경험 및 관련성 증명을 소개하십시오.
+      한국어로 답변해 주십시오.
+  - title: 요청
+    prompt: >
+      투자 금액, 자금 사용처 및 잠금 해제될 마일스톤을 명시하십시오.
+      모멘텀으로 끝내십시오. 한국어로 답변해 주십시오.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf
+marp_template: |
+  ---
+  marp: true
+  theme: gaia
+  paginate: true
+  class: lead
+  ---
+
+  # {{ company_name }}
+  ## {{ one_liner }}
+
+  <!-- 시선 마주침; 잠시 멈춤; 후크가 자리잡도록 -->
+
+  ---
+
+  ## 문제
+
+  > {{ problem_statement }}
+
+  - **현재:** {{ status_quo }}
+  - **비용:** {{ pain_metric }}
+
+  ---
+
+  ## 우리의 솔루션
+
+  ### {{ solution_headline }}
+
+  {{ solution_description }}
+
+  ```mermaid
+  flowchart LR
+    Today([현 상황]) --> {{ company_name }}([우리의 솔루션]) --> Outcome([{{ outcome }}])
+  ```
+
+  ---
+
+  ## 시장 및 성과
+
+  | 지표 | 값 |
+  |---|---|
+  | TAM | {{ tam }} |
+  | SAM | {{ sam }} |
+  | SOM | {{ som }} |
+  | MRR / 사용자 | {{ traction }} |
+  | 성장률 (MoM) | {{ growth }} |
+
+  ---
+
+  ## 비즈니스 모델
+
+  - **가격 책정:** {{ pricing }}
+  - **CAC / LTV:** {{ cac_ltv }}
+  - **우리를 선택해야 하는 이유:** {{ moat }}
+
+  ---
+
+  ## 팀
+
+  - **{{ founder_1_name }}** — {{ founder_1_role }} — {{ founder_1_bio }}
+  - **{{ founder_2_name }}** — {{ founder_2_role }} — {{ founder_2_bio }}
+
+  ---
+
+  ## 요청
+
+  다음을 위해 **{{ raise_amount }}** 투자 유치:
+
+  1. {{ use_of_funds_1 }}
+  2. {{ use_of_funds_2 }}
+  3. {{ use_of_funds_3 }}
+
+  <!-- 다음 마일스톤으로 마무리 -->

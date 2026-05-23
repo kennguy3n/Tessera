@@ -1,0 +1,118 @@
+id: pitch-v1-ja
+name: ピッチデッキ
+type: slides
+description: 問題、ソリューション、市場、トラクション、チーム、依頼を含む創業者/営業ピッチデッキ（日本語版）
+locale: ja
+format: marp
+theme: gaia
+paginate: true
+sections:
+  - title: フック
+    prompt: >
+      機会についての一文のインパクトのある宣言で始めてください。問題または
+      ヘッドラインメトリックでリードしてください。日本語で回答してください。
+  - title: 問題
+    prompt: >
+      問題を具体的な顧客視点の言葉で記述してください。可能な限り苦痛
+      （コスト、時間、解約率）を定量化してください。日本語で回答してください。
+  - title: ソリューション
+    prompt: >
+      ソリューションを簡潔に説明してください。それを機能させる魔法のような
+      能力を強調してください。日本語で回答してください。
+  - title: 市場とトラクション
+    prompt: >
+      市場規模（TAM/SAM/SOM）を測定し、現在のトラクション（ユーザー数、
+      ARR、成長率）を報告してください。出典を使用してください。日本語で回答してください。
+    required_sources:
+      - type: local
+        min: 1
+  - title: ビジネスモデルと競合
+    prompt: >
+      収益の獲得方法と、代替案との差別化要因を記述してください。
+      日本語で回答してください。
+  - title: チーム
+    prompt: >
+      創業者/主要チームメンバーを役割、経験、関連性の証明とともに紹介
+      してください。日本語で回答してください。
+  - title: 依頼
+    prompt: >
+      調達額、資金の使途、達成されるマイルストーンを記載してください。
+      勢いをもって終わってください。日本語で回答してください。
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf
+marp_template: |
+  ---
+  marp: true
+  theme: gaia
+  paginate: true
+  class: lead
+  ---
+
+  # {{ company_name }}
+  ## {{ one_liner }}
+
+  <!-- アイコンタクト、間、フックを響かせる -->
+
+  ---
+
+  ## 問題
+
+  > {{ problem_statement }}
+
+  - **現状:** {{ status_quo }}
+  - **コスト:** {{ pain_metric }}
+
+  ---
+
+  ## 私たちのソリューション
+
+  ### {{ solution_headline }}
+
+  {{ solution_description }}
+
+  ```mermaid
+  flowchart LR
+    Today([現状]) --> {{ company_name }}([私たちのソリューション]) --> Outcome([{{ outcome }}])
+  ```
+
+  ---
+
+  ## 市場とトラクション
+
+  | 指標 | 値 |
+  |---|---|
+  | TAM | {{ tam }} |
+  | SAM | {{ sam }} |
+  | SOM | {{ som }} |
+  | MRR / ユーザー | {{ traction }} |
+  | 成長率（前月比） | {{ growth }} |
+
+  ---
+
+  ## ビジネスモデル
+
+  - **価格設定:** {{ pricing }}
+  - **CAC / LTV:** {{ cac_ltv }}
+  - **私たちが選ばれる理由:** {{ moat }}
+
+  ---
+
+  ## チーム
+
+  - **{{ founder_1_name }}** — {{ founder_1_role }} — {{ founder_1_bio }}
+  - **{{ founder_2_name }}** — {{ founder_2_role }} — {{ founder_2_bio }}
+
+  ---
+
+  ## 依頼
+
+  **{{ raise_amount }}** を調達して以下を実現:
+
+  1. {{ use_of_funds_1 }}
+  2. {{ use_of_funds_2 }}
+  3. {{ use_of_funds_3 }}
+
+  <!-- 次のマイルストーンで終わる -->

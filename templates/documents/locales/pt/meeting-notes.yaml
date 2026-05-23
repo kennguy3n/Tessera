@@ -1,0 +1,46 @@
+id: meeting-notes-v1-pt
+name: Notas da Reunião
+type: document
+description: Notas estruturadas capturadas durante ou após uma reunião com decisões e ações (versão em português)
+locale: pt
+sections:
+  - title: Metadados da Reunião
+    prompt: >
+      Capture título da reunião, data, participantes presentes e ausentes,
+      facilitador e responsável pelas notas. Referencie a pauta, se houver.
+      Responda em português.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Resumo
+    prompt: >
+      Resumo de um parágrafo da reunião — o que foi discutido
+      em alto nível e o resultado geral. Responda em português.
+  - title: Notas de Discussão
+    prompt: >
+      Notas tópico a tópico capturando pontos-chave levantados,
+      perspectivas compartilhadas e contexto que informou as decisões.
+      Responda em português.
+  - title: Decisões
+    prompt: >
+      Liste decisões tomadas, a justificativa, o responsável e quaisquer
+      condições ou acompanhamentos. Referencie material de origem relevante.
+      Responda em português.
+  - title: Itens de Ação
+    prompt: >
+      Itens de ação com responsável, prazo e critérios de aceitação.
+      Cada um deve ser mensurável. Responda em português.
+  - title: Riscos e Questões em Aberto
+    prompt: >
+      Capture riscos levantados, questões em aberto que precisam de
+      acompanhamento e quem é responsável por persegui-las. Responda em português.
+  - title: Próximos Passos
+    prompt: >
+      Descreva o que acontece a seguir, incluindo a data da próxima reunião,
+      se houver, e o gatilho para o próximo ponto de verificação.
+      Responda em português.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

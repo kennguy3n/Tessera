@@ -1,0 +1,31 @@
+id: proposal-v1-zh
+name: 提案书
+type: document
+description: 包含执行摘要、方法、时间表和预算的商业或项目提案书（中文版）
+locale: zh
+sections:
+  - title: 执行摘要
+    prompt: >
+      简明扼要地概述提案，包括机会、推荐方法和预期成果。
+      请用中文回答。
+  - title: 背景
+    prompt: >
+      描述导致此提案的背景和上下文。引用相关来源材料。请用中文回答。
+    required_sources:
+      - type: local
+        min: 1
+  - title: 拟议方法
+    prompt: >
+      详细说明推荐的方法、方法论和关键活动。请用中文回答。
+  - title: 时间表
+    prompt: >
+      概述项目时间表，包含主要里程碑和交付物。请用中文回答。
+  - title: 预算
+    prompt: >
+      列示估算预算，包含明细项目和理由说明。请用中文回答。
+  - title: 预期成果
+    prompt: >
+      描述预期成果以及如何衡量成功。请用中文回答。
+export:
+  - markdown
+  - html

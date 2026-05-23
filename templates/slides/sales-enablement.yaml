@@ -1,0 +1,81 @@
+id: sales-enablement-deck-v1
+name: Sales Enablement Deck
+type: slides
+description: Sales enablement / product demo deck covering audience, problem, solution, value, demo, pricing, and CTA
+profile:
+  - account-executive
+  - sales-engineer
+  - marketing-manager
+sections:
+  - title: Title and Hook
+    prompt: >
+      Title slide with the prospect's company name, the date,
+      and a one-line hook tied to a known pain point the
+      prospect mentioned in discovery. Set up the room.
+  - title: Audience and Discovery Recap
+    prompt: >
+      Summary slide that mirrors back what was heard in
+      discovery: who is in the room (titles, roles), the
+      pain points they articulated, the stated success
+      criteria, and the decision timeline.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Why Change, Why Now
+    prompt: >
+      Burning platform: cost of inaction, market timing,
+      competitive pressure, internal mandate. Quantify the
+      pain in dollars where possible. Avoid generic
+      thought-leadership; ground in the prospect's reality.
+  - title: Our Approach
+    prompt: >
+      The platform's approach to the problem, the unique
+      perspective or "category-of-one" claim, and how it
+      differs from the alternatives (status quo, build,
+      named competitor). One concept slide and a category
+      diagram.
+  - title: Product Walk-Through
+    prompt: >
+      Three to five screens showing the product solving the
+      prospect's specific use case. For each screen: the user
+      action, the system response, the outcome, and the
+      quantitative benefit (time saved, errors avoided,
+      pipeline created).
+  - title: Customer Proof
+    prompt: >
+      Two or three relevant customer logos with metric
+      proof points and short quotes. Choose customers that
+      match the prospect's industry, size, and use case.
+      Include named references the prospect can talk to.
+  - title: Implementation and Time to Value
+    prompt: >
+      Realistic implementation plan: timeline, key
+      milestones, customer and vendor responsibilities,
+      integration steps, and the documented average time
+      from contract signature to first value moment.
+    output_format: table
+  - title: Pricing and Commercial Structure
+    prompt: >
+      Pricing for the proposed configuration: list price,
+      proposed discount (if any), contract length, payment
+      terms, renewal mechanics, and value-based ROI
+      framing. State assumptions and what's included vs.
+      add-on.
+  - title: Mutual Action Plan
+    prompt: >
+      Joint action plan from this meeting to signature:
+      who does what by when on both sides. Each step has
+      an owner and a date. Highlight the next two steps
+      to be agreed before the meeting ends.
+    output_format: table
+  - title: Q and A and Close
+    prompt: >
+      Reserved Q&A slide and a close that ties back to the
+      success criteria heard in discovery. End with the
+      explicit next-step ask (signature, contract review,
+      reference call, exec sponsor introduction).
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

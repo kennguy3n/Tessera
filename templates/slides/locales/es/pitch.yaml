@@ -1,0 +1,47 @@
+id: pitch-v1-es
+name: Pitch Deck
+type: slides
+description: Pitch deck con problema, solución, mercado, tracción, equipo y la solicitud (versión en español)
+locale: es
+format: marp
+theme: gaia
+paginate: true
+sections:
+  - title: Gancho
+    prompt: >
+      Abra con una sola frase de alto impacto sobre la oportunidad.
+      Comience con el problema o la métrica titular. Responda en español.
+  - title: Problema
+    prompt: >
+      Describa el problema en lenguaje concreto y centrado en el
+      cliente. Cuantifique el dolor (costo, tiempo, abandono)
+      cuando sea posible. Responda en español.
+  - title: Solución
+    prompt: >
+      Explique la solución de forma concisa. Destaque la
+      capacidad mágica que la hace funcionar. Responda en español.
+  - title: Mercado y tracción
+    prompt: >
+      Dimensione el mercado (TAM/SAM/SOM) e informe la tracción
+      actual (usuarios, ARR, tasa de crecimiento). Cite fuentes.
+      Responda en español.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Modelo de negocio y competencia
+    prompt: >
+      Describa cómo se genera el ingreso y cómo la oferta se
+      diferencia de las alternativas. Responda en español.
+  - title: Equipo
+    prompt: >
+      Presente a los fundadores y miembros clave del equipo con
+      rol, experiencia y prueba de relevancia. Responda en español.
+  - title: La solicitud
+    prompt: >
+      Indique el monto de la ronda, el uso de fondos y los hitos
+      desbloqueados. Termine con impulso. Responda en español.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

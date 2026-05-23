@@ -1,0 +1,84 @@
+id: quality-control-report-v1
+name: Quality Control Report
+type: document
+description: Manufacturing QC report with inspection criteria, defect analysis, statistical sampling, and corrective actions
+industry:
+  - manufacturing
+profile:
+  - quality-engineer
+  - production-manager
+  - inspector
+sections:
+  - title: Inspection Identification
+    prompt: >
+      Part number / SKU, revision level, lot or batch number, supplier
+      or production line, inspection date, inspector name and
+      certification level, the inspection plan reference, and the
+      sampling standard (e.g., ANSI/ASQ Z1.4 single sampling,
+      AQL 0.65 / 1.0 / 2.5).
+  - title: Inspection Criteria and Specifications
+    prompt: >
+      Reference the drawing or specification revision, the critical
+      characteristics, major and minor characteristics with their
+      acceptance criteria (dimensional tolerances, surface finish,
+      hardness, electrical parameters, visual standards), and the
+      gauges or test equipment used (with calibration dates).
+    required_sources:
+      - type: local
+        min: 1
+  - title: Sampling Plan
+    prompt: >
+      Lot size, sample size, accept / reject numbers, the AQL or
+      RQL applied, and the basis for the sampling plan. Identify
+      whether reduced, normal, or tightened inspection is in force
+      and the trigger conditions for switching between them.
+  - title: Inspection Results
+    prompt: >
+      Detailed table of measurements per sample: characteristic,
+      specification (nominal ± tolerance), actual reading, in / out
+      of specification, and the deviation. For attribute checks
+      (go/no-go), record pass / fail with the number of
+      occurrences.
+    output_format: table
+  - title: Defect Classification and Pareto
+    prompt: >
+      Group defects by type, severity (Critical / Major / Minor),
+      and frequency. Plot the Pareto and identify the vital few
+      defect modes accounting for ≥ 80% of the issues. Compare to
+      prior inspection trends.
+  - title: Root Cause Analysis
+    prompt: >
+      For each significant defect mode, perform root cause analysis
+      using 5-Whys or fishbone (man, machine, method, material,
+      measurement, environment). Identify whether the root cause
+      is special cause or common cause.
+  - title: Corrective and Preventive Actions
+    prompt: >
+      For each root cause, propose corrective actions (contain,
+      correct, eliminate) and preventive actions (process change,
+      training, tooling, supplier engagement). Each action must
+      have an owner, target completion date, and verification
+      method.
+    output_format: table
+  - title: Disposition Decision
+    prompt: >
+      State the disposition: accept, accept with deviation (with
+      MRB / material review board reference), rework, sort / 100%
+      inspect, return to supplier, or scrap. Justify the decision
+      against the inspection results and any customer requirements.
+  - title: Process Capability and Trend
+    prompt: >
+      Compute the process capability indices (Cp, Cpk, Pp, Ppk)
+      for the critical characteristics and compare to the target
+      (typically Cpk ≥ 1.33 for new processes, 1.67 for safety-
+      critical). Plot the trend over the last 5-10 lots.
+  - title: Sign-Off and Distribution
+    prompt: >
+      QA inspector signature, QA supervisor approval, production
+      manager acknowledgment, and (where required) customer
+      representative sign-off. Distribution list: production, QA,
+      MRB, supplier (if applicable), document control.
+export:
+  - markdown
+  - pdf
+  - docx

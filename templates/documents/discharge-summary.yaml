@@ -1,0 +1,82 @@
+id: discharge-summary-v1
+name: Discharge Summary
+type: document
+description: Hospital discharge summary with diagnosis, hospital course, medications, follow-up, and patient instructions
+industry:
+  - healthcare
+profile:
+  - physician
+  - hospitalist
+  - nurse-practitioner
+sections:
+  - title: Patient and Admission Identification
+    prompt: >
+      State the patient's name (or MRN for de-identified template),
+      date of birth, admission date, discharge date, length of stay,
+      attending physician, discharge service, and the discharge
+      disposition (home, SNF, rehab, hospice, AMA, expired).
+  - title: Admission and Discharge Diagnoses
+    prompt: >
+      List the admission diagnosis, the principal discharge diagnosis,
+      and all secondary diagnoses present on admission or developed
+      during the stay. Code each with ICD-10-CM where appropriate. Note
+      any diagnoses ruled out and the basis for exclusion.
+    output_format: bullets
+  - title: Reason for Admission
+    prompt: >
+      One paragraph summarizing the chief complaint, history of present
+      illness, and the clinical decision to admit. Cite key labs,
+      imaging, and exam findings at presentation.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Hospital Course
+    prompt: >
+      Day-by-day or problem-based narrative of the hospital course:
+      interventions, response to therapy, consultations obtained,
+      complications, and any unexpected events. Highlight transitions
+      of care between ICU, step-down, and floor.
+  - title: Procedures Performed
+    prompt: >
+      Numbered list of procedures performed during the admission with
+      date, the proceduralist, indication, and any complications.
+      Reference operative reports where applicable.
+    output_format: numbered_list
+  - title: Pertinent Labs and Imaging at Discharge
+    prompt: >
+      Tabulate the trends of key labs (CBC, BMP, LFTs, coags, troponin,
+      cultures with sensitivities, etc.) over the admission, ending
+      with the values at discharge. Include the imaging studies and
+      final read.
+    output_format: table
+  - title: Discharge Medications
+    prompt: >
+      Reconcile the discharge medication list: continued (with any dose
+      change), newly started (with indication and planned duration),
+      and discontinued (with reason). Flag any anticoagulants,
+      controlled substances, or medications requiring lab monitoring.
+    output_format: table
+  - title: Follow-Up Appointments
+    prompt: >
+      Enumerate all required follow-up appointments: primary care,
+      specialty, lab/imaging follow-up, and home health. For each,
+      give the timing window and whether the appointment is already
+      scheduled or pending the patient/clinic to arrange.
+    output_format: bullets
+  - title: Patient and Family Instructions
+    prompt: >
+      Patient-facing instructions written at an 8th-grade reading
+      level: activity restrictions, wound care, diet, medication
+      schedule, signs and symptoms warranting urgent re-evaluation
+      (return precautions), and contact information for the discharging
+      service.
+  - title: Pending Studies and Open Issues
+    prompt: >
+      List any tests, cultures, biopsies, or consultations whose
+      results were not yet available at discharge. For each, identify
+      the responsible follow-up clinician and the route by which
+      results will be communicated.
+export:
+  - markdown
+  - pdf
+  - docx

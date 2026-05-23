@@ -1,0 +1,39 @@
+id: report-v1-es
+name: Informe
+type: document
+description: Informe analítico con hallazgos, análisis y recomendaciones (versión en español)
+locale: es
+sections:
+  - title: Resumen ejecutivo
+    prompt: >
+      Resuma los hallazgos clave y las recomendaciones de este
+      informe. Responda en español.
+  - title: Metodología
+    prompt: >
+      Describa la metodología utilizada para la recopilación y el
+      análisis de datos. Responda en español.
+  - title: Hallazgos
+    prompt: >
+      Presente los hallazgos clave respaldados por datos de las
+      fuentes. Incluya estadísticas y evidencia relevantes.
+      Responda en español.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Análisis
+    prompt: >
+      Proporcione un análisis detallado de los hallazgos.
+      Identifique patrones, tendencias e implicaciones.
+      Responda en español.
+  - title: Recomendaciones
+    prompt: >
+      Enumere recomendaciones accionables basadas en el análisis.
+      Priorice por impacto y viabilidad. Responda en español.
+  - title: Anexo
+    prompt: >
+      Incluya datos de respaldo, referencias y material
+      complementario. Responda en español.
+export:
+  - markdown
+  - html
+  - csv

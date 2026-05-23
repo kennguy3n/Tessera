@@ -1,0 +1,81 @@
+id: landing-event-v1
+name: Event / Conference Landing
+type: landing_page
+description: Event or conference landing page with hero, speakers, agenda, sponsors, venue, and registration CTAs
+profile:
+  - event-manager
+  - marketing-manager
+sections:
+  - title: Hero — Event Identity
+    prompt: >
+      Event name, tagline, dates, location (city +
+      venue or "online"), and the primary CTA
+      ("Register", "Get Early Bird Tickets"). Below
+      the fold: a one-paragraph elevator pitch on what
+      the event delivers and who it's for.
+  - title: Why Attend
+    prompt: >
+      The three to five concrete reasons to attend:
+      what attendees will learn, who they will meet,
+      what they will take home. Frame as outcomes —
+      not features.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Featured Speakers
+    prompt: >
+      Per speaker: headshot, full name, title /
+      company, session topic, and a 1-2 sentence
+      "why this speaker matters" anchor. Lead with
+      the most recognizable names. Indicate any
+      speakers still confirming.
+  - title: Agenda
+    prompt: >
+      Day-by-day agenda: time slots, session titles,
+      speakers, room / track, format (keynote /
+      panel / workshop / lightning / breakout). Mark
+      tracks for different audiences (technical,
+      business, beginner / advanced).
+    output_format: table
+  - title: Venue and Travel
+    prompt: >
+      For in-person events: venue name, full address,
+      transit options, hotel partner block (with
+      discount code), parking, and accessibility
+      features (wheelchair access, captioning,
+      dietary accommodations). For virtual: platform,
+      timezone, system requirements.
+  - title: Sponsors and Partners
+    prompt: >
+      Sponsor logos by tier (presenting, gold,
+      silver, bronze, community partner). One
+      sentence positioning the sponsor benefits and
+      a CTA for prospective sponsors. Include any
+      community / nonprofit partners.
+  - title: Pricing and Ticket Tiers
+    prompt: >
+      Ticket tiers: early-bird, regular, student /
+      academic, group, virtual-only, in-person. Per
+      tier: what's included, the price, and the
+      deadline. Note refund policy, transfer policy,
+      and any scholarship / financial-assistance
+      program.
+    output_format: table
+  - title: FAQ
+    prompt: >
+      Frequently asked questions: COVID / health
+      policy, code of conduct, recording rights /
+      photo opt-out, food, age restrictions, virtual
+      access for in-person ticket holders,
+      cancellation. Each Q/A pair short and direct.
+  - title: Closing CTA
+    prompt: >
+      Closing registration CTA repeating the dates,
+      ticket urgency (countdown to early-bird
+      deadline), and an emotional reminder of the
+      headline benefit. Footer with contact email
+      for support and accessibility requests.
+export:
+  - markdown
+  - html
+  - pdf

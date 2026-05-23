@@ -1,0 +1,76 @@
+id: onboarding-deck-v1
+name: Employee Onboarding Deck
+type: slides
+description: New-hire onboarding deck covering company, culture, team, role, tools, and 30/60/90 plan
+profile:
+  - manager
+  - hr-business-partner
+sections:
+  - title: Welcome
+    prompt: >
+      Personalized welcome slide. Include the new hire's name,
+      start date, manager, team, and the first-week schedule
+      summary. Set a warm, confident tone.
+  - title: Company Story
+    prompt: >
+      Founding story in 2-3 paragraphs: the problem the
+      founders saw, why now, the early milestones, and the
+      current chapter. Designed to give the new hire context
+      and pride.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Mission, Vision, and Values
+    prompt: >
+      State the mission, vision, and 3-5 values. For each
+      value, an actionable operating definition (one sentence)
+      and a concrete example of what living it looks like in
+      day-to-day work.
+  - title: Strategic Priorities
+    prompt: >
+      The company's top 3-5 strategic priorities for the
+      year. For each priority, the metric being moved, the
+      owner, and how the new hire's team contributes.
+  - title: Org and Team
+    prompt: >
+      The new hire's place in the organization: org chart,
+      team structure, peer roles, key cross-functional
+      partners, and how decisions flow.
+  - title: Role and Success Profile
+    prompt: >
+      The new hire's role in detail: scope, top three
+      outcomes expected by end of probation, the metrics
+      success will be measured against, and the planned
+      ramp curve.
+  - title: 30 / 60 / 90 Day Plan
+    prompt: >
+      First 30 days (learn — meet people, observe systems,
+      complete training), days 31-60 (contribute — own a
+      small project, present learnings), days 61-90 (lead
+      — own a meaningful workstream, set goals for next
+      quarter). Each phase with deliverables.
+    output_format: table
+  - title: Tools, Access, and Logistics
+    prompt: >
+      Tools the new hire will use (email, chat, repo, design,
+      CRM, HRIS), the access provisioning checklist, the
+      hardware setup, the office / remote norms, and how to
+      get help (IT, HR, security).
+  - title: Culture, Norms, and Rituals
+    prompt: >
+      How the team and company work together: meeting rhythm,
+      written-vs-verbal culture, decision-making norms (DACI /
+      RACI), feedback culture, recognition practices, and
+      key recurring rituals (all-hands, planning cadences,
+      offsites).
+  - title: Resources and Open Questions
+    prompt: >
+      Curated resource list (handbook, brand guidelines, key
+      docs, recordings of past all-hands, glossary of
+      internal terms). A reminder that questions are welcome
+      and a default channel for asking them.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

@@ -1,0 +1,32 @@
+id: prd-v1-fr
+name: Document d'Exigences Produit
+type: document
+description: PRD standard avec problème, solution, périmètre et critères de succès (version française)
+locale: fr
+sections:
+  - title: Énoncé du problème
+    prompt: >
+      Résumez le problème central que ce produit aborde, en
+      citant les sources pertinentes. Répondez en français.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Solution proposée
+    prompt: >
+      Décrivez la solution proposée en référençant les
+      contraintes techniques et l'état de l'art. Répondez en français.
+  - title: Périmètre
+    prompt: >
+      Définissez ce qui est inclus et exclu du périmètre de la
+      version initiale. Répondez en français.
+  - title: Critères de succès
+    prompt: >
+      Listez les critères de succès mesurables avec leurs cibles
+      quantitatives. Répondez en français.
+  - title: Risques et mitigations
+    prompt: >
+      Identifiez les risques et les mitigations proposées, en
+      citant les sources lorsque pertinent. Répondez en français.
+export:
+  - markdown
+  - html

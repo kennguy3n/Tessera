@@ -1,0 +1,33 @@
+id: budget-v1-fr
+name: Budget
+type: sheet
+description: Tableur budgétaire avec catégories, postes, réalisé vs. prévu et écart (version française)
+locale: fr
+sections:
+  - title: Synthèse budgétaire
+    prompt: >
+      Donnez une vue d'ensemble du budget total, incluant les
+      dépenses prévues, les dépenses réelles à date et l'écart
+      projeté. Répondez en français.
+  - title: Catégories
+    prompt: >
+      Ventilez le budget par catégorie (personnel, infrastructure,
+      logiciels, marketing, etc.) avec montants prévus et réels.
+      Répondez en français.
+  - title: Postes
+    prompt: >
+      Détaillez les postes individuels dans chaque catégorie.
+      Incluez le fournisseur, le montant, la fréquence et le
+      statut. Répondez en français.
+  - title: Analyse des écarts
+    prompt: >
+      Analysez les écarts entre les dépenses prévues et réelles.
+      Expliquez les écarts significatifs et les actions
+      correctives. Répondez en français.
+  - title: Prévision
+    prompt: >
+      Projetez les dépenses restantes pour la période et signalez
+      tout risque budgétaire. Répondez en français.
+export:
+  - markdown
+  - csv

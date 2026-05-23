@@ -1,0 +1,40 @@
+id: meeting-agenda-v1-zh
+name: 会议议程
+type: document
+description: 包含目标、与会者、议题和时间安排的结构化议程（中文版）
+locale: zh
+sections:
+  - title: 会议概览
+    prompt: >
+      记录会议标题、日期、时间、地点/视频链接和一句话目标。
+      如有相关排程来源请引用。请用中文回答。
+  - title: 与会者
+    prompt: >
+      列出必需和可选与会者及其角色或单位。
+      注明应预先阅读的材料。请用中文回答。
+  - title: 目标
+    prompt: >
+      列举会议应达成的2-5个具体成果。
+      每个都应可衡量（做出决定/产生工件）。请用中文回答。
+  - title: 议程事项
+    prompt: >
+      为每个议程事项记录议题、负责人、分配时间、
+      期望结果和任何预读链接。请用中文回答。
+    required_sources:
+      - type: local
+        min: 0
+  - title: 需要决定事项
+    prompt: >
+      列出会议期间必须做出的决定。每项应引用相关议程事项。
+      请用中文回答。
+  - title: 预读材料
+    prompt: >
+      链接与会者应提前查阅的来源材料。请用中文回答。
+  - title: 后续事项
+    prompt: >
+      预留空间记录会议期间捕获的行动项，会后填入。
+      请用中文回答。
+export:
+  - markdown
+  - html
+  - pdf

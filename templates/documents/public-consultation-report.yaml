@@ -1,0 +1,87 @@
+id: public-consultation-report-v1
+name: Public Consultation Report
+type: document
+description: Public consultation report summarizing submissions, identifying themes, and documenting agency responses
+industry:
+  - government
+profile:
+  - policy-analyst
+  - public-engagement-officer
+sections:
+  - title: Consultation Overview
+    prompt: >
+      Title of the consultation, issuing agency, consultation
+      period (open / close dates), the channels used (online
+      portal, town halls, advisory committee meetings, written
+      submissions), and the total number of submissions received,
+      categorized by submitter type (individuals, NGOs, industry,
+      academic, government).
+    output_format: table
+  - title: Background and Consultation Document
+    prompt: >
+      Summarize the policy or regulatory question that was put out
+      for public comment, the alternatives presented in the
+      consultation document, and any specific questions the agency
+      asked respondents to address.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Methodology for Submissions Analysis
+    prompt: >
+      Describe how submissions were analyzed: thematic coding,
+      sentiment scoring, weighting (if any) of substantively
+      analytic submissions vs. form-letter campaigns, the
+      coding team's qualifications, and inter-rater reliability
+      where multiple coders were used.
+  - title: Themes from Submissions
+    prompt: >
+      For each major theme identified in submissions, provide:
+      theme title, a representative submitter quote, count of
+      submissions raising the theme, range of perspectives
+      (supporting, opposing, qualifying), and any quantitative
+      evidence submitters provided.
+    output_format: bullets
+  - title: Stakeholder Group Perspectives
+    prompt: >
+      Summarize the positions of identifiable stakeholder groups:
+      affected industry, consumer advocates, environmental
+      organizations, labor unions, tribal nations, professional
+      associations, and academic experts. Note areas of consensus
+      and key points of disagreement.
+  - title: Agency Response to Substantive Comments
+    prompt: >
+      For each substantive issue raised, provide the agency's
+      response: accepted (with description of the change made),
+      partially accepted (with description), or not accepted
+      (with the basis for the decision). Reference the relevant
+      section of the proposal that was modified.
+    output_format: table
+  - title: Changes from the Draft Proposal
+    prompt: >
+      Concise list of the substantive changes the agency made to
+      the proposal in response to consultation, the rationale,
+      and the expected impact of each change.
+    output_format: bullets
+  - title: Outstanding Issues for Further Engagement
+    prompt: >
+      Identify issues raised in consultation that were not
+      resolved in this iteration and the planned follow-up
+      engagement (working group, technical workshop, additional
+      comment period, post-implementation review).
+  - title: Methodological Limitations
+    prompt: >
+      Disclose limitations: submission representativeness (who
+      participated and who did not), self-selection bias,
+      digital divide considerations, language access, and any
+      issues with the consultation process that the agency will
+      address in future consultations.
+  - title: Next Steps and Decision
+    prompt: >
+      State the final decision (proceed as proposed, proceed with
+      modifications, defer, withdraw), the rationale linked to the
+      consultation findings, and the projected timeline for
+      implementation including any further procedural steps.
+export:
+  - markdown
+  - pdf
+  - docx

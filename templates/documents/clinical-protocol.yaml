@@ -1,0 +1,84 @@
+id: clinical-protocol-v1
+name: Clinical Protocol
+type: document
+description: Evidence-based clinical protocol with patient criteria, intervention steps, monitoring, and safety stops
+industry:
+  - healthcare
+profile:
+  - clinician
+  - nurse
+  - physician
+sections:
+  - title: Protocol Identification
+    prompt: >
+      State the protocol title, version, effective date, originating
+      department or service line, the responsible clinical lead, and the
+      patient population this protocol applies to. Cite the local
+      governance committee that approved it and the next scheduled review
+      date.
+  - title: Clinical Background and Rationale
+    prompt: >
+      Summarize the underlying condition or clinical scenario, the
+      evidence base motivating this protocol (cite guideline bodies such
+      as IDSA, ACC/AHA, NICE, or the relevant specialty society), and how
+      this protocol differs from any prior version it replaces.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Inclusion and Exclusion Criteria
+    prompt: >
+      List the patient inclusion criteria (age range, diagnosis, lab
+      thresholds, hemodynamic status) and the exclusion criteria
+      (pregnancy, contraindicated comorbidities, allergies, recent
+      interventions). Use bulleted lists. Inclusion AND exclusion must
+      both be met for protocol eligibility.
+    output_format: bullets
+  - title: Pre-Intervention Assessment
+    prompt: >
+      Describe the required baseline assessment: history elements, focused
+      physical exam, lab panel, imaging, and any specialty consults that
+      must be documented before initiating the intervention. Specify
+      timing windows (e.g., "labs drawn within 4 hours of administration").
+  - title: Intervention Steps
+    prompt: >
+      Provide the step-by-step intervention protocol as a numbered list,
+      including dosing, route, rate, equipment, and the credentialed role
+      authorized to perform each step. Highlight any time-critical steps
+      (door-to-needle, door-to-balloon) with explicit target intervals.
+    output_format: numbered_list
+  - title: Monitoring Plan
+    prompt: >
+      Lay out vital sign monitoring frequency, laboratory follow-up
+      cadence, neuro checks, telemetry parameters, and the documentation
+      cadence in the EMR. Include a table of monitoring frequency by
+      protocol hour for the first 24 hours.
+    output_format: table
+  - title: Safety Stops and Adverse Event Response
+    prompt: >
+      Enumerate the safety stop criteria (e.g., systolic BP < 90, SpO2 <
+      88%, anaphylaxis signs) that require immediate pause and rapid
+      response activation. For each safety stop, describe the
+      countermeasure and the escalation path. Reference any reversal
+      agents or rescue therapies that must be immediately available.
+  - title: Documentation and Handoff
+    prompt: >
+      Specify the structured documentation expected at handoff: SBAR
+      elements, mandatory order set fields, and any patient-facing
+      teach-back items. List the receiving service or floor and any
+      handoff bundle (medication reconciliation, code status confirmation).
+  - title: Quality Metrics and Audit
+    prompt: >
+      Identify the protocol's quality metrics (process and outcome) that
+      the unit will audit monthly. Include the data source, the numerator
+      and denominator definitions, and the target threshold for each
+      metric.
+  - title: References
+    prompt: >
+      Provide the full citation list for guideline documents, peer-
+      reviewed studies, and institutional policies referenced in the
+      protocol. Use a numbered list keyed to the in-text citations.
+    output_format: numbered_list
+export:
+  - markdown
+  - pdf
+  - docx

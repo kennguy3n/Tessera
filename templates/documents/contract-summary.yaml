@@ -1,0 +1,84 @@
+id: contract-summary-v1
+name: Contract Summary
+type: document
+description: Contract review summary with key terms, obligations, risks, and recommendations
+industry:
+  - legal
+profile:
+  - attorney
+  - paralegal
+  - contracts-manager
+sections:
+  - title: Contract Identification
+    prompt: >
+      State the contract title, the executing parties (legal entity
+      names, jurisdictions of formation), effective date, expiration or
+      renewal terms, governing law, and venue / dispute resolution
+      forum.
+  - title: Business Purpose and Scope
+    prompt: >
+      Summarize the commercial purpose of the contract, the scope of
+      services or goods, key deliverables, milestones, and acceptance
+      criteria. Note any exclusivity, non-compete, or restrictive
+      covenants.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Financial Terms
+    prompt: >
+      Tabulate fees, pricing structure (fixed, time-and-materials,
+      subscription, royalty), payment terms (net 30/60/90), late
+      payment interest, currency, taxes, expense reimbursement, audit
+      rights, and any most-favored-nation or price-adjustment clauses.
+    output_format: table
+  - title: Key Obligations and Performance Standards
+    prompt: >
+      Identify each party's material obligations: deliverables, SLAs /
+      uptime commitments, reporting cadence, regulatory compliance,
+      and any conditions precedent or subsequent. Use a bulleted list
+      organized by party.
+    output_format: bullets
+  - title: Representations, Warranties, and Disclaimers
+    prompt: >
+      Summarize the representations and warranties (authority, no
+      conflict, IP ownership, non-infringement, compliance with law),
+      survival periods, and any express disclaimers (e.g., "AS IS",
+      no implied warranty of merchantability).
+  - title: Indemnification and Limitation of Liability
+    prompt: >
+      Describe the indemnification structure (mutual vs. one-way,
+      triggers, defense control, settlement consent), and the
+      limitation of liability (cap amount, exclusions for IP / data /
+      gross negligence, consequential damages waiver). Flag any
+      uncapped exposure.
+  - title: IP and Data Rights
+    prompt: >
+      Cover ownership of background IP, foreground IP / work product,
+      licenses granted (scope, term, exclusivity, sublicensable),
+      moral rights waivers, and data ownership / processing rights
+      (controller vs. processor, DPA references, cross-border transfer
+      mechanism).
+  - title: Term, Termination, and Transition
+    prompt: >
+      State the initial term, renewal mechanics (auto-renew vs.
+      affirmative), and the termination rights (for cause, for
+      convenience, with notice period). Describe the post-termination
+      transition obligations: data return / deletion, knowledge
+      transfer, ongoing licenses, and survival of provisions.
+  - title: Risk Heatmap
+    prompt: >
+      Risk-rank each material clause on a Low / Medium / High scale.
+      For each High risk, propose a specific redline or fallback
+      position to negotiate. For each Medium, note the acceptable
+      cap or carve-out.
+    output_format: table
+  - title: Recommendations
+    prompt: >
+      Concrete recommendation: sign as drafted, sign with redlines
+      below, escalate to senior counsel, or decline. Justify the
+      recommendation in two-to-three sentences referencing the
+      highest-risk clauses.
+export:
+  - markdown
+  - pdf
+  - docx

@@ -1,0 +1,37 @@
+id: proposal-v1-de
+name: Angebot
+type: document
+description: Geschäfts- oder Projektangebot mit Zusammenfassung, Ansatz, Zeitplan und Budget (deutsche Version)
+locale: de
+sections:
+  - title: Zusammenfassung
+    prompt: >
+      Geben Sie eine prägnante Übersicht über das Angebot,
+      einschließlich der Chance, des empfohlenen Ansatzes und
+      der erwarteten Ergebnisse. Antworten Sie auf Deutsch.
+  - title: Hintergrund
+    prompt: >
+      Beschreiben Sie den Kontext, der zu diesem Angebot
+      geführt hat. Verweisen Sie auf relevante Quellen. Antworten Sie auf Deutsch.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Vorgeschlagener Ansatz
+    prompt: >
+      Detaillieren Sie den empfohlenen Ansatz, die Methodik
+      und die wesentlichen Aktivitäten. Antworten Sie auf Deutsch.
+  - title: Zeitplan
+    prompt: >
+      Skizzieren Sie den Projektzeitplan mit den wichtigsten
+      Meilensteinen und Lieferergebnissen. Antworten Sie auf Deutsch.
+  - title: Budget
+    prompt: >
+      Stellen Sie das geschätzte Budget mit Einzelposten und
+      Begründungen dar. Antworten Sie auf Deutsch.
+  - title: Erwartete Ergebnisse
+    prompt: >
+      Beschreiben Sie die erwarteten Ergebnisse und wie Erfolg
+      gemessen wird. Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - html

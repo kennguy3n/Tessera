@@ -1,0 +1,82 @@
+id: course-syllabus-v1
+name: Course Syllabus
+type: document
+description: Course syllabus with schedule, grading, policies, resources, and learning outcomes
+industry:
+  - education
+profile:
+  - professor
+  - teacher
+  - department-chair
+sections:
+  - title: Course Identification
+    prompt: >
+      Course title, course number, credit hours, prerequisites,
+      term, meeting days and times, classroom location (or LMS
+      URL for online), instructor name, email, office hours, and
+      office location.
+  - title: Course Description and Rationale
+    prompt: >
+      The catalog description (verbatim) followed by an expanded
+      rationale: how this course fits the major, what students will
+      be able to do at completion, and how the course connects to
+      prior and subsequent coursework.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Student Learning Outcomes
+    prompt: >
+      Numbered list of student learning outcomes using Bloom's
+      taxonomy verbs. Each outcome should be measurable. Map each
+      outcome to the program-level outcomes and to the assessments
+      that will demonstrate mastery.
+    output_format: numbered_list
+  - title: Required Materials
+    prompt: >
+      Bibliographic list of required textbooks, journal articles,
+      software, lab kits, and any consumables. Provide ISBNs,
+      edition numbers, and approximate costs. Identify free /
+      open-educational-resource alternatives where available.
+  - title: Course Schedule
+    prompt: >
+      Week-by-week schedule including: week number, topic, readings
+      due, in-class activity, and assignments due. Highlight major
+      milestones (midterm, paper, final). Note any holidays or
+      university breaks that affect the schedule.
+    output_format: table
+  - title: Grading Policy
+    prompt: >
+      Detailed grade breakdown by assessment type with percentages
+      summing to 100%. Define the letter-grade scale (numerical
+      thresholds), policies on extra credit, late work (with
+      penalty schedule), make-up work, and grade-appeal process.
+    output_format: table
+  - title: Attendance and Participation
+    prompt: >
+      State the attendance policy, how participation is measured
+      and weighted, the policy on absences (excused vs. unexcused),
+      and the consequences of excessive absences. Reference any
+      institutional minimum attendance for credit.
+  - title: Academic Integrity
+    prompt: >
+      Reference the institution's academic integrity policy in
+      full. Define what constitutes plagiarism, fabrication,
+      unauthorized collaboration, and the appropriate use of AI
+      assistants in this course. State the consequences (zero on
+      the assignment, course failure, referral to honor council).
+  - title: Accommodations and Inclusion
+    prompt: >
+      Statement on disability accommodations referencing the
+      institution's disability services office and the process for
+      students to register. Statement on inclusive classroom
+      practices, preferred pronouns, and reporting bias incidents.
+  - title: Communication and Office Hours
+    prompt: >
+      State the expected email response time, the preferred
+      communication channel (email vs. LMS messaging), office-hour
+      protocol (drop-in vs. scheduled), and the policy on
+      after-hours / weekend messages.
+export:
+  - markdown
+  - pdf
+  - docx

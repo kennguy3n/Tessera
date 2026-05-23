@@ -1,0 +1,69 @@
+id: infographic-kpi-dashboard-v1
+name: KPI Dashboard
+type: infographic
+description: KPI dashboard infographic with headline metrics, trend, target lines, and narrative annotations
+profile:
+  - analyst
+  - executive
+  - operations
+sections:
+  - title: Dashboard Identification
+    prompt: >
+      Dashboard title, the audience (CEO, CFO, customer-
+      success-leadership, marketing-leadership), the
+      cadence of review (daily / weekly / monthly /
+      quarterly), and the data freshness expectation.
+  - title: Headline Metrics
+    prompt: >
+      The 3-5 metrics that get the largest visual treatment
+      ("hero KPIs"). Per metric: name, current value,
+      period-over-period delta, target / threshold,
+      status (on track / at risk / off track), and the
+      data source / definition link.
+    output_format: table
+    required_sources:
+      - type: local
+        min: 1
+  - title: Secondary Metrics
+    prompt: >
+      Supporting KPIs that explain the headline metrics:
+      drill-down rates, leading indicators, segment cuts.
+      For each: name, value, trend (sparkline), and the
+      relationship to the headline metric.
+  - title: Trend Charts
+    prompt: >
+      Per chart: title, the metric plotted, the time
+      window, the comparison series (prior year, plan,
+      benchmark), any target / threshold lines, and a
+      one-sentence interpretation. Choose chart type
+      (line, bar, area, stacked) deliberately.
+  - title: Annotations and Causation
+    prompt: >
+      Annotate the trend charts with key events (launches,
+      outages, marketing campaigns, regulatory changes)
+      that explain notable inflections. Help the reader
+      attribute movement to a cause.
+  - title: Segment Breakdowns
+    prompt: >
+      Where applicable, show the headline KPI broken down
+      by the most decision-relevant segment (product line,
+      channel, geography, customer cohort). Highlight any
+      segment that materially diverges from the average.
+    output_format: table
+  - title: Definitions and Data Lineage
+    prompt: >
+      Glossary of metric definitions, the source system,
+      the transformation logic (dbt model / SQL view),
+      the calculation formula, and any known caveats
+      (sampled data, definition changes, restated history).
+      Link to the metric catalog.
+  - title: Owner and Review Cadence
+    prompt: >
+      Per metric: the metric owner (the person
+      accountable for moving it), the review forum, and
+      the next planned review date. State the
+      escalation path when a metric goes off track.
+export:
+  - markdown
+  - html
+  - pdf

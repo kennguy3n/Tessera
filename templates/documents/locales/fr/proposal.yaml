@@ -1,0 +1,37 @@
+id: proposal-v1-fr
+name: Proposition
+type: document
+description: Proposition commerciale ou de projet avec résumé exécutif, approche, calendrier et budget (version française)
+locale: fr
+sections:
+  - title: Résumé exécutif
+    prompt: >
+      Donnez un aperçu concis de la proposition, incluant
+      l'opportunité, l'approche recommandée et les résultats
+      attendus. Répondez en français.
+  - title: Contexte
+    prompt: >
+      Décrivez le contexte qui a mené à cette proposition.
+      Référencez les sources pertinentes. Répondez en français.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Approche proposée
+    prompt: >
+      Détaillez l'approche recommandée, la méthodologie et les
+      activités clés. Répondez en français.
+  - title: Calendrier
+    prompt: >
+      Présentez le calendrier du projet avec les jalons majeurs
+      et les livrables. Répondez en français.
+  - title: Budget
+    prompt: >
+      Présentez le budget estimé avec les postes et les
+      justifications. Répondez en français.
+  - title: Résultats attendus
+    prompt: >
+      Décrivez les résultats attendus et la façon dont le succès
+      sera mesuré. Répondez en français.
+export:
+  - markdown
+  - html

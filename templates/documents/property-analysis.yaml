@@ -1,0 +1,94 @@
+id: property-analysis-v1
+name: Property Investment Analysis
+type: document
+description: Real-estate investment analysis with comparables, cash flow, returns, and exit scenarios
+industry:
+  - real-estate
+profile:
+  - investor
+  - analyst
+  - broker
+sections:
+  - title: Property Identification
+    prompt: >
+      Property address, APN / parcel ID, property type (multifamily,
+      office, industrial, retail, mixed-use, land), year built, year
+      renovated, total square footage, number of units, zoning, and
+      the seller / listing source.
+  - title: Market and Submarket Analysis
+    prompt: >
+      Metro and submarket context: employment growth, population
+      trends, household income, vacancy and rent trends, supply
+      pipeline (units in construction / lease-up), and the
+      submarket's positioning vs. metro average.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Property Description
+    prompt: >
+      Unit mix (count, sqft, current rent vs. market rent),
+      amenities, parking, building systems (HVAC, electrical,
+      plumbing — age and condition), deferred maintenance, and
+      capital improvements completed in the last five years.
+  - title: Comparable Sales and Rents
+    prompt: >
+      Three to five sales comparables: address, sale date, sale
+      price, $/sqft, $/unit, cap rate at sale, and adjustments
+      (size, age, location, condition). Three to five rent
+      comparables with the same structure for $/sqft asking rent.
+    output_format: table
+  - title: Pro Forma Cash Flow
+    prompt: >
+      Ten-year stabilized pro forma: gross potential rent, vacancy
+      and collection loss, other income, effective gross income,
+      operating expenses by line (taxes, insurance, utilities,
+      repairs, management, replacement reserves), NOI, debt
+      service, and cash flow before tax. State the rent-growth
+      and expense-growth assumptions.
+    output_format: table
+  - title: Capital Structure and Financing
+    prompt: >
+      Proposed capital stack: senior debt (lender, LTV, amortization,
+      term, rate, fees), mezzanine or preferred equity (if any),
+      common equity (sponsor co-invest, LP commitments). State the
+      sources-and-uses table including closing costs, capex
+      reserves, and acquisition fee.
+  - title: Return Analysis
+    prompt: >
+      Compute the deal-level and LP-level returns: cap rate at
+      acquisition, stabilized cap rate, cash-on-cash by year,
+      IRR (levered and unlevered), equity multiple, average
+      annual return, and the breakeven occupancy. Sensitivity
+      table: exit cap × rent growth.
+    output_format: table
+  - title: Value-Add or Repositioning Plan
+    prompt: >
+      For value-add deals: planned capital improvements with
+      budget and timeline, expected rent premium per category,
+      and the operational changes (management, branding,
+      amenities, expense reductions). Tie investment dollars to
+      the return contribution.
+  - title: Risks and Mitigations
+    prompt: >
+      Top risks: market (job loss, supply pipeline), property
+      (construction-quality issues, environmental, hazardous
+      materials, ADA compliance), financing (rate, refinance,
+      maturity), execution (lease-up speed, contractor risk).
+      Mitigation per risk.
+  - title: Exit Strategy
+    prompt: >
+      Base / upside / downside exit scenarios: hold period, exit
+      cap rate, the next buyer profile, brokerage costs, and the
+      sales process. Test refinance vs. sale at year 5 / 7 / 10.
+  - title: Recommendation
+    prompt: >
+      Investment recommendation: proceed at offer price / proceed
+      with re-trade to X / pass. State the bid strategy
+      (free-look period, due diligence contingencies, hard
+      money), the diligence checklist, and the expected closing
+      timeline.
+export:
+  - markdown
+  - pdf
+  - docx
+  - xlsx

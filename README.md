@@ -92,12 +92,48 @@ for connect/sync/disconnect.
 
 | Artifact | Description |
 |---|---|
-| Documents | PRDs, proposals, SOPs, reports, memos, forms |
-| Slides | QBRs, strategy decks, review presentations |
-| Sheets | Budgets, scorecards, roadmaps, trackers |
-| Bases | Vendor registers, risk registers, roadmap tables, asset inventory — five views (Grid / Kanban / Calendar / Timeline / Gallery) over the same records |
-| Infographics | Stats overview, process flow, comparison layouts with icon + heading + stat blocks |
-| Landing pages | Hero / features / stats / testimonials / CTA sections, exportable as standalone HTML or PDF |
+| Documents | PRDs, proposals, SOPs, reports, memos, forms — plus industry-specific variants (clinical protocols, legal briefs, lesson plans, policy briefs, investment memos, audit findings, brand guidelines, campaign briefs, …) |
+| Slides | QBRs, strategy decks, pitch decks, board / investor updates, onboarding decks, sales enablement, workshop decks |
+| Sheets | Budgets, scorecards, roadmaps, trackers, product catalogs, sales forecasts |
+| Bases | Vendor registers, risk registers, roadmap tables, asset inventory, CRM, incident tracker, employee directory, compliance register — five views (Grid / Kanban / Calendar / Timeline / Gallery) over the same records |
+| Infographics | Stats overview, process flow, comparison, KPI dashboard, organization chart, timeline |
+| Landing pages | Hero / features / stats / testimonials / CTA sections — SaaS, event / conference, nonprofit cause, personal & agency portfolio — exportable as standalone HTML or PDF |
+
+## Industry coverage
+
+Templates ship pre-tagged for the following industries; the CreatePage industry filter surfaces them on demand. Templates without an `industry:` tag are industry-agnostic ("General").
+
+| Industry | Sample templates |
+|---|---|
+| Healthcare | Clinical protocol, patient care plan, HIPAA incident report, discharge summary |
+| Legal | Legal brief (IRAC), contract summary, compliance audit, case intake |
+| Education | Lesson plan, course syllabus, student progress report, curriculum map |
+| Government / Public Sector | Policy brief, grant proposal, impact assessment, public consultation report |
+| Finance | Investment memo, financial analysis, audit findings, loan proposal |
+| Manufacturing / Supply Chain | Quality control report, safety incident report, maintenance schedule |
+| Retail / E-commerce | Product catalog, sales forecast |
+| Nonprofit | Donor report, volunteer handbook, nonprofit cause landing |
+| Creative / Marketing | Content calendar, brand guidelines, campaign brief, portfolio landing |
+| Real Estate | Property analysis, lease summary |
+
+## Language support
+
+The ten most-used templates (PRD, proposal, SOP, report, meeting agenda, meeting notes, task list, form, budget, pitch) ship localized variants in nine languages besides English. Section titles and LLM prompts are translated and the prompt itself asks the model to respond in the target language. The CreatePage language filter switches the visible cards to a locale; non-localized templates default to English regardless of selection.
+
+| Locale | Language | Variants shipped |
+|---|---|---|
+| `en` | English | All 100+ templates (default) |
+| `es` | Spanish | Top 10 core templates |
+| `fr` | French | Top 10 core templates |
+| `de` | German | Top 10 core templates |
+| `ja` | Japanese | Top 10 core templates |
+| `zh` | Chinese (Simplified) | Top 10 core templates |
+| `pt` | Portuguese | Top 10 core templates |
+| `ko` | Korean | Top 10 core templates |
+| `ar` | Arabic | Top 10 core templates |
+| `hi` | Hindi | Top 10 core templates |
+
+Localized templates live under `templates/<category>/locales/<locale>/<slug>.yaml` and share the same base id with a locale suffix (e.g. `prd-v1-es`). `crates/tessera_templates/tests/bundled_templates.rs` enforces that every non-English locale ships the full canonical set so the filter shows a consistent picker across languages.
 
 ## Productivity workflows
 

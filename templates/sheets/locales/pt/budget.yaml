@@ -1,0 +1,30 @@
+id: budget-v1-pt
+name: Orçamento
+type: sheet
+description: Planilha de orçamento com categorias, itens detalhados, realizado vs. planejado e análise de variação (versão em português)
+locale: pt
+sections:
+  - title: Resumo do Orçamento
+    prompt: >
+      Forneça uma visão geral do orçamento total, incluindo gastos planejados,
+      gastos reais até o momento e variação projetada. Responda em português.
+  - title: Categorias
+    prompt: >
+      Divida o orçamento por categoria (pessoal, infraestrutura,
+      software, marketing, etc.) com valores planejados e realizados.
+      Responda em português.
+  - title: Itens Detalhados
+    prompt: >
+      Detalhe os itens individuais dentro de cada categoria.
+      Inclua fornecedor, valor, frequência e status. Responda em português.
+  - title: Análise de Variação
+    prompt: >
+      Analise variações entre gastos planejados e realizados.
+      Explique desvios significativos e ações corretivas. Responda em português.
+  - title: Previsão
+    prompt: >
+      Projete os gastos restantes do período e sinalize quaisquer
+      riscos orçamentários. Responda em português.
+export:
+  - markdown
+  - csv

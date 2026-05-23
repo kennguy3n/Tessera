@@ -1,0 +1,56 @@
+id: employee-directory-base-v1
+name: Employee Directory
+type: base
+description: Employee directory base with department, role, location, contact, manager hierarchy, and skills
+profile:
+  - hr-manager
+  - operations
+  - it-admin
+sections:
+  - title: Employee Records
+    prompt: >
+      Per employee: employee ID, preferred name, legal name
+      (if different), pronouns, email, work phone, slack /
+      teams handle, start date, employment type (FTE / PTE /
+      contractor / intern), location (city, timezone,
+      remote vs. office), and the manager.
+  - title: Role and Level
+    prompt: >
+      Per employee: job title, job family, level / grade,
+      department, sub-team, cost center, FLSA status
+      (exempt / non-exempt), and the role description.
+      Include any matrixed / dual reporting structure.
+  - title: Reporting Hierarchy
+    prompt: >
+      Manager chain rolling up to the CEO. For each
+      manager: span of control, direct reports count,
+      indirect reports count. Identify the executive
+      sponsor and the next-level skip-level manager.
+  - title: Skills and Certifications
+    prompt: >
+      Per employee: declared skills, proficiency levels,
+      certifications held (with expiration), languages
+      spoken, security clearances (where applicable), and
+      compliance training completion status.
+    output_format: table
+  - title: Onboarding and Equipment
+    prompt: >
+      Onboarding status per new hire: laptop issued, badge
+      issued, system accounts provisioned, training
+      completed, manager check-in done, and the days-to-
+      productivity benchmark.
+  - title: Privacy and Access Controls
+    prompt: >
+      Document what is publicly visible to the whole
+      company vs. restricted to HR / managers. Define the
+      access tiers (self, manager chain, HR, IT, security)
+      and the audit logging for any sensitive view.
+  - title: Maintenance and Sync
+    prompt: >
+      Source-of-truth system (HRIS), sync cadence to this
+      base, the field-by-field write-back policy, and the
+      ownership for keeping records accurate (employees
+      self-serve vs. HR-managed).
+export:
+  - markdown
+  - csv

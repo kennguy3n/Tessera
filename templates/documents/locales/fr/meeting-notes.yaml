@@ -1,0 +1,49 @@
+id: meeting-notes-v1-fr
+name: Compte-Rendu de Réunion
+type: document
+description: Compte-rendu avec décisions, actions, risques et prochaines étapes (version française)
+locale: fr
+sections:
+  - title: Métadonnées de la réunion
+    prompt: >
+      Saisissez le titre, la date, les participants présents et
+      absents, l'animateur et la personne chargée des notes.
+      Référencez l'ordre du jour le cas échéant. Répondez en français.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Synthèse
+    prompt: >
+      Synthèse d'un paragraphe de la réunion : ce qui a été
+      discuté à haut niveau et le résultat global.
+      Répondez en français.
+  - title: Notes de discussion
+    prompt: >
+      Notes sujet par sujet capturant les points clés soulevés,
+      les perspectives partagées et le contexte ayant éclairé
+      les décisions. Répondez en français.
+  - title: Décisions
+    prompt: >
+      Listez les décisions prises, la justification, le
+      responsable et les conditions de suivi. Référencez le
+      matériel de source pertinent. Répondez en français.
+  - title: Actions à entreprendre
+    prompt: >
+      Actions avec responsable, échéance et critères
+      d'acceptation. Chacune doit être mesurable.
+      Répondez en français.
+  - title: Risques et questions ouvertes
+    prompt: >
+      Capturez les risques soulevés, les questions ouvertes
+      nécessitant un suivi et la personne en charge de chacune.
+      Répondez en français.
+  - title: Prochaines étapes
+    prompt: >
+      Précisez la suite, y compris la prochaine date de réunion
+      le cas échéant, et le déclencheur du prochain point de
+      contrôle. Répondez en français.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

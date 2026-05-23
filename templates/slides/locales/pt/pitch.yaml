@@ -1,0 +1,118 @@
+id: pitch-v1-pt
+name: Pitch Deck
+type: slides
+description: Pitch deck de fundador/vendas com problema, solução, mercado, tração, equipe e pedido (versão em português)
+locale: pt
+format: marp
+theme: gaia
+paginate: true
+sections:
+  - title: Gancho
+    prompt: >
+      Abra com uma única frase de alto impacto sobre a oportunidade.
+      Lidere com o problema ou a métrica de destaque. Responda em português.
+  - title: Problema
+    prompt: >
+      Descreva o problema em linguagem concreta e fundamentada no cliente.
+      Quantifique a dor (custo, tempo, churn) quando possível. Responda em português.
+  - title: Solução
+    prompt: >
+      Explique a solução sucintamente. Destaque a capacidade mágica que
+      faz com que funcione. Responda em português.
+  - title: Mercado e Tração
+    prompt: >
+      Dimensione o mercado (TAM/SAM/SOM) e relate a tração atual
+      (usuários, ARR, taxa de crescimento). Use fontes. Responda em português.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Modelo de Negócio e Concorrência
+    prompt: >
+      Descreva como a receita é gerada e como a oferta se diferencia
+      das alternativas. Responda em português.
+  - title: Equipe
+    prompt: >
+      Apresente os fundadores/membros-chave da equipe com papel, experiência
+      e prova de relevância. Responda em português.
+  - title: O Pedido
+    prompt: >
+      Indique o valor da captação, uso dos recursos e marcos desbloqueados.
+      Termine com momentum. Responda em português.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf
+marp_template: |
+  ---
+  marp: true
+  theme: gaia
+  paginate: true
+  class: lead
+  ---
+
+  # {{ company_name }}
+  ## {{ one_liner }}
+
+  <!-- Contato visual; pausa; deixe o gancho aterrissar -->
+
+  ---
+
+  ## O Problema
+
+  > {{ problem_statement }}
+
+  - **Hoje:** {{ status_quo }}
+  - **Custo:** {{ pain_metric }}
+
+  ---
+
+  ## Nossa Solução
+
+  ### {{ solution_headline }}
+
+  {{ solution_description }}
+
+  ```mermaid
+  flowchart LR
+    Today([Status quo]) --> {{ company_name }}([Nossa solução]) --> Outcome([{{ outcome }}])
+  ```
+
+  ---
+
+  ## Mercado e Tração
+
+  | Métrica | Valor |
+  |---|---|
+  | TAM | {{ tam }} |
+  | SAM | {{ sam }} |
+  | SOM | {{ som }} |
+  | MRR / Usuários | {{ traction }} |
+  | Crescimento (MoM) | {{ growth }} |
+
+  ---
+
+  ## Modelo de Negócio
+
+  - **Preço:** {{ pricing }}
+  - **CAC / LTV:** {{ cac_ltv }}
+  - **Por que nós:** {{ moat }}
+
+  ---
+
+  ## Equipe
+
+  - **{{ founder_1_name }}** — {{ founder_1_role }} — {{ founder_1_bio }}
+  - **{{ founder_2_name }}** — {{ founder_2_role }} — {{ founder_2_bio }}
+
+  ---
+
+  ## O Pedido
+
+  Captando **{{ raise_amount }}** para:
+
+  1. {{ use_of_funds_1 }}
+  2. {{ use_of_funds_2 }}
+  3. {{ use_of_funds_3 }}
+
+  <!-- Termine no próximo marco -->

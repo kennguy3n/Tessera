@@ -1,0 +1,74 @@
+id: landing-nonprofit-v1
+name: Nonprofit / Cause Landing
+type: landing_page
+description: Nonprofit landing page with mission framing, impact proof, beneficiary stories, and donate / get-involved CTAs
+industry:
+  - nonprofit
+profile:
+  - communications
+  - development-director
+sections:
+  - title: Hero — Mission Promise
+    prompt: >
+      A one-line emotional hero stating the change the
+      nonprofit creates ("Every child reads by third
+      grade", "Clean water for every community"). Below
+      the headline, a 15-25 word subheadline expanding on
+      who is served and how. CTA buttons: "Donate" and
+      "Get Involved".
+  - title: The Problem
+    prompt: >
+      The problem the nonprofit addresses, grounded in
+      data and a single concrete example. 2-3 paragraphs.
+      Avoid statistics-only framing — pair every number
+      with a story.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Our Approach
+    prompt: >
+      The nonprofit's distinctive approach to the
+      problem: what makes the model effective, the
+      theory of change, and the evidence base. Present in
+      3-4 short cards with icons.
+  - title: Impact Numbers
+    prompt: >
+      Headline impact numbers — beneficiaries served,
+      outcomes achieved, funds raised, communities
+      reached. Per number: the figure, a one-word label,
+      and the methodology link. Comparable to prior
+      year and to a five-year cumulative total.
+    output_format: table
+  - title: Stories of Change
+    prompt: >
+      Two or three short stories (first names or
+      pseudonyms with consent), each pairing a photo, a
+      pull quote, and 2-3 sentences of context.
+      Beneficiary agency at the center — not the
+      nonprofit's heroism.
+  - title: Financial Stewardship
+    prompt: >
+      Program / fundraising / management ratios, third-
+      party ratings (Charity Navigator, GuideSeal /
+      Candid, BBB Wise Giving), and the most recent
+      audited financials link. Donor trust comes from
+      transparency.
+  - title: Get Involved
+    prompt: >
+      Pathways to engagement: one-time donation, monthly
+      giving, volunteering, advocacy, planned giving,
+      employer matching, and corporate partnership. Each
+      pathway: brief description and a clear next step
+      (link, email, form).
+  - title: Closing CTA and Newsletter
+    prompt: >
+      Closing call-to-action repeating the headline
+      promise. Newsletter signup with a value
+      proposition ("Quarterly updates on the
+      communities we serve"). Footer with EIN,
+      registered address, contact email, and social-
+      media links.
+export:
+  - markdown
+  - html
+  - pdf

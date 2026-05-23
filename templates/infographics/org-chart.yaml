@@ -1,0 +1,68 @@
+id: infographic-org-chart-v1
+name: Organization Chart
+type: infographic
+description: Organization chart with reporting hierarchy, span of control, vacant positions, and matrix relationships
+profile:
+  - hr-manager
+  - executive
+  - communications
+sections:
+  - title: Chart Identification
+    prompt: >
+      Title (org name, organizational scope — entire
+      company, division, function), as-of date,
+      classification (public, internal-only, board-only),
+      data source (HRIS export), and the responsible
+      maintainer.
+  - title: Hierarchy Structure
+    prompt: >
+      Per node: name, title, level, manager (chain to
+      CEO), department, direct-reports count, span of
+      control. For each open position: title, requisition
+      ID, target start date, and the placeholder name
+      (e.g., "OPEN — Head of Eng Platform"). Indicate the
+      CEO at the top and roll down level by level.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Matrix and Dotted-Line Relationships
+    prompt: >
+      Document any matrix / dotted-line reporting
+      structures: name, primary manager, secondary
+      manager, the percent allocation, and the basis
+      (project lead, functional expertise, geographic
+      coverage). Show on the chart with a distinct line
+      style.
+  - title: Spans of Control and Layer Analysis
+    prompt: >
+      Quantitative breakdown: organization layers from
+      individual contributor to CEO, average span of
+      control per layer, the layers exceeding the
+      benchmark (typically 7-8 direct reports for ICs,
+      5-7 for managers), and any single-person reporting
+      lines.
+    output_format: table
+  - title: Geographic and Functional View
+    prompt: >
+      Alternate cuts of the same data: by office /
+      timezone, by function (eng / GTM / G&A), by
+      employment type (FTE / contractor), or by tenure.
+      State which alternate view is useful for which
+      audience.
+  - title: Confidentiality and Access
+    prompt: >
+      Specify the redaction policy for external
+      distribution (e.g., remove names and titles below
+      VP, show only counts), the watermarking for
+      shared copies, and the audit log for access to
+      sensitive versions.
+  - title: Maintenance Cadence
+    prompt: >
+      Source of truth (HRIS) and the sync mechanism, the
+      review cadence (weekly auto-refresh, monthly manual
+      curation), and the owner who confirms the chart is
+      current before external distribution.
+export:
+  - markdown
+  - html
+  - pdf

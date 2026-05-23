@@ -1,0 +1,48 @@
+id: task-list-v1-fr
+name: Liste de Tâches
+type: document
+description: Liste de tâches priorisées avec responsables, échéances et dépendances (version française)
+locale: fr
+sections:
+  - title: Contexte
+    prompt: >
+      Un paragraphe de contexte pour cette liste de tâches : à
+      quelle initiative ou quel projet elle sert et l'état
+      actuel. Répondez en français.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Chemin critique
+    prompt: >
+      Listez les tâches qui doivent être complétées à temps
+      pour que l'effort global réussisse. Chacune avec
+      responsable et échéance. Répondez en français.
+  - title: En cours
+    prompt: >
+      Tâches actuellement en cours, avec responsable, état
+      actuel, blocages et achèvement prévu.
+      Répondez en français.
+  - title: À venir
+    prompt: >
+      Tâches en file d'attente pour le prochain sprint ou cycle,
+      avec classement de priorité et responsable.
+      Répondez en français.
+  - title: Backlog
+    prompt: >
+      Tâches de priorité inférieure non encore planifiées, avec
+      priorité et estimation approximative de l'effort.
+      Répondez en français.
+  - title: Terminées
+    prompt: >
+      Tâches récemment terminées, avec date d'achèvement et
+      résumé du résultat pour la traçabilité.
+      Répondez en français.
+  - title: Notes et dépendances
+    prompt: >
+      Dépendances entre tâches, décisions affectant la
+      priorisation et blocages nécessitant une escalade.
+      Répondez en français.
+export:
+  - markdown
+  - html
+  - csv

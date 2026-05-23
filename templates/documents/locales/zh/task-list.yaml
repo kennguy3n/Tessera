@@ -1,0 +1,37 @@
+id: task-list-v1-zh
+name: 任务列表
+type: document
+description: 包含负责人、截止日期和依赖关系的优先级任务列表（中文版）
+locale: zh
+sections:
+  - title: 背景
+    prompt: >
+      一段式描述此任务列表所服务的倡议或项目以及当前状态。请用中文回答。
+    required_sources:
+      - type: local
+        min: 0
+  - title: 关键路径
+    prompt: >
+      列出必须按时完成才能让整体工作成功的任务。
+      每项应包含负责人和截止日期。请用中文回答。
+  - title: 进行中
+    prompt: >
+      当前正在进行的任务，包含负责人、当前状态、阻碍因素
+      和预期完成时间。请用中文回答。
+  - title: 即将开始
+    prompt: >
+      为下一个冲刺或周期排队的任务，包含优先级排名和负责人。请用中文回答。
+  - title: 待办事项
+    prompt: >
+      尚未排程的低优先级任务，包含优先级和粗略工作量估计。请用中文回答。
+  - title: 已完成
+    prompt: >
+      最近完成的任务，包含完成日期和结果摘要以便追溯。请用中文回答。
+  - title: 注意事项与依赖关系
+    prompt: >
+      跨任务依赖关系、影响优先级排序的决定，
+      以及任何需要升级的阻碍。请用中文回答。
+export:
+  - markdown
+  - html
+  - csv

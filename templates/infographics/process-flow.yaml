@@ -12,25 +12,25 @@ color_scheme:
   secondary: "#0EA5E9"
   accent: "#F59E0B"
 sections:
-  - heading: Step 1 — Intake
+  - title: Step 1 — Intake
     prompt: >
       Describe the entry point of the process: who or what kicks it off,
       and what data or input is required.
     icon_suggestion: log-in
-  - heading: Step 2 — Process
+  - title: Step 2 — Process
     prompt: >
       Describe the core processing step: what transforms the input.
     icon_suggestion: settings
-  - heading: Step 3 — Decision
+  - title: Step 3 — Decision
     prompt: >
       Describe the decision or routing step that determines the
       branching outcome.
     icon_suggestion: git-branch
-  - heading: Step 4 — Action
+  - title: Step 4 — Action
     prompt: >
       Describe the action taken once the decision is made.
     icon_suggestion: zap
-  - heading: Step 5 — Outcome
+  - title: Step 5 — Outcome
     prompt: >
       Describe the final result delivered to the end user.
     icon_suggestion: check-circle

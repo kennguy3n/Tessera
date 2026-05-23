@@ -1,0 +1,32 @@
+id: prd-v1-es
+name: Documento de Requisitos del Producto
+type: document
+description: PRD estándar con problema, solución, alcance y criterios de éxito (versión en español)
+locale: es
+sections:
+  - title: Planteamiento del problema
+    prompt: >
+      Resuma el problema central que aborda este producto,
+      citando material de origen relevante. Responda en español.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Solución propuesta
+    prompt: >
+      Describa la solución propuesta haciendo referencia a las
+      restricciones técnicas y al estado del arte. Responda en español.
+  - title: Alcance
+    prompt: >
+      Defina qué entra y qué queda fuera del alcance para la
+      versión inicial. Responda en español.
+  - title: Criterios de éxito
+    prompt: >
+      Enumere criterios de éxito medibles con sus objetivos
+      cuantitativos. Responda en español.
+  - title: Riesgos y mitigaciones
+    prompt: >
+      Identifique los riesgos y las mitigaciones propuestas,
+      citando material de origen cuando proceda. Responda en español.
+export:
+  - markdown
+  - html

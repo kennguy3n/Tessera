@@ -21,29 +21,106 @@ impl TemplateRegistry {
     pub fn load_from_directory(path: &Path) -> Result<Self> {
         let mut registry = Self::new();
 
-        for entry in WalkDir::new(path)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(std::result::Result::ok)
-        {
-            let file_path = entry.path();
-            if !file_path.is_file() {
+        // Walk every canonical template-category directory rooted at
+        // `path/<category>/`. This mirrors `parser::load_template_by_id`
+        // so the list and the by-id lookup paths can never disagree on
+        // which files count as templates — adding a new category at
+        // `crate::TEMPLATE_CATEGORIES` updates both paths atomically.
+        // Walking the entire `path` tree (as the pre-WS3 implementation
+        // did) would also process stray YAML under `templates/grammars/`
+        // or any other non-category subdirectory the runtime parser
+        // deliberately ignores, which would silently desync the "list"
+        // and "load by id" semantics. The tests in this file create
+        // their fixtures under the same canonical category names, so
+        // they continue to pass unchanged.
+        for category in crate::TEMPLATE_CATEGORIES {
+            let category_root = path.join(category);
+            if !category_root.is_dir() {
                 continue;
             }
-            let ext = file_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or_default();
-            if ext != "yaml" && ext != "yml" {
-                continue;
-            }
-            match parse_template_file(file_path) {
-                Ok(template) => {
-                    if validate_template(&template).is_ok() {
-                        registry.templates.push(template);
+            for entry_result in WalkDir::new(&category_root).follow_links(false) {
+                let entry = match entry_result {
+                    Ok(entry) => entry,
+                    Err(e) => {
+                        // Walkdir failed to descend (e.g. permission
+                        // denied on `locales/<code>/`). The pre-WS3
+                        // implementation propagated IO errors via
+                        // `read_dir(&dir).map_err(...)?`; the walkdir
+                        // migration would silently drop them via
+                        // `filter_map(Result::ok)`. Log so an
+                        // unreadable directory shows up in operator
+                        // logs instead of silently shrinking the
+                        // registry list. Mirrors the convention used
+                        // for parse / validate failures below.
+                        eprintln!(
+                            "[tessera_templates] walkdir error under {}: {e}",
+                            category_root.display()
+                        );
+                        continue;
+                    }
+                };
+                let file_path = entry.path();
+                if !file_path.is_file() {
+                    continue;
+                }
+                let ext = file_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or_default();
+                if ext != "yaml" && ext != "yml" {
+                    continue;
+                }
+                match parse_template_file(file_path) {
+                    Ok(template) => match validate_template(&template) {
+                        Ok(()) => registry.templates.push(template),
+                        Err(e) => {
+                            // The template parsed but failed semantic
+                            // validation (missing sections, invalid
+                            // max_tokens, etc.). Skip it so the rest
+                            // of the registry still loads, but surface
+                            // the error so the operator can fix the
+                            // offending file.
+                            eprintln!(
+                                "[tessera_templates] template at {} failed validation: {e}",
+                                file_path.display()
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        // YAML couldn't deserialize into the canonical
+                        // `Template` struct. Historically the four
+                        // legacy visual templates
+                        // (infographics/{comparison, process-flow,
+                        // stats-overview}.yaml and
+                        // landing_pages/saas-product.yaml) failed here
+                        // because they used the pre-canonical
+                        // `heading:` section schema; WS3 R10 migrated
+                        // those YAMLs to canonical `title:` / `prompt:`
+                        // and they now parse successfully (the
+                        // visual-hint fields `layout`,
+                        // `default_icon_set`, `color_scheme`, and
+                        // per-section `icon_suggestion` are silently
+                        // ignored by serde, by design).
+                        //
+                        // Today this arm exists purely as a guard
+                        // against future schema drift / typos: any
+                        // YAML newly committed under a category root
+                        // that doesn't deserialize into `Template`
+                        // surfaces here with the file path so the
+                        // operator can fix it rather than have it
+                        // silently disappear from the registry. We
+                        // log-and-continue rather than `?`-propagate
+                        // so a single broken template doesn't take
+                        // down the entire list operation —
+                        // `bundled_templates.rs::every_bundled_
+                        // template_parses_and_validates` is the
+                        // hard-fail gate in CI.
+                        eprintln!(
+                            "[tessera_templates] skipping unparseable template at {}: {e}",
+                            file_path.display()
+                        );
                     }
                 }
-                Err(_) => continue,
             }
         }
 

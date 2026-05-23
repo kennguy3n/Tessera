@@ -1,0 +1,47 @@
+id: meeting-notes-v1-es
+name: Notas de Reunión
+type: document
+description: Notas con decisiones, acciones, riesgos y próximos pasos de una reunión (versión en español)
+locale: es
+sections:
+  - title: Metadatos de la reunión
+    prompt: >
+      Registre el título, la fecha, los asistentes presentes y
+      ausentes, el facilitador y el responsable de las notas.
+      Cite la agenda si existe. Responda en español.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Resumen
+    prompt: >
+      Resumen en un párrafo de la reunión: lo que se discutió
+      a alto nivel y el resultado general. Responda en español.
+  - title: Notas de la discusión
+    prompt: >
+      Notas tema por tema capturando puntos clave, perspectivas
+      compartidas y contexto que informó las decisiones.
+      Responda en español.
+  - title: Decisiones
+    prompt: >
+      Enumere las decisiones tomadas, la justificación, el
+      responsable y las condiciones de seguimiento. Cite material
+      de origen relevante. Responda en español.
+  - title: Acciones a tomar
+    prompt: >
+      Acciones con responsable, fecha límite y criterios de
+      aceptación. Cada una debe ser medible. Responda en español.
+  - title: Riesgos y preguntas abiertas
+    prompt: >
+      Capture los riesgos planteados, las preguntas abiertas que
+      necesitan seguimiento y quién es responsable de cada una.
+      Responda en español.
+  - title: Próximos pasos
+    prompt: >
+      Detalle lo que sigue, incluida la próxima fecha de reunión
+      si corresponde y el disparador del próximo punto de control.
+      Responda en español.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

@@ -12,7 +12,7 @@ color_scheme:
   secondary: "#0EA5E9"
   accent: "#F59E0B"
 sections:
-  - heading: Headline Metric
+  - title: Headline Metric
     prompt: >
       Identify the single most important quantitative result from the
       provided sources. Express it as a number/percentage with a one-line
@@ -21,22 +21,22 @@ sections:
     required_sources:
       - type: local
         min: 1
-  - heading: Growth or Trend
+  - title: Growth or Trend
     prompt: >
       Surface a number that captures the change over time (year over
       year, quarter over quarter, etc.). Include the comparison period.
     icon_suggestion: trending-up
-  - heading: Reach or Volume
+  - title: Reach or Volume
     prompt: >
       Surface a number that captures scale — users, customers, events,
       records processed.
     icon_suggestion: users
-  - heading: Efficiency
+  - title: Efficiency
     prompt: >
       Surface a number that captures speed, cost reduction, latency, or
       throughput.
     icon_suggestion: gauge
-  - heading: Quality or Outcome
+  - title: Quality or Outcome
     prompt: >
       Surface a number that captures a satisfaction, retention, or
       success-rate metric.

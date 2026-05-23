@@ -1,0 +1,44 @@
+id: task-list-v1-es
+name: Lista de Tareas
+type: document
+description: Lista de tareas priorizadas con responsables, fechas de vencimiento y dependencias (versión en español)
+locale: es
+sections:
+  - title: Contexto
+    prompt: >
+      Un párrafo de contexto para esta lista de tareas: qué
+      iniciativa o proyecto sirve y el estado actual.
+      Responda en español.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Ruta crítica
+    prompt: >
+      Enumere las tareas que deben completarse a tiempo para que
+      el esfuerzo general tenga éxito. Cada una con responsable y
+      fecha de vencimiento. Responda en español.
+  - title: En progreso
+    prompt: >
+      Tareas en curso, con responsable, estado actual, bloqueos
+      y finalización prevista. Responda en español.
+  - title: Próximas
+    prompt: >
+      Tareas en cola para el próximo sprint o ciclo, con
+      clasificación de prioridad y responsable. Responda en español.
+  - title: Backlog
+    prompt: >
+      Tareas de menor prioridad aún no programadas, con
+      prioridad y estimación aproximada de esfuerzo. Responda en español.
+  - title: Completadas
+    prompt: >
+      Tareas recientemente completadas, con fecha de finalización
+      y resumen del resultado para trazabilidad. Responda en español.
+  - title: Notas y dependencias
+    prompt: >
+      Dependencias entre tareas, decisiones que afectan la
+      priorización y bloqueos que requieren escalamiento.
+      Responda en español.
+export:
+  - markdown
+  - html
+  - csv

@@ -1,0 +1,44 @@
+id: form-v1-fr
+name: Formulaire
+type: document
+description: Formulaire à remplir avec sections pour titre, description, champs et instructions de soumission (version française)
+locale: fr
+sections:
+  - title: Titre et description du formulaire
+    prompt: >
+      Saisissez le titre du formulaire, un bref énoncé d'objectif
+      et le contexte dont le répondant a besoin avant de
+      remplir. Répondez en français.
+  - title: Informations du répondant
+    prompt: >
+      Collectez les informations d'identification du répondant
+      (nom, courriel, rôle, organisation) et la date de
+      soumission. Répondez en français.
+  - title: Champs du formulaire
+    prompt: >
+      Définissez chaque champ que le formulaire collecte. Pour
+      chaque champ, notez l'étiquette, le type d'entrée (texte,
+      texte long, sélection unique ou multiple, date, case à
+      cocher, nombre, téléversement de fichier), s'il est
+      obligatoire et toute valeur par défaut ou liste d'options.
+      Répondez en français.
+  - title: Validation et logique conditionnelle
+    prompt: >
+      Décrivez les règles de validation (obligatoire, regex,
+      min/max, valeurs autorisées) et toute logique conditionnelle
+      d'affichage entre champs. Répondez en français.
+  - title: Instructions de soumission
+    prompt: >
+      Expliquez comment soumettre le formulaire complété, qui le
+      révise, le délai de traitement attendu et comment le
+      répondant sera notifié du résultat. Répondez en français.
+  - title: Confidentialité et conservation
+    prompt: >
+      Indiquez comment les données du formulaire sont stockées,
+      qui peut y accéder et combien de temps elles sont conservées
+      avant suppression ou anonymisation. Répondez en français.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

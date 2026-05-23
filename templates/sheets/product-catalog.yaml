@@ -1,0 +1,55 @@
+id: product-catalog-v1
+name: Product Catalog
+type: sheet
+description: Retail product catalog with SKU, variants, pricing tiers, inventory, and merchandising attributes
+industry:
+  - retail
+profile:
+  - merchandiser
+  - category-manager
+  - e-commerce-manager
+sections:
+  - title: Catalog Header
+    prompt: >
+      Identify the catalog scope (channel, region, season), the
+      effective date range, the system of record (PIM / ERP), the
+      currency and the catalog owner.
+  - title: Product Records
+    prompt: >
+      For each product capture: product name, brand, parent SKU,
+      category, sub-category, short description, long description,
+      lifecycle status (new / core / clearance / discontinued),
+      launch date, and the responsible buyer or merchandiser.
+  - title: Variant Matrix
+    prompt: >
+      For products with variants (size, color, material, capacity),
+      list each child SKU with its variant attributes, UPC / EAN,
+      barcode, weight, dimensions, and the parent SKU it rolls up to.
+  - title: Pricing and Promotions
+    prompt: >
+      Per SKU: MSRP, regular retail price, current promotional
+      price, promo start / end dates, planned markdown cadence,
+      and any volume / loyalty pricing tiers.
+    output_format: table
+  - title: Inventory and Replenishment
+    prompt: >
+      Per SKU and per location: on-hand quantity, on-order
+      quantity, safety stock, reorder point, supplier lead time,
+      minimum order quantity, and the recommended replenishment
+      action (no action / reorder / expedite / phase out).
+    output_format: table
+  - title: Merchandising and Content Readiness
+    prompt: >
+      Per SKU: hero image asset ID, alternate image count, video
+      asset, copy approval status, regulatory disclosures complete,
+      reviews count and rating, and the channels enabled (web,
+      marketplace, store, B2B).
+  - title: Performance Summary
+    prompt: >
+      Roll up performance by category and brand: sell-through rate,
+      gross margin, sales velocity, and inventory turn. Identify
+      top performers and underperformers for review.
+export:
+  - markdown
+  - csv
+  - xlsx

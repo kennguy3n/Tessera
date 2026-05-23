@@ -484,6 +484,58 @@ boundary, structured logging, release workflow).
 
 ---
 
+## Phase 10 — Template & artifact expansion (industry / profile / language coverage)
+
+**Status:** `DONE`
+
+**Goal:** Grow the bundled template registry from the original ~36
+English-only corporate-tech templates to >170 templates that cover
+ten industries, multiple user profiles, and ten BCP-47 locales (English
+plus nine localized variants).
+
+### Build
+
+| Item | Status |
+|---|---|
+| A | Add `locale`, `industry`, `profile` fields to the YAML schema, the Rust `Template` struct, and the TypeScript `Template` interface | `DONE` |
+| B | Industry-specific document templates — Healthcare (4), Legal (4), Education (4), Government (4), Finance (4), Manufacturing (3), Retail (2), Nonprofit (2), Creative / Marketing (3), Real Estate (2) | `DONE` |
+| C | New slide decks — onboarding, sales enablement, board update, investor update, workshop | `DONE` |
+| D | New base templates — CRM, incident tracker, employee directory, compliance register | `DONE` |
+| E | New infographics — timeline, org chart, KPI dashboard | `DONE` |
+| F | New landing pages — nonprofit cause, event / conference, personal & agency portfolio | `DONE` |
+| G | New sheet templates — product catalog, sales forecast | `DONE` |
+| H | Localized variants of the top 10 templates (PRD, Proposal, SOP, Report, Meeting agenda, Meeting notes, Task list, Form, Budget, Pitch) in nine languages: `es`, `fr`, `de`, `ja`, `zh`, `pt`, `ko`, `ar`, `hi` — 90 files total | `DONE` |
+| I | CreatePage industry + locale filter dropdowns; cards re-resolve to the localized id when a non-English locale is selected | `DONE` |
+| J | Smoke registry test (`crates/tessera_templates/tests/bundled_templates.rs`) discovers every template, validates parse + schema, enforces unique ids, locale-directory consistency, and the canonical-set invariant for every supported locale | `DONE` |
+| K | README industry-coverage and language-support tables, PROPOSAL template-catalog update, PROGRESS phase entry | `DONE` |
+
+### Exit criteria
+
+- [x] Every YAML file under `templates/` parses through
+      `tessera_templates::parser::parse_template_file` and validates
+      via `tessera_templates::validator::validate_template`.
+- [x] No two templates share the same `id`; localized variants use
+      the `<base-id>-<locale>` suffix convention.
+- [x] Each of the nine non-English locales ships the full canonical
+      set of 10 core templates; the registry test fails if any
+      translation goes missing.
+- [x] The CreatePage industry filter shows every industry-tagged
+      template under its declared industries and surfaces untagged
+      templates under "General".
+- [x] The CreatePage locale filter routes cards to the localized id
+      when a translation exists. Cards without a localized variant for
+      the selected non-English locale are hidden from the grid (a
+      deliberate UX signal that those templates are not yet
+      translated). The locale-aware workflow shortcuts in the Analyze
+      tab carry `availableLocales: CORE_LOCALES` so they remain
+      visible under every locale and route to the localized id when
+      one exists. See the `matchesLocale` / `resolveTemplateId`
+      contract documented at the top of `CreatePage.tsx`. Choosing
+      "All languages" or "English" shows every card; non-English
+      locales filter to the translated subset.
+
+---
+
 ## Links
 
 - [README.md](README.md) — project overview
@@ -494,6 +546,52 @@ boundary, structured logging, release workflow).
 ---
 
 ## Changelog
+
+### 2026-05-23 (Phase 10 — template & artifact expansion)
+- **Schema additions**: `locale` (BCP-47), `industry[]`, `profile[]` added
+  to the YAML schema, the `Template` Rust struct, and the renderer
+  `Template` interface. `default_locale()` returns `"en"`; existing
+  templates round-trip unchanged.
+- **Industry templates**: 32 new document / sheet templates tagged
+  for healthcare, legal, education, government, finance,
+  manufacturing, retail, nonprofit, creative / marketing, and real
+  estate (clinical protocol, patient care plan, HIPAA incident
+  report, discharge summary, legal brief / IRAC, contract summary,
+  compliance audit, case intake, lesson plan, course syllabus,
+  student progress report, curriculum map, policy brief, grant
+  proposal, impact assessment, public consultation report,
+  investment memo, financial analysis, audit findings, loan
+  proposal, quality control report, safety incident report,
+  maintenance schedule, product catalog, sales forecast, donor
+  report, volunteer handbook, content calendar, brand guidelines,
+  campaign brief, property analysis, lease summary).
+- **New slide decks**: onboarding, sales enablement, board update,
+  investor update, workshop.
+- **New bases**: CRM, incident tracker, employee directory,
+  compliance register.
+- **New infographics**: timeline, org chart, KPI dashboard.
+- **New landing pages**: nonprofit cause, event / conference,
+  personal & agency portfolio.
+- **Localized variants**: 90 files under
+  `templates/<category>/locales/<locale>/` covering nine languages
+  (`es`, `fr`, `de`, `ja`, `zh`, `pt`, `ko`, `ar`, `hi`) for the top
+  10 most-used templates. Section titles + LLM prompts are
+  translated and prompts explicitly ask the model to respond in the
+  target language.
+- **CreatePage**: industry-filter and locale-filter dropdowns added
+  above the template grid; cards re-resolve to the localized id when
+  a non-English locale is selected.
+- **Registry test rewrite**: `bundled_templates.rs` now discovers
+  every YAML on the filesystem, parses + validates each, enforces
+  unique ids, asserts every locale variant lives in
+  `locales/<code>/` matching its `locale:` field, and verifies every
+  non-English locale ships the full canonical 10-template set. 8
+  tests, ~170 templates covered.
+- **JSON schema**: `type` enum extended to include `infographic`
+  and `landing_page`, matching the runtime `ArtifactType` variants.
+- **Docs**: README artifact-types table refreshed, new "Industry
+  coverage" and "Language support" sections added; PROPOSAL.md
+  template-catalog updated.
 
 ### 2026-05-21 (Phase 9)
 - **Block A — Missing templates**: Five new YAML templates landed

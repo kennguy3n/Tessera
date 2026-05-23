@@ -1,0 +1,40 @@
+id: report-v1-fr
+name: Rapport
+type: document
+description: Rapport analytique avec constats, analyse et recommandations (version française)
+locale: fr
+sections:
+  - title: Résumé exécutif
+    prompt: >
+      Résumez les principaux constats et recommandations de ce
+      rapport. Répondez en français.
+  - title: Méthodologie
+    prompt: >
+      Décrivez la méthodologie utilisée pour la collecte et
+      l'analyse des données. Répondez en français.
+  - title: Constats
+    prompt: >
+      Présentez les principaux constats, étayés par des données
+      des sources. Incluez les statistiques et preuves pertinentes.
+      Répondez en français.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Analyse
+    prompt: >
+      Fournissez une analyse détaillée des constats. Identifiez
+      les schémas, les tendances et les implications.
+      Répondez en français.
+  - title: Recommandations
+    prompt: >
+      Listez les recommandations actionnables basées sur
+      l'analyse. Priorisez par impact et faisabilité.
+      Répondez en français.
+  - title: Annexe
+    prompt: >
+      Incluez les données de support, les références et le
+      matériel supplémentaire. Répondez en français.
+export:
+  - markdown
+  - html
+  - csv

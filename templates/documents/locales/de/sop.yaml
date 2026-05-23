@@ -1,0 +1,33 @@
+id: sop-v1-de
+name: Standardarbeitsanweisung
+type: document
+description: Schritt-für-Schritt-Verfahren mit Rollen, Voraussetzungen und Verifizierungsschritten (deutsche Version)
+locale: de
+sections:
+  - title: Zweck
+    prompt: >
+      Geben Sie den Zweck dieses Verfahrens an und wann es
+      befolgt werden muss. Antworten Sie auf Deutsch.
+  - title: Geltungsbereich
+    prompt: >
+      Definieren Sie, für wen dieses Verfahren gilt und unter
+      welchen Umständen. Antworten Sie auf Deutsch.
+  - title: Voraussetzungen
+    prompt: >
+      Listen Sie alle Voraussetzungen, Werkzeuge, Zugriffe und
+      Berechtigungen auf, die vor Beginn benötigt werden. Antworten Sie auf Deutsch.
+  - title: Verfahrensschritte
+    prompt: >
+      Geben Sie detaillierte Schritt-für-Schritt-Anweisungen.
+      Nummerieren Sie jeden Schritt und nennen Sie das erwartete
+      Ergebnis. Antworten Sie auf Deutsch.
+  - title: Verifizierung
+    prompt: >
+      Beschreiben Sie, wie verifiziert wird, dass das Verfahren
+      erfolgreich abgeschlossen wurde. Antworten Sie auf Deutsch.
+  - title: Fehlerbehebung
+    prompt: >
+      Listen Sie häufige Probleme und deren Lösungen auf. Antworten Sie auf Deutsch.
+export:
+  - markdown
+  - html

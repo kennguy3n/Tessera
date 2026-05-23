@@ -16,29 +16,93 @@ pub fn parse_template_file(path: &Path) -> Result<Template> {
 
 pub fn load_template_by_id(template_dir: &str, template_id: &str) -> Result<Template> {
     let base = Path::new(template_dir);
-    let subdirs = ["documents", "slides", "sheets", "bases"];
-    for subdir in &subdirs {
+    // Recurse over every template-category directory. We list the
+    // categories explicitly (rather than walking `template_dir` as a
+    // single tree) so unrelated subdirectories like `grammars/` are
+    // never opened. `walkdir::WalkDir` then visits every nested
+    // `locales/<locale>/` directory so localized variants are
+    // reachable by id without an additional lookup step.
+    //
+    // The category list is the canonical `crate::TEMPLATE_CATEGORIES`
+    // constant — `tests/bundled_templates.rs` and any future tooling
+    // that walks the template tree share the same source of truth, so
+    // adding a category is a one-line edit at the crate root.
+    for subdir in crate::TEMPLATE_CATEGORIES {
         let dir = base.join(subdir);
         if !dir.is_dir() {
             continue;
         }
-        for entry in std::fs::read_dir(&dir).map_err(Error::Io)? {
-            let entry = entry.map_err(Error::Io)?;
+        for entry_result in walkdir::WalkDir::new(&dir).follow_links(false) {
+            let entry = match entry_result {
+                Ok(entry) => entry,
+                Err(e) => {
+                    // Walkdir failed to descend into a subdirectory
+                    // (most commonly: permission denied on
+                    // `locales/<code>/`). The pre-WS3 implementation
+                    // used `std::fs::read_dir(&dir).map_err(...)?` and
+                    // would have propagated the IO error to the caller;
+                    // the walkdir migration would silently drop it via
+                    // `filter_map(Result::ok)`. Log it so an unreadable
+                    // template directory surfaces in operator logs
+                    // (matching the convention used for parse / validate
+                    // failures below) instead of producing a misleading
+                    // "Template not found" error downstream.
+                    eprintln!(
+                        "[tessera_templates] walkdir error under {}: {e}",
+                        dir.display()
+                    );
+                    continue;
+                }
+            };
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("yaml")
-                || path.extension().and_then(|e| e.to_str()) == Some("yml")
-            {
-                if let Ok(tmpl) = parse_template_file(&path) {
+            if !path.is_file() {
+                continue;
+            }
+            if !matches!(
+                path.extension().and_then(|e| e.to_str()),
+                Some("yaml" | "yml")
+            ) {
+                continue;
+            }
+            match parse_template_file(path) {
+                Ok(tmpl) => {
                     if tmpl.id == template_id {
                         return Ok(tmpl);
                     }
                 }
+                Err(e) => {
+                    // Don't fail the whole lookup just because one YAML
+                    // file is corrupted — the target template may still
+                    // live in a sibling file. But surface the parse
+                    // error so an unrelated typo doesn't silently mask
+                    // a working template. This used to be a silent
+                    // `if let Ok` swallow; the walkdir migration in WS3
+                    // expanded the search set to every localized
+                    // variant, making silent swallowing much more
+                    // dangerous (a broken `prd-v1-ja` would mask
+                    // nothing visible to the user). Mirrors the
+                    // `eprintln!` convention used in tessera_sources.
+                    eprintln!(
+                        "[tessera_templates] skipping malformed template at {}: {e}",
+                        path.display()
+                    );
+                }
             }
         }
     }
-    Err(Error::TemplateValidation(format!(
-        "Template not found: {template_id}"
-    )))
+    // Dedicated `TemplateNotFound` variant (not `TemplateValidation`)
+    // so callers like the NAPI bridge can distinguish a missing id
+    // (`Ok(None)` in the UI) from a parse/validation error (real
+    // failure) without resorting to string matching on the error
+    // message. Previously this returned
+    // `Error::TemplateValidation(format!("Template not found: {id}"))`
+    // and the bridge did
+    // `if msg.starts_with("Template not found:")` to recover the
+    // not-found semantics; any future refactor of the error text
+    // would have silently broken that contract. See
+    // `crates/tessera_bridge/src/templates.rs::get_template` for
+    // the matching consumer.
+    Err(Error::TemplateNotFound(template_id.to_string()))
 }
 
 #[cfg(test)]

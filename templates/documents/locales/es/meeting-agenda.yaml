@@ -1,0 +1,44 @@
+id: meeting-agenda-v1-es
+name: Agenda de Reunión
+type: document
+description: Agenda estructurada con objetivos, asistentes, temas y tiempos (versión en español)
+locale: es
+sections:
+  - title: Resumen de la reunión
+    prompt: >
+      Capture el título, fecha, hora, ubicación o enlace de
+      videoconferencia y un objetivo de una línea. Responda en español.
+  - title: Asistentes
+    prompt: >
+      Enumere los asistentes requeridos y opcionales con sus
+      roles. Indique cualquier lectura previa. Responda en español.
+  - title: Objetivos
+    prompt: >
+      Enumere de 2 a 5 resultados específicos que la reunión
+      debería lograr. Cada uno debe ser medible (decisión tomada
+      o artefacto producido). Responda en español.
+  - title: Puntos de la agenda
+    prompt: >
+      Para cada punto, capture el tema, el responsable, el tiempo
+      asignado, el resultado deseado y los enlaces de lectura previa.
+      Responda en español.
+    required_sources:
+      - type: local
+        min: 0
+  - title: Decisiones requeridas
+    prompt: >
+      Liste explícitamente las decisiones que deben tomarse en la
+      reunión y los responsables de su aplicación. Responda en español.
+  - title: Lecturas previas
+    prompt: >
+      Enlace al material de origen que los asistentes deben revisar
+      antes de la reunión. Responda en español.
+  - title: Seguimientos
+    prompt: >
+      Reserve espacio para los puntos de acción capturados durante
+      la reunión, para ser completados después del evento.
+      Responda en español.
+export:
+  - markdown
+  - html
+  - pdf

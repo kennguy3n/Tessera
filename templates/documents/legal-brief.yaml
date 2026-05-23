@@ -1,0 +1,77 @@
+id: legal-brief-v1
+name: Legal Brief (IRAC)
+type: document
+description: Legal brief in IRAC format (Issue, Rule, Analysis, Conclusion) with citation table and standard of review
+industry:
+  - legal
+profile:
+  - attorney
+  - paralegal
+  - law-clerk
+sections:
+  - title: Caption and Procedural Posture
+    prompt: >
+      State the court, case caption, docket number, and procedural
+      posture (motion to dismiss, summary judgment, appeal, etc.).
+      Identify the moving party, opposing party, and the standard of
+      review applicable to the motion or appeal.
+  - title: Statement of the Issues
+    prompt: >
+      State each legal issue presented as a numbered question of law.
+      Frame each question to incorporate the controlling rule and the
+      key facts that drive the outcome (the "deep issue" style favored
+      by Bryan Garner). One sentence per issue.
+    output_format: numbered_list
+  - title: Statement of Facts
+    prompt: >
+      Provide a clear, factually accurate narrative of the material
+      facts, cited to the record (declaration, deposition, exhibit).
+      Include only facts that are material to the legal issues; reserve
+      argument for the analysis section. Cite the record in standard
+      court format.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Standard of Review or Burden
+    prompt: >
+      For each issue, state the applicable standard of review (de novo,
+      abuse of discretion, clear error, substantial evidence) or the
+      moving party's evidentiary burden (preponderance, clear and
+      convincing, beyond a reasonable doubt). Cite the controlling
+      authority.
+  - title: Rule (R of IRAC)
+    prompt: >
+      State the controlling legal rule(s) for each issue, beginning
+      with constitutional and statutory authority, then binding
+      precedent, then persuasive authority. Quote statutes and key
+      holdings exactly; paraphrase elsewhere. Use standard Bluebook
+      citations.
+  - title: Analysis (A of IRAC)
+    prompt: >
+      Apply the rule to the facts for each issue. Use CREAC sub-
+      structure where helpful: Conclusion, Rule, Explanation
+      (synthesis of authority), Application (rule to facts), Counter-
+      argument and rebuttal, and re-Conclusion. Address opposing
+      arguments directly rather than ignoring them.
+  - title: Conclusion (C of IRAC) and Relief Requested
+    prompt: >
+      Restate the resolution of each issue and the specific relief
+      requested (grant the motion, deny opposing motion, remand,
+      reverse, award costs and fees). Match the relief to the prayer
+      in the underlying pleading.
+  - title: Table of Authorities
+    prompt: >
+      Compile a table of authorities: cases (federal, state, alphabetical
+      within each), statutes, regulations, rules, secondary sources.
+      Group by type and provide pin cites where the authority appears in
+      the brief. Bluebook format.
+    output_format: table
+  - title: Certificate of Service and Word Count
+    prompt: >
+      Include the certificate of service (parties served, method,
+      date) and the certificate of compliance with the court's word /
+      page limit. State the actual word count.
+export:
+  - markdown
+  - pdf
+  - docx

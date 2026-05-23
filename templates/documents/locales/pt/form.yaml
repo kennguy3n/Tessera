@@ -1,0 +1,42 @@
+id: form-v1-pt
+name: Formulário
+type: document
+description: Formulário preenchível de uso geral com seções para título, descrição, campos e instruções de submissão (versão em português)
+locale: pt
+sections:
+  - title: Título e Descrição do Formulário
+    prompt: >
+      Capture o título do formulário, uma declaração curta de propósito
+      e qualquer contexto que o respondente precise antes de preencher.
+      Responda em português.
+  - title: Informações do Respondente
+    prompt: >
+      Colete os dados de identificação do respondente (nome, email,
+      papel, organização) e a data de submissão. Responda em português.
+  - title: Campos do Formulário
+    prompt: >
+      Defina cada campo que o formulário coleta. Para cada campo, registre
+      o rótulo, o tipo de entrada (texto, texto longo, seleção única,
+      seleção múltipla, data, caixa de seleção, número, upload de arquivo),
+      se é obrigatório e qualquer valor padrão ou lista de opções.
+      Responda em português.
+  - title: Validação e Lógica Condicional
+    prompt: >
+      Descreva regras de validação (obrigatório, regex, mín/máx, valores
+      permitidos) e qualquer lógica condicional de exibir/ocultar entre
+      campos. Responda em português.
+  - title: Instruções de Submissão
+    prompt: >
+      Explique como o formulário preenchido deve ser submetido, quem revisa,
+      o tempo de resposta esperado e como o respondente será notificado
+      do resultado. Responda em português.
+  - title: Privacidade e Retenção
+    prompt: >
+      Indique como os dados do formulário são armazenados, quem pode acessá-los
+      e por quanto tempo são retidos antes de serem excluídos ou anonimizados.
+      Responda em português.
+export:
+  - markdown
+  - html
+  - pdf
+  - docx

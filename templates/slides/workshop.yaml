@@ -1,0 +1,83 @@
+id: workshop-deck-v1
+name: Workshop / Facilitation Deck
+type: slides
+description: Workshop facilitation deck with objectives, agenda, exercises, debrief, and next steps
+profile:
+  - facilitator
+  - trainer
+  - team-lead
+sections:
+  - title: Workshop Opening
+    prompt: >
+      Title, date, location (or virtual platform), facilitator
+      name, expected duration, attendees / audience, and one
+      sentence on why this workshop exists right now.
+  - title: Objectives and Outcomes
+    prompt: >
+      State the workshop objectives in observable terms
+      (e.g., "By the end, we will have agreed on the top 3
+      product bets for Q1"). Distinguish process objectives
+      (decision made, alignment reached) from learning
+      objectives (skill gained).
+    required_sources:
+      - type: local
+        min: 1
+  - title: Pre-Work
+    prompt: >
+      What participants should read, watch, or do before
+      the workshop. Time estimate, the artifact they should
+      bring (filled-out template, opinion, data), and the
+      mechanism for submitting it.
+  - title: Working Agreements
+    prompt: >
+      Ground rules for participation: confidentiality,
+      device norms, equal-airtime principles, how
+      disagreement will be handled, how time is kept, and
+      the safety practices for difficult topics.
+  - title: Agenda
+    prompt: >
+      Detailed agenda with time blocks: opening, segment 1
+      (concept + exercise + debrief), break, segment 2
+      (deeper exercise), lunch, segment 3 (application or
+      decision), close. Each block: duration, format
+      (presentation / exercise / discussion), and the
+      facilitator role.
+    output_format: table
+  - title: Exercise Briefs
+    prompt: >
+      Per exercise: name, purpose, group size, materials
+      needed, instructions (step-by-step), the prompt or
+      worksheet, the debrief questions, and the planned
+      output. Use a consistent rubric for all exercises.
+  - title: Templates and Worksheets
+    prompt: >
+      Reference the worksheet PDFs / digital boards used
+      in the workshop: persona canvas, fishbone, 2x2
+      prioritization, pre-mortem, action-planning grid.
+      Include a download or URL.
+  - title: Debrief and Synthesis
+    prompt: >
+      How the workshop will synthesize across exercises:
+      capture method (sticky notes, digital board), the
+      synthesis facilitator, the framework used to roll
+      observations into themes, and the form of the
+      published synthesis.
+  - title: Decisions and Next Steps
+    prompt: >
+      Slide reserved for capturing the decisions made and
+      the next-step actions: owner, deliverable, due date,
+      and follow-up forum. The facilitator updates this
+      live as the workshop closes.
+    output_format: table
+  - title: Close and Follow-Up
+    prompt: >
+      Closing reflections (each participant in one
+      sentence), the post-workshop survey link, the
+      planned follow-up artifact (synthesis doc, decision
+      log, project plan), and the date and forum where
+      progress will be reviewed.
+export:
+  - markdown
+  - html
+  - pptx
+  - pdf

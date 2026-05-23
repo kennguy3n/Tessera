@@ -1,0 +1,37 @@
+id: report-v1-pt
+name: Relatório
+type: document
+description: Relatório analítico com descobertas, análise e recomendações (versão em português)
+locale: pt
+sections:
+  - title: Resumo Executivo
+    prompt: >
+      Resuma as principais descobertas e recomendações deste relatório.
+      Responda em português.
+  - title: Metodologia
+    prompt: >
+      Descreva a metodologia usada para coleta e análise de dados.
+      Responda em português.
+  - title: Descobertas
+    prompt: >
+      Apresente as principais descobertas, apoiadas por dados das fontes.
+      Inclua estatísticas e evidências relevantes. Responda em português.
+    required_sources:
+      - type: local
+        min: 1
+  - title: Análise
+    prompt: >
+      Forneça análise detalhada das descobertas. Identifique padrões,
+      tendências e implicações. Responda em português.
+  - title: Recomendações
+    prompt: >
+      Liste recomendações acionáveis baseadas na análise.
+      Priorize por impacto e viabilidade. Responda em português.
+  - title: Apêndice
+    prompt: >
+      Inclua dados de apoio, referências e material complementar.
+      Responda em português.
+export:
+  - markdown
+  - html
+  - csv
