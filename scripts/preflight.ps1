@@ -45,6 +45,19 @@ param(
 # the failure banner has the correct step name.
 $ErrorActionPreference = 'Stop'
 
+# Mirror the CI workflow's global RUSTFLAGS (ci.yml line 18). Without
+# this, `cargo test --all` (and any plain `cargo build` it triggers)
+# would only emit warnings while CI treats those same warnings as
+# errors — a release-day surprise we exist to prevent. We append rather
+# than overwrite so a developer's pre-existing RUSTFLAGS (e.g. for
+# target-cpu tuning) is preserved.
+# PowerShell 5.1 lacks the `??` null-coalescing operator, so we
+# explicitly normalise an unset env var to the empty string before
+# concatenating. The Trim() ensures we don't leave a leading space
+# when RUSTFLAGS was previously unset.
+$existingRustflags = if ($env:RUSTFLAGS) { $env:RUSTFLAGS } else { '' }
+$env:RUSTFLAGS = ("{0} -D warnings" -f $existingRustflags).Trim()
+
 # Always run from the repo root so relative paths in cargo / npm /
 # electron-builder resolve correctly even when the script is invoked
 # from a subdirectory.
@@ -134,25 +147,37 @@ function Invoke-AllSteps {
 # Version detection
 # ----------------------------------------------------------------------
 
+# Returns $true if $Value is a usable version string (non-empty and
+# not the JSON sentinels `undefined` / `null` that ConvertFrom-Json
+# would surface if package.json lacked a `version` field).
+function Test-VersionUsable {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    return ($Value -notin @('undefined', 'null'))
+}
+
 function Resolve-Version {
     # NOTE: `$PSBoundParameters` here would scope to *this* function (which
     # declares no parameters), not the script. The script-level `-Version`
     # parameter is reachable via the parent scope because PowerShell
     # functions inherit the caller's variables — so we test the variable
     # itself rather than the (empty) function-local PSBoundParameters.
-    if ($script:Version) {
+    if (Test-VersionUsable $script:Version) {
         return $script:Version
     }
-    if ($env:TESSERA_PREFLIGHT_VERSION) {
+    if (Test-VersionUsable $env:TESSERA_PREFLIGHT_VERSION) {
         return $env:TESSERA_PREFLIGHT_VERSION
     }
     try {
         $pkg = Get-Content -Raw -Path (Join-Path $RepoRoot 'package.json') | ConvertFrom-Json
-        if ($pkg.version) { return [string]$pkg.version }
+        if ($pkg.PSObject.Properties.Name -contains 'version') {
+            $candidate = [string]$pkg.version
+            if (Test-VersionUsable $candidate) { return $candidate }
+        }
     }
     catch {
         # Fall through to the placeholder; the build steps will fail
-        # loudly if package.json is genuinely missing.
+        # loudly if package.json is genuinely missing or malformed.
     }
     return 'X.Y.Z'
 }

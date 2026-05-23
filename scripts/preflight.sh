@@ -28,6 +28,18 @@
 
 set -euo pipefail
 
+# Mirror the CI workflow's global RUSTFLAGS (ci.yml line 18). Without
+# this, `cargo test --all` (and any plain `cargo build` it triggers)
+# would only emit warnings while CI treats those same warnings as
+# errors — a release-day surprise we exist to prevent. We append rather
+# than overwrite so a developer's pre-existing RUSTFLAGS (e.g. for
+# target-cpu tuning) is preserved.
+if [[ -n "${RUSTFLAGS:-}" ]]; then
+  export RUSTFLAGS="${RUSTFLAGS} -D warnings"
+else
+  export RUSTFLAGS="-D warnings"
+fi
+
 # Always run from the repo root so relative paths in cargo / npm /
 # electron-builder resolve correctly even when the script is invoked
 # from a subdirectory.
@@ -111,6 +123,16 @@ run_steps() {
 # Version detection
 # ----------------------------------------------------------------------
 
+# Returns 0 if $1 is a usable version string (non-empty and not the
+# stringified JS sentinels `undefined`/`null` that `console.log` would
+# emit if package.json had no version field). Used by detect_version
+# below; factored out so both the node-based and regex-based fallbacks
+# get the same sanity check.
+is_valid_version() {
+  local v="$1"
+  [[ -n "${v}" && "${v}" != "undefined" && "${v}" != "null" ]]
+}
+
 detect_version() {
   if [[ -n "${TESSERA_PREFLIGHT_VERSION:-}" ]]; then
     printf '%s' "${TESSERA_PREFLIGHT_VERSION}"
@@ -120,13 +142,19 @@ detect_version() {
   # in `jq` to keep preflight runnable on a bare clone.
   local v
   v="$(node -e "console.log(require('./package.json').version)" 2>/dev/null || true)"
-  if [[ -z "${v}" ]]; then
-    # Fallback to a regex if Node is missing. Preflight needs Node
-    # for the desktop build anyway, but this keeps the version
-    # detection from being the failing step.
+  if ! is_valid_version "${v}"; then
+    # Fallback to a regex if Node is missing OR if Node returned the
+    # JS sentinel "undefined"/"null" (which would happen if the
+    # package.json had no `version` field). Preflight needs Node for
+    # the desktop build anyway, but this keeps the version detection
+    # from emitting a bogus "vundefined" banner.
     v="$(grep -E '"version"' package.json | head -n1 | sed -E 's/.*"version"[^"]*"([^"]+)".*/\1/')"
   fi
-  printf '%s' "${v:-X.Y.Z}"
+  if is_valid_version "${v}"; then
+    printf '%s' "${v}"
+  else
+    printf '%s' "X.Y.Z"
+  fi
 }
 
 # ----------------------------------------------------------------------
