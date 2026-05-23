@@ -11,8 +11,6 @@
  *   * SettingsPage labels: every form control (Theme, Watch
  *     Patterns, Ignore Patterns, Default Export Format) has a
  *     <label> whose htmlFor matches the control's id.
- *   * SourceDetailPage Re-embed button: aria-label is descriptive
- *     in both idle and busy states.
  *   * Sidebar: NavLink renders aria-current="page" on the active
  *     route (react-router-dom contract — pinned here so a future
  *     refactor that swaps NavLink for <a> is caught immediately).

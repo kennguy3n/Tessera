@@ -24,6 +24,7 @@
 //! a stub returning `Default::default()` would fail every assertion
 //! here.
 
+use std::fmt::Write;
 use std::io::Read;
 
 use tessera_artifacts::Artifact;
@@ -127,7 +128,7 @@ fn markdown_very_long_content_does_not_overflow() {
     // output whose length is monotonically related to the input.
     let mut content = String::new();
     for i in 0..10_000 {
-        content.push_str(&format!("Paragraph {i} body text.\n\n"));
+        writeln!(content, "Paragraph {i} body text.\n").unwrap();
     }
     let mut artifact = Artifact::new("Long Doc".into(), ArtifactType::Document, None);
     artifact.update_content(content.clone());
@@ -158,7 +159,7 @@ fn html_very_long_content_emits_each_paragraph_separately() {
     // `emit_text_segment` doesn't drop or merge anything.
     let mut content = String::new();
     for i in 0..1_000 {
-        content.push_str(&format!("Paragraph {i} body.\n\n"));
+        writeln!(content, "Paragraph {i} body.\n").unwrap();
     }
     let mut artifact = Artifact::new("Long HTML".into(), ArtifactType::Document, None);
     artifact.update_content(content);
@@ -421,7 +422,12 @@ fn evidence_pack_unicode_source_title_round_trips_through_excerpt() {
     let output = dir.path().join("unicode.zip");
     let artifact = Artifact::new("ユニコード Test".into(), ArtifactType::Document, None);
 
-    build_evidence_pack(&artifact, &[citation.clone()], output.to_str().unwrap()).expect("build");
+    build_evidence_pack(
+        &artifact,
+        std::slice::from_ref(&citation),
+        output.to_str().unwrap(),
+    )
+    .expect("build");
 
     let file = std::fs::File::open(&output).unwrap();
     let mut archive = zip::ZipArchive::new(file).expect("zip parses");
@@ -500,8 +506,7 @@ fn evidence_pack_many_citations_produces_one_excerpt_per_unique_source() {
         .filter(|&i| {
             archive
                 .by_index(i)
-                .map(|f| f.name().starts_with("sources/"))
-                .unwrap_or(false)
+                .is_ok_and(|f| f.name().starts_with("sources/"))
         })
         .count();
     assert_eq!(
