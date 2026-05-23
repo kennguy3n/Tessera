@@ -6,7 +6,9 @@ pub mod jira;
 pub mod notion;
 pub mod onedrive;
 pub mod registry;
+pub mod retry;
 pub mod token;
+pub mod traits;
 pub mod types;
 pub mod url_encode;
 
@@ -18,4 +20,6 @@ pub use jira::JiraConnector;
 pub use notion::NotionConnector;
 pub use onedrive::OneDriveConnector;
 pub use registry::ConnectorRegistry;
+pub use retry::{send_with_retry, RetryPolicy};
+pub use traits::RemoteConnector;
 pub use types::{AuthConfig, ConnectorStatus, RemoteFile, SyncResult};

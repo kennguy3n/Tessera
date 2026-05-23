@@ -40,10 +40,15 @@
  *
  * - **`safeStorage` unavailable** (Linux headless / no keyring
  *   daemon): {@link getOrCreateDbKey} throws with a
- *   user-actionable message from {@link encryptionUnavailableReason}.
- *   The current launch path in `appState.ts` catches and falls
- *   through to an unencrypted bridge so the app remains usable —
- *   WS10 will add an interactive password-prompt fallback.
+ *   user-actionable message from {@link keyringUnavailableSentence}.
+ *   We deliberately use `keyringUnavailableSentence()` here rather
+ *   than `encryptionUnavailableReason()` because the password vault
+ *   does NOT wrap the SQLCipher database key (see the KNOWN
+ *   LIMITATION block in `main.ts` next to `maybeInitPasswordVault`):
+ *   showing the user a "restart and enter a vault password" hint
+ *   on this path would send them down an unrecoverable route. The
+ *   current launch path in `appState.ts` catches and falls through
+ *   to an unencrypted bridge so the app remains usable.
  * - **`db.key` exists but won't decrypt** (e.g. the user copied
  *   their `userData` directory to a different machine): we surface
  *   the underlying `safeStorage.decryptString` error verbatim. The
@@ -68,7 +73,7 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 
-import { encryptionUnavailableReason } from "./tokenVault";
+import { keyringUnavailableSentence } from "./vaultCrypto";
 
 /** Length of the SQLCipher raw key in bytes (256-bit cipher key). */
 const KEY_BYTES = 32;
@@ -207,7 +212,13 @@ export function getOrCreateDbKey(): string {
   // `EncryptionUnavailableError` so the caller can degrade to an
   // unencrypted bridge, because there is no encrypted state to lose.
   if (!safeStorage.isEncryptionAvailable()) {
-    throw new EncryptionUnavailableError(encryptionUnavailableReason());
+    // Use `keyringUnavailableSentence()` here, NOT
+    // `encryptionUnavailableReason()`. The latter appends a
+    // password-vault recovery hint, but the password vault does NOT
+    // wrap the SQLCipher database key (see `maybeInitPasswordVault`
+    // KNOWN LIMITATION in `main.ts`). Showing the vault-recovery
+    // hint here would send the user down an unrecoverable path.
+    throw new EncryptionUnavailableError(keyringUnavailableSentence());
   }
   // First launch — generate, wrap, persist.
   const hex = generateDbKey();
