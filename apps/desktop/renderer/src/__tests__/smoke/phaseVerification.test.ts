@@ -45,6 +45,15 @@ const TEMPLATES_DIR = join(REPO_ROOT, "templates");
 // Categories we expect under templates/. If a new artifact type lands,
 // add it here and add a section parser below — the test will fail loudly
 // if a new directory shows up that isn't covered.
+//
+// NOTE: `templates/grammars/` is intentionally not listed here. That
+// directory holds GBNF grammar files (`.gbnf`) that constrain LLM
+// output for structured generation — it is not a template category.
+// The walker below filters on the `.yaml`/`.yml` extension anyway, so
+// even if a stray `.gbnf` ended up under one of the listed categories
+// it would be skipped, but keeping the exclusion explicit here means
+// a future contributor reading this list isn't left wondering whether
+// `grammars/` was an oversight.
 const TEMPLATE_CATEGORIES = [
   "documents",
   "slides",
@@ -329,10 +338,18 @@ function extractCategoryTemplateIds(): Set<string> {
   const block = source.slice(start, end);
 
   const ids = new Set<string>();
-  const re = /\bid:\s*["']([a-z0-9][a-z0-9-]*)["']/g;
+  // The leading `["']` is captured into group 1 and the trailing
+  // `\1` backreference enforces that the closing quote matches the
+  // opening one — a future maintainer who hand-edits CATEGORIES into
+  // `id: "foo'` won't get a false positive. The id pattern itself
+  // is constrained to the same `[a-z0-9][a-z0-9-]*` shape that the
+  // bundled-template loader enforces, so accidental matches against
+  // longer string literals elsewhere in CreatePage.tsx (e.g. badge
+  // names like "workflow") are ruled out structurally.
+  const re = /\bid:\s*(["'])([a-z0-9][a-z0-9-]*)\1/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(block)) !== null) {
-    ids.add(m[1]);
+    ids.add(m[2]);
   }
   return ids;
 }

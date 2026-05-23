@@ -39,9 +39,20 @@ fn templates_root() -> PathBuf {
 /// `tessera_templates::Template`-compatible. The infographic and
 /// landing-page templates intentionally use a richer renderer-side
 /// schema (with `hero:`, `features:`, `stats:`, `layout:`, ...) that
-/// the Rust struct does not model — those are verified in the
-/// renderer's `phaseVerification.test.ts` smoke suite instead.
+/// the Rust struct does not model — those are still parsed for
+/// well-formedness by `every_renderer_only_template_is_well_formed_yaml`
+/// below, just not subjected to the full `validate_template` pass.
 const RUST_TEMPLATE_DIRS: &[&str] = &["documents", "slides", "sheets", "bases"];
+
+/// Subdirectories under `templates/` whose YAML files use the
+/// renderer-side schema. These don't deserialize into the Rust
+/// `Template` struct, but they still need to be syntactically valid
+/// YAML — a malformed `hero:` block in an infographic or landing-page
+/// template would crash the renderer at runtime. We use a minimal
+/// `serde_yaml::Value` parse below so this Rust test still gates
+/// malformed YAML before it can land on `main`, closing the gap
+/// flagged in Devin Review round-2.
+const RENDERER_ONLY_TEMPLATE_DIRS: &[&str] = &["infographics", "landing_pages"];
 
 /// Recursively collect every `.yaml`/`.yml` file under the supplied
 /// templates root that belongs to a Rust-side template category
@@ -285,4 +296,99 @@ fn registry_loads_every_bundled_template() {
         phantoms.is_empty(),
         "TemplateRegistry reported templates not present on disk anywhere under templates/: {phantoms:?}"
     );
+}
+
+/// Renderer-only template categories (`infographics/`, `landing_pages/`)
+/// use a richer schema that the Rust `Template` struct doesn't model.
+/// They are loaded by the renderer at runtime, so a malformed YAML
+/// would only blow up in jsdom or production Electron — neither of
+/// which gates CI as effectively as a `cargo test` failure.
+///
+/// This test closes that gap: every `.yaml`/`.yml` file under the
+/// renderer-only category dirs must parse as a valid YAML document
+/// (via `serde_yaml::Value`, the loose-typed parse path), AND it must
+/// expose the three structural fields every CreatePage.tsx-registered
+/// template needs to be picker-addressable: a non-empty `id`, a
+/// non-empty `name`, and a non-empty `type`. Schema-specific fields
+/// (`hero:`, `features:`, `stats:`, ...) are deliberately NOT asserted
+/// here — that's the renderer's job — but the floor enforced below is
+/// enough to make a typo'd colon, an unbalanced quote, or a missing
+/// id break the Rust build instead of the runtime.
+#[test]
+fn every_renderer_only_template_is_well_formed_yaml() {
+    let root = templates_root();
+    let mut files: Vec<PathBuf> = Vec::new();
+    for sub in RENDERER_ONLY_TEMPLATE_DIRS {
+        let dir = root.join(sub);
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(&dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+            .filter(|e| e.file_type().is_file())
+        {
+            let path = entry.into_path();
+            if matches!(
+                path.extension().and_then(|s| s.to_str()),
+                Some("yaml" | "yml")
+            ) {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    assert!(
+        !files.is_empty(),
+        "expected at least one renderer-only template under templates/{{infographics,landing_pages}}/, found none — was the directory renamed?",
+    );
+
+    let mut ids_seen: HashSet<String> = HashSet::new();
+    for path in &files {
+        let body = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("failed to read renderer-only template {path:?}: {e}"));
+        let value: serde_yaml::Value = serde_yaml::from_str(&body)
+            .unwrap_or_else(|e| panic!("renderer-only template {path:?} is not valid YAML: {e}"));
+        let mapping = value.as_mapping().unwrap_or_else(|| {
+            panic!(
+                "renderer-only template {path:?} must be a YAML mapping at the top level, got {:?}",
+                value
+            )
+        });
+
+        // The three picker-addressable fields. We use `serde_yaml::Value`
+        // accessors rather than a derived struct because the renderer-side
+        // schema isn't stable enough across infographic / landing-page
+        // variants to be worth modelling here — the renderer applies its
+        // own per-variant validation downstream.
+        for required in ["id", "name", "type"] {
+            let v = mapping
+                .get(serde_yaml::Value::String(required.to_string()))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "renderer-only template {path:?} is missing required top-level field `{required}`"
+                    )
+                });
+            let s = v.as_str().unwrap_or_else(|| {
+                panic!(
+                    "renderer-only template {path:?} field `{required}` must be a string, got {v:?}"
+                )
+            });
+            assert!(
+                !s.trim().is_empty(),
+                "renderer-only template {path:?} field `{required}` must not be empty",
+            );
+        }
+
+        let id = mapping
+            .get(serde_yaml::Value::String("id".to_string()))
+            .and_then(|v| v.as_str())
+            .expect("id presence and string-ness asserted above")
+            .to_string();
+        assert!(
+            ids_seen.insert(id.clone()),
+            "renderer-only template {path:?} declares duplicate id `{id}` (already seen in another file)",
+        );
+    }
 }
