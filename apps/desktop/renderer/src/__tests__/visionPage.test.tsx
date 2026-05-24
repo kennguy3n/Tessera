@@ -320,6 +320,89 @@ describe("VisionPage", () => {
     expect(updateArgs[1]).toMatch(/A vintage travel poster of Lake Tahoe\./);
   });
 
+  it("uses the mode + maxTokens that were in effect at analysis time when saving as a document, not the live state of the controls", async () => {
+    // Devin Review PR #39 pass-1 🟡 finding: after a successful
+    // analysis, the mode radio + maxTokens slider remained
+    // enabled and the Save-as-Document flow read from the live
+    // state instead of the analysis-time snapshot. A user who
+    // analysed in `describe` mode at 512 tokens and then nudged
+    // the controls to `chart` / 1024 before clicking Save would
+    // get an artifact titled "Vision: Chart — file.png" and a
+    // provenance header claiming `maxTokens: 1024` despite the
+    // body being produced by the describe-at-512 call. Pin the
+    // correct behaviour: the artifact must reflect the analysis
+    // parameters, not the live controls.
+    vi.mocked(window.tessera.dialog.pickImage).mockResolvedValueOnce({
+      canceled: false,
+      filePath: "/some/dir/snapshot.png",
+    });
+    vi.mocked(window.tessera.vision.describe).mockResolvedValueOnce({
+      content: "Snapshot at analysis time.",
+      stop: true,
+      tokensPredicted: 12,
+      tokensEvaluated: 200,
+    });
+    vi.mocked(window.tessera.artifacts.create).mockResolvedValueOnce({
+      id: "art-snap",
+      title: "Vision: Describe — snapshot.png",
+      artifactType: "document",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as unknown as ReturnType<
+      typeof window.tessera.artifacts.create
+    > extends Promise<infer T>
+      ? T
+      : never);
+    vi.mocked(window.tessera.artifacts.update).mockResolvedValueOnce(
+      {} as unknown as ReturnType<
+        typeof window.tessera.artifacts.update
+      > extends Promise<infer T>
+        ? T
+        : never,
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByTestId("vision-pick-image")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("vision-pick-image"));
+    // Default mode = describe, default maxTokens = 512. Analyse
+    // with those defaults.
+    await user.click(await screen.findByTestId("vision-analyze"));
+    await screen.findByTestId("vision-result-content");
+    // After the analysis completes, mutate the live controls.
+    // The result panel and Save flow must continue to reflect
+    // the analysis-time snapshot, NOT this drifted state.
+    await user.click(screen.getByTestId("vision-mode-chart"));
+    const slider = screen.getByTestId("vision-max-tokens-slider");
+    fireEvent.change(slider, { target: { value: "1024" } });
+    // Sanity: the result-meta caption keeps showing the
+    // analysis-time max-tokens (512), not the live slider value
+    // (1024). Pin the digit explicitly so a regression that swaps
+    // the source can't slip past matching on "of \d+".
+    expect(
+      screen.getByTestId("vision-result-content").parentElement?.textContent,
+    ).toMatch(/Tokens predicted: 12 of 512/);
+    await user.click(screen.getByTestId("vision-save-as-doc"));
+    await waitFor(() => {
+      expect(window.tessera.artifacts.create).toHaveBeenCalledWith(
+        "Vision: Describe — snapshot.png",
+        "document",
+      );
+    });
+    const updateArgs = vi.mocked(window.tessera.artifacts.update).mock
+      .calls[0];
+    expect(updateArgs[1]).toMatch(/# Vision: Describe — snapshot\.png/);
+    // The provenance header must record the analysis-time
+    // maxTokens, NOT the live slider value the user nudged
+    // afterward.
+    expect(updateArgs[1]).toMatch(/512/);
+    expect(updateArgs[1]).not.toMatch(/1024/);
+    // And the mode in the body / title must be the analysis-time
+    // mode (`Describe`), NOT the live radio (`Chart`).
+    expect(updateArgs[1]).not.toMatch(/Vision: Chart/);
+  });
+
   it("buildVisionDocument formats a deterministic Markdown body", () => {
     const out = buildVisionDocument({
       imagePath: "/some/path/photo.png",

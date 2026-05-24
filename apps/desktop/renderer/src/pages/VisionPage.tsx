@@ -69,6 +69,21 @@ export default function VisionPage() {
   const [maxTokens, setMaxTokens] = useState<number>(DEFAULT_VISION_MAX_TOKENS);
   const [analysing, setAnalysing] = useState(false);
   const [result, setResult] = useState<VisionResult | null>(null);
+  // The mode + maxTokens that were actually in effect when the
+  // current `result` was produced. The live `mode` / `maxTokens`
+  // controls remain enabled after analysis (so the user can pick
+  // different settings for a follow-up run without re-picking the
+  // image), but the Save-as-Document flow and the result-meta
+  // display MUST read from this snapshot — not the live state —
+  // because otherwise tweaking the controls after analysis would
+  // silently produce a Markdown artifact whose provenance header
+  // disagrees with the actual analysis that generated the body.
+  // Devin Review PR #39 pass-1 🟡 finding.
+  const [resultMeta, setResultMeta] = useState<{
+    mode: VisionMode;
+    maxTokens: number;
+    imagePath: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -104,6 +119,7 @@ export default function VisionPage() {
       if (pick.canceled || !pick.filePath) return;
       setImagePath(pick.filePath);
       setResult(null);
+      setResultMeta(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -113,14 +129,29 @@ export default function VisionPage() {
     if (!imagePath) return;
     setError(null);
     setResult(null);
+    setResultMeta(null);
     setAnalysing(true);
+    // Snapshot the analysis parameters at call time so the result
+    // panel and Save-as-Document flow can read them regardless of
+    // how the live controls have moved since. Captured as locals
+    // first so this remains a single atomic decision point even
+    // if the IPC takes seconds and the user starts twisting
+    // sliders during the wait.
+    const snapshotMode = mode;
+    const snapshotMaxTokens = maxTokens;
+    const snapshotImagePath = imagePath;
     try {
       const out = await window.tessera.vision.describe({
-        imagePath,
-        mode,
-        maxTokens,
+        imagePath: snapshotImagePath,
+        mode: snapshotMode,
+        maxTokens: snapshotMaxTokens,
       });
       setResult(out);
+      setResultMeta({
+        mode: snapshotMode,
+        maxTokens: snapshotMaxTokens,
+        imagePath: snapshotImagePath,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -129,14 +160,22 @@ export default function VisionPage() {
   }, [imagePath, mode, maxTokens]);
 
   const onSaveAsDocument = useCallback(async () => {
-    if (!imagePath || !result) return;
+    if (!result || !resultMeta) return;
     setError(null);
     setSaving(true);
     try {
+      // Build the artifact from the snapshot taken at analysis
+      // time, NOT the live controls. The user may have nudged the
+      // mode radio or maxTokens slider after the analysis
+      // completed but before clicking Save; reading the live
+      // values here would persist an artifact whose provenance
+      // header (mode, token cap, source path) lies about what
+      // actually produced the content. Devin Review PR #39 pass-1
+      // 🟡 finding.
       const { title, markdown } = buildVisionDocument({
-        imagePath,
-        mode,
-        maxTokens,
+        imagePath: resultMeta.imagePath,
+        mode: resultMeta.mode,
+        maxTokens: resultMeta.maxTokens,
         result,
       });
       const artifact = await window.tessera.artifacts.create(
@@ -149,7 +188,7 @@ export default function VisionPage() {
       setError(err instanceof Error ? err.message : String(err));
       setSaving(false);
     }
-  }, [imagePath, mode, maxTokens, result, navigate]);
+  }, [result, resultMeta, navigate]);
 
   const imageBasename = useMemo(() => {
     if (!imagePath) return null;
@@ -337,7 +376,8 @@ export default function VisionPage() {
                   {result.content}
                 </pre>
                 <p className="vision-result-meta">
-                  Tokens predicted: {result.tokensPredicted} of {maxTokens}
+                  Tokens predicted: {result.tokensPredicted} of{" "}
+                  {resultMeta?.maxTokens ?? maxTokens}
                   {!result.stop && " — output was truncated"}
                 </p>
               </div>
