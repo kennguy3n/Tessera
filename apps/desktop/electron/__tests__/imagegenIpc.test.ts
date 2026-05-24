@@ -370,6 +370,7 @@ describe("imagegen IPC handlers", () => {
       const handler = getHandler("imagegen:generate");
       const out = (await handler({}, validInput())) as {
         path: string;
+        assetUrl: string;
         seed: number;
         width: number;
         height: number;
@@ -389,6 +390,17 @@ describe("imagegen IPC handlers", () => {
       expect(out.path.endsWith(".png")).toBe(true);
       const written = await fsp.readFile(out.path);
       expect(written).toEqual(pngBytesStub());
+      // The handler MUST also return a `tessera-asset://` URL so the
+      // renderer can drop it into `<img src>` without computing the
+      // mapping itself. Pin the shape directly: must start with the
+      // `generated-images` host and end with the same filename the
+      // on-disk path uses. Pass-1 advisory note: this assertion was
+      // missing and Devin Review flagged it as a gap.
+      expect(out.assetUrl.startsWith("tessera-asset://generated-images/")).toBe(
+        true,
+      );
+      expect(out.assetUrl).toContain("art-001/");
+      expect(out.assetUrl.endsWith(path.basename(out.path))).toBe(true);
     });
 
     it("brackets the bridge call with markGenerationActive / markGenerationIdle so the idle monitor cannot kill mid-generation", async () => {

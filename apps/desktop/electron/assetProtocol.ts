@@ -179,8 +179,20 @@ export function pathToAssetUrl(
 ): string | null {
   const allowedRoot = path.resolve(userDataDir, ALLOWED_SUBDIR);
   const resolved = path.resolve(absolutePath);
+  // The path must be STRICTLY inside `allowedRoot` — i.e. nested
+  // at least one segment under `generated-images/`. The
+  // protocol handler at line 139 already rejects
+  // `tessera-asset://generated-images/` (the directory root)
+  // with 403; we now refuse to mint that URL in the first place
+  // so the renderer never sees an `assetUrl` that the handler
+  // would refuse to serve. Without this guard a caller passing
+  // the bare `generated-images/` directory would get back
+  // `tessera-asset://generated-images/` (a URL the handler
+  // would 403), which is a confusing semantic asymmetry. Devin
+  // Review pass-1 finding on
+  // `apps/desktop/electron/assetProtocol.ts:182-186`.
   if (
-    resolved !== allowedRoot &&
+    resolved === allowedRoot ||
     !resolved.startsWith(allowedRoot + path.sep)
   ) {
     return null;
