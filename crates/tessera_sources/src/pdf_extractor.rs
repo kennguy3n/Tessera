@@ -493,7 +493,41 @@ pub fn vlm_ocr_chunks_from_probes(
         //      the page's XObject count (typically 1–3 images),
         //      not the page's pixel area, so doing it twice in the
         //      rare denial path is fine.
-        let has_decodable_image = page_has_decodable_image(doc, page_id, pdf_path)?;
+        //
+        // Defense-in-depth: treat any `get_page_images` failure
+        // here as page-local rather than file-fatal, log it, flip
+        // `fully_processed = false`, and `continue`. The original
+        // `?` propagation would have discarded every OCR chunk
+        // already collected for pages 1..N-1 of the same PDF on a
+        // single bad page. This is dead-code today because the
+        // probe (`probe_pdf_pages_with_doc`) already swallows
+        // per-page `get_page_images` errors via
+        // `.map_or(0, |imgs| imgs.len())`, so a page whose
+        // XObject dict fails to parse ends up with
+        // `image_count = 0` and is filtered out of
+        // `pdf_pages_needing_ocr` before reaching this loop.
+        // Keeping the conservative `match`/`continue` here
+        // (rather than a `.expect()` or the original `?`) is the
+        // robust choice if the probe and the OCR call ever diverge
+        // — e.g. a future refactor switches one of them to a
+        // different lopdf API that surfaces errors the other
+        // swallows. Pattern matches the per-page VLM error handler
+        // below. Devin Review pass-N 🚩 finding raised the question;
+        // analysis shows the original `?` was already protected by
+        // the probe, but the more defensive shape is no costlier
+        // and removes a "subtle invariant between two call sites"
+        // gap.
+        let has_decodable_image = match page_has_decodable_image(doc, page_id, pdf_path) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "[tessera_sources] pdf OCR decodable-image probe failed for {} page {}: {e}; skipping page (file will be re-indexed on next pass)",
+                    pdf_path_str, page_number
+                );
+                fully_processed = false;
+                continue;
+            }
+        };
         if !has_decodable_image {
             eprintln!(
                 "[tessera_sources] pdf {} page {} has no decodable image (only non-DCTDecode filters available); skipping OCR for this page",
@@ -538,10 +572,38 @@ pub fn vlm_ocr_chunks_from_probes(
         // Token granted — NOW write the temp file. If the write
         // itself fails, we've already consumed a token; this is
         // acceptable because the failure mode (e.g. disk full) is
-        // unrelated to OCR-budget accounting and is rare. The
-        // structured error propagates out of
-        // `write_largest_image_for_ocr` and bubbles up via `?`.
-        let Some(image_path) = write_largest_image_for_ocr(doc, page_id, pdf_path)? else {
+        // unrelated to OCR-budget accounting and is rare.
+        //
+        // Symmetric with the probe above: treat write failures as
+        // page-local rather than file-fatal so OCR chunks already
+        // collected for earlier pages are preserved for search. The
+        // failure modes here are (a) lopdf re-walking this page's
+        // XObject dict and erroring on its second pass (already
+        // filtered by the probe upstream — see the
+        // `page_has_decodable_image` comment), or (b)
+        // `std::fs::write` failing for I/O reasons (disk-full,
+        // permission). For case (b), subsequent pages on this file
+        // will likely hit the same error, so flipping
+        // `fully_processed = false` + `continue` has the same
+        // eventual outcome as the original `?` (`partial:` sentinel
+        // → retry next pass) plus the benefit of preserving
+        // earlier-page chunks for search in the interim. Retry cost
+        // is bounded by the remaining pages on this single file;
+        // transient disk-full typically clears between scans. Devin
+        // Review pass-N 🚩 finding flagged the aggressive `?` here
+        // in tandem with the probe above.
+        let write_outcome = match write_largest_image_for_ocr(doc, page_id, pdf_path) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "[tessera_sources] pdf OCR temp-image write failed for {} page {}: {e}; skipping page (file will be re-indexed on next pass)",
+                    pdf_path_str, page_number
+                );
+                fully_processed = false;
+                continue;
+            }
+        };
+        let Some(image_path) = write_outcome else {
             // Race: a future change could let the second
             // `get_page_images` call disagree with the first (e.g.
             // `Document` mutation during indexing). Today

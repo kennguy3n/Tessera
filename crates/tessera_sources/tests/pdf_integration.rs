@@ -197,6 +197,125 @@ fn write_pdf(name: &str, bytes: &[u8]) -> tempfile::TempDir {
     dir
 }
 
+/// Build a 2-page PDF where page 1 has a valid DCTDecode JPEG
+/// XObject (OCR-eligible, lopdf can resolve the resource) and
+/// page 2's `Resources/XObject` dictionary references an
+/// `ObjectId` that does NOT exist in the document's object map.
+/// Used to simulate a malformed-XObject failure on a single page
+/// without corrupting the rest of the document — exercises the
+/// page-local error branch in `vlm_ocr_chunks_from_probes` where
+/// `page_has_decodable_image` / `write_largest_image_for_ocr`
+/// must `continue` rather than propagate `?`. Without that branch,
+/// every earlier OCR chunk would be discarded by the function
+/// returning `Err` mid-pass. Devin Review pass-N regression
+/// guard.
+fn build_pdf_with_broken_xobject_on_second_page() -> Vec<u8> {
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+
+    let font_id = doc.add_object(dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type1",
+        "BaseFont" => "Helvetica",
+    });
+
+    // Valid DCTDecode image for page 1.
+    let jpeg_bytes = tiny_jpeg();
+    let mut img_dict = dictionary! {
+        "Type" => "XObject",
+        "Subtype" => "Image",
+        "Width" => 4,
+        "Height" => 4,
+        "ColorSpace" => "DeviceRGB",
+        "BitsPerComponent" => 8,
+    };
+    img_dict.set("Filter", Object::Name(b"DCTDecode".to_vec()));
+    let img_stream = Stream::new(img_dict, jpeg_bytes);
+    let valid_img_id = doc.add_object(img_stream);
+
+    // Reserve a fresh ObjectId without inserting an object for it,
+    // so lopdf's `get_page_images` call on page 2 fails when it
+    // tries to resolve the reference. `new_object_id` bumps the
+    // internal counter but does not populate `doc.objects`.
+    let missing_img_id = doc.new_object_id();
+
+    let valid_resources = dictionary! {
+        "Font" => dictionary! { "F1" => font_id },
+        "XObject" => dictionary! { "Im1" => valid_img_id },
+    };
+    let broken_resources = dictionary! {
+        "Font" => dictionary! { "F1" => font_id },
+        "XObject" => dictionary! { "Im1" => missing_img_id },
+    };
+
+    let mut kids: Vec<Object> = Vec::new();
+
+    // Page 1: raster-only page (text_char_count = 0 → needs_ocr,
+    // image_count = 1) with a working DCT image.
+    let content_op = |xobject_name: &[u8]| Content {
+        operations: vec![
+            Operation::new("q", vec![]),
+            Operation::new(
+                "cm",
+                vec![
+                    100.into(),
+                    0.into(),
+                    0.into(),
+                    100.into(),
+                    100.into(),
+                    600.into(),
+                ],
+            ),
+            Operation::new("Do", vec![Object::Name(xobject_name.to_vec())]),
+            Operation::new("Q", vec![]),
+        ],
+    };
+
+    let stream_ok = Stream::new(dictionary! {}, content_op(b"Im1").encode().unwrap());
+    let content_id_ok = doc.add_object(stream_ok);
+    let page_ok = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "Contents" => content_id_ok,
+        "Resources" => valid_resources,
+    });
+    kids.push(page_ok.into());
+
+    // Page 2: same content stream shape (so the page text-extract
+    // pass produces empty text → needs_ocr stays true), but the
+    // Resources/XObject map points to a missing ObjectId. The page
+    // probe (`get_page_images`) will fail when lopdf tries to
+    // resolve that reference.
+    let stream_bad = Stream::new(dictionary! {}, content_op(b"Im1").encode().unwrap());
+    let content_id_bad = doc.add_object(stream_bad);
+    let page_bad = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "Contents" => content_id_bad,
+        "Resources" => broken_resources,
+    });
+    kids.push(page_bad.into());
+
+    let kids_count = kids.len() as i32;
+    let pages_dict = dictionary! {
+        "Type" => "Pages",
+        "Kids" => kids,
+        "Count" => kids_count,
+        "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+    };
+    doc.objects.insert(pages_id, Object::Dictionary(pages_dict));
+
+    let catalog_id = doc.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    doc.trailer.set("Root", catalog_id);
+
+    let mut buf: Vec<u8> = Vec::new();
+    doc.save_to(&mut buf).expect("PDF save must succeed");
+    buf
+}
+
 /// Build a PDF with `text_pages` of plain text and `chart_pages`
 /// of pages that embed a single JPEG XObject whose dictionary
 /// `Width` × `Height` is `chart_w × chart_h`. The JPEG payload
@@ -475,6 +594,92 @@ fn vlm_ocr_chunks_for_pdf_respects_rate_limit() {
         "third page was skipped by rate limiter → pass MUST flag fully_processed=false so the indexer can defer the hash stamp and retry on the next pass"
     );
     assert_eq!(stub.called().len(), 2);
+}
+
+#[test]
+fn vlm_ocr_chunks_for_pdf_preserves_earlier_chunks_when_one_page_has_broken_xobject() {
+    // Regression guard for the Devin Review pass-N finding on
+    // `vlm_ocr_chunks_from_probes`. The bot's concern: if
+    // `page_has_decodable_image` / `write_largest_image_for_ocr`
+    // ever surface an `Err` from inside the OCR loop, the original
+    // `?` propagation would discard every OCR chunk already
+    // collected for earlier pages on the same PDF.
+    //
+    // The actual protection mechanism this test pins is the
+    // upstream probe: `probe_pdf_pages_with_doc` uses
+    // `.map_or(0, |imgs| imgs.len())` on `get_page_images`, so a
+    // page whose XObject dictionary fails to resolve (e.g. lopdf
+    // returns `ObjectNotFound` because the `XObject/Im1`
+    // entry references a missing object) ends up with
+    // `image_count = 0` and is filtered out of
+    // `pdf_pages_needing_ocr` BEFORE entering the OCR loop. So the
+    // bot's discard scenario can't actually fire today via lopdf
+    // failures — the broken page is simply not visited.
+    //
+    // Fixture: page 1 = valid DCTDecode JPEG (OCR succeeds), page
+    // 2 = `Resources/XObject` references a missing `ObjectId`
+    // (lopdf returns `Err(ObjectNotFound)` from
+    // `get_page_images`). Expected behaviour:
+    //   - `chunks.len() == 1` — only page 1 produces an OCR chunk
+    //   - `chunks[0].content == "PAGE ONE OCR TEXT"` — VLM ran on page 1
+    //   - `fully_processed == true` — page 2 was filtered by the
+    //     probe (image_count=0 → not in pdf_pages_needing_ocr), so
+    //     the OCR pass legitimately processed every eligible page
+    //   - VLM invoked exactly once
+    //
+    // The defensive `match`/`continue` on the in-loop calls remains
+    // valuable insurance against future API drift between the
+    // probe and the OCR call (e.g. if the probe and the in-loop
+    // call ever switch to different lopdf APIs and stop sharing
+    // failure modes), but that scenario can't be reproduced with
+    // today's code paths.
+    let bytes = build_pdf_with_broken_xobject_on_second_page();
+    let dir = write_pdf("broken-xobject.pdf", &bytes);
+    let path = dir.path().join("broken-xobject.pdf");
+
+    // Sanity: the probe must report image_count = 0 for the broken
+    // page. If lopdf ever stops returning `Err` for missing
+    // references (so `.map_or` no longer collapses to 0), this
+    // assertion will fail loudly and the rest of the test would
+    // need to be rethought.
+    let probes = probe_pdf_pages(&path).expect("probe must succeed on the document as a whole");
+    assert_eq!(probes.len(), 2, "expected exactly 2 pages");
+    let needing_ocr = pdf_pages_needing_ocr(&probes);
+    assert_eq!(
+        needing_ocr.len(),
+        1,
+        "expected exactly one OCR-eligible page (probe must filter the broken-XObject page via image_count=0); probes={probes:?}"
+    );
+
+    let stub = OcrStub::new("PAGE ONE OCR TEXT", "test-vlm-broken-xobj");
+    let limiter = PdfOcrRateLimiter::with_budget(10, Duration::from_secs(60));
+
+    let outcome = vlm_ocr_chunks_for_pdf(&stub, &path, &limiter, 0)
+        .expect("OCR pass must succeed end-to-end despite the broken page being silently filtered upstream");
+
+    assert_eq!(
+        outcome.chunks.len(),
+        1,
+        "page 1's OCR chunk must be the only chunk; page 2 is filtered by the probe (chunks: {:?})",
+        outcome.chunks
+    );
+    assert_eq!(
+        outcome.chunks[0].content, "PAGE ONE OCR TEXT",
+        "page 1's chunk content must reflect the VLM stub output"
+    );
+    assert_eq!(
+        outcome.chunks[0].extraction_method,
+        Some(ExtractionMethod::VlmOcr)
+    );
+    assert!(
+        outcome.fully_processed,
+        "every OCR-eligible page (after the probe's image_count=0 filter) was processed → fully_processed must be true; no partial sentinel should be stamped"
+    );
+    assert_eq!(
+        stub.called().len(),
+        1,
+        "VLM must be invoked exactly once (page 1) — page 2 never entered the OCR loop"
+    );
 }
 
 #[test]
