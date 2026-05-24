@@ -576,4 +576,86 @@ describe("SourcesPage", () => {
     window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
     window.tessera.sources.removeSource = vi.fn().mockResolvedValue(undefined);
   });
+
+  it("opens the ComparisonResultModal in-place instead of navigating after a successful compare", async () => {
+    // Regression test for Task 29: handleCompare must surface the
+    // structured CompareSourcesResult through the new modal rather
+    // than calling navigate(/artifacts/<id>) which was the old
+    // behaviour. The modal lets the user inspect themes and either
+    // dismiss or click "Open artifact" — keeping the comparison
+    // flow self-contained on SourcesPage.
+    const s1 = {
+      id: "src-a",
+      sourceType: "local_folder" as const,
+      path: "/docs/a",
+      status: "connected" as const,
+      createdAt: new Date().toISOString(),
+      lastIndexed: null,
+      fileCount: 1,
+    };
+    const s2 = {
+      id: "src-b",
+      sourceType: "local_folder" as const,
+      path: "/docs/b",
+      status: "connected" as const,
+      createdAt: new Date().toISOString(),
+      lastIndexed: null,
+      fileCount: 1,
+    };
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([s1, s2]);
+
+    const compareSpy = vi.fn().mockResolvedValue({
+      artifact: {
+        id: "art-cmp",
+        title: "Source Comparison",
+        artifactType: "document",
+        templateId: null,
+        content: "# Source Comparison\n\n",
+        citationCount: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        version: 1,
+      },
+      comparison: {
+        similarityScore: 0.62,
+        commonThemes: [{ label: "indexing pipeline", frequency: 9 }],
+        uniqueToA: [{ label: "alpha-only feature", frequency: 3 }],
+        uniqueToB: [{ label: "beta-only feature", frequency: 4 }],
+      },
+      labelA: "a",
+      labelB: "b",
+    });
+    window.tessera.artifacts.compareSources = compareSpy;
+
+    render(
+      <MemoryRouter>
+        <SourcesPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("/docs/a")).toBeInTheDocument();
+      expect(screen.getByText("/docs/b")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("source-select-src-a"));
+    fireEvent.click(screen.getByTestId("source-select-src-b"));
+    fireEvent.click(screen.getByTestId("compare-sources"));
+
+    await waitFor(() => {
+      expect(compareSpy).toHaveBeenCalledWith("src-a", "src-b");
+    });
+    // Modal shows up with the bridge-side friendly labels and
+    // structured themes — proves the wiring carries the
+    // CompareSourcesResult fields through.
+    await waitFor(() => {
+      expect(screen.getByText("Comparison: a vs b")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByTestId("comparison-modal-common-item-indexing pipeline"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("comparison-modal-similarity"),
+    ).toHaveTextContent("62%");
+  });
 });

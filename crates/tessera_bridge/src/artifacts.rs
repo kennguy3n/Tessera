@@ -5,7 +5,7 @@ use tessera_core::{ArtifactId, ArtifactType, TemplateId};
 
 use crate::{BridgeError, BridgeResult};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[napi(object)]
 pub struct ArtifactInfo {
     pub id: String,
@@ -25,6 +25,51 @@ pub struct ArtifactVersionInfo {
     pub version: u32,
     pub content: String,
     pub created_at: String,
+}
+
+/// One theme surfaced by `tessera_artifacts::comparison::compare_sources`
+/// after it streams over the two sources' chunks and extracts shared
+/// /  unique key phrases. Surfaced to the renderer so the
+/// `ComparisonResultModal` can render structured theme badges with
+/// frequency counts — previously the renderer only had the rendered
+/// markdown content, which it would have had to re-parse to extract
+/// the same structural data the Rust side already produces.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[napi(object)]
+pub struct ThemeInfo {
+    pub label: String,
+    pub frequency: i32,
+}
+
+/// Structured comparison surface mirroring
+/// `tessera_artifacts::comparison::ComparisonResult`. `similarity_score`
+/// is the symmetric-overlap fraction in `[0.0, 1.0]` (the renderer
+/// scales it to a percentage). Theme arrays preserve the Rust-side
+/// truncation order (`common_themes` ≤ 30, `unique_to_*` ≤ 20)
+/// already applied by `compare_sources`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[napi(object)]
+pub struct ComparisonInfo {
+    pub similarity_score: f64,
+    pub common_themes: Vec<ThemeInfo>,
+    pub unique_to_a: Vec<ThemeInfo>,
+    pub unique_to_b: Vec<ThemeInfo>,
+}
+
+/// Return type for `bridge_compare_sources`. Carries BOTH the
+/// persisted artifact (so the renderer can navigate to it / link
+/// it from elsewhere) AND the structured comparison data (so the
+/// modal can render rich theme badges without re-parsing the
+/// artifact's markdown). Also carries human-readable source labels
+/// computed bridge-side from the source paths so the renderer
+/// doesn't have to look them up itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[napi(object)]
+pub struct CompareSourcesResult {
+    pub artifact: ArtifactInfo,
+    pub comparison: ComparisonInfo,
+    pub label_a: String,
+    pub label_b: String,
 }
 
 pub fn create_artifact(

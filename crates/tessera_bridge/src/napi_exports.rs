@@ -965,7 +965,7 @@ pub fn bridge_extract_tasks_decisions(source_id: String) -> napi::Result<String>
 pub fn bridge_compare_sources(
     source_id_a: String,
     source_id_b: String,
-) -> napi::Result<artifacts::ArtifactInfo> {
+) -> napi::Result<artifacts::CompareSourcesResult> {
     let s = state()?;
     let src_mgr = s
         .source_manager
@@ -983,11 +983,29 @@ pub fn bridge_compare_sources(
     let sid_a = tessera_core::SourceId(uuid_a);
     let sid_b = tessera_core::SourceId(uuid_b);
 
+    // Resolve source labels bridge-side so the renderer doesn't
+    // have to round-trip a second IPC to look them up. Falls back
+    // to "Source A" / "Source B" if a source has been deleted
+    // between the time the user picked them and the time the
+    // comparison ran — preserving the legacy markdown label so
+    // anyone diffing artifacts from before/after this refactor
+    // doesn't see a content shift.
+    let label_a = src_mgr
+        .get_source(&sid_a)
+        .ok()
+        .map(|src| friendly_source_label(&src.path))
+        .unwrap_or_else(|| "Source A".to_string());
+    let label_b = src_mgr
+        .get_source(&sid_b)
+        .ok()
+        .map(|src| friendly_source_label(&src.path))
+        .unwrap_or_else(|| "Source B".to_string());
+
     let chunks_a = src_mgr.get_chunks_for_source(&sid_a).unwrap_or_default();
     let chunks_b = src_mgr.get_chunks_for_source(&sid_b).unwrap_or_default();
 
     let result = tessera_artifacts::comparison::compare_sources(&chunks_a, &chunks_b);
-    let content = result.to_markdown("Source A", "Source B");
+    let content = result.to_markdown(&label_a, &label_b);
 
     let art = art_mgr
         .create(
@@ -1015,7 +1033,112 @@ pub fn bridge_compare_sources(
     if let Ok(logger) = s.audit_logger.lock() {
         let _ = logger.log_artifact_created("Source Comparison");
     }
-    Ok(info)
+
+    // Convert the Rust-side `ComparisonResult` into the napi-shaped
+    // mirror. The truncation order (≤30 common, ≤20 unique each)
+    // was already applied inside `compare_sources` so we just
+    // collect here.
+    let comparison = artifacts::ComparisonInfo {
+        similarity_score: result.similarity_score,
+        common_themes: result
+            .common_themes
+            .iter()
+            .map(|t| artifacts::ThemeInfo {
+                label: t.label.clone(),
+                // `frequency` is `usize` on the Rust side; the napi
+                // contract is `i32`. Saturate at `i32::MAX` instead
+                // of wrapping so a pathologically large frequency
+                // (would require ~2.1B chunks containing the same
+                // phrase, which is impossible in practice) still
+                // produces a sensible UI rendering instead of a
+                // negative number.
+                frequency: i32::try_from(t.frequency).unwrap_or(i32::MAX),
+            })
+            .collect(),
+        unique_to_a: result
+            .unique_to_a
+            .iter()
+            .map(|t| artifacts::ThemeInfo {
+                label: t.label.clone(),
+                frequency: i32::try_from(t.frequency).unwrap_or(i32::MAX),
+            })
+            .collect(),
+        unique_to_b: result
+            .unique_to_b
+            .iter()
+            .map(|t| artifacts::ThemeInfo {
+                label: t.label.clone(),
+                frequency: i32::try_from(t.frequency).unwrap_or(i32::MAX),
+            })
+            .collect(),
+    };
+
+    Ok(artifacts::CompareSourcesResult {
+        artifact: info,
+        comparison,
+        label_a,
+        label_b,
+    })
+}
+
+/// Build a short human-readable label for a source path. Used by
+/// `bridge_compare_sources` to render the two compared sources in
+/// the modal heading and the rendered markdown without dumping a
+/// full absolute path (which would push the rest of the modal
+/// content off-screen on narrow viewports). Falls back to the
+/// trimmed path if no separator is present (e.g. a connector URI
+/// that is one logical segment).
+fn friendly_source_label(path: &str) -> String {
+    // Strip trailing slashes so a folder source path of
+    // `/home/user/docs/` produces `docs`, not "".
+    let trimmed = path.trim_end_matches(['/', '\\']);
+    let last_segment = trimmed
+        .rsplit(['/', '\\'])
+        .find(|s| !s.is_empty())
+        .unwrap_or(trimmed);
+    if last_segment.is_empty() {
+        path.to_string()
+    } else {
+        last_segment.to_string()
+    }
+}
+
+#[cfg(test)]
+mod compare_label_tests {
+    use super::friendly_source_label;
+
+    #[test]
+    fn friendly_source_label_strips_path_prefix() {
+        assert_eq!(friendly_source_label("/home/user/docs"), "docs");
+    }
+
+    #[test]
+    fn friendly_source_label_handles_trailing_slash() {
+        assert_eq!(friendly_source_label("/home/user/docs/"), "docs");
+    }
+
+    #[test]
+    fn friendly_source_label_handles_windows_backslash() {
+        assert_eq!(
+            friendly_source_label("C:\\Users\\user\\docs"),
+            "docs"
+        );
+    }
+
+    #[test]
+    fn friendly_source_label_falls_back_to_full_path_when_no_segments() {
+        // Connector-style URIs that have no separator should pass
+        // through intact so the user still sees a meaningful label.
+        assert_eq!(friendly_source_label("notion://workspace"), "workspace");
+        assert_eq!(friendly_source_label("standalone-name"), "standalone-name");
+    }
+
+    #[test]
+    fn friendly_source_label_handles_root() {
+        // Pathological case: nothing but separators. Fall back to
+        // the original input rather than returning an empty string.
+        assert_eq!(friendly_source_label("/"), "/");
+    }
 }
 
 #[napi]
