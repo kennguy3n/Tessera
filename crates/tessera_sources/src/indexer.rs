@@ -611,8 +611,55 @@ impl Indexer {
         // start of the retry anyway. We stamp here, before the
         // chunk insert, so a panic between the two doesn't leave
         // the row claiming "fully indexed".
+        //
+        // Error handling here MUST be log-and-continue (`if let
+        // Err`), NOT `?` propagation. The outer error handler
+        // (`index_file`, lines 311-333) catches a propagated `Err`
+        // and re-tries the same `mark_file_needs_reindex` call
+        // against the same DB — if the first call failed for a
+        // structural reason (DB locked, disk full, schema-drift)
+        // the re-try almost certainly fails too, and the original
+        // `?` path discards every chunk we just computed (text +
+        // VLM/OCR/chart) on the way out. The outer handler's
+        // logged-and-swallowed fallback then leaves the row with
+        // the raw BLAKE3 hash, the next `index_file` call
+        // short-circuits on hash match, and the file is
+        // PERMANENTLY missing chunks from the indexer's view until
+        // the user's content changes on disk.
+        //
+        // Using `if let Err` here gives strictly better behaviour
+        // on stamp failure:
+        //   - chunks already computed still flow into
+        //     `insert_chunks_returning_ids` below — the file is at
+        //     least partially searchable rather than empty,
+        //   - the row keeps its raw BLAKE3 hash, so the next pass
+        //     short-circuits and we DO miss the retry of the
+        //     unprocessed VLM pages on that one file — but that's
+        //     equivalent to the outer handler's swallow-on-retry
+        //     fallback already produces today; we're not making
+        //     that worse, just preserving the chunks we already
+        //     have,
+        //   - subsequent scheduled scans that DO see the file's
+        //     real BLAKE3 hash mutate (user edits the PDF, etc.)
+        //     trigger a full re-extract and the VLM passes run
+        //     again on the new content,
+        //   - logged via the same `eprintln` shape as the outer
+        //     handler at line 325 so triage tooling treats stamp
+        //     failures uniformly regardless of which call site
+        //     fires.
+        //
+        // Devin Review pass-N 🐛 BUG-0001 finding identified the
+        // asymmetry between this branch's `?` and the outer
+        // handler's `if let Err`, and the resulting permanent-
+        // data-loss path when both fail. This is the corrected
+        // symmetric shape.
         if !vlm_passes_complete {
-            store.mark_file_needs_reindex(file_id)?;
+            if let Err(e) = store.mark_file_needs_reindex(file_id) {
+                eprintln!(
+                    "[tessera_sources] failed to stamp partial sentinel for {} after partial VLM pass: {e}; preserving already-extracted chunks (row will retain raw hash and short-circuit until content changes)",
+                    path.display()
+                );
+            }
         }
 
         let mut inline_embeddings_dropped: u64 = 0;
