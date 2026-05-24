@@ -281,6 +281,40 @@ export class ModelSidecar {
     }
   }
 
+  /**
+   * Poll `/health` until the sidecar's HTTP listener is accepting
+   * connections, then return. Resolves `true` on success, `false`
+   * on timeout / process exit. Used by callers (`ipc/model.ts`,
+   * `ipc/vision.ts`) that need to make a sidecar request
+   * immediately after `start()` resolves — `start()` only confirms
+   * that `spawn()` was called, not that llama-server has finished
+   * loading the model and bound the port.
+   *
+   * Without this guard the first request after a cold-start can
+   * land before the listener is up and reject with `ECONNREFUSED`
+   * / `ECONNRESET`, which surfaces as a confusing "sidecar errored"
+   * dialog to the user even though the sidecar is starting up
+   * normally. Llama-server warms up in 1-3 s on typical hosts; the
+   * 60 s default covers vision (`--mmproj`) cold-starts on slow
+   * disks.
+   *
+   * The poll interval scales with the configured
+   * `healthCheckIntervalMs` but is capped at 500 ms so the
+   * post-`start()` latency stays bounded — once the listener is
+   * up the very next probe succeeds.
+   */
+  async waitForReady(timeoutMs: number = STARTUP_GRACE_MS): Promise<boolean> {
+    if (!this._isRunning) return false;
+    const deadline = Date.now() + timeoutMs;
+    const pollInterval = Math.min(500, this.options.healthCheckIntervalMs);
+    while (Date.now() < deadline) {
+      if (!this._isRunning) return false;
+      if (await this.healthCheck()) return true;
+      await new Promise((r) => setTimeout(r, pollInterval));
+    }
+    return false;
+  }
+
   recordActivity(): void {
     this.lastRequestTime = Date.now();
   }

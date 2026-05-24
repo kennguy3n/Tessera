@@ -35,6 +35,32 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "http")]
 use base64::Engine;
 
+#[cfg(feature = "http")]
+use std::sync::OnceLock;
+
+/// Module-shared `reqwest::Client` for the vision sidecar. A
+/// single client owns the underlying connection pool so repeated
+/// `vision_complete` calls during indexing — which can fire
+/// 10-100 of these in close succession over the loopback to
+/// `llama-server --mmproj` — reuse the TCP connection instead of
+/// paying the handshake on every call.
+///
+/// The previous implementation constructed `reqwest::Client::new()`
+/// per call, which silently created a fresh pool each time and
+/// disabled keep-alive reuse entirely. For the diffusion sidecar
+/// (10-30 s per call) the overhead was negligible; for vision
+/// (sub-second per call during a batch indexing run) it measurably
+/// inflated wall-clock time.
+///
+/// Constructed lazily on first use so a process that never invokes
+/// the vision sidecar (e.g. headless CI, smoke tests) doesn't pay
+/// the cost of standing up the client.
+#[cfg(feature = "http")]
+fn shared_http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new)
+}
+
 /// A vision-completion request. The image is referenced by path so
 /// the bridge can pass a local file straight through without
 /// holding the bytes in JS heap; the Rust side reads + base64-
@@ -186,8 +212,7 @@ pub async fn vision_complete(
     let body = build_body(request, image_base64);
     let url = format!("{endpoint}/completion");
 
-    let client = reqwest::Client::new();
-    let resp = client
+    let resp = shared_http_client()
         .post(&url)
         .json(&body)
         .send()
@@ -320,6 +345,20 @@ mod tests {
             msg.contains("/this/path/does/not/exist.png"),
             "error message must include offending path; got: {msg}"
         );
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn shared_http_client_is_deduped_across_calls() {
+        // Calling `shared_http_client()` repeatedly must return the
+        // same underlying client (i.e. the OnceLock dedupes). If a
+        // future refactor accidentally replaces this with
+        // `reqwest::Client::new()` per call, the connection-pool
+        // reuse promise from the doc comment is silently broken;
+        // pinning pointer identity here catches that regression.
+        let a = std::ptr::from_ref::<reqwest::Client>(shared_http_client());
+        let b = std::ptr::from_ref::<reqwest::Client>(shared_http_client());
+        assert_eq!(a, b, "shared_http_client must dedupe via OnceLock");
     }
 
     #[cfg(feature = "http")]

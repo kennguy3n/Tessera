@@ -77,6 +77,12 @@ const sidecarMock = {
   isRunning: false,
   setModelPath: vi.fn(),
   start: vi.fn().mockResolvedValue(undefined),
+  // After `start()` returns, IPC handlers gate the next bridge call on
+  // `waitForReady()` to avoid the spawn-vs-listener race
+  // (Devin Review ANALYSIS_0005). Tests resolve it `true` by default;
+  // the handler only short-circuits to its error branch when the gate
+  // returns `false`, and these audit tests verify the success path.
+  waitForReady: vi.fn().mockResolvedValue(true),
   stop: vi.fn().mockResolvedValue(undefined),
 };
 
@@ -125,6 +131,11 @@ beforeEach(() => {
   sidecarMock.isRunning = false;
   sidecarMock.setModelPath.mockClear();
   sidecarMock.start.mockClear();
+  sidecarMock.waitForReady.mockClear();
+  // Reset the resolved value because earlier tests in the file
+  // (or future ones) may flip it to `false` to exercise the
+  // not-ready error branch.
+  sidecarMock.waitForReady.mockResolvedValue(true);
   sidecarMock.stop.mockClear();
 });
 

@@ -36,6 +36,7 @@ const handleMock = vi.fn();
 const removeHandlerMock = vi.fn();
 const setModelPathMock = vi.fn();
 const sidecarStartMock = vi.fn();
+const sidecarWaitForReadyMock = vi.fn().mockResolvedValue(true);
 const markGenerationActiveMock = vi.fn();
 const markGenerationIdleMock = vi.fn();
 const bridgeGenerateImageMock = vi.fn();
@@ -54,6 +55,7 @@ const sidecarStub = {
   },
   setModelPath: (p: string) => setModelPathMock(p),
   start: (resetRetries?: boolean) => sidecarStartMock(resetRetries),
+  waitForReady: (timeoutMs?: number) => sidecarWaitForReadyMock(timeoutMs),
   markGenerationActive: () => markGenerationActiveMock(),
   markGenerationIdle: () => markGenerationIdleMock(),
 };
@@ -157,6 +159,8 @@ describe("imagegen IPC handlers", () => {
     removeHandlerMock.mockClear();
     setModelPathMock.mockClear();
     sidecarStartMock.mockClear();
+    sidecarWaitForReadyMock.mockClear();
+    sidecarWaitForReadyMock.mockResolvedValue(true);
     markGenerationActiveMock.mockClear();
     markGenerationIdleMock.mockClear();
     bridgeGenerateImageMock.mockReset();
@@ -268,6 +272,24 @@ describe("imagegen IPC handlers", () => {
       await expect(ensureDiffusionSidecarRunning()).rejects.toThrow(
         /GPU/,
       );
+    });
+
+    it("rejects when waitForReady times out so the next imagegen:generate doesn't race the listener bind with ECONNREFUSED", async () => {
+      // Regression test for Devin Review ANALYSIS_0005:
+      // sd-server's ~15-30 s cold-start can outlast the readiness
+      // budget on slow disks / GPU-starved hosts. start() returns
+      // immediately after spawn(), so without the explicit
+      // waitForReady gate `bridgeGenerateImage` would race the
+      // HTTP bind and reject with ECONNREFUSED. The handler must
+      // surface a clear "failed to become ready" error so the UI
+      // can show a useful message instead of a generic network
+      // failure.
+      getInstalledModelMock.mockResolvedValue({ path: "/m/flux.gguf" });
+      sidecarWaitForReadyMock.mockResolvedValueOnce(false);
+      await expect(ensureDiffusionSidecarRunning()).rejects.toThrow(
+        /failed to become ready/i,
+      );
+      expect(sidecarStartMock).toHaveBeenCalledWith(true);
     });
 
     it("rejects with structured error when no model is installed", async () => {

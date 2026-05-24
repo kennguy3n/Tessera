@@ -137,6 +137,17 @@ export function registerModelHandlers(): void {
     if (sidecar.isRunning) return;
     sidecar.setModelPath(validated);
     await sidecar.start(true);
+    // Block until llama-server's HTTP listener is up so the very
+    // next `model:generate` doesn't race the bind. See
+    // ModelSidecar.waitForReady JSDoc. The audit log below also
+    // benefits — we only record "model started" once the sidecar
+    // is actually reachable, not just after spawn().
+    const ready = await sidecar.waitForReady();
+    if (!ready) {
+      throw new Error(
+        "Text sidecar failed to become ready within the startup window",
+      );
+    }
     // audit the local model lifecycle. The
     // `validated` model path is what was loaded, so an auditor can
     // correlate "model started" with the GGUF the sidecar

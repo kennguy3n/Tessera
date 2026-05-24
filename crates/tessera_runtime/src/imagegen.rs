@@ -31,6 +31,25 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "http")]
 use base64::Engine;
 
+#[cfg(feature = "http")]
+use std::sync::OnceLock;
+
+/// Module-shared `reqwest::Client` for the diffusion sidecar.
+/// Matches the pattern used by [`crate::vision`] — see that
+/// module's `shared_http_client` JSDoc for the full rationale.
+///
+/// For diffusion specifically, the connection-pool overhead per
+/// call is negligible compared to the 10-30 s generation latency,
+/// so this is more about API consistency and reducing socket
+/// churn than a measurable speed-up. The OnceLock construction is
+/// also free in the no-imagegen / headless-CI case because it
+/// lazily initialises on first use.
+#[cfg(feature = "http")]
+fn shared_http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new)
+}
+
 /// Request to generate a single image. Defaults to FLUX.2-klein's
 /// recommended settings (20 steps, CFG 3.5) so callers that just
 /// want "make me an image of X" don't have to know diffusion
@@ -180,8 +199,7 @@ pub async fn generate_image(
     let body = build_body(request);
     let url = format!("{endpoint}/txt2img");
 
-    let client = reqwest::Client::new();
-    let resp = client
+    let resp = shared_http_client()
         .post(&url)
         .json(&body)
         .send()
@@ -250,6 +268,18 @@ mod tests {
         assert!((req.cfg_scale - 7.0).abs() < f32::EPSILON);
         assert_eq!(req.seed, Some(42));
         assert_eq!(req.negative_prompt.as_deref(), Some("ugly"));
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn shared_http_client_is_deduped_across_calls() {
+        // Mirrors `vision::tests::shared_http_client_is_deduped_across_calls`
+        // — pinning pointer identity here so a future refactor that
+        // accidentally drops the OnceLock and falls back to per-call
+        // `reqwest::Client::new()` fails loudly.
+        let a = std::ptr::from_ref::<reqwest::Client>(shared_http_client());
+        let b = std::ptr::from_ref::<reqwest::Client>(shared_http_client());
+        assert_eq!(a, b, "shared_http_client must dedupe via OnceLock");
     }
 
     #[cfg(feature = "http")]

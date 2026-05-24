@@ -164,6 +164,18 @@ export async function ensureDiffusionSidecarRunning(): Promise<void> {
   }
   sidecar.setModelPath(record.path);
   await sidecar.start(true);
+  // Block until sd-server's HTTP listener is up. sd-server's cold
+  // start is 15-30 s (loading ~6 GB of FLUX weights to GPU), so
+  // without this gate `bridgeGenerateImage` would race the bind
+  // and reject with ECONNREFUSED on the very first generation —
+  // surfacing as a confusing "generation failed" error to a user
+  // who is already waiting on a known-slow operation.
+  const ready = await sidecar.waitForReady();
+  if (!ready) {
+    throw new Error(
+      "Diffusion sidecar failed to become ready within the startup window",
+    );
+  }
 }
 
 function nowIsoForFile(): string {

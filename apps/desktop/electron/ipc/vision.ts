@@ -173,6 +173,17 @@ export async function ensureVisionSidecarRunning(): Promise<void> {
     ),
   );
   await sidecar.start(true);
+  // Block until llama-server's HTTP listener is up. Without this,
+  // the first vision:describe after a cold-start races the
+  // listener bind and rejects with ECONNREFUSED — see
+  // ModelSidecar.waitForReady JSDoc. The default 60 s budget
+  // covers VLM cold-starts including --mmproj load on slow disks.
+  const ready = await sidecar.waitForReady();
+  if (!ready) {
+    throw new Error(
+      "Vision sidecar failed to become ready within the startup window",
+    );
+  }
 }
 
 export function registerVisionHandlers(): void {

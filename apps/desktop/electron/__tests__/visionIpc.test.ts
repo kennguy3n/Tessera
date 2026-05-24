@@ -24,6 +24,7 @@ const removeHandlerMock = vi.fn();
 const setModelPathMock = vi.fn();
 const setExtraArgsMock = vi.fn();
 const sidecarStartMock = vi.fn();
+const sidecarWaitForReadyMock = vi.fn().mockResolvedValue(true);
 const markGenerationActiveMock = vi.fn();
 const markGenerationIdleMock = vi.fn();
 const bridgeVisionDescribeMock = vi.fn();
@@ -48,6 +49,7 @@ const sidecarStub = {
   setModelPath: (p: string) => setModelPathMock(p),
   setExtraArgs: (args: string[]) => setExtraArgsMock(args),
   start: (resetRetries?: boolean) => sidecarStartMock(resetRetries),
+  waitForReady: (timeoutMs?: number) => sidecarWaitForReadyMock(timeoutMs),
   markGenerationActive: () => markGenerationActiveMock(),
   markGenerationIdle: () => markGenerationIdleMock(),
 };
@@ -156,6 +158,8 @@ describe("vision IPC handlers", () => {
     setModelPathMock.mockClear();
     setExtraArgsMock.mockClear();
     sidecarStartMock.mockClear();
+    sidecarWaitForReadyMock.mockClear();
+    sidecarWaitForReadyMock.mockResolvedValue(true);
     markGenerationActiveMock.mockClear();
     markGenerationIdleMock.mockClear();
     bridgeVisionDescribeMock.mockClear();
@@ -296,6 +300,27 @@ describe("vision IPC handlers", () => {
       await expect(ensureVisionSidecarRunning()).rejects.toThrow(
         /No vision model installed/,
       );
+    });
+
+    it("rejects when waitForReady times out so the IPC caller sees an actionable error instead of a silent ECONNREFUSED on the next describe call", async () => {
+      // Regression test for Devin Review ANALYSIS_0005: spawn()
+      // succeeds but the HTTP listener never binds (slow disk,
+      // OOM during model load, sigchld lost). Production code
+      // must surface this as a structured error rather than
+      // returning a half-started sidecar that the next
+      // vision:describe will hit with ECONNREFUSED.
+      getInstalledModelMock.mockResolvedValue({
+        path: "/m/qwen.gguf",
+        mmprojPath: "/m/proj.gguf",
+      });
+      sidecarWaitForReadyMock.mockResolvedValueOnce(false);
+      await expect(ensureVisionSidecarRunning()).rejects.toThrow(
+        /failed to become ready/i,
+      );
+      // start() still got called — the failure is in the readiness
+      // probe, not the spawn itself, so the rejection message is
+      // about readiness specifically.
+      expect(sidecarStartMock).toHaveBeenCalledWith(true);
     });
 
     it("rejects with structured error when mmproj is missing", async () => {

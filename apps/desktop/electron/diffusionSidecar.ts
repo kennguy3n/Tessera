@@ -301,6 +301,31 @@ export class DiffusionSidecar {
     }
   }
 
+  /**
+   * Poll `/health` until the sd-server HTTP listener is accepting
+   * connections, then return. Mirrors
+   * [`ModelSidecar.waitForReady`](./sidecar.ts) — see that JSDoc
+   * for the full rationale. sd-server's cold-start is much longer
+   * than llama-server's (15-30 s to load ~6 GB of FLUX weights vs.
+   * 1-3 s for ~3 GB of llama text weights), so this guard is
+   * proportionally more important here: without it the very first
+   * `imagegen:generate` after a cold start would race the listener
+   * bind and reject with `ECONNREFUSED`, surfacing as a confusing
+   * "image generation failed" error to a user who is correctly
+   * waiting for a slow operation.
+   */
+  async waitForReady(timeoutMs: number = STARTUP_GRACE_MS): Promise<boolean> {
+    if (!this._isRunning) return false;
+    const deadline = Date.now() + timeoutMs;
+    const pollInterval = Math.min(500, this.options.healthCheckIntervalMs);
+    while (Date.now() < deadline) {
+      if (!this._isRunning) return false;
+      if (await this.healthCheck()) return true;
+      await new Promise((r) => setTimeout(r, pollInterval));
+    }
+    return false;
+  }
+
   recordActivity(): void {
     this.lastRequestTime = Date.now();
   }
