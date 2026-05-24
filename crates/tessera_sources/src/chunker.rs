@@ -129,6 +129,18 @@ pub fn chunk_text(source_path: &str, text: &str, config: &ChunkerConfig) -> Vec<
     }
 
     if text.len() <= config.chunk_size {
+        // Mirror the long-text path's whitespace guard at line ~158:
+        // a fully-scanned multi-page PDF with no text layer joins to a
+        // string of only `\n\n` page separators (see
+        // `extract_pdf_text_from_probes`), which falls into this
+        // short-text branch but has zero search value. Without the
+        // guard we'd emit a whitespace-only chunk into the store and
+        // FTS index — wasting a row, an FTS entry, and (if an
+        // embedder is attached) an embedding computation. Devin
+        // Review pass-11 🟡 finding on chunker.rs:131-142.
+        if text.trim().is_empty() {
+            return Vec::new();
+        }
         let hash = blake3::hash(text.as_bytes()).to_hex().to_string();
         return vec![Chunk {
             source_path: source_path.to_string(),
@@ -227,6 +239,26 @@ mod tests {
         assert_eq!(chunks[0].chunk_index, 0);
         assert_eq!(chunks[0].byte_offset, 0);
         assert!(!chunks[0].hash.is_empty());
+    }
+
+    #[test]
+    fn short_whitespace_only_text_produces_no_chunks() {
+        // Devin Review pass-11 🟡 regression guard: when a fully
+        // scanned PDF has no text layer, `extract_pdf_text_from_probes`
+        // joins per-page empty strings with `\n\n`, producing a
+        // whitespace-only string under the default 1024-byte chunk
+        // size. The short-text path used to emit that as a chunk
+        // — wasting a row, an FTS entry, and (if an embedder is
+        // attached) an embedding computation on zero-search-value
+        // content. The long-text path's existing `.trim().is_empty()`
+        // guard is now mirrored in the short-text path.
+        let config = ChunkerConfig::default();
+        for whitespace in &["\n\n", "\n\n\n\n", "   ", " \t\n ", "\r\n\r\n\r\n"] {
+            assert!(
+                chunk_text("scan.pdf", whitespace, &config).is_empty(),
+                "whitespace-only short text {whitespace:?} must produce no chunks",
+            );
+        }
     }
 
     #[test]

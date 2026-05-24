@@ -375,7 +375,7 @@ impl Indexer {
         // expects to handle. We don't want a parse failure to
         // permanently skip indexing of a corrupted PDF without
         // the user seeing a structured error.
-        let pdf_doc = if ext.eq_ignore_ascii_case("pdf") {
+        let pdf_doc = if ext == "pdf" {
             match load_pdf_document(path) {
                 Ok(doc) => Some(doc),
                 Err(e) => {
