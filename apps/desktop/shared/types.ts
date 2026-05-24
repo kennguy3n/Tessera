@@ -187,6 +187,49 @@ export interface ArtifactVersionInfo {
   createdAt: string;
 }
 
+/**
+ * One theme surfaced by `tessera_artifacts::comparison::compare_sources`.
+ * The Rust-side definition lives in
+ * `crates/tessera_artifacts/src/comparison.rs::Theme`; the bridge
+ * exposes it as `ThemeInfo` (this shape). `frequency` is the
+ * combined occurrence count across both compared sources for
+ * common themes, or the per-source count for unique themes.
+ */
+export interface ThemeInfo {
+  label: string;
+  frequency: number;
+}
+
+/**
+ * Structured comparison data surfaced by `compareSources`.
+ * `similarityScore` is in `[0.0, 1.0]` (the renderer scales it to
+ * a percentage). Theme arrays preserve the Rust-side truncation
+ * order (`commonThemes` ≤ 30, `uniqueToA` / `uniqueToB` ≤ 20)
+ * already applied by `compare_sources`. Mirrors the napi
+ * `ComparisonInfo` struct.
+ */
+export interface ComparisonInfo {
+  similarityScore: number;
+  commonThemes: ThemeInfo[];
+  uniqueToA: ThemeInfo[];
+  uniqueToB: ThemeInfo[];
+}
+
+/**
+ * Return type for `compareSources`. Carries both the persisted
+ * comparison artifact (so the renderer can navigate to it / link
+ * it elsewhere) AND the structured comparison data (so the
+ * `ComparisonResultModal` can render rich theme badges without
+ * re-parsing the markdown). `labelA` / `labelB` are bridge-side
+ * friendly source labels derived from the source paths.
+ */
+export interface CompareSourcesResult {
+  artifact: ArtifactInfo;
+  comparison: ComparisonInfo;
+  labelA: string;
+  labelB: string;
+}
+
 export interface ExportResult {
   content: string;
   format: string;
@@ -820,7 +863,7 @@ export interface ArtifactApi {
   compareSources: (
     sourceIdA: string,
     sourceIdB: string,
-  ) => Promise<ArtifactInfo>;
+  ) => Promise<CompareSourcesResult>;
   exportEvidencePack: (
     artifactId: string,
     outputPath: string,

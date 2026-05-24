@@ -4,13 +4,18 @@ import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import Modal from "../components/Modal";
+import ComparisonResultModal from "../components/ComparisonResultModal";
 import StatusBadge from "../components/StatusBadge";
 import EmptyState from "../components/EmptyState";
 import ConnectorStatus from "../components/ConnectorStatus";
 import ConnectorsList from "../components/ConnectorsList";
 import DriveFilePicker from "../components/DriveFilePicker";
 import { useSourceList, useAddSource, useRemoveSource } from "../hooks/useSources";
-import type { ConnectorFileInfo, ConnectorStatusInfo } from "../types/ipc";
+import type {
+  CompareSourcesResult,
+  ConnectorFileInfo,
+  ConnectorStatusInfo,
+} from "../types/ipc";
 
 // Stable reference so `ConnectorsList`'s dep-equality memo doesn't
 // invalidate on every render of `SourcesPage`.
@@ -28,6 +33,8 @@ export default function SourcesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [compareError, setCompareError] = useState<string | null>(null);
   const [comparing, setComparing] = useState(false);
+  const [comparisonResult, setComparisonResult] =
+    useState<CompareSourcesResult | null>(null);
 
   const [driveStatus, setDriveStatus] = useState<ConnectorStatusInfo>({
     provider: "google_drive",
@@ -173,8 +180,17 @@ export default function SourcesPage() {
     setCompareError(null);
     try {
       const [a, b] = Array.from(selectedIds);
-      const artifact = await api.artifacts.compareSources(a, b);
-      navigate(`/artifacts/${artifact.id}`);
+      // The bridge now returns a structured `CompareSourcesResult`
+      // carrying both the persisted artifact AND the rich theme
+      // breakdown. Display the structured view in the modal
+      // instead of immediately navigating away — the user can
+      // still click "Open artifact" inside the modal to reach the
+      // full artifact page. This keeps the comparison flow
+      // self-contained on the SourcesPage (where the user picked
+      // the two sources) so cross-comparing pairs of sources
+      // doesn't bounce them through the artifact editor.
+      const result = await api.artifacts.compareSources(a, b);
+      setComparisonResult(result);
     } catch (err) {
       setCompareError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -533,6 +549,14 @@ export default function SourcesPage() {
           </Button>
         </div>
       </Modal>
+
+      {comparisonResult && (
+        <ComparisonResultModal
+          isOpen={comparisonResult !== null}
+          onClose={() => setComparisonResult(null)}
+          result={comparisonResult}
+        />
+      )}
     </div>
   );
 }

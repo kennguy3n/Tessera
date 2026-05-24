@@ -10,6 +10,7 @@ import type {
   AutomationInfo,
   BackfillEmbeddingsResult,
   CitationInfo,
+  CompareSourcesResult,
   EmbeddingProgressInfo,
   ExportResult,
   HybridSearchConfigInfo,
@@ -34,6 +35,8 @@ export type {
   AutomationInfo,
   BackfillEmbeddingsResult,
   CitationInfo,
+  CompareSourcesResult,
+  ComparisonInfo,
   EmbeddingProgressInfo,
   HybridSearchConfigInfo,
   HybridSearchConfigUpdate,
@@ -47,6 +50,7 @@ export type {
   SourceInfo,
   TaskInfo,
   TemplateInfo,
+  ThemeInfo,
 } from "../shared/types";
 
 export interface NativeBridge {
@@ -131,7 +135,10 @@ export interface NativeBridge {
     sourceIds: string[],
   ): ArtifactInfo;
   bridgeExtractTasksDecisions(sourceId: string): string;
-  bridgeCompareSources(sourceIdA: string, sourceIdB: string): ArtifactInfo;
+  bridgeCompareSources(
+    sourceIdA: string,
+    sourceIdB: string,
+  ): CompareSourcesResult;
   bridgeExportEvidencePack(artifactId: string, outputPath: string): string;
   // --- Tasks ---
   // `req_json` is a JSON-encoded `tessera_bridge::tasks::CreateTaskRequest`

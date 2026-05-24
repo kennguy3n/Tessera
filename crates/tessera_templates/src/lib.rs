@@ -3,7 +3,9 @@ pub mod registry;
 pub mod template;
 pub mod validator;
 
-pub use registry::TemplateRegistry;
+pub use registry::{
+    TemplateLoadFailure, TemplateLoadFailureKind, TemplateLoadResult, TemplateRegistry,
+};
 pub use template::Template;
 
 /// Canonical list of template-category directories rooted at
