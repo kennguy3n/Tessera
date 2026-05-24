@@ -52,8 +52,7 @@
  * The handler's top-level try/catch is what turns the thrown
  * `RateLimitError` into the typed result the renderer can
  * display, so this test also indirectly verifies that the catch
- * wrapping (added in PR #27 ) still covers the rate-limit
- * path.
+ * wrapping still covers the rate-limit path.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as fs from "fs";

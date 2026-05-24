@@ -307,11 +307,11 @@ function extractTopLevelScalar(body: string, key: string): string | null {
     //       preceded by whitespace; a `#` adjacent to non-whitespace
     //       (e.g. `id: foo#bar`) stays literal.
     //
-    // the  implementation as
-    // returning `"# comment"` literally for case (a), which (while
-    // not exercised by any real bundled template — every shipped
-    // template has a non-empty id) would confuse any future caller.
-    // The explicit branch here is the long-term-correct fix.
+    // Earlier versions of this helper returned `"# comment"` literally
+    // for case (a), which (while not exercised by any real bundled
+    // template — every shipped template has a non-empty id) would
+    // confuse any future caller. The explicit branch here is the
+    // long-term-correct fix.
     if (rest.startsWith("#")) return null;
     const commentRe = /\s+#.*$/;
     const stripped = rest.replace(commentRe, "").trimEnd();
@@ -1232,12 +1232,12 @@ describe("phase verification — internal helper invariants", () => {
   });
 
   test("extractTopLevelScalar returns null for comment-only values", () => {
-    // that `extractTopLevelScalar` would
-    // return the literal string `"# only a comment"` for an input
-    // where the value region is entirely a YAML comment. Per
-    // YAML 1.2 §6.6 that's a null scalar; the  fix adds an
-    // explicit start-of-line `#` branch and an empty-after-strip
-    // branch, both returning null.
+    // Pin the YAML 1.2 §6.6 contract for comment-only values:
+    // `extractTopLevelScalar` must NOT return the literal string
+    // `"# only a comment"` for an input where the value region is
+    // entirely a YAML comment — that's a null scalar. The implementation
+    // covers two branches (explicit start-of-line `#` and empty-after-
+    // strip), both returning null.
     expect(extractTopLevelScalar("id: # only a comment\n", "id")).toBeNull();
     // Indented `#` (after the colon, still no preceding non-# tokens)
     // also indicates a comment-only value.

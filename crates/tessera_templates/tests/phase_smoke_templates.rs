@@ -1,9 +1,9 @@
-//! Phase-verification smoke test for the bundled template registry.
+//! Cross-tree smoke test for the bundled template registry.
 //!
-//! Part of the Phase 7/8 tracking-integrity guarantee: every bundled
-//! YAML template under `templates/` must (a) parse, (b) validate, and
-//! (c) appear in the registry that the renderer-side `CreatePage.tsx`
-//! sources its picker from.
+//! Tracking-integrity guarantee: every bundled YAML template under
+//! `templates/` must (a) parse, (b) validate, and (c) appear in the
+//! registry that the renderer-side `CreatePage.tsx` sources its
+//! picker from.
 //!
 //! This test is intentionally broader than `bundled_templates.rs` (the
 //! pre-existing per-category test). It walks the entire `templates/`
@@ -171,9 +171,8 @@ fn every_bundled_template_has_a_unique_id() {
 }
 
 /// Templates of each Rust-modelled artifact type must appear in the
-/// on-disk fixtures. This is the structural floor implied by
-/// the README: Phase 5/6 shipped at least one template per
-/// artifact category.
+/// on-disk fixtures. This is the structural floor implied by the
+/// README: at least one template per artifact category.
 ///
 /// Only the four categories that `tessera_templates::Template` can
 /// represent (Document, Slides, Sheet, Base) are covered here.
@@ -222,7 +221,7 @@ fn every_rust_modelled_category_has_at_least_one_template() {
 ///    sheets/, bases/) must appear in the registry. A regression in
 ///    `WalkDir` filtering or in `parse_template_file` that silently
 ///    skips a fixture would fail this check — which is the core
-///    Phase 7/8 tracking-integrity guarantee.
+///    tracking-integrity guarantee.
 ///
 /// 2. Every registry entry must correspond to a real .yaml/.yml file
 ///    on disk somewhere under templates/. A phantom template (e.g.

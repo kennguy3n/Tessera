@@ -11,9 +11,9 @@
  *     tail of references to `--color-bg`, `--color-surface`,
  *     `--color-muted`, etc. that were never declared — their
  *     fallback colors fired in both light and dark mode, breaking
- *     dark theme silently. Task 26 added the aliases; this test
- *     pins them so a future refactor that drops one of the aliases
- *     surfaces immediately.
+ *     dark theme silently. The dark-mode hardening pass added the
+ *     aliases; this test pins them so a future refactor that drops
+ *     one of the aliases surfaces immediately.
  *
  * (2) The `[data-theme="dark"]` block in tokens.css must override
  *     EVERY token that's reasonable for a theme to flip — at

@@ -95,7 +95,7 @@ export class RateLimiter {
 }
 
 /**
- * Default profile for the limits called out in the  brief.
+ * Default profile pinning the expensive-IPC channels.
  *
  * - `connectors:authenticate` — 1 per 5s per provider.
  * - `connectors:sync` — 1 per 30s per provider.

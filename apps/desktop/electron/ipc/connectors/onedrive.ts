@@ -1,5 +1,5 @@
 /**
- * OneDrive / Microsoft Graph connector sync logic (Task 1).
+ * OneDrive / Microsoft Graph connector sync logic.
  *
  * Authentication: standard OAuth 2.0 authorization code grant against
  * the Microsoft identity platform v2.0 endpoint.

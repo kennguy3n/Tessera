@@ -98,7 +98,7 @@ export interface ProviderOAuthConfig {
   /**
    * Loopback host for the redirect URI. RFC 8252 prefers `127.0.0.1`
    * but Google's published examples and the legacy Tessera OAuth
-   * client (pre-) use `localhost`. Existing user OAuth
+   * client both used `localhost`. Existing user OAuth
    * client configurations in Google Cloud Console therefore have
    * `http://localhost:9876/callback` registered — switching to
    * `127.0.0.1` would break every existing installation with a

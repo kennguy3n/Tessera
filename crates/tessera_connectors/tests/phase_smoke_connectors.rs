@@ -1,7 +1,6 @@
-//! Phase-verification smoke test for the connector framework.
+//! Tracking-integrity smoke test for the connector framework.
 //!
-//! This suite is part of the cross-cutting Phase 7/8 tracking-integrity
-//! guarantee: every connector the README must be backed by real,
+//! Every connector the README advertises must be backed by real,
 //! compileable code — not just a checked checkbox. The renderer-side
 //! companion is `apps/desktop/renderer/src/__tests__/smoke/
 //! phaseVerification.test.ts`.

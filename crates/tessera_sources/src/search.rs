@@ -461,7 +461,7 @@ mod tests {
     /// score is in `(0.0, 1.0]`, the first result is exactly
     /// `1.0`, and the i-th (1-based) result is `1.0 / i`.
     ///
-    /// Earlier hybrid retrieval landed, this field held
+    /// Before hybrid retrieval landed, this field held
     /// `-FTS5_rank` (unbounded positive BM25-derived magnitude),
     /// which the renderer multiplied by 100 to produce a
     /// percentage — resulting in displays like "230%" for

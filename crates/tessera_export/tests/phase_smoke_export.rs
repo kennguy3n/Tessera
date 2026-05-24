@@ -1,8 +1,8 @@
-//! Phase-verification smoke test for the export engine.
+//! Tracking-integrity smoke test for the export engine.
 //!
-//! Part of the Phase 7/8 tracking-integrity guarantee: every export
-//! format the README must be backed by a real, importable
-//! top-level function (not a TODO marker or `unimplemented!()`).
+//! Every export format the README advertises must be backed by a
+//! real, importable top-level function (not a TODO marker or
+//! `unimplemented!()`).
 //!
 //! Companion suites:
 //!   * Renderer side — `apps/desktop/renderer/src/__tests__/smoke/

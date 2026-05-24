@@ -1,8 +1,8 @@
-//! Integration tests for the Phase 9 templates: Form (Document),
-//! Asset Inventory (Base), Tracker (Sheet), Inventory (Sheet), and
-//! Roadmap (Base). These fixtures live at the workspace root and are
-//! resolved via `CARGO_MANIFEST_DIR` so the test works from any
-//! `cargo test` working directory.
+//! Integration tests for the expanded-coverage templates: Form
+//! (Document), Asset Inventory (Base), Tracker (Sheet), Inventory
+//! (Sheet), and Roadmap (Base). These fixtures live at the workspace
+//! root and are resolved via `CARGO_MANIFEST_DIR` so the test works
+//! from any `cargo test` working directory.
 
 use std::path::PathBuf;
 use tessera_core::types::ArtifactType;
@@ -148,7 +148,7 @@ fn roadmap_base_template_is_a_base() {
 }
 
 #[test]
-fn phase_9_templates_have_unique_ids() {
+fn expanded_templates_have_unique_ids() {
     let mut ids = std::collections::HashSet::new();
     for (category, name) in [
         ("documents", "form.yaml"),
@@ -160,14 +160,14 @@ fn phase_9_templates_have_unique_ids() {
         let tmpl = parse_template_file(&template_at(category, name)).unwrap();
         assert!(
             ids.insert(tmpl.id.clone()),
-            "Duplicate id in Phase 9 templates: {}",
+            "Duplicate id in expanded-coverage templates: {}",
             tmpl.id
         );
     }
 }
 
 #[test]
-fn full_template_registry_finds_phase_9_templates() {
+fn full_template_registry_finds_expanded_templates() {
     let root = workspace_templates_root();
     let registry = TemplateRegistry::load_from_directory(&root).expect("load");
 

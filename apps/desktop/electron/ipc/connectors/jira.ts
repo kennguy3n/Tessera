@@ -1,5 +1,5 @@
 /**
- * Jira connector sync logic (Task 3).
+ * Jira connector sync logic.
  *
  * Authentication: Atlassian OAuth 2.0 (3LO). After token exchange we
  * call `api.atlassian.com/oauth/token/accessible-resources` to find

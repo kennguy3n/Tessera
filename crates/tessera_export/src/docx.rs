@@ -8,7 +8,7 @@
 //!
 //! Mermaid blocks are preserved as text placeholders (the HTML export is
 //! the canonical place for live diagrams). DOCX has no inline SVG support
-//! out of the box, so a future Phase 8 task can wire in image-based
+//! out of the box, so a future iteration can wire in image-based
 //! rasterization.
 
 use docx_rs::{Docx, Paragraph, Run};

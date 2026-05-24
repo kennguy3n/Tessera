@@ -387,7 +387,7 @@ pub fn update_hybrid_search_config(
     //      the wire-level semantics aligned with caller intent and
     //      prevents the API surface from drifting between "don't
     //      touch the flag" and "I'm setting halflife but not the
-    //      toggle". this gap.
+    //      toggle".
     //   4. `None`         → otherwise, pass whatever halflife the
     //      renderer sent (could be `None`).
     let current_decay_enabled = manager

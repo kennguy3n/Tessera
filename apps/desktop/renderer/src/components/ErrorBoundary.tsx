@@ -14,7 +14,7 @@ interface State {
 }
 
 /**
- * Top-level React error boundary (Task 24).
+ * Top-level React error boundary.
  *
  * Catches render-time errors in any descendant component and shows
  * a friendly screen with:

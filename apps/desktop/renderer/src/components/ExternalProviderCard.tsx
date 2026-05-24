@@ -206,11 +206,12 @@ export default function ExternalProviderCard() {
     //
     // The `enabled` dep is REQUIRED — without it the callback's
     // closure captures the value at first render and never sees
-    // subsequent toggles Concrete
-    // failure mode: user has persisted `enabled: false`, toggles
-    // the form ON, clicks List models → stale `false` flows through
-    // as the override and the handler returns "External provider
-    // is disabled", defeating the  fix.
+    // subsequent toggles. Concrete failure mode: user has persisted
+    // `enabled: false`, toggles the form ON, clicks List models →
+    // stale `false` flows through as the override and the handler
+    // returns "External provider is disabled", defeating the
+    // draft-form-override fix that lets List/Test run without a
+    // prior Save.
   }, [provider?.apiUrl, provider?.providerType, provider?.enabled]);
 
   const onResetTokenUsage = useCallback(async () => {

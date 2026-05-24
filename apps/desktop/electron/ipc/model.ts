@@ -240,8 +240,8 @@ export function registerModelHandlers(): void {
       // uses `Math.ceil(length / CHARS_PER_TOKEN)` with a floor of
       // `MIN_TOKENS_FOR_NON_EMPTY = 1`, so applying it independently
       // to each short SSE delta (typically 1–6 chars) systematically
-      // over-counted. Concrete example flagged by (round
-      // 5): `"Hello"` + `", "` + `"world"` per-chunk yields
+      // over-counted. Concrete example: `"Hello"` + `", "` +
+      // `"world"` per-chunk yields
       // `ceil(5/4) + ceil(1/4) + ceil(5/4) = 2+1+2 = 5` tokens, but
       // the concatenated `"Hello, world"` yields `ceil(12/4) = 3`. For
       // typical OpenAI streaming (many short chunks) the cumulative

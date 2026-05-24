@@ -33,8 +33,8 @@
 //!   `matching_on_generate()` can push the predicate into SQLite.
 //!
 //! These require a schema migration plus a refactor of `is_due()` /
-//! `next_scheduled_at()` to read the precomputed column, so they live
-//! in a follow-up PR rather than mixing into Phase 8 scope.
+//! `next_scheduled_at()` to read the precomputed column, so they are
+//! deferred to a follow-up rather than mixing into the current scope.
 
 use chrono::{DateTime, Utc};
 use rusqlite::params;

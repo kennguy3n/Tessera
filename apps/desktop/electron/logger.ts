@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 
 /**
- * Tessera structured logger (Task 25).
+ * Tessera structured logger.
  *
  * Writes JSON-lines records to `~/.tessera/logs/tessera-N.log`.
  * Rotation keeps the most recent 5 files at up to ~10 MB each so
