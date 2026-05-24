@@ -291,7 +291,7 @@ function columnLabel(index: number): string {
 }
 
 /** Parse CSV text respecting RFC 4180 quoted fields (handles commas inside quotes). */
-function parseCSVLines(text: string): string[][] {
+export function parseCSVLines(text: string): string[][] {
   const rows: string[][] = [];
   let i = 0;
   while (i < text.length) {
@@ -339,7 +339,16 @@ function parseCSVLines(text: string): string[][] {
   return rows;
 }
 
-function parseSheetContent(content: string): SheetContent {
+/**
+ * Decode the artifact's serialized JSON body into the in-memory
+ * SheetContent shape the editor mounts. Falls back to a 3×3
+ * default grid if the body is empty or malformed JSON.
+ *
+ * Exported so unit tests can pin this independently of the
+ * SheetEditor's render pipeline (full component renders pull in
+ * the IPC bridge and a chain of focus / clipboard side effects).
+ */
+export function parseSheetContent(content: string): SheetContent {
   if (!content) {
     return { columns: ["A", "B", "C"], rows: [["", "", ""], ["", "", ""], ["", "", ""]] };
   }
@@ -354,7 +363,17 @@ function parseSheetContent(content: string): SheetContent {
   return { columns: ["A", "B", "C"], rows: [["", "", ""], ["", "", ""], ["", "", ""]] };
 }
 
-function evaluateFormula(formula: string, sheet: SheetContent): string | number {
+/**
+ * Evaluate a single-cell formula expression against the supplied
+ * sheet state and return the computed value. Supports SUM /
+ * AVERAGE / COUNT / MIN / MAX over an A1-style cell range. Returns
+ * the sentinel string `#ERR` for malformed formulas and `#REF`
+ * for ranges that resolve to out-of-bounds cells.
+ *
+ * Exported for unit-test coverage of the parser / evaluator,
+ * separate from the SheetEditor render pipeline.
+ */
+export function evaluateFormula(formula: string, sheet: SheetContent): string | number {
   const expr = formula.slice(1).trim().toUpperCase();
 
   const rangeMatch = expr.match(/^(SUM|AVERAGE|COUNT|MIN|MAX)\(([A-Z]+\d+):([A-Z]+\d+)\)$/);
@@ -392,7 +411,15 @@ function evaluateFormula(formula: string, sheet: SheetContent): string | number 
   }
 }
 
-function parseCellRef(ref: string): { row: number; col: number } | null {
+/**
+ * Parse an A1-style cell reference (e.g. `A1`, `AA1`, `AZ100`)
+ * into a zero-based `{ row, col }` pair, or return `null` if the
+ * input doesn't match the `^[A-Z]+\d+$` shape.
+ *
+ * Exported for unit-test coverage; this is the canonical place
+ * cell references are decoded inside the sheet editor.
+ */
+export function parseCellRef(ref: string): { row: number; col: number } | null {
   const match = ref.match(/^([A-Z]+)(\d+)$/);
   if (!match) return null;
   const col = match[1].split("").reduce((acc, c) => acc * 26 + c.charCodeAt(0) - 64, 0) - 1;

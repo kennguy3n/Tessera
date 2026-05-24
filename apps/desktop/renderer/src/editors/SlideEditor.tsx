@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useId } from "react";
 import {
   renderMermaid,
   MermaidEnvironmentError,
@@ -41,6 +41,38 @@ interface SlideEditorProps {
   /** See SheetEditor.onDraftChange — published synchronously on every edit. */
   onDraftChange?: (content: string) => void;
   autoSaveMs?: number;
+}
+
+/**
+ * Local helper component for the Speaker Notes textarea. Lives at a
+ * separate component scope so we can call `useId()` to wire the
+ * sibling-pattern `<label>` to the `<textarea>` via htmlFor /
+ * matching id, satisfying the WCAG SC 1.3.1 / SC 4.1.2 requirement
+ * that every form control has a programmatically associated label.
+ */
+function SpeakerNotesField({
+  notes,
+  onChange,
+}: {
+  notes: string;
+  onChange: (next: string) => void;
+}) {
+  const id = useId();
+  return (
+    <div className="slide-notes">
+      <label htmlFor={id} className="slide-notes-label">
+        Speaker Notes
+      </label>
+      <textarea
+        id={id}
+        className="slide-notes-input"
+        value={notes}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Speaker notes for this slide..."
+        rows={3}
+      />
+    </div>
+  );
 }
 
 export default function SlideEditor({
@@ -193,6 +225,12 @@ export default function SlideEditor({
               key={i}
               type="button"
               className={`slide-thumb ${i === activeIndex ? "active" : ""}`}
+              // `aria-current="true"` is the WAI-ARIA standard for a
+              // "the currently selected item in a non-page set"
+              // signal. Pairs with the visual `active` class so
+              // assistive tech announces the active slide alongside
+              // sighted users' visual highlight.
+              aria-current={i === activeIndex ? "true" : undefined}
               onClick={() => setActiveIndex(i)}
             >
               <span className="slide-thumb-number">{i + 1}</span>
@@ -392,16 +430,10 @@ export default function SlideEditor({
             </div>
 
             {showNotes && (
-              <div className="slide-notes">
-                <label className="slide-notes-label">Speaker Notes</label>
-                <textarea
-                  className="slide-notes-input"
-                  value={activeSlide.notes}
-                  onChange={(e) => updateSlide(activeIndex, { notes: e.target.value })}
-                  placeholder="Speaker notes for this slide..."
-                  rows={3}
-                />
-              </div>
+              <SpeakerNotesField
+                notes={activeSlide.notes}
+                onChange={(notes) => updateSlide(activeIndex, { notes })}
+              />
             )}
           </div>
         )}

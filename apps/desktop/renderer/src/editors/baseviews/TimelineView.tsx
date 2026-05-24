@@ -400,7 +400,7 @@ function Chart({
                   width: `${effectiveWidth}%`,
                   background: "var(--color-primary, #7C3AED)",
                   borderRadius: "0.25rem",
-                  color: "#fff",
+                  color: "var(--color-text-on-primary, #fff)",
                   fontSize: "0.75rem",
                   padding: "0 0.5rem",
                   display: "flex",

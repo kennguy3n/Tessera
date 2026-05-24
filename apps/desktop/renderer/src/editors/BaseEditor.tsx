@@ -492,7 +492,16 @@ function getDefaultValue(type: FieldType): unknown {
   }
 }
 
-function parseBaseContent(content: string): BaseContent {
+/**
+ * Decode the artifact's serialized JSON body into the in-memory
+ * BaseContent shape the editor mounts. Falls back to a
+ * two-field (Name + Status) default when the body is empty or
+ * not valid JSON.
+ *
+ * Exported so unit tests can pin this independently of the
+ * BaseEditor's full render pipeline.
+ */
+export function parseBaseContent(content: string): BaseContent {
   if (!content) {
     return {
       fields: [

@@ -53,7 +53,7 @@ export default function DocumentEditor({
       }),
       MermaidNode,
     ],
-    content: parseContent(content),
+    content: parseDocumentContent(content),
     onCreate: ({ editor }) => {
       // Sync lastSavedRef to the editor's parsed HTML so the first real
       // user edit doesn't trigger a spurious save.
@@ -87,7 +87,7 @@ export default function DocumentEditor({
 
   useEffect(() => {
     if (editor) {
-      const parsed = parseContent(content);
+      const parsed = parseDocumentContent(content);
       // Only update editor if content came from an external source (not our own save)
       if (parsed !== lastSavedRef.current) {
         editor.commands.setContent(parsed);
@@ -264,7 +264,17 @@ function OutlinePanel({ editor }: { editor: ReturnType<typeof useEditor> }) {
   );
 }
 
-function parseContent(content: string): string {
+/**
+ * Normalize the artifact's serialized content into the TipTap-friendly
+ * HTML string the editor expects on mount.
+ *
+ * Exported so it can be unit-tested independently of the TipTap
+ * pipeline (which is not easy to load in a headless vitest run because
+ * of the ProseMirror DOM module graph). The runtime caller is still
+ * `useEditor(...).content` below — the export adds no production
+ * behaviour change.
+ */
+export function parseDocumentContent(content: string): string {
   if (!content) return "<p></p>";
   // If content already looks like HTML, use it directly
   if (content.trim().startsWith("<")) return content;
