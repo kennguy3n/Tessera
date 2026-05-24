@@ -143,7 +143,7 @@ interface BundledTemplate {
  *
  * We deliberately do NOT depend on a YAML library on the renderer
  * side. The rigorous full-document parse (serde_yaml) runs in the
- * Rust smoke test (`crates/tessera_templates/tests/phase_smoke_*.rs`).
+ * Rust smoke test (`crates/tessera_templates/tests/smoke_*.rs`).
  * Here we only need `id` and `type`, and Tessera's bundled templates
  * write both as top-level scalar fields on their own line — so a
  * straightforward line-by-line scanner is both correct and avoids
