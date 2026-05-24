@@ -845,7 +845,8 @@ async function openExternalProviderStream(
   // here while the body stream is still bound to `attemptController.
   // signal`, leaving the user's outer signal disconnected from the
   // body stream and making the Stop button non-functional mid-
-  // stream. exactly this regression.
+  // stream. The regression tests in `externalProviderStream.test.ts`
+  // pin exactly this failure mode.
   const forwardUserAbort = (): void => attemptController.abort();
   signal?.addEventListener("abort", forwardUserAbort, { once: true });
   // Set to true when the body opens successfully so the `finally`

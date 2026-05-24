@@ -12,9 +12,9 @@
  *   - Skip files larger than 100 MB.
  *   - Persist the post-sync state in `<userData>/gdrive-sync/manifest.json`.
  *
- * This module is the canonical implementation post-; the
- * legacy ipc.ts forwards `connectors:gdrive:sync` here so the public
- * IPC surface is unchanged.
+ * This module is the canonical implementation; the legacy ipc.ts
+ * forwards `connectors:gdrive:sync` here so the public IPC surface
+ * is unchanged.
  */
 
 import * as fsp from "fs/promises";

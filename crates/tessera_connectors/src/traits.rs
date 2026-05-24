@@ -2,7 +2,7 @@
 //!
 //! ## Why only the read-only summary surface
 //!
-//! The original an earlier release scoping document proposed a single, monolithic
+//! An earlier scoping document proposed a single, monolithic
 //! `RemoteConnector` trait that would unify `authenticate`, `list_files`,
 //! `sync_changes`, `refresh_access_token`, and `revoke` into one uniform
 //! signature across all six connectors. That ambition runs aground on
@@ -36,8 +36,8 @@
 //! a divergent `sync_changes` shape, the smoke macro becomes a
 //! constraint rather than a verification — the right response then is
 //! to either reshape the new connector to fit, or split the smoke
-//! check into per-connector arms. this
-//! design tension; documenting it here is the long-term fix.
+//! check into per-connector arms. Documenting the design tension
+//! here is the long-term fix.
 //!
 //! Instead, this trait captures the **read-only summary surface** every
 //! connector shares (provider name, status, last sync time, file count).
@@ -155,17 +155,17 @@ mod tests {
         // Floor — the macro is the source of truth for the upper end
         // of the count, but we DO want to catch the failure mode where
         // the macro gets accidentally emptied (or trimmed to one
-        // connector) during a refactor. Six connectors were the
-        // the README, so anything below that is
-        // Pins a regression. A `>= 6` floor lets the macro grow to a 7th
-        // connector without an unrelated edit here, while still
-        // catching the "macro accidentally lost all but one connector"
-        // case correctly flagged when this assertion was
-        // weakened to `!is_empty()`.
+        // connector) during a refactor. Six connectors are documented
+        // in the README, so anything below that pins a regression. A
+        // `>= 6` floor lets the macro grow to a 7th connector without
+        // an unrelated edit here, while still catching the "macro
+        // accidentally lost all but one connector" case that surfaced
+        // when this assertion was previously weakened to
+        // `!is_empty()`.
         assert!(
             connectors.len() >= 6,
-            "expected at least the 6 shipping connectors from PROGRESS.md \
-             Phase 7/8, found {}; check `for_each_connector!` in src/lib.rs",
+            "expected at least the 6 shipping connectors documented in \
+             the README, found {}; check `for_each_connector!` in src/lib.rs",
             connectors.len(),
         );
         for c in &connectors {

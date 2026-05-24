@@ -174,8 +174,9 @@ impl TemplateRegistry {
                         // stats-overview}.yaml and
                         // landing_pages/saas-product.yaml) failed here
                         // because they used the pre-canonical
-                        // `heading:` section schema; an earlier release migrated
-                        // those YAMLs to canonical `title:` / `prompt:`
+                        // `heading:` section schema; a prior migration
+                        // converted those YAMLs to canonical
+                        // `title:` / `prompt:`
                         // and they now parse successfully (the
                         // visual-hint fields `layout`,
                         // `default_icon_set`, `color_scheme`, and

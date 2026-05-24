@@ -28,8 +28,8 @@
  *
  * If a user reports a broken cover image: (a) widen this allow-list
  * in code to include the new CDN (requires a release), or (b) wait
- * for the planned per-Base "trust this host" UX (tracked in an earlier release
- * follow-ups — not yet implemented). The CSP violation is observable
+ * for the planned per-Base "trust this host" UX (not yet
+ * implemented). The CSP violation is observable
  * in devtools as `Refused to load the image '<url>' because it
  * violates the following Content Security Policy directive: "img-src
  * 'self' data: ..."`. `main.ts` ALSO installs an `installCSPDevtoolsLogger`

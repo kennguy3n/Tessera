@@ -484,8 +484,9 @@ impl JiraConnector {
     /// catches issues whose `updated` timestamp was rewritten by an
     /// admin (which the changelog path would miss) and because it
     /// matches the pattern already established by the other
-    /// full-walk connectors. an earlier release centralises the file-count
-    /// arithmetic via [`SyncResult::apply_to_file_count`] so a
+    /// full-walk connectors. The accounting layer centralises the
+    /// file-count arithmetic via
+    /// [`SyncResult::apply_to_file_count`] so a
     /// future Jira-deletion-detection change is scoped to populating
     /// `result.removed` here — the accounting path then propagates
     /// the decrement without any further edit.

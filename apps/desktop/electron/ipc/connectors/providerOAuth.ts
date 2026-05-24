@@ -1,5 +1,5 @@
 /**
- * Provider-agnostic OAuth 2.0 helper ( Tasks 1–6).
+ * Provider-agnostic OAuth 2.0 helper.
  *
  * Single Authorization Code Grant flow shared by every Tessera
  * connector. The provider-specific bits (auth URL, token URL,

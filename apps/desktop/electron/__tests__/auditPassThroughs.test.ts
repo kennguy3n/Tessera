@@ -1,5 +1,5 @@
 /**
- * / Task 17 — audit trail completeness.
+ * Audit trail completeness.
  *
  * Cross-cutting tests verifying that the JS-side IPC handlers route
  * their security-relevant lifecycle events through the new

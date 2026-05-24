@@ -1,6 +1,6 @@
 /**
  * Tests for the in-memory `loadConfig`/`saveConfig`/`updateConfig`
- * cache introduced in an earlier release.
+ * cache.
  *
  * The cache is keyed by the resolved config path so each test (which
  * swaps `app.getPath('userData')` to a fresh tempdir) starts with an
@@ -183,10 +183,10 @@ describe("config cache", () => {
     // The module-level defaults are intentionally frozen so a future
     // contributor doing `DEFAULT_EXTERNAL_PROVIDER.apiUrl = '...'`
     // fails loudly rather than silently corrupting the baseline used
-    // by every subsequent `loadConfig`. (Before this PR's an earlier release review
-    // round, the defaults were unfrozen and would get frozen as a
-    // side effect by the first cache population — a confusing "this
-    // constant became frozen after some call somewhere" surprise.)
+    // by every subsequent `loadConfig`. Previously the defaults
+    // were unfrozen and would get frozen as a side effect by the
+    // first cache population — a confusing "this constant became
+    // frozen after some call somewhere" surprise.
     expect(Object.isFrozen(DEFAULT_EXTERNAL_PROVIDER)).toBe(true);
     expect(() => {
       (DEFAULT_EXTERNAL_PROVIDER as { apiUrl: string }).apiUrl =

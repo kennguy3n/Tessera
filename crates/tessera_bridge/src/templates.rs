@@ -125,8 +125,9 @@ fn get_template_inner(
     // the first id match, instead of materializing the full registry
     // (`TemplateRegistry::load_from_directory`) every call. The
     // renderer's `useEffect` on every `TemplateRunner` mount hits this
-    // path, and an earlier release grew the on-disk template set ~5x to 170+ files
-    // across locales, so the full-registry walk became measurable.
+    // path, and a prior expansion grew the on-disk template set ~5x
+    // to 170+ files across locales, so the full-registry walk became
+    // measurable.
     //
     // We deliberately reproduce two semantics from the previous
     // registry-backed implementation:
@@ -234,7 +235,7 @@ export:
         // Templates must live under a canonical category subdirectory
         // (see `tessera_templates::TEMPLATE_CATEGORIES`). The
         // `list_templates_from_dir` test above already follows this
-        // layout — `get_template_by_id` was written before the an earlier release
+        // layout — `get_template_by_id` was written before the
         // contract tightening and used to drop the YAML at the root,
         // which the registry now correctly ignores so its by-id lookup
         // can never diverge from `load_template_by_id` for stray files

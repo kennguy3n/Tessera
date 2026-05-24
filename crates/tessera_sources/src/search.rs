@@ -43,7 +43,7 @@ pub struct SearchResult {
     ///   positive and routinely exceeded 2.0, displaying as
     ///   "230%" etc.).
     ///
-    /// Compatibility note: chunks indexed prior to the an earlier release
+    /// Compatibility note: chunks indexed prior to the
     /// hybrid-retrieval landing have citation `confidence`
     /// values stored on disk in the *old* BM25-derived
     /// magnitude. Renderer code that needs to compare against

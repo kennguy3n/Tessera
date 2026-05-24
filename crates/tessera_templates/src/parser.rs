@@ -76,7 +76,7 @@ pub fn load_template_by_id(template_dir: &str, template_id: &str) -> Result<Temp
                     // live in a sibling file. But surface the parse
                     // error so an unrelated typo doesn't silently mask
                     // a working template. This used to be a silent
-                    // `if let Ok` swallow; the walkdir migration in an earlier release
+                    // `if let Ok` swallow; the walkdir migration
                     // expanded the search set to every localized
                     // variant, making silent swallowing much more
                     // dangerous (a broken `prd-v1-ja` would mask

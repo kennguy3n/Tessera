@@ -4,7 +4,7 @@
 //! them via `CARGO_MANIFEST_DIR` so it works from `cargo test` in any
 //! working directory.
 //!
-//! an earlier release (template / artifact expansion) grew the registry from ~36
+//! A prior template/artifact expansion grew the registry from ~36
 //! English-only corporate-tech templates to >170 templates across
 //! ten industries and ten locales (English plus nine localized
 //! variants). Hand-listing every file would be fragile: the registry
@@ -128,9 +128,9 @@ fn every_bundled_template_parses_and_validates() {
 /// cards because the CreatePage locale filter resolves them at the
 /// base id via the bridge.
 ///
-/// History: this test was added in an earlier release after
-/// (``) that the TS-side `CATEGORIES` ids had no
-/// compile-time or test-time cross-check with the on-disk registry.
+/// History: this test was added after it was noticed that the
+/// TS-side `CATEGORIES` ids had no compile-time or test-time
+/// cross-check with the on-disk registry.
 /// The test reads CreatePage.tsx as plain text and extracts every
 /// `id: "..."` literal inside the `CATEGORIES` block; if the renderer
 /// is later refactored away from a literal-id constant, update the
@@ -223,7 +223,7 @@ fn create_page_categories_only_reference_real_template_ids() {
 /// schema and the on-disk YAML files to the same vocabulary so they
 /// can never drift apart.
 ///
-/// History: this test was added in an earlier release after the legacy visual
+/// History: this test was added after the legacy visual
 /// templates (`templates/infographics/*.yaml`,
 /// `templates/landing_pages/saas-product.yaml`) were migrated from
 /// pre-canonical `heading:` schema to canonical `title:` schema in
@@ -411,9 +411,10 @@ fn approval_documents_expose_governance_section() {
     for name in approval_docs {
         let path = docs_root.join(name);
         if !path.exists() {
-            // Some governance templates only exist in an earlier release — if the
-            // file isn't present yet (e.g. on a branch predating an earlier release)
-            // we skip it rather than fail the whole suite.
+            // Some governance templates only exist in newer revisions
+            // of the template bundle — if the file isn't present on
+            // the current branch we skip it rather than fail the
+            // whole suite.
             continue;
         }
         let tmpl =
@@ -434,8 +435,9 @@ fn approval_documents_expose_governance_section() {
 }
 
 /// Canonical set of localized templates whose shape must mirror the
-/// English source. This is the ten most-used templates listed in the
-/// an earlier release spec. Lifted to a module-level constant so the presence check,
+/// English source. This is the ten most-used templates listed in
+/// the localization spec. Lifted to a module-level constant so the
+/// presence check,
 /// section-count check, and export-format check all share one source
 /// of truth — adding a new canonical template is a single-line edit
 /// that all three parity tests pick up automatically.
@@ -697,8 +699,8 @@ fn locale_industry_profile_round_trip_through_parser() {
     let clinical = docs_root.join("clinical-protocol.yaml");
     if clinical.exists() {
         let tmpl = parse_template_file(&clinical).expect("clinical-protocol parses");
-        // The an earlier release clinical-protocol template MUST tag itself as
-        // healthcare so the CreatePage industry filter can surface it.
+        // The clinical-protocol template MUST tag itself as healthcare
+        // so the CreatePage industry filter can surface it.
         assert!(
             tmpl.industry.iter().any(|i| i == "healthcare"),
             "clinical-protocol should declare `healthcare` industry, got {:?}",

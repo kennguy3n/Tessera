@@ -1049,8 +1049,8 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     // Pin the fix by intercepting add/removeEventListener on the
     // user's signal: count net `abort`-listener installations and
     // assert the implementation's forwarder was detached before
-    // the throw. Without the  fix this count is +1 (leak);
-    // with the fix it is 0.
+    // the throw. Without the fix this count is +1 (leak); with
+    // the fix it is 0.
     const controller = new AbortController();
     let netAbortListeners = 0;
     const origAdd = controller.signal.addEventListener.bind(controller.signal);
