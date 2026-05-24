@@ -220,11 +220,34 @@ pub fn extract_pdf_text(path: &Path) -> Result<String> {
 /// Same semantics as [`extract_pdf_text`], but reuses the caller's
 /// `Document` so the text + OCR + chart passes can share a single
 /// parse.
+///
+/// Internally calls [`probe_pdf_pages_with_doc`] which walks every
+/// page and invokes `lopdf::Document::extract_text` per page. The
+/// indexer hot path goes through [`extract_pdf_text_from_probes`]
+/// instead so the probe vector is shared with the OCR pass and the
+/// per-page `extract_text` invocations happen exactly once per
+/// `index_file` call (rather than once for the text-join and again
+/// for the OCR-eligibility check).
 #[must_use]
 pub fn extract_pdf_text_with_doc(doc: &Document) -> String {
-    probe_pdf_pages_with_doc(doc)
-        .into_iter()
-        .map(|p| p.text)
+    extract_pdf_text_from_probes(&probe_pdf_pages_with_doc(doc))
+}
+
+/// Join the per-page text from an already-computed probe vector
+/// into the same `\n\n`-separated string [`extract_pdf_text_with_doc`]
+/// produces. Lets the indexer probe each page exactly once and
+/// reuse the probes for both text concatenation and OCR
+/// eligibility (`needs_ocr` / `pdf_pages_needing_ocr`). Devin
+/// Review pass-9 📝 finding flagged the redundant
+/// `probe_pdf_pages_with_doc` calls between
+/// `extract_pdf_text_with_doc` and `vlm_ocr_chunks_with_doc`; this
+/// is the architecturally correct fix — the indexer probes once,
+/// both downstream paths consume the result.
+#[must_use]
+pub fn extract_pdf_text_from_probes(probes: &[PdfPageProbe]) -> String {
+    probes
+        .iter()
+        .map(|p| p.text.clone())
         .collect::<Vec<_>>()
         .join("\n\n")
 }
@@ -250,7 +273,17 @@ pub fn probe_pdf_pages(path: &Path) -> Result<Vec<PdfPageProbe>> {
 /// (lopdf re-reads the whole file on every `Document::load`, which
 /// for a multi-hundred-page scan is the dominant cost in the OCR
 /// path).
-fn probe_pdf_pages_with_doc(doc: &Document) -> Vec<PdfPageProbe> {
+///
+/// Exposed `pub` so the indexer can probe the document ONCE and
+/// thread the resulting `Vec<PdfPageProbe>` into both the
+/// text-join and OCR-eligibility paths via
+/// [`extract_pdf_text_from_probes`] and
+/// [`vlm_ocr_chunks_from_probes`] respectively. Without this
+/// sharing, the OCR pass would re-call `extract_text` on every
+/// page after the text pass already did — doubling the work on
+/// page-count-bound runs.
+#[must_use]
+pub fn probe_pdf_pages_with_doc(doc: &Document) -> Vec<PdfPageProbe> {
     let mut probes = Vec::new();
     for (page_number, page_id) in doc.get_pages() {
         let text = doc
@@ -345,6 +378,12 @@ pub fn vlm_ocr_chunks_for_pdf(
 /// `Document`. The indexer threads a single `Document` from
 /// [`load_pdf_document`] through the text + OCR + chart passes so
 /// the PDF is parsed exactly once per `index_file` call.
+///
+/// Internally calls [`probe_pdf_pages_with_doc`]; for the hot path
+/// where the caller has already probed the document (e.g. the
+/// indexer reusing the text-pass probes), use
+/// [`vlm_ocr_chunks_from_probes`] to avoid re-walking every page's
+/// text layer.
 pub fn vlm_ocr_chunks_with_doc(
     doc: &Document,
     extractor: &dyn VisionExtractor,
@@ -353,7 +392,36 @@ pub fn vlm_ocr_chunks_with_doc(
     starting_chunk_index: usize,
 ) -> Result<PdfPassOutcome> {
     let probes = probe_pdf_pages_with_doc(doc);
-    let pages = pdf_pages_needing_ocr(&probes);
+    vlm_ocr_chunks_from_probes(
+        doc,
+        &probes,
+        extractor,
+        pdf_path,
+        limiter,
+        starting_chunk_index,
+    )
+}
+
+/// Like [`vlm_ocr_chunks_with_doc`] but takes the pre-computed
+/// page probes from [`probe_pdf_pages_with_doc`]. The indexer
+/// probes the document ONCE per `index_file` call and threads the
+/// same `&[PdfPageProbe]` into the text-join
+/// ([`extract_pdf_text_from_probes`]) and OCR-eligibility
+/// (`pdf_pages_needing_ocr`) paths, so the per-page
+/// `lopdf::Document::extract_text` call is paid exactly once — not
+/// twice as in the older `extract_pdf_text_with_doc` →
+/// `vlm_ocr_chunks_with_doc` sequence. Devin Review pass-9 📝
+/// finding flagged the duplicate work; this is the architectural
+/// fix.
+pub fn vlm_ocr_chunks_from_probes(
+    doc: &Document,
+    probes: &[PdfPageProbe],
+    extractor: &dyn VisionExtractor,
+    pdf_path: &Path,
+    limiter: &PdfOcrRateLimiter,
+    starting_chunk_index: usize,
+) -> Result<PdfPassOutcome> {
+    let pages = pdf_pages_needing_ocr(probes);
     if pages.is_empty() {
         return Ok(PdfPassOutcome {
             chunks: Vec::new(),
@@ -372,39 +440,74 @@ pub fn vlm_ocr_chunks_with_doc(
             continue;
         };
 
-        // Resolve the page's largest decodable image FIRST so we
-        // only consume a rate-limit token when a VLM call is
-        // actually about to happen. Without this ordering, a page
-        // whose only images use a non-DCTDecode filter (FlateDecode,
-        // CCITTFax, JBIG2, JPX) would still spend a token, even
-        // though no VLM call is made — so a PDF full of such pages
-        // could exhaust the 10-page/minute budget without producing
-        // any OCR output, starving subsequent pages and other PDFs
-        // in the same window. Mirrors the order used by
-        // `vlm_chart_chunks_for_pdf`.
-        let Some(image_path) = write_largest_image_for_ocr(doc, page_id, pdf_path)? else {
+        // Resolve the page's largest decodable image FIRST (cheap:
+        // just walks the XObject dictionary and picks the largest
+        // single-filter `[DCTDecode]` image — no temp-file write).
+        // Three reasons for doing this before consuming a token:
+        //
+        //   1. A page whose only images use a non-DCTDecode filter
+        //      (FlateDecode, CCITTFax, JBIG2, JPX) cannot be OCR'd,
+        //      so consuming a token would waste budget on a page
+        //      that produces no VLM output — a multi-page PDF full
+        //      of such filters could exhaust the 10-page/minute
+        //      budget without producing any OCR text, starving
+        //      subsequent pages.
+        //   2. We also need to avoid writing the temp file before
+        //      the rate-limit check passes (Devin Review pass-9 📝
+        //      finding flagged the OCR/chart asymmetry: the chart
+        //      pass checks the limiter first, the OCR pass was
+        //      writing the temp file first and then having to
+        //      unlink it on rate-limit denial). Doing the
+        //      decodability probe via a non-writing helper lets us
+        //      align the order with the chart pass: probe → check
+        //      limiter → write → VLM call.
+        //   3. The cost of `get_page_images` itself is bounded by
+        //      the page's XObject count (typically 1–3 images),
+        //      not the page's pixel area, so doing it twice in the
+        //      rare denial path is fine.
+        let has_decodable_image = page_has_decodable_image(doc, page_id, pdf_path)?;
+        if !has_decodable_image {
             eprintln!(
                 "[tessera_sources] pdf {} page {} has no decodable image (only non-DCTDecode filters available); skipping OCR for this page",
                 pdf_path_str, page_number
             );
             continue;
-        };
+        }
 
         if !limiter.try_acquire() {
-            // Budget exhausted — we've already written the temp
-            // image but haven't issued the VLM call yet, so unlink
-            // and bail out of the loop. Mark the outcome as
+            // Budget exhausted — no temp file written yet, so
+            // there's nothing to clean up. Mark the outcome as
             // partial so the indexer can stamp a sentinel hash on
             // the `indexed_files` row — without that, the next
             // `index_file` call would short-circuit on hash match
             // and the remaining pages would be permanently lost.
-            let _ = std::fs::remove_file(&image_path);
             eprintln!(
                 "[tessera_sources] pdf OCR rate limit reached at page {page_number} of {pdf_path_str}; remaining pages deferred (file will be re-indexed on next pass)"
             );
             fully_processed = false;
             break;
         }
+
+        // Token granted — NOW write the temp file. If the write
+        // itself fails, we've already consumed a token; this is
+        // acceptable because the failure mode (e.g. disk full) is
+        // unrelated to OCR-budget accounting and is rare. The
+        // structured error propagates out of
+        // `write_largest_image_for_ocr` and bubbles up via `?`.
+        let Some(image_path) = write_largest_image_for_ocr(doc, page_id, pdf_path)? else {
+            // Race: a future change could let the second
+            // `get_page_images` call disagree with the first (e.g.
+            // `Document` mutation during indexing). Today
+            // `Document` is held by-ref and immutable; if this
+            // branch ever fires, treat it the same as a non-DCT
+            // page — token has been consumed (a minor budget loss)
+            // but no progress made.
+            eprintln!(
+                "[tessera_sources] pdf {} page {}: decodable-image probe disagreed with write step (no DCTDecode image found on second walk); skipping OCR for this page",
+                pdf_path_str, page_number
+            );
+            continue;
+        };
 
         // Use the dedicated OCR-mode trait method so the bridge
         // layer can drive the VLM with a transcription-flavoured
@@ -477,6 +580,33 @@ fn write_largest_image_for_ocr(
         message: format!("failed to write OCR temp image {}: {e}", out.display()),
     })?;
     Ok(Some(out))
+}
+
+/// Cheap probe: does the page have at least one Image XObject
+/// whose filter list is exactly `[DCTDecode]` and therefore can be
+/// dumped verbatim to a `.jpg` temp file? Used by
+/// [`vlm_ocr_chunks_from_probes`] to decide whether to consume a
+/// rate-limit token BEFORE doing any I/O.
+///
+/// Walks the same `doc.get_page_images(page_id)` list
+/// `write_largest_image_for_ocr` uses but skips the temp-file
+/// write. For a typical page (1–3 image XObjects) the cost is
+/// dominated by lopdf's XObject-dictionary walk, not by the
+/// filter-list inspection, so calling this AND then
+/// `write_largest_image_for_ocr` on success roughly doubles the
+/// per-page XObject-walk cost in the granted-token path. That
+/// extra walk is amortized over the multi-second VLM call that
+/// follows, so the net effect is negligible — and in the
+/// denied-token path (rate limit hit, no decodable image) we
+/// save the cost of a temp-file write entirely.
+fn page_has_decodable_image(doc: &Document, page_id: ObjectId, source_pdf: &Path) -> Result<bool> {
+    let images = doc
+        .get_page_images(page_id)
+        .map_err(|e| Error::Extraction {
+            path: source_pdf.display().to_string(),
+            message: format!("failed to walk page XObjects: {e}"),
+        })?;
+    Ok(pick_largest_dct_image(&images).is_some())
 }
 
 /// Compute the per-process-unique temp-file path for an embedded

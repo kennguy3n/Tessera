@@ -181,11 +181,14 @@ pub fn record_error(slot: &Arc<Mutex<ProgressSnapshot>>) {
 /// leaving slow VLM passes so the UI can show a more accurate
 /// label than the generic "Scanning" default.
 ///
-/// Pairs with `record_phase_scanning` which resets to the default
-/// in a finally-style block — callers MUST reset to `Scanning`
-/// after the VLM pass completes, otherwise the UI will keep
-/// showing "Describing images" through the rest of the indexing
-/// pass.
+/// Pairs with a follow-up `record_phase(slot, IndexPhase::Scanning)`
+/// call which resets to the default in a finally-style block —
+/// callers MUST reset to `Scanning` after the VLM pass completes,
+/// otherwise the UI will keep showing "Describing images" through
+/// the rest of the indexing pass. See `indexer.rs:index_file` for
+/// the canonical reset pattern (Devin Review pass-9 flagged the
+/// previous "`record_phase_scanning` helper" wording as referring
+/// to a function that never existed).
 pub fn record_phase(slot: &Arc<Mutex<ProgressSnapshot>>, phase: IndexPhase) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.phase = phase;

@@ -10,8 +10,8 @@ use crate::extractor::{extract_text, is_supported_extension};
 use crate::ignore::IgnoreRules;
 use crate::image_metadata::is_image_extension;
 use crate::pdf_extractor::{
-    extract_pdf_text_with_doc, load_pdf_document, vlm_chart_chunks_with_doc,
-    vlm_ocr_chunks_with_doc, PdfOcrRateLimiter,
+    extract_pdf_text_from_probes, load_pdf_document, probe_pdf_pages_with_doc,
+    vlm_chart_chunks_with_doc, vlm_ocr_chunks_from_probes, PdfOcrRateLimiter, PdfPageProbe,
 };
 use crate::progress::{
     self, record_chunk_embed_failed, record_chunk_embedded, EmbeddingProgressSnapshot, IndexPhase,
@@ -259,8 +259,19 @@ impl Indexer {
         store: &SourceStore,
         progress_slot: Option<&Arc<Mutex<ProgressSnapshot>>>,
     ) -> Result<IndexFileOutcome> {
-        let content_bytes = std::fs::read(path)?;
-        let file_hash = blake3::hash(&content_bytes).to_hex().to_string();
+        // Scope `content_bytes` to the hash computation so the raw
+        // buffer is dropped before the rest of `index_file` runs.
+        // For a 500 MB scanned PDF, holding the raw bytes in memory
+        // alongside the parsed `lopdf::Document` (which is loaded a
+        // few lines below for the text + OCR + chart passes) roughly
+        // doubled peak heap usage — the raw bytes are only needed
+        // for the BLAKE3 hash. Devin Review pass-9 📝 finding
+        // flagged this; the scoped block is the minimal correct
+        // fix.
+        let file_hash = {
+            let content_bytes = std::fs::read(path)?;
+            blake3::hash(&content_bytes).to_hex().to_string()
+        };
         let path_str = path.to_string_lossy().to_string();
 
         if let Ok(Some(existing_hash)) = store.get_file_hash(&path_str) {
@@ -323,8 +334,19 @@ impl Indexer {
             None
         };
 
-        let text = if let Some(doc) = pdf_doc.as_ref() {
-            extract_pdf_text_with_doc(doc)
+        // Probe the PDF's pages ONCE so the text-join and the OCR
+        // eligibility checks share a single `extract_text` pass.
+        // Without this, `extract_pdf_text_with_doc` would call
+        // `probe_pdf_pages_with_doc` (one `extract_text` per page),
+        // then `vlm_ocr_chunks_with_doc` would call it again,
+        // doubling the per-page work for a 500-page scan. Devin
+        // Review pass-9 📝 finding flagged the duplicate work; the
+        // architectural fix is to probe at the indexer level and
+        // pass `&[PdfPageProbe]` into both downstream paths.
+        let pdf_probes: Option<Vec<PdfPageProbe>> = pdf_doc.as_ref().map(probe_pdf_pages_with_doc);
+
+        let text = if let Some(probes) = pdf_probes.as_ref() {
+            extract_pdf_text_from_probes(probes)
         } else {
             extract_text(path)?
         };
@@ -339,7 +361,15 @@ impl Indexer {
         // call would short-circuit on hash match, and the
         // remaining pages would be permanently lost until the
         // user's file content changed on disk.
-        let mut pdf_passes_complete = true;
+        //
+        // Renamed from `pdf_passes_complete` in Devin Review pass-9:
+        // image VLM failures now also flip this to `false` so a
+        // transient VLM hiccup on an image doesn't permanently
+        // lose the description for that file (the next pass
+        // retries the VLM call). The name `vlm_passes_complete`
+        // reflects the broader scope (images + PDF OCR + PDF
+        // chart).
+        let mut vlm_passes_complete = true;
 
         // Vision pass: when the file is an image AND a VLM-backed
         // extractor is attached, append a single VLM-derived chunk
@@ -365,6 +395,20 @@ impl Indexer {
                             "[tessera_sources] VLM describe failed for {}: {e}",
                             path.display()
                         );
+                        // Mark this file as partial so the next
+                        // `index_file` call re-runs the VLM
+                        // describe rather than short-circuiting
+                        // on hash match. Without this stamp, a
+                        // transient sidecar timeout (which the
+                        // user would expect to recover from on
+                        // the next scheduled scan) would
+                        // permanently lose the VLM description
+                        // for that image until the file content
+                        // changed on disk. Devin Review pass-9
+                        // 🚩 finding flagged this asymmetry
+                        // between image (no retry) and PDF OCR /
+                        // chart (retry via partial sentinel).
+                        vlm_passes_complete = false;
                     }
                 }
                 if let Some(slot) = progress_slot {
@@ -389,8 +433,21 @@ impl Indexer {
                 if let Some(slot) = progress_slot {
                     progress::record_phase(slot, IndexPhase::OcrPdf);
                 }
-                match vlm_ocr_chunks_with_doc(
+                // Reuse the probes from the text-join pass; this is
+                // the architectural deduplication of the redundant
+                // `probe_pdf_pages_with_doc` calls Devin Review
+                // pass-9 📝 finding called out. `pdf_probes` is
+                // `Some` whenever `pdf_doc` is `Some` (both are
+                // populated together at the top of the function),
+                // so the `expect()` cannot fire in practice — a
+                // panic here would indicate a logic bug, not an
+                // input-driven failure mode.
+                let probes = pdf_probes
+                    .as_ref()
+                    .expect("pdf_doc Some implies pdf_probes Some");
+                match vlm_ocr_chunks_from_probes(
                     doc,
+                    probes,
                     vlm.as_ref(),
                     path,
                     self.pdf_ocr_rate_limiter.as_ref(),
@@ -399,7 +456,7 @@ impl Indexer {
                     Ok(outcome) => {
                         chunks.extend(outcome.chunks);
                         if !outcome.fully_processed {
-                            pdf_passes_complete = false;
+                            vlm_passes_complete = false;
                         }
                     }
                     Err(e) => {
@@ -412,7 +469,7 @@ impl Indexer {
                         // same as a rate-limit truncation so the
                         // next pass retries from scratch rather than
                         // short-circuiting on the just-stamped hash.
-                        pdf_passes_complete = false;
+                        vlm_passes_complete = false;
                     }
                 }
                 // Chart-extraction pass (Block C task 11): tier-gated.
@@ -436,7 +493,7 @@ impl Indexer {
                         Ok(outcome) => {
                             chunks.extend(outcome.chunks);
                             if !outcome.fully_processed {
-                                pdf_passes_complete = false;
+                                vlm_passes_complete = false;
                             }
                         }
                         Err(e) => {
@@ -444,7 +501,7 @@ impl Indexer {
                                 "[tessera_sources] PDF chart pass failed for {}: {e}",
                                 path.display()
                             );
-                            pdf_passes_complete = false;
+                            vlm_passes_complete = false;
                         }
                     }
                 }
@@ -472,7 +529,7 @@ impl Indexer {
         // start of the retry anyway. We stamp here, before the
         // chunk insert, so a panic between the two doesn't leave
         // the row claiming "fully indexed".
-        if !pdf_passes_complete {
+        if !vlm_passes_complete {
             store.mark_file_needs_reindex(file_id)?;
         }
 
