@@ -351,11 +351,11 @@ describe("hybrid search config IPC", () => {
   });
 
   it("settings:updateHybridSearchConfig emits candidatePoolSize audit row when the user changes the pool size", async () => {
-    // Pin the contract that `candidatePoolSize` IS audited (the
-    // initial implementation missed it). This test deliberately
-    // passes a
-    // non-zero pool size so a regression that drops the audit row
-    // would fail even if the test seed defaulted to a zero pool.
+    // Pin the contract that `candidatePoolSize` IS audited; an
+    // earlier implementation missed it. This test deliberately
+    // passes a non-zero pool size so a regression that drops the
+    // audit row would fail even if the test seed defaulted to a
+    // zero pool.
     const { bridge } = makeBridge(DEFAULT_HYBRID_SEARCH_CONFIG);
     stubBridge = bridge;
     registerSettingsHandlers();
