@@ -240,9 +240,9 @@ function extractTopLevelScalar(body: string, key: string): string | null {
     //   * Single-quoted (YAML 1.2 §7.3.2): the ONLY escape is the
     //     literal sequence `''` (two consecutive single quotes),
     //     which represents one literal `'`. No backslash escapes
-    //     apply. So `'it''s'` decodes to `it's`. This was the gap
-    //     — the previous lexer would
-    //     stop at the first `'` and incorrectly return `it`.
+    //     apply. So `'it''s'` decodes to `it's`. This was the gap:
+    //     the previous lexer would stop at the first `'` and
+    //     incorrectly return `it`.
     //
     // We accumulate the decoded value as we go so the returned
     // string is the actual scalar content, not the raw slice between
@@ -331,10 +331,10 @@ function extractTopLevelScalar(body: string, key: string): string | null {
  * smoke suite. Earlier rounds shipped two separate state machines —
  * one in `lexJsBraces` (brace-tracking only) and one inside
  * `extractObjectProperties` (brace + identifier + colon + string
- * tracking) — and correctly flagged the duplication as a
- * maintenance hazard: any fix to one lexer (e.g. the `${…}`
- * depth-decrement repair in ) would have to be applied to both,
- * and a regression in only one would silently diverge them. The unified
+ * tracking) — duplication that was a known maintenance hazard:
+ * any fix to one lexer (e.g. the `${…}` depth-decrement repair)
+ * would have to be applied to both, and a regression in only one
+ * would silently diverge them. The unified
  * lexer below covers BOTH callers' needs through optional callbacks.
  *
  * Five lexical productions can hide `{` / `}` / identifier-shaped
@@ -905,9 +905,9 @@ function extractCategoryEntries(): CategoryEntry[] {
 /**
  * The de-duplicated set of template ids referenced from CreatePage.tsx's
  * CATEGORIES constant. Derived directly from `extractCategoryEntries`
- * so both checks share a single extraction path —
- *  finding #0002 correctly flagged that an earlier regex-based
- * implementation could false-match `id:` inside string values or
+ * so both checks share a single extraction path. An earlier
+ * regex-based implementation could false-match `id:` inside
+ * string values or
  * comments. Folding it onto the lexer-based entry walker means the
  * two helpers can never disagree about what a "CATEGORIES id" is.
  */
@@ -1060,7 +1060,7 @@ describe("phase verification — bundled template registry", () => {
     // a template category (`TEMPLATE_CATEGORIES`) or a deliberate
     // non-category (`NON_TEMPLATE_DIRS`).
     //
-    // This closes the failure mode : if a
+    // This closes the failure mode where, if a
     // contributor adds a new category directory (say `templates/forms/`)
     // without updating `TEMPLATE_CATEGORIES`, the `loadBundledTemplates`
     // walker above silently skips it. Walking the directory at runtime

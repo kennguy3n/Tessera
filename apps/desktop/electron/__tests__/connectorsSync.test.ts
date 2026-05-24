@@ -680,13 +680,13 @@ describe("Notion sync", () => {
       );
 
       fetchMock
-        // GET /v1/pages/shared-page → 502 (transient).
+        // Phase 1: GET /v1/pages/shared-page → 502 (transient).
         .mockResolvedValueOnce({
           ok: false,
           status: 502,
           text: async () => "Bad Gateway",
         })
-        // POST /v1/search → same page with newer
+        // Phase 2: POST /v1/search → same page with newer
         // last_edited_time (i.e. the user touched it between the
         // failed Phase-1 attempt and this Phase-2 scan).
         .mockResolvedValueOnce({
@@ -771,13 +771,13 @@ describe("Notion sync", () => {
       );
 
       fetchMock
-        // GET /v1/pages/shared-page → 502 → throws → push #1.
+        // Phase 1: GET /v1/pages/shared-page → 502 → throws → push #1.
         .mockResolvedValueOnce({
           ok: false,
           status: 502,
           text: async () => "Bad Gateway",
         })
-        // POST /v1/search → returns shared-page with a NEW
+        // Phase 2: POST /v1/search → returns shared-page with a NEW
         // last_edited_time strictly after the watermark, so the
         // listAllPages filter doesn't drop it.
         .mockResolvedValueOnce({
@@ -797,7 +797,7 @@ describe("Notion sync", () => {
             next_cursor: null,
           }),
         })
-        // fetchPageText → fetchAllBlocks GET
+        // Phase 2: fetchPageText → fetchAllBlocks GET
         // /v1/blocks/shared-page/children → 502 → throws → push #2.
         .mockResolvedValueOnce({
           ok: false,
@@ -1656,13 +1656,13 @@ describe("Figma sync", () => {
       );
 
       fetchMock
-        // retry: GET /v1/files/transiently-broken → 502
+        // Phase 1 retry: GET /v1/files/transiently-broken → 502
         .mockResolvedValueOnce({
           ok: false,
           status: 502,
           text: async () => "Bad Gateway",
         })
-        // GET /v1/teams/t1/projects → empty (nothing else to do)
+        // Phase 2: GET /v1/teams/t1/projects → empty (nothing else to do)
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({ name: "Team A", projects: [] }),

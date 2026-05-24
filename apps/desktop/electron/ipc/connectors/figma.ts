@@ -635,7 +635,7 @@ export async function syncFigma(ctx: {
     //   (a) success → `succeededIds.add` + `pendingRetries.delete`,
     //   (b) 404/410 cascade → `succeededIds.add` + `pendingRetries.delete`,
     //   (c) `recordFailure(...)` → `failedThisPassIds.add`.
-    // likewise either succeeds (path a) or records a
+    // Phase 2 likewise either succeeds (path a) or records a
     // failure (path c) for every file it touches. So under the
     // current code shape, no key reaches this loop without being in
     // one of the two sets.
