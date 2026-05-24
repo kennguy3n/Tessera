@@ -91,6 +91,59 @@ function teardownIpcSubscription() {
  * window — relying purely on token events leaves a visibility gap
  * of however long the upstream provider takes to flush its first
  * chunk, which on Anthropic + OpenAI is often 1\u20132 seconds.
+ *
+ * ## Current production callers: none (intentional)
+ *
+ * Devin Review on PR #27 correctly observed that no production
+ * code currently calls this function. That is by design:
+ *
+ *   - The `model:generate` IPC channel (`electron/ipc/model.ts`)
+ *     is wired end-to-end and tested, but no renderer page yet
+ *     invokes it. Today's renderer drives generation through the
+ *     synchronous `artifacts.generateFromTemplate` bridge call,
+ *     which runs through `inference_router` and never emits the
+ *     `model:token` events this hook subscribes to (see the
+ *     comment in `pages/CreatePage.tsx` at the `bridgeGenerate`
+ *     callsite — the previous attempt to subscribe to
+ *     `model:token` for that path was removed as dead code).
+ *
+ *   - The streaming `model:generate` path is reserved for an
+ *     upcoming surface (chat-style interaction with the local
+ *     sidecar / external provider) that has not yet shipped. When
+ *     that surface lands, the renderer code that calls
+ *     `window.tessera.model.generate(...)` must call
+ *     `notifyGenerationStarted()` immediately before the IPC
+ *     invoke. Forgetting to do so re-introduces the 1\u20132 s
+ *     pre-first-token visibility gap on the Stop button — which
+ *     is the exact bug this hook was designed to close.
+ *
+ * The function stays exported (rather than being inlined into a
+ * future caller's file) for three reasons:
+ *
+ *   1. The module-scope `isActive` / `notifyAll` plumbing is
+ *      already coupled to the IPC-token subscription set up at
+ *      module load. Putting the start hint anywhere else would
+ *      either reach into module-private state (worse coupling)
+ *      or recreate the plumbing (duplication).
+ *
+ *   2. The contract is pinned by tests in
+ *      `stopGenerationButton.test.tsx` (the call-before-IPC
+ *      ordering must produce a synchronous true \u2192 false \u2192 true
+ *      cycle around the first `done: false` token). If a future
+ *      contributor refactors this function out of existence,
+ *      those tests will fail loudly, which is the desired
+ *      regression-detection signal.
+ *
+ *   3. Removing the export would force the future caller to
+ *      reach into the hook's internals or duplicate the
+ *      subscriber-notification logic. Keeping a small, named,
+ *      well-documented export is the lower-coupling choice.
+ *
+ * If a future audit revisits this and the streaming
+ * `model:generate` surface has been removed entirely (not just
+ * unshipped), THEN this export becomes genuinely dead and should
+ * be removed alongside the IPC channel itself — but that's a
+ * paired removal, not an isolated cleanup.
  */
 export function notifyGenerationStarted(): void {
   if (!isActive) {

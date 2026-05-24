@@ -45,9 +45,20 @@ interface OpenAiModelsListResponse {
  * - `{ ok: true, models }` with at least one entry on success
  *   (deduped + sorted alphabetically for stable display).
  * - `{ ok: false, kind: "unsupported" }` for Anthropic providers
- *   (no `/v1/models` endpoint).
- * - `{ ok: false, kind: "error", error }` for transport / HTTP /
- *   parse failures.
+ *   (no `/v1/models` endpoint exists in the API schema at all —
+ *   the Messages API does not surface model discovery).
+ * - `{ ok: false, kind: "endpoint_not_found", url }` when the
+ *   resolved `/v1/models` URL returned HTTP 404. This is the
+ *   common case for self-hosted OpenAI-compatible shims that
+ *   implement chat completions without the discovery endpoint
+ *   (e.g. older llama-server builds, lightweight proxies). We
+ *   distinguish this from the generic `error` variant because the
+ *   renderer wants to surface a "use manual entry" hint, not a
+ *   retry-suggesting "HTTP 404" message — the deployment is
+ *   working as designed, the user just needs to type the model
+ *   name themselves.
+ * - `{ ok: false, kind: "error", error }` for any other transport
+ *   / HTTP / parse failure (auth, 5xx, malformed response).
  *
  * The `apiKey` is the cleartext value retrieved from
  * `secretsVault` by the IPC handler. Anthropic providers never
@@ -85,6 +96,25 @@ export async function listExternalProviderModels(
       signal: controller.signal,
     });
     if (!res.ok) {
+      // Specifically narrow HTTP 404 to the typed
+      // `endpoint_not_found` result so the renderer can show a
+      // "use manual entry" hint pointing at the exact URL we
+      // attempted. Self-hosted shims that don't implement the
+      // discovery endpoint at all return 404 with no body — the
+      // generic `kind: "error", error: "HTTP 404"` variant would
+      // read to the user as a transient failure they should
+      // retry, when in fact the deployment is working as designed
+      // and they just need to enter a model name manually. We
+      // drain the body (best-effort) to keep the fetch's
+      // underlying connection clean for keep-alive reuse but do
+      // not include it in the result — 404 bodies are
+      // attacker-controlled HTML and surfacing them in the
+      // renderer would invite "HTML escape failure" follow-on
+      // findings without adding any diagnostic value.
+      if (res.status === 404) {
+        await res.text().catch(() => "");
+        return { ok: false, kind: "endpoint_not_found", url };
+      }
       const bodyPreview = await res.text().catch(() => "");
       return {
         ok: false,
