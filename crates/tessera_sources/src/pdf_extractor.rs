@@ -623,6 +623,14 @@ fn page_has_decodable_image(doc: &Document, page_id: ObjectId, source_pdf: &Path
 /// two cargo tests racing over a 4 × 4 DCTDecode image in
 /// different tempdirs would alias the same temp file and one
 /// would `unlink` it out from under the other.)
+///
+/// The full `ObjectId` (both `obj_num` and `generation`) is
+/// folded into the hash so two images with the same object
+/// number but different generations — possible in PDFs with
+/// incremental updates per PDF 32000-1:2008 §7.5.4 — cannot
+/// alias the same temp path. Devin Review pass-9 📝 finding
+/// flagged this as defense-in-depth; on second look the fix is
+/// a one-line tightening with no downside, so it's in.
 fn temp_image_path(source_pdf: &Path, tag: &str, img: &PdfImage<'_>) -> std::path::PathBuf {
     let dir = std::env::temp_dir();
     let abs = std::fs::canonicalize(source_pdf).unwrap_or_else(|_| source_pdf.to_path_buf());
@@ -630,8 +638,8 @@ fn temp_image_path(source_pdf: &Path, tag: &str, img: &PdfImage<'_>) -> std::pat
     let pid = std::process::id();
     let unique = blake3::hash(
         format!(
-            "{abs_str}-{tag}-{}-{}-{}-{pid}",
-            img.width, img.height, img.id.0
+            "{abs_str}-{tag}-{}-{}-{}-{}-{pid}",
+            img.width, img.height, img.id.0, img.id.1
         )
         .as_bytes(),
     )
