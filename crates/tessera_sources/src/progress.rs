@@ -37,6 +37,32 @@ pub enum IndexStatus {
     Failed,
 }
 
+/// Optional sub-phase of an indexing pass. The bulk of indexing is
+/// uniform "walk + extract + chunk" work but a few stages (notably
+/// VLM image description and PDF OCR) take seconds-to-minutes per
+/// file, so the UI shows a separate label for them. The phase is
+/// `None` while the pass is doing ordinary text extraction.
+///
+/// Wire-format is stable (`describing_images`, `ocr_pdf`,
+/// `describing_charts`) so the renderer's i18n strings can map
+/// directly off this enum without an additional translation layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexPhase {
+    /// Generic text-only extraction (txt/md/csv/json/html/xlsx) and
+    /// per-image metadata extraction. The "default" state.
+    Scanning,
+    /// Running a VLM over an image file to produce a natural-language
+    /// description chunk. Slow (seconds per file). Block C task 9.
+    DescribingImages,
+    /// Running a VLM over scanned-PDF pages to OCR them into text
+    /// chunks. Slow + rate-limited. Block C task 10.
+    OcrPdf,
+    /// Running a VLM over detected chart images to produce
+    /// structured descriptions. Medium+ tier only. Block C task 11.
+    DescribingCharts,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressSnapshot {
     pub status: IndexStatus,
@@ -54,6 +80,11 @@ pub struct ProgressSnapshot {
     /// Optional human-readable failure reason populated by
     /// `mark_failed`. Empty on success or while running.
     pub last_error: Option<String>,
+    /// Current sub-phase. The default `Scanning` covers the
+    /// bulk of indexing work; the indexer flips this to the
+    /// VLM-specific variants for the (slow) image / OCR / chart
+    /// passes so the UI can show a more accurate label.
+    pub phase: IndexPhase,
 }
 
 impl Default for ProgressSnapshot {
@@ -68,6 +99,7 @@ impl Default for ProgressSnapshot {
             total_files: 0,
             current_path: None,
             last_error: None,
+            phase: IndexPhase::Scanning,
         }
     }
 }
@@ -144,11 +176,27 @@ pub fn record_error(slot: &Arc<Mutex<ProgressSnapshot>>) {
     s.errors = s.errors.saturating_add(1);
 }
 
+/// Update the current sub-phase. Cheap to call (single short
+/// critical section). Used by the indexer to signal entering /
+/// leaving slow VLM passes so the UI can show a more accurate
+/// label than the generic "Scanning" default.
+///
+/// Pairs with `record_phase_scanning` which resets to the default
+/// in a finally-style block — callers MUST reset to `Scanning`
+/// after the VLM pass completes, otherwise the UI will keep
+/// showing "Describing images" through the rest of the indexing
+/// pass.
+pub fn record_phase(slot: &Arc<Mutex<ProgressSnapshot>>, phase: IndexPhase) {
+    let mut s = slot.lock().expect("snapshot mutex poisoned");
+    s.phase = phase;
+}
+
 pub fn finish(slot: &Arc<Mutex<ProgressSnapshot>>, total_files: u64) {
     let mut s = slot.lock().expect("snapshot mutex poisoned");
     s.status = IndexStatus::Done;
     s.total_files = total_files;
     s.current_path = None;
+    s.phase = IndexPhase::Scanning;
 }
 
 pub fn mark_failed(slot: &Arc<Mutex<ProgressSnapshot>>, error: &str) {

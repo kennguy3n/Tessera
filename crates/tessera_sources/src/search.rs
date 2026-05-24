@@ -383,6 +383,8 @@ mod tests {
                         byte_offset: 0,
                         content: "Tessera is a local-first productivity workspace for creating documents and slides".to_string(),
                         hash: "ch1".to_string(),
+                        extraction_method: None,
+                        extraction_model_id: None,
                     },
                     crate::chunker::Chunk {
                         source_path: "/test/doc.txt".to_string(),
@@ -390,6 +392,8 @@ mod tests {
                         byte_offset: 80,
                         content: "It uses encrypted storage with SQLCipher and BLAKE3 hashing for content integrity".to_string(),
                         hash: "ch2".to_string(),
+                        extraction_method: None,
+                        extraction_model_id: None,
                     },
                 ],
             )
@@ -408,6 +412,8 @@ mod tests {
                     content: "Meeting notes about the project budget and roadmap planning session"
                         .to_string(),
                     hash: "ch3".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
                 }],
             )
             .unwrap();

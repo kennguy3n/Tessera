@@ -87,6 +87,15 @@ impl SourceStore {
                 byte_offset INTEGER NOT NULL,
                 content TEXT NOT NULL,
                 hash TEXT NOT NULL,
+                -- Provenance columns added by Block C (vision-powered
+                -- indexing). NULL on legacy / native-extraction rows;
+                -- set to the lower-snake-case `ExtractionMethod`
+                -- discriminant and the manifest entry id of the
+                -- vision model that produced VLM-derived rows. See
+                -- `crate::chunker::ExtractionMethod` for the value
+                -- catalogue.
+                extraction_method TEXT,
+                extraction_model_id TEXT,
                 FOREIGN KEY (indexed_file_id) REFERENCES indexed_files(id)
             );
 
@@ -127,6 +136,46 @@ impl SourceStore {
             ",
             )
             .map_err(|e| Error::Database(e.to_string()))?;
+
+        // Block C migration: databases created by earlier Tessera
+        // builds have a `chunks` table WITHOUT the
+        // `extraction_method` / `extraction_model_id` columns. The
+        // CREATE TABLE above is a no-op against an existing table, so
+        // we have to ALTER explicitly. SQLite has no
+        // `ADD COLUMN IF NOT EXISTS`; we attempt the ALTER and
+        // silently ignore the "duplicate column name" error so the
+        // migration is idempotent across both code paths
+        // (freshly-created vs. legacy-then-upgraded). Any other
+        // error surfaces — we don't want to swallow real failures
+        // like a corrupt schema.
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        for column in &["extraction_method", "extraction_model_id"] {
+            let sql = format!("ALTER TABLE chunks ADD COLUMN {column} TEXT");
+            if let Err(e) = conn.execute(&sql, []) {
+                let msg = e.to_string();
+                if !msg.contains("duplicate column name") {
+                    return Err(Error::Database(format!(
+                        "failed to add chunks.{column}: {msg}"
+                    )));
+                }
+            }
+        }
+
+        // Partial index on the new column. Created AFTER the ALTERs
+        // above so legacy databases (where the column didn't exist
+        // when the batch ran) still get the index. `WHERE … IS NOT
+        // NULL` keeps the index dense — the index only holds rows
+        // for VLM-derived chunks, which is the only access pattern
+        // ("delete all chunks produced by the previously-installed
+        // vision model so we can re-extract").
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_extraction_model
+             ON chunks(extraction_model_id)
+             WHERE extraction_model_id IS NOT NULL",
+            [],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+
         Ok(())
     }
 
@@ -371,8 +420,11 @@ impl SourceStore {
         {
             let mut stmt = conn
                 .prepare(
-                    "INSERT INTO chunks (indexed_file_id, chunk_index, byte_offset, content, hash)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO chunks (
+                        indexed_file_id, chunk_index, byte_offset, content, hash,
+                        extraction_method, extraction_model_id
+                     )
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 )
                 .map_err(|e| Error::Database(e.to_string()))?;
 
@@ -383,6 +435,10 @@ impl SourceStore {
                     chunk.byte_offset as i64,
                     chunk.content,
                     chunk.hash,
+                    chunk
+                        .extraction_method
+                        .map(crate::chunker::ExtractionMethod::as_str),
+                    chunk.extraction_model_id.as_deref(),
                 ])
                 .map_err(|e| Error::Database(e.to_string()))?;
                 ids.push(conn.last_insert_rowid());
@@ -396,6 +452,54 @@ impl SourceStore {
         .map_err(|e| Error::Database(e.to_string()))?;
 
         Ok(ids)
+    }
+
+    /// Return every chunk (including provenance columns) attached
+    /// to the `indexed_files` row matching `path`, ordered by
+    /// `chunk_index`. Used by tests + the renderer's per-file
+    /// "show chunks" panel.
+    ///
+    /// The query joins `indexed_files` so callers can pass the
+    /// canonical `source_path` they already have on hand (rather
+    /// than threading the synthetic `indexed_file_id` through). The
+    /// shape mirrors [`Chunk`] one-to-one — including the new Block
+    /// C `extraction_method` / `extraction_model_id` columns — so
+    /// callers can round-trip rows back into the chunker's data
+    /// model.
+    pub fn all_chunks_for_path(&self, path: &str) -> Result<Vec<Chunk>> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT c.chunk_index, c.byte_offset, c.content, c.hash,
+                        c.extraction_method, c.extraction_model_id
+                 FROM chunks c
+                 JOIN indexed_files f ON f.id = c.indexed_file_id
+                 WHERE f.path = ?1
+                 ORDER BY c.chunk_index ASC",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![path], |row| {
+                let extraction_method: Option<String> = row.get(4)?;
+                let extraction_model_id: Option<String> = row.get(5)?;
+                let chunk_index: i64 = row.get(0)?;
+                let byte_offset: i64 = row.get(1)?;
+                Ok(Chunk {
+                    source_path: path.to_string(),
+                    chunk_index: chunk_index as usize,
+                    byte_offset: byte_offset as usize,
+                    content: row.get(2)?,
+                    hash: row.get(3)?,
+                    extraction_method: extraction_method
+                        .as_deref()
+                        .and_then(crate::chunker::ExtractionMethod::from_wire),
+                    extraction_model_id,
+                })
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+        Ok(rows)
     }
 
     pub fn get_file_hash(&self, path: &str) -> Result<Option<String>> {
@@ -897,6 +1001,8 @@ mod tests {
                 byte_offset: 0,
                 content: "Tessera is a local-first productivity workspace".to_string(),
                 hash: "hash1".to_string(),
+                extraction_method: None,
+                extraction_model_id: None,
             },
             crate::chunker::Chunk {
                 source_path: "/tmp/test/doc.txt".to_string(),
@@ -904,6 +1010,8 @@ mod tests {
                 byte_offset: 48,
                 content: "It indexes local folders and files for search".to_string(),
                 hash: "hash2".to_string(),
+                extraction_method: None,
+                extraction_model_id: None,
             },
         ];
 
@@ -945,6 +1053,8 @@ mod tests {
             byte_offset: 0,
             content: "old content".to_string(),
             hash: "oldhash".to_string(),
+            extraction_method: None,
+            extraction_model_id: None,
         }];
         store.insert_chunks(fid, &chunks).unwrap();
 
@@ -1107,6 +1217,8 @@ mod tests {
                 byte_offset: i * 100,
                 content: format!("chunk body {i}"),
                 hash: format!("hash{i}"),
+                extraction_method: None,
+                extraction_model_id: None,
             })
             .collect();
         store.insert_chunks(file_id, &chunks).unwrap();
@@ -1186,6 +1298,8 @@ mod tests {
                 byte_offset: i * 100,
                 content: format!("body {i}"),
                 hash: format!("h{i}"),
+                extraction_method: None,
+                extraction_model_id: None,
             })
             .collect();
         store.insert_chunks(file_id, &chunks).unwrap();

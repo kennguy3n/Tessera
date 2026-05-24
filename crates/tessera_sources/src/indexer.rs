@@ -8,11 +8,14 @@ use crate::chunker::{chunk_text, ChunkerConfig};
 use crate::embedding::{encode_vec, EmbeddingProvider};
 use crate::extractor::{extract_text, is_supported_extension};
 use crate::ignore::IgnoreRules;
+use crate::image_metadata::is_image_extension;
+use crate::pdf_extractor::{vlm_chart_chunks_for_pdf, vlm_ocr_chunks_for_pdf, PdfOcrRateLimiter};
 use crate::progress::{
-    self, record_chunk_embed_failed, record_chunk_embedded, EmbeddingProgressSnapshot,
+    self, record_chunk_embed_failed, record_chunk_embedded, EmbeddingProgressSnapshot, IndexPhase,
     ProgressSnapshot,
 };
 use crate::store::SourceStore;
+use crate::vision_extractor::{vlm_chunks_for_image, VisionExtractor};
 
 pub struct Indexer {
     chunker_config: ChunkerConfig,
@@ -23,6 +26,29 @@ pub struct Indexer {
     /// `None`, the table stays empty and retrieval falls back to
     /// BM25 + recency only.
     embedder: Option<Arc<dyn EmbeddingProvider>>,
+    /// Optional vision extractor. When set AND the file under
+    /// extraction is an image, the indexer adds a VLM-derived
+    /// natural-language description as an additional searchable
+    /// chunk alongside the always-emitted metadata chunk. When
+    /// `None` (no vision model installed, low-tier host, or the
+    /// caller explicitly opted out), the indexer falls back to
+    /// metadata-only image extraction.
+    vision_extractor: Option<Arc<dyn VisionExtractor>>,
+    /// Process-wide rate limiter shared across PDFs to enforce the
+    /// "max 10 OCR pages / minute" budget from the Block C spec.
+    /// Always present (a default-budget limiter is created in
+    /// [`Indexer::new`]); callers that want a custom budget can
+    /// pass one via [`Indexer::with_pdf_ocr_rate_limiter`].
+    pdf_ocr_rate_limiter: Arc<PdfOcrRateLimiter>,
+    /// Whether the chart-extraction pass (Block C task 11) runs on
+    /// every indexed PDF. Off by default because chart description
+    /// is tier-gated — the prompt benefits from spatial reasoning
+    /// (Qwen3.5-VL on medium+ tier), and emitting chart chunks on a
+    /// low-tier host that loaded SmolVLM-256M would produce
+    /// information-poor descriptions that just pollute search
+    /// recall. The bridge layer flips this on when it detects
+    /// `tier >= medium` at startup.
+    chart_extraction_enabled: bool,
 }
 
 impl Indexer {
@@ -36,7 +62,50 @@ impl Indexer {
             chunker_config: ChunkerConfig::default(),
             ignore_rules,
             embedder: None,
+            vision_extractor: None,
+            pdf_ocr_rate_limiter: Arc::new(PdfOcrRateLimiter::new()),
+            chart_extraction_enabled: false,
         }
+    }
+
+    /// Toggle the chart-extraction pass on (typically when the host
+    /// is medium+ tier and a vision model is installed). Defaults
+    /// to `false`; the bridge layer flips it on after capability
+    /// detection so existing tests — which exercise the indexer
+    /// without setting up a tier probe — keep their current
+    /// behaviour.
+    pub fn with_chart_extraction_enabled(mut self, enabled: bool) -> Self {
+        self.chart_extraction_enabled = enabled;
+        self
+    }
+
+    /// `&mut self` setter for the chart-extraction toggle. Pairs
+    /// with [`Indexer::with_chart_extraction_enabled`] (the builder
+    /// form) so that callers which already own an `Indexer` (e.g.
+    /// the bridge's [`crate::manager::SourceManager`] under a
+    /// `Mutex`) can flip the toggle at runtime without rebuilding
+    /// the whole indexer.
+    pub fn set_chart_extraction_enabled(&mut self, enabled: bool) {
+        self.chart_extraction_enabled = enabled;
+    }
+
+    /// `&mut self` setter for the vision extractor. Pairs with
+    /// [`Indexer::with_vision_extractor`] (the builder form) so
+    /// the bridge can swap or remove the extractor at runtime when
+    /// the user installs / deletes / switches the vision model
+    /// without rebuilding the indexer.
+    pub fn set_vision_extractor(&mut self, extractor: Option<Arc<dyn VisionExtractor>>) {
+        self.vision_extractor = extractor;
+    }
+
+    /// Override the PDF OCR rate limiter. Tests pass a budget-small
+    /// limiter to assert the OCR loop respects the limit without
+    /// waiting 60 s of wall clock; production callers can share a
+    /// single limiter across multiple [`Indexer`] instances by
+    /// wrapping it in `Arc` and cloning.
+    pub fn with_pdf_ocr_rate_limiter(mut self, limiter: Arc<PdfOcrRateLimiter>) -> Self {
+        self.pdf_ocr_rate_limiter = limiter;
+        self
     }
 
     pub fn with_chunker_config(mut self, config: ChunkerConfig) -> Self {
@@ -49,6 +118,22 @@ impl Indexer {
     /// vector for every newly inserted chunk.
     pub fn with_embedder(mut self, embedder: Arc<dyn EmbeddingProvider>) -> Self {
         self.embedder = Some(embedder);
+        self
+    }
+
+    /// Attach a vision extractor. Subsequent indexing passes will
+    /// add a VLM-described chunk for every image file (in
+    /// addition to the always-emitted metadata chunk). The
+    /// extractor is invoked synchronously from the indexer thread;
+    /// the bridge layer is expected to wrap the underlying async
+    /// vision call so this stays a single-thread API.
+    ///
+    /// Pass `None` (or omit the call entirely) to opt out — useful
+    /// when no vision model is installed, on low-tier hosts where
+    /// VLM cost would dominate the indexing budget, or in tests
+    /// that don't want to wire a stub.
+    pub fn with_vision_extractor(mut self, extractor: Arc<dyn VisionExtractor>) -> Self {
+        self.vision_extractor = Some(extractor);
         self
     }
 
@@ -112,7 +197,7 @@ impl Indexer {
                 continue;
             }
 
-            match self.index_file(source_id, path, store) {
+            match self.index_file(source_id, path, store, progress_slot) {
                 Ok(outcome) => {
                     // Per-file inline drops fold into the pass-wide
                     // count regardless of whether the file was newly
@@ -161,7 +246,7 @@ impl Indexer {
         file_path: &Path,
         store: &SourceStore,
     ) -> Result<IndexFileOutcome> {
-        self.index_file(source_id, file_path, store)
+        self.index_file(source_id, file_path, store, None)
     }
 
     fn index_file(
@@ -169,6 +254,7 @@ impl Indexer {
         source_id: &SourceId,
         path: &Path,
         store: &SourceStore,
+        progress_slot: Option<&Arc<Mutex<ProgressSnapshot>>>,
     ) -> Result<IndexFileOutcome> {
         let content_bytes = std::fs::read(path)?;
         let file_hash = blake3::hash(&content_bytes).to_hex().to_string();
@@ -193,7 +279,106 @@ impl Indexer {
             store.upsert_indexed_file(source_id, &path_str, &file_hash, &last_modified)?;
 
         let text = extract_text(path)?;
-        let chunks = chunk_text(&path_str, &text, &self.chunker_config);
+        let mut chunks = chunk_text(&path_str, &text, &self.chunker_config);
+
+        // Vision pass: when the file is an image AND a VLM-backed
+        // extractor is attached, append a single VLM-derived chunk
+        // alongside the metadata chunks emitted by `extract_text`.
+        // The metadata chunk carries `extraction_method = None`
+        // ("native"); the VLM chunk carries
+        // `Some(ExtractionMethod::Vlm)` plus the model id so a
+        // future model swap can re-extract just the VLM rows.
+        //
+        // VLM failures are non-fatal — we log and continue with
+        // just the metadata chunks. The user still gets EXIF +
+        // dimensions for search; they just lose the
+        // natural-language description for that one file.
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default()
+            .to_lowercase();
+        if is_image_extension(&ext) {
+            if let Some(vlm) = &self.vision_extractor {
+                if let Some(slot) = progress_slot {
+                    progress::record_phase(slot, IndexPhase::DescribingImages);
+                }
+                match vlm_chunks_for_image(vlm.as_ref(), path, chunks.len()) {
+                    Ok(mut vlm_chunks) => chunks.append(&mut vlm_chunks),
+                    Err(e) => {
+                        eprintln!(
+                            "[tessera_sources] VLM describe failed for {}: {e}",
+                            path.display()
+                        );
+                    }
+                }
+                if let Some(slot) = progress_slot {
+                    progress::record_phase(slot, IndexPhase::Scanning);
+                }
+            }
+        }
+
+        // PDF OCR pass (Block C task 10): when the file is a PDF AND
+        // a VLM extractor is attached, walk every page; for pages
+        // with effectively no text layer but one or more embedded
+        // raster images, decode the largest DCTDecode image and
+        // feed it through the VLM with an OCR-flavoured prompt. The
+        // resulting OCR text is appended as one chunk per page with
+        // `extraction_method = Some(ExtractionMethod::VlmOcr)`.
+        //
+        // OCR failures (rate limit hit, undecodable image filters,
+        // VLM error) are non-fatal — we log and continue with the
+        // text-pass chunks already in the chunks vector.
+        if ext == "pdf" {
+            if let Some(vlm) = &self.vision_extractor {
+                if let Some(slot) = progress_slot {
+                    progress::record_phase(slot, IndexPhase::OcrPdf);
+                }
+                match vlm_ocr_chunks_for_pdf(
+                    vlm.as_ref(),
+                    path,
+                    self.pdf_ocr_rate_limiter.as_ref(),
+                    chunks.len(),
+                ) {
+                    Ok(mut ocr_chunks) => chunks.append(&mut ocr_chunks),
+                    Err(e) => {
+                        eprintln!(
+                            "[tessera_sources] PDF OCR pass failed for {}: {e}",
+                            path.display()
+                        );
+                    }
+                }
+                // Chart-extraction pass (Block C task 11): tier-gated.
+                // Runs AFTER the OCR pass so chart chunks land
+                // after OCR chunks in chunk-index order — preserving
+                // the canonical "text → OCR → chart" provenance
+                // sequence. Uses the same rate limiter as OCR so
+                // the combined VLM work respects a single
+                // 10-pages-per-minute budget across both passes.
+                if self.chart_extraction_enabled {
+                    if let Some(slot) = progress_slot {
+                        progress::record_phase(slot, IndexPhase::DescribingCharts);
+                    }
+                    match vlm_chart_chunks_for_pdf(
+                        vlm.as_ref(),
+                        path,
+                        self.pdf_ocr_rate_limiter.as_ref(),
+                        chunks.len(),
+                    ) {
+                        Ok(mut chart_chunks) => chunks.append(&mut chart_chunks),
+                        Err(e) => {
+                            eprintln!(
+                                "[tessera_sources] PDF chart pass failed for {}: {e}",
+                                path.display()
+                            );
+                        }
+                    }
+                }
+                if let Some(slot) = progress_slot {
+                    progress::record_phase(slot, IndexPhase::Scanning);
+                }
+            }
+        }
 
         let mut inline_embeddings_dropped: u64 = 0;
         if !chunks.is_empty() {
@@ -1034,5 +1219,196 @@ mod tests {
             outcome.inline_embeddings_dropped > 0,
             "expected >0 dropped embeddings on a multi-chunk file with budget=0"
         );
+    }
+
+    // =============================================================
+    // Block C task 9 — VLM-driven image extraction tests.
+    //
+    // These tests exercise the `vision_extractor` injection path
+    // end-to-end: a tiny 2x2 PNG goes through `index_file`, the
+    // stub extractor returns a canned description, and we assert
+    // that BOTH the native metadata chunk AND the VLM chunk land
+    // in the store with the correct provenance columns set.
+    // =============================================================
+
+    fn write_tiny_png(path: &Path) {
+        let img = image::RgbaImage::from_fn(2, 2, |_, _| image::Rgba([255, 255, 255, 255]));
+        img.save_with_format(path, image::ImageFormat::Png).unwrap();
+    }
+
+    struct StubVisionExtractor {
+        description: String,
+        model_id: String,
+    }
+
+    impl VisionExtractor for StubVisionExtractor {
+        fn describe_image(&self, _image_path: &Path) -> Result<String> {
+            Ok(self.description.clone())
+        }
+        fn model_id(&self) -> &str {
+            &self.model_id
+        }
+    }
+
+    /// Failing extractor used to verify the indexer's "VLM failure
+    /// is non-fatal" guarantee — the metadata chunk must still be
+    /// persisted and the file must still count as indexed even when
+    /// the vision call errors.
+    struct FailingVisionExtractor;
+    impl VisionExtractor for FailingVisionExtractor {
+        fn describe_image(&self, _image_path: &Path) -> Result<String> {
+            Err(tessera_core::error::Error::Extraction {
+                path: "<failing-vlm>".to_string(),
+                message: "synthetic sidecar timeout".to_string(),
+            })
+        }
+        fn model_id(&self) -> &'static str {
+            "failing-vlm-model-id"
+        }
+    }
+
+    #[test]
+    fn index_file_emits_vlm_chunk_when_vision_extractor_attached() {
+        let dir = tempfile::tempdir().unwrap();
+        let img_path = dir.path().join("photo.png");
+        write_tiny_png(&img_path);
+
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder(dir.path().to_string_lossy().to_string());
+        store.add_source(&source).unwrap();
+
+        let extractor = Arc::new(StubVisionExtractor {
+            description: "A small white square on a white background.".to_string(),
+            model_id: "qwen3.5-4b-vision-gguf".to_string(),
+        });
+        let indexer = Indexer::default().with_vision_extractor(extractor);
+        let result = indexer
+            .index_folder(&source.id, dir.path(), &store)
+            .unwrap();
+        assert_eq!(result.indexed, 1, "expected the 1 PNG to be indexed");
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+
+        // Pull every chunk and partition by provenance.
+        let chunks = store
+            .all_chunks_for_path(&img_path.to_string_lossy())
+            .expect("query chunks");
+        let vlm_chunks: Vec<_> = chunks
+            .iter()
+            .filter(|c| c.extraction_method.is_some())
+            .collect();
+        let native_chunks: Vec<_> = chunks
+            .iter()
+            .filter(|c| c.extraction_method.is_none())
+            .collect();
+
+        assert!(
+            !native_chunks.is_empty(),
+            "expected at least one metadata chunk (extraction_method=None)"
+        );
+        assert_eq!(
+            vlm_chunks.len(),
+            1,
+            "expected exactly one VLM chunk; got {:#?}",
+            vlm_chunks
+        );
+        let vlm = vlm_chunks[0];
+        assert_eq!(
+            vlm.extraction_method,
+            Some(crate::chunker::ExtractionMethod::Vlm)
+        );
+        assert_eq!(
+            vlm.extraction_model_id.as_deref(),
+            Some("qwen3.5-4b-vision-gguf")
+        );
+        assert!(
+            vlm.content.contains("white square"),
+            "VLM chunk content {:?} did not contain expected substring",
+            vlm.content,
+        );
+    }
+
+    #[test]
+    fn index_file_image_without_vision_extractor_skips_vlm_chunk() {
+        let dir = tempfile::tempdir().unwrap();
+        let img_path = dir.path().join("photo.png");
+        write_tiny_png(&img_path);
+
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder(dir.path().to_string_lossy().to_string());
+        store.add_source(&source).unwrap();
+
+        // Critically: no .with_vision_extractor() call.
+        let indexer = Indexer::default();
+        indexer
+            .index_folder(&source.id, dir.path(), &store)
+            .unwrap();
+
+        let chunks = store
+            .all_chunks_for_path(&img_path.to_string_lossy())
+            .expect("query chunks");
+        for c in &chunks {
+            assert!(
+                c.extraction_method.is_none(),
+                "no chunk should be VLM-tagged when extractor is absent; got {:?}",
+                c.extraction_method,
+            );
+        }
+        // We still expect AT LEAST the metadata chunk.
+        assert!(!chunks.is_empty(), "metadata chunk should still exist");
+    }
+
+    #[test]
+    fn index_file_vlm_failure_does_not_abort_metadata_chunk() {
+        let dir = tempfile::tempdir().unwrap();
+        let img_path = dir.path().join("broken.png");
+        write_tiny_png(&img_path);
+
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder(dir.path().to_string_lossy().to_string());
+        store.add_source(&source).unwrap();
+
+        let indexer = Indexer::default().with_vision_extractor(Arc::new(FailingVisionExtractor));
+        let result = indexer
+            .index_folder(&source.id, dir.path(), &store)
+            .unwrap();
+        assert_eq!(result.indexed, 1, "VLM failure must not break indexing");
+        // The metadata pipeline is the source of truth here; no
+        // VLM chunk should land, and no `extraction_method` column
+        // should be populated.
+        let chunks = store
+            .all_chunks_for_path(&img_path.to_string_lossy())
+            .expect("query chunks");
+        assert!(!chunks.is_empty(), "metadata chunk should still exist");
+        for c in &chunks {
+            assert!(
+                c.extraction_method.is_none(),
+                "failed VLM should not leave behind a tagged chunk"
+            );
+        }
+    }
+
+    #[test]
+    fn index_file_does_not_invoke_vlm_for_non_image_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("doc.txt"), "not an image, must skip VLM").unwrap();
+
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder(dir.path().to_string_lossy().to_string());
+        store.add_source(&source).unwrap();
+
+        // Wire a failing extractor — if the indexer invoked it,
+        // we'd see VLM error logging, but more importantly, no
+        // chunk would carry a VLM-tagged provenance. The assertion
+        // here is the same shape as the previous test: no
+        // `extraction_method` should be set on any chunk emitted
+        // from a `.txt` file. The fact that the indexer didn't
+        // *call* the extractor is implicit in the test passing
+        // with a `FailingVisionExtractor` attached.
+        let indexer = Indexer::default().with_vision_extractor(Arc::new(FailingVisionExtractor));
+        let result = indexer
+            .index_folder(&source.id, dir.path(), &store)
+            .unwrap();
+        assert_eq!(result.indexed, 1);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
     }
 }

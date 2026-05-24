@@ -4,6 +4,7 @@ use std::path::Path;
 use tessera_core::error::{Error, Result};
 
 use crate::image_metadata::{extract_image_metadata, is_image_extension};
+use crate::pdf_extractor::extract_pdf_text;
 
 pub fn extract_text(path: &Path) -> Result<String> {
     let ext = path
@@ -19,6 +20,7 @@ pub fn extract_text(path: &Path) -> Result<String> {
         "json" => extract_json(path),
         "html" | "htm" => extract_html(path),
         "xlsx" | "xls" => extract_xlsx(path),
+        "pdf" => extract_pdf_text(path),
         "jpg" | "jpeg" | "png" | "tif" | "tiff" | "webp" => extract_image_metadata(path),
         _ => Err(Error::Extraction {
             path: path.display().to_string(),
@@ -31,7 +33,17 @@ pub fn is_supported_extension(ext: &str) -> bool {
     let lower = ext.to_lowercase();
     matches!(
         lower.as_str(),
-        "txt" | "text" | "md" | "markdown" | "csv" | "json" | "html" | "htm" | "xlsx" | "xls"
+        "txt"
+            | "text"
+            | "md"
+            | "markdown"
+            | "csv"
+            | "json"
+            | "html"
+            | "htm"
+            | "xlsx"
+            | "xls"
+            | "pdf"
     ) || is_image_extension(&lower)
 }
 
