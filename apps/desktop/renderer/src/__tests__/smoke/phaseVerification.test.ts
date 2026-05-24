@@ -37,8 +37,8 @@ import * as editors from "../../editors";
 //
 //   resolve(__dirname, "..", "..", "..", "..", "..", "..")
 //
-// which correctly flagged as fragile against
-// future repository layout changes — promoting the smoke suite to a
+// which was fragile against future repository layout changes —
+// promoting the smoke suite to a
 // top-level `tests/` directory, moving it deeper into a fixture
 // folder, or any other relocation would silently slice the wrong
 // `REPO_ROOT` and either fail mysteriously or, worse, succeed against

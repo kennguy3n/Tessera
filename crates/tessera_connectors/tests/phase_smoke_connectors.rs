@@ -51,16 +51,16 @@
 //! implement any of the lifecycle methods on the new connector is a
 //! compile error pointing at the new connector type.
 //!
-//! Earlier rounds of this PR had each test maintain its own
-//! hand-typed list, which correctly flagged as a
-//! duplication hazard (drift between the two copies would have gone
-//! unnoticed until CI ran both). An intermediate round shipped
-//! macro-driven trait/provider-name checks but kept the lifecycle
-//! wrappers hand-written + listed via `stringify!`. The bot then
-//! correctly flagged that `stringify!` does not force compilation of
-//! the referenced functions, so a missing 7th-connector wrapper
-//! could slip through. The current round closes that gap by making
-//! the lifecycle check itself macro-driven.
+//! An earlier iteration of this suite had each test maintain its
+//! own hand-typed list, which was a duplication hazard (drift
+//! between the two copies would have gone unnoticed until CI ran
+//! both). A later iteration shipped macro-driven trait /
+//! provider-name checks but kept the lifecycle wrappers
+//! hand-written + listed via `stringify!`. That left a separate
+//! gap: `stringify!` does not force compilation of the referenced
+//! functions, so a missing 7th-connector wrapper could slip
+//! through. The current shape closes that gap by making the
+//! lifecycle check itself macro-driven.
 
 use std::collections::HashSet;
 
@@ -137,7 +137,7 @@ fn every_connector_implements_remote_connector() {
 // that signature (Notion needed the `known_file_ids` set for
 // full-walk deletion detection, and the other connectors thread it
 // through for symmetry — see `src/traits.rs` for the design
-// rationale). correctly noted that this turns
+// rationale). Note that this turns
 // the macro into a CONSTRAINT on any 7th connector rather than just
 // a verification of an existing invariant. If a future connector
 // genuinely needs a divergent `sync_changes` shape, the right
