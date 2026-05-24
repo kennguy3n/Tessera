@@ -681,25 +681,44 @@ export async function handleWillQuit(
   // `event.preventDefault()` + deferred `app.quit()` pattern Electron
   // documents for async cleanup in quit handlers.
   event.preventDefault();
+  // Outer `try/finally` guarantees `deps.quit()` runs even if one of
+  // the inner `console.error` calls were to throw (e.g. a custom
+  // `console` override in a future test/wrapper). The two inner
+  // `try/catch` blocks remain sequential — a throw in `stopScheduler`
+  // must NOT skip `stopAllSidecars`, since each represents an
+  // independent shutdown responsibility (the indexer tick AND the
+  // sidecar drain must both be attempted on every quit).
+  //
+  // Before this refactor, `deps.quit()` was attached to the inner
+  // `finally` of the second `try` block only — a (pathological)
+  // throw from `console.error` in the FIRST `catch` would skip the
+  // second block entirely and the process would hang forever waiting
+  // for an `app.quit()` that never fires. `console.error` doesn't
+  // throw in practice, but pinning the bullet-proof guarantee in code
+  // (rather than relying on Node.js implementation details) matches
+  // the docstring's "in a `finally` block so a throw in either step
+  // still terminates the process" promise.
   try {
-    await deps.stopScheduler();
-  } catch (e) {
-    // We're already on the quit path — log and continue rather than
-    // hang the process indefinitely on a misbehaving tick.
-    console.error("[tessera] scheduler shutdown failed:", e);
-  }
-  try {
-    // Drain text + vision + diffusion sidecars gracefully (SIGTERM
-    // with a 5 s SIGKILL fallback inside each sidecar) BEFORE
-    // calling `app.quit()`. Without this, every sidecar would only
-    // get the synchronous `process.on("exit")` SIGKILL fallback,
-    // which is correct for orphan-prevention but skips any cache
-    // flush / clean shutdown that llama-server / sd-server want
-    // to do on SIGTERM. Errors are swallowed (logged inside
-    // `stopAllSidecars`) so a hung sidecar can't block app exit.
-    await deps.stopAllSidecars();
-  } catch (e) {
-    console.error("[tessera] sidecar shutdown failed:", e);
+    try {
+      await deps.stopScheduler();
+    } catch (e) {
+      // We're already on the quit path — log and continue rather than
+      // hang the process indefinitely on a misbehaving tick.
+      console.error("[tessera] scheduler shutdown failed:", e);
+    }
+    try {
+      // Drain text + vision + diffusion sidecars gracefully (SIGTERM
+      // with a 5 s SIGKILL fallback inside each sidecar) BEFORE
+      // calling `app.quit()`. Without this, every sidecar would only
+      // get the synchronous `process.on("exit")` SIGKILL fallback,
+      // which is correct for orphan-prevention but skips any cache
+      // flush / clean shutdown that llama-server / sd-server want
+      // to do on SIGTERM. Errors are swallowed (logged inside
+      // `stopAllSidecars`) so a hung sidecar can't block app exit.
+      await deps.stopAllSidecars();
+    } catch (e) {
+      console.error("[tessera] sidecar shutdown failed:", e);
+    }
   } finally {
     deps.quit();
   }

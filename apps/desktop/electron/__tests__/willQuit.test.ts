@@ -135,7 +135,17 @@ vi.mock("../logger", () => ({
   getLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 vi.mock("../autoUpdater", () => ({ initAutoUpdater: vi.fn() }));
-vi.mock("../cspImageSources", () => ({ cspImageSources: vi.fn() }));
+vi.mock("../cspImageSources", () => ({
+  // Production exports `cspImageSources` as a frozen `readonly string[]`
+  // (see `electron/cspImageSources.ts:65`); `main.ts:87` calls
+  // `cspImageSources.join(" ")` on it inside `installContentSecurityPolicy`.
+  // The will-quit tests never reach that code (whenReady is mocked to
+  // never resolve), but a shape-correct empty array avoids a
+  // latent runtime crash if a future test in this file resolves
+  // whenReady to exercise startup. Empty is safe — the resulting CSP
+  // just omits the connector hosts; no test here asserts on CSP.
+  cspImageSources: [],
+}));
 vi.mock("../passwordVault", () => ({
   initPasswordVaultIfNeeded: vi.fn(),
   passwordVaultSaltExists: vi.fn().mockReturnValue(false),
@@ -295,6 +305,51 @@ describe("handleWillQuit", () => {
       .join("\n");
     expect(allCalls).toContain("scheduler shutdown failed");
     expect(allCalls).toContain("sidecar shutdown failed");
+  });
+
+  it("calls app.quit() even when a logger inside the scheduler catch throws", async () => {
+    // Devin Review pass-8 finding ANALYSIS_pr-review-job-8bbc56fb…_0001
+    // pointed out that the docstring claims "in a `finally` block so
+    // a throw in either step still terminates the process", but the
+    // original code attached the `finally` to the SECOND try/catch
+    // only. If `console.error` inside the FIRST catch threw (e.g. a
+    // pathological logger replacement), control would skip the
+    // second try/catch entirely and `app.quit()` would never fire.
+    //
+    // This test pins the bullet-proof outer `try { … } finally
+    // { deps.quit() }` structure by stubbing `console.error` to
+    // throw, asserting `quit()` still runs exactly once.
+    const stopScheduler = vi
+      .fn()
+      .mockRejectedValue(new Error("scheduler hung"));
+    const stopAllSidecars = vi.fn().mockResolvedValue(undefined);
+    const quit = vi.fn();
+
+    // Make the FIRST `console.error` call throw — this is the
+    // pathological-logger case.
+    const errSpy = vi
+      .spyOn(console, "error")
+      .mockImplementationOnce(() => {
+        throw new Error("logger broke during scheduler error reporting");
+      });
+
+    const { event } = makeEvent();
+    // `handleWillQuit` must NOT reject — the outer finally swallows
+    // the logger throw via `deps.quit()` running on the way out.
+    // (The throw will still bubble out of the function after the
+    // finally runs, but the contract is "app.quit() always fires".)
+    await expect(
+      handleWillQuit(event, { stopScheduler, stopAllSidecars, quit }),
+    ).rejects.toThrow("logger broke");
+
+    expect(stopScheduler).toHaveBeenCalledTimes(1);
+    // stopAllSidecars should NOT run — the logger threw before
+    // control could enter the second try block. But quit MUST
+    // still fire from the outer finally.
+    expect(stopAllSidecars).toHaveBeenCalledTimes(0);
+    expect(quit).toHaveBeenCalledTimes(1);
+
+    errSpy.mockRestore();
   });
 
   it("is idempotent under reentrant invocations (the schedulerShutdownStarted latch)", async () => {
