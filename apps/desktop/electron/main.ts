@@ -620,7 +620,57 @@ export function _appInitCompleteForTests(): boolean {
 // stop the scheduler we know the process is committed to terminating.
 let schedulerShutdownStarted = false;
 
-app.on("will-quit", (event) => {
+/**
+ * Reset the will-quit deduplication latch.
+ *
+ * The `schedulerShutdownStarted` flag exists to make the will-quit
+ * handler idempotent under repeated `app.quit()` calls (the deferred
+ * `app.quit()` inside the async cleanup re-emits `will-quit`, so the
+ * handler MUST short-circuit on the second emission to avoid stopping
+ * the scheduler twice and double-awaiting the sidecar drain). Tests
+ * call this between cases to start each case from a clean state.
+ *
+ * Production code never calls this — the flag is set exactly once
+ * per process lifetime and the process exits immediately after.
+ */
+export function _resetWillQuitLatchForTests(): void {
+  schedulerShutdownStarted = false;
+}
+
+/**
+ * The will-quit handler body, lifted out of the inline callback so the
+ * vitest suite can drive the integration directly (the inline callback
+ * captures `app` from "electron", which makes mocking `app.quit()`
+ * awkward; the exported function takes `app.quit` as an explicit
+ * dependency).
+ *
+ * Returns the cleanup promise so tests can await it. Production callers
+ * (the `app.on("will-quit")` registration below) fire-and-forget the
+ * returned promise — Electron only cares that `event.preventDefault()`
+ * was called synchronously and that `app.quit()` is eventually re-fired.
+ *
+ * Behaviour contract (verified by `__tests__/willQuit.test.ts`):
+ *
+ *   1. Calls `event.preventDefault()` synchronously so Electron defers
+ *      the quit until our async cleanup finishes.
+ *   2. Stops the scheduler FIRST so no new bridge calls start while
+ *      the sidecars are being torn down.
+ *   3. Drains text + vision + diffusion sidecars via `stopAllSidecars`.
+ *   4. Calls `app.quit()` in a `finally` block so a throw in either
+ *      step still terminates the process.
+ *   5. A throw in `stopScheduler` does NOT skip `stopAllSidecars` —
+ *      the two `try` blocks are sequential, not nested.
+ *   6. Reentrant `will-quit` emissions (from the deferred `app.quit()`)
+ *      no-op via the `schedulerShutdownStarted` latch.
+ */
+export async function handleWillQuit(
+  event: { preventDefault: () => void },
+  deps: {
+    stopScheduler: () => Promise<void>;
+    stopAllSidecars: () => Promise<void>;
+    quit: () => void;
+  },
+): Promise<void> {
   if (schedulerShutdownStarted) return;
   schedulerShutdownStarted = true;
   // Stop the interval immediately so no NEW ticks start, then wait
@@ -631,28 +681,34 @@ app.on("will-quit", (event) => {
   // `event.preventDefault()` + deferred `app.quit()` pattern Electron
   // documents for async cleanup in quit handlers.
   event.preventDefault();
-  void (async () => {
-    try {
-      await stopScheduler();
-    } catch (e) {
-      // We're already on the quit path — log and continue rather than
-      // hang the process indefinitely on a misbehaving tick.
-      console.error("[tessera] scheduler shutdown failed:", e);
-    }
-    try {
-      // Drain text + vision + diffusion sidecars gracefully (SIGTERM
-      // with a 5 s SIGKILL fallback inside each sidecar) BEFORE
-      // calling `app.quit()`. Without this, every sidecar would only
-      // get the synchronous `process.on("exit")` SIGKILL fallback,
-      // which is correct for orphan-prevention but skips any cache
-      // flush / clean shutdown that llama-server / sd-server want
-      // to do on SIGTERM. Errors are swallowed (logged inside
-      // `stopAllSidecars`) so a hung sidecar can't block app exit.
-      await stopAllSidecars();
-    } catch (e) {
-      console.error("[tessera] sidecar shutdown failed:", e);
-    } finally {
-      app.quit();
-    }
-  })();
+  try {
+    await deps.stopScheduler();
+  } catch (e) {
+    // We're already on the quit path — log and continue rather than
+    // hang the process indefinitely on a misbehaving tick.
+    console.error("[tessera] scheduler shutdown failed:", e);
+  }
+  try {
+    // Drain text + vision + diffusion sidecars gracefully (SIGTERM
+    // with a 5 s SIGKILL fallback inside each sidecar) BEFORE
+    // calling `app.quit()`. Without this, every sidecar would only
+    // get the synchronous `process.on("exit")` SIGKILL fallback,
+    // which is correct for orphan-prevention but skips any cache
+    // flush / clean shutdown that llama-server / sd-server want
+    // to do on SIGTERM. Errors are swallowed (logged inside
+    // `stopAllSidecars`) so a hung sidecar can't block app exit.
+    await deps.stopAllSidecars();
+  } catch (e) {
+    console.error("[tessera] sidecar shutdown failed:", e);
+  } finally {
+    deps.quit();
+  }
+}
+
+app.on("will-quit", (event) => {
+  void handleWillQuit(event, {
+    stopScheduler,
+    stopAllSidecars,
+    quit: () => app.quit(),
+  });
 });
