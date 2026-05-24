@@ -49,8 +49,176 @@ describe("HomePage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("1")).toBeInTheDocument();
       expect(screen.getByText("Connected sources")).toBeInTheDocument();
+    });
+
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
+  });
+
+  // Phase 10 / Task 27: source-status breakdown — every canonical
+  // status renders as its own bucket (`indexed`, `indexing`,
+  // `connected`, `error`, `disconnected`), even when the count is
+  // zero. Pins the visual contract so a future refactor cannot
+  // silently hide buckets that the user relies on for at-a-glance
+  // health-checking.
+  it("renders a status-breakdown bucket for every canonical SourceStatus", async () => {
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([
+      {
+        id: "s-ok",
+        sourceType: "local_folder",
+        path: "/docs/ok",
+        status: "indexed",
+        createdAt: new Date().toISOString(),
+        lastIndexed: new Date().toISOString(),
+        fileCount: 12,
+      },
+      {
+        id: "s-ix",
+        sourceType: "local_folder",
+        path: "/docs/ix",
+        status: "indexing",
+        createdAt: new Date().toISOString(),
+        lastIndexed: null,
+        fileCount: 0,
+      },
+      {
+        id: "s-err",
+        sourceType: "google_drive",
+        path: "drive://...",
+        status: "error",
+        createdAt: new Date().toISOString(),
+        lastIndexed: null,
+        fileCount: 0,
+      },
+      {
+        id: "s-err-2",
+        sourceType: "google_drive",
+        path: "drive://...",
+        status: "error",
+        createdAt: new Date().toISOString(),
+        lastIndexed: null,
+        fileCount: 0,
+      },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("source-status-breakdown")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("source-status-indexed")).toHaveTextContent("1");
+    expect(screen.getByTestId("source-status-indexing")).toHaveTextContent("1");
+    // Even though no `connected` or `disconnected` source exists,
+    // the buckets must still render so the user can confirm at a
+    // glance that those states are empty rather than wonder if the
+    // UI is filtering them out.
+    expect(screen.getByTestId("source-status-connected")).toHaveTextContent("0");
+    expect(screen.getByTestId("source-status-disconnected")).toHaveTextContent(
+      "0",
+    );
+    expect(screen.getByTestId("source-status-error")).toHaveTextContent("2");
+
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
+  });
+
+  // Phase 10 / Task 27: recent-artifact cards are navigable. Wired
+  // through the `Card` component's `onClick` which carries
+  // role="button", tabIndex, focus styles, and Enter/Space
+  // activation. Test exercises the mouse-click path; keyboard
+  // activation is exercised separately by the `Card` component's
+  // dedicated test suite.
+  it("makes recent-artifact cards navigable to the artifact detail page", async () => {
+    window.tessera.artifacts.list = vi.fn().mockResolvedValue([
+      {
+        id: "art-recent-1",
+        title: "Recent Doc",
+        artifactType: "document",
+        templateId: null,
+        content: "",
+        citationCount: 0,
+        createdAt: new Date(Date.now() - 3600_000).toISOString(),
+        updatedAt: new Date().toISOString(),
+        version: 2,
+      },
+    ]);
+    // The status-breakdown row needs at least one source for the
+    // dashboard view to render instead of the empty welcome state.
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([
+      {
+        id: "s1",
+        sourceType: "local_folder",
+        path: "/home/docs",
+        status: "indexed",
+        createdAt: new Date().toISOString(),
+        lastIndexed: new Date().toISOString(),
+        fileCount: 1,
+      },
+    ]);
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route
+            path="/artifacts/:id"
+            element={<CurrentPath />}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const card = await screen.findByTestId("recent-artifact-art-recent-1");
+    fireEvent.click(card);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path")).toHaveTextContent(
+        "/artifacts/art-recent-1",
+      );
+    });
+
+    window.tessera.artifacts.list = vi.fn().mockResolvedValue([]);
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
+  });
+
+  // Phase 10 / Task 27: quick-actions row. The four navigation
+  // shortcuts (Browse Templates / Tasks / Manage Sources /
+  // Settings) must exist on the dashboard view AND route to the
+  // right path when clicked. Pins the menu so a refactor that
+  // accidentally drops one of the buckets fails CI.
+  it("routes each quick-action button to its destination", async () => {
+    window.tessera.sources.listSources = vi.fn().mockResolvedValue([
+      {
+        id: "s1",
+        sourceType: "local_folder",
+        path: "/home/docs",
+        status: "indexed",
+        createdAt: new Date().toISOString(),
+        lastIndexed: new Date().toISOString(),
+        fileCount: 1,
+      },
+    ]);
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/create" element={<CurrentPath />} />
+          <Route path="/tasks" element={<CurrentPath />} />
+          <Route path="/sources" element={<CurrentPath />} />
+          <Route path="/settings" element={<CurrentPath />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByText("Browse Templates");
+    fireEvent.click(screen.getByText("Browse Templates"));
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path")).toHaveTextContent("/create");
     });
 
     window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
