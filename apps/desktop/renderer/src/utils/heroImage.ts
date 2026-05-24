@@ -17,7 +17,17 @@
  *     load time but better-caught at parse time);
  *   - reject when `prompt` / `seed` / `width` / `height` are missing
  *     or the wrong type (so the editor can never render a half-formed
- *     hero image).
+ *     hero image);
+ *   - reject when `seed` / `width` / `height` are `NaN` / `Infinity`
+ *     (a hand-edited artifact JSON with `"width": 1e999` parses to
+ *     `Infinity` and `typeof === 'number'` accepts it — using
+ *     `Number.isFinite` closes the gap at parse time so downstream
+ *     rendering never sees a non-finite dimension);
+ *   - reject when `seed` is negative or beyond `Number.MAX_SAFE_INTEGER`,
+ *     or when `width` / `height` are not positive integers (matches
+ *     the upstream `imagegen:generate` IPC contract — seeds are
+ *     non-negative u64 truncated to safe-int range, dimensions are
+ *     positive integer pixel counts).
  *
  * Devin Review pass-2 📝 finding on `LandingPageEditor.tsx:186-208`
  * pointed out that the two editors had byte-identical copies of the
@@ -61,10 +71,35 @@ export function sanitizeHeroImage(raw: unknown): HeroImage | undefined {
   if (
     typeof r.assetUrl !== "string" ||
     !r.assetUrl.startsWith("tessera-asset://") ||
-    typeof r.prompt !== "string" ||
+    typeof r.prompt !== "string"
+  ) {
+    return undefined;
+  }
+  // Seed: non-negative safe-integer (matches imagegen.generate output —
+  // seeds are u64 truncated to Number.MAX_SAFE_INTEGER on the IPC
+  // boundary, see apps/desktop/electron/ipc/imagegen.ts:bigint-coercion).
+  if (
     typeof r.seed !== "number" ||
+    !Number.isFinite(r.seed) ||
+    !Number.isInteger(r.seed) ||
+    r.seed < 0
+  ) {
+    return undefined;
+  }
+  // Width / height: positive finite integers. `Number.isInteger` is
+  // false for NaN / Infinity / non-integers, so combined with the
+  // `> 0` check it rules out every non-pixel-count value.
+  if (
     typeof r.width !== "number" ||
-    typeof r.height !== "number"
+    !Number.isInteger(r.width) ||
+    r.width <= 0
+  ) {
+    return undefined;
+  }
+  if (
+    typeof r.height !== "number" ||
+    !Number.isInteger(r.height) ||
+    r.height <= 0
   ) {
     return undefined;
   }
