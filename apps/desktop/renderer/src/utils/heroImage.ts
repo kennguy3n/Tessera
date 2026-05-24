@@ -78,10 +78,16 @@ export function sanitizeHeroImage(raw: unknown): HeroImage | undefined {
   // Seed: non-negative safe-integer (matches imagegen.generate output —
   // seeds are u64 truncated to Number.MAX_SAFE_INTEGER on the IPC
   // boundary, see apps/desktop/electron/ipc/imagegen.ts:bigint-coercion).
+  // `Number.isSafeInteger` enforces the [-2^53+1, 2^53-1] safe-int range
+  // AND rejects NaN/Infinity/non-integers in a single predicate. A plain
+  // `Number.isInteger` would let 2^53 (= MAX_SAFE_INTEGER + 1) through —
+  // 2^53 is exactly representable as a double and `isInteger` is `true`
+  // for it — which would let a hand-edited artifact JSON with
+  // `"seed": 9007199254740992` past the sanitizer even though the
+  // upstream IPC contract truncates seeds AT `Number.MAX_SAFE_INTEGER`.
   if (
     typeof r.seed !== "number" ||
-    !Number.isFinite(r.seed) ||
-    !Number.isInteger(r.seed) ||
+    !Number.isSafeInteger(r.seed) ||
     r.seed < 0
   ) {
     return undefined;

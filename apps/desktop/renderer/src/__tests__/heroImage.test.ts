@@ -112,6 +112,27 @@ describe("sanitizeHeroImage", () => {
         sanitizeHeroImage({ ...valid, seed: Number.MAX_SAFE_INTEGER }),
       ).toEqual({ ...valid, seed: Number.MAX_SAFE_INTEGER });
     });
+
+    it("rejects seed === Number.MAX_SAFE_INTEGER + 1 (= 2^53, above the IPC truncation ceiling)", () => {
+      // Regression guard: `Number.isInteger(Number.MAX_SAFE_INTEGER + 1)`
+      // returns `true` because 2^53 is exactly representable as a
+      // double and is mathematically an integer. The previous sanitizer
+      // used `Number.isInteger` and would have accepted this — letting
+      // a hand-edited artifact JSON with `"seed": 9007199254740992`
+      // past the seed-range check even though the upstream
+      // `imagegen:generate` IPC truncates seeds AT MAX_SAFE_INTEGER.
+      // The fix uses `Number.isSafeInteger`, which rejects 2^53 (and
+      // every larger double) on top of NaN/Infinity/non-integers.
+      expect(
+        sanitizeHeroImage({ ...valid, seed: Number.MAX_SAFE_INTEGER + 1 }),
+      ).toBeUndefined();
+    });
+
+    it("rejects seed === Number.MAX_VALUE (a representable double well past safe-int)", () => {
+      expect(
+        sanitizeHeroImage({ ...valid, seed: Number.MAX_VALUE }),
+      ).toBeUndefined();
+    });
   });
 
   describe("dimension positivity guards", () => {

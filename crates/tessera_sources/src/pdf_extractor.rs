@@ -499,6 +499,25 @@ pub fn vlm_ocr_chunks_from_probes(
                 "[tessera_sources] pdf {} page {} has no decodable image (only non-DCTDecode filters available); skipping OCR for this page",
                 pdf_path_str, page_number
             );
+            // Deliberate: do NOT flip `fully_processed = false` here.
+            // The page genuinely cannot be OCR'd by the current
+            // implementation (no DCTDecode image available), so
+            // re-running the OCR pass on the next `index_file` call
+            // would produce identical "skipped, no decodable image"
+            // output — the partial sentinel exists to retry transient
+            // failures (rate limit, VLM error), not to retry pages the
+            // implementation has no path for.
+            //
+            // Future-work hook: when FlateDecode / CCITTFax / JBIG2
+            // support lands (see module docs, lines 39–44), pages that
+            // were skipped here become newly decodable. The follow-up
+            // PR that adds those filters needs to ALSO bump some
+            // version sentinel (extractor version stamp, manifest
+            // schema field, or the indexer's `indexed_files` row
+            // shape) so previously-indexed files are re-processed and
+            // the newly-OCR-able pages get their text. A blanket
+            // `fully_processed = false` here today would just thrash
+            // the indexer on every scheduled scan for no gain.
             continue;
         }
 
