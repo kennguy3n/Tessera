@@ -73,10 +73,10 @@ describe("SourceDetailPage Re-embed button", () => {
     // `BackfillEmbeddingsResult` exposes `embedded` and `progress`
     // (the wrapped snapshot) — nothing else. The test mock used to
     // also synthesise `failed` and `batchSize` fields that don't
-    // exist on the real type, which as a
-    // pattern that lets renderer code accidentally rely on
-    // non-existent fields. We keep the mock honest by only
-    // populating the two fields the bridge actually returns.
+    // exist on the real type — a pattern that lets renderer code
+    // accidentally rely on non-existent fields. We keep the mock
+    // honest by only populating the two fields the bridge actually
+    // returns.
     resolveBackfill({
       embedded: 5,
       progress: {

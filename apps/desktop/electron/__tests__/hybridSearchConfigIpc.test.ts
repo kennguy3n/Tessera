@@ -301,9 +301,9 @@ describe("hybrid search config IPC", () => {
   });
 
   it("settings:updateHybridSearchConfig emits per-field audit rows for the effective post-clamp config", async () => {
-    // that the hybrid
-    // config update IPC bypassed `bridgeLogSettingsChanged`. The
-    // hybrid weights and recency tuning are part of the user's
+    // The hybrid config update IPC previously bypassed
+    // `bridgeLogSettingsChanged`. The hybrid weights and recency
+    // tuning are part of the user's
     // search-tuning surface, so a mutation here is security-
     // relevant in the same way `theme` or `ignorePatterns` are.
     // This test pins the audit contract: one row per effective
@@ -331,9 +331,9 @@ describe("hybrid search config IPC", () => {
     // `HybridSearchConfigInfo`. The order matches the handler's
     // emission order so future maintainers can grep-trace the audit
     // feed back to the field rather than chasing a synthetic Set.
-    // the original test as
-    // pinning only 5 of the 6 fields, masking the missing
-    // `candidatePoolSize` audit row in the handler.
+    // An earlier version of this test pinned only 5 of the 6
+    // fields, masking the missing `candidatePoolSize` audit row
+    // in the handler.
     expect(calls).toEqual([
       ["hybridSearch.bm25Weight", "0.8"],
       ["hybridSearch.vectorWeight", "0.6"],

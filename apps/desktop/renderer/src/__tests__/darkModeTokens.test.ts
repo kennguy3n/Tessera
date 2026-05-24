@@ -149,11 +149,10 @@ describe("dark-mode CSS variable enforcement", () => {
   });
 
   it("[data-theme=\"dark\"] and @media (prefers-color-scheme: dark) declare the same tokens with identical values", () => {
-    // that the explicit-Dark scope and the
-    // System-Dark media query block are duplicated, and a future
-    // patch could update one without the other — silently giving
-    // users in System-Dark different colors than users who
-    // selected Dark explicitly.
+    // The explicit-Dark scope and the System-Dark media query block
+    // are duplicated, and a future patch could update one without
+    // the other — silently giving users in System-Dark different
+    // colors than users who selected Dark explicitly.
     //
     // We pin BOTH:
     //   (a) the same set of token *names* is declared, AND

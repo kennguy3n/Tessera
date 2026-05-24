@@ -705,11 +705,10 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
   });
 
   it("honours provider.maxRetries=0 by NOT retrying — single attempt then failure", async () => {
-    // that the retry loop
-    // used to hardcode a 3-retry schedule regardless of the
-    // user-configured `maxRetries`. This regression test pins the
-    // new behaviour: `maxRetries: 0` means "do not retry, surface
-    // the first transient failure immediately".
+    // The retry loop used to hardcode a 3-retry schedule regardless
+    // of the user-configured `maxRetries`. This regression test pins
+    // the new behaviour: `maxRetries: 0` means "do not retry,
+    // surface the first transient failure immediately".
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(makeErrorResponse(503, "service unavailable"));

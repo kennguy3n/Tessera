@@ -111,7 +111,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
 
     // And the "List models" button is hidden for anthropic — pinned
     // by the existing visibility predicate, but assert it here too so
-    // Pins a regression that removes the predicate doesn't leave a
+    // a regression that removes the predicate doesn't leave a
     // misleading button onscreen.
     expect(
       screen.queryByLabelText("Fetch available models from this provider"),

@@ -1198,12 +1198,11 @@ describe("phase verification — internal helper invariants", () => {
   });
 
   test("extractObjectProperties supports quoted property keys", () => {
-    // that the previous identifier-only
-    // implementation would silently skip an entry whose keys were
-    // quoted (`{ "id": "v" }`) — common when JSON-shaped object
-    // literals are pasted into a TS file. The lexer now also accepts
-    // a depth-1 string literal as a candidate KEY when not awaiting a
-    // value after a colon.
+    // The previous identifier-only implementation would silently
+    // skip an entry whose keys were quoted (`{ "id": "v" }`) —
+    // common when JSON-shaped object literals are pasted into a TS
+    // file. The lexer now also accepts a depth-1 string literal as
+    // a candidate KEY when not awaiting a value after a colon.
     const dq = `{ "id": "double-id", "name": "double-name" }`;
     const dqProps = extractObjectProperties(dq, ["id", "name"]);
     expect(dqProps.id).toBe("double-id");

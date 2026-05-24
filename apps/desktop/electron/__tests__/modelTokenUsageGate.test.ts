@@ -4,9 +4,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // `apps/desktop/electron/ipc/model.ts` — the `if (streamOpened)`
 // branch in the external-provider `finally` block.
 //
-// The bug : the original
-// implementation persisted the `promptTokens` estimate
-// unconditionally in `finally`, so a pre-stream failure (401, 403,
+// The bug: the original implementation persisted the `promptTokens`
+// estimate unconditionally in `finally`, so a pre-stream failure (401, 403,
 // retry-exhausted 503, DNS / TLS error — anything that surfaces as a
 // throw from `streamExternalProvider` BEFORE the body opens)
 // inflated the cumulative-usage counter by the prompt-token estimate
