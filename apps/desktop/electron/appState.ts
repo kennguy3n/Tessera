@@ -242,7 +242,7 @@ export async function initAppState(): Promise<boolean> {
   //
   // - `EncryptionUnavailableError` means NEITHER `safeStorage` NOR
   //   the password-derived vault is available to wrap the cipher
-  //   key. This is the post- contract: the call sequence
+  //   key. The boot contract is that the call sequence
   //   in `main.ts` runs `maybeInitPasswordVault()` BEFORE
   //   `initAppState()`, so by the time we reach this code the
   //   vault has either been unlocked (in which case

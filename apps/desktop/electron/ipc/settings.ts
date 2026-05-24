@@ -170,10 +170,10 @@ async function testExternalProviderConnection(
  *     toggled the provider on in the form (without saving) still
  *     successfully list models — the handler gates on the EFFECTIVE
  *     `enabled` after merging overrides atop the persisted config.
- *      An earlier review flagged that the handler
- *     previously gated on the PERSISTED `enabled` flag only, so
- *     fresh-enable + List would fail with "External provider is
- *     disabled" even though the form clearly intended otherwise.
+ *     The handler previously gated on the PERSISTED `enabled` flag
+ *     only, so fresh-enable + List would fail with "External
+ *     provider is disabled" even though the form clearly intended
+ *     otherwise.
  */
 export function parseListModelsOverrides(
   raw: unknown,
@@ -340,8 +340,8 @@ export function registerSettingsHandlers(): void {
     // this, a user who pasted a new `apiUrl` (or switched
     // `providerType` between openai_compatible and anthropic)
     // would see the model list for the OLD provider, even though
-    // the form they're looking at points elsewhere. That mismatch
-    // is the exact failure mode flagged by .
+    // the form they're looking at points elsewhere. The override
+    // payload closes that mismatch.
     //
     // The API key is intentionally NOT part of the overrides
     // payload — we keep secrets out of IPC payloads as a hard
@@ -540,9 +540,8 @@ export function registerSettingsHandlers(): void {
       // to `ignorePatterns` or `theme` is. We audit the EFFECTIVE
       // (post-clamp) values returned by the bridge — not the raw
       // user input — so the audit row reflects what the live
-      // engine is actually using.
-      // An earlier review flagged the gap; closing it here keeps every settings-
-      // mutating IPC channel auditable.
+      // engine is actually using. Auditing here keeps every
+      // settings-mutating IPC channel observable.
       //
       // Each field is logged as its own row so an operator's audit
       // query (`WHERE field LIKE 'hybridSearch.%'`) can attribute
@@ -577,7 +576,6 @@ export function registerSettingsHandlers(): void {
       // alongside the other five tracked fields, so omitting it here
       // would break the contract documented above ("Each field is
       // logged as its own row").
-      // An earlier review flagged the omission.
       auditSettingsField(
         "hybridSearch.candidatePoolSize",
         String(effective.candidatePoolSize),
@@ -591,9 +589,8 @@ export function registerSettingsHandlers(): void {
     // gate (which throws `RateLimitError`) and any unexpected
     // failure are surfaced as the typed `{ ok: false, error }`
     // shape the renderer expects. This matches the
-    // `externalProvider:listModels` handler's posture (added in
-    // PR #27 ) and closes the gap
-    //  An earlier review flagged: the test handler makes the same kind
+    // `externalProvider:listModels` handler's posture and closes
+    // a parallel gap: the test handler makes the same kind
     // of outbound HTTPS call as listModels (and arguably a more
     // expensive one — chat completion vs. discovery) yet had no
     // rate-limit gate, so leaving it ungated while limiting

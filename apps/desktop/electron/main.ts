@@ -501,16 +501,16 @@ app.whenReady().then(async () => {
   // vault is unlocked so that on keyringless platforms
   // `getOrCreateDbKeyAsync` can wrap the SQLCipher key under the
   // vault key (instead of throwing `EncryptionUnavailableError`
-  // and falling back to unencrypted mode like the pre-
-  // boot sequence did). See the doc comment at the top of this
+  // and falling back to unencrypted mode as an earlier boot
+  // sequence did). See the doc comment at the top of this
   // callback for the full ordering rationale.
   await initAppState();
   // Replay the persisted hybrid retrieval config into the live Rust
   // `SourceManager`. Must run AFTER `initAppState` brings the
-  // bridge up (block-c's await on `initAppState` is what makes
-  // that ordering deterministic — block-b's original placement
-  // before `initAppState` raced against the bridge being ready
-  // and silently no-op'd via `getBridge() === null`). A failure
+  // bridge up (awaiting `initAppState` is what makes that ordering
+  // deterministic — placing this call before `initAppState` raced
+  // against the bridge being ready and silently no-op'd via
+  // `getBridge() === null`). A failure
   // is logged but not fatal: the user can re-tune in Settings,
   // the live engine simply uses its compiled defaults.
   try {

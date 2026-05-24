@@ -21,8 +21,8 @@
  * - All sibling outbound-network handlers
  *   (`connectors:authenticate`, `connectors:sync`,
  *   `runtime:downloadModel`) consume() at the top of their
- *   bodies. Missing the same posture on listModels was the gap
- *   the .
+ *   bodies. Missing the same posture on listModels was a
+ *   parallel gap closed here.
  *
  * The fix wires `defaultRateLimiter.consume(…)` at the head of
  * the handler body, before any vault read or config touch. The

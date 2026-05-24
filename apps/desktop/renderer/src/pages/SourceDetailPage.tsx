@@ -92,7 +92,7 @@ export default function SourceDetailPage() {
       // pending timer — and the new effect to early-return without
       // scheduling another tick. The next successful Re-embed click
       // re-bumps to 1, which is a fresh generation as far as the
-      // hook is concerned. this.
+      // hook is concerned.
       setReembedGeneration(0);
     } finally {
       setReembedding(false);

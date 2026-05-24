@@ -1,6 +1,5 @@
 /**
- * Regression tests for two structural invariants that
- * An earlier review flagged on  of PR #17:
+ * Regression tests for two structural invariants:
  *
  *   1. `passwordPromptChannels.ts` MUST remain a constants-only module
  *      with zero imports. It is loaded by the sandboxed password-prompt

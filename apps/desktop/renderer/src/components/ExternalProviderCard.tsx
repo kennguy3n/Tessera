@@ -367,9 +367,9 @@ export default function ExternalProviderCard() {
       // handler at `electron/ipc/settings.ts` already wraps its body
       // in a try/catch and returns a typed result, so this `catch`
       // is the renderer-side belt to the handler-side suspenders.
-      //  An earlier review flagged the pre-existing
-      // inconsistency: every other handler in this file uses
-      // try/catch/finally, only `onTest` used try/finally.
+      // This pattern closes a pre-existing inconsistency: every
+      // other handler in this file uses try/catch/finally, only
+      // `onTest` used try/finally.
       setStatus({
         kind: "error",
         message: e instanceof Error ? e.message : String(e),
@@ -502,8 +502,7 @@ export default function ExternalProviderCard() {
                   // at line ~376, so a `provider.enabled=false` state
                   // collapses this whole subtree before the button
                   // can render. Adding the gate to `disabled` would
-                  // be dead code —
-                  // An earlier review flagged the redundancy. The form's `enabled`
+                  // be dead code. The form's `enabled`
                   // value is forwarded as a draft override to the
                   // listModels handler (see `onListModels` above)
                   // so the handler gates on the EFFECTIVE enabled
@@ -511,8 +510,8 @@ export default function ExternalProviderCard() {
                   // the previous "fresh-enable + List = External
                   // provider is disabled" UX gap.
                   //
-                  // the broader UX
-                  // gap: the button was clickable in all these
+                  // The broader UX gap that the gate closes:
+                  // the button was clickable in all these
                   // states and the user saw "External provider is
                   // disabled" on a first-time-setup click instead
                   // of the expected model list. The `title`

@@ -730,7 +730,8 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
   it("honours the default provider.maxRetries=2 — 3 total attempts on persistent failure", async () => {
     // Companion to the maxRetries=0 test: with the schema default
     // (`2`), we expect 1 initial + 2 retries = 3 total attempts,
-    // NOT the legacy 4. This is the exact gap .
+    // NOT the legacy 4 that the old hardcoded retry constant
+    // produced.
     vi.useFakeTimers();
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
@@ -751,8 +752,8 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
   });
 
   it("does NOT misclassify a slow body-drain on a non-retryable HTTP error as a pre-stream timeout", async () => {
-    //  An earlier review flagged that the per-attempt
-    // timer was only cleared in the `res.ok` branch of
+    // The per-attempt timer was previously
+    // cleared only in the `res.ok` branch of
     // `openExternalProviderStream`. For a non-retryable status
     // (e.g. 401 invalid api key), the function reads the response
     // body via `await res.text().catch(() => "")` before throwing

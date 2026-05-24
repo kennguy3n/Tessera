@@ -97,7 +97,7 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
       setFreshness((prev) => ({ ...prev, [added.citationId]: "fresh" }));
       setShowAdd(false);
     } catch {
-      // An earlier review surfaced via toast in the parent; keep the dialog open so
+      // surfaced via toast in the parent; keep the dialog open so
       // the user can adjust their selection without losing context.
     }
   };

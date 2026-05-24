@@ -9,9 +9,8 @@
  *      modules in turn need to call `isNetworkError(err)` in their
  *      per-iteration `catch` blocks so a token-refresh `NetworkError`
  *      propagates out instead of being silently swallowed alongside
- *      benign API errors (the bug
- *      An earlier review flagged). If the classifier lived in `handlers.ts`, those
- *      imports would form a cycle.
+ *      benign API errors. If the classifier lived in `handlers.ts`,
+ *      those imports would form a cycle.
  *
  *   2. Network-error classification is conceptually one self-contained
  *      module — class, code allowlist, message-pattern fallback,

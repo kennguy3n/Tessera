@@ -173,7 +173,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     ).not.toBeInTheDocument();
   });
 
-  //  An earlier review flagged a UX gap: the
+  // UX gap pinned: the
   // "List models" button was clickable even when the persisted
   // provider was not saved/enabled or had no API key in the vault,
   // producing a confusing "External provider is disabled" toast on a
@@ -245,10 +245,10 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
   });
 
   it("forwards the form's CURRENT enabled flag to listModels after the user toggles it", async () => {
-    // : the `enabled` override I added
-    // in  was captured by the `onListModels`
-    // useCallback at first render and never refreshed because
-    // `enabled` was missing from the deps array. Pin the fix here:
+    // Stale-closure bug pinned: the `enabled` override was captured
+    // by the `onListModels` useCallback at first render and never
+    // refreshed because `enabled` was missing from the deps array.
+    // Pin the fix here:
     // after the user toggles the form's `enabled`, a subsequent
     // List models click must forward the CURRENT value, not the
     // stale closure capture from first render.
@@ -467,7 +467,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
   });
 
   it("surfaces a deep failure from Test connection via setStatus instead of silently un-busying", async () => {
-    //  An earlier review flagged that `onTest` was the
+    // `onTest` was the
     // only handler in this file using `try/finally` instead of the
     // sibling pattern `try/catch/finally`. If the IPC channel itself
     // failed (bridge serialization error, contextIsolation violation,
@@ -479,7 +479,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     //
     // This test pins the new behavior by making the IPC mock reject
     // (the realistic "deep failure" scenario) and asserting the
-    // An earlier review surfaced error message reaches the DOM rather than the test
+    // surfaced error message reaches the DOM rather than the test
     // throwing the unhandled rejection. With the pre-fix code, the
     // rejection would escape the component and React Testing
     // Library's `act` wrapper would surface it as an uncaught error.

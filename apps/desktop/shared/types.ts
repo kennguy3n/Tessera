@@ -436,11 +436,11 @@ export type ExternalProviderListModelsResult =
  *
  * `enabled` IS settable so a user who has just toggled the
  * provider on in the form (but not yet saved) can still click
- * "List models" without first hitting Save.
- *  An earlier review flagged the gap: previously the handler gated on
- * the PERSISTED `enabled` flag, so a fresh-enable + List would
- * fail with "External provider is disabled" even though the form
- * the user is looking at clearly intends the provider to be on.
+ * "List models" without first hitting Save. Previously the
+ * handler gated on the PERSISTED `enabled` flag, so a fresh-enable
+ * + List would fail with "External provider is disabled" even
+ * though the form the user is looking at clearly intends the
+ * provider to be on.
  * Including `enabled` in the draft override lets the handler gate
  * on the EFFECTIVE config (overrides merged atop persisted) so
  * the UX matches the user's mental model.
@@ -978,7 +978,7 @@ export interface ConnectorApi {
   selectItems: (items: DrivePickerItem[]) => Promise<DrivePickerSelection[]>;
   syncDrive: (selectedFileIds?: string[]) => Promise<DriveSyncResult>;
   /**
-   * Provider-agnostic sync . Used for OneDrive / Notion /
+   * Provider-agnostic sync entrypoint. Used for OneDrive / Notion /
    * Jira / Confluence / Figma — Google Drive still uses `syncDrive`
    * because it accepts an explicit file selection from the picker.
    * Returns the same `{ added, modified, removed, status }` shape.
@@ -1027,7 +1027,7 @@ export interface DialogApi {
 }
 
 /**
- * Auto-update integration . The renderer never talks to
+ * Auto-update integration surface. The renderer never talks to
  * `electron-updater` directly — every interaction goes through these
  * IPC channels so the main process can validate state, run the
  * updater out of the sandboxed renderer, and apply a single
