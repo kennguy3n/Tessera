@@ -523,27 +523,40 @@ export function getDiffusionSidecar(): DiffusionSidecar | null {
  * shutdowns apart.
  */
 export async function stopAllSidecars(): Promise<void> {
-  const tasks: Array<Promise<void>> = [];
-  if (modelSidecar) {
-    tasks.push(
-      modelSidecar.stop().catch((err) => {
-        console.error("[tessera] text sidecar stop failed:", err);
-      }),
-    );
-  }
-  if (visionSidecar) {
-    tasks.push(
-      visionSidecar.stop().catch((err) => {
-        console.error("[tessera] vision sidecar stop failed:", err);
-      }),
-    );
-  }
-  if (diffusionSidecar) {
-    tasks.push(
-      diffusionSidecar.stop().catch((err) => {
-        console.error("[tessera] diffusion sidecar stop failed:", err);
-      }),
-    );
-  }
-  await Promise.all(tasks);
+  await stopSidecarsList([
+    { label: "text", sidecar: modelSidecar },
+    { label: "vision", sidecar: visionSidecar },
+    { label: "diffusion", sidecar: diffusionSidecar },
+  ]);
+}
+
+/**
+ * Pure helper for [`stopAllSidecars`]. Takes an explicit list so
+ * tests can inject fakes (the production function reads from
+ * module-private state). Each task swallows its sidecar's error
+ * and logs it — so a hung or throwing sidecar must NOT block the
+ * others from being stopped, and must NOT bubble an error up to
+ * the `will-quit` handler (which would otherwise block
+ * `app.quit()`).
+ *
+ * Exported for the test in `__tests__/stopAllSidecars.test.ts`.
+ * Production code should call `stopAllSidecars()` instead.
+ */
+export async function stopSidecarsList(
+  entries: Array<{
+    label: string;
+    sidecar: { stop(): Promise<void> } | null;
+  }>,
+): Promise<void> {
+  await Promise.all(
+    entries
+      .filter((e): e is { label: string; sidecar: { stop(): Promise<void> } } =>
+        e.sidecar !== null,
+      )
+      .map((e) =>
+        e.sidecar.stop().catch((err) => {
+          console.error(`[tessera] ${e.label} sidecar stop failed:`, err);
+        }),
+      ),
+  );
 }

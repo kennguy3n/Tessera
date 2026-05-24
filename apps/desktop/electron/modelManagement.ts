@@ -780,14 +780,41 @@ function validateManifest(manifest: ModelManifest): ModelManifest {
         `models[${i}] (id=${String(m.id)}, capability=${cap}, format=${m.format}) carries mmproj fields, but mmproj is only valid for vision-GGUF entries. Drop mmprojFilename/mmprojUrl/mmprojSha256/mmprojSizeMb.`,
       );
     }
-    if (
-      hasMmprojFilename &&
-      m.mmprojSizeMb !== undefined &&
-      (typeof m.mmprojSizeMb !== "number" || !Number.isFinite(m.mmprojSizeMb) || m.mmprojSizeMb < 0)
-    ) {
-      errors.push(
-        `models[${i}].mmprojSizeMb="${String(m.mmprojSizeMb)}" must be a non-negative finite number (id=${String(m.id)}).`,
-      );
+    // mmprojSizeMb is REQUIRED when an mmproj URL is present.
+    //
+    // The download-progress math in `downloadModelLocked` builds a
+    // combined byte total from `mainBytes + (mmprojSizeMb ?? 0) *
+    // MiB` and reports per-fetcher progress as a single monotonic
+    // 0..100% sweep across both files. When `mmprojSizeMb` is
+    // omitted, the `?? 0` fallback makes the combined total equal
+    // to `mainBytes` while the mmproj fetcher still writes real
+    // bytes on top — so the cumulative progress sails past 100%
+    // during the projector download (e.g. 107% for SmolVLM's
+    // 190 MB projector on a 150 MB main weights file).
+    //
+    // Requiring a positive `mmprojSizeMb` alongside the URL closes
+    // both the progress bug AND the Settings-UI disk-usage report
+    // (which sums per-slot bytes — without the field the vision
+    // slot underreports by the projector's footprint).
+    //
+    // Allowing 0 here would let a future shipper declare a
+    // zero-byte projector, which would also break the progress
+    // math (denominator would still be `mainBytes`, identical to
+    // the omitted-field case). Reject that too.
+    if (hasMmprojFilename) {
+      if (m.mmprojSizeMb === undefined) {
+        errors.push(
+          `models[${i}] (id=${String(m.id)}) is a vision-GGUF entry with mmprojFilename/mmprojUrl but is missing mmprojSizeMb. Download progress reporting requires the projector size in MB.`,
+        );
+      } else if (
+        typeof m.mmprojSizeMb !== "number" ||
+        !Number.isFinite(m.mmprojSizeMb) ||
+        m.mmprojSizeMb <= 0
+      ) {
+        errors.push(
+          `models[${i}].mmprojSizeMb="${String(m.mmprojSizeMb)}" must be a positive finite number (id=${String(m.id)}).`,
+        );
+      }
     }
     // Detect duplicate (format, platform, tier, capability) tuples —
     // these would otherwise silently shadow each other in
@@ -2045,8 +2072,22 @@ async function downloadModelLocked(
   // jumps backwards. For single-file installs (text / MLX / imagegen)
   // `mmprojBytes` is 0 and the math collapses to the prior behaviour.
   const mainBytes = requested.downloadSizeMb * 1024 * 1024;
+  // Defence-in-depth: validateManifest already rejects a vision-GGUF
+  // entry that has `mmprojUrl` without a positive `mmprojSizeMb`, so
+  // in practice the `??` branch below is unreachable from manifest
+  // data. Keep the fallback to `mainBytes` (not 0) anyway: it
+  // guarantees `combinedBytes >= mainBytes + 1` once we add any
+  // non-zero projector byte, so the progress percentage CANNOT
+  // exceed 100% even if a future code path constructs a
+  // `ResolvedModel` directly without going through manifest
+  // validation. Using `mainBytes` (instead of an arbitrary number)
+  // means the worst-case progress curve still resembles "half
+  // weights, half projector" — visually defensible for the rare
+  // synthetic-test code path that hits this branch.
   const mmprojBytes = requested.mmprojUrl
-    ? (requested.mmprojSizeMb ?? 0) * 1024 * 1024
+    ? (typeof requested.mmprojSizeMb === "number" && requested.mmprojSizeMb > 0
+        ? requested.mmprojSizeMb * 1024 * 1024
+        : mainBytes)
     : 0;
   const combinedBytes = mainBytes + mmprojBytes;
   // Stream the download into a `.partial` sibling so the final filename

@@ -343,17 +343,27 @@ export type GdriveSelectedItemsInput = z.infer<typeof GdriveSelectedItemsSchema>
 // keeps the validation policy uniform across every IPC channel and
 // gives the OS dialog APIs a clean payload to work with.
 //
-// This is the ONE schema in this file that uses `.strict()` instead of
-// the default `.strip()`. Every other schema strips unknown keys so a
-// newer renderer can send forward-compat fields the older main process
-// doesn't know about without crashing; the Rust bridge's serde layer
-// rejects unknown fields downstream so stripping is safe. Here the
-// payload flows directly into Electron's native dialog API (Cocoa /
-// Win32 / GTK), each of which has provider-specific options we do NOT
-// want a renderer bug accidentally enabling. `.strict()` makes the
-// validator reject unknown keys outright. If you add a new field to
-// `SaveDialogOptions` in `shared/types.ts`, extend this schema in the
-// same commit — strict mode will reject the new field otherwise.
+// This is one of the few schemas in this file that uses `.strict()`
+// instead of the default `.strip()`. Most schemas strip unknown keys
+// so a newer renderer can send forward-compat fields the older main
+// process doesn't know about without crashing; the Rust bridge's
+// serde layer rejects unknown fields downstream so stripping is safe.
+//
+// The `.strict()` schemas in this file are payloads that flow
+// directly into platform-specific native APIs where unknown fields
+// could trigger provider-specific side effects we don't want a
+// renderer bug accidentally enabling:
+//
+//   - `SaveDialogOptionsSchema` (this one) — Electron's native dialog
+//     API (Cocoa / Win32 / GTK).
+//   - `VisionDescribeSchema` — vision sidecar (`llama-server
+//     --mmproj`) which forwards every JSON key to llama.cpp.
+//   - `GenerateImageSchema` — diffusion sidecar (`sd-server`) which
+//     forwards every JSON key to stable-diffusion.cpp.
+//
+// If you add a new field to `SaveDialogOptions` in `shared/types.ts`,
+// extend this schema in the same commit — strict mode will reject
+// the new field otherwise.
 export const SaveDialogOptionsSchema = z
   .object({
     title: z.string().max(512).optional(),

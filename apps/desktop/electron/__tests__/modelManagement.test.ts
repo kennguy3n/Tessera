@@ -1867,6 +1867,168 @@ describe("manifest validation guard — models[] entries", () => {
       /models\[0\]\.compute must be an array/,
     );
   });
+
+  // -----------------------------------------------------------------
+  // mmproj-field validator coverage (Block B). The Devin Review
+  // pass-4 finding (BUG-pr-review-job-08df75766eba4513809fceac8a2cb5e0
+  // -0001 + ANALYSIS-…-0005) called out that the validator
+  // accepted a vision-GGUF entry with mmprojFilename + mmprojUrl
+  // but no mmprojSizeMb — which then drove the cumulative download
+  // progress past 100% (because mmprojBytes defaulted to 0 in
+  // `downloadModelLocked`). The validator now requires a positive
+  // mmprojSizeMb whenever mmprojUrl is present. These tests pin
+  // the matrix so the latent bug can't return.
+  // -----------------------------------------------------------------
+
+  function visionGgufEntry(
+    overrides: Partial<ModelManifest["models"][number]>,
+  ): ModelManifest["models"][number] {
+    return {
+      id: "smolvlm-256m-vision-gguf",
+      name: "SmolVLM 256M Vision",
+      parameters: "256M",
+      format: "gguf",
+      quantization: "Q4_K_S",
+      capability: "vision" as ManifestModel["capability"],
+      platform: "any-non-apple-silicon",
+      compute: ["cpu"],
+      tier: "low",
+      downloadSizeMb: 150,
+      diskSizeMb: 150,
+      requiredRamGb: 1,
+      contextLength: 2048,
+      filename: "smolvlm.gguf",
+      url: "https://example.invalid/smolvlm.gguf",
+      sha256: null,
+      mmprojFilename: "smolvlm-mmproj.gguf",
+      mmprojUrl: "https://example.invalid/smolvlm-mmproj.gguf",
+      mmprojSha256: null,
+      mmprojSizeMb: 190,
+      ...overrides,
+    };
+  }
+
+  function visionManifest(
+    entry: ModelManifest["models"][number],
+  ): ModelManifest {
+    return {
+      format_version: 1,
+      models: [entry],
+      llama_server: {
+        version: "b4546",
+        variants: [
+          {
+            platform: "linux-x64",
+            compute: "cpu",
+            url: "https://example.invalid/llama-server",
+            sha256: null,
+          },
+        ],
+      },
+    };
+  }
+
+  it("rejects a vision-GGUF entry with mmprojUrl but no mmprojSizeMb (BUG_0001)", async () => {
+    const bad = visionManifest(
+      visionGgufEntry({ mmprojSizeMb: undefined as unknown as number }),
+    );
+    const p = path.join(workdir, "missing-mmproj-size.json");
+    await fsp.writeFile(p, JSON.stringify(bad), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = p;
+    resetManifestCache();
+    expect(() => loadManifest(true)).toThrowError(/missing mmprojSizeMb/);
+    expect(() => loadManifest(true)).toThrowError(/smolvlm-256m-vision-gguf/);
+  });
+
+  it("rejects a vision-GGUF entry with mmprojSizeMb=0", async () => {
+    // Zero is as harmful as `undefined` for the progress math —
+    // both make `combinedBytes === mainBytes`, so the cumulative
+    // progress can overshoot 100% during the projector download.
+    const bad = visionManifest(visionGgufEntry({ mmprojSizeMb: 0 }));
+    const p = path.join(workdir, "zero-mmproj-size.json");
+    await fsp.writeFile(p, JSON.stringify(bad), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = p;
+    resetManifestCache();
+    expect(() => loadManifest(true)).toThrowError(/mmprojSizeMb/);
+  });
+
+  it("rejects a vision-GGUF entry with a negative mmprojSizeMb", async () => {
+    const bad = visionManifest(visionGgufEntry({ mmprojSizeMb: -5 }));
+    const p = path.join(workdir, "neg-mmproj-size.json");
+    await fsp.writeFile(p, JSON.stringify(bad), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = p;
+    resetManifestCache();
+    expect(() => loadManifest(true)).toThrowError(/mmprojSizeMb/);
+  });
+
+  it("rejects a vision-GGUF entry with NaN mmprojSizeMb", async () => {
+    // JSON-parses to `null` if literal NaN, so emulate via a code path
+    // (manifest could be hand-edited to `"mmprojSizeMb": "abc"` or
+    // similar). The validator must reject any non-finite number.
+    const bad = visionManifest(
+      visionGgufEntry({ mmprojSizeMb: Number.NaN }),
+    );
+    const p = path.join(workdir, "nan-mmproj-size.json");
+    await fsp.writeFile(p, JSON.stringify(bad), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = p;
+    resetManifestCache();
+    expect(() => loadManifest(true)).toThrowError(/mmprojSizeMb/);
+  });
+
+  it("accepts a complete vision-GGUF entry with positive mmprojSizeMb", async () => {
+    const good = visionManifest(visionGgufEntry({}));
+    const p = path.join(workdir, "complete-vision.json");
+    await fsp.writeFile(p, JSON.stringify(good), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = p;
+    resetManifestCache();
+    const m = loadManifest(true);
+    expect(m.models[0].mmprojSizeMb).toBe(190);
+  });
+
+  it("rejects an mmproj URL without a matching mmproj filename (and vice versa)", async () => {
+    // Pair invariant: both halves of the mmproj descriptor must be
+    // present together. The original tests in the codebase do not
+    // exercise this path even though the validator covers it.
+    const onlyUrl = visionManifest(
+      visionGgufEntry({ mmprojFilename: undefined as unknown as string }),
+    );
+    const p1 = path.join(workdir, "only-url.json");
+    await fsp.writeFile(p1, JSON.stringify(onlyUrl), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = p1;
+    resetManifestCache();
+    expect(() => loadManifest(true)).toThrowError(/mismatched mmproj descriptor/);
+
+    resetManifestCache();
+    const onlyFilename = visionManifest(
+      visionGgufEntry({ mmprojUrl: undefined as unknown as string }),
+    );
+    const p2 = path.join(workdir, "only-filename.json");
+    await fsp.writeFile(p2, JSON.stringify(onlyFilename), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = p2;
+    resetManifestCache();
+    expect(() => loadManifest(true)).toThrowError(/mismatched mmproj descriptor/);
+  });
+
+  it("rejects a non-vision-GGUF entry that carries mmproj fields", async () => {
+    // mmproj only applies to llama-server `--mmproj` (vision-GGUF
+    // path). A text or imagegen entry carrying mmproj fields would
+    // silently misroute through the validator's positive checks
+    // were it not caught here.
+    const bad = visionManifest(
+      visionGgufEntry({
+        id: "ternary-bonsai-fake",
+        capability: "text",
+        // Keep mmproj* fields — that's what we want to reject.
+      }),
+    );
+    const p = path.join(workdir, "text-with-mmproj.json");
+    await fsp.writeFile(p, JSON.stringify(bad), "utf8");
+    process.env.TESSERA_MODELS_MANIFEST = p;
+    resetManifestCache();
+    expect(() => loadManifest(true)).toThrowError(
+      /mmproj is only valid for vision-GGUF entries/,
+    );
+  });
 });
 
 describe("ModelRuntimeCard fetcher / defaultFetcher socket-leak guard", () => {
