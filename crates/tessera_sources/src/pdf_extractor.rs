@@ -515,6 +515,23 @@ pub fn vlm_ocr_chunks_from_probes(
         // description. Default impl delegates to `describe_image`,
         // which keeps existing test fixtures and the
         // `NullVisionExtractor` working unchanged.
+        //
+        // A VLM error on a single page is treated as a transient
+        // failure that should retry on the next pass — the sidecar
+        // could have been mid-restart, OOM-killed, or hit a
+        // per-request timeout, none of which the user would expect
+        // to permanently lose the OCR text for that page. We
+        // `continue` to the next page rather than aborting the
+        // whole pass (other pages may still succeed), AND flip
+        // `fully_processed = false` so the indexer stamps the
+        // `partial:` sentinel on the `indexed_files` row and the
+        // next `index_file` call re-runs the OCR pass from scratch.
+        // Without this stamp, the file's real BLAKE3 hash would be
+        // on the row and the next pass would short-circuit on hash
+        // match — permanently losing the failed pages' OCR text
+        // until the file's content changed on disk. Devin Review
+        // pass-13 🚩 finding flagged this gap between the rate-limit
+        // retry path and the per-page VLM-error path.
         let ocr_text = match extractor.ocr_text(&image_path) {
             Ok(t) => t,
             Err(e) => {
@@ -523,6 +540,7 @@ pub fn vlm_ocr_chunks_from_probes(
                     pdf_path_str, page_number
                 );
                 let _ = std::fs::remove_file(&image_path);
+                fully_processed = false;
                 continue;
             }
         };
@@ -844,6 +862,17 @@ pub fn vlm_chart_chunks_with_doc(
                 fully_processed = false;
                 break 'outer;
             }
+            // Per-image VLM error branches below treat the failure
+            // as transient and retry on the next pass — same
+            // rationale as the OCR pass per-page error path above.
+            // The temp-image write failure (typically EDISKFULL or
+            // EACCES) and the VLM `describe_chart` failure (sidecar
+            // restart, OOM, request timeout) both flip
+            // `fully_processed = false` so the indexer stamps the
+            // `partial:` sentinel and the next pass re-runs the
+            // chart pass from scratch. Devin Review pass-13 🚩
+            // finding flagged the asymmetry between the rate-limit
+            // retry path and the per-image VLM-error path.
             let image_path = match write_image_for_vlm(img, pdf_path, "chart") {
                 Ok(p) => p,
                 Err(e) => {
@@ -851,6 +880,7 @@ pub fn vlm_chart_chunks_with_doc(
                         "[tessera_sources] pdf {} page {} failed to write chart temp image: {e}",
                         pdf_path_str, page_number
                     );
+                    fully_processed = false;
                     continue;
                 }
             };
@@ -862,6 +892,7 @@ pub fn vlm_chart_chunks_with_doc(
                         pdf_path_str, page_number
                     );
                     let _ = std::fs::remove_file(&image_path);
+                    fully_processed = false;
                     continue;
                 }
             };

@@ -498,7 +498,21 @@ fn vlm_ocr_chunks_for_pdf_drops_empty_ocr_output() {
 }
 
 #[test]
-fn vlm_ocr_chunks_for_pdf_continues_when_one_page_vlm_call_fails() {
+fn vlm_ocr_chunks_for_pdf_continues_when_one_page_vlm_call_fails_but_flags_partial() {
+    // Devin Review pass-13 🚩 finding regression guard.
+    //
+    // When a single page's VLM call returns Err (transient sidecar
+    // restart / OOM / timeout), the OCR pass MUST:
+    //   1. continue to the next page (don't lose the OTHER pages'
+    //      successful OCR text), AND
+    //   2. flip `fully_processed = false` so the indexer stamps the
+    //      `partial:` sentinel on the `indexed_files` row and the
+    //      next scan re-runs the OCR pass from scratch.
+    //
+    // Prior to the fix, this test asserted `fully_processed == true`
+    // and the failed page's OCR was permanently lost (the file's
+    // real BLAKE3 hash got stamped, and the next pass short-circuited
+    // on hash match). That assertion encoded the bug.
     struct FlakyStub {
         calls: Mutex<u32>,
     }
@@ -532,11 +546,11 @@ fn vlm_ocr_chunks_for_pdf_continues_when_one_page_vlm_call_fails() {
     assert_eq!(
         outcome.chunks.len(),
         2,
-        "one failing VLM call should not abort the whole OCR pass"
+        "one failing VLM call should not abort the whole OCR pass — the other two pages must still produce chunks"
     );
     assert!(
-        outcome.fully_processed,
-        "every page was visited (one VLM call failed but was logged-and-continued) → fully_processed remains true"
+        !outcome.fully_processed,
+        "one VLM call failed → pass MUST flag fully_processed=false so the indexer stamps the `partial:` sentinel and retries on the next scan (otherwise the failed page's OCR is permanently lost)"
     );
 }
 
@@ -687,6 +701,70 @@ fn vlm_chart_chunks_for_pdf_respects_rate_limit() {
         "third chart page was skipped by rate limiter → pass MUST flag fully_processed=false so the indexer can defer the hash stamp and retry on the next pass"
     );
     assert_eq!(stub.chart_call_count(), 2);
+}
+
+#[test]
+fn vlm_chart_chunks_for_pdf_continues_when_one_chart_vlm_call_fails_but_flags_partial() {
+    // Devin Review pass-13 🚩 finding regression guard (chart-pass
+    // companion to `vlm_ocr_chunks_for_pdf_continues_when_one_page
+    // _vlm_call_fails_but_flags_partial`).
+    //
+    // When the chart-pass `describe_chart` call fails on a single
+    // chart image (transient sidecar restart / OOM / timeout), the
+    // pass MUST:
+    //   1. continue to the next chart image (don't lose other
+    //      successful chart descriptions), AND
+    //   2. flip `fully_processed = false` so the indexer stamps the
+    //      `partial:` sentinel and the next scan re-runs the chart
+    //      pass from scratch.
+    //
+    // Without this, a file where the FIRST chart's VLM call
+    // transiently failed would be stamped fully-indexed and the
+    // failed chart's description would be permanently lost.
+    struct FlakyChartStub {
+        calls: Mutex<u32>,
+        model: String,
+    }
+    impl VisionExtractor for FlakyChartStub {
+        fn describe_image(&self, _: &Path) -> Result<String> {
+            Ok("plain image description".to_string())
+        }
+        fn describe_chart(&self, _: &Path) -> Result<String> {
+            let mut n = self.calls.lock().unwrap();
+            *n += 1;
+            if *n == 1 {
+                Err(tessera_core::error::Error::Extraction {
+                    path: "<flaky-chart>".to_string(),
+                    message: "transient sidecar error".to_string(),
+                })
+            } else {
+                Ok(format!("chart-text-{n}"))
+            }
+        }
+        fn model_id(&self) -> &str {
+            &self.model
+        }
+    }
+
+    let bytes = build_pdf_with_chart_image(&[], 3, 1920, 1080);
+    let dir = write_pdf("three-charts-flaky.pdf", &bytes);
+    let path = dir.path().join("three-charts-flaky.pdf");
+
+    let stub = FlakyChartStub {
+        calls: Mutex::new(0),
+        model: "flaky-chart-vlm".to_string(),
+    };
+    let limiter = PdfOcrRateLimiter::with_budget(10, Duration::from_secs(60));
+    let outcome = vlm_chart_chunks_for_pdf(&stub, &path, &limiter, 0).expect("must succeed");
+    assert_eq!(
+        outcome.chunks.len(),
+        2,
+        "one failing chart VLM call should not abort the whole chart pass — the other two charts must still produce chunks"
+    );
+    assert!(
+        !outcome.fully_processed,
+        "one chart VLM call failed → pass MUST flag fully_processed=false so the indexer stamps the `partial:` sentinel and retries on the next scan (otherwise the failed chart's description is permanently lost)"
+    );
 }
 
 #[test]
