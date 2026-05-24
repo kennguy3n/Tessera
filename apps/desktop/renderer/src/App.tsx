@@ -9,6 +9,7 @@ import SettingsPage from "./pages/SettingsPage";
 import ArtifactEditorPage from "./pages/ArtifactEditorPage";
 import TasksPage from "./pages/TasksPage";
 import AutomationsPage from "./pages/AutomationsPage";
+import VisionPage from "./pages/VisionPage";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useTheme } from "./hooks/useTheme";
 
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/create" element={<CreatePage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/automations" element={<AutomationsPage />} />
+          <Route path="/vision" element={<VisionPage />} />
           <Route path="/artifacts/:id/edit" element={<ArtifactEditorPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

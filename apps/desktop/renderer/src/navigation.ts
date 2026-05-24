@@ -5,6 +5,7 @@ import {
   ClipboardList,
   CheckSquare,
   Zap,
+  Eye,
   Settings,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -13,7 +14,7 @@ import type { LucideIcon } from "lucide-react";
  * Sidebar / global navigation source of truth.
  *
  * Both the visible sidebar order (`Sidebar.tsx`) and the
- * `Ctrl/Cmd+1..7` keyboard shortcuts (`useKeyboardShortcuts.ts`)
+ * `Ctrl/Cmd+1..N` keyboard shortcuts (`useKeyboardShortcuts.ts`)
  * read from this single array, so they can never drift out of
  * sync — adding, removing, or reordering an entry here propagates
  * to both the visual list and the shortcut hint chips
@@ -36,6 +37,7 @@ export const SIDEBAR_ITEMS: readonly SidebarNavItem[] = [
   { to: "/templates", label: "Templates", Icon: ClipboardList },
   { to: "/tasks", label: "Tasks", Icon: CheckSquare },
   { to: "/automations", label: "Automations", Icon: Zap },
+  { to: "/vision", label: "Vision", Icon: Eye },
   { to: "/settings", label: "Settings", Icon: Settings },
 ];
 

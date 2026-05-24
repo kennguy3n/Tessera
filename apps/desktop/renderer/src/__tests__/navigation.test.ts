@@ -32,8 +32,19 @@ describe("sidebar navigation", () => {
       "/templates",
       "/tasks",
       "/automations",
+      "/vision",
       "/settings",
     ]);
+  });
+
+  it("maps the Vision entry to keyboard shortcut 7 (Settings shifts to 8)", () => {
+    // Block E added `/vision` between Automations and Settings —
+    // pin the keyboard shortcut so `Ctrl/Cmd+7` lands on the
+    // Vision page and `Ctrl/Cmd+8` lands on Settings.
+    expect(SIDEBAR_NAV_BY_KEY["7"]).toBe("/vision");
+    expect(SIDEBAR_NAV_BY_KEY["8"]).toBe("/settings");
+    expect(SIDEBAR_SHORTCUT_HINTS["/vision"]).toBe("7");
+    expect(SIDEBAR_SHORTCUT_HINTS["/settings"]).toBe("8");
   });
 
   it("uses every key exactly once across both maps", () => {

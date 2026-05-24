@@ -7,6 +7,7 @@ import type {
   InstalledModelsByCapability,
   ModelCapability,
   ModelDownloadProgress,
+  OpenImageDialogOptions,
   ReplaceCitationRequest,
   SaveDialogOptions,
   SettingsData,
@@ -394,6 +395,8 @@ const api: TesseraApi = {
   dialog: {
     showSaveDialog: (options: SaveDialogOptions) =>
       ipcRenderer.invoke("dialog:showSaveDialog", options),
+    pickImage: (options?: OpenImageDialogOptions) =>
+      ipcRenderer.invoke("dialog:pickImage", options ?? {}),
   },
   updates: {
     status: () => ipcRenderer.invoke("updates:status"),

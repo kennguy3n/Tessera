@@ -25,6 +25,7 @@ import {
   TypstExportSchema,
   MarpExportSchema,
   GdriveSelectedItemsSchema,
+  OpenImageDialogSchema,
   SaveDialogOptionsSchema,
 } from "../ipc/schemas";
 import {
@@ -511,6 +512,43 @@ describe("SaveDialogOptionsSchema", () => {
     expect(() =>
       SaveDialogOptionsSchema.parse({ title: "x".repeat(513) }),
     ).toThrow();
+  });
+});
+
+describe("OpenImageDialogSchema", () => {
+  it("accepts a full payload with a custom title", () => {
+    const opts = { title: "Choose a whiteboard photo" };
+    expect(OpenImageDialogSchema.parse(opts)).toEqual(opts);
+  });
+
+  it("accepts an empty object (title is optional)", () => {
+    expect(OpenImageDialogSchema.parse({})).toEqual({});
+  });
+
+  it("rejects unknown keys (strict mode)", () => {
+    // The payload flows into Electron's `dialog.showOpenDialog`
+    // which accepts a much wider option surface (`properties`,
+    // `filters`, etc.). The renderer is NOT allowed to override
+    // those — they are pinned main-side so a hostile renderer
+    // can't widen the picker to directories or all files.
+    expect(() =>
+      OpenImageDialogSchema.parse({ title: "x", properties: ["openFile"] }),
+    ).toThrow();
+    expect(() =>
+      OpenImageDialogSchema.parse({ filters: [] }),
+    ).toThrow();
+  });
+
+  it("rejects a title exceeding 512 chars", () => {
+    expect(() =>
+      OpenImageDialogSchema.parse({ title: "x".repeat(513) }),
+    ).toThrow();
+  });
+
+  it("rejects a non-string title", () => {
+    for (const v of [42, true, null, [], {}]) {
+      expect(() => OpenImageDialogSchema.parse({ title: v })).toThrow();
+    }
   });
 });
 
