@@ -534,9 +534,9 @@ opens this phase.*
 | E | Task 24 — Editor component vitest coverage (Document / Slide / Sheet / Base / Infographic / LandingPage) | `IN PROGRESS` |
 | E | Task 25 — Accessibility audit (focus trap, aria-labelledby, aria-current, htmlFor, Re-embed + Stop labels) | `IN PROGRESS` |
 | E | Task 26 — Dark-mode CSS-variable enforcement + regression test | `IN PROGRESS` |
-| F | Task 27 — Home page: real recent-artifacts (sorted by modified) + source status counts + quick actions | `IN PROGRESS` |
-| F | Task 28 — Template validation on load: required-field + section-prompt + export-format checks; audit-log validation failures | `IN PROGRESS` |
-| F | Task 29 — Source comparison: structured result (common / unique-to-A / unique-to-B) + `ComparisonResultModal` | `IN PROGRESS` |
+| F | Task 27 — Home page: real recent-artifacts (sorted by modified) + source status counts + quick actions | `DONE` (Block F branch) |
+| F | Task 28 — Template validation on load: required-field + section-prompt + export-format checks; audit-log validation failures | `DONE` (Block F branch) |
+| F | Task 29 — Source comparison: structured result (common / unique-to-A / unique-to-B) + `ComparisonResultModal` | `DONE` (Block F branch) |
 | F | Task 30 — Scheduler resilience (tick failure, concurrency, drain) | `DONE` (PR #17) |
 | G | Release readiness — RELEASING.md, preflight scripts, README platform table | `DONE` (PR #21) |
 | G | Phase-tracking smoke suite + phase-exit checklist in CONTRIBUTING.md | `DONE` (PR #22) |
@@ -606,13 +606,26 @@ ten industries, multiple user profiles, and ten BCP-47 locales
       an associated label; sidebar uses `aria-current`.
 - [ ] No renderer component leaks hardcoded hex colors in either
       theme (snapshot / assertion-based regression test).
-- [ ] HomePage shows real recent-artifact + source-status data; the
+- [x] HomePage shows real recent-artifact + source-status data; the
       empty state is distinguishable from a loading state.
-- [ ] Template validation runs on load; failures are surfaced in the
+      *(Block F: source-status breakdown rendering every canonical
+      `SourceStatus` bucket, navigable recent-artifact cards, quick-
+      actions row to Templates / Tasks / Sources / Settings.)*
+- [x] Template validation runs on load; failures are surfaced in the
       audit log; the 173-template registry has zero validation
       errors.
-- [ ] Source comparison returns a structured `{ common, uniqueToA,
+      *(Block F: `TemplateLoadFailureKind` distinguishes parse vs.
+      validation; `AuditEventType::TemplateValidationFailed` rows
+      are written via `log_template_validation_failed`; bridge
+      surfaces every dropped template through
+      `bridge_list_templates`.)*
+- [x] Source comparison returns a structured `{ common, uniqueToA,
       uniqueToB }` result and renders through `ComparisonResultModal`.
+      *(Block F: `bridge_compare_sources` returns
+      `CompareSourcesResult { artifact, comparison, label_a, label_b }`;
+      renderer wraps it in a modal with frequency-badge sections,
+      similarity-as-percent, Download as Markdown, and Open
+      artifact affordances.)*
 
 #### Template & artifact expansion exit criteria *(Block H, shipped in PR #23)*
 
