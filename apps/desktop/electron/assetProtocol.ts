@@ -94,6 +94,31 @@ const SCHEME = "tessera-asset";
 const ALLOWED_SUBDIR = "generated-images";
 
 /**
+ * Resolve the absolute allow-list root for `tessera-asset://`
+ * requests. Both the protocol handler (registered once at
+ * `app.whenReady`) and the renderer-side `pathToAssetUrl` helper
+ * (called per `imagegen.generate` result) MUST derive the same
+ * root from the same `userDataDir`, otherwise the handler could
+ * 403 a URL `pathToAssetUrl` minted (or vice versa) and the
+ * renderer-side `<img src>` would silently fail.
+ *
+ * Centralising the join here pins the invariant that both call
+ * sites see byte-identical absolute paths. A future refactor that
+ * needs to change the subdirectory layout (e.g. nesting under
+ * `assets/generated-images/`) only has to touch this one helper.
+ *
+ * Devin Review PR #38 pass-6 📝 finding: `pathToAssetUrl` and
+ * `registerAssetProtocolHandler` previously computed `allowedRoot`
+ * independently via two separate `path.resolve` calls. Both
+ * inputs always came from `app.getPath("userData")` so the
+ * result was identical — but the duplication was a maintainability
+ * trap.
+ */
+export function resolveAssetAllowedRoot(userDataDir: string): string {
+  return path.resolve(userDataDir, ALLOWED_SUBDIR);
+}
+
+/**
  * Declare `tessera-asset://` as a privileged scheme. Must be called
  * synchronously at module load time — Electron's
  * `protocol.registerSchemesAsPrivileged` only honours its argument
@@ -141,7 +166,7 @@ export function registerAssetProtocolHandler(assetsRoot: string): void {
   // handler then compares each incoming request against this
   // pre-resolved absolute path, so a later `process.chdir()` or
   // symlink change can't shift the allow-list out from under us.
-  const allowedRoot = path.resolve(assetsRoot, ALLOWED_SUBDIR);
+  const allowedRoot = resolveAssetAllowedRoot(assetsRoot);
 
   protocol.handle(SCHEME, async (request) => {
     try {
@@ -238,7 +263,7 @@ export function pathToAssetUrl(
   absolutePath: string,
   userDataDir: string = app.getPath("userData"),
 ): string | null {
-  const allowedRoot = path.resolve(userDataDir, ALLOWED_SUBDIR);
+  const allowedRoot = resolveAssetAllowedRoot(userDataDir);
   const resolved = path.resolve(absolutePath);
   // The path must be STRICTLY inside `allowedRoot` — i.e. nested
   // at least one segment under `generated-images/`. The

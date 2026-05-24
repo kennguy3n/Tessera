@@ -116,6 +116,7 @@ import {
   pathToAssetUrl,
   registerAssetProtocolHandler,
   registerAssetProtocolScheme,
+  resolveAssetAllowedRoot,
   TESSERA_ASSET_SCHEME,
 } from "../assetProtocol";
 
@@ -295,6 +296,33 @@ describe("registerAssetProtocolHandler", () => {
     const res = await invoke(sibling);
     expect(res.status).toBe(403);
     expect(await res.text()).toMatch(/Forbidden path/);
+  });
+
+  it("derives the same allowedRoot the protocol handler uses, byte-identical, when given the same userDataDir", () => {
+    // Devin Review PR #38 pass-6 📝 follow-up: the protocol handler
+    // and the renderer-side `pathToAssetUrl` helper previously
+    // computed `allowedRoot` independently with two `path.resolve`
+    // calls. The two values happened to agree because both come
+    // from `app.getPath("userData")`, but a future refactor that
+    // changes one without the other could silently break the URL
+    // round-trip. The shared `resolveAssetAllowedRoot` helper is
+    // now the single source of truth — pin that it returns the
+    // SAME value when called twice with the same input, and that
+    // the value is a real path under the given userData root.
+    const a = resolveAssetAllowedRoot(workdir);
+    const b = resolveAssetAllowedRoot(workdir);
+    expect(a).toBe(b);
+    expect(a).toBe(path.join(workdir, "generated-images"));
+    // And — more importantly — `pathToAssetUrl` must mint a URL the
+    // handler will accept for any file inside this root. Use a
+    // freshly-resolved root + a freshly-built filename so we're
+    // exercising the round-trip through `pathToAssetUrl` rather
+    // than the test's own `allowedRoot` cache.
+    const file = path.join(a, "art-002", "image-1.png");
+    const url = pathToAssetUrl(file, workdir);
+    expect(url).toBe(
+      `${TESSERA_ASSET_SCHEME}://generated-images/art-002/image-1.png`,
+    );
   });
 
   it("rejects a crafted Windows drive-letter path with 403 (regression pin)", async () => {
