@@ -943,8 +943,72 @@ pub fn vlm_chart_chunks_with_doc(
     let mut fully_processed = true;
 
     'outer: for (page_number, page_id) in doc.get_pages() {
-        let Ok(images) = doc.get_page_images(page_id) else {
-            continue;
+        // Page-local error handling on `get_page_images`. The
+        // chart pass walks the PDF page tree directly
+        // (`doc.get_pages()`) — unlike the OCR pass, which
+        // iterates a pre-filtered probe set
+        // (`pdf_pages_needing_ocr`) where the upstream
+        // `probe_pdf_pages_with_doc` already collapses
+        // `get_page_images` failures to `image_count = 0` via
+        // `.map_or(0, |imgs| imgs.len())`. So this loop visits
+        // every page including text-only ones, and the lopdf API
+        // conflates two distinct cases into a single `Err` return:
+        //
+        //   A. `Err(lopdf::Error::DictKey)` — the page has no
+        //      `Resources` dict, OR `Resources` has no `XObject`
+        //      entry. This is the DOMINANT case for text-only
+        //      pages (Resources typically only carries `Font`,
+        //      no `XObject`), and means "no images on this page"
+        //      — benign, expected, must be skipped silently
+        //      WITHOUT flipping `fully_processed`. Flipping it
+        //      here would mark every text-heavy PDF as
+        //      `partial:` after the chart pass, forcing the
+        //      indexer to re-scan on every scheduled pass and
+        //      never converge.
+        //   B. Any other `Err` variant — `ObjectNotFound` when
+        //      an XObject reference points to a missing
+        //      `ObjectId`, `Stream` / `Type` for malformed
+        //      stream objects, etc. These represent genuine
+        //      page-level PDF corruption. Log + flip
+        //      `fully_processed = false` + `continue`, matching
+        //      the shape every other chart-pass error branch
+        //      uses below (`write_image_for_vlm` Err,
+        //      `describe_chart` Err). This means chart chunks
+        //      already collected for earlier pages are preserved
+        //      (no `?` propagation), AND the file is stamped
+        //      `partial:` so the next scheduled scan retries the
+        //      malformed page. If the PDF is genuinely
+        //      permanently malformed, the retry cost is bounded
+        //      (just the `get_page_images` walk, no VLM call)
+        //      and the file converges to "perpetually partial"
+        //      rather than silently losing chart chunks from
+        //      neighbouring pages.
+        //
+        // Devin Review pass-N 📝 finding flagged the asymmetry
+        // between this branch (was: bare `continue`) and the OCR
+        // pass's `match`/`continue` + `fully_processed = false`
+        // shape. The fix here is NOT to mirror OCR blindly — the
+        // call-site contracts differ (OCR's pages are
+        // probe-filtered; chart's are not) — but to discriminate
+        // on the lopdf error variant so the dominant
+        // text-only-page case (A) stays silent while genuine
+        // corruption (B) lights up the partial sentinel.
+        let images = match doc.get_page_images(page_id) {
+            Ok(v) => v,
+            Err(lopdf::Error::DictKey) => {
+                // Page has no XObject entries — typical for
+                // text-only pages. Skip silently; do NOT flip
+                // `fully_processed`.
+                continue;
+            }
+            Err(e) => {
+                eprintln!(
+                    "[tessera_sources] pdf chart get_page_images failed for {} page {}: {e}; skipping page (file will be re-indexed on next pass)",
+                    pdf_path_str, page_number
+                );
+                fully_processed = false;
+                continue;
+            }
         };
         for img in &images {
             if !is_likely_chart_image(img.width, img.height) {

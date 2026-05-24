@@ -316,6 +316,154 @@ fn build_pdf_with_broken_xobject_on_second_page() -> Vec<u8> {
     buf
 }
 
+/// Build a 2-page PDF where page 1 has a valid chart-shaped
+/// DCTDecode JPEG XObject (≥ `CHART_MIN_PIXELS_PER_SIDE` on the
+/// short side, 4:3 aspect, single `DCTDecode` filter — so it
+/// matches `is_likely_chart_image` AND `is_single_dct_filter`)
+/// and page 2's `Resources/XObject` dictionary references a
+/// missing `ObjectId` (the same shape as
+/// `build_pdf_with_broken_xobject_on_second_page`, but with the
+/// VALID page sized to fire the chart heuristic instead of the
+/// OCR threshold).
+///
+/// Used by the chart-pass regression test that pins the symmetric
+/// `match`/`continue` + `fully_processed = false` handler for
+/// `doc.get_page_images(page_id)` failures inside
+/// `vlm_chart_chunks_with_doc` — exercising the live failure
+/// path that the chart pass has but the OCR pass doesn't
+/// (the OCR pass's upstream probe filters broken pages via
+/// `image_count = 0` before the loop). Devin Review pass-N
+/// regression guard.
+fn build_pdf_with_chart_then_broken_xobject_page() -> Vec<u8> {
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+
+    let font_id = doc.add_object(dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type1",
+        "BaseFont" => "Helvetica",
+    });
+
+    // Chart-sized DCTDecode JPEG for page 1 — 1600×1200 falls in
+    // the 4:3 ±10% band that `is_likely_chart_image` accepts and
+    // is comfortably above `CHART_MIN_PIXELS_PER_SIDE = 400`.
+    let jpeg_bytes = tiny_jpeg();
+    let mut img_dict = dictionary! {
+        "Type" => "XObject",
+        "Subtype" => "Image",
+        "Width" => 1600,
+        "Height" => 1200,
+        "ColorSpace" => "DeviceRGB",
+        "BitsPerComponent" => 8,
+    };
+    img_dict.set("Filter", Object::Name(b"DCTDecode".to_vec()));
+    let img_stream = Stream::new(img_dict, jpeg_bytes);
+    let valid_img_id = doc.add_object(img_stream);
+
+    // Reserve a fresh ObjectId without inserting an object for it
+    // — `new_object_id` bumps the internal counter but does not
+    // populate `doc.objects`, so lopdf's `get_page_images` call
+    // on page 2 fails when it tries to resolve the reference.
+    let missing_img_id = doc.new_object_id();
+
+    let valid_resources = dictionary! {
+        "Font" => dictionary! { "F1" => font_id },
+        "XObject" => dictionary! { "Im1" => valid_img_id },
+    };
+    let broken_resources = dictionary! {
+        "Font" => dictionary! { "F1" => font_id },
+        "XObject" => dictionary! { "Im1" => missing_img_id },
+    };
+
+    let mut kids: Vec<Object> = Vec::new();
+
+    let chart_content = Content {
+        operations: vec![
+            Operation::new("BT", vec![]),
+            Operation::new("Tf", vec!["F1".into(), 12.into()]),
+            Operation::new("Td", vec![72.into(), 720.into()]),
+            Operation::new(
+                "Tj",
+                vec![Object::string_literal("Figure 1 \u{2014} sales by quarter")],
+            ),
+            Operation::new("ET", vec![]),
+            Operation::new("q", vec![]),
+            Operation::new(
+                "cm",
+                vec![
+                    400.into(),
+                    0.into(),
+                    0.into(),
+                    300.into(),
+                    100.into(),
+                    200.into(),
+                ],
+            ),
+            Operation::new("Do", vec![Object::Name(b"Im1".to_vec())]),
+            Operation::new("Q", vec![]),
+        ],
+    };
+    let stream_ok = Stream::new(dictionary! {}, chart_content.encode().unwrap());
+    let content_id_ok = doc.add_object(stream_ok);
+    let page_ok = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "Contents" => content_id_ok,
+        "Resources" => valid_resources,
+    });
+    kids.push(page_ok.into());
+
+    // Page 2 references the missing XObject — same content stream
+    // shape so the page parses, but `get_page_images` will fail on
+    // it.
+    let broken_content = Content {
+        operations: vec![
+            Operation::new("q", vec![]),
+            Operation::new(
+                "cm",
+                vec![
+                    100.into(),
+                    0.into(),
+                    0.into(),
+                    100.into(),
+                    100.into(),
+                    600.into(),
+                ],
+            ),
+            Operation::new("Do", vec![Object::Name(b"Im1".to_vec())]),
+            Operation::new("Q", vec![]),
+        ],
+    };
+    let stream_bad = Stream::new(dictionary! {}, broken_content.encode().unwrap());
+    let content_id_bad = doc.add_object(stream_bad);
+    let page_bad = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "Contents" => content_id_bad,
+        "Resources" => broken_resources,
+    });
+    kids.push(page_bad.into());
+
+    let kids_count = kids.len() as i32;
+    let pages_dict = dictionary! {
+        "Type" => "Pages",
+        "Kids" => kids,
+        "Count" => kids_count,
+        "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+    };
+    doc.objects.insert(pages_id, Object::Dictionary(pages_dict));
+
+    let catalog_id = doc.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    doc.trailer.set("Root", catalog_id);
+
+    let mut buf: Vec<u8> = Vec::new();
+    doc.save_to(&mut buf).expect("PDF save must succeed");
+    buf
+}
+
 /// Build a PDF with `text_pages` of plain text and `chart_pages`
 /// of pages that embed a single JPEG XObject whose dictionary
 /// `Width` × `Height` is `chart_w × chart_h`. The JPEG payload
@@ -969,6 +1117,72 @@ fn vlm_chart_chunks_for_pdf_continues_when_one_chart_vlm_call_fails_but_flags_pa
     assert!(
         !outcome.fully_processed,
         "one chart VLM call failed → pass MUST flag fully_processed=false so the indexer stamps the `partial:` sentinel and retries on the next scan (otherwise the failed chart's description is permanently lost)"
+    );
+}
+
+#[test]
+fn vlm_chart_chunks_for_pdf_preserves_chart_chunks_when_later_page_has_broken_xobject() {
+    // Devin Review pass-N regression guard for the chart-pass
+    // analogue of
+    // `vlm_ocr_chunks_for_pdf_preserves_earlier_chunks_when_one_page_has_broken_xobject`.
+    //
+    // Unlike the OCR pass — which iterates a pre-filtered probe
+    // set (`pdf_pages_needing_ocr`) where the upstream
+    // `probe_pdf_pages_with_doc` already collapses
+    // `get_page_images` failures to `image_count = 0` via
+    // `.map_or(0, |imgs| imgs.len())`, filtering broken-XObject
+    // pages OUT before the loop — the chart pass walks the PDF
+    // page tree directly (`doc.get_pages()`). So a page with a
+    // malformed `Resources/XObject` dict IS a live failure path
+    // here: lopdf returns `Err(ObjectNotFound)` from
+    // `get_page_images` and the chart pass must:
+    //
+    //   1. preserve every chart chunk already collected from
+    //      earlier pages (don't propagate `?`, don't bare-`continue`
+    //      to neighbouring pages without flipping the
+    //      fully-processed flag), AND
+    //   2. flip `fully_processed = false` so the indexer stamps the
+    //      `partial:` sentinel on the `indexed_files` row and the
+    //      next scheduled scan re-runs the chart pass from scratch
+    //      (preserving the symmetry with the chart pass's other
+    //      error branches — `write_image_for_vlm` Err and
+    //      `describe_chart` Err both flip the flag too).
+    //
+    // Fixture: page 1 = valid 1600×1200 DCTDecode JPEG (a chart
+    // image — 1.33 ratio in the 4:3 ±10% band, both dimensions
+    // above the 400px minimum), page 2 = `Resources/XObject`
+    // references a missing `ObjectId` (lopdf returns
+    // `Err(ObjectNotFound)` from `get_page_images`).
+    let bytes = build_pdf_with_chart_then_broken_xobject_page();
+    let dir = write_pdf("chart-then-broken.pdf", &bytes);
+    let path = dir.path().join("chart-then-broken.pdf");
+
+    let stub = ChartStub::new("Bar chart: Q1 → Q4 rising.", "test-chart-vlm-broken");
+    let limiter = PdfOcrRateLimiter::with_budget(10, Duration::from_secs(60));
+
+    let outcome = vlm_chart_chunks_for_pdf(&stub, &path, &limiter, 0).expect(
+        "chart pass must succeed end-to-end despite the broken page — the page-local match/continue handler must not abort the whole pass",
+    );
+
+    assert_eq!(
+        outcome.chunks.len(),
+        1,
+        "page 1's chart chunk must survive page 2's `get_page_images` failure; chunks: {:?}",
+        outcome.chunks
+    );
+    assert_eq!(outcome.chunks[0].content, "Bar chart: Q1 → Q4 rising.");
+    assert_eq!(
+        outcome.chunks[0].extraction_method,
+        Some(ExtractionMethod::VlmChart)
+    );
+    assert!(
+        !outcome.fully_processed,
+        "page 2's `get_page_images` failure must flip fully_processed=false so the indexer stamps the `partial:` sentinel and retries the chart pass on the next scan (symmetric with `write_image_for_vlm` / `describe_chart` Err branches)"
+    );
+    assert_eq!(
+        stub.chart_call_count(),
+        1,
+        "`describe_chart` must be invoked exactly once — for page 1's chart — and page 2's broken `get_page_images` must be handled before reaching the VLM call"
     );
 }
 
