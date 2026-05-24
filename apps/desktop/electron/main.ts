@@ -725,9 +725,24 @@ export async function handleWillQuit(
 }
 
 app.on("will-quit", (event) => {
-  void handleWillQuit(event, {
+  // Attach a `.catch()` so an exception thrown inside `handleWillQuit`
+  // (the pathological "logger throws inside the scheduler catch" case
+  // pinned by `willQuit.test.ts`'s
+  // "calls app.quit() even when a logger inside the scheduler catch throws"
+  // test) doesn't surface as an `unhandledRejection`. The outer
+  // `try { … } finally { deps.quit() }` inside `handleWillQuit`
+  // guarantees `app.quit()` has already fired by the time control
+  // reaches this `.catch()`, so the process is on its way out
+  // anyway — we just log the original error so a post-mortem can
+  // see what broke. Using `void` alone would let the rejection
+  // bubble up to `process.on("unhandledRejection")` (registered at
+  // `main.ts:31`), which is functionally equivalent but produces
+  // a noisier log line right at shutdown.
+  handleWillQuit(event, {
     stopScheduler,
     stopAllSidecars,
     quit: () => app.quit(),
+  }).catch((e) => {
+    console.error("[tessera] handleWillQuit rejected during quit:", e);
   });
 });

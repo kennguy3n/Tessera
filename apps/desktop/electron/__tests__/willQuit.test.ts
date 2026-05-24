@@ -334,10 +334,15 @@ describe("handleWillQuit", () => {
       });
 
     const { event } = makeEvent();
-    // `handleWillQuit` must NOT reject — the outer finally swallows
-    // the logger throw via `deps.quit()` running on the way out.
-    // (The throw will still bubble out of the function after the
-    // finally runs, but the contract is "app.quit() always fires".)
+    // `handleWillQuit` WILL reject with the logger's error — JS
+    // `finally` doesn't swallow exceptions, it just guarantees the
+    // `finally` body runs and then re-throws whatever was in flight.
+    // The contract this test pins is NOT "no rejection" — it's
+    // "`deps.quit()` still fires before the rejection propagates".
+    // The `.rejects.toThrow("logger broke")` matcher below asserts
+    // the rejection escapes the function (so any caller using
+    // `.catch()` can still observe and log it); the `expect(quit)`
+    // matcher further down asserts the outer finally fired first.
     await expect(
       handleWillQuit(event, { stopScheduler, stopAllSidecars, quit }),
     ).rejects.toThrow("logger broke");
