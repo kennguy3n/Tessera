@@ -292,6 +292,62 @@ impl Indexer {
         let file_id =
             store.upsert_indexed_file(source_id, &path_str, &file_hash, &last_modified)?;
 
+        // From here on, the row's hash is already stamped with the
+        // raw `file_hash`. Every subsequent error path between
+        // `upsert_indexed_file` above and the final `Ok(...)` below
+        // therefore needs to flip the row to the `partial:` sentinel
+        // before propagating — otherwise the next `index_file` call
+        // would short-circuit on hash match and the file would be
+        // permanently skipped with no chunks. Devin Review pass-10
+        // 🚩 finding flagged this for `extract_text(path)?` (line
+        // ~351) specifically, but the same bug class applies to
+        // every `?` between here and the function tail (most notably
+        // `insert_chunks_returning_ids` after the chunk-vector is
+        // built). The architecturally correct fix is to trap any
+        // `Err` from the post-upsert body in one place — a single
+        // `match` on a helper method that holds the full extraction
+        // pipeline — rather than sprinkling per-`?` recovery shims
+        // throughout the function.
+        match self.index_file_after_hash_stamp(file_id, path, store, progress_slot) {
+            Ok(outcome) => Ok(outcome),
+            Err(e) => {
+                // Stamp `partial:HEX` so the row's stored hash no
+                // longer matches the raw content hash. The next pass
+                // sees the mismatch, `upsert_indexed_file` deletes the
+                // (likely empty) chunk set, and the full extraction
+                // pipeline retries from scratch. Errors from
+                // `mark_file_needs_reindex` itself (typically a DB
+                // write failure) are logged but swallowed — the
+                // caller still needs the original `e` to know what
+                // failed, and a DB-write failure here would also
+                // affect the caller's downstream attempts to record
+                // the failure.
+                if let Err(stamp_err) = store.mark_file_needs_reindex(file_id) {
+                    eprintln!(
+                        "[tessera_sources] failed to stamp partial sentinel for {} after extraction error: {stamp_err}",
+                        path.display()
+                    );
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Post-upsert body of `index_file`. Separated out so a single
+    /// error trap in the caller can ensure every failure path between
+    /// the hash stamp and the final `Ok` also flips the row to the
+    /// `partial:` sentinel — preventing the pre-existing
+    /// hash-stamp-before-chunks bug class where a transient
+    /// extraction or chunk-insert failure would permanently skip the
+    /// file on subsequent passes.
+    fn index_file_after_hash_stamp(
+        &self,
+        file_id: i64,
+        path: &Path,
+        store: &SourceStore,
+        progress_slot: Option<&Arc<Mutex<ProgressSnapshot>>>,
+    ) -> Result<IndexFileOutcome> {
+        let path_str = path.to_string_lossy().to_string();
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -1538,6 +1594,68 @@ mod tests {
                 "failed VLM should not leave behind a tagged chunk"
             );
         }
+    }
+
+    #[test]
+    fn index_file_text_extraction_failure_stamps_partial_sentinel() {
+        // Devin Review pass-10 🚩 regression guard: the pre-existing
+        // hash-stamp-before-chunks design in `index_file` left a
+        // gap where a transient `extract_text` failure (file locked,
+        // unreadable, unsupported / corrupt) would leave the row
+        // with the raw BLAKE3 hash already stamped but zero chunks
+        // inserted — the next pass would short-circuit on hash
+        // match and the file would be permanently skipped. The fix
+        // wraps the post-`upsert_indexed_file` body in an error
+        // trap that stamps the `partial:` sentinel on any failure
+        // path; the next pass sees the mismatch and re-runs the
+        // full pipeline.
+        let dir = tempfile::tempdir().unwrap();
+        let bad_path = dir.path().join("doc.xyz");
+        std::fs::write(&bad_path, b"this extension is unsupported by extract_text").unwrap();
+
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder(dir.path().to_string_lossy().to_string());
+        store.add_source(&source).unwrap();
+
+        let indexer = Indexer::default();
+        // `index_single_file` bypasses the `is_supported_extension`
+        // gate that `index_folder` applies in its walk, so the
+        // unsupported `.xyz` file makes it all the way down to
+        // `extract_text(path)?`, which returns
+        // `Error::Extraction { message: "unsupported file type: .xyz" }`.
+        let outcome = indexer.index_single_file(&source.id, &bad_path, &store);
+        assert!(
+            outcome.is_err(),
+            "extract_text failure must propagate to the caller; got {outcome:?}"
+        );
+
+        let stored = store
+            .get_file_hash(&bad_path.to_string_lossy())
+            .unwrap()
+            .expect("indexed_files row must exist — upsert ran before extraction failed");
+        assert!(
+            stored.starts_with("partial:"),
+            "extract_text failure must stamp partial sentinel so the next pass retries; got hash={stored}"
+        );
+
+        // Sanity check the retry contract: with a clean indexer, a
+        // second `index_single_file` call still errors (the file
+        // type is still unsupported), but the partial sentinel
+        // persists — never escalating to the raw hash — so a future
+        // fix that supports `.xyz` would naturally re-extract.
+        let second = indexer.index_single_file(&source.id, &bad_path, &store);
+        assert!(
+            second.is_err(),
+            "second pass on still-unsupported file must still error"
+        );
+        let stored_again = store
+            .get_file_hash(&bad_path.to_string_lossy())
+            .unwrap()
+            .expect("row must still exist after second failed pass");
+        assert!(
+            stored_again.starts_with("partial:"),
+            "row must remain `partial:` across repeated failures; got hash={stored_again}"
+        );
     }
 
     #[test]
