@@ -351,16 +351,29 @@ export type ExternalProviderTestResult =
  *
  * - `ok: true, models: string[]`: at least one model id was
  *   returned. Sorted alphabetically by id for stable display.
- * - `ok: false, kind: "unsupported"`: the configured provider does
- *   not expose a models endpoint (Anthropic). The renderer should
- *   gracefully degrade to the manual text input.
- * - `ok: false, kind: "error", error: string`: network or HTTP
- *   error. The renderer should surface the message and keep the
- *   manual text input.
+ * - `ok: false, kind: "unsupported"`: the configured provider type
+ *   does not expose a models endpoint AT ALL (Anthropic — the
+ *   Messages API has no `/v1/models` analogue). The renderer
+ *   should gracefully degrade to the manual text input.
+ * - `ok: false, kind: "endpoint_not_found", url: string`: the
+ *   provider type supports the schema in principle, but THIS
+ *   provider's deployment returned HTTP 404 at the `/v1/models`
+ *   URL. This is the common case for custom self-hosted shims
+ *   that implement chat completions without the models discovery
+ *   endpoint (e.g. older llama-server builds, minimal proxies).
+ *   Distinguished from the generic `error` variant so the renderer
+ *   can show a hint that points the user at the manual text input
+ *   instead of treating it as a transient failure they should
+ *   retry. The `url` is the exact endpoint the renderer attempted
+ *   so the user can verify the deployment exposes it.
+ * - `ok: false, kind: "error", error: string`: network or
+ *   non-404 HTTP error. The renderer should surface the message
+ *   and keep the manual text input.
  */
 export type ExternalProviderListModelsResult =
   | { ok: true; models: string[] }
   | { ok: false; kind: "unsupported" }
+  | { ok: false; kind: "endpoint_not_found"; url: string }
   | { ok: false; kind: "error"; error: string };
 
 /**

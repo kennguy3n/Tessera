@@ -104,6 +104,74 @@ describe("listExternalProviderModels — OpenAI-compatible", () => {
     });
   });
 
+  it("narrows HTTP 404 to kind: endpoint_not_found with the attempted url (custom self-hosted shim case)", async () => {
+    // A custom provider's deployment that implements chat completions
+    // without the /v1/models discovery endpoint returns 404. The
+    // generic `kind: error, error: HTTP 404` would read as a transient
+    // failure to the user — the renderer needs the typed
+    // `endpoint_not_found` so it can show a "use manual entry" hint.
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("<html>not found</html>", {
+        status: 404,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+    const result = await listExternalProviderModels(
+      mkProvider({
+        providerType: "custom",
+        apiUrl: "http://localhost:9000/v1/chat/completions",
+      }),
+      "sk",
+    );
+    expect(result).toEqual({
+      ok: false,
+      kind: "endpoint_not_found",
+      url: "http://localhost:9000/v1/models",
+    });
+  });
+
+  it("includes the attempted url unmodified when the user pasted a bare /v1 base", async () => {
+    // The `stripBareV1Suffix` normaliser in `externalProviderStream.ts`
+    // turns `https://host/llm/v1` into `https://host/llm/v1/models`
+    // (not `…/v1/v1/models`). The `endpoint_not_found` URL we surface
+    // to the user must be the same URL we actually attempted, so the
+    // user can paste it into a `curl` to verify their deployment.
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("", { status: 404 }),
+    );
+    const result = await listExternalProviderModels(
+      mkProvider({
+        providerType: "openai_compatible",
+        apiUrl: "https://api.example.com/llm/v1",
+      }),
+      "sk",
+    );
+    expect(result).toEqual({
+      ok: false,
+      kind: "endpoint_not_found",
+      url: "https://api.example.com/llm/v1/models",
+    });
+  });
+
+  it("does NOT narrow HTTP 405 (method not allowed) to endpoint_not_found", async () => {
+    // Only HTTP 404 indicates "endpoint missing". A 405 means the URL
+    // exists but the method is rejected — that's a deployment config
+    // bug the user CAN fix by adjusting the upstream, so we keep the
+    // generic `kind: error` and surface the status so they see it.
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("Method Not Allowed", { status: 405 }),
+    );
+    const result = await listExternalProviderModels(mkProvider(), "sk");
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.kind === "error") {
+      expect(result.error).toMatch(/HTTP 405/);
+    } else {
+      throw new Error(
+        `expected kind: error for 405, got: ${JSON.stringify(result)}`,
+      );
+    }
+  });
+
   it("returns kind: error when the response shape lacks a data[] array", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(JSON.stringify({ object: "list" }), { status: 200 }),

@@ -346,6 +346,126 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     expect(button).toHaveAttribute("title", "Provide an API URL first");
   });
 
+  it("surfaces a 'use manual entry' hint with the attempted url when listModels returns kind: endpoint_not_found (typed-404 fix)", async () => {
+    // The custom-provider 404 path: a self-hosted shim that implements
+    // chat completions but not /v1/models. Before the typed
+    // `endpoint_not_found` variant the renderer fell into the generic
+    // `kind: error` branch and showed the raw "HTTP 404: <html>not
+    // found</html>" string, which reads as a transient failure the
+    // user should retry. The proper fix is a discriminated result
+    // variant whose renderer mapping points the user at the manual
+    // text input and includes the URL they can `curl` to verify their
+    // deployment.
+    const user = userEvent.setup();
+    const tessera = window.tessera;
+    tessera.externalProvider.get = vi.fn().mockResolvedValue({
+      enabled: true,
+      providerType: "custom",
+      apiUrl: "http://localhost:9000",
+      apiKeyRef: "tessera.external_provider.primary",
+      modelName: "",
+      maxTokens: 1024,
+      temperature: 0.7,
+      timeoutSecs: 60,
+      maxRetries: 2,
+      hasApiKey: true,
+    });
+    tessera.externalProvider.listModels = vi.fn().mockResolvedValue({
+      ok: false,
+      kind: "endpoint_not_found",
+      url: "http://localhost:9000/v1/models",
+    });
+
+    render(<ExternalProviderCard />);
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText("Fetch available models from this provider"),
+      ).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByLabelText("Fetch available models from this provider"),
+    );
+
+    // The user-facing message must include the URL that was
+    // attempted (so they can verify their deployment with curl) and
+    // the explicit "enter manually" hint (so they don't think this
+    // is a transient retry-this failure). The status pill renders
+    // the full message in a single DOM node, so a substring match
+    // against both halves of the text is sufficient.
+    await waitFor(() => {
+      const status = screen.getByText(
+        /This provider does not expose a model listing endpoint/,
+      );
+      expect(status).toBeInTheDocument();
+      expect(status.textContent).toContain(
+        "http://localhost:9000/v1/models",
+      );
+      expect(status.textContent).toContain("Enter the model name manually");
+    });
+
+    // The dropdown must NOT have appeared — endpoint_not_found is a
+    // failure path that keeps the user on the manual text input.
+    // The Model name input keeps its text-input form (not a <select>).
+    // We check `tagName` rather than `type=text` because the JSX
+    // omits the attribute (HTML defaults `<input>` to text), so the
+    // attribute is structurally absent on the rendered node.
+    const modelInput = screen.getByLabelText("Model name");
+    expect(modelInput.tagName).toBe("INPUT");
+  });
+
+  it("does NOT mention the URL for the kind: unsupported branch (Anthropic-only manual-entry hint)", async () => {
+    // Symmetric to the endpoint_not_found test above: the Anthropic
+    // path has no URL the user could possibly hit to make listing
+    // work, so the renderer message must NOT include a URL — only
+    // the "use manual entry" hint. This pins the discriminator
+    // semantics: unsupported = provider type lacks the endpoint at
+    // all; endpoint_not_found = this deployment lacks it.
+    const user = userEvent.setup();
+    const tessera = window.tessera;
+    tessera.externalProvider.get = vi.fn().mockResolvedValue({
+      enabled: true,
+      providerType: "openai_compatible",
+      apiUrl: "https://api.openai.com",
+      apiKeyRef: "tessera.external_provider.primary",
+      modelName: "",
+      maxTokens: 1024,
+      temperature: 0.7,
+      timeoutSecs: 60,
+      maxRetries: 2,
+      hasApiKey: true,
+    });
+    tessera.externalProvider.listModels = vi
+      .fn()
+      .mockResolvedValue({ ok: false, kind: "unsupported" });
+
+    render(<ExternalProviderCard />);
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText("Fetch available models from this provider"),
+      ).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByLabelText("Fetch available models from this provider"),
+    );
+
+    let alertText: string | null = null;
+    await waitFor(() => {
+      const alert = screen.getByRole("alert");
+      alertText = alert.textContent;
+      expect(alertText).toMatch(
+        /Model listing is not available for this provider/,
+      );
+    });
+    // The unsupported message must NOT include a URL — the alert
+    // pill's full text is the entire user-facing surface for this
+    // failure mode, so substring-asserting against the alert text
+    // (rather than the broader DOM) gives us a precise pin without
+    // matching the unrelated `apiUrl` input value rendered nearby.
+    expect(alertText!).not.toMatch(/https?:\/\//);
+  });
+
   it("surfaces a deep failure from Test connection via setStatus instead of silently un-busying (round 14 ANALYSIS_001)", async () => {
     // Devin Review round 14 ANALYSIS_001 flagged that `onTest` was the
     // only handler in this file using `try/finally` instead of the

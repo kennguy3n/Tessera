@@ -150,10 +150,28 @@ export default function ExternalProviderCard() {
       if (result.ok) {
         setAvailableModels(result.models);
       } else if (result.kind === "unsupported") {
+        // The provider TYPE (Anthropic) has no `/v1/models` analogue
+        // in its API. The user's only path forward is manual entry —
+        // surface that directly without mentioning a URL because there
+        // is no URL that would work for this provider type.
         setStatus({
           kind: "error",
           message:
             "Model listing is not available for this provider — keep using the manual model name input.",
+        });
+      } else if (result.kind === "endpoint_not_found") {
+        // The provider type supports listing in principle, but THIS
+        // deployment (typically a self-hosted shim) returned 404 at
+        // the resolved URL. Show the URL we attempted so the user can
+        // verify the deployment exposes it, and point them at manual
+        // entry rather than letting them think a transient failure
+        // happened. This message is distinct from the `unsupported`
+        // branch because here the user might still be able to enable
+        // listing by deploying a different shim — the manual-entry
+        // fallback is interim, not permanent for this provider type.
+        setStatus({
+          kind: "error",
+          message: `This provider does not expose a model listing endpoint (404 at ${result.url}). Enter the model name manually below.`,
         });
       } else {
         setStatus({ kind: "error", message: result.error });
