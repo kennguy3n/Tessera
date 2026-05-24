@@ -588,22 +588,43 @@ export function registerSettingsHandlers(): void {
   );
 
   idempotentHandle("externalProvider:test", async () => {
-    const config = loadConfig();
-    const provider = config.externalProvider;
-    if (!provider || !provider.enabled) {
-      return { ok: false, error: "External provider is disabled" };
-    }
-    if (!provider.apiUrl.trim() || !provider.modelName.trim()) {
-      return { ok: false, error: "API URL and model name are required" };
-    }
-    if (!secretsVault.hasSecret(provider.apiKeyRef)) {
-      return { ok: false, error: "API key has not been stored" };
-    }
-    const apiKey = secretsVault.getSecret(provider.apiKeyRef);
-    if (!apiKey) {
-      return { ok: false, error: "API key has not been stored" };
-    }
+    // Wrap the entire handler body in try/catch so the rate-limit
+    // gate (which throws `RateLimitError`) and any unexpected
+    // failure are surfaced as the typed `{ ok: false, error }`
+    // shape the renderer expects. This matches the
+    // `externalProvider:listModels` handler's posture (added in
+    // PR #27 round 4) and closes the gap Devin Review on PR #29
+    // ANALYSIS_0003 flagged: the test handler makes the same kind
+    // of outbound HTTPS call as listModels (and arguably a more
+    // expensive one — chat completion vs. discovery) yet had no
+    // rate-limit gate, so leaving it ungated while limiting
+    // listModels would invert the protection priority.
     try {
+      // Rate-limit BEFORE any vault / config read so a flood of
+      // Test calls can't (a) hammer the OS keychain, (b) burn
+      // open-fd budget on the config file, or (c) trip upstream
+      // per-IP throttling at the provider with the user's
+      // authenticated key. Same posture as listModels (added in
+      // this PR commit `4f6dacf`).
+      defaultRateLimiter.consume(
+        "externalProvider:test",
+        RATE_LIMIT_PROFILES["externalProvider:test"],
+      );
+      const config = loadConfig();
+      const provider = config.externalProvider;
+      if (!provider || !provider.enabled) {
+        return { ok: false, error: "External provider is disabled" };
+      }
+      if (!provider.apiUrl.trim() || !provider.modelName.trim()) {
+        return { ok: false, error: "API URL and model name are required" };
+      }
+      if (!secretsVault.hasSecret(provider.apiKeyRef)) {
+        return { ok: false, error: "API key has not been stored" };
+      }
+      const apiKey = secretsVault.getSecret(provider.apiKeyRef);
+      if (!apiKey) {
+        return { ok: false, error: "API key has not been stored" };
+      }
       const result = await testExternalProviderConnection(provider, apiKey);
       return result;
     } catch (e) {
