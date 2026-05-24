@@ -1,9 +1,9 @@
 /**
  * Regression tests for the CSP `img-src` allow-list in
- * `electron/cspImageSources.ts`. The point of these tests is to make
- * Pins a regression — accidentally re-introducing the `https:` wildcard or
- * dropping a connector's CDN — show up as a red CI rather than as a
- * post-merge bug report.
+ * `electron/cspImageSources.ts`. The point of these tests is to
+ * make a regression — accidentally re-introducing the `https:`
+ * wildcard or dropping a connector's CDN — show up as a red CI
+ * rather than as a post-merge bug report.
  */
 
 import { describe, expect, it } from "vitest";

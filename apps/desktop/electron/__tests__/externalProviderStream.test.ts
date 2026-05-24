@@ -1093,14 +1093,13 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
   });
 
   it("user-cancel mid-stream aborts the body reader", async () => {
-    // Pins a regression: after the
-    // per-attempt-timeout refactor split fetch onto a per-attempt
-    // `AbortController`, `openExternalProviderStream`'s `finally`
-    // block detached the user-cancel forwarder as soon as the body
-    // opened. The body reader was bound to the per-attempt signal,
-    // and the user's outer signal was never reconnected — so
-    // clicking "Stop generating" after tokens started flowing did
-    // nothing.
+    // Pins a regression that emerged after the per-attempt-timeout
+    // refactor split fetch onto a per-attempt `AbortController`:
+    // `openExternalProviderStream`'s `finally` block detached the
+    // user-cancel forwarder as soon as the body opened. The body
+    // reader was bound to the per-attempt signal, and the user's
+    // outer signal was never reconnected — so clicking "Stop
+    // generating" after tokens started flowing did nothing.
     //
     // The fix transfers listener ownership to the caller via
     // `cleanupBodyForwarder()`, returned in the OpenedResponse. This
