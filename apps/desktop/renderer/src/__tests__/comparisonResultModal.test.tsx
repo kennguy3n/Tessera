@@ -1,4 +1,12 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  type MockInstance,
+} from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import ComparisonResultModal, {
@@ -286,23 +294,37 @@ describe("sanitizeForFilename", () => {
     const longLabel = "a".repeat(120);
     expect(sanitizeForFilename(longLabel).length).toBeLessThanOrEqual(60);
   });
+
+  it("re-strips trailing dashes that survive the length cap", () => {
+    // Regression: a label like "aaa<bbb<ccc<..." (60+ chars of
+    // alternating alpha + reserved char) collapses to
+    // "aaa-bbb-ccc-..." which after a 60-byte slice could end on a
+    // dash. The sanitizer must re-trim trailing dashes AFTER the
+    // length cap so the resulting filename never has a dot-or-dash
+    // ending that file pickers render as broken.
+    const label = "ab<".repeat(30); // 90 chars → collapses to "ab-ab-ab-..."
+    const result = sanitizeForFilename(label);
+    expect(result.endsWith("-")).toBe(false);
+    expect(result.startsWith("-")).toBe(false);
+    expect(result.length).toBeLessThanOrEqual(60);
+  });
 });
 
 describe("downloadMarkdown", () => {
-  // The spy types are inferred from `vi.spyOn(...)` so we accept any
-  // shape here — strongly typing each `MockInstance` is noisy and
-  // doesn't add coverage beyond what the assertions already pin.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let createObjectURLSpy: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let revokeObjectURLSpy: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let appendSpy: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let removeSpy: any;
+  // Use vitest's `MockInstance<Args, Return>` (tuple-Args form)
+  // directly instead of `any` to comply with CONTRIBUTING.md's
+  // "no any types" rule. The Args tuple mirrors each Web API
+  // signature exactly so the `mockRestore()` / `.toHaveBeenCalled*`
+  // chain calls typecheck without further casting.
+  let createObjectURLSpy: MockInstance<[obj: Blob | MediaSource], string>;
+  let revokeObjectURLSpy: MockInstance<[url: string], void>;
+  let appendSpy: MockInstance<[node: Node], Node>;
+  let removeSpy: MockInstance<[child: Node], Node>;
   let clickedAnchors: HTMLAnchorElement[] = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let createElSpy: any;
+  let createElSpy: MockInstance<
+    [tagName: string, options?: ElementCreationOptions],
+    HTMLElement
+  >;
 
   beforeEach(() => {
     clickedAnchors = [];

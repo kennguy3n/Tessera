@@ -199,9 +199,7 @@ impl AuditLogger {
     ) -> Result<()> {
         self.log(
             AuditEventType::TemplateValidationFailed,
-            format!(
-                "Template load failure: kind={kind} path={template_path} error={error}"
-            ),
+            format!("Template load failure: kind={kind} path={template_path} error={error}"),
         )
     }
 

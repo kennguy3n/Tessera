@@ -83,7 +83,12 @@ fn list_templates_inner(
         }
     }
 
-    let templates = result.registry.list().iter().map(template_to_info).collect();
+    let templates = result
+        .registry
+        .list()
+        .iter()
+        .map(template_to_info)
+        .collect();
 
     Ok(templates)
 }
@@ -499,8 +504,7 @@ export:
 
         let audit = AuditLogger::new_in_memory().unwrap();
         let result =
-            get_template_with_audit(dir.path().to_str().unwrap(), "no-such-id-v1", &audit)
-                .unwrap();
+            get_template_with_audit(dir.path().to_str().unwrap(), "no-such-id-v1", &audit).unwrap();
         assert!(result.is_none());
 
         let rows = audit

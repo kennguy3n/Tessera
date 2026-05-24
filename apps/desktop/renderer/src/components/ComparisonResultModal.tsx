@@ -266,6 +266,11 @@ export function sanitizeForFilename(label: string): string {
     .replace(reservedOrWhitespace, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
-  const trimmed = stripped.slice(0, 60);
+  // Re-strip trailing dashes after the length cap so a label that
+  // produces "foo-bar-baz-..." longer than 60 characters can't leave
+  // a trailing dash at position 60 (cosmetic, but a dot/dash-final
+  // filename looks broken in file pickers). Trimming both ends keeps
+  // the empty-result branch reachable for purely-stripped inputs.
+  const trimmed = stripped.slice(0, 60).replace(/^-+|-+$/g, "");
   return trimmed.length === 0 ? "source" : trimmed;
 }

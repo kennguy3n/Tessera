@@ -1119,10 +1119,7 @@ mod compare_label_tests {
 
     #[test]
     fn friendly_source_label_handles_windows_backslash() {
-        assert_eq!(
-            friendly_source_label("C:\\Users\\user\\docs"),
-            "docs"
-        );
+        assert_eq!(friendly_source_label("C:\\Users\\user\\docs"), "docs");
     }
 
     #[test]
