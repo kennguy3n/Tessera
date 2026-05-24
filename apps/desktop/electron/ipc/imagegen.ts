@@ -52,6 +52,7 @@ import {
   getDiffusionSidecar,
   isBridgeAvailable,
 } from "../appState";
+import { pathToAssetUrl } from "../assetProtocol";
 
 function userDataDir(): string {
   return app.getPath("userData");
@@ -204,6 +205,16 @@ function nowIsoForFile(): string {
 export interface ImageGenResult {
   /** Absolute path to the written PNG. */
   path: string;
+  /**
+   * `tessera-asset://` URL the renderer can drop directly into
+   * `<img src>`. Always set when the PNG was written under
+   * `<userData>/generated-images/` (the only path the handler
+   * writes to). Derived from `path` via `pathToAssetUrl` so the
+   * renderer never has to compute it itself — the renderer has
+   * no access to `<userData>` and can’t turn an absolute path
+   * into a protocol URL on its own.
+   */
+  assetUrl: string;
   /** Seed sd-server actually used. */
   seed: number;
   /** Width / height as resolved (echoes the request). */
@@ -355,8 +366,23 @@ export function registerImagegenHandlers(): void {
         await fsp.writeFile(outPath, result.pngBytes);
 
         const stat = await fsp.stat(outPath);
+        // Compute the asset URL inside the main process — the
+        // renderer has no userData path and cannot build this
+        // string itself. `pathToAssetUrl` re-runs the same
+        // prefix check the IPC handler already enforced above
+        // (`artifactDir` strictly under `generatedRoot`), so a
+        // null return here would indicate a logic bug rather
+        // than untrusted input: throw rather than silently
+        // shipping an empty URL to the renderer.
+        const assetUrl = pathToAssetUrl(outPath, userDataDir());
+        if (assetUrl === null) {
+          throw new Error(
+            "Internal error: generated image path is not under generated-images/ \u2014 refusing to return an unrouteable assetUrl",
+          );
+        }
         return {
           path: outPath,
+          assetUrl,
           seed: seedNum,
           width: input.width,
           height: input.height,

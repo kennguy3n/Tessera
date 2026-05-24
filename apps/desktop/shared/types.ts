@@ -1163,6 +1163,15 @@ export interface ImagegenApi {
     sectionIndex?: number;
   }) => Promise<{
     path: string;
+    /**
+     * `tessera-asset://` URL the renderer can drop directly into
+     * `<img src>`. Always present when the IPC returns successfully
+     * (the main-process handler refuses to ship a result whose
+     * `path` is outside `<userData>/generated-images/`, so this
+     * field is never empty in practice). The renderer never
+     * computes this itself — it has no `<userData>` reference.
+     */
+    assetUrl: string;
     seed: number;
     width: number;
     height: number;

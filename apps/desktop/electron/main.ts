@@ -10,10 +10,25 @@ import { getLogger } from "./logger";
 import { initAutoUpdater } from "./autoUpdater";
 import { cspImageSources } from "./cspImageSources";
 import {
+  registerAssetProtocolScheme,
+  registerAssetProtocolHandler,
+  TESSERA_ASSET_SCHEME,
+} from "./assetProtocol";
+import {
   initPasswordVaultIfNeeded,
   passwordVaultSaltExists,
   VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE,
 } from "./passwordVault";
+
+// `tessera-asset://` must be registered as a privileged scheme
+// BEFORE `app.whenReady` fires — Electron's
+// `protocol.registerSchemesAsPrivileged` is a one-shot, ready-state
+// gated API. Doing it at module top-level (synchronously, after the
+// imports above) puts the call ahead of the `whenReady` chain at the
+// bottom of this file. The actual request handler (`protocol.handle`)
+// is registered later inside the `whenReady` callback, after the
+// user-data directory is known.
+registerAssetProtocolScheme();
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -84,7 +99,18 @@ function installContentSecurityPolicy(): void {
           // image hosts that don't belong to a connected provider
           // are blocked. Scripts and connect-src remain locked to
           // 'self', so this only narrows the previous policy.
-          `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: ${cspImageSources.join(" ")}; ${connectSrc}`,
+          // `tessera-asset:` is the custom protocol registered by
+          // `assetProtocol.ts` that serves files under
+          // `<userData>/generated-images/` — i.e. the destination
+          // directory the `imagegen:generate` IPC writes to. Adding
+          // it to `img-src` lets the editors' generated-image
+          // previews render the SDXL output via `<img
+          // src="tessera-asset://generated-images/<artifactId>/<file>">`
+          // without falling back to a multi-megabyte base64 data URL
+          // in the artifact JSON state. The protocol handler enforces
+          // a strict prefix check so this `img-src` widening cannot
+          // be abused to read arbitrary disk paths.
+          `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: ${TESSERA_ASSET_SCHEME}: ${cspImageSources.join(" ")}; ${connectSrc}`,
         ],
       },
     });
@@ -433,6 +459,13 @@ app.whenReady().then(async () => {
   // every page load — not just for windows created after the main
   // app shell. See `installContentSecurityPolicy` for rationale.
   installContentSecurityPolicy();
+  // Wire up the `tessera-asset://` request handler so the renderer
+  // can load files under `<userData>/generated-images/` via
+  // `<img src="tessera-asset://generated-images/<artifactId>/<file>">`.
+  // Registered AFTER the CSP handler (so the CSP is in place for
+  // the very first load) and BEFORE any window is created (so the
+  // first paint of the main window already has the protocol live).
+  registerAssetProtocolHandler(app.getPath("userData"));
   // Surface CSP violations to the main-process log so users who
   // never open devtools can still discover why their pasted image
   // URL was blocked. See `installCSPDevtoolsLogger` for rationale.

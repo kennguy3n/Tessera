@@ -21,6 +21,9 @@
  */
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import IconPicker, { type IconPickerValue } from "../components/IconPicker";
+import GenerateImageButton, {
+  type GenerateImageResult,
+} from "../components/GenerateImageButton";
 import { embedIcons } from "../services/iconResolver";
 import { sanitizeCssColor } from "../utils/cssColor";
 import { sanitizeIconSpec } from "../utils/iconSpec";
@@ -55,6 +58,23 @@ export interface InfographicColorScheme {
   accent?: string;
 }
 
+/**
+ * Optional generated hero image. Persisted alongside the rest of
+ * the infographic spec so the editor can re-render the preview on
+ * load without re-running `tessera.imagegen.generate`. The body of
+ * the field is intentionally minimal — the renderer only needs
+ * `assetUrl` to drop into `<img src>`; the `prompt` and `seed` are
+ * kept for the user's reference ("what prompt produced this?") and
+ * for a future regenerate-with-same-seed affordance.
+ */
+export interface InfographicHeroImage {
+  assetUrl: string;
+  prompt: string;
+  seed: number;
+  width: number;
+  height: number;
+}
+
 export interface InfographicContent {
   title: string;
   subtitle?: string;
@@ -62,6 +82,7 @@ export interface InfographicContent {
   colorScheme: InfographicColorScheme;
   defaultIconSet?: "lucide" | "phosphor";
   sections: InfographicSection[];
+  heroImage?: InfographicHeroImage;
 }
 
 interface InfographicEditorProps {
@@ -70,6 +91,15 @@ interface InfographicEditorProps {
   /** See SheetEditor.onDraftChange — published synchronously on every edit. */
   onDraftChange?: (content: string) => void;
   autoSaveMs?: number;
+  /**
+   * The owning artifact's id — threaded into the imagegen IPC so
+   * generated hero images land in
+   * `<userData>/generated-images/<artifactId>/`. Optional because
+   * existing tests that drive the editor directly (without going
+   * through `ArtifactEditorPage`) shouldn't have to construct a
+   * fake id; the hero-image UI is hidden when no id is supplied.
+   */
+  artifactId?: string;
 }
 
 const DEFAULT_PRIMARY = "#7C3AED";
@@ -106,6 +136,7 @@ export function parseInfographicContent(content: string): InfographicContent {
         },
         defaultIconSet: parsed.defaultIconSet ?? "lucide",
         sections: parsed.sections.length > 0 ? parsed.sections : fallback.sections,
+        heroImage: sanitizeHeroImage(parsed.heroImage),
       };
     }
   } catch {
@@ -118,11 +149,52 @@ function iconSpecFromPick(v: IconPickerValue): string {
   return `${v.set}:${v.name}`;
 }
 
+/**
+ * Validate a parsed `heroImage` payload from the on-disk JSON.
+ * Returns `undefined` (drop the field) when the payload is not a
+ * complete object — a half-formed hero image would render a broken
+ * `<img>` in the preview and we'd rather hide the field entirely.
+ *
+ * The `assetUrl` is also gated on starting with the
+ * `tessera-asset://` scheme. A future code path that somehow
+ * persisted a `file://` or `http://` URL here would otherwise let
+ * the renderer load the unexpected resource on next open — not a
+ * security issue in itself (the renderer's CSP allow-list is the
+ * real boundary), but the wrong URL would silently fail to render
+ * and the user would have no way to know why. Better to drop the
+ * field and surface the Generate button again so the user can
+ * regenerate cleanly.
+ */
+function sanitizeHeroImage(
+  raw: unknown,
+): InfographicHeroImage | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  if (
+    typeof r.assetUrl !== "string" ||
+    !r.assetUrl.startsWith("tessera-asset://") ||
+    typeof r.prompt !== "string" ||
+    typeof r.seed !== "number" ||
+    typeof r.width !== "number" ||
+    typeof r.height !== "number"
+  ) {
+    return undefined;
+  }
+  return {
+    assetUrl: r.assetUrl,
+    prompt: r.prompt,
+    seed: r.seed,
+    width: r.width,
+    height: r.height,
+  };
+}
+
 export default function InfographicEditor({
   content,
   onSave,
   onDraftChange,
   autoSaveMs = 2000,
+  artifactId,
 }: InfographicEditorProps) {
   const [data, setData] = useState<InfographicContent>(() =>
     parseInfographicContent(content),
@@ -212,6 +284,39 @@ export default function InfographicEditor({
     });
   };
 
+  const onHeroImageGenerated = useCallback(
+    (result: GenerateImageResult) => {
+      // Persist exactly the fields we need to re-render later — we
+      // deliberately do NOT store the absolute on-disk `path` in
+      // the artifact JSON because the path is main-process state
+      // (it includes the user's home directory) and would break
+      // across machines on artifact sync.
+      setData((prev) => {
+        const next: InfographicContent = {
+          ...prev,
+          heroImage: {
+            assetUrl: result.assetUrl,
+            prompt: result.prompt,
+            seed: result.seed,
+            width: result.width,
+            height: result.height,
+          },
+        };
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  const clearHeroImage = useCallback(() => {
+    setData((prev) => {
+      const next: InfographicContent = { ...prev, heroImage: undefined };
+      debouncedSave(next);
+      return next;
+    });
+  }, [debouncedSave]);
+
   const previewHtml = useMemo(() => buildPreviewHtml(data), [data]);
 
   return (
@@ -231,6 +336,41 @@ export default function InfographicEditor({
           placeholder="Subtitle (optional)"
           className="infographic-subtitle-input"
         />
+        {artifactId && (
+          <div className="infographic-hero-image">
+            <h3>Hero image</h3>
+            {data.heroImage ? (
+              <div
+                className="infographic-hero-image-preview"
+                data-testid="infographic-hero-image-preview"
+              >
+                <img
+                  src={data.heroImage.assetUrl}
+                  alt={`Hero image for ${data.title}`}
+                  width={data.heroImage.width}
+                  height={data.heroImage.height}
+                />
+                <button
+                  type="button"
+                  onClick={clearHeroImage}
+                  aria-label="Remove hero image"
+                >
+                  <Trash2 size={16} /> Remove
+                </button>
+              </div>
+            ) : (
+              <GenerateImageButton
+                artifactId={artifactId}
+                initialPrompt={
+                  data.subtitle
+                    ? `Hero image for an infographic titled "${data.title}" — ${data.subtitle}`
+                    : `Hero image for an infographic titled "${data.title}"`
+                }
+                onGenerated={onHeroImageGenerated}
+              />
+            )}
+          </div>
+        )}
         <div className="infographic-toolbar-row">
           <label>
             Layout:
@@ -462,11 +602,25 @@ export function buildPreviewHtml(data: InfographicContent): string {
     })
     .join("\n");
 
+  // Hero image (optional). The `assetUrl` was already validated to
+  // start with `tessera-asset://` by `sanitizeHeroImage`, but the
+  // value is still user-derived (the IPC handler returns the URL
+  // and the editor persists it verbatim) so we HTML-escape it
+  // before interpolating into the `src` attribute as belt-and-
+  // braces. Width/height are written to the DOM so the layout
+  // doesn't reflow when the image finishes decoding.
+  const heroHtml = data.heroImage
+    ? `<figure class="infographic-hero">
+  <img src="${escapeHtml(data.heroImage.assetUrl)}" alt="${escapeHtml(data.title)}" width="${data.heroImage.width}" height="${data.heroImage.height}" />
+</figure>`
+    : "";
+
   const html = `<div class="infographic ${layoutClass}" style="--igc-primary:${primary};--igc-secondary:${secondary};--igc-accent:${accent};">
   <header class="infographic-header">
     <h1>${escapeHtml(data.title)}</h1>
     ${data.subtitle ? `<p class="infographic-subtitle">${escapeHtml(data.subtitle)}</p>` : ""}
   </header>
+  ${heroHtml}
   <div class="infographic-grid">
     ${sectionsHtml}
   </div>

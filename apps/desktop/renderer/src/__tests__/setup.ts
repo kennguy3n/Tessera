@@ -439,6 +439,12 @@ const mockApi = {
     isAvailable: vi.fn().mockResolvedValue(false),
     generate: vi.fn().mockResolvedValue({
       path: "/mock/generated.png",
+      // Mirrors the real IPC contract — the handler refuses to
+      // ship a result whose path is outside
+      // `<userData>/generated-images/`, so `assetUrl` is always
+      // present on a successful generate. Tests that need to
+      // assert on the URL value flip this with `vi.spyOn`.
+      assetUrl: "tessera-asset://generated-images/mock/generated.png",
       seed: 0,
       width: 1024,
       height: 1024,

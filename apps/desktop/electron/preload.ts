@@ -332,9 +332,13 @@ const api: TesseraApi = {
     isAvailable: (): Promise<boolean> =>
       ipcRenderer.invoke("imagegen:isAvailable"),
     // Returns a structured result the renderer can persist without
-    // re-reading the file: { path, seed, width, height, durationMs,
-    // sizeBytes }. The main process keeps the actual PNG bytes — it
-    // owns the on-disk path under userData.
+    // re-reading the file: { path, assetUrl, seed, width, height,
+    // durationMs, sizeBytes }. The `assetUrl` field is a
+    // `tessera-asset://` URL the renderer drops directly into
+    // `<img src>` — see `assetProtocol.ts` for the protocol
+    // contract. The main process keeps the actual PNG bytes — it
+    // owns the on-disk path under userData and the renderer has no
+    // way to read absolute filesystem paths directly.
     generate: (req: {
       prompt: string;
       width: number;

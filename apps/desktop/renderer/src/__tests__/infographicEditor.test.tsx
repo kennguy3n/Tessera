@@ -1,5 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  render,
+  screen,
+  fireEvent,
+  act,
+  waitFor,
+} from "@testing-library/react";
 import InfographicEditor, {
   buildPreviewHtml,
   parseInfographicContent,
@@ -189,5 +195,233 @@ describe("InfographicEditor", () => {
     expect(screen.getByLabelText("Section 1 heading")).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Add section"));
     expect(screen.getByLabelText("Section 2 heading")).toBeInTheDocument();
+  });
+
+  it("hides the hero-image UI when no artifactId is supplied", () => {
+    // Tests that construct an editor without going through
+    // ArtifactEditorPage must not see the Generate-image affordance.
+    render(<InfographicEditor content="" onSave={() => {}} autoSaveMs={10} />);
+    expect(screen.queryByTestId("imagegen-button")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("imagegen-unavailable"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("InfographicEditor hero image", () => {
+  beforeEach(() => {
+    // Default mock from setup.ts has imagegen.isAvailable === false.
+    // Override per-test where needed.
+    vi.spyOn(window.tessera.imagegen, "isAvailable").mockResolvedValue(true);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows the unavailable banner when imagegen.isAvailable resolves false", async () => {
+    vi.spyOn(window.tessera.imagegen, "isAvailable").mockResolvedValue(false);
+    render(
+      <InfographicEditor
+        content=""
+        onSave={() => {}}
+        artifactId="artifact-001"
+        autoSaveMs={10}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("imagegen-unavailable")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("imagegen-button")).not.toBeInTheDocument();
+  });
+
+  it("shows the prompt + Generate button when imagegen.isAvailable resolves true", async () => {
+    render(
+      <InfographicEditor
+        content=""
+        onSave={() => {}}
+        artifactId="artifact-002"
+        autoSaveMs={10}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("imagegen-button")).toBeInTheDocument();
+    });
+    // Prompt is seeded from the default title.
+    expect(
+      (screen.getByLabelText("Image prompt") as HTMLTextAreaElement).value,
+    ).toContain("Untitled Infographic");
+  });
+
+  it("persists the generated assetUrl into the JSON on save", async () => {
+    const generate = vi
+      .spyOn(window.tessera.imagegen, "generate")
+      .mockResolvedValue({
+        path: "/mock/artifact-003/hero.png",
+        assetUrl: "tessera-asset://generated-images/artifact-003/hero.png",
+        seed: 42,
+        width: 1024,
+        height: 1024,
+        durationMs: 12345,
+        sizeBytes: 220000,
+      });
+    const onSave = vi.fn();
+    vi.useFakeTimers();
+    try {
+      render(
+        <InfographicEditor
+          content=""
+          onSave={onSave}
+          artifactId="artifact-003"
+          autoSaveMs={50}
+        />,
+      );
+      // Wait for isAvailable() to resolve and the button to render.
+      // The promise was queued before fake timers kicked in, so a
+      // microtask flush brings the component up.
+      await act(async () => {
+        await Promise.resolve();
+      });
+      // Edit the prompt and click Generate.
+      fireEvent.change(screen.getByLabelText("Image prompt"), {
+        target: { value: "Vibrant abstract gradient" },
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByLabelText("Generate image"));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      // Drain the autosave debounce.
+      act(() => {
+        vi.advanceTimersByTime(60);
+      });
+      expect(generate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: "Vibrant abstract gradient",
+          artifactId: "artifact-003",
+          width: 1024,
+          height: 1024,
+        }),
+      );
+      // The latest persisted JSON must include the heroImage payload
+      // with the bridge-returned assetUrl, seed, and dimensions.
+      const lastCall = onSave.mock.calls.at(-1) as [string];
+      const saved = JSON.parse(lastCall[0]);
+      expect(saved.heroImage).toEqual({
+        assetUrl: "tessera-asset://generated-images/artifact-003/hero.png",
+        prompt: "Vibrant abstract gradient",
+        seed: 42,
+        width: 1024,
+        height: 1024,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders the generated image as a preview and lets the user remove it", async () => {
+    const content = JSON.stringify({
+      title: "Existing Infographic",
+      layout: "vertical",
+      colorScheme: { primary: "#7C3AED" },
+      sections: [{ heading: "S", body: "B" }],
+      heroImage: {
+        assetUrl:
+          "tessera-asset://generated-images/artifact-004/old-hero.png",
+        prompt: "Old prompt",
+        seed: 7,
+        width: 1024,
+        height: 1024,
+      },
+    });
+    render(
+      <InfographicEditor
+        content={content}
+        onSave={() => {}}
+        artifactId="artifact-004"
+        autoSaveMs={10}
+      />,
+    );
+    const preview = await screen.findByTestId(
+      "infographic-hero-image-preview",
+    );
+    const img = preview.querySelector("img");
+    expect(img?.getAttribute("src")).toBe(
+      "tessera-asset://generated-images/artifact-004/old-hero.png",
+    );
+    // The Generate button is hidden while a hero image exists.
+    expect(screen.queryByTestId("imagegen-button")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Remove hero image"));
+    // After removing, the Generate UI returns.
+    await waitFor(() => {
+      expect(screen.getByTestId("imagegen-button")).toBeInTheDocument();
+    });
+  });
+
+  it("surfaces the bridge error message when generate() rejects", async () => {
+    vi.spyOn(window.tessera.imagegen, "generate").mockRejectedValue(
+      new Error("Rate limit exceeded"),
+    );
+    render(
+      <InfographicEditor
+        content=""
+        onSave={() => {}}
+        artifactId="artifact-005"
+        autoSaveMs={10}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("imagegen-button")).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByLabelText("Image prompt"), {
+      target: { value: "Anything" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Generate image"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const errorBox = await screen.findByTestId("imagegen-error");
+    expect(errorBox.textContent).toContain("Rate limit exceeded");
+  });
+
+  it("drops a hero image payload whose assetUrl is not tessera-asset://", () => {
+    const parsed = parseInfographicContent(
+      JSON.stringify({
+        title: "X",
+        layout: "vertical",
+        colorScheme: { primary: "#7C3AED" },
+        sections: [{ heading: "A", body: "B" }],
+        heroImage: {
+          assetUrl: "http://evil.example.com/img.png",
+          prompt: "x",
+          seed: 1,
+          width: 1024,
+          height: 1024,
+        },
+      }),
+    );
+    // Hostile scheme is rejected; field is dropped so the renderer
+    // falls back to the Generate UI rather than loading the URL.
+    expect(parsed.heroImage).toBeUndefined();
+  });
+
+  it("renders the hero image as a <figure> in the preview HTML", () => {
+    const html = buildPreviewHtml({
+      title: "Hero",
+      layout: "vertical",
+      colorScheme: { primary: "#7C3AED" },
+      sections: [{ heading: "A", body: "B" }],
+      heroImage: {
+        assetUrl: "tessera-asset://generated-images/artifact-006/h.png",
+        prompt: "p",
+        seed: 1,
+        width: 1024,
+        height: 1024,
+      },
+    });
+    expect(html).toContain("infographic-hero");
+    expect(html).toContain(
+      'src="tessera-asset://generated-images/artifact-006/h.png"',
+    );
   });
 });
