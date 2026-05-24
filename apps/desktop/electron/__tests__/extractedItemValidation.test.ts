@@ -200,7 +200,7 @@ describe("validateExtractedItems", () => {
 });
 
 // =====================================================================
-// / Task 16 — XSS / prompt-injection handling
+// XSS / prompt-injection handling
 // =====================================================================
 //
 // `extractedItem.text` and `extractedItem.sourceCitation` are

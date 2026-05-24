@@ -96,7 +96,7 @@ describe("sandboxed preload contract: passwordPromptChannels.ts", () => {
  * substring searches against the result always hit a CODE token,
  * never a JSDoc reference.
  *
- * / Task 13 added rich JSDoc references to
+ * The password-vault landing added rich JSDoc references to
  * `maybeInitPasswordVault()` and `installContentSecurityPolicy()`
  * INSIDE the `app.whenReady().then(async () => { ... })` body —
  * those references appear textually BEFORE the actual call sites,

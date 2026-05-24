@@ -381,7 +381,7 @@ function installCSPDevtoolsLogger(): void {
 let appInitComplete = false;
 
 app.whenReady().then(async () => {
-  // / Task 13 — DB-key + password-vault unification.
+  // DB-key + password-vault unification.
   //
   // Boot ordering for the at-rest-encryption stack is now:
   //
@@ -411,7 +411,7 @@ app.whenReady().then(async () => {
   //      `safeStorage`. See `dbKey.ts:getOrCreateDbKeyAsync` for
   //      the full dispatch matrix.
   //
-  // Migration of pre- keyringless installs:
+  // Migration of legacy keyringless installs:
   // `tessera.db` is on disk as plaintext (no `db.key` file). On
   // the next launch, the vault prompt fires (step 4), a fresh
   // 256-bit key is generated and vault-wrapped (step 5), and the

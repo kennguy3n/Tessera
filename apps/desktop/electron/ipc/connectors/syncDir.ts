@@ -1,5 +1,5 @@
 /**
- * Per-provider local sync directory helpers ( Tasks 1–6).
+ * Per-provider local sync directory helpers.
  *
  * Every connector writes the files it pulled down to
  * `<userData>/<provider>-sync/<file-id>.<ext>` so the local indexer

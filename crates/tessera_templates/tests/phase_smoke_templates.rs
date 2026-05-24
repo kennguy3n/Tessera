@@ -50,8 +50,7 @@ const RUST_TEMPLATE_DIRS: &[&str] = &["documents", "slides", "sheets", "bases"];
 /// YAML — a malformed `hero:` block in an infographic or landing-page
 /// template would crash the renderer at runtime. We use a minimal
 /// `serde_yaml::Value` parse below so this Rust test still gates
-/// malformed YAML before it can land on `main`, closing the gap
-/// flagged in .
+/// malformed YAML before it can land on `main`.
 const RENDERER_ONLY_TEMPLATE_DIRS: &[&str] = &["infographics", "landing_pages"];
 
 /// Subdirectories under `templates/` that are NOT template categories

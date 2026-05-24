@@ -1,5 +1,5 @@
 /**
- * Shared IPC handler context ( Task 17 — ipc.ts split).
+ * Shared IPC handler context (per-domain registrar pattern).
  *
  * Every domain module receives this context object via its
  * `register*Handlers(ctx)` registrar. Capturing the shared state in

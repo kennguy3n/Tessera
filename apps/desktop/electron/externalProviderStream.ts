@@ -875,8 +875,8 @@ async function openExternalProviderStream(
     // resulting abort error, and the explicit `throw new Error(...)`
     // for "HTTP 401" would then enter the catch block where
     // `attemptController.signal.aborted === true` would misclassify
-    // the failure as a retryable timeout. The user would see "pre-
-    // stream timeout (Nms) after K attempts" instead of "HTTP 401",
+    // the failure as a retryable timeout. The user would see a
+    // pre-stream-timeout error after K attempts instead of "HTTP 401",
     // and the retry loop would waste its budget on a permanent
     // failure. Clearing the timer here, before any body-read, makes
     // the misclassification structurally impossible.

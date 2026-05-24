@@ -1,5 +1,5 @@
 /**
- * In-memory rate limiter for expensive IPC operations ( Task 23).
+ * In-memory rate limiter for expensive IPC operations.
  *
  * Defense-in-depth against a buggy or compromised renderer that
  * hammers a single channel. The renderer already debounces user

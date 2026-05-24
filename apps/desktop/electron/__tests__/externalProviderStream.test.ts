@@ -1157,9 +1157,10 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     // arrives — we are now unambiguously mid-stream.
     await Promise.resolve();
     await Promise.resolve();
-    // Cancel. Without the  fix the user signal is
-    // disconnected from the body reader and this rejects only
-    // when the test runner times out the entire it().
+    // Cancel. Without the abort-forwarder ownership-transfer fix
+    // the user signal is disconnected from the body reader and
+    // this rejects only when the test runner times out the
+    // entire it().
     controller.abort();
     await expect(streamPromise).rejects.toThrow(/Aborted/);
     expect(bodyController).not.toBeNull();

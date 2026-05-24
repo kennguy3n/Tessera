@@ -1229,9 +1229,9 @@ async function downloadModelLocked(
   }
 
   // If a *stale* record exists (right model id but file missing, OR
-  // a different model entirely), clean it up first so the post-
-  // download `writeCurrentModel` writes a clean state instead of
-  // merging with the stale one.
+  // a different model entirely), clean it up first so the
+  // post-download `writeCurrentModel` writes a clean state instead
+  // of merging with the stale one.
   const current = await getCurrentModel(userDataDir);
   if (current) {
     if (current.modelId === requested.id) {

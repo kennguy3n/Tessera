@@ -96,10 +96,10 @@ function makeBridge(initial: HybridSearchConfigInfo): {
 } {
   const current = { value: { ...initial } };
   const bridge = {
-    // / Task 17 audit pass-through. The
-    // `settings:updateHybridSearchConfig` handler routes an audit row
-    // per effective field through `bridgeLogSettingsChanged`; the
-    // mock just records calls so tests can assert the rows.
+    // Audit pass-through. The `settings:updateHybridSearchConfig`
+    // handler routes an audit row per effective field through
+    // `bridgeLogSettingsChanged`; the mock just records calls so
+    // tests can assert the rows.
     bridgeLogSettingsChanged: vi.fn(),
     bridgeGetHybridSearchConfig: vi.fn(() => ({ ...current.value })),
     bridgeUpdateHybridSearchConfig: vi.fn((patch: HybridSearchConfigUpdate) => {

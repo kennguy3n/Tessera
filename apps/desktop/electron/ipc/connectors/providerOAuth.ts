@@ -151,11 +151,11 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     revokeUrl: "https://oauth2.googleapis.com/revoke",
     scope: "https://www.googleapis.com/auth/drive.readonly",
     redirectPort: 9876,
-    // Google Drive was the first connector wired into Tessera (pre-
-    // ) using `http://localhost:9876/callback`. Users have
-    // already registered that exact URI in Google Cloud Console; we
-    // must preserve it bit-for-bit or every existing installation
-    // breaks with `redirect_uri_mismatch`.
+    // Google Drive was the first connector wired into Tessera,
+    // using `http://localhost:9876/callback`. Users have already
+    // registered that exact URI in Google Cloud Console; we must
+    // preserve it bit-for-bit or every existing installation breaks
+    // with `redirect_uri_mismatch`.
     redirectHost: "localhost",
     extraAuthorizeParams: {
       access_type: "offline",
