@@ -142,23 +142,30 @@ impl SourceStore {
         // `extraction_method` / `extraction_model_id` columns. The
         // CREATE TABLE above is a no-op against an existing table, so
         // we have to ALTER explicitly. SQLite has no
-        // `ADD COLUMN IF NOT EXISTS`; we attempt the ALTER and
-        // silently ignore the "duplicate column name" error so the
-        // migration is idempotent across both code paths
-        // (freshly-created vs. legacy-then-upgraded). Any other
-        // error surfaces — we don't want to swallow real failures
-        // like a corrupt schema.
+        // `ADD COLUMN IF NOT EXISTS`, so we make this idempotent by
+        // querying `PRAGMA table_info` for the existing columns
+        // FIRST and only issuing the ALTER for ones that don't
+        // already exist. This is structurally robust — unlike the
+        // "execute then match the rusqlite error string" approach
+        // which would silently mis-detect a future rusqlite version
+        // that reworded the duplicate-column message.
         let conn = self.conn.lock().expect("connection mutex poisoned");
+        let existing_columns: std::collections::HashSet<String> = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(chunks)")
+                .map_err(|e| Error::Database(format!("table_info(chunks): {e}")))?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| Error::Database(format!("table_info(chunks) query: {e}")))?;
+            rows.filter_map(std::result::Result::ok).collect()
+        };
         for column in &["extraction_method", "extraction_model_id"] {
-            let sql = format!("ALTER TABLE chunks ADD COLUMN {column} TEXT");
-            if let Err(e) = conn.execute(&sql, []) {
-                let msg = e.to_string();
-                if !msg.contains("duplicate column name") {
-                    return Err(Error::Database(format!(
-                        "failed to add chunks.{column}: {msg}"
-                    )));
-                }
+            if existing_columns.contains(*column) {
+                continue;
             }
+            let sql = format!("ALTER TABLE chunks ADD COLUMN {column} TEXT");
+            conn.execute(&sql, [])
+                .map_err(|e| Error::Database(format!("failed to add chunks.{column}: {e}")))?;
         }
 
         // Partial index on the new column. Created AFTER the ALTERs

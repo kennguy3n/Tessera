@@ -209,7 +209,15 @@ pub fn probe_pdf_pages(path: &Path) -> Result<Vec<PdfPageProbe>> {
         path: path.display().to_string(),
         message: format!("failed to load PDF: {e}"),
     })?;
+    Ok(probe_pdf_pages_with_doc(&doc))
+}
 
+/// Probe every page of an already-loaded `Document`. Used by the
+/// OCR pass to avoid re-parsing the PDF after the text-pass probe
+/// (lopdf re-reads the whole file on every `Document::load`, which
+/// for a multi-hundred-page scan is the dominant cost in the OCR
+/// path).
+fn probe_pdf_pages_with_doc(doc: &Document) -> Vec<PdfPageProbe> {
     let mut probes = Vec::new();
     for (page_number, page_id) in doc.get_pages() {
         let text = doc
@@ -224,7 +232,7 @@ pub fn probe_pdf_pages(path: &Path) -> Result<Vec<PdfPageProbe>> {
             image_count,
         });
     }
-    Ok(probes)
+    probes
 }
 
 /// Set of pages that need OCR (filtered by `needs_ocr`).
@@ -266,16 +274,20 @@ pub fn vlm_ocr_chunks_for_pdf(
     limiter: &PdfOcrRateLimiter,
     starting_chunk_index: usize,
 ) -> Result<Vec<Chunk>> {
-    let probes = probe_pdf_pages(pdf_path)?;
-    let pages = pdf_pages_needing_ocr(&probes);
-    if pages.is_empty() {
-        return Ok(Vec::new());
-    }
-
+    // Load the PDF ONCE and reuse the parsed `Document` for both the
+    // page probe and the OCR loop. Earlier revisions called
+    // `probe_pdf_pages(pdf_path)` (which itself called
+    // `Document::load`) and then `Document::load(pdf_path)` again —
+    // doubling the parse cost for multi-hundred-page scans.
     let doc = Document::load(pdf_path).map_err(|e| Error::Extraction {
         path: pdf_path.display().to_string(),
         message: format!("failed to load PDF for OCR pass: {e}"),
     })?;
+    let probes = probe_pdf_pages_with_doc(&doc);
+    let pages = pdf_pages_needing_ocr(&probes);
+    if pages.is_empty() {
+        return Ok(Vec::new());
+    }
     let pages_map = doc.get_pages();
 
     let mut chunks = Vec::new();
@@ -283,17 +295,20 @@ pub fn vlm_ocr_chunks_for_pdf(
     let pdf_path_str = pdf_path.to_string_lossy().to_string();
 
     for page_number in pages {
-        if !limiter.try_acquire() {
-            eprintln!(
-                "[tessera_sources] pdf OCR rate limit reached at page {page_number} of {pdf_path_str}; skipping remaining pages this window"
-            );
-            break;
-        }
-
         let Some(page_id) = pages_map.get(&page_number).copied() else {
             continue;
         };
 
+        // Resolve the page's largest decodable image FIRST so we
+        // only consume a rate-limit token when a VLM call is
+        // actually about to happen. Without this ordering, a page
+        // whose only images use a non-DCTDecode filter (FlateDecode,
+        // CCITTFax, JBIG2, JPX) would still spend a token, even
+        // though no VLM call is made — so a PDF full of such pages
+        // could exhaust the 10-page/minute budget without producing
+        // any OCR output, starving subsequent pages and other PDFs
+        // in the same window. Mirrors the order used by
+        // `vlm_chart_chunks_for_pdf`.
         let Some(image_path) = write_largest_image_for_ocr(&doc, page_id, pdf_path)? else {
             eprintln!(
                 "[tessera_sources] pdf {} page {} has no decodable image (only non-DCTDecode filters available); skipping OCR for this page",
@@ -302,7 +317,26 @@ pub fn vlm_ocr_chunks_for_pdf(
             continue;
         };
 
-        let ocr_text = match extractor.describe_image(&image_path) {
+        if !limiter.try_acquire() {
+            // Budget exhausted — we've already written the temp
+            // image but haven't issued the VLM call yet, so unlink
+            // and bail out of the loop. Remaining raster pages are
+            // deferred to the next indexing pass (the limiter
+            // refills on its 60 s wall-clock window).
+            let _ = std::fs::remove_file(&image_path);
+            eprintln!(
+                "[tessera_sources] pdf OCR rate limit reached at page {page_number} of {pdf_path_str}; skipping remaining pages this window"
+            );
+            break;
+        }
+
+        // Use the dedicated OCR-mode trait method so the bridge
+        // layer can drive the VLM with a transcription-flavoured
+        // prompt (`VisionMode::Ocr`) rather than a free-form
+        // description. Default impl delegates to `describe_image`,
+        // which keeps existing test fixtures and the
+        // `NullVisionExtractor` working unchanged.
+        let ocr_text = match extractor.ocr_text(&image_path) {
             Ok(t) => t,
             Err(e) => {
                 eprintln!(

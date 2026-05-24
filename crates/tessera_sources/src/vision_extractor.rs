@@ -81,6 +81,30 @@ pub trait VisionExtractor: Send + Sync {
         self.describe_image(image_path)
     }
 
+    /// Generate plain-text OCR output for the image at `image_path`.
+    /// Used by the PDF OCR pass in
+    /// [`crate::pdf_extractor::vlm_ocr_chunks_for_pdf`] to surface
+    /// scanned-page text as searchable chunks tagged with
+    /// `extraction_method = Some(ExtractionMethod::VlmOcr)`.
+    ///
+    /// Implementations are expected to drive the VLM with an
+    /// OCR-flavoured prompt of the shape "Transcribe every visible
+    /// character on this image. Preserve line breaks. Do not
+    /// describe the image; output the text only." so the output is
+    /// usable as a citation-quality transcription rather than a
+    /// free-form description.
+    ///
+    /// The default implementation delegates to [`Self::describe_image`].
+    /// This keeps existing test fixtures and the [`NullVisionExtractor`]
+    /// fallback working, and lets the bridge layer override with the
+    /// OCR-mode prompt (`VisionMode::Ocr` in `tessera_bridge`) by
+    /// implementing this method directly. Mirrors the
+    /// [`Self::describe_chart`] pattern so the trait API stays
+    /// symmetric across the three VLM modes Block B exposes.
+    fn ocr_text(&self, image_path: &Path) -> Result<String> {
+        self.describe_image(image_path)
+    }
+
     /// Identifier of the underlying model emitting these
     /// descriptions, used for the `extraction_model_id` column on
     /// chunks. Typically the manifest entry id (e.g.
