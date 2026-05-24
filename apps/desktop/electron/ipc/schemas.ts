@@ -343,17 +343,27 @@ export type GdriveSelectedItemsInput = z.infer<typeof GdriveSelectedItemsSchema>
 // keeps the validation policy uniform across every IPC channel and
 // gives the OS dialog APIs a clean payload to work with.
 //
-// This is the ONE schema in this file that uses `.strict()` instead of
-// the default `.strip()`. Every other schema strips unknown keys so a
-// newer renderer can send forward-compat fields the older main process
-// doesn't know about without crashing; the Rust bridge's serde layer
-// rejects unknown fields downstream so stripping is safe. Here the
-// payload flows directly into Electron's native dialog API (Cocoa /
-// Win32 / GTK), each of which has provider-specific options we do NOT
-// want a renderer bug accidentally enabling. `.strict()` makes the
-// validator reject unknown keys outright. If you add a new field to
-// `SaveDialogOptions` in `shared/types.ts`, extend this schema in the
-// same commit — strict mode will reject the new field otherwise.
+// This is one of the few schemas in this file that uses `.strict()`
+// instead of the default `.strip()`. Most schemas strip unknown keys
+// so a newer renderer can send forward-compat fields the older main
+// process doesn't know about without crashing; the Rust bridge's
+// serde layer rejects unknown fields downstream so stripping is safe.
+//
+// The `.strict()` schemas in this file are payloads that flow
+// directly into platform-specific native APIs where unknown fields
+// could trigger provider-specific side effects we don't want a
+// renderer bug accidentally enabling:
+//
+//   - `SaveDialogOptionsSchema` (this one) — Electron's native dialog
+//     API (Cocoa / Win32 / GTK).
+//   - `VisionDescribeSchema` — vision sidecar (`llama-server
+//     --mmproj`) which forwards every JSON key to llama.cpp.
+//   - `GenerateImageSchema` — diffusion sidecar (`sd-server`) which
+//     forwards every JSON key to stable-diffusion.cpp.
+//
+// If you add a new field to `SaveDialogOptions` in `shared/types.ts`,
+// extend this schema in the same commit — strict mode will reject
+// the new field otherwise.
 export const SaveDialogOptionsSchema = z
   .object({
     title: z.string().max(512).optional(),
@@ -371,3 +381,83 @@ export const SaveDialogOptionsSchema = z
   })
   .strict();
 export type SaveDialogOptionsInput = z.infer<typeof SaveDialogOptionsSchema>;
+
+// --- Vision describe ---
+//
+// `vision:describe` accepts an absolute path to an image already on
+// the user's disk plus the prompt mode (describe/ocr/chart). The
+// path bound matches the OS PATH_MAX upper bound (Linux 4096 is the
+// largest of the common platforms — macOS 1024, Windows 32 767 only
+// applies with extended-length prefixes). The renderer is expected
+// to validate that the path is an image before calling, but the
+// Rust side ALSO reads the file extension defensively, so a non-
+// image will fail loudly downstream rather than silently corrupting
+// the search index with a hallucinated VLM description of random
+// bytes.
+export const VisionDescribeSchema = z
+  .object({
+    imagePath: z.string().min(1).max(4096),
+    mode: z.enum(["describe", "ocr", "chart"]),
+    // Vision completions are deliberately bounded tighter than text
+    // completions: an OCR/describe/chart prompt should never need
+    // more than ~2k tokens of output. Anything longer means the VLM
+    // is rambling and the result is unlikely to be useful for the
+    // search index.
+    maxTokens: z.number().int().min(16).max(2048).optional(),
+  })
+  .strict();
+export type VisionDescribeInput = z.infer<typeof VisionDescribeSchema>;
+
+// --- Image generation ---
+//
+// Tight bounds on every diffusion sampling knob:
+//   * `width` / `height`: limited to a 256-2048 pixel range. FLUX.2-
+//     klein is trained at 1024×1024 — sub-256 produces visible
+//     compression artifacts and the model wasn't trained at those
+//     scales; above 2048 OOMs all but the largest consumer GPUs
+//     and the renderer hides those options anyway.
+//   * `width` / `height` must be multiples of 64 — diffusion VAEs
+//     downsample by 8x and the UNet downsamples by 2x more, so any
+//     dimension not divisible by 64 produces ragged latent
+//     dimensions and silent quality degradation.
+//   * `steps`: 1-100. FLUX.2-klein needs ~20 by design; the bound
+//     just catches obviously-bad values from a renderer bug.
+//   * `cfgScale`: 0-15. FLUX uses ~3.5 and absolutely does not
+//     benefit from CFG > 15 (which produces oversaturated, melted
+//     compositions on SD-style models).
+//   * `seed`: non-negative integer < 2^53 so it survives JSON
+//     round-trip via Number (the bridge converts to u64 inside the
+//     Rust task).
+//   * `prompt` / `negativePrompt`: bounded at 4 KiB to defend
+//     against renderer bugs sending entire artifact bodies as
+//     prompts; FLUX text encoders only see the first ~512 tokens
+//     anyway, so 4 KiB is generous headroom.
+const DimensionBound = z
+  .number()
+  .int()
+  .min(256)
+  .max(2048)
+  .refine((n) => n % 64 === 0, {
+    message: "must be a multiple of 64 (diffusion-VAE alignment)",
+  });
+
+export const GenerateImageSchema = z
+  .object({
+    prompt: z.string().min(1).max(4096),
+    width: DimensionBound,
+    height: DimensionBound,
+    steps: z.number().int().min(1).max(100).optional(),
+    cfgScale: z.number().finite().min(0).max(15).optional(),
+    // JSON Number can express integers up to 2^53 - 1 without loss;
+    // values beyond that would silently round-trip incorrectly.
+    seed: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+    negativePrompt: z.string().max(4096).optional(),
+    // Identifier used to namespace the on-disk output under
+    // `<userData>/generated-images/<artifactId>/`. Validated as an
+    // id (alphanum + dash) by the handler itself; this schema just
+    // shapes it.
+    artifactId: z.string().min(1).max(256),
+    sectionIndex: z.number().int().min(0).max(1000).optional(),
+  })
+  .strict();
+export type GenerateImageInput = z.infer<typeof GenerateImageSchema>;

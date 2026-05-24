@@ -552,6 +552,27 @@ export interface ResolvedModel {
   filename: string;
   url: string;
   sha256: string | null;
+  /**
+   * Vision-only: filename of the multimodal projector (mmproj) that
+   * llama-server needs alongside the main weights to load the vision
+   * tower. Stored as a sibling file of `filename` inside the per-slot
+   * `models/vision/` directory. Absent on:
+   *   - Text and imagegen entries (no projector concept).
+   *   - MLX vision entries (the projector is packaged inside the
+   *     archive and the MLX adapter loads it implicitly).
+   * Required (alongside `mmprojUrl`) on all `vision` + `gguf` entries.
+   */
+  mmprojFilename?: string;
+  mmprojUrl?: string;
+  mmprojSha256?: string | null;
+  /**
+   * Disk footprint contributed by the projector file on its own.
+   * Reported separately from `diskSizeMb` so the Settings UI can
+   * show users the total cost of the vision slot (weights +
+   * projector) without forcing every reader to maintain a side
+   * table of per-entry projector sizes.
+   */
+  mmprojSizeMb?: number;
 }
 
 export interface InstalledModelRecord {
@@ -577,6 +598,24 @@ export interface InstalledModelRecord {
    */
   diskSizeMb?: number;
   sha256: string | null;
+  /**
+   * Absolute on-disk path to the downloaded multimodal projector,
+   * populated for vision GGUF installs whose manifest entry carried
+   * `mmprojFilename` + `mmprojUrl`. The vision sidecar is started
+   * with `--mmproj <mmprojPath>` so llama-server can wire the vision
+   * tower onto the language model.
+   *
+   * Always absent on text / imagegen / MLX-vision records (those
+   * code paths don't use a sibling projector file).
+   */
+  mmprojPath?: string;
+  mmprojSha256?: string | null;
+  /**
+   * Disk footprint of the projector file alone. Read separately from
+   * `diskSizeMb` by the Settings UI's per-slot disk-usage display so
+   * users see the true cost of the vision slot.
+   */
+  mmprojSizeMb?: number;
   downloadedAt: string;
 }
 
@@ -1051,6 +1090,95 @@ export interface RuntimeApi {
   ) => () => void;
 }
 
+/**
+ * Vision-language model API exposed on `window.tessera.vision`.
+ * Backed by the `llama-server --mmproj` sidecar on port 8385.
+ *
+ * The renderer treats this as best-effort: callers should always
+ * await `isAvailable()` (or `runtime.isCapabilityAvailable("vision")`)
+ * before showing vision-driven UI, since `describe()` rejects on
+ * hosts that haven't downloaded a VLM yet.
+ */
+export interface VisionApi {
+  /**
+   * True iff the native bridge is loaded AND a vision-slot model is
+   * installed on disk AND it has the multimodal projector stored
+   * alongside it. Cheap — does not touch the sidecar.
+   */
+  isAvailable: () => Promise<boolean>;
+  /**
+   * Describe / OCR / chart-extract the image at the given path. The
+   * sidecar warms up on the first call (~3 s on top of the actual
+   * 5-15 s VLM forward pass) and stays warm for 60 s between calls.
+   * Rejects with a structured error message if (a) no vision model
+   * is installed, (b) the file is unreadable, or (c) the sidecar
+   * is offline.
+   */
+  describe: (req: {
+    imagePath: string;
+    mode: "describe" | "ocr" | "chart";
+    maxTokens?: number;
+  }) => Promise<{
+    content: string;
+    stop: boolean;
+    tokensPredicted: number;
+    tokensEvaluated: number;
+  }>;
+}
+
+/**
+ * Image-generation API exposed on `window.tessera.imagegen`. Backed
+ * by the `sd-server` diffusion sidecar on port 8386. ALWAYS gate the
+ * surface with `isAvailable()` — image generation is GPU-only and a
+ * large fraction of users won't have a GPU.
+ */
+export interface ImagegenApi {
+  /**
+   * True iff (a) the native bridge is loaded, (b) the host's tier +
+   * compute backends satisfy `isCapabilityAvailable("imagegen")`,
+   * and (c) an imagegen model is installed on disk.
+   */
+  isAvailable: () => Promise<boolean>;
+  /**
+   * Generate one image and persist it to
+   * `<userData>/generated-images/<artifactId>/<timestamp>-<seed>.png`.
+   * Returns the absolute path plus the seed the sampler actually
+   * used (so the caller can persist it for reproducibility) plus
+   * timing and size metadata so the preview renders without a
+   * follow-up `stat()`.
+   *
+   * Single in-flight call: a second `generate()` while a first is
+   * still running rejects with "already in flight". Callers must
+   * either wait or call `cancel()` first.
+   */
+  generate: (req: {
+    prompt: string;
+    width: number;
+    height: number;
+    steps?: number;
+    cfgScale?: number;
+    seed?: number;
+    negativePrompt?: string;
+    artifactId: string;
+    sectionIndex?: number;
+  }) => Promise<{
+    path: string;
+    seed: number;
+    width: number;
+    height: number;
+    durationMs: number;
+    sizeBytes: number;
+  }>;
+  /**
+   * Schedule cancellation of the in-flight generation. Returns
+   * `{ scheduled: true }` if a generation was actually pending —
+   * note that sd-server can't be safely interrupted mid-sample, so
+   * the bridge call will still run to completion; only the result
+   * persistence is skipped.
+   */
+  cancel: () => Promise<{ scheduled: boolean }>;
+}
+
 export interface ConnectorApi {
   authenticate: (
     provider: string,
@@ -1148,6 +1276,8 @@ export interface TesseraApi {
   externalProvider: ExternalProviderApi;
   model: ModelApi;
   runtime: RuntimeApi;
+  vision: VisionApi;
+  imagegen: ImagegenApi;
   connectors: ConnectorApi;
   tasks: TaskApi;
   automations: AutomationApi;

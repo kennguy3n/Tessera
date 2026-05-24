@@ -314,6 +314,41 @@ const api: TesseraApi = {
     onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) =>
       subscribeIpc<ModelDownloadProgress>("runtime:downloadProgress", callback),
   },
+  vision: {
+    isAvailable: (): Promise<boolean> =>
+      ipcRenderer.invoke("vision:isAvailable"),
+    describe: (req: {
+      imagePath: string;
+      mode: "describe" | "ocr" | "chart";
+      maxTokens?: number;
+    }): Promise<{
+      content: string;
+      stop: boolean;
+      tokensPredicted: number;
+      tokensEvaluated: number;
+    }> => ipcRenderer.invoke("vision:describe", req),
+  },
+  imagegen: {
+    isAvailable: (): Promise<boolean> =>
+      ipcRenderer.invoke("imagegen:isAvailable"),
+    // Returns a structured result the renderer can persist without
+    // re-reading the file: { path, seed, width, height, durationMs,
+    // sizeBytes }. The main process keeps the actual PNG bytes — it
+    // owns the on-disk path under userData.
+    generate: (req: {
+      prompt: string;
+      width: number;
+      height: number;
+      steps?: number;
+      cfgScale?: number;
+      seed?: number;
+      negativePrompt?: string;
+      artifactId: string;
+      sectionIndex?: number;
+    }) => ipcRenderer.invoke("imagegen:generate", req),
+    cancel: (): Promise<{ scheduled: boolean }> =>
+      ipcRenderer.invoke("imagegen:cancel"),
+  },
   connectors: {
     authenticate: (provider: string, clientId: string, clientSecret: string) =>
       ipcRenderer.invoke(

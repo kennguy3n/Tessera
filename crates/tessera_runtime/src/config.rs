@@ -269,6 +269,29 @@ pub struct ModelInfo {
     pub url: Option<String>,
     pub checksum: Option<String>,
     pub local_path: Option<String>,
+    /// Filename of the multimodal projector (mmproj) for vision-GGUF
+    /// entries. Mirrors `ManifestModel.mmprojFilename` on the TS side
+    /// (see `apps/desktop/electron/modelManagement.ts`). `None` for
+    /// every other (capability, format) combination — text and
+    /// imagegen have no projector concept, and MLX vision bundles
+    /// the projector inside its archive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mmproj_filename: Option<String>,
+    /// HTTPS URL of the projector. Always populated together with
+    /// `mmproj_filename`; the TS-side manifest validator rejects an
+    /// entry that has one without the other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mmproj_url: Option<String>,
+    /// Optional sha256 checksum of the projector file. `None` means
+    /// "skip verification" with the same semantics as `checksum`
+    /// above (the manifest's stamped sha256 for the main weights).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mmproj_checksum: Option<String>,
+    /// Disk footprint of the projector alone in MB. Reported
+    /// separately from `disk_size_mb` so the Settings UI can show
+    /// the projector's contribution to the vision slot's footprint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mmproj_size_mb: Option<u64>,
 }
 
 fn default_capability() -> ModelCapability {
@@ -446,6 +469,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             )),
             checksum: None,
             local_path: None,
+            mmproj_filename: None,
+            mmproj_url: None,
+            mmproj_checksum: None,
+            mmproj_size_mb: None,
         },
         ModelInfo {
             id: "ternary-bonsai-1.7b-gguf".into(),
@@ -471,6 +498,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             )),
             checksum: None,
             local_path: None,
+            mmproj_filename: None,
+            mmproj_url: None,
+            mmproj_checksum: None,
+            mmproj_size_mb: None,
         },
         // 4B
         ModelInfo {
@@ -494,6 +525,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             )),
             checksum: None,
             local_path: None,
+            mmproj_filename: None,
+            mmproj_url: None,
+            mmproj_checksum: None,
+            mmproj_size_mb: None,
         },
         ModelInfo {
             id: "ternary-bonsai-4b-gguf".into(),
@@ -517,6 +552,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             )),
             checksum: None,
             local_path: None,
+            mmproj_filename: None,
+            mmproj_url: None,
+            mmproj_checksum: None,
+            mmproj_size_mb: None,
         },
         // 8B
         ModelInfo {
@@ -540,6 +579,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             )),
             checksum: None,
             local_path: None,
+            mmproj_filename: None,
+            mmproj_url: None,
+            mmproj_checksum: None,
+            mmproj_size_mb: None,
         },
         ModelInfo {
             id: "ternary-bonsai-8b-gguf".into(),
@@ -563,6 +606,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             )),
             checksum: None,
             local_path: None,
+            mmproj_filename: None,
+            mmproj_url: None,
+            mmproj_checksum: None,
+            mmproj_size_mb: None,
         },
         // --- Vision (VLM) -------------------------------------------------
         // Qwen3.5-4B Vision — mid-tier VLM. Served by llama-server with
@@ -590,6 +637,19 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             )),
             checksum: None,
             local_path: None,
+            // Multimodal projector for Qwen3.5-4B-VL. llama-server
+            // mmaps both the language-model weights AND this f16
+            // projector at startup so the vision tower can produce
+            // image embeddings the LM consumes. Hosted in the same
+            // Smoffyy HF repo as the main weights to keep the URL
+            // pair consistent.
+            mmproj_filename: Some("mmproj-Qwen3.5-4B-Revised-f16.gguf".into()),
+            mmproj_url: Some(gguf_url(
+                "Smoffyy/Qwen3.5-4B-Instruct-Revised-GGUF",
+                "mmproj-Qwen3.5-4B-Revised-f16.gguf",
+            )),
+            mmproj_checksum: None,
+            mmproj_size_mb: Some(750),
         },
         ModelInfo {
             id: "qwen3.5-4b-vision-mlx".into(),
@@ -612,6 +672,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             )),
             checksum: None,
             local_path: None,
+            mmproj_filename: None,
+            mmproj_url: None,
+            mmproj_checksum: None,
+            mmproj_size_mb: None,
         },
         // SmolVLM 256M — low-tier VLM. Small enough to run on CPU
         // at low device tier; both GGUF and MLX variants ship.
@@ -637,6 +701,15 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             )),
             checksum: None,
             local_path: None,
+            // SmolVLM2 projector. The mradermacher GGUF repo uses
+            // the canonical `.mmproj-f16.gguf` suffix.
+            mmproj_filename: Some("SmolVLM2-256M-Video-Instruct.mmproj-f16.gguf".into()),
+            mmproj_url: Some(gguf_url(
+                "mradermacher/SmolVLM2-256M-Video-Instruct-GGUF",
+                "SmolVLM2-256M-Video-Instruct.mmproj-f16.gguf",
+            )),
+            mmproj_checksum: None,
+            mmproj_size_mb: Some(190),
         },
         ModelInfo {
             id: "smolvlm-256m-vision-mlx".into(),
@@ -659,6 +732,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             )),
             checksum: None,
             local_path: None,
+            mmproj_filename: None,
+            mmproj_url: None,
+            mmproj_checksum: None,
+            mmproj_size_mb: None,
         },
         // --- Image generation (FLUX.2-klein) -----------------------------
         // GPU-only — `compute_backends` deliberately excludes CPU.
@@ -687,6 +764,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             )),
             checksum: None,
             local_path: None,
+            mmproj_filename: None,
+            mmproj_url: None,
+            mmproj_checksum: None,
+            mmproj_size_mb: None,
         },
         ModelInfo {
             id: "flux2-klein-4b-mlx".into(),
@@ -713,6 +794,10 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             )),
             checksum: None,
             local_path: None,
+            mmproj_filename: None,
+            mmproj_url: None,
+            mmproj_checksum: None,
+            mmproj_size_mb: None,
         },
     ]
 }

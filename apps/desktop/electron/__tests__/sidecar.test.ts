@@ -170,6 +170,32 @@ describe("ModelSidecar lifecycle (POSIX detached spawn)", () => {
     expect(process.listenerCount("exit")).toBe(exitListenersBefore);
   });
 
+  it("removes the exit handler when the child errors so a failed spawn doesn't leak a listener slot per restart attempt", async () => {
+    // Regression test for Devin Review follow-up
+    // (ANALYSIS_pr-review-job-095e635be43f4af68e37c59e0af14838_0002).
+    // The `error` handler was previously asymmetric with the
+    // `exit` handler: it dropped `_isRunning` and stopped the
+    // monitors, but left the `process.on("exit")` SIGKILL-fallback
+    // listener registered. A misconfigured binary path that keeps
+    // hitting ENOENT would slowly accumulate listeners and trip
+    // Node's MaxListenersExceededWarning (default 10). Stops at 1
+    // here because we only spawn once, but the assertion guards
+    // the cleanup contract.
+    const { ModelSidecar } = await import("../sidecar");
+    const sidecar = new ModelSidecar({ modelPath: "/tmp/model.gguf" });
+
+    const exitListenersBefore = process.listenerCount("exit");
+    await sidecar.start();
+    expect(process.listenerCount("exit")).toBe(exitListenersBefore + 1);
+
+    // Simulate child-process emitter firing the `error` event
+    // (e.g. ENOENT, spawn EPERM). The handler must drop its
+    // process.on("exit") listener so we end up back at the
+    // baseline count.
+    fakeChild.emit("error", new Error("ENOENT"));
+    expect(process.listenerCount("exit")).toBe(exitListenersBefore);
+  });
+
   it("does not register the unref/exit-handler pair on Windows (no detached spawn)", async () => {
     Object.defineProperty(process, "platform", { value: "win32" });
     const { ModelSidecar } = await import("../sidecar");
@@ -182,5 +208,136 @@ describe("ModelSidecar lifecycle (POSIX detached spawn)", () => {
 
     queueMicrotask(() => fakeChild.emit("exit", 0, null));
     await sidecar.stop();
+  });
+});
+
+/**
+ * `waitForReady` is the gate IPC handlers (model:start, vision:describe,
+ * imagegen:generate) use AFTER `start()` to prevent the well-known
+ * "first request lands before llama-server / sd-server has bound its
+ * HTTP port" race (Devin Review ANALYSIS_0005). These tests pin its
+ * three observable invariants:
+ *
+ *   1. Returns `true` once `/health` is reachable.
+ *   2. Polls again on transient failures rather than giving up.
+ *   3. Returns `false` if the deadline elapses without success.
+ *
+ * The tests mock `globalThis.fetch` so they don't require a real
+ * HTTP listener (the spawn mock from the parent describe block
+ * already prevents any real sidecar process from starting).
+ */
+describe("ModelSidecar.waitForReady (HTTP listener readiness gate)", () => {
+  const originalPlatform = process.platform;
+  const originalFetch = globalThis.fetch;
+  let spawnMock: Mock;
+  let fakeChild: EventEmitter & {
+    pid: number;
+    unref: Mock;
+    kill: Mock;
+  };
+
+  beforeEach(() => {
+    vi.resetModules();
+    Object.defineProperty(process, "platform", { value: "linux" });
+    const emitter = new EventEmitter();
+    fakeChild = Object.assign(emitter, {
+      pid: 88888,
+      unref: vi.fn(),
+      kill: vi.fn(),
+    });
+    spawnMock = vi.fn(() => fakeChild);
+    vi.doMock("child_process", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("child_process")>();
+      return {
+        ...actual,
+        default: { ...actual, spawn: spawnMock },
+        spawn: spawnMock,
+      };
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: originalPlatform });
+    vi.doUnmock("child_process");
+    vi.resetModules();
+    globalThis.fetch = originalFetch;
+  });
+
+  it("returns true as soon as /health responds 200", async () => {
+    const { ModelSidecar } = await import("../sidecar");
+    const sidecar = new ModelSidecar({
+      modelPath: "/tmp/model.gguf",
+      healthCheckIntervalMs: 100,
+    });
+    await sidecar.start();
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response("ok", { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ready = await sidecar.waitForReady(5_000);
+    expect(ready).toBe(true);
+    expect(fetchMock).toHaveBeenCalled();
+    // The very first call asks /health on the sidecar's loopback endpoint.
+    const firstUrl = (fetchMock.mock.calls[0] as [string])[0];
+    expect(firstUrl).toMatch(/\/health$/);
+
+    queueMicrotask(() => fakeChild.emit("exit", 0, null));
+    await sidecar.stop();
+  });
+
+  it("keeps polling on transient /health failures until the sidecar reports ready", async () => {
+    const { ModelSidecar } = await import("../sidecar");
+    const sidecar = new ModelSidecar({
+      modelPath: "/tmp/model.gguf",
+      healthCheckIntervalMs: 50,
+    });
+    await sidecar.start();
+
+    let calls = 0;
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      calls += 1;
+      if (calls < 3) throw new Error("ECONNREFUSED");
+      return new Response("ok", { status: 200 });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ready = await sidecar.waitForReady(10_000);
+    expect(ready).toBe(true);
+    expect(calls).toBeGreaterThanOrEqual(3);
+
+    queueMicrotask(() => fakeChild.emit("exit", 0, null));
+    await sidecar.stop();
+  });
+
+  it("returns false when the deadline elapses without /health succeeding", async () => {
+    const { ModelSidecar } = await import("../sidecar");
+    const sidecar = new ModelSidecar({
+      modelPath: "/tmp/model.gguf",
+      healthCheckIntervalMs: 30,
+    });
+    await sidecar.start();
+
+    const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const start = Date.now();
+    const ready = await sidecar.waitForReady(200);
+    const elapsed = Date.now() - start;
+    expect(ready).toBe(false);
+    // Bounded by the deadline (200 ms) with a small slack for the
+    // final in-flight poll completing.
+    expect(elapsed).toBeLessThan(1_500);
+
+    queueMicrotask(() => fakeChild.emit("exit", 0, null));
+    await sidecar.stop();
+  });
+
+  it("returns false immediately when the sidecar isn't running", async () => {
+    const { ModelSidecar } = await import("../sidecar");
+    const sidecar = new ModelSidecar({ modelPath: "/tmp/model.gguf" });
+    const ready = await sidecar.waitForReady(5_000);
+    expect(ready).toBe(false);
   });
 });

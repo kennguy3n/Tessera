@@ -79,6 +79,30 @@ export interface ManifestModel {
   filename: string;
   url: string;
   sha256: string | null;
+  /**
+   * Multimodal projector (mmproj) descriptor for vision-GGUF entries.
+   *
+   * llama-server needs both the language-model weights AND a separate
+   * mmproj file (the vision tower projection) to load a VLM. The two
+   * files are downloaded together and stored side-by-side in
+   * `models/vision/`; `--mmproj <path>` is passed to the vision
+   * sidecar at startup.
+   *
+   * Absent on text entries (no projector) and on imagegen entries
+   * (diffusion has no mmproj concept). Also absent on MLX vision
+   * entries — the MLX archive bundles its projector internally, so
+   * no second download is required.
+   *
+   * `mmprojFilename` + `mmprojUrl` are required together; setting
+   * only one is a manifest-load error. `mmprojSha256` follows the
+   * same null-means-skip-verification convention as the main `sha256`
+   * field. `mmprojSizeMb` is what the Settings UI shows for projector
+   * footprint and what `plan_download` uses for disk-space planning.
+   */
+  mmprojFilename?: string;
+  mmprojUrl?: string;
+  mmprojSha256?: string | null;
+  mmprojSizeMb?: number;
 }
 
 export interface ManifestLlamaServerVariant {
@@ -94,11 +118,40 @@ export interface ManifestLlamaServer {
   variants: ManifestLlamaServerVariant[];
 }
 
+/**
+ * Diffusion-server (sd-server, leejet/stable-diffusion.cpp) binary
+ * descriptor. Parallel shape to `ManifestLlamaServer` — same
+ * variant-by-(platform, compute) selection, same nullable `sha256`
+ * for skip-verify-when-null semantics, separate `version` tag so
+ * llama-server and sd-server can be bumped independently.
+ *
+ * The variants list deliberately omits any `"cpu"` entries: sd-server
+ * builds for CPU exist upstream, but minutes-per-step throughput
+ * makes them unfit for an interactive product. The
+ * `is_capability_available` gating in `crates/tessera_runtime/src/config.rs`
+ * refuses to surface imagegen on CPU-only devices anyway, so omitting
+ * the CPU sd-server variant keeps the failure mode "no binary to
+ * download" rather than "binary downloads, GPU absent, hangs".
+ */
+export interface ManifestDiffusionServerVariant {
+  platform: Platform;
+  compute: ComputeBackend;
+  url: string;
+  sha256: string | null;
+}
+
+export interface ManifestDiffusionServer {
+  version: string;
+  note?: string;
+  variants: ManifestDiffusionServerVariant[];
+}
+
 export interface ModelManifest {
   format_version: number;
   note?: string;
   models: ManifestModel[];
   llama_server?: ManifestLlamaServer;
+  diffusion_server?: ManifestDiffusionServer;
 }
 
 export interface PlatformInfo {
@@ -134,6 +187,15 @@ export interface ResolvedModel {
   filename: string;
   url: string;
   sha256: string | null;
+  /**
+   * Mirror of `ManifestModel.mmprojFilename` / `mmprojUrl` /
+   * `mmprojSha256` / `mmprojSizeMb`. Populated for vision-GGUF
+   * entries; absent elsewhere.
+   */
+  mmprojFilename?: string;
+  mmprojUrl?: string;
+  mmprojSha256?: string | null;
+  mmprojSizeMb?: number;
 }
 
 export interface InstalledModelRecord {
@@ -155,6 +217,22 @@ export interface InstalledModelRecord {
   // stays correct for legacy installs.
   diskSizeMb?: number;
   sha256: string | null;
+  /**
+   * Absolute on-disk path of the multimodal projector for vision
+   * GGUF installs. Set at download time when the manifest entry
+   * carried `mmprojFilename` + `mmprojUrl`; consumed by the vision
+   * sidecar at startup (`--mmproj <mmprojPath>`).
+   *
+   * Always absent on text / imagegen / MLX-vision records.
+   */
+  mmprojPath?: string;
+  mmprojSha256?: string | null;
+  /**
+   * On-disk footprint of the projector file alone. Surfaced in the
+   * Settings UI per-slot disk-usage display so users see the true
+   * cost of the vision slot (weights + projector).
+   */
+  mmprojSizeMb?: number;
   downloadedAt: string;
 }
 
@@ -561,6 +639,38 @@ function validateManifest(manifest: ModelManifest): ModelManifest {
       }
     }
   }
+  const diffusion = manifest.diffusion_server;
+  if (diffusion) {
+    for (let i = 0; i < diffusion.variants.length; i += 1) {
+      const v = diffusion.variants[i];
+      if (!parsePlatform(v.platform as unknown as string)) {
+        errors.push(
+          `diffusion_server.variants[${i}].platform="${String(
+            v.platform,
+          )}" is not one of: ${Array.from(KNOWN_PLATFORMS).join(", ")}`,
+        );
+      }
+      const compute = parseComputeBackend(v.compute as unknown as string);
+      if (!compute) {
+        errors.push(
+          `diffusion_server.variants[${i}].compute="${String(
+            v.compute,
+          )}" is not one of: ${Array.from(KNOWN_COMPUTE_BACKENDS).join(", ")}`,
+        );
+      } else if (compute === "cpu") {
+        // sd-server on CPU is a real upstream target, but minutes-per-step
+        // throughput makes it unfit for an interactive product. The
+        // `is_capability_available` gating refuses to surface imagegen
+        // on CPU-only hosts anyway, so a CPU sd-server variant in the
+        // manifest is almost always a misconfiguration; reject at load
+        // time rather than letting `pickDiffusionServerVariant` happily
+        // hand it out.
+        errors.push(
+          `diffusion_server.variants[${i}].compute="cpu" is not allowed — diffusion is GPU-only by design.`,
+        );
+      }
+    }
+  }
   // Validate `models[]` entries :
   // an unknown `format` is mitigated downstream by `listModelsForPlatform`'s
   // `m.format !== preferred` filter, but an unknown `tier` would silently
@@ -642,6 +752,70 @@ function validateManifest(manifest: ModelManifest): ModelManifest {
         )}) — diffusion is GPU-only by registry design.`,
       );
     }
+    // mmproj fields: must be present together on vision-GGUF entries,
+    // and absent on every other (capability, format) combination. The
+    // vision sidecar needs `--mmproj <path>` to load the projection
+    // tower; without it the model loads as text-only and a vision
+    // request hangs forever waiting for an image embedding the
+    // sidecar can't produce. Failing fast here keeps misconfiguration
+    // visible at app startup rather than producing a runtime
+    // mystery.
+    const hasMmprojFilename =
+      typeof m.mmprojFilename === "string" && m.mmprojFilename.length > 0;
+    const hasMmprojUrl = typeof m.mmprojUrl === "string" && m.mmprojUrl.length > 0;
+    if (hasMmprojFilename !== hasMmprojUrl) {
+      errors.push(
+        `models[${i}] has mismatched mmproj descriptor: mmprojFilename=${hasMmprojFilename}, mmprojUrl=${hasMmprojUrl}. Both must be present together.`,
+      );
+    }
+    const cap = (m.capability as ModelCapability | undefined) ?? "text";
+    const isVisionGguf = cap === "vision" && m.format === "gguf";
+    if (isVisionGguf && !hasMmprojFilename) {
+      errors.push(
+        `models[${i}] is a vision-GGUF entry (id=${String(m.id)}) but is missing mmprojFilename/mmprojUrl. llama-server requires --mmproj to load a VLM.`,
+      );
+    }
+    if (!isVisionGguf && hasMmprojFilename) {
+      errors.push(
+        `models[${i}] (id=${String(m.id)}, capability=${cap}, format=${m.format}) carries mmproj fields, but mmproj is only valid for vision-GGUF entries. Drop mmprojFilename/mmprojUrl/mmprojSha256/mmprojSizeMb.`,
+      );
+    }
+    // mmprojSizeMb is REQUIRED when an mmproj URL is present.
+    //
+    // The download-progress math in `downloadModelLocked` builds a
+    // combined byte total from `mainBytes + (mmprojSizeMb ?? 0) *
+    // MiB` and reports per-fetcher progress as a single monotonic
+    // 0..100% sweep across both files. When `mmprojSizeMb` is
+    // omitted, the `?? 0` fallback makes the combined total equal
+    // to `mainBytes` while the mmproj fetcher still writes real
+    // bytes on top — so the cumulative progress sails past 100%
+    // during the projector download (e.g. 107% for SmolVLM's
+    // 190 MB projector on a 150 MB main weights file).
+    //
+    // Requiring a positive `mmprojSizeMb` alongside the URL closes
+    // both the progress bug AND the Settings-UI disk-usage report
+    // (which sums per-slot bytes — without the field the vision
+    // slot underreports by the projector's footprint).
+    //
+    // Allowing 0 here would let a future shipper declare a
+    // zero-byte projector, which would also break the progress
+    // math (denominator would still be `mainBytes`, identical to
+    // the omitted-field case). Reject that too.
+    if (hasMmprojFilename) {
+      if (m.mmprojSizeMb === undefined) {
+        errors.push(
+          `models[${i}] (id=${String(m.id)}) is a vision-GGUF entry with mmprojFilename/mmprojUrl but is missing mmprojSizeMb. Download progress reporting requires the projector size in MB.`,
+        );
+      } else if (
+        typeof m.mmprojSizeMb !== "number" ||
+        !Number.isFinite(m.mmprojSizeMb) ||
+        m.mmprojSizeMb <= 0
+      ) {
+        errors.push(
+          `models[${i}].mmprojSizeMb="${String(m.mmprojSizeMb)}" must be a positive finite number (id=${String(m.id)}).`,
+        );
+      }
+    }
     // Detect duplicate (format, platform, tier, capability) tuples —
     // these would otherwise silently shadow each other in
     // `listModelsForPlatform`/`recommendModel`. Capability is part of
@@ -652,7 +826,8 @@ function validateManifest(manifest: ModelManifest): ModelManifest {
       typeof m.platform === "string" &&
       typeof m.tier === "string"
     ) {
-      const cap = (m.capability as ModelCapability | undefined) ?? "text";
+      // Reuse the `cap` resolved above for the mmproj checks; same
+      // legacy-default ("text" when absent) semantics apply here.
       const key = `${m.format}|${m.platform}|${m.tier}|${cap}`;
       const prevIndex = dupKeys.get(key);
       if (prevIndex !== undefined) {
@@ -714,7 +889,7 @@ function formatLabel(entry: ManifestModel): string {
 }
 
 function toResolvedModel(entry: ManifestModel, target: Platform): ResolvedModel {
-  return {
+  const resolved: ResolvedModel = {
     id: entry.id,
     name: entry.name,
     parameters: entry.parameters,
@@ -733,6 +908,23 @@ function toResolvedModel(entry: ManifestModel, target: Platform): ResolvedModel 
     url: entry.url,
     sha256: entry.sha256,
   };
+  // Propagate mmproj descriptor to the resolved shape only when the
+  // manifest carried it (vision-GGUF entries). Leaving these fields
+  // undefined on text/imagegen/MLX-vision keeps the wire shape and
+  // every downstream `if (resolved.mmprojUrl)` check truthy-clean.
+  if (entry.mmprojFilename !== undefined) {
+    resolved.mmprojFilename = entry.mmprojFilename;
+  }
+  if (entry.mmprojUrl !== undefined) {
+    resolved.mmprojUrl = entry.mmprojUrl;
+  }
+  if (entry.mmprojSha256 !== undefined) {
+    resolved.mmprojSha256 = entry.mmprojSha256;
+  }
+  if (entry.mmprojSizeMb !== undefined) {
+    resolved.mmprojSizeMb = entry.mmprojSizeMb;
+  }
+  return resolved;
 }
 
 /**
@@ -826,6 +1018,34 @@ export function pickLlamaServerVariant(
       (v) => v.platform === target && v.compute === preferred,
     ) ??
     server.variants.find((v) => v.platform === target) ??
+    null
+  );
+}
+
+/**
+ * Mirror of `pickLlamaServerVariant` for the diffusion sidecar
+ * binary. Same precedence: exact (platform, compute) match wins,
+ * falling back to "any compute for this platform" (e.g. a host with
+ * both CUDA and Vulkan available will prefer the CUDA build if
+ * `preferred === "cuda"`, but accept the Vulkan one as a fallback if
+ * CUDA isn't shipped for this platform yet). Returns `null` when
+ * the manifest carries no `diffusion_server` block at all OR when no
+ * variant matches `target` — the imagegen UI uses the latter to grey
+ * out the slot rather than start an install that has nothing to
+ * download.
+ */
+export function pickDiffusionServerVariant(
+  manifest: ModelManifest,
+  target: Platform,
+  preferred: ComputeBackend,
+): ManifestDiffusionServerVariant | null {
+  const diffusion = manifest.diffusion_server;
+  if (!diffusion) return null;
+  return (
+    diffusion.variants.find(
+      (v) => v.platform === target && v.compute === preferred,
+    ) ??
+    diffusion.variants.find((v) => v.platform === target) ??
     null
   );
 }
@@ -1577,6 +1797,24 @@ async function deleteCurrentModelUnlocked(
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
+  // Vision-GGUF mmproj cleanup. The projector is a sibling file of
+  // the weights so deleting the weights alone leaves the projector
+  // orphaned on disk, breaking the single-model-on-disk invariant
+  // for the vision slot and burning disk space (the FP16 projector
+  // for Qwen3.5-4B is ~750 MB). Best-effort unlink (logged on
+  // non-ENOENT failure) parallels the stray-archive sweep below.
+  if (current.mmprojPath) {
+    try {
+      await fsp.unlink(current.mmprojPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        console.warn(
+          `[deleteCurrentModel] failed to remove mmproj ${current.mmprojPath}:`,
+          err,
+        );
+      }
+    }
+  }
   // Defensive stray-archive sweep :
   // For MLX models, the install record's `filename` is the original
   // `.tar.gz`/`.tgz` archive while `path` points at the extracted
@@ -1827,6 +2065,31 @@ async function downloadModelLocked(
   const dir = modelsDir(userDataDir, capability);
   await fsp.mkdir(dir, { recursive: true });
   const dest = path.join(dir, requested.filename);
+  // Two-file vision GGUF installs report progress across BOTH files as
+  // a single monotonic 0..100% sweep. Computing the combined total up
+  // front lets us offset the projector's per-fetcher progress by the
+  // main weights' MB count, so the renderer's progress bar never
+  // jumps backwards. For single-file installs (text / MLX / imagegen)
+  // `mmprojBytes` is 0 and the math collapses to the prior behaviour.
+  const mainBytes = requested.downloadSizeMb * 1024 * 1024;
+  // Defence-in-depth: validateManifest already rejects a vision-GGUF
+  // entry that has `mmprojUrl` without a positive `mmprojSizeMb`, so
+  // in practice the `??` branch below is unreachable from manifest
+  // data. Keep the fallback to `mainBytes` (not 0) anyway: it
+  // guarantees `combinedBytes >= mainBytes + 1` once we add any
+  // non-zero projector byte, so the progress percentage CANNOT
+  // exceed 100% even if a future code path constructs a
+  // `ResolvedModel` directly without going through manifest
+  // validation. Using `mainBytes` (instead of an arbitrary number)
+  // means the worst-case progress curve still resembles "half
+  // weights, half projector" — visually defensible for the rare
+  // synthetic-test code path that hits this branch.
+  const mmprojBytes = requested.mmprojUrl
+    ? (typeof requested.mmprojSizeMb === "number" && requested.mmprojSizeMb > 0
+        ? requested.mmprojSizeMb * 1024 * 1024
+        : mainBytes)
+    : 0;
+  const combinedBytes = mainBytes + mmprojBytes;
   // Stream the download into a `.partial` sibling so the final filename
   // ONLY ever exists on disk for fully-downloaded, checksum-verified models.
   // If anything fails (network, checksum), we clean up the partial so a
@@ -1840,10 +2103,19 @@ async function downloadModelLocked(
     await fetcher(
       requested.url,
       (downloaded, total) => {
-        const totalMb =
-          total > 0 ? total / (1024 * 1024) : requested.downloadSizeMb;
-        const downloadedMb = downloaded / (1024 * 1024);
-        const percent = total > 0 ? (downloaded / total) * 100 : 0;
+        const mainPart = total > 0 ? Math.min(downloaded, total) : downloaded;
+        // Use the combined target if we're downloading mmproj too,
+        // otherwise fall back to whatever the fetcher reported.
+        const totalForReport =
+          combinedBytes > 0
+            ? combinedBytes
+            : total > 0
+              ? total
+              : mainBytes;
+        const totalMb = totalForReport / (1024 * 1024);
+        const downloadedMb = mainPart / (1024 * 1024);
+        const percent =
+          totalForReport > 0 ? (mainPart / totalForReport) * 100 : 0;
         onProgress({
           modelId: requested.id,
           capability: requested.capability,
@@ -1879,6 +2151,92 @@ async function downloadModelLocked(
     });
     throw err;
   }
+
+  // Vision-GGUF mmproj second-leg download. Conceptually one
+  // logical install: if the projector fails to download (or fails
+  // checksum), we DELETE the already-successful weights file too —
+  // a vision sidecar started against weights-without-projector
+  // loads as a text-only model and hangs forever on vision
+  // requests. Better to leave the slot empty than leave it
+  // half-installed. The cleanup of `dest` is best-effort (logged on
+  // failure) because the primary error from the projector download
+  // is what the user actually needs to see.
+  let mmprojResult: { path: string; sha256: string | null; sizeMb: number | undefined } | null =
+    null;
+  if (requested.mmprojUrl && requested.mmprojFilename) {
+    const mmprojDest = path.join(dir, requested.mmprojFilename);
+    const mmprojPartial = `${mmprojDest}.partial`;
+    try {
+      await fetcher(
+        requested.mmprojUrl,
+        (downloaded, total) => {
+          const mmprojPart =
+            total > 0 ? Math.min(downloaded, total) : downloaded;
+          // Offset by the (already complete) main weights so the
+          // combined progress bar continues monotonically from the
+          // main download's terminal value.
+          const cumulative = mainBytes + mmprojPart;
+          const totalForReport =
+            combinedBytes > 0
+              ? combinedBytes
+              : total > 0
+                ? mainBytes + total
+                : mainBytes + mmprojBytes;
+          const totalMb = totalForReport / (1024 * 1024);
+          const downloadedMb = cumulative / (1024 * 1024);
+          const percent =
+            totalForReport > 0 ? (cumulative / totalForReport) * 100 : 0;
+          onProgress({
+            modelId: requested.id,
+            capability: requested.capability,
+            format: requested.format,
+            // Report the projector's filename so renderer-side log
+            // strings ("Downloading mmproj…") can tell which file
+            // is in flight without a separate event type.
+            filename: requested.mmprojFilename!,
+            downloadedMb,
+            totalMb,
+            percent,
+          });
+        },
+        mmprojPartial,
+      );
+      if (requested.mmprojSha256) {
+        const got = await hasher(mmprojPartial);
+        if (got.toLowerCase() !== requested.mmprojSha256.toLowerCase()) {
+          throw new Error(
+            `Checksum mismatch for mmproj ${requested.mmprojFilename}: expected ${requested.mmprojSha256}, got ${got}`,
+          );
+        }
+      }
+      await fsp.rename(mmprojPartial, mmprojDest);
+      mmprojResult = {
+        path: mmprojDest,
+        sha256: requested.mmprojSha256 ?? null,
+        sizeMb: requested.mmprojSizeMb,
+      };
+    } catch (err) {
+      // Clean up both the mmproj partial AND the successful main
+      // weights so the slot returns to an empty state. Either file
+      // surviving would either (a) trick the next download into
+      // the already-installed fast path or (b) leave a half-install
+      // the vision sidecar can't use.
+      await fsp.unlink(mmprojPartial).catch((unlinkErr: unknown) => {
+        console.warn(
+          `[downloadModel] failed to remove mmproj .partial ${mmprojPartial} after error:`,
+          unlinkErr,
+        );
+      });
+      await fsp.unlink(dest).catch((unlinkErr: unknown) => {
+        console.warn(
+          `[downloadModel] failed to remove main weights ${dest} after mmproj failure (slot may be half-installed; next deleteCurrentModel will sweep):`,
+          unlinkErr,
+        );
+      });
+      throw err;
+    }
+  }
+
 
   // MLX models ship as `.tar.gz` archives that expand into a directory
   // (config.json, weights/, tokenizer, etc.) consumed by the MLX adapter.
@@ -1944,6 +2302,13 @@ async function downloadModelLocked(
     sha256: requested.sha256,
     downloadedAt: nowFn().toISOString(),
   };
+  if (mmprojResult) {
+    record.mmprojPath = mmprojResult.path;
+    record.mmprojSha256 = mmprojResult.sha256;
+    if (mmprojResult.sizeMb !== undefined) {
+      record.mmprojSizeMb = mmprojResult.sizeMb;
+    }
+  }
   await writeCurrentModel(userDataDir, capability, record);
   return record;
 }

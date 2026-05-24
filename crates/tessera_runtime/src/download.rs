@@ -67,6 +67,21 @@ pub struct ManifestModel {
     pub filename: String,
     pub url: String,
     pub sha256: Option<String>,
+    /// Filename of the multimodal projector for vision-GGUF entries.
+    /// Always populated together with `mmproj_url`; the TS-side
+    /// validator rejects an entry that has one without the other.
+    /// `None` for every text / imagegen / MLX-vision entry.
+    #[serde(rename = "mmprojFilename", default)]
+    pub mmproj_filename: Option<String>,
+    /// HTTPS URL of the projector.
+    #[serde(rename = "mmprojUrl", default)]
+    pub mmproj_url: Option<String>,
+    /// Optional projector sha256.
+    #[serde(rename = "mmprojSha256", default)]
+    pub mmproj_sha256: Option<String>,
+    /// Disk footprint of the projector file in MB.
+    #[serde(rename = "mmprojSizeMb", default)]
+    pub mmproj_size_mb: Option<u64>,
 }
 
 fn default_manifest_capability_string() -> String {
@@ -183,6 +198,10 @@ impl ManifestModel {
             url: Some(self.url),
             checksum: self.sha256,
             local_path: None,
+            mmproj_filename: self.mmproj_filename,
+            mmproj_url: self.mmproj_url,
+            mmproj_checksum: self.mmproj_sha256,
+            mmproj_size_mb: self.mmproj_size_mb,
         })
     }
 }
@@ -303,6 +322,27 @@ pub struct InstalledModel {
     /// `sha256` here would silently strip the field on round-trip.
     #[serde(default)]
     pub sha256: Option<String>,
+    /// Absolute on-disk path to the multimodal projector for vision
+    /// GGUF installs. Mirrors `InstalledModelRecord.mmprojPath` on
+    /// the TS side. Always `None` for text / imagegen / MLX-vision
+    /// installs (those code paths don't use a sibling projector
+    /// file). The vision sidecar reads this and passes `--mmproj
+    /// <path>` to llama-server at startup.
+    ///
+    /// `#[serde(default, skip_serializing_if = "Option::is_none")]`
+    /// keeps the wire format identical to the TS side, where
+    /// `mmprojPath` is omitted (not `null`) on non-vision-GGUF
+    /// records to stay backwards-compatible with legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mmproj_path: Option<String>,
+    /// Optional sha256 of the projector. Same null-means-skip
+    /// semantics as `sha256` above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mmproj_sha256: Option<String>,
+    /// Disk footprint of the projector file alone. Surfaced in the
+    /// Settings UI per-slot disk display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mmproj_size_mb: Option<u64>,
     pub downloaded_at: String,
 }
 
@@ -681,6 +721,9 @@ mod tests {
             download_size_mb: req.download_size_mb,
             disk_size_mb: req.disk_size_mb,
             sha256: None,
+            mmproj_path: None,
+            mmproj_sha256: None,
+            mmproj_size_mb: None,
             downloaded_at: "2026-05-19T00:00:00Z".into(),
         };
         let plan = plan_download(Some(&installed), &req);
@@ -714,6 +757,9 @@ mod tests {
             download_size_mb: installed_info.download_size_mb,
             disk_size_mb: installed_info.disk_size_mb,
             sha256: None,
+            mmproj_path: None,
+            mmproj_sha256: None,
+            mmproj_size_mb: None,
             downloaded_at: "2026-05-19T00:00:00Z".into(),
         };
         let plan = plan_download(Some(&installed), &requested);
@@ -745,6 +791,9 @@ mod tests {
             download_size_mb: 100,
             disk_size_mb: 300,
             sha256: None,
+            mmproj_path: None,
+            mmproj_sha256: None,
+            mmproj_size_mb: None,
             downloaded_at: "2026-05-19T00:00:00Z".into(),
         };
         let requested = ModelInfo {
@@ -765,6 +814,10 @@ mod tests {
             url: None,
             checksum: None,
             local_path: None,
+            mmproj_filename: None,
+            mmproj_url: None,
+            mmproj_checksum: None,
+            mmproj_size_mb: None,
         };
         let plan = plan_download(Some(&installed), &requested);
         match plan {
@@ -790,6 +843,9 @@ mod tests {
             download_size_mb: 450,
             disk_size_mb: 450,
             sha256: Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into()),
+            mmproj_path: None,
+            mmproj_sha256: None,
+            mmproj_size_mb: None,
             downloaded_at: "2026-05-19T00:00:00Z".into(),
         };
         let json = serde_json::to_value(&m).unwrap();
@@ -946,6 +1002,9 @@ mod tests {
             download_size_mb: 450,
             disk_size_mb: 0,
             sha256: None,
+            mmproj_path: None,
+            mmproj_sha256: None,
+            mmproj_size_mb: None,
             downloaded_at: "2026-05-19T00:00:00Z".into(),
         };
         assert_eq!(m.effective_disk_size_mb(), 450);

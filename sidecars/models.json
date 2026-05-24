@@ -126,7 +126,11 @@
       "contextLength": 4096,
       "filename": "Qwen3.5-4B-Revised-q4_k_m.gguf",
       "url": "https://huggingface.co/Smoffyy/Qwen3.5-4B-Instruct-Revised-GGUF/resolve/main/Qwen3.5-4B-Revised-q4_k_m.gguf",
-      "sha256": null
+      "sha256": null,
+      "mmprojFilename": "mmproj-Qwen3.5-4B-Revised-f16.gguf",
+      "mmprojUrl": "https://huggingface.co/Smoffyy/Qwen3.5-4B-Instruct-Revised-GGUF/resolve/main/mmproj-Qwen3.5-4B-Revised-f16.gguf",
+      "mmprojSha256": null,
+      "mmprojSizeMb": 750
     },
     {
       "id": "qwen3.5-4b-vision-mlx",
@@ -162,7 +166,11 @@
       "contextLength": 2048,
       "filename": "SmolVLM2-256M-Video-Instruct.Q4_K_S.gguf",
       "url": "https://huggingface.co/mradermacher/SmolVLM2-256M-Video-Instruct-GGUF/resolve/main/SmolVLM2-256M-Video-Instruct.Q4_K_S.gguf",
-      "sha256": null
+      "sha256": null,
+      "mmprojFilename": "SmolVLM2-256M-Video-Instruct.mmproj-f16.gguf",
+      "mmprojUrl": "https://huggingface.co/mradermacher/SmolVLM2-256M-Video-Instruct-GGUF/resolve/main/SmolVLM2-256M-Video-Instruct.mmproj-f16.gguf",
+      "mmprojSha256": null,
+      "mmprojSizeMb": 190
     },
     {
       "id": "smolvlm-256m-vision-mlx",
@@ -281,6 +289,48 @@
         "platform": "windows-x64",
         "compute": "vulkan",
         "url": "https://github.com/PrismML/llama.cpp/releases/download/b4546/llama-server-windows-x64-vulkan.zip",
+        "sha256": null
+      }
+    ]
+  },
+  "diffusion_server": {
+    "version": "master-c2f6c81",
+    "note": "Pre-built sd-server binaries from leejet/stable-diffusion.cpp. Diffusion is GPU-only — variants are restricted to cuda (NVIDIA), vulkan (cross-vendor), metal (Apple Silicon), and rocm (AMD on Linux). Aggressive idle-unload (30s) reflects the larger VRAM footprint of diffusion models compared to text-gen.",
+    "variants": [
+      {
+        "platform": "linux-x64",
+        "compute": "cuda",
+        "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-c2f6c81/sd-server-linux-x64-cuda.tar.gz",
+        "sha256": null
+      },
+      {
+        "platform": "linux-x64",
+        "compute": "vulkan",
+        "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-c2f6c81/sd-server-linux-x64-vulkan.tar.gz",
+        "sha256": null
+      },
+      {
+        "platform": "linux-x64",
+        "compute": "rocm",
+        "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-c2f6c81/sd-server-linux-x64-rocm.tar.gz",
+        "sha256": null
+      },
+      {
+        "platform": "macos-apple-silicon",
+        "compute": "metal",
+        "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-c2f6c81/sd-server-macos-arm64-metal.tar.gz",
+        "sha256": null
+      },
+      {
+        "platform": "windows-x64",
+        "compute": "cuda",
+        "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-c2f6c81/sd-server-windows-x64-cuda.zip",
+        "sha256": null
+      },
+      {
+        "platform": "windows-x64",
+        "compute": "vulkan",
+        "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-c2f6c81/sd-server-windows-x64-vulkan.zip",
         "sha256": null
       }
     ]

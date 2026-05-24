@@ -77,6 +77,12 @@ const sidecarMock = {
   isRunning: false,
   setModelPath: vi.fn(),
   start: vi.fn().mockResolvedValue(undefined),
+  // After `start()` returns, IPC handlers gate the next bridge call on
+  // `waitForReady()` to avoid the spawn-vs-listener race
+  // (Devin Review ANALYSIS_0005). Tests resolve it `true` by default;
+  // the handler only short-circuits to its error branch when the gate
+  // returns `false`, and these audit tests verify the success path.
+  waitForReady: vi.fn().mockResolvedValue(true),
   stop: vi.fn().mockResolvedValue(undefined),
 };
 
@@ -125,7 +131,16 @@ beforeEach(() => {
   sidecarMock.isRunning = false;
   sidecarMock.setModelPath.mockClear();
   sidecarMock.start.mockClear();
+  sidecarMock.waitForReady.mockClear();
+  // Reset the resolved value because earlier tests in the file
+  // (or future ones) may flip it to `false` to exercise the
+  // not-ready error branch. The afterEach `vi.restoreAllMocks()`
+  // wipes the implementation set in the `sidecarMock` declaration,
+  // so re-establish the default-success values here.
+  sidecarMock.waitForReady.mockResolvedValue(true);
   sidecarMock.stop.mockClear();
+  sidecarMock.stop.mockResolvedValue(undefined);
+  sidecarMock.start.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -178,6 +193,29 @@ describe("model:* IPC handlers — audit pass-throughs", () => {
     ).resolves.not.toThrow();
     // The model still started — the audit failure is swallowed.
     expect(sidecarMock.start).toHaveBeenCalled();
+  });
+
+  it("stops the half-started sidecar when waitForReady times out so the next model:start re-spawns cleanly instead of silently no-opping", async () => {
+    // Regression test for Devin Review follow-up
+    // (ANALYSIS_pr-review-job-095e635be43f4af68e37c59e0af14838_0001).
+    // After start() flips _isRunning=true, a readiness timeout
+    // would leave the flag stuck and cause the early-return at
+    // the top of the model:start handler to silently no-op the
+    // next attempt. The handler must call stop() before throwing
+    // so subsequent attempts begin from a clean state and the
+    // user actually sees a re-attempt instead of a phantom
+    // "model already started" outcome.
+    sidecarMock.waitForReady.mockResolvedValueOnce(false);
+    registerModelHandlers();
+    await expect(
+      invoke("model:start", "/models/llama-3.gguf"),
+    ).rejects.toThrow(/failed to become ready/i);
+    expect(sidecarMock.start).toHaveBeenCalled();
+    expect(sidecarMock.stop).toHaveBeenCalledTimes(1);
+    // Audit must NOT fire when the sidecar never became ready —
+    // we'd otherwise log a "model started" event for a sidecar
+    // that didn't actually serve a single request.
+    expect(bridgeMock.bridgeLogModelStarted).not.toHaveBeenCalled();
   });
 });
 
