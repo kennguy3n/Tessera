@@ -1,11 +1,12 @@
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use tessera_audit::AuditLogger;
 use tessera_core::Error as CoreError;
 use tessera_templates::parser::load_template_by_id;
 use tessera_templates::template::Template;
 use tessera_templates::validator::validate_template;
-use tessera_templates::TemplateRegistry;
+use tessera_templates::{TemplateLoadFailureKind, TemplateRegistry};
 
 use crate::{BridgeError, BridgeResult};
 
@@ -29,19 +30,87 @@ pub struct TemplateSectionInfo {
 }
 
 pub fn list_templates(template_dir: &str) -> BridgeResult<Vec<TemplateInfo>> {
+    // No audit logger — only the on-disk eprintln surface fires for
+    // dropped templates. Used by callers that don't have an audit
+    // logger (e.g. unit tests). The IPC path in
+    // `napi_exports::bridge_list_templates` calls
+    // `list_templates_with_audit` instead so dropped templates land
+    // in the audit log.
+    list_templates_inner(template_dir, None)
+}
+
+/// Same as `list_templates` but routes every parse / validation
+/// failure into the supplied audit logger via
+/// `log_template_validation_failed`. The successful registry is
+/// still returned in full (load-and-continue posture preserved)
+/// so a single broken template never takes down the entire list
+/// operation. Wired into the napi bridge so the renderer's
+/// `templates:list` IPC produces audit rows for any template the
+/// user has on disk that no longer parses or validates —
+/// previously the only surface was the Electron main process's
+/// stderr, which a packaged-build user has no way to read.
+pub fn list_templates_with_audit(
+    template_dir: &str,
+    audit: &AuditLogger,
+) -> BridgeResult<Vec<TemplateInfo>> {
+    list_templates_inner(template_dir, Some(audit))
+}
+
+fn list_templates_inner(
+    template_dir: &str,
+    audit: Option<&AuditLogger>,
+) -> BridgeResult<Vec<TemplateInfo>> {
     let path = Path::new(template_dir);
     if !path.exists() {
         return Ok(Vec::new());
     }
 
-    let registry = TemplateRegistry::load_from_directory(path).map_err(BridgeError::Core)?;
+    let result =
+        TemplateRegistry::load_from_directory_with_failures(path).map_err(BridgeError::Core)?;
 
-    let templates = registry.list().iter().map(template_to_info).collect();
+    if let Some(logger) = audit {
+        for failure in &result.failures {
+            // Ignore audit-write errors so a failed audit row
+            // (full disk, locked DB) can never sabotage the
+            // template list. Mirrors the `_ = logger.log_*`
+            // convention used by every other audit call in
+            // `napi_exports.rs`.
+            let _ = logger.log_template_validation_failed(
+                &failure.path.to_string_lossy(),
+                failure.kind.as_str(),
+                &failure.error,
+            );
+        }
+    }
+
+    let templates = result.registry.list().iter().map(template_to_info).collect();
 
     Ok(templates)
 }
 
 pub fn get_template(template_dir: &str, template_id: &str) -> BridgeResult<Option<TemplateInfo>> {
+    get_template_inner(template_dir, template_id, None)
+}
+
+/// Same as `get_template` but routes a validation failure into
+/// the supplied audit logger. The IPC path in
+/// `napi_exports::bridge_get_template` calls this variant so a
+/// user trying to load a known-broken template (e.g. the
+/// `TemplateRunner` mounts after `templates:list` already silently
+/// dropped it) still produces an audit row pinpointing the file.
+pub fn get_template_with_audit(
+    template_dir: &str,
+    template_id: &str,
+    audit: &AuditLogger,
+) -> BridgeResult<Option<TemplateInfo>> {
+    get_template_inner(template_dir, template_id, Some(audit))
+}
+
+fn get_template_inner(
+    template_dir: &str,
+    template_id: &str,
+    audit: Option<&AuditLogger>,
+) -> BridgeResult<Option<TemplateInfo>> {
     let path = Path::new(template_dir);
     if !path.exists() {
         return Ok(None);
@@ -86,6 +155,21 @@ pub fn get_template(template_dir: &str, template_id: &str) -> BridgeResult<Optio
             Ok(()) => Ok(Some(template_to_info(&template))),
             Err(e) => {
                 eprintln!("[tessera_bridge] template `{template_id}` failed validation: {e}");
+                if let Some(logger) = audit {
+                    // The template parsed but failed validation
+                    // (missing sections, out-of-range max_tokens,
+                    // etc.). The IPC contract maps this to
+                    // `Ok(None)` for back-compat, so the renderer
+                    // would silently see "no such template" — the
+                    // audit row is the only persistent surface
+                    // the operator can grep to find the offending
+                    // file.
+                    let _ = logger.log_template_validation_failed(
+                        template_id,
+                        TemplateLoadFailureKind::Validation.as_str(),
+                        &e.to_string(),
+                    );
+                }
                 Ok(None)
             }
         },
@@ -253,6 +337,178 @@ export:
         assert!(
             result.is_none(),
             "expected Ok(None) for validate-failed template; got Ok(Some({result:?}))"
+        );
+    }
+
+    /// Phase 10 / Task 28: `list_templates_with_audit` must emit one
+    /// `TemplateValidationFailed` audit row for every dropped
+    /// template (parse OR validation kind), while still returning
+    /// the successful subset of the registry. The bridge ties this
+    /// to the `templates:list` IPC so an operator can grep the
+    /// audit log for templates that silently disappeared from the
+    /// renderer's template picker.
+    #[test]
+    fn list_templates_with_audit_emits_one_row_per_dropped_template() {
+        use tessera_audit::AuditEventType;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("documents")).unwrap();
+        std::fs::create_dir_all(dir.path().join("slides")).unwrap();
+
+        // Healthy template.
+        std::fs::write(
+            dir.path().join("documents/healthy.yaml"),
+            r#"
+id: healthy-v1
+name: Healthy
+type: document
+description: ok
+sections:
+  - title: Intro
+    prompt: Write intro.
+export:
+  - markdown
+"#,
+        )
+        .unwrap();
+
+        // Validation failure: empty description.
+        std::fs::write(
+            dir.path().join("documents/empty-desc.yaml"),
+            r#"
+id: empty-desc-v1
+name: EmptyDesc
+type: document
+description: ""
+sections:
+  - title: Intro
+    prompt: Write intro.
+export:
+  - markdown
+"#,
+        )
+        .unwrap();
+
+        // Parse failure: not a YAML map at the top level.
+        std::fs::write(
+            dir.path().join("slides/broken.yaml"),
+            "- this is not a template document\n",
+        )
+        .unwrap();
+
+        let audit = AuditLogger::new_in_memory().unwrap();
+        let templates = list_templates_with_audit(dir.path().to_str().unwrap(), &audit).unwrap();
+
+        // The healthy template still loads.
+        assert_eq!(
+            templates.len(),
+            1,
+            "healthy template should land in the returned list"
+        );
+        assert_eq!(templates[0].id, "healthy-v1");
+
+        // Two audit rows: one for the validation failure, one for
+        // the parse failure.
+        let rows = audit
+            .query_by_type(&AuditEventType::TemplateValidationFailed)
+            .unwrap();
+        assert_eq!(
+            rows.len(),
+            2,
+            "expected one audit row per dropped template; got {}",
+            rows.len()
+        );
+
+        let by_path: Vec<&str> = rows.iter().map(|r| r.details.as_str()).collect();
+        assert!(by_path.iter().any(|d| d.contains("empty-desc.yaml")
+            && d.contains("kind=validation")
+            && d.contains("description")));
+        assert!(by_path
+            .iter()
+            .any(|d| d.contains("broken.yaml") && d.contains("kind=parse")));
+    }
+
+    /// `get_template_with_audit` must emit a `TemplateValidationFailed`
+    /// row when the requested template parses but fails validation.
+    /// The IPC contract maps this to `Ok(None)` for back-compat, so
+    /// the audit row is the only surface the operator can grep to
+    /// find the offending file.
+    #[test]
+    fn get_template_with_audit_emits_validation_row() {
+        use tessera_audit::AuditEventType;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("documents")).unwrap();
+        std::fs::write(
+            dir.path().join("documents/invalid.yaml"),
+            r#"
+id: invalid-v1
+name: Invalid
+type: document
+description: ""
+sections:
+  - title: Intro
+    prompt: Write intro.
+export:
+  - markdown
+"#,
+        )
+        .unwrap();
+
+        let audit = AuditLogger::new_in_memory().unwrap();
+        let result =
+            get_template_with_audit(dir.path().to_str().unwrap(), "invalid-v1", &audit).unwrap();
+        assert!(
+            result.is_none(),
+            "validate-failed template must surface as Ok(None) to preserve the IPC contract"
+        );
+
+        let rows = audit
+            .query_by_type(&AuditEventType::TemplateValidationFailed)
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].details.contains("kind=validation"));
+        // The template id is the surface the user has at the IPC
+        // boundary; preserve it in the details so an operator can
+        // grep audit rows for the same id they typed into the
+        // template picker.
+        assert!(rows[0].details.contains("invalid-v1"));
+    }
+
+    /// Missing-id lookups must NOT emit an audit row — the operator
+    /// did nothing wrong, and conflating "template not found" with
+    /// "template failed validation" would dilute the audit signal.
+    #[test]
+    fn get_template_with_audit_does_not_audit_missing_id() {
+        use tessera_audit::AuditEventType;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("documents")).unwrap();
+        std::fs::write(
+            dir.path().join("documents/healthy.yaml"),
+            r#"
+id: healthy-v1
+name: Healthy
+type: document
+description: ok
+sections:
+  - title: Intro
+    prompt: Write intro.
+export:
+  - markdown
+"#,
+        )
+        .unwrap();
+
+        let audit = AuditLogger::new_in_memory().unwrap();
+        let result =
+            get_template_with_audit(dir.path().to_str().unwrap(), "no-such-id-v1", &audit)
+                .unwrap();
+        assert!(result.is_none());
+
+        let rows = audit
+            .query_by_type(&AuditEventType::TemplateValidationFailed)
+            .unwrap();
+        assert!(
+            rows.is_empty(),
+            "missing-id lookup must not emit a validation-failed audit row"
         );
     }
 }

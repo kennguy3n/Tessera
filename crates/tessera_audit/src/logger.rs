@@ -182,6 +182,29 @@ impl AuditLogger {
         )
     }
 
+    /// Record that a template YAML failed parse or semantic
+    /// validation when the registry was loaded. Distinct from a
+    /// runtime IPC error because the failure happens at load time
+    /// (Tessera startup or `templates:list` IPC) and the affected
+    /// file is silently dropped from the registry — without an
+    /// audit row the operator has no surfaced way to learn that a
+    /// template went missing from the list. The `kind` ("parse" or
+    /// "validation") and `error` are folded into the details
+    /// payload so an auditor's grep can filter by either dimension.
+    pub fn log_template_validation_failed(
+        &self,
+        template_path: &str,
+        kind: &str,
+        error: &str,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::TemplateValidationFailed,
+            format!(
+                "Template load failure: kind={kind} path={template_path} error={error}"
+            ),
+        )
+    }
+
     pub fn query_by_type(&self, event_type: &AuditEventType) -> Result<Vec<AuditEvent>> {
         self.store.query_by_type(event_type)
     }
@@ -267,5 +290,56 @@ mod tests {
         let stopped = logger.query_by_type(&AuditEventType::ModelStopped).unwrap();
         assert_eq!(stopped.len(), 1);
         assert!(stopped[0].details.contains("user-requested"));
+    }
+
+    /// Phase 10 / Task 28: `log_template_validation_failed` must
+    /// route to the new `TemplateValidationFailed` event type and
+    /// fold the file path, the failure kind, and the underlying
+    /// error message into the details payload so an auditor's grep
+    /// can filter by any of those three dimensions.
+    #[test]
+    fn template_validation_failure_helper_routes_to_correct_event_type() {
+        let logger = AuditLogger::new_in_memory().unwrap();
+
+        logger
+            .log_template_validation_failed(
+                "templates/documents/missing-sections.yaml",
+                "validation",
+                "template must have at least one section",
+            )
+            .unwrap();
+        logger
+            .log_template_validation_failed(
+                "templates/slides/broken.yaml",
+                "parse",
+                "missing field `id` at line 1",
+            )
+            .unwrap();
+
+        assert_eq!(logger.event_count().unwrap(), 2);
+
+        let rows = logger
+            .query_by_type(&AuditEventType::TemplateValidationFailed)
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+
+        // The validation-kind row.
+        let validation = rows
+            .iter()
+            .find(|row| row.details.contains("missing-sections.yaml"))
+            .expect("validation row should be present");
+        assert!(validation.details.contains("kind="));
+        assert!(validation.details.contains("validation"));
+        assert!(validation
+            .details
+            .contains("template must have at least one section"));
+
+        // The parse-kind row.
+        let parse = rows
+            .iter()
+            .find(|row| row.details.contains("broken.yaml"))
+            .expect("parse row should be present");
+        assert!(parse.details.contains("parse"));
+        assert!(parse.details.contains("missing field `id`"));
     }
 }

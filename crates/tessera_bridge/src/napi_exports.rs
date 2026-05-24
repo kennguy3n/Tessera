@@ -616,12 +616,34 @@ pub fn bridge_export_artifact_to_file(
 #[napi]
 pub fn bridge_list_templates() -> napi::Result<Vec<templates::TemplateInfo>> {
     let s = state()?;
+    // Phase 10 / Task 28: route every parse / validation failure
+    // encountered while walking `template_dir` into the audit log
+    // so a packaged-build operator can find templates that were
+    // silently dropped from the list — `eprintln!` alone goes to
+    // the Electron main process's stderr, which a user has no UI
+    // to read. We swallow the audit-logger lock-poison case (mirrors
+    // every other audit call site here) and fall through to the
+    // non-audit variant; the registry walk itself still produces
+    // its stderr surface for the operator.
+    if let Ok(logger) = s.audit_logger.lock() {
+        return templates::list_templates_with_audit(&s.template_dir, &logger)
+            .map_err(|e| napi::Error::from_reason(e.to_string()));
+    }
     templates::list_templates(&s.template_dir).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi]
 pub fn bridge_get_template(template_id: String) -> napi::Result<Option<templates::TemplateInfo>> {
     let s = state()?;
+    // Same audit posture as `bridge_list_templates`: a validation
+    // failure on lookup is mapped to `Ok(None)` for back-compat,
+    // which means the only surface the operator has to discover the
+    // dropped template is the audit row. Falls back to the
+    // non-audit variant if the audit logger is poisoned.
+    if let Ok(logger) = s.audit_logger.lock() {
+        return templates::get_template_with_audit(&s.template_dir, &template_id, &logger)
+            .map_err(|e| napi::Error::from_reason(e.to_string()));
+    }
     templates::get_template(&s.template_dir, &template_id)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }

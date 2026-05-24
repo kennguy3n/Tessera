@@ -30,6 +30,16 @@ pub enum AuditEventType {
     CitationAdded,
     CitationReplaced,
     CitationRemoved,
+    /// A bundled or user-supplied template YAML failed parse or
+    /// semantic validation when the registry was loaded. Distinct
+    /// from a runtime IPC error because the failure happens at
+    /// load time (Tessera startup or `templates:list` IPC) and the
+    /// affected file is silently dropped from the registry. The
+    /// `details` payload includes the file path, the failure kind
+    /// (parse vs. validation), and the underlying error message so
+    /// operators reviewing the audit log can tell exactly which
+    /// template needs fixing.
+    TemplateValidationFailed,
 }
 
 impl AuditEvent {
