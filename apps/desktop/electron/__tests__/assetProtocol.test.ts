@@ -64,6 +64,7 @@ import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as os from "os";
 import * as path from "path";
+import { pathToFileURL } from "node:url";
 
 // --- electron mock ----------------------------------------------------
 //
@@ -320,7 +321,15 @@ describe("registerAssetProtocolHandler", () => {
       { bypassCustomProtocolHandlers?: boolean } | undefined,
     ];
     expect(fetchedUrl.startsWith("file://")).toBe(true);
-    expect(decodeURIComponent(fetchedUrl)).toContain(filePath);
+    // Compare via `pathToFileURL` so the assertion is OS-agnostic.
+    // On Windows `filePath` is e.g. `C:\Users\...\image-0.png`
+    // (backslash separators) but the handler emits
+    // `file:///C:/Users/.../image-0.png` (forward slashes, with the
+    // drive letter and colon percent-decoded). A raw substring
+    // check fails on Windows even when the URL is correct;
+    // `pathToFileURL` is Node's canonical converter and produces
+    // the exact shape the handler emits via `url.pathToFileURL`.
+    expect(fetchedUrl).toBe(pathToFileURL(filePath).toString());
     expect(fetchOpts?.bypassCustomProtocolHandlers).toBe(true);
   });
 
@@ -339,7 +348,9 @@ describe("registerAssetProtocolHandler", () => {
     );
     expect(res.status).toBe(200);
     const [fetchedUrl] = netFetchMock.mock.calls[0] as [string, unknown];
-    expect(decodeURIComponent(fetchedUrl)).toContain(filePath);
+    // OS-agnostic compare via `pathToFileURL` (see sibling test
+    // above for the Windows-vs-POSIX rationale).
+    expect(fetchedUrl).toBe(pathToFileURL(filePath).toString());
   });
 });
 
