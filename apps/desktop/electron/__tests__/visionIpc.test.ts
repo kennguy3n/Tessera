@@ -29,6 +29,13 @@ const markGenerationIdleMock = vi.fn();
 const bridgeVisionDescribeMock = vi.fn();
 const getInstalledModelMock = vi.fn();
 const detectPlatformInfoMock = vi.fn();
+// Tracks which paths the mocked `fs/promises.access` should treat as
+// existing. The handler stat-checks the mmproj companion (in addition
+// to the main weights, which `getInstalledModel` already covers) so
+// `vision:isAvailable` can report `false` when the projector vanishes
+// between download and probe. Tests opt files in / out by mutating
+// this set in beforeEach + per-test setup.
+const accessiblePaths = new Set<string>();
 
 let sidecarIsRunning = false;
 const sidecarStub = {
@@ -69,6 +76,26 @@ vi.mock("../appState", () => ({
   isBridgeAvailable: () => bridgeStub !== null,
   getVisionSidecar: () => visionSidecarStub,
 }));
+
+vi.mock("fs/promises", async () => {
+  // Real fs/promises is wrapped so the handler can `await fsp.access`
+  // against deterministic test paths without touching the host
+  // filesystem. Anything in `accessiblePaths` resolves; anything
+  // else rejects with an ENOENT-shaped error so the handler's
+  // catch-block path executes exactly as it would in production.
+  const actual = await vi.importActual<typeof import("fs/promises")>(
+    "fs/promises",
+  );
+  return {
+    ...actual,
+    access: vi.fn(async (p: string) => {
+      if (accessiblePaths.has(p)) return;
+      const err = new Error(`ENOENT: no such file or directory, access '${p}'`);
+      (err as NodeJS.ErrnoException).code = "ENOENT";
+      throw err;
+    }),
+  };
+});
 
 vi.mock("../modelManagement", async () => {
   const actual = await vi.importActual<
@@ -137,6 +164,13 @@ describe("vision IPC handlers", () => {
     sidecarIsRunning = false;
     visionSidecarStub = sidecarStub;
     bridgeStub = { bridgeVisionDescribe: bridgeVisionDescribeMock };
+    accessiblePaths.clear();
+    // Default fixtures: the mmproj paths used by the
+    // "model + mmproj present" tests below are always on disk.
+    // Individual tests that exercise the missing-file path
+    // delete from this set after beforeEach runs.
+    accessiblePaths.add("/m/proj.gguf");
+    accessiblePaths.add("/m/smolproj.gguf");
     defaultRateLimiter.reset();
     sidecarStartMock.mockResolvedValue(undefined);
     detectPlatformInfoMock.mockReturnValue({
@@ -186,6 +220,26 @@ describe("vision IPC handlers", () => {
         path: "/m/qwen.gguf",
         mmprojPath: "/m/proj.gguf",
       });
+      const handler = getHandler("vision:isAvailable");
+      await expect(handler({})).resolves.toBe(false);
+    });
+
+    it("returns false when mmproj path is populated but the file no longer exists on disk", async () => {
+      // Regression guard for Devin Review BUG_0001: vision-GGUF
+      // installs are two-file (main weights + mmproj projector) but
+      // `getInstalledModel` only stat-checks the main weights. If
+      // the mmproj is deleted, quarantined by AV, or wiped by a
+      // partial disk fault while the main weights remain, the
+      // probe must report false so the renderer hides the
+      // "Describe image" button rather than letting the click
+      // resolve to a confusing llama-server startup failure.
+      getInstalledModelMock.mockResolvedValue({
+        path: "/m/qwen.gguf",
+        mmprojPath: "/m/proj.gguf",
+      });
+      // Remove the projector from the simulated filesystem AFTER
+      // beforeEach has populated it; main weights stay accessible.
+      accessiblePaths.delete("/m/proj.gguf");
       const handler = getHandler("vision:isAvailable");
       await expect(handler({})).resolves.toBe(false);
     });
@@ -252,6 +306,27 @@ describe("vision IPC handlers", () => {
       await expect(ensureVisionSidecarRunning()).rejects.toThrow(
         /missing its multimodal projector/,
       );
+    });
+
+    it("rejects with structured error when mmproj path is set but file is gone from disk", async () => {
+      // Symmetrical defence-in-depth to the `vision:isAvailable`
+      // stat (Devin Review BUG_0001). If the renderer somehow
+      // calls `vision:describe` despite the probe returning false
+      // (e.g. stale UI state, race with a delete), the handler
+      // surfaces a structured message rather than letting
+      // llama-server fail with a cryptic mmproj-load error.
+      getInstalledModelMock.mockResolvedValue({
+        path: "/m/qwen.gguf",
+        mmprojPath: "/m/proj.gguf",
+      });
+      accessiblePaths.delete("/m/proj.gguf");
+      await expect(ensureVisionSidecarRunning()).rejects.toThrow(
+        /projector file is missing/,
+      );
+      // Critically, we must NOT have called start() — the sidecar
+      // would refuse anyway, but ensuring we short-circuit early
+      // saves the multi-second startup grace period.
+      expect(sidecarStartMock).not.toHaveBeenCalled();
     });
 
     it("rejects when the vision sidecar slot is null", async () => {

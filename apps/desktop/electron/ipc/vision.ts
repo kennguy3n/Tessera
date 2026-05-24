@@ -28,6 +28,8 @@
  * independently from the text sidecar, so the text generator can
  * still stream tokens while a vision describe is in flight.
  */
+import * as fsp from "fs/promises";
+
 import { idempotentHandle } from "./register";
 import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
 import { VisionDescribeSchema } from "./schemas";
@@ -140,6 +142,21 @@ export async function ensureVisionSidecarRunning(): Promise<void> {
       "Installed vision model is missing its multimodal projector (mmproj). Re-download the vision model from Settings.",
     );
   }
+  // Defence-in-depth: the on-disk record points at an mmproj path
+  // but the FILE may have disappeared since download (manual
+  // delete, AV quarantine, partial disk fault). Catch that here
+  // with a structured error rather than letting llama-server
+  // exit with a cryptic "failed to load mmproj" line several
+  // seconds later. `vision:isAvailable` performs the equivalent
+  // stat for the probe path; this is its analogue for the
+  // actual-startup path.
+  try {
+    await fsp.access(record.mmprojPath);
+  } catch {
+    throw new Error(
+      "Vision model projector file is missing on disk. Re-download the vision model from Settings.",
+    );
+  }
 
   const platform = detectPlatformInfo();
   sidecar.setModelPath(record.path);
@@ -162,17 +179,41 @@ export function registerVisionHandlers(): void {
   idempotentHandle("vision:isAvailable", async () => {
     // Quick capability probe used by the renderer to decide
     // whether to show "Describe image" buttons. Returns true
-    // when (a) the native bridge is loaded, (b) a vision model
-    // record exists, and (c) the file the record points at is
-    // present on disk (`getInstalledModel` checks existence as
-    // part of its contract).
+    // when:
+    //   (a) the native bridge is loaded,
+    //   (b) a vision-slot model record exists,
+    //   (c) the main-weights file the record points at is
+    //       present on disk (`getInstalledModel` checks existence
+    //       as part of its contract for `current.path`),
+    //   (d) the `mmprojPath` companion is populated AND that file
+    //       is ALSO present on disk.
+    //
+    // (d) is the load-bearing extra step over `getInstalledModel`:
+    // vision-GGUF installs are two-file (main weights + mmproj
+    // projector), but `getInstalledModel` only stat-checks the
+    // main weights. If the mmproj is deleted, quarantined by AV,
+    // or wiped by a partial-disk fault while the main weights
+    // remain, the renderer would happily show the "Describe
+    // image" button and the click would resolve to a confusing
+    // llama-server startup failure because `--mmproj` points at
+    // a missing path. Doing the stat here keeps the probe honest.
     //
     // Does NOT start the sidecar — probes are called at render
     // time and must be cheap. The sidecar warms up on the first
     // actual `vision:describe` call.
     if (!isBridgeAvailable()) return false;
     const record = await getInstalledModel(userDataDir(), "vision");
-    return record !== null && typeof record.mmprojPath === "string";
+    if (!record || typeof record.mmprojPath !== "string") return false;
+    try {
+      await fsp.access(record.mmprojPath);
+      return true;
+    } catch {
+      // mmproj file disappeared between download and probe (e.g.
+      // user deleted it, AV quarantine, disk fault). Fall through
+      // to false so the renderer hides the vision UI — the user
+      // can re-download the model from Settings to recover.
+      return false;
+    }
   });
 
   idempotentHandle("vision:describe", async (_event, raw: unknown) => {
