@@ -435,6 +435,13 @@ describe("ModelRuntimeCard download-progress lifecycle", () => {
           id: "ternary-bonsai-1.7b-gguf",
           name: "Ternary-Bonsai 1.7B",
           parameters: "1.7B",
+          // Required `ResolvedModel.capability` field (shared/types.ts:541).
+          // The text card only ever receives text-slot records via the
+          // `capability="text"`-scoped IPC, so the test fixtures must
+          // match that wire shape — a vision/imagegen record would
+          // imply a cross-slot bug at the IPC boundary, not a valid
+          // mock for this card.
+          capability: "text",
           format: "gguf",
           formatLabel: "GGUF Q1_0_g128",
           quantization: "Q1_0_g128",
@@ -558,6 +565,9 @@ describe("ModelRuntimeCard onDownloadProgress capability filter", () => {
           id: "ternary-bonsai-1.7b-gguf",
           name: "Ternary-Bonsai 1.7B",
           parameters: "1.7B",
+          // See note in the buildApi above — this matches
+          // ResolvedModel.capability (required by shared/types.ts:541).
+          capability: "text" as const,
           format: "gguf",
           formatLabel: "GGUF Q1_0_g128",
           quantization: "Q1_0_g128",
@@ -905,6 +915,7 @@ describe("ModelRuntimeCard failed-swap re-fetches current model", () => {
           id: "ternary-bonsai-8b-gguf",
           name: "Ternary-Bonsai 8B",
           parameters: "8B",
+          capability: "text",
           format: "gguf",
           formatLabel: "GGUF Q1_0_g128",
           quantization: "Q1_0_g128",
@@ -924,6 +935,7 @@ describe("ModelRuntimeCard failed-swap re-fetches current model", () => {
             id: "ternary-bonsai-8b-gguf",
             name: "Ternary-Bonsai 8B",
             parameters: "8B",
+            capability: "text",
             format: "gguf",
             formatLabel: "GGUF Q1_0_g128",
             quantization: "Q1_0_g128",
@@ -1049,6 +1061,7 @@ describe("ModelRuntimeCard 5s poll respects busyModelId gate", () => {
           id: "ternary-bonsai-8b-gguf",
           name: "Ternary-Bonsai 8B",
           parameters: "8B",
+          capability: "text",
           format: "gguf",
           formatLabel: "GGUF Q1_0_g128",
           quantization: "Q1_0_g128",
@@ -1334,5 +1347,182 @@ describe("ModelRuntimeCard handleDelete error path re-fetches state", () => {
         screen.queryByText(/ternary-bonsai-1.7b-gguf/i),
       ).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("ModelRuntimeCard handleDelete success path re-fetches current", () => {
+  // `handleDelete`'s success path used to hardcode `current: null` after
+  // a successful `deleteModel("text")`. The new contract: re-fetch
+  // `getCurrentModel("text")` and adopt whatever the main process
+  // reports — matches the same on-disk-truth invariant the error path,
+  // both `performDownload` paths, and `ModelSlotPanel.handleDelete`
+  // already maintain. The expected reading is `null` (we just
+  // deleted), but reading from disk is the only way to guarantee it
+  // and is robust against a concurrent install in another window.
+  it("calls getCurrentModel('text') after deleteModel resolves and adopts the live value", async () => {
+    const installedRecord = {
+      modelId: "ternary-bonsai-1.7b-gguf",
+      format: "gguf" as const,
+      filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+      path: "/var/tmp/m.gguf",
+      downloadSizeMb: 450,
+      diskSizeMb: 450,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+
+    // Initial mount → installedRecord. Post-delete re-fetch → null
+    // (which is what we'd see after a normal delete settled cleanly
+    // and `active-model-text.json` was cleared).
+    const getCurrentModelMock = vi
+      .fn()
+      .mockResolvedValueOnce(installedRecord) // initial mount
+      .mockResolvedValue(null); // post-success re-fetch + any poll ticks
+    const statusMock = vi
+      .fn()
+      .mockResolvedValue({
+        available: false,
+        modelName: null,
+        status: "stopped",
+      });
+    const deleteMock = vi.fn().mockResolvedValue(undefined);
+
+    const api = {
+      ...window.tessera,
+      model: {
+        ...window.tessera.model,
+        status: statusMock,
+        stop: vi.fn().mockResolvedValue(undefined),
+      },
+      runtime: {
+        ...window.tessera.runtime,
+        detectPlatform: vi.fn().mockResolvedValue({
+          platform: "linux-x64",
+          platformLabel: "Linux x64",
+          totalRamGb: 16,
+          tier: "high",
+          tierLabel: "High (8+ GB RAM)",
+          computeBackends: ["cpu"],
+          preferredFormat: "gguf",
+        }),
+        recommendModel: vi.fn().mockResolvedValue(null),
+        listModels: vi.fn().mockResolvedValue([]),
+        getCurrentModel: getCurrentModelMock,
+        deleteModel: deleteMock,
+        onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
+      },
+    } as unknown as Window["tessera"];
+
+    render(<ModelRuntimeCard api={api} />);
+
+    await screen.findByText(/ternary-bonsai-1.7b-gguf/i);
+
+    const deleteBtn = screen.getByRole("button", { name: /Delete model/i });
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(deleteMock).toHaveBeenCalledTimes(1);
+    });
+
+    // getCurrentModel must have been called AT LEAST twice — once on
+    // mount, once on the success path's live re-fetch. If the fix were
+    // reverted (hardcoded `current: null`), only the mount call would
+    // happen and this assertion would fail.
+    await waitFor(() => {
+      expect(getCurrentModelMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+    // Every call must be explicitly text-scoped — locks the same
+    // text-scoping invariant the catch-path regression guards above.
+    for (const call of getCurrentModelMock.mock.calls) {
+      expect(call[0]).toBe("text");
+    }
+
+    // The on-disk record is `null` (we just deleted) — the UI must
+    // reflect that. If the renderer had ignored the re-fetch and
+    // hardcoded `null` blindly, this would still pass; the
+    // call-count + argument assertions above are what lock the new
+    // contract.
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/ternary-bonsai-1.7b-gguf/i),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("adopts a non-null record if a concurrent install lands between deleteModel and the re-fetch", async () => {
+    // Edge case: another renderer window or a background download
+    // completes between our `deleteModel` call and the re-fetch, so
+    // the on-disk truth is a DIFFERENT model record rather than
+    // `null`. The renderer must adopt that record — hardcoding `null`
+    // would lie to the user until the next 5s poll tick caught up.
+    const beforeDelete = {
+      modelId: "ternary-bonsai-1.7b-gguf",
+      format: "gguf" as const,
+      filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+      path: "/var/tmp/m1.gguf",
+      downloadSizeMb: 450,
+      diskSizeMb: 450,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+    const concurrentInstall = {
+      modelId: "ternary-bonsai-8b-gguf",
+      format: "gguf" as const,
+      filename: "ternary-bonsai-8b-q1_0_g128.gguf",
+      path: "/var/tmp/m2.gguf",
+      downloadSizeMb: 2000,
+      diskSizeMb: 2000,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+    const getCurrentModelMock = vi
+      .fn()
+      .mockResolvedValueOnce(beforeDelete) // initial mount
+      .mockResolvedValue(concurrentInstall); // post-delete + polls
+
+    const api = {
+      ...window.tessera,
+      model: {
+        ...window.tessera.model,
+        status: vi.fn().mockResolvedValue({
+          available: false,
+          modelName: null,
+          status: "stopped",
+        }),
+        stop: vi.fn().mockResolvedValue(undefined),
+      },
+      runtime: {
+        ...window.tessera.runtime,
+        detectPlatform: vi.fn().mockResolvedValue({
+          platform: "linux-x64",
+          platformLabel: "Linux x64",
+          totalRamGb: 16,
+          tier: "high",
+          tierLabel: "High (8+ GB RAM)",
+          computeBackends: ["cpu"],
+          preferredFormat: "gguf",
+        }),
+        recommendModel: vi.fn().mockResolvedValue(null),
+        listModels: vi.fn().mockResolvedValue([]),
+        getCurrentModel: getCurrentModelMock,
+        deleteModel: vi.fn().mockResolvedValue(undefined),
+        onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
+      },
+    } as unknown as Window["tessera"];
+
+    render(<ModelRuntimeCard api={api} />);
+
+    await screen.findByText(/ternary-bonsai-1.7b-gguf/i);
+
+    const deleteBtn = screen.getByRole("button", { name: /Delete model/i });
+    fireEvent.click(deleteBtn);
+
+    // The renderer must adopt the concurrent install's record — NOT
+    // the hardcoded null we used to write. If the fix were reverted,
+    // the assertion that the 8B record appears would never resolve.
+    await screen.findByText(/ternary-bonsai-8b-gguf/i);
+    expect(
+      screen.queryByText(/ternary-bonsai-1.7b-gguf/i),
+    ).not.toBeInTheDocument();
   });
 });

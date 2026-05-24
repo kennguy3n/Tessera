@@ -337,20 +337,38 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
         setState((s) => ({ ...s, status }));
       }
       await tessera.runtime.deleteModel("text");
-      // Always re-fetch status after a successful delete — not just on
-      // the running-before-delete branch above. If the runtime was in
-      // any non-running state when delete fired ("stopped", "error",
-      // "starting", or a stale "running" that crashed externally), the
-      // truth on the main-process side after `deleteModel` is
-      // unambiguously "no model installed, nothing to run". Re-pulling
-      // `model.status()` keeps the UI honest instead of leaving a stale
-      // indicator next to the empty "no model" panel.
-      const status = await tessera.model.status().catch(() => null);
+      // Re-fetch BOTH `getCurrentModel("text")` AND `model.status()`
+      // after the delete settles — not just on the running-before-
+      // delete branch above. Two reasons:
+      //
+      //   1. Status: if the runtime was in any non-running state when
+      //      delete fired ("stopped", "error", "starting", or a stale
+      //      "running" that crashed externally), the truth on the
+      //      main-process side after `deleteModel` is unambiguously
+      //      "no model installed, nothing to run". Re-pulling
+      //      `model.status()` keeps the UI honest instead of leaving
+      //      a stale indicator next to the empty "no model" panel.
+      //
+      //   2. Current: re-fetching `getCurrentModel("text")` instead
+      //      of hardcoding `current: null` matches the same
+      //      "state.current == on-disk-truth on every settled
+      //      boundary" invariant the error path (and `performDownload`
+      //      both paths, and `ModelSlotPanel.handleDelete`) already
+      //      maintains. A concurrent window could install a model
+      //      between our `deleteModel` call and this re-fetch and we
+      //      should pick that up here; hardcoding `null` would let
+      //      the UI lie until the next 5s poll tick. The expected
+      //      value is `null` (we just deleted), but reading from disk
+      //      is the only way to guarantee that.
+      const [liveCurrent, liveStatus] = await Promise.all([
+        tessera.runtime.getCurrentModel("text").catch(() => null),
+        tessera.model.status().catch(() => null),
+      ]);
       setState((s) => ({
         ...s,
         busyModelId: null,
-        current: null,
-        status: status ?? s.status,
+        current: liveCurrent,
+        status: liveStatus ?? s.status,
       }));
     } catch (err) {
       // Mirror `performDownload`'s error path: re-fetch live current +
