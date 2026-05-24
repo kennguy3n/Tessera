@@ -384,7 +384,7 @@ describe("InfographicEditor hero image", () => {
     expect(errorBox.textContent).toContain("Rate limit exceeded");
   });
 
-  it("drops a hero image payload whose assetUrl is not tessera-asset://", () => {
+  it("drops a hero image payload whose assetUrl is not tessera-asset://generated-images/", () => {
     const parsed = parseInfographicContent(
       JSON.stringify({
         title: "X",

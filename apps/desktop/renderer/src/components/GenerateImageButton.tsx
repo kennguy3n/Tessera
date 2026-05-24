@@ -12,13 +12,28 @@
  *    an imagegen model being installed on disk — so the renderer
  *    just trusts the single boolean.
  * 2. Expose a prompt textarea + size dropdown (square / portrait /
- *    landscape) + Generate button + status row (`Generating…` /
- *    error / "Generated in 12.3s").
+ *    landscape) + Generate button + transient error row (the
+ *    button renders "Generating…" while in flight; success
+ *    status is the parent's job — see below).
  * 3. Call `tessera.imagegen.generate({ artifactId, prompt, width,
  *    height, sectionIndex })` and forward the resulting
  *    `{ assetUrl, seed, durationMs, ... }` to the parent via
  *    `onGenerated`. The parent decides where to persist the URL
  *    (e.g. `data.heroImage.assetUrl` for the Infographic editor).
+ *
+ * Why we don't render a post-generation "Generated in Xs · seed Y"
+ * status here
+ * --------------------------------------------------------------
+ * Both editors render `<GenerateImageButton>` conditionally
+ * (`data.heroImage ? <Preview/> : <GenerateImageButton/>`) and the
+ * `onGenerated` callback writes `data.heroImage` synchronously. The
+ * next React render flips the ternary and unmounts the button —
+ * meaning any status DOM kept in `GenerateImageButton`'s state
+ * would never paint. Devin Review PR #38 pass-4 📝 correctly
+ * flagged that as dead code; the success-side status (`durationMs`,
+ * `seed`) is now the parent's responsibility (the hero preview
+ * shows seed in its caption). Errors stay here — they fire when
+ * the button is still mounted and there is no parent state to flip.
  *
  * Why this lives as its own component
  * -----------------------------------
@@ -124,9 +139,6 @@ export default function GenerateImageButton({
   const [dimension, setDimension] = useState<ImageGenDimension>("square");
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastResult, setLastResult] = useState<GenerateImageResult | null>(
-    null,
-  );
 
   useEffect(() => {
     let cancelled = false;
@@ -183,7 +195,6 @@ export default function GenerateImageButton({
         sizeBytes: out.sizeBytes,
         prompt: trimmed,
       };
-      setLastResult(result);
       onGenerated(result);
     } catch (e: unknown) {
       // Surface the underlying error message — the IPC handler
@@ -275,12 +286,6 @@ export default function GenerateImageButton({
           role="alert"
         >
           {error}
-        </div>
-      )}
-      {lastResult && !error && (
-        <div className="imagegen-status" data-testid="imagegen-status">
-          Generated in {(lastResult.durationMs / 1000).toFixed(1)}s · seed{" "}
-          {lastResult.seed}
         </div>
       )}
     </div>
