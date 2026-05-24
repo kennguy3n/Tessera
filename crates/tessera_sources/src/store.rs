@@ -1012,7 +1012,7 @@ mod tests {
 
     #[test]
     fn chunk_embeddings_cascade_fires_when_parent_chunk_is_deleted() {
-        // Defence-in-depth regression test for ANALYSIS_0003: with
+        // Defence-in-depth regression test for : with
         // foreign_keys=ON, deleting a chunk must remove its
         // associated `chunk_embeddings` row via either the trigger
         // (belt) or the CASCADE clause (suspenders). We assert the
@@ -1077,7 +1077,7 @@ mod tests {
 
     #[test]
     fn chunks_missing_embedding_excluding_returns_ascending_chunk_id() {
-        // Regression for ANALYSIS_0005: the SELECT in
+        // Regression test: the SELECT in
         // `chunks_missing_embedding_excluding` previously had no
         // ORDER BY clause, relying on SQLite's implicit rowid order.
         // That ordering is an implementation detail and can shift

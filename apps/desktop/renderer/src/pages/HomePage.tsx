@@ -66,7 +66,7 @@ export default function HomePage() {
   const hasArtifacts = recent.length > 0;
   const isLoading = artifactsLoading || sourcesLoading;
 
-  // Phase 10 / Task 27: source-status breakdown — `useMemo` so the
+  // source-status breakdown — `useMemo` so the
   // count map is stable across renders that don't actually mutate
   // the source list (otherwise the breakdown row's badge elements
   // re-mount on every parent re-render, which makes the React
@@ -123,7 +123,7 @@ export default function HomePage() {
         }
       />
 
-      {/* Phase 10 / Task 27: quick-actions row. The header above
+      {/* quick-actions row. The header above
           carries the two highest-frequency actions (create / add);
           this row carries the navigation shortcuts to other product
           surfaces so the user can land on Tasks, Browse Templates,
@@ -176,7 +176,7 @@ export default function HomePage() {
           </Card>
         </div>
 
-        {/* Phase 10 / Task 27: status-breakdown row. Renders the
+        {/* status-breakdown row. Renders the
             count for every canonical `SourceStatus` variant —
             including the zero buckets — so the user can see at a
             glance whether anything needs attention (e.g. a
@@ -230,7 +230,7 @@ export default function HomePage() {
             {recent.map((artifact) => (
               <Card
                 key={artifact.id}
-                // Phase 10 / Task 27: recent-artifact cards become
+                // recent-artifact cards become
                 // navigable shortcuts to the artifact detail page.
                 // The `Card` component already wires role="button",
                 // `tabIndex`, focus styles, and Enter/Space

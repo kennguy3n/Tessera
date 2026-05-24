@@ -1,5 +1,5 @@
 /**
- * Shared input validators for IPC handlers (Phase 10 Task 22).
+ * Shared input validators for IPC handlers ( Task 22).
  *
  * Every IPC channel that accepts caller-controlled input runs each
  * argument through one of these validators. The validators throw an

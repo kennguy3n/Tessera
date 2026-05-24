@@ -381,7 +381,7 @@ function installCSPDevtoolsLogger(): void {
 let appInitComplete = false;
 
 app.whenReady().then(async () => {
-  // Phase 10 / Task 13 — DB-key + password-vault unification.
+  // / Task 13 — DB-key + password-vault unification.
   //
   // Boot ordering for the at-rest-encryption stack is now:
   //
@@ -411,7 +411,7 @@ app.whenReady().then(async () => {
   //      `safeStorage`. See `dbKey.ts:getOrCreateDbKeyAsync` for
   //      the full dispatch matrix.
   //
-  // Migration of pre-Phase-10 keyringless installs:
+  // Migration of pre- keyringless installs:
   // `tessera.db` is on disk as plaintext (no `db.key` file). On
   // the next launch, the vault prompt fires (step 4), a fresh
   // 256-bit key is generated and vault-wrapped (step 5), and the
@@ -501,7 +501,7 @@ app.whenReady().then(async () => {
   // vault is unlocked so that on keyringless platforms
   // `getOrCreateDbKeyAsync` can wrap the SQLCipher key under the
   // vault key (instead of throwing `EncryptionUnavailableError`
-  // and falling back to unencrypted mode like the pre-Phase-10
+  // and falling back to unencrypted mode like the pre-
   // boot sequence did). See the doc comment at the top of this
   // callback for the full ordering rationale.
   await initAppState();

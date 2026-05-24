@@ -1,5 +1,5 @@
 /**
- * Provider-agnostic OAuth 2.0 helper (Phase 10 Tasks 1–6).
+ * Provider-agnostic OAuth 2.0 helper ( Tasks 1–6).
  *
  * Single Authorization Code Grant flow shared by every Tessera
  * connector. The provider-specific bits (auth URL, token URL,
@@ -98,7 +98,7 @@ export interface ProviderOAuthConfig {
   /**
    * Loopback host for the redirect URI. RFC 8252 prefers `127.0.0.1`
    * but Google's published examples and the legacy Tessera OAuth
-   * client (pre-Phase 10) use `localhost`. Existing user OAuth
+   * client (pre-) use `localhost`. Existing user OAuth
    * client configurations in Google Cloud Console therefore have
    * `http://localhost:9876/callback` registered — switching to
    * `127.0.0.1` would break every existing installation with a
@@ -152,7 +152,7 @@ export const PROVIDER_OAUTH_CONFIGS: Record<ProviderId, ProviderOAuthConfig> = {
     scope: "https://www.googleapis.com/auth/drive.readonly",
     redirectPort: 9876,
     // Google Drive was the first connector wired into Tessera (pre-
-    // Phase 10) using `http://localhost:9876/callback`. Users have
+    // ) using `http://localhost:9876/callback`. Users have
     // already registered that exact URI in Google Cloud Console; we
     // must preserve it bit-for-bit or every existing installation
     // breaks with `redirect_uri_mismatch`.

@@ -1,7 +1,7 @@
 //! Phase-verification smoke test for the export engine.
 //!
 //! Part of the Phase 7/8 tracking-integrity guarantee: every export
-//! format PROGRESS.md claims must be backed by a real, importable
+//! format the README must be backed by a real, importable
 //! top-level function (not a TODO marker or `unimplemented!()`).
 //!
 //! Companion suites:
@@ -142,8 +142,8 @@ fn csv_export_emits_a_comma_separated_table() {
 }
 
 // The pdf / docx / xlsx tests below previously wore
-// `#[cfg(feature = "pdf"|"docx"|"xlsx")]` attributes, but Devin Review
-// round-12 #0003 correctly flagged those guards as misleading: those
+// `#[cfg(feature = "pdf"|"docx"|"xlsx")]` attributes, but
+//  #0003 correctly flagged those guards as misleading: those
 // three features are declared as empty arrays in `Cargo.toml`
 // (`pdf = []`, `docx = []`, `xlsx = []`) and only listed in `default`,
 // so they don't actually gate any code or dependency. The corresponding

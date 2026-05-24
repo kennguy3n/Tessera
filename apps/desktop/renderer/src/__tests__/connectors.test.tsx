@@ -331,7 +331,7 @@ describe("ConnectorStatus", () => {
       "does not show Offline when the network is healthy " +
       "(regression: stale-badge across reconnect)",
     async () => {
-      // Phase 1: connected + offline (sync failed due to network).
+      // connected + offline (sync failed due to network).
       mockApi.connectors.status.mockResolvedValue({
         provider: "google_drive",
         connected: true,
@@ -357,7 +357,7 @@ describe("ConnectorStatus", () => {
         expect(screen.getByText("Offline")).toBeInTheDocument();
       });
 
-      // Phase 2: user clicks Disconnect. After the call, pollStatus
+      // user clicks Disconnect. After the call, pollStatus
       // returns `connected: false` (the connector was torn down).
       mockApi.connectors.disconnect.mockResolvedValue({
         provider: "google_drive",
@@ -383,7 +383,7 @@ describe("ConnectorStatus", () => {
         expect(screen.getByText("Disconnected")).toBeInTheDocument();
       });
 
-      // Phase 3: user reconnects (OAuth). Status now returns
+      // user reconnects (OAuth). Status now returns
       // `connected: true` again. A stale `offline = true` would make
       // the ternary evaluate to "Offline" even though the brand-new
       // OAuth flow proves the network is healthy.

@@ -200,7 +200,7 @@ describe("validateExtractedItems", () => {
 });
 
 // =====================================================================
-// Phase 10 / Task 16 — XSS / prompt-injection handling
+// / Task 16 — XSS / prompt-injection handling
 // =====================================================================
 //
 // `extractedItem.text` and `extractedItem.sourceCitation` are
@@ -221,7 +221,7 @@ describe("validateExtractedItems", () => {
 //       expression used in `SourceDetailPage.tsx`, no executable
 //       HTML materialises (no `<script>` / `<img>` / `<iframe>`
 //       elements in the rendered DOM).
-describe("validateExtractedItems — XSS pass-through + render-time safety (Phase 10 / Task 16)", () => {
+describe("validateExtractedItems — XSS pass-through + render-time safety", () => {
   it("passes <script> tags through unchanged (renderer auto-escapes)", () => {
     const payload = "<script>alert(1)</script>";
     const out = validateExtractedItems(

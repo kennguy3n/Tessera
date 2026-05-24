@@ -22,7 +22,7 @@ import {
 describe("updateConfig", () => {
   beforeEach(() => {
     userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "tessera-config-"));
-    // WS7's in-memory cache is keyed by the resolved config path so a
+    // the in-memory cache is keyed by the resolved config path so a
     // fresh `userDataDir` already invalidates it, but we drop it
     // explicitly anyway so a future refactor of the keying strategy
     // doesn't silently start sharing state across tests in this file.

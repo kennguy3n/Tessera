@@ -680,13 +680,13 @@ describe("Notion sync", () => {
       );
 
       fetchMock
-        // Phase 1: GET /v1/pages/shared-page → 502 (transient).
+        // GET /v1/pages/shared-page → 502 (transient).
         .mockResolvedValueOnce({
           ok: false,
           status: 502,
           text: async () => "Bad Gateway",
         })
-        // Phase 2: POST /v1/search → same page with newer
+        // POST /v1/search → same page with newer
         // last_edited_time (i.e. the user touched it between the
         // failed Phase-1 attempt and this Phase-2 scan).
         .mockResolvedValueOnce({
@@ -771,13 +771,13 @@ describe("Notion sync", () => {
       );
 
       fetchMock
-        // Phase 1: GET /v1/pages/shared-page → 502 → throws → push #1.
+        // GET /v1/pages/shared-page → 502 → throws → push #1.
         .mockResolvedValueOnce({
           ok: false,
           status: 502,
           text: async () => "Bad Gateway",
         })
-        // Phase 2: POST /v1/search → returns shared-page with a NEW
+        // POST /v1/search → returns shared-page with a NEW
         // last_edited_time strictly after the watermark, so the
         // listAllPages filter doesn't drop it.
         .mockResolvedValueOnce({
@@ -797,7 +797,7 @@ describe("Notion sync", () => {
             next_cursor: null,
           }),
         })
-        // Phase 2: fetchPageText → fetchAllBlocks GET
+        // fetchPageText → fetchAllBlocks GET
         // /v1/blocks/shared-page/children → 502 → throws → push #2.
         .mockResolvedValueOnce({
           ok: false,
@@ -1656,13 +1656,13 @@ describe("Figma sync", () => {
       );
 
       fetchMock
-        // Phase 1 retry: GET /v1/files/transiently-broken → 502
+        // retry: GET /v1/files/transiently-broken → 502
         .mockResolvedValueOnce({
           ok: false,
           status: 502,
           text: async () => "Bad Gateway",
         })
-        // Phase 2: GET /v1/teams/t1/projects → empty (nothing else to do)
+        // GET /v1/teams/t1/projects → empty (nothing else to do)
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({ name: "Team A", projects: [] }),
@@ -2895,7 +2895,7 @@ describe("Token refresh + cascading deletions", () => {
         "utf8",
       );
 
-      // Phase 1: getFile("abc") → 404. Then Phase 2 lists projects
+      // getFile("abc") → 404. Then Phase 2 lists projects
       // and finds nothing new.
       fetchMock
         // getFile abc → 404
@@ -2970,7 +2970,7 @@ describe("Token refresh + cascading deletions", () => {
         "utf8",
       );
 
-      // Phase 1 fetchPageById → 404. Phase 2 /search → empty.
+      // fetchPageById → 404. Phase 2 /search → empty.
       fetchMock
         .mockResolvedValueOnce({
           ok: false,

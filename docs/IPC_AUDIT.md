@@ -1,4 +1,4 @@
-# IPC Audit (WS10)
+# IPC channel audit
 
 This document audits every Electron `ipcMain.handle` / `ipcMain.on`
 channel registered by the main process and pins the **input
@@ -7,20 +7,18 @@ checklist: when a new IPC channel is added it must appear here with
 its validation strategy, or this doc goes stale and CI surfaces the
 drift.
 
-> **Note:** This doc describes the shipping state on `main` (post-WS6
-> per-domain split of `ipc.ts` and post-WS10 security hardening).
-> Every channel marked `zod-schema` is validated by the schema named
-> in parentheses in `apps/desktop/electron/ipc/schemas.ts`; every
-> channel marked `scalar-helper` is validated by one of the typed
-> `assert*` helpers exported from
-> `apps/desktop/electron/ipc/validate.ts`
+> **Note:** Every channel marked `zod-schema` is validated by the
+> schema named in parentheses in
+> `apps/desktop/electron/ipc/schemas.ts`; every channel marked
+> `scalar-helper` is validated by one of the typed `assert*` helpers
+> exported from `apps/desktop/electron/ipc/validate.ts`
 > (`assertString`, `assertOptionalString`, `assertUuid`, `assertId`,
 > `assertProvider`, `assertSafePath`, `assertNumber`,
 > `assertBoolean`, `assertStringArray`). The strategy table below
 > tags each row with the primitive type expected so a reviewer can
-> map the row back to the specific helper without grepping. Adding a
-> new channel without a corresponding row here is a Phase-10 exit
-> blocker.
+> map the row back to the specific helper without grepping. New
+> channels must ship with a corresponding row in this table; CI fails
+> on drift.
 
 The validation strategy for each channel is one of:
 
@@ -256,7 +254,7 @@ The following invariants must hold for every channel in this doc:
    `tokenVault` is only exposed to main-process modules.
 
 6. **Encryption-at-rest.** All vault data is encrypted by
-   `safeStorage` (OS keyring) or the WS10 password-vault fallback.
+   `safeStorage` (OS keyring) or the password-vault fallback.
    Plaintext writes are not possible — both vault modules throw
    rather than degrade to unencrypted storage.
 

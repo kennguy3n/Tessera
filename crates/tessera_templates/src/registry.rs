@@ -95,7 +95,7 @@ impl TemplateRegistry {
         // so the list and the by-id lookup paths can never disagree on
         // which files count as templates — adding a new category at
         // `crate::TEMPLATE_CATEGORIES` updates both paths atomically.
-        // Walking the entire `path` tree (as the pre-WS3 implementation
+        // Walking the entire `path` tree (as an earlier implementation
         // did) would also process stray YAML under `templates/grammars/`
         // or any other non-category subdirectory the runtime parser
         // deliberately ignores, which would silently desync the "list"
@@ -112,7 +112,7 @@ impl TemplateRegistry {
                     Ok(entry) => entry,
                     Err(e) => {
                         // Walkdir failed to descend (e.g. permission
-                        // denied on `locales/<code>/`). The pre-WS3
+                        // denied on `locales/<code>/`). The earlier
                         // implementation propagated IO errors via
                         // `read_dir(&dir).map_err(...)?`; the walkdir
                         // migration would silently drop them via
@@ -174,7 +174,7 @@ impl TemplateRegistry {
                         // stats-overview}.yaml and
                         // landing_pages/saas-product.yaml) failed here
                         // because they used the pre-canonical
-                        // `heading:` section schema; WS3 R10 migrated
+                        // `heading:` section schema; an earlier release migrated
                         // those YAMLs to canonical `title:` / `prompt:`
                         // and they now parse successfully (the
                         // visual-hint fields `layout`,
@@ -326,7 +326,7 @@ export:
         assert_eq!(registry.count(), 0);
     }
 
-    /// Phase 10 / Task 28: `load_from_directory_with_failures` must
+    /// `load_from_directory_with_failures` must
     /// distinguish parse failures (YAML did not deserialize) from
     /// validation failures (deserialized but missing required
     /// fields), so the bridge can route them to the right audit

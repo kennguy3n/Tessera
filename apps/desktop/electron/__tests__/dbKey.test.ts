@@ -275,7 +275,7 @@ describe("dbKey", () => {
 });
 
 // =====================================================================
-// Phase 10 / Task 13 — vault-aware async path
+// / Task 13 — vault-aware async path
 // =====================================================================
 //
 // The async `getOrCreateDbKeyAsync` integrates the password vault as a

@@ -1,5 +1,5 @@
 /**
- * Regression test for Devin Review round 4 BUG_001 on PR #27.
+ * Regression test for .
  *
  * The bug: after a user clicked "List models" on an
  * `openai_compatible` provider (populating the model `<select>`
@@ -111,7 +111,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
 
     // And the "List models" button is hidden for anthropic — pinned
     // by the existing visibility predicate, but assert it here too so
-    // a regression that removes the predicate doesn't leave a
+    // Pins a regression that removes the predicate doesn't leave a
     // misleading button onscreen.
     expect(
       screen.queryByLabelText("Fetch available models from this provider"),
@@ -173,7 +173,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     ).not.toBeInTheDocument();
   });
 
-  // Devin Review round 10 (ANALYSIS_006) flagged a UX gap: the
+  //  An earlier review flagged a UX gap: the
   // "List models" button was clickable even when the persisted
   // provider was not saved/enabled or had no API key in the vault,
   // producing a confusing "External provider is disabled" toast on a
@@ -183,7 +183,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
   // future maintainer who narrows the predicate to fewer dimensions
   // re-introduces a regression that the test suite flags.
 
-  it("disables List models when the persisted provider has no API key (ANALYSIS_006)", async () => {
+  it("disables List models when the persisted provider has no API key", async () => {
     const tessera = window.tessera;
     tessera.externalProvider.get = vi.fn().mockResolvedValue({
       enabled: true,
@@ -211,7 +211,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     );
   });
 
-  it("disables List models when the form has the provider toggled off (ANALYSIS_006)", async () => {
+  it("disables List models when the form has the provider toggled off", async () => {
     const tessera = window.tessera;
     tessera.externalProvider.get = vi.fn().mockResolvedValue({
       enabled: false,
@@ -244,9 +244,9 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     ).not.toBeInTheDocument();
   });
 
-  it("forwards the form's CURRENT enabled flag to listModels after the user toggles it (round 13 BUG_001)", async () => {
-    // Devin Review round 13 BUG_001: the `enabled` override I added
-    // in round 12 ANALYSIS_002 was captured by the `onListModels`
+  it("forwards the form's CURRENT enabled flag to listModels after the user toggles it", async () => {
+    // : the `enabled` override I added
+    // in  was captured by the `onListModels`
     // useCallback at first render and never refreshed because
     // `enabled` was missing from the deps array. Pin the fix here:
     // after the user toggles the form's `enabled`, a subsequent
@@ -321,7 +321,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     );
   });
 
-  it("disables List models when apiUrl is empty (ANALYSIS_006 — pre-existing gate, pinned)", async () => {
+  it("disables List models when apiUrl is empty", async () => {
     const tessera = window.tessera;
     tessera.externalProvider.get = vi.fn().mockResolvedValue({
       enabled: true,
@@ -466,8 +466,8 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     expect(alertText!).not.toMatch(/https?:\/\//);
   });
 
-  it("surfaces a deep failure from Test connection via setStatus instead of silently un-busying (round 14 ANALYSIS_001)", async () => {
-    // Devin Review round 14 ANALYSIS_001 flagged that `onTest` was the
+  it("surfaces a deep failure from Test connection via setStatus instead of silently un-busying", async () => {
+    //  An earlier review flagged that `onTest` was the
     // only handler in this file using `try/finally` instead of the
     // sibling pattern `try/catch/finally`. If the IPC channel itself
     // failed (bridge serialization error, contextIsolation violation,
@@ -479,7 +479,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     //
     // This test pins the new behavior by making the IPC mock reject
     // (the realistic "deep failure" scenario) and asserting the
-    // surfaced error message reaches the DOM rather than the test
+    // An earlier review surfaced error message reaches the DOM rather than the test
     // throwing the unhandled rejection. With the pre-fix code, the
     // rejection would escape the component and React Testing
     // Library's `act` wrapper would surface it as an uncaught error.

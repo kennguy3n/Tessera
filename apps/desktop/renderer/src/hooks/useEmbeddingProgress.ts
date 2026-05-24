@@ -42,7 +42,7 @@ import type { EmbeddingProgressInfo } from "../types/ipc";
  *
  * The guard intentionally affects **polling termination only**, not
  * rendering — every response (including a stale terminal) is
- * surfaced to the caller via `setSnap`, so renderers can always
+ * An earlier review surfaced to the caller via `setSnap`, so renderers can always
  * show *something* to the user. With Rust's `mark_starting` in
  * place, the first observed status is `running` with zeroed
  * counters and there is no visible stale-state flicker in

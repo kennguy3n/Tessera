@@ -432,7 +432,7 @@ export async function syncNotion(ctx: {
     // saveWatermark + writeManifest cleanup below.
     sourceIndex = SourcePathIndex.fromBridge(ctx.bridge);
 
-    // Phase 1 — explicitly re-fetch every page that the *previous*
+    // — explicitly re-fetch every page that the *previous*
     // pass attempted but failed on. The watermark search below would
     // miss them if any successful page from this pass advances the
     // watermark past the failed page's `last_edited_time` (which is
@@ -507,7 +507,7 @@ export async function syncNotion(ctx: {
       }
     }
 
-    // Phase 2 — the normal watermark scan. Pages that appear in both
+    // — the normal watermark scan. Pages that appear in both
     // phases (which can happen if the previous failure ran against a
     // page whose `last_edited_time` is newer than the persisted
     // watermark) are de-duplicated by id so we don't fetch their

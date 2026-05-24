@@ -1,8 +1,8 @@
 /**
- * Phase verification smoke test (renderer side).
+ * Shipping-feature smoke test (renderer side).
  *
- * This suite enforces the Phase 7/8 tracking-integrity guarantee: every
- * feature claimed in PROGRESS.md must be backed by real, importable code
+ * This suite enforces the tracking-integrity guarantee: every
+ * feature claimed in the README must be backed by real, importable code
  * — not just documentation or a checked checkbox. The suite intentionally
  * skips behavioural depth (those checks live in the focused unit tests
  * under apps/desktop/renderer/src/__tests__/) and instead enforces the
@@ -37,7 +37,7 @@ import * as editors from "../../editors";
 //
 //   resolve(__dirname, "..", "..", "..", "..", "..", "..")
 //
-// which Devin Review round-11 correctly flagged as fragile against
+// which correctly flagged as fragile against
 // future repository layout changes — promoting the smoke suite to a
 // top-level `tests/` directory, moving it deeper into a fixture
 // folder, or any other relocation would silently slice the wrong
@@ -241,7 +241,7 @@ function extractTopLevelScalar(body: string, key: string): string | null {
     //     literal sequence `''` (two consecutive single quotes),
     //     which represents one literal `'`. No backslash escapes
     //     apply. So `'it''s'` decodes to `it's`. This was the gap
-    //     Devin Review round-6 flagged — the previous lexer would
+    //     — the previous lexer would
     //     stop at the first `'` and incorrectly return `it`.
     //
     // We accumulate the decoded value as we go so the returned
@@ -307,7 +307,7 @@ function extractTopLevelScalar(body: string, key: string): string | null {
     //       preceded by whitespace; a `#` adjacent to non-whitespace
     //       (e.g. `id: foo#bar`) stays literal.
     //
-    // Devin Review round-10 flagged the round-9 implementation as
+    // the  implementation as
     // returning `"# comment"` literally for case (a), which (while
     // not exercised by any real bundled template — every shipped
     // template has a non-empty id) would confuse any future caller.
@@ -331,9 +331,9 @@ function extractTopLevelScalar(body: string, key: string): string | null {
  * smoke suite. Earlier rounds shipped two separate state machines —
  * one in `lexJsBraces` (brace-tracking only) and one inside
  * `extractObjectProperties` (brace + identifier + colon + string
- * tracking) — and Devin Review correctly flagged the duplication as a
+ * tracking) — and correctly flagged the duplication as a
  * maintenance hazard: any fix to one lexer (e.g. the `${…}`
- * depth-decrement repair in round 6) would have to be applied to both,
+ * depth-decrement repair in ) would have to be applied to both,
  * and a regression in only one would silently diverge them. The unified
  * lexer below covers BOTH callers' needs through optional callbacks.
  *
@@ -610,7 +610,7 @@ function lexJs(
  *
  * The function returns ONLY the object literal — i.e. the slice begins
  * at the value side `{` rather than at the `const CATEGORIES` keyword.
- * This was Devin Review round-9 finding #0001: returning the larger
+ * This was finding #0001: returning the larger
  * slice meant downstream lexers had to lex past the (currently
  * empty-of-braces, but theoretically arbitrary) type annotation
  * `Record<string, CategoryItem[]>`. Anchoring the returned slice on
@@ -630,7 +630,7 @@ function extractCategoriesBlock(): string {
   // start of a line, and the next non-whitespace token MUST be `:` (a
   // TS type annotation) or `=` (a direct assignment). The previous
   // implementation used `source.indexOf("const CATEGORIES")`, which
-  // Devin Review round-10 correctly flagged as fragile: it would
+  // was fragile: it would
   // false-match against a TS declaration like
   // `const CATEGORIES_METADATA = ...` (same prefix, different
   // identifier), or against a comment line like
@@ -660,8 +660,8 @@ function extractCategoriesBlock(): string {
     throw new Error("CATEGORIES declaration is missing the `=` assignment token");
   }
   // Find the opening `{` of the object literal via a real lexer scan
-  // rather than a plain `source.indexOf("{", eqIdx)`. Devin Review
-  // round-12 #0001 flagged the indexOf approach as fragile against a
+  // rather than a plain `source.indexOf("{", eqIdx)`. The indexOf
+  // approach was fragile against a
   // comment containing `{` placed between `=` and the actual object
   // literal (e.g. `const CATEGORIES: ... = // { see docs\n{...}`).
   // CreatePage.tsx doesn't have such a comment today, but the smoke
@@ -737,10 +737,10 @@ interface CategoryEntry {
  * value's string literal won't be mistaken for a property key — the
  * JS/TS lexical state machine driving the walk ensures that.
  *
- * Devin Review round-7 flagged the previous regex-based approach as
+ * The previous regex-based approach was
  * fragile: a regex like `/\bname:\s*(["'])(...)\1/.exec(slice)` would
  * false-match if an earlier property's string value contained the
- * literal substring `name: "..."`. Round-9 then flagged the
+ * literal substring `name: "..."`.  then flagged the
  * lexer-based replacement for duplicating the brace-tracking state
  * machine from `lexJsBraces`. The current incarnation is the proper
  * long-term fix to BOTH: this helper is now a thin observer on top of
@@ -767,7 +767,7 @@ interface CategoryEntry {
  *     in addition to the unquoted-identifier form (`{ id: "v" }`).
  *     CreatePage.tsx today uses unquoted keys exclusively, but a
  *     future refactor (or copy-paste from JSON) could introduce
- *     quoted keys; Devin Review round-10 flagged the previous
+ *     quoted keys; the previous
  *     identifier-only behaviour as a silent gap, and the long-term
  *     fix is to accept both. The string-event handler distinguishes
  *     "this string is a candidate KEY" (not awaiting after a colon)
@@ -870,7 +870,7 @@ function extractCategoryEntries(): CategoryEntry[] {
   const out: CategoryEntry[] = [];
 
   // The CATEGORIES block now begins with the value-side `{` directly
-  // (Devin Review round-9 finding #0001 — extractCategoriesBlock no
+  // (finding #0001 — extractCategoriesBlock no
   // longer includes the `const CATEGORIES: …Type… =` prefix). So the
   // outermost CATEGORIES brace opens at depth = 1, the category-array
   // `[` does not change brace depth, and each entry-object `{` opens
@@ -880,7 +880,7 @@ function extractCategoryEntries(): CategoryEntry[] {
   // SAME `lexJs` token stream, so an entry value like `description:
   // "see id: foo for details"` cannot pollute the `id` / `name`
   // capture — both helpers honour identical lexical state, by
-  // construction (round-9 finding #0003).
+  // construction ( finding #0003).
   const entryStarts: number[] = [];
   lexJs(block, 0, {
     onOpen: (pos, depth) => {
@@ -905,8 +905,8 @@ function extractCategoryEntries(): CategoryEntry[] {
 /**
  * The de-duplicated set of template ids referenced from CreatePage.tsx's
  * CATEGORIES constant. Derived directly from `extractCategoryEntries`
- * so both checks share a single extraction path — Devin Review
- * round-9 finding #0002 correctly flagged that an earlier regex-based
+ * so both checks share a single extraction path —
+ *  finding #0002 correctly flagged that an earlier regex-based
  * implementation could false-match `id:` inside string values or
  * comments. Folding it onto the lexer-based entry walker means the
  * two helpers can never disagree about what a "CATEGORIES id" is.
@@ -982,8 +982,8 @@ describe("phase verification — bundled template registry", () => {
   const bundled = loadBundledTemplates();
 
   test("at least the original 36 bundled templates parse with a non-empty id", () => {
-    // The Phase 5/6 build deliberately shipped a minimum of 36 templates
-    // across the six artifact categories. Future growth (WS3 industry
+    // The original template set shipped a minimum of 36 templates
+    // across the six artifact categories. Future growth (industry
     // / locale expansion) only ever adds, never removes — so this is a
     // floor, not a ceiling.
     expect(bundled.length).toBeGreaterThanOrEqual(36);
@@ -1060,7 +1060,7 @@ describe("phase verification — bundled template registry", () => {
     // a template category (`TEMPLATE_CATEGORIES`) or a deliberate
     // non-category (`NON_TEMPLATE_DIRS`).
     //
-    // This closes the failure mode Devin Review round-6 flagged: if a
+    // This closes the failure mode : if a
     // contributor adds a new category directory (say `templates/forms/`)
     // without updating `TEMPLATE_CATEGORIES`, the `loadBundledTemplates`
     // walker above silently skips it. Walking the directory at runtime
@@ -1112,8 +1112,8 @@ describe("phase verification — bundled template registry", () => {
 
 describe("phase verification — internal helper invariants", () => {
   // These tests pin down the behaviour of the helpers above so future
-  // refactors can't silently regress them. Devin Review round-7 flagged
-  // the previous regex-based extractor as fragile against
+  // refactors can't silently regress them. The previous regex-based
+  // extractor was fragile against
   // identifier-like substrings inside string values; the new
   // `extractObjectProperties` lexer is the correct fix, and the cases
   // below lock that in.
@@ -1125,7 +1125,7 @@ describe("phase verification — internal helper invariants", () => {
   });
 
   test("extractObjectProperties is not fooled by 'name:' substring in another value", () => {
-    // Before round-7, the regex /\bname:\s*(["'])(?:\\.|[^\\])*?\1/.exec(slice)
+    // Before , the regex /\bname:\s*(["'])(?:\\.|[^\\])*?\1/.exec(slice)
     // applied to the entry slice as a whole would match the SUBSTRING
     // `name: 'imposter'` inside the description value, since the regex
     // doesn't know it's inside a string. The walker honours JS lexical
@@ -1164,7 +1164,7 @@ describe("phase verification — internal helper invariants", () => {
     // escape needed) or `'L\'Étranger'` (single-quoted with escape).
     // The walker has to decode the second form correctly.
     //
-    // Devin Review round-8 flagged that an earlier version of this
+    // that an earlier version of this
     // helper used the YAML `''` convention by accident — adjacent
     // single quotes are NOT a JS escape, they are two separate string
     // literals, which is a syntax error inside an object literal.
@@ -1197,8 +1197,8 @@ describe("phase verification — internal helper invariants", () => {
     expect(props.name).toBe("real-name");
   });
 
-  test("extractObjectProperties supports quoted property keys (round-10 #0002)", () => {
-    // Devin Review round-10 flagged that the previous identifier-only
+  test("extractObjectProperties supports quoted property keys", () => {
+    // that the previous identifier-only
     // implementation would silently skip an entry whose keys were
     // quoted (`{ "id": "v" }`) — common when JSON-shaped object
     // literals are pasted into a TS file. The lexer now also accepts
@@ -1231,11 +1231,11 @@ describe("phase verification — internal helper invariants", () => {
     expect(nestedProps.name).toBe("outer-real");
   });
 
-  test("extractTopLevelScalar returns null for comment-only values (round-10 #0001)", () => {
-    // Devin Review round-10 flagged that `extractTopLevelScalar` would
+  test("extractTopLevelScalar returns null for comment-only values", () => {
+    // that `extractTopLevelScalar` would
     // return the literal string `"# only a comment"` for an input
     // where the value region is entirely a YAML comment. Per
-    // YAML 1.2 §6.6 that's a null scalar; the round-10 fix adds an
+    // YAML 1.2 §6.6 that's a null scalar; the  fix adds an
     // explicit start-of-line `#` branch and an empty-after-strip
     // branch, both returning null.
     expect(extractTopLevelScalar("id: # only a comment\n", "id")).toBeNull();
@@ -1253,7 +1253,7 @@ describe("phase verification — internal helper invariants", () => {
     expect(extractTopLevelScalar("id: foo#bar\n", "id")).toBe("foo#bar");
   });
 
-  test("extractCategoriesBlock rejects unanchored matches (round-10 #0004)", () => {
+  test("extractCategoriesBlock rejects unanchored matches", () => {
     // The replacement regex `/^const CATEGORIES\b[ \t]*[:=]/m` only
     // matches a top-level declaration. We can't fault-inject directly
     // (the helper reads CreatePage.tsx from disk), but we can verify
@@ -1277,9 +1277,9 @@ describe("phase verification — internal helper invariants", () => {
     expect(m && m.index).toBe(realistic.indexOf("const CATEGORIES:"));
   });
 
-  test("REPO_ROOT was located by walking up to the workspace sentinel (round-11 #0006)", () => {
-    // Devin Review round-11 flagged the previous hardcoded six-level
-    // `..` chain as fragile. The replacement walks upward looking for
+  test("REPO_ROOT was located by walking up to the workspace sentinel", () => {
+    // The previous hardcoded six-level
+    // `..` chain was fragile. The replacement walks upward looking for
     // a directory that contains BOTH a `Cargo.toml` with a top-level
     // `[workspace]` table AND a `templates/` directory. The test below
     // pins down the invariants the `findRepoRoot` helper relies on so

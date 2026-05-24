@@ -421,7 +421,7 @@ let cachedPath: string | null = null;
  * already-frozen object is a no-op, so re-freezing during a descent
  * is free. We deliberately do NOT short-circuit on
  * `Object.isFrozen(obj)` at any level — the pre-split code at
- * `electron/config.ts` (before WS6) carried an explicit comment
+ * `electron/config.ts` (earlier) carried an explicit comment
  * rejecting that optimisation:
  *
  *   "a partially-frozen config (top frozen, children unfrozen) is a

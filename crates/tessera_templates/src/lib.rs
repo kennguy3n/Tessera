@@ -22,7 +22,7 @@ pub use template::Template;
 /// Adding a new category is a one-line edit here; the parser and the
 /// registry test pick it up automatically. The 2026 cleanup of the
 /// pre-existing "three parallel lists must be kept in sync manually"
-/// problem (flagged by Devin Review on PR #23) is what introduced this
+/// problem (flagged by ) is what introduced this
 /// constant.
 pub const TEMPLATE_CATEGORIES: &[&str] = &[
     "documents",

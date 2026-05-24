@@ -114,13 +114,11 @@ cargo test --all
 npm run test:ui
 ```
 
-### Phase-tracking smoke suite
+### Cross-language smoke suite
 
-The repo includes a cross-language smoke suite that asserts every
-feature claimed in `PROGRESS.md` / `PHASES.md` is actually backed by
-importable / callable code. CI runs the suite on every PR and the
-phase-exit checklist (see [Phase completion checklist](#phase-completion-checklist)
-below) requires it to be green before a phase flips to `DONE`:
+The repo ships a cross-language smoke suite that asserts every feature
+claimed in `README.md` / `ARCHITECTURE.md` is backed by importable,
+callable code. CI runs the suite on every PR:
 
 ```bash
 npm run test:smoke
@@ -265,69 +263,6 @@ tessera/
 ├── schemas/               # JSON schemas
 └── docs/                  # Additional documentation
 ```
-
----
-
-## Phase completion checklist
-
-Tessera ships in phases, tracked in [`PROGRESS.md`](PROGRESS.md) and
-specified in [`PHASES.md`](PHASES.md). Before a phase is marked `DONE`
-in `PROGRESS.md`, the maintainer closing the phase must verify each of
-the following — every item is a guard against the Phase 7/8 tracking
-gap, where features were marked DONE in the planning docs before the
-underlying code had landed in the workspace.
-
-1. **All Build items are `DONE` in `PROGRESS.md`.**
-   Every line in the phase's Build table is marked `DONE` and the
-   commit / PR that delivered it is linkable. No `IN PROGRESS` or
-   `NOT STARTED` entries remain.
-
-2. **All Exit Criteria checkboxes are checked.**
-   Every bullet under the phase's "Exit criteria" section in
-   `PROGRESS.md` is `[x]`. Exit criteria describe observable outcomes
-   ("the renderer launches", "the user can export PDF"), not source
-   files — checking these forces the closer to actually exercise the
-   feature, not just inspect the diff.
-
-3. **Smoke tests pass (`npm run test:smoke`).**
-   The smoke suite is the structural floor: it asserts every claimed
-   feature is backed by importable, callable code (not just docs or a
-   TODO). It covers
-   - the desktop renderer
-     (`apps/desktop/renderer/src/__tests__/smoke/phaseVerification.test.ts`),
-   - the connectors crate
-     (`crates/tessera_connectors/tests/phase_smoke_connectors.rs`),
-   - the export crate
-     (`crates/tessera_export/tests/phase_smoke_export.rs`),
-   - the templates crate
-     (`crates/tessera_templates/tests/phase_smoke_templates.rs`).
-
-   If a smoke test starts failing because a feature in scope for an
-   already-closed phase regressed, the regression must be fixed before
-   the *next* phase can close — the suite is the historical
-   reality-check for every prior phase, not just the current one.
-
-4. **Every feature claimed in the phase has at least one test that
-   exercises real code (not just type stubs).**
-   For each Build item in the phase, locate the test(s) that cover it.
-   A unit test that only constructs a struct or imports a module is
-   not sufficient; the test must call into the production code path
-   the feature describes. If a feature genuinely cannot be tested
-   automatically (e.g. an OAuth interactive flow), document the manual
-   verification step in the PR description.
-
-5. **`README.md`, `ARCHITECTURE.md`, `PHASES.md`, and `PROGRESS.md`
-   are updated consistently.**
-   Cross-document drift is the original sin behind the Phase 7/8 gap.
-   Before flipping the phase to `DONE`, grep for the phase name across
-   the four docs and reconcile every reference. New features mentioned
-   in `README.md` or `ARCHITECTURE.md` must have a matching Build line
-   in `PROGRESS.md`; conversely, Build lines that did not ship must be
-   removed from the phase (not silently left as DONE).
-
-If any item above fails, the phase stays `IN PROGRESS`. The
-[tracking-integrity callout](PROGRESS.md#tracking-integrity-note) at
-the top of `PROGRESS.md` documents why this checklist exists.
 
 ---
 

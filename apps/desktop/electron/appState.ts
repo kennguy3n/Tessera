@@ -166,7 +166,7 @@ export interface NativeBridge {
   bridgeMatchingOnGenerateAutomations(templateId: string): AutomationInfo[];
   /** Persist a run result. `status` is rendered verbatim by the UI. */
   bridgeRecordAutomationRun(automationId: string, status: string): void;
-  // --- Audit pass-throughs (Phase 10 / Task 17) ---
+  // --- Audit pass-throughs (the audit code) ---
   //
   // The events below are emitted from JS-side IPC handlers
   // (`ipc/settings.ts`, `ipc/model.ts`, `ipc/connectors/handlers.ts`)
@@ -242,7 +242,7 @@ export async function initAppState(): Promise<boolean> {
   //
   // - `EncryptionUnavailableError` means NEITHER `safeStorage` NOR
   //   the password-derived vault is available to wrap the cipher
-  //   key. This is the post-Phase-10 contract: the call sequence
+  //   key. This is the post- contract: the call sequence
   //   in `main.ts` runs `maybeInitPasswordVault()` BEFORE
   //   `initAppState()`, so by the time we reach this code the
   //   vault has either been unlocked (in which case
@@ -318,7 +318,7 @@ function resolveSidecarBinary(): string {
   // below climb two extra levels to land at `<desktop>/` and
   // `<repo>/apps/` respectively — the `../../..` entry does NOT reach
   // the repo root, it reaches `apps/`, which is consistent with how the
-  // pre-WS1 `../..` lookup behaved. Without the depth bump these would
+  // earlier `../..` lookup behaved. Without the depth bump these would
   // silently resolve inside `dist-electron/`.
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
     .resourcesPath;

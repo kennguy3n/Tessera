@@ -10,7 +10,7 @@
 //! paths the production code routes for the user (`TokenExpired`,
 //! `RateLimited`, `FileNotFound`, `PermissionDenied`).
 //!
-//! Devin Review note: the wiremock servers run on `localhost:0` and are
+//! note: the wiremock servers run on `localhost:0` and are
 //! torn down at the end of each test. They share no global state.
 
 use std::collections::HashSet;

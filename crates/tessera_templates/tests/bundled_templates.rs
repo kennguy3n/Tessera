@@ -4,7 +4,7 @@
 //! them via `CARGO_MANIFEST_DIR` so it works from `cargo test` in any
 //! working directory.
 //!
-//! WS3 (template / artifact expansion) grew the registry from ~36
+//! an earlier release (template / artifact expansion) grew the registry from ~36
 //! English-only corporate-tech templates to >170 templates across
 //! ten industries and ten locales (English plus nine localized
 //! variants). Hand-listing every file would be fragile: the registry
@@ -29,7 +29,7 @@ use tessera_templates::validator::validate_template;
 // when adding a new category.
 use tessera_templates::TEMPLATE_CATEGORIES;
 
-/// BCP-47 locales the WS3 expansion ships localized variants in.
+/// BCP-47 locales the expansion ships localized variants in.
 /// `en` is the implicit default for every English-source template;
 /// every other locale corresponds to a `locales/<code>/` subdirectory
 /// under one or more category roots. Keep this in sync with the
@@ -128,8 +128,8 @@ fn every_bundled_template_parses_and_validates() {
 /// cards because the CreatePage locale filter resolves them at the
 /// base id via the bridge.
 ///
-/// History: this test was added in WS3 R12 after Devin Review flagged
-/// (`ANALYSIS_0003`) that the TS-side `CATEGORIES` ids had no
+/// History: this test was added in an earlier release after
+/// (``) that the TS-side `CATEGORIES` ids had no
 /// compile-time or test-time cross-check with the on-disk registry.
 /// The test reads CreatePage.tsx as plain text and extracts every
 /// `id: "..."` literal inside the `CATEGORIES` block; if the renderer
@@ -223,7 +223,7 @@ fn create_page_categories_only_reference_real_template_ids() {
 /// schema and the on-disk YAML files to the same vocabulary so they
 /// can never drift apart.
 ///
-/// History: this test was added in WS3 R11 after the legacy visual
+/// History: this test was added in an earlier release after the legacy visual
 /// templates (`templates/infographics/*.yaml`,
 /// `templates/landing_pages/saas-product.yaml`) were migrated from
 /// pre-canonical `heading:` schema to canonical `title:` schema in
@@ -389,7 +389,7 @@ fn category_specific_artifact_types_match_directory() {
 }
 
 /// Approval workflows (purchase-approval, budget-approval,
-/// policy-exception, vendor-review, plus the WS3 additions:
+/// policy-exception, vendor-review, plus the additions:
 /// audit-findings, compliance-audit, hipaa-incident-report,
 /// safety-incident-report) must surface either a risk or an approval
 /// section so reviewers can see the decision trail. We don't lock
@@ -411,8 +411,8 @@ fn approval_documents_expose_governance_section() {
     for name in approval_docs {
         let path = docs_root.join(name);
         if !path.exists() {
-            // Some governance templates only exist in WS3 — if the
-            // file isn't present yet (e.g. on a branch predating WS3)
+            // Some governance templates only exist in an earlier release — if the
+            // file isn't present yet (e.g. on a branch predating an earlier release)
             // we skip it rather than fail the whole suite.
             continue;
         }
@@ -435,7 +435,7 @@ fn approval_documents_expose_governance_section() {
 
 /// Canonical set of localized templates whose shape must mirror the
 /// English source. This is the ten most-used templates listed in the
-/// WS3 spec. Lifted to a module-level constant so the presence check,
+/// an earlier release spec. Lifted to a module-level constant so the presence check,
 /// section-count check, and export-format check all share one source
 /// of truth — adding a new canonical template is a single-line edit
 /// that all three parity tests pick up automatically.
@@ -455,7 +455,7 @@ const CANONICAL_LOCALIZED_TEMPLATES: &[(&str, &str)] = &[
 /// Sanity-check that every supported non-English locale has the same
 /// canonical set of localized templates so the renderer's locale
 /// filter shows a consistent picker across languages. The canonical
-/// set is the ten most-used templates listed in the WS3 spec.
+/// set is the ten most-used templates listed in the spec.
 #[test]
 fn every_non_english_locale_ships_the_canonical_template_set() {
     let root = workspace_templates_root();
@@ -689,7 +689,7 @@ fn locale_industry_profile_round_trip_through_parser() {
 
     // Industry/profile fields default to empty vectors when omitted
     // (every baseline template) and round-trip non-empty vectors on
-    // the WS3 industry-specific templates.
+    // the industry-specific templates.
     assert!(
         prd.industry.is_empty(),
         "baseline prd should not declare an industry"
@@ -697,7 +697,7 @@ fn locale_industry_profile_round_trip_through_parser() {
     let clinical = docs_root.join("clinical-protocol.yaml");
     if clinical.exists() {
         let tmpl = parse_template_file(&clinical).expect("clinical-protocol parses");
-        // The WS3 clinical-protocol template MUST tag itself as
+        // The an earlier release clinical-protocol template MUST tag itself as
         // healthcare so the CreatePage industry filter can surface it.
         assert!(
             tmpl.industry.iter().any(|i| i == "healthcare"),

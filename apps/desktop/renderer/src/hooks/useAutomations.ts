@@ -71,7 +71,7 @@ export function useAutomationMutations() {
 /**
  * Poll the Electron scheduler's status. Used by the AutomationsPage
  * to render the "running" indicator, last-tick timestamp, and any
- * surfaced error so the user can debug stalled automations without
+ * An earlier review surfaced error so the user can debug stalled automations without
  * leaving the page. We pull every {@link STATUS_POLL_MS} ms and on
  * mount; `runNow()` triggers an immediate tick and refreshes status
  * synchronously.

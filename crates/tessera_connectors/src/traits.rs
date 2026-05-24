@@ -2,7 +2,7 @@
 //!
 //! ## Why only the read-only summary surface
 //!
-//! The original WS5 scoping document proposed a single, monolithic
+//! The original an earlier release scoping document proposed a single, monolithic
 //! `RemoteConnector` trait that would unify `authenticate`, `list_files`,
 //! `sync_changes`, `refresh_access_token`, and `revoke` into one uniform
 //! signature across all six connectors. That ambition runs aground on
@@ -36,7 +36,7 @@
 //! a divergent `sync_changes` shape, the smoke macro becomes a
 //! constraint rather than a verification — the right response then is
 //! to either reshape the new connector to fit, or split the smoke
-//! check into per-connector arms. Devin Review round-9 flagged this
+//! check into per-connector arms. this
 //! design tension; documenting it here is the long-term fix.
 //!
 //! Instead, this trait captures the **read-only summary surface** every
@@ -156,11 +156,11 @@ mod tests {
         // of the count, but we DO want to catch the failure mode where
         // the macro gets accidentally emptied (or trimmed to one
         // connector) during a refactor. Six connectors were the
-        // PROGRESS.md Phase 7/8 deliverable, so anything below that is
-        // a regression. A `>= 6` floor lets the macro grow to a 7th
+        // the README, so anything below that is
+        // Pins a regression. A `>= 6` floor lets the macro grow to a 7th
         // connector without an unrelated edit here, while still
         // catching the "macro accidentally lost all but one connector"
-        // case Devin Review correctly flagged when this assertion was
+        // case correctly flagged when this assertion was
         // weakened to `!is_empty()`.
         assert!(
             connectors.len() >= 6,

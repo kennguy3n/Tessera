@@ -1,5 +1,5 @@
 /**
- * Phase 10 — multi-provider connector list.
+ * — multi-provider connector list.
  *
  * Renders one row per supported connector (Google Drive, OneDrive,
  * Notion, Jira, Confluence, Figma) with an inline "Connect" button

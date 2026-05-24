@@ -67,7 +67,7 @@ describe("encryptionUnavailableReason", () => {
     expect(encryptionUnavailableReason()).toMatch(/DPAPI/);
   });
 
-  // Regression: the password-vault recovery path (WS10) is reachable
+  // Regression: the password-vault recovery path is reachable
   // from this exact error message — a user on headless Linux who saw
   // only "install gnome-keyring" would not realise that restarting +
   // entering a password is the alternative. The hint must appear on

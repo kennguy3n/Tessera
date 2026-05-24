@@ -1,5 +1,5 @@
 /**
- * Auto-update integration for packaged Tessera builds (Phase 10).
+ * Auto-update integration for packaged Tessera builds .
  *
  * Uses `electron-updater` to:
  *   1. Check the GitHub Releases feed for a newer version on launch

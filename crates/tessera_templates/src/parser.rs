@@ -38,7 +38,7 @@ pub fn load_template_by_id(template_dir: &str, template_id: &str) -> Result<Temp
                 Err(e) => {
                     // Walkdir failed to descend into a subdirectory
                     // (most commonly: permission denied on
-                    // `locales/<code>/`). The pre-WS3 implementation
+                    // `locales/<code>/`). The earlier implementation
                     // used `std::fs::read_dir(&dir).map_err(...)?` and
                     // would have propagated the IO error to the caller;
                     // the walkdir migration would silently drop it via
@@ -76,7 +76,7 @@ pub fn load_template_by_id(template_dir: &str, template_id: &str) -> Result<Temp
                     // live in a sibling file. But surface the parse
                     // error so an unrelated typo doesn't silently mask
                     // a working template. This used to be a silent
-                    // `if let Ok` swallow; the walkdir migration in WS3
+                    // `if let Ok` swallow; the walkdir migration in an earlier release
                     // expanded the search set to every localized
                     // variant, making silent swallowing much more
                     // dangerous (a broken `prd-v1-ja` would mask

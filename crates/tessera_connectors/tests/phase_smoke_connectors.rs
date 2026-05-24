@@ -1,7 +1,7 @@
 //! Phase-verification smoke test for the connector framework.
 //!
 //! This suite is part of the cross-cutting Phase 7/8 tracking-integrity
-//! guarantee: every connector PROGRESS.md claims must be backed by real,
+//! guarantee: every connector the README must be backed by real,
 //! compileable code — not just a checked checkbox. The renderer-side
 //! companion is `apps/desktop/renderer/src/__tests__/smoke/
 //! phaseVerification.test.ts`.
@@ -53,7 +53,7 @@
 //! compile error pointing at the new connector type.
 //!
 //! Earlier rounds of this PR had each test maintain its own
-//! hand-typed list, which Devin Review correctly flagged as a
+//! hand-typed list, which correctly flagged as a
 //! duplication hazard (drift between the two copies would have gone
 //! unnoticed until CI ran both). An intermediate round shipped
 //! macro-driven trait/provider-name checks but kept the lifecycle
@@ -138,7 +138,7 @@ fn every_connector_implements_remote_connector() {
 // that signature (Notion needed the `known_file_ids` set for
 // full-walk deletion detection, and the other connectors thread it
 // through for symmetry — see `src/traits.rs` for the design
-// rationale). Devin Review round-9 correctly noted that this turns
+// rationale). correctly noted that this turns
 // the macro into a CONSTRAINT on any 7th connector rather than just
 // a verification of an existing invariant. If a future connector
 // genuinely needs a divergent `sync_changes` shape, the right

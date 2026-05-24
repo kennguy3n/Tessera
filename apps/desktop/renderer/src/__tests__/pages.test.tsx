@@ -55,7 +55,7 @@ describe("HomePage", () => {
     window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
   });
 
-  // Phase 10 / Task 27: source-status breakdown — every canonical
+  // source-status breakdown — every canonical
   // status renders as its own bucket (`indexed`, `indexing`,
   // `connected`, `error`, `disconnected`), even when the count is
   // zero. Pins the visual contract so a future refactor cannot
@@ -126,7 +126,7 @@ describe("HomePage", () => {
     window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
   });
 
-  // Phase 10 / Task 27: recent-artifact cards are navigable. Wired
+  // recent-artifact cards are navigable. Wired
   // through the `Card` component's `onClick` which carries
   // role="button", tabIndex, focus styles, and Enter/Space
   // activation. Test exercises the mouse-click path; keyboard
@@ -185,7 +185,7 @@ describe("HomePage", () => {
     window.tessera.sources.listSources = vi.fn().mockResolvedValue([]);
   });
 
-  // Phase 10 / Task 27: quick-actions row. The four navigation
+  // quick-actions row. The four navigation
   // shortcuts (Browse Templates / Tasks / Manage Sources /
   // Settings) must exist on the dashboard view AND route to the
   // right path when clicked. Pins the menu so a refactor that
@@ -270,7 +270,7 @@ describe("CreatePage", () => {
     expect(screen.queryByText(/Phase 3/i)).not.toBeInTheDocument();
   });
 
-  it("does not show the stale Phase 3 placeholder when a template is selected", async () => {
+  it("does not show the legacy placeholder copy when a template is selected", async () => {
     render(
       <MemoryRouter initialEntries={["/create?template=prd-v1"]}>
         <CreatePage />
@@ -578,7 +578,7 @@ describe("SourcesPage", () => {
   });
 
   it("opens the ComparisonResultModal in-place instead of navigating after a successful compare", async () => {
-    // Regression test for Task 29: handleCompare must surface the
+    // Regression test: handleCompare must surface the
     // structured CompareSourcesResult through the new modal rather
     // than calling navigate(/artifacts/<id>) which was the old
     // behaviour. The modal lets the user inspect themes and either

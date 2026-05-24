@@ -51,7 +51,7 @@ const RUST_TEMPLATE_DIRS: &[&str] = &["documents", "slides", "sheets", "bases"];
 /// template would crash the renderer at runtime. We use a minimal
 /// `serde_yaml::Value` parse below so this Rust test still gates
 /// malformed YAML before it can land on `main`, closing the gap
-/// flagged in Devin Review round-2.
+/// flagged in .
 const RENDERER_ONLY_TEMPLATE_DIRS: &[&str] = &["infographics", "landing_pages"];
 
 /// Subdirectories under `templates/` that are NOT template categories
@@ -98,7 +98,7 @@ fn collect_template_files(root: &Path) -> Vec<PathBuf> {
 /// repository-wide invariants (non-empty id, non-empty name, at least
 /// one section, at least one export format).
 ///
-/// Plan 2C calls for a "phase 9+" smoke test that catches templates
+/// The smoke suite calls for a smoke test that catches templates
 /// claimed in docs but not wired into the registry. This is exactly
 /// that test: it walks the on-disk fixtures so any new YAML file is
 /// automatically covered without an edit here.
@@ -147,7 +147,7 @@ fn every_bundled_template_parses_validates_and_has_required_fields() {
 
 /// Template ids are the registry key the renderer uses to look up
 /// templates by name. Duplicates would shadow each other silently in
-/// the picker, so the phase smoke suite makes uniqueness an explicit
+/// the picker, so the smoke suite makes uniqueness an explicit
 /// guarantee rather than relying on convention.
 #[test]
 fn every_bundled_template_has_a_unique_id() {
@@ -173,7 +173,7 @@ fn every_bundled_template_has_a_unique_id() {
 
 /// Templates of each Rust-modelled artifact type must appear in the
 /// on-disk fixtures. This is the structural floor implied by
-/// PROGRESS.md: Phase 5/6 shipped at least one template per
+/// the README: Phase 5/6 shipped at least one template per
 /// artifact category.
 ///
 /// Only the four categories that `tessera_templates::Template` can
@@ -408,7 +408,7 @@ fn every_renderer_only_template_is_well_formed_yaml() {
 ///   * `RENDERER_ONLY_TEMPLATE_DIRS` — well-formed-only check
 ///   * `NON_TEMPLATE_DIRS`         — not a template category (e.g. grammars/)
 ///
-/// This closes the failure mode Devin Review round-6 flagged: if a
+/// This closes the failure mode : if a
 /// contributor adds a new category directory (say `templates/forms/`)
 /// without updating either list, the per-category tests above silently
 /// skip it. Walking the directory at runtime here forces the new
@@ -470,8 +470,8 @@ fn every_templates_subdirectory_is_classified() {
     // We collect the discovered names into a `HashSet<&str>` (not
     // `HashSet<&String>`) so the membership test below can hash a
     // borrowed `&str` directly — `HashSet::<&str>::contains(&str)`
-    // avoids allocating a fresh `String` per check. Devin Review
-    // round-10 / clippy `inefficient_to_string` flagged the previous
+    // avoids allocating a fresh `String` per check.
+    //  / clippy `inefficient_to_string` flagged the previous
     // `discovered_set.contains(&name.to_string())` form for exactly
     // this reason.
     let discovered_set: HashSet<&str> = discovered.iter().map(String::as_str).collect();

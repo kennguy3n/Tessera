@@ -839,7 +839,7 @@ mod tests {
     #[test]
     fn backfill_does_not_re_query_persistently_failing_chunks() {
         // Regression test for the convergence-rate bug surfaced by
-        // Devin Review ANALYSIS_0005. Prior to the
+        // . Prior to the
         // `chunks_missing_embedding_excluding` wiring, a corpus with P
         // passing chunks and F persistently-failing chunks at batch
         // size B converged in `O(P · ⌈F/B⌉ / B)` iterations because
@@ -942,7 +942,7 @@ mod tests {
 
     #[test]
     fn index_folder_surfaces_inline_embedding_drops() {
-        // Regression test for Devin Review ANALYSIS_0004. The inline
+        // Regression test for . The inline
         // path in `index_file` used to `eprintln!` embedding failures
         // and silently continue, leaving callers with no signal that
         // they should later invoke `backfill_embeddings` to retry.

@@ -10,7 +10,7 @@ const STATUS_VARIANTS: Record<string, BadgeVariant> = {
   // `indexed` is the post-`Indexing` happy path — a source that has
   // been fully ingested. Treated as the most "ready" status (more
   // settled than `connected`, which only means the credentials work).
-  // Phase 10 / Task 27: HomePage's source-status-breakdown card
+  // HomePage's source-status-breakdown card
   // surfaces this count, so the badge needs to render with the same
   // success variant as `connected` instead of falling through to the
   // default `info`.

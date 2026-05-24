@@ -1,6 +1,6 @@
 /**
  * Tests for the in-memory `loadConfig`/`saveConfig`/`updateConfig`
- * cache introduced in WS7.
+ * cache introduced in an earlier release.
  *
  * The cache is keyed by the resolved config path so each test (which
  * swaps `app.getPath('userData')` to a fresh tempdir) starts with an
@@ -183,7 +183,7 @@ describe("config cache", () => {
     // The module-level defaults are intentionally frozen so a future
     // contributor doing `DEFAULT_EXTERNAL_PROVIDER.apiUrl = '...'`
     // fails loudly rather than silently corrupting the baseline used
-    // by every subsequent `loadConfig`. (Before this PR's WS7 review
+    // by every subsequent `loadConfig`. (Before this PR's an earlier release review
     // round, the defaults were unfrozen and would get frozen as a
     // side effect by the first cache population — a confusing "this
     // constant became frozen after some call somewhere" surprise.)
@@ -321,7 +321,7 @@ describe("config cache", () => {
   });
 
   it("freezes children of a partially-frozen graph (no Object.isFrozen short-circuit)", () => {
-    // Regression test for the architectural rule the pre-WS6 code
+    // Regression test for the architectural rule the earlier code
     // documented at length:
     //
     //   "a partially-frozen config (top frozen, children unfrozen) is
@@ -330,7 +330,7 @@ describe("config cache", () => {
     //   state would silently leak unfrozen mutable references through
     //   the cache."
     //
-    // The first iteration of the WS6 recursive walker accidentally
+    // The first iteration of the recursive walker accidentally
     // re-introduced an `Object.isFrozen(obj)` short-circuit, which
     // would have silently regressed that defensive posture. This test
     // pins the contract by constructing exactly the failure mode the

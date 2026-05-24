@@ -427,11 +427,11 @@ The full registry lives in `sidecars/models.json`. `available_models_for_platfor
 | Revocation | Disconnect removes local index and revokes remote tokens |
 | Citation tracking | Every generated section links to its source material |
 
-### Defense-in-depth controls (Phase 10)
+### Defense-in-depth controls
 
-The Phase 10 security pass added the following controls on top of the
-baseline principles above. Every control ships with regression tests
-under `apps/desktop/electron/__tests__/`.
+In addition to the baseline principles above, Tessera ships the
+following defense-in-depth controls. Every control is pinned by a
+regression test under `apps/desktop/electron/__tests__/`.
 
 - **Password vault fallback.** When `safeStorage` cannot reach an OS
   keyring (headless Linux, certain CI runners), Tessera falls back to
@@ -576,8 +576,7 @@ tessera/
 ├── README.md
 ├── PROPOSAL.md
 ├── ARCHITECTURE.md
-├── PHASES.md
-└── PROGRESS.md
+└── CHANGELOG.md
 ```
 
 ---
@@ -607,6 +606,5 @@ Tessera's UI follows the **KChat design system** ([https://kchat.com](https://kc
 
 - [README.md](README.md) — project overview
 - [PROPOSAL.md](PROPOSAL.md) — product proposal
-- [PHASES.md](PHASES.md) — one-page phase index
-- [PROGRESS.md](PROGRESS.md) — phased delivery tracker
+- [CHANGELOG.md](CHANGELOG.md) — release changelog
 - [kennguy3n/knowledge](https://github.com/kennguy3n/knowledge) — local knowledge substrate

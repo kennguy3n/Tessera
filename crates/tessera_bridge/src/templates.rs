@@ -125,7 +125,7 @@ fn get_template_inner(
     // the first id match, instead of materializing the full registry
     // (`TemplateRegistry::load_from_directory`) every call. The
     // renderer's `useEffect` on every `TemplateRunner` mount hits this
-    // path, and WS3 grew the on-disk template set ~5x to 170+ files
+    // path, and an earlier release grew the on-disk template set ~5x to 170+ files
     // across locales, so the full-registry walk became measurable.
     //
     // We deliberately reproduce two semantics from the previous
@@ -234,7 +234,7 @@ export:
         // Templates must live under a canonical category subdirectory
         // (see `tessera_templates::TEMPLATE_CATEGORIES`). The
         // `list_templates_from_dir` test above already follows this
-        // layout — `get_template_by_id` was written before the WS3
+        // layout — `get_template_by_id` was written before the an earlier release
         // contract tightening and used to drop the YAML at the root,
         // which the registry now correctly ignores so its by-id lookup
         // can never diverge from `load_template_by_id` for stray files
@@ -307,9 +307,9 @@ export:
 
     /// `get_template` must return `Ok(None)` (not `Ok(Some(...))`) for a
     /// template that parses successfully but fails `validate_template`.
-    /// The pre-WS3 implementation enforced this implicitly via
+    /// The earlier implementation enforced this implicitly via
     /// `TemplateRegistry::load_from_directory`, which excluded
-    /// validate-failed templates from the registry; the WS3 perf
+    /// validate-failed templates from the registry; the perf
     /// refactor switched to `load_template_by_id` which only parses,
     /// so the validation step has to be re-applied explicitly inside
     /// `get_template`. This test fails the moment somebody removes
@@ -345,7 +345,7 @@ export:
         );
     }
 
-    /// Phase 10 / Task 28: `list_templates_with_audit` must emit one
+    /// `list_templates_with_audit` must emit one
     /// `TemplateValidationFailed` audit row for every dropped
     /// template (parse OR validation kind), while still returning
     /// the successful subset of the registry. The bridge ties this

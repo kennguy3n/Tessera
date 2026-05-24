@@ -73,7 +73,7 @@ describe("SourceDetailPage Re-embed button", () => {
     // `BackfillEmbeddingsResult` exposes `embedded` and `progress`
     // (the wrapped snapshot) — nothing else. The test mock used to
     // also synthesise `failed` and `batchSize` fields that don't
-    // exist on the real type, which Devin Review flagged as a
+    // exist on the real type, which as a
     // pattern that lets renderer code accidentally rely on
     // non-existent fields. We keep the mock honest by only
     // populating the two fields the bridge actually returns.
@@ -155,7 +155,7 @@ describe("SourceDetailPage Re-embed button", () => {
   });
 
   it("suppresses the stale progress card when a follow-up click is rejected with an error", async () => {
-    // Regression test for Devin Review finding: if the previous
+    // Regression test for finding: if the previous
     // backfill completed and left a "done" snapshot in the
     // `useEmbeddingProgress` hook's state, and the user clicks
     // Re-embed again but the IPC rejects synchronously (e.g.
@@ -212,7 +212,7 @@ describe("SourceDetailPage Re-embed button", () => {
   });
 
   it("re-runs the polling effect on a second Re-embed click (generation counter)", async () => {
-    // Regression test for Devin Review finding: with the original
+    // Regression test for finding: with the original
     // `active: boolean` design, clicking Re-embed a second time
     // failed to restart the polling loop because the boolean stayed
     // `true` across the click handler's batched state updates.
@@ -359,7 +359,7 @@ describe("SourceDetailPage Re-embed button", () => {
   });
 
   it("suppresses a stale terminal snapshot until the new run reaches `running` (race-fix regression)", async () => {
-    // Regression test for the second-pass Devin Review finding:
+    // Regression test for the second-pass finding:
     // when the renderer polls `getEmbeddingProgress` before the
     // bridge's worker thread has called `tracker.start()` for the
     // new run, the first response can be the *previous* run's
@@ -441,7 +441,7 @@ describe("SourceDetailPage Re-embed button", () => {
   });
 
   it("stops the polling loop when the backfill IPC rejects synchronously (no infinite-poll leak)", async () => {
-    // Regression test for Devin Review round 5 finding: if
+    // Regression test for finding: if
     // `sources:backfillEmbeddings` rejects before reaching the
     // bridge (e.g. the IPC handler's
     // `defaultRateLimiter.consume(...)` throws synchronously),

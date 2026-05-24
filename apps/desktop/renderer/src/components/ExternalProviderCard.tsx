@@ -18,7 +18,7 @@ import type {
  *
  *  The k→M boundary is at 999_500 (not 1_000_000) because (999_999 /
  *  1_000).toFixed(1) === "1000.0" — displaying "1000.0k" instead of
- *  "1.0M" is the obvious-but-wrong threshold that Devin Review round
+ *  "1.0M" is the obvious-but-wrong threshold that round
  *  10 flagged. Moving the boundary down to 999_500 means any value
  *  that would round-up to 1000.0k at one decimal place is shown in M
  *  units instead, which is what every conventional financial /
@@ -120,8 +120,8 @@ export default function ExternalProviderCard() {
       // the main process so the listing operates against what the
       // user is CURRENTLY editing, not the last-saved on-disk
       // config. This avoids the "I changed the URL, clicked List,
-      // got the old provider's models" confusion that Devin
-      // Review flagged. The API key is intentionally NOT
+      // got the old provider's models" UX gap. The API key is
+      // intentionally NOT
       // overridable here — the persisted vault entry is the only
       // source of plaintext-key truth (see comment on the IPC
       // handler in `electron/ipc/settings.ts`).
@@ -142,7 +142,7 @@ export default function ExternalProviderCard() {
                 // "List models" without first hitting Save. See the
                 // long doc comment on
                 // `ExternalProviderListModelsDraftOverrides` for the
-                // motivation (Devin Review round 12 ANALYSIS_002).
+                // motivation
                 enabled: provider.enabled,
               }
             : undefined,
@@ -206,11 +206,11 @@ export default function ExternalProviderCard() {
     //
     // The `enabled` dep is REQUIRED — without it the callback's
     // closure captures the value at first render and never sees
-    // subsequent toggles (Devin Review round 13 BUG_001). Concrete
+    // subsequent toggles Concrete
     // failure mode: user has persisted `enabled: false`, toggles
     // the form ON, clicks List models → stale `false` flows through
     // as the override and the handler returns "External provider
-    // is disabled", defeating the round-12 ANALYSIS_002 fix.
+    // is disabled", defeating the  fix.
   }, [provider?.apiUrl, provider?.providerType, provider?.enabled]);
 
   const onResetTokenUsage = useCallback(async () => {
@@ -367,7 +367,7 @@ export default function ExternalProviderCard() {
       // handler at `electron/ipc/settings.ts` already wraps its body
       // in a try/catch and returns a typed result, so this `catch`
       // is the renderer-side belt to the handler-side suspenders.
-      // Devin Review round 14 ANALYSIS_001 flagged the pre-existing
+      //  An earlier review flagged the pre-existing
       // inconsistency: every other handler in this file uses
       // try/catch/finally, only `onTest` used try/finally.
       setStatus({
@@ -502,8 +502,8 @@ export default function ExternalProviderCard() {
                   // at line ~376, so a `provider.enabled=false` state
                   // collapses this whole subtree before the button
                   // can render. Adding the gate to `disabled` would
-                  // be dead code — Devin Review round 12 ANALYSIS_002
-                  // flagged the redundancy. The form's `enabled`
+                  // be dead code —
+                  // An earlier review flagged the redundancy. The form's `enabled`
                   // value is forwarded as a draft override to the
                   // listModels handler (see `onListModels` above)
                   // so the handler gates on the EFFECTIVE enabled
@@ -511,7 +511,7 @@ export default function ExternalProviderCard() {
                   // the previous "fresh-enable + List = External
                   // provider is disabled" UX gap.
                   //
-                  // Devin Review round 10 surfaced the broader UX
+                  // the broader UX
                   // gap: the button was clickable in all these
                   // states and the user saw "External provider is
                   // disabled" on a first-time-setup click instead

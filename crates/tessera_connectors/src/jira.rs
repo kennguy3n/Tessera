@@ -484,7 +484,7 @@ impl JiraConnector {
     /// catches issues whose `updated` timestamp was rewritten by an
     /// admin (which the changelog path would miss) and because it
     /// matches the pattern already established by the other
-    /// full-walk connectors. WS5 centralises the file-count
+    /// full-walk connectors. an earlier release centralises the file-count
     /// arithmetic via [`SyncResult::apply_to_file_count`] so a
     /// future Jira-deletion-detection change is scoped to populating
     /// `result.removed` here — the accounting path then propagates
@@ -545,7 +545,7 @@ impl JiraConnector {
         // without any further change to this call site. All six
         // connectors converge on this one accounting helper,
         // eliminating the Jira-specific monotonic-add-only drift that
-        // existed before WS5.
+        // existed earlier.
         self.file_count = result.apply_to_file_count(self.file_count);
         self.status = ConnectorStatus::Connected;
         Ok(result)

@@ -1,5 +1,5 @@
 /**
- * Phase 10 / Task 17 — audit trail completeness.
+ * / Task 17 — audit trail completeness.
  *
  * Cross-cutting tests verifying that the JS-side IPC handlers route
  * their security-relevant lifecycle events through the new

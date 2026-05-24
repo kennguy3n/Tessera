@@ -84,7 +84,7 @@ struct AppState {
 /// database is opened unencrypted — this path exists for testing and
 /// for headless environments where Electron's `safeStorage` is
 /// unavailable and the renderer chose not to prompt for a fallback
-/// password (see WS10).
+/// password
 ///
 /// `napi-rs` 2.x maps `Option<String>` to a TypeScript `string | null | undefined`
 /// at the boundary, so callers can simply pass `null` or omit the
@@ -616,7 +616,7 @@ pub fn bridge_export_artifact_to_file(
 #[napi]
 pub fn bridge_list_templates() -> napi::Result<Vec<templates::TemplateInfo>> {
     let s = state()?;
-    // Phase 10 / Task 28: route every parse / validation failure
+    // route every parse / validation failure
     // encountered while walking `template_dir` into the audit log
     // so a packaged-build operator can find templates that were
     // silently dropped from the list — `eprintln!` alone goes to
@@ -1216,7 +1216,7 @@ mod compare_label_tests {
 
     #[test]
     fn disambiguate_labels_escalates_to_two_segments_on_collision() {
-        // Devin Review ANALYSIS_0003: two sources sharing the same
+        // : two sources sharing the same
         // last segment should produce parent-qualified labels so the
         // modal heading isn't "Comparison: docs vs docs".
         assert_eq!(
@@ -1470,7 +1470,7 @@ pub fn bridge_record_automation_run(automation_id: String, status: String) -> na
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
-// --- Audit pass-throughs (Phase 10 / Task 17) ---
+// --- Audit pass-throughs (the audit code) ---
 //
 // Most audit events are emitted directly by other bridge methods on
 // behalf of the JS caller (see `bridge_add_local_folder`,

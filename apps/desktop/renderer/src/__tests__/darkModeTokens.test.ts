@@ -149,7 +149,7 @@ describe("dark-mode CSS variable enforcement", () => {
   });
 
   it("[data-theme=\"dark\"] and @media (prefers-color-scheme: dark) declare the same tokens with identical values", () => {
-    // Devin Review flagged that the explicit-Dark scope and the
+    // that the explicit-Dark scope and the
     // System-Dark media query block are duplicated, and a future
     // patch could update one without the other — silently giving
     // users in System-Dark different colors than users who
@@ -232,7 +232,7 @@ describe("dark-mode CSS variable enforcement", () => {
       "--color-relevance-medium-bg",
       "--color-relevance-low-fg",
       "--color-relevance-low-bg",
-      // Phase 10 round-2 fix: --color-priority-high was added to
+      //  fix: --color-priority-high was added to
       // give the "high" priority badge a dedicated dark value
       // (#fb923c orange-400) for contrast on dark surfaces. If a
       // future patch drops the dark override, the badge silently
@@ -275,7 +275,7 @@ describe("dark-mode CSS variable enforcement", () => {
     // Anchor on a property-name boundary so the `color` alternative
     // doesn't accidentally match as a suffix of `backgroundColor`,
     // `borderColor`, etc. (the previous regex relied on that
-    // accident — Devin Review caught it).
+    // accident — it).
     const re =
       /(?:(?:^|[\s,;{])(?:color|backgroundColor|background-color|background|borderColor|border-color))\s*:\s*["'](?:#fff(?:fff)?|white)["']/gim;
     for (const file of walk(RENDERER_SRC)) {

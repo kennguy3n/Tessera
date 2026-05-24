@@ -94,7 +94,7 @@ function teardownIpcSubscription() {
  *
  * ## Current production callers: none (intentional)
  *
- * Devin Review on PR #27 correctly observed that no production
+ * that no production
  * code currently calls this function. That is by design:
  *
  *   - The `model:generate` IPC channel (`electron/ipc/model.ts`)

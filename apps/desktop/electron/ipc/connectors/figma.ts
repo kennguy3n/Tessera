@@ -557,7 +557,7 @@ export async function syncFigma(ctx: {
     // throws an unexpected error" in `connectorsSync.test.ts`.
     sourceIndex = SourcePathIndex.fromBridge(ctx.bridge);
 
-    // Phase 1 — explicitly retry every file the previous pass failed
+    // — explicitly retry every file the previous pass failed
     // on. We have no `last_modified` for retries at this point, so we
     // pass through `null` and let the watermark advance only when the
     // watermark scan below sees newer files.
@@ -565,7 +565,7 @@ export async function syncFigma(ctx: {
       await syncFileByKey(entry.remoteId, entry.remoteModifiedAt);
     }
 
-    // Phase 2 — the normal watermark-filtered scan.
+    // — the normal watermark-filtered scan.
     for (const teamId of teamIds) {
       let projects: FigmaProject[];
       try {
@@ -635,7 +635,7 @@ export async function syncFigma(ctx: {
     //   (a) success → `succeededIds.add` + `pendingRetries.delete`,
     //   (b) 404/410 cascade → `succeededIds.add` + `pendingRetries.delete`,
     //   (c) `recordFailure(...)` → `failedThisPassIds.add`.
-    // Phase 2 likewise either succeeds (path a) or records a
+    // likewise either succeeds (path a) or records a
     // failure (path c) for every file it touches. So under the
     // current code shape, no key reaches this loop without being in
     // one of the two sets.
