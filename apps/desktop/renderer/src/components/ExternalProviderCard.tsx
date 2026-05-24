@@ -18,11 +18,11 @@ import type {
  *
  *  The k→M boundary is at 999_500 (not 1_000_000) because (999_999 /
  *  1_000).toFixed(1) === "1000.0" — displaying "1000.0k" instead of
- *  "1.0M" is the obvious-but-wrong threshold that round
- *  10 flagged. Moving the boundary down to 999_500 means any value
- *  that would round-up to 1000.0k at one decimal place is shown in M
- *  units instead, which is what every conventional financial /
- *  analytics display does (e.g. Stripe dashboard, GitHub Insights). */
+ *  "1.0M" is the obvious-but-wrong rendering this boundary avoids.
+ *  Moving the boundary down to 999_500 means any value that would
+ *  round-up to 1000.0k at one decimal place is shown in M units
+ *  instead, which is what every conventional financial / analytics
+ *  display does (e.g. Stripe dashboard, GitHub Insights). */
 function formatTokenCount(n: number): string {
   if (n < 1_000) return n.toLocaleString();
   if (n < 999_500) return `${(n / 1_000).toFixed(1)}k`;

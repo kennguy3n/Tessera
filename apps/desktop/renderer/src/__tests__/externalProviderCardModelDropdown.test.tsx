@@ -1,5 +1,5 @@
 /**
- * Regression test for .
+ * Regression test: the model dropdown must reset on providerType change.
  *
  * The bug: after a user clicked "List models" on an
  * `openai_compatible` provider (populating the model `<select>`
@@ -467,9 +467,9 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
   });
 
   it("surfaces a deep failure from Test connection via setStatus instead of silently un-busying", async () => {
-    // `onTest` was the
-    // only handler in this file using `try/finally` instead of the
-    // sibling pattern `try/catch/finally`. If the IPC channel itself
+    // `onTest` was the only handler in this file using `try/finally`
+    // instead of the sibling pattern `try/catch/finally`. If the
+    // IPC channel itself
     // failed (bridge serialization error, contextIsolation violation,
     // the IPC handler throwing before its own try/catch wraps the
     // result), the rejected promise would propagate unhandled while

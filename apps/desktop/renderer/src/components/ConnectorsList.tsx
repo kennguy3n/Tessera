@@ -1,5 +1,5 @@
 /**
- * — multi-provider connector list.
+ * Multi-provider connector list.
  *
  * Renders one row per supported connector (Google Drive, OneDrive,
  * Notion, Jira, Confluence, Figma) with an inline "Connect" button
