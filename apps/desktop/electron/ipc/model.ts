@@ -14,12 +14,17 @@ import { getBridge, getModelSidecar } from "../appState";
 import type { ModelStatus } from "../../shared/types";
 import { assertString } from "./validate";
 import { GenerateRequestSchema } from "./schemas";
-import { loadConfig, type ExternalProviderConfig } from "../config";
+import { loadConfig, updateConfig, type ExternalProviderConfig } from "../config";
 import * as secretsVault from "../secretsVault";
 import {
   streamExternalProvider,
   type ExternalProviderStreamChunk,
 } from "../externalProviderStream";
+import {
+  estimateTokens,
+  accumulateTokenUsage,
+  type ExternalProviderTokenUsage,
+} from "../tokenCounter";
 
 /**
  * Bind a destroyed-window-safe sender for an IPC channel.
@@ -204,6 +209,87 @@ export function registerModelHandlers(): void {
     const adapter = resolveGenerationAdapter();
 
     if (adapter.kind === "external") {
+      // Token-usage accounting for the optional external provider.
+      //
+      // We use a CLIENT-SIDE heuristic (see `tokenCounter.ts`)
+      // rather than the provider's authoritative `usage` field
+      // because OpenAI's `chat.completion.chunk.usage` requires
+      // `stream_options.include_usage = true` (not supported by
+      // every OpenAI-compatible proxy — Ollama, vLLM, LM Studio,
+      // llama-server OpenAI shim — so turning it on would
+      // silently degrade routing) and Anthropic's `usage` lives
+      // in `message_start` / `message_delta` events we currently
+      // treat as opaque framing.
+      //
+      // The prompt-token estimate is computed ONCE at the start.
+      // Response-token estimates accumulate per delivered chunk
+      // (NOT per byte; chunks already align with token boundaries
+      // for OpenAI-compatible deltas, and Anthropic deltas
+      // similarly align). We persist the cumulative usage
+      // exactly ONCE per stream — in the `finally` block —
+      // because writing on every chunk would amplify disk I/O
+      // 100x for a 100-token completion and would race the IPC
+      // settings handlers if the renderer happens to read the
+      // counter mid-stream. The end-of-stream write captures the
+      // final cumulative value.
+      const promptTokens = estimateTokens(parsed.prompt);
+      // Accumulate the streamed completion text as a single string
+      // and call `estimateTokens` ONCE on the concatenation in the
+      // `finally` block. The earlier implementation summed
+      // `estimateTokens(chunk.content)` per chunk, but `estimateTokens`
+      // uses `Math.ceil(length / CHARS_PER_TOKEN)` with a floor of
+      // `MIN_TOKENS_FOR_NON_EMPTY = 1`, so applying it independently
+      // to each short SSE delta (typically 1–6 chars) systematically
+      // over-counted. Concrete example flagged by Devin Review (round
+      // 5 on PR #27): `"Hello"` + `", "` + `"world"` per-chunk yields
+      // `ceil(5/4) + ceil(1/4) + ceil(5/4) = 2+1+2 = 5` tokens, but
+      // the concatenated `"Hello, world"` yields `ceil(12/4) = 3`. For
+      // typical OpenAI streaming (many short chunks) the cumulative
+      // over-count is 40–60% of the bulk estimate, which inflated the
+      // `"~N tokens used"` display in `SettingsPage` and would mislead
+      // a user trying to track their actual provider spend.
+      //
+      // Buffering the full completion text in memory is acceptable
+      // here: a single generation is bounded by `parsed.maxTokens`
+      // (and the schema clamps that to a sensible ceiling), so the
+      // buffer never exceeds a few tens of KB of UTF-16. The
+      // alternative — tracking raw char count and applying the
+      // `Math.ceil(chars / CHARS_PER_TOKEN)` formula directly here —
+      // would lose the whitespace normalisation that `estimateTokens`
+      // performs (collapsing runs of whitespace to a single space
+      // before counting), which matters because providers compress
+      // whitespace before tokenising. Keeping the single
+      // `estimateTokens` call preserves bulk-vs-streaming
+      // consistency: the counter increments by the same value
+      // whether the response arrived as one chunk or fifty.
+      let completionText = "";
+      // Tracks whether the upstream stream body actually opened
+      // (i.e. the provider returned a 2xx response and we have a
+      // readable body). Pre-stream failures — HTTP 401/403/400,
+      // retry-exhausted 5xx, DNS errors, TLS errors — surface as a
+      // throw from `streamExternalProvider` BEFORE the body-opened
+      // callback runs. In those cases the upstream provider never
+      // processed the prompt and the user was never billed, so we
+      // MUST NOT inflate the cumulative-usage counter by
+      // `promptTokens`. A user who misconfigures their API key and
+      // repeatedly retries would otherwise see the counter climb
+      // without any actual provider spend, making the "used since
+      // <date>" display misleading.
+      //
+      // The flag is set via the third `streamExternalProvider`
+      // argument (the `onBodyOpened` callback), NOT via the emit
+      // callback — the SSE dispatchers in `externalProviderStream.ts`
+      // intentionally filter framing-only events (role-only deltas,
+      // content_block_start, message_start, ping) BEFORE calling
+      // emit, so a provider that accepts the request and then errors
+      // mid-stream without ever emitting non-empty content would NOT
+      // trigger emit even though the prompt was processed and
+      // billed. Hooking the gate to the body-opened signal in
+      // `streamExternalProvider` instead of the emit-content path
+      // captures the architectural ground truth: "the upstream
+      // accepted the request" → "count the prompt tokens", regardless
+      // of subsequent SSE shape.
+      let streamOpened = false;
       try {
         await streamExternalProvider(
           {
@@ -216,8 +302,16 @@ export function registerModelHandlers(): void {
           },
           (chunk: ExternalProviderStreamChunk) => {
             if (chunk.content.length > 0) {
+              completionText += chunk.content;
               sendToken({ token: chunk.content, done: false });
             }
+          },
+          () => {
+            // Fires exactly once when the HTTP body is confirmed
+            // open in `streamExternalProvider`. See the comment block
+            // above for why this is the correct gate (instead of the
+            // emit callback).
+            streamOpened = true;
           },
         );
       } finally {
@@ -227,6 +321,41 @@ export function registerModelHandlers(): void {
         if (!sentDone) {
           sendToken({ token: "", done: true });
           sentDone = true;
+        }
+        // Persist the cumulative usage delta ONLY if the upstream
+        // body actually opened. This runs even on mid-stream
+        // failure (network drop, abort) so a partial completion
+        // still counts the tokens the user actually received —
+        // they were billed for those tokens by the upstream
+        // provider regardless of whether the stream completed
+        // cleanly. Errors during the config write are swallowed
+        // because (1) the disk write is best-effort for an
+        // informational counter and (2) propagating them would
+        // mask the original generation error.
+        if (streamOpened) {
+          try {
+            // Single bulk `estimateTokens` call on the concatenated
+            // completion text — NOT a per-chunk sum (see the long
+            // comment near `completionText`'s declaration for the
+            // over-counting rationale). The empty-text branch is
+            // handled inside `estimateTokens` (returns 0 for
+            // length-0 input), so a stream that opened but never
+            // delivered non-empty content cleanly records 0
+            // completion tokens — NOT the `MIN_TOKENS_FOR_NON_EMPTY`
+            // floor that a per-chunk `estimateTokens("")` would have
+            // hit had we still been summing.
+            const completionTokens = estimateTokens(completionText);
+            const current = loadConfig();
+            const previous: ExternalProviderTokenUsage =
+              current.externalProviderTokenUsage;
+            const next = accumulateTokenUsage(previous, {
+              promptTokens,
+              completionTokens,
+            });
+            updateConfig({ externalProviderTokenUsage: next });
+          } catch {
+            // Best-effort; see comment above.
+          }
         }
       }
       return;

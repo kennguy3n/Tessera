@@ -13,17 +13,22 @@ import {
   loadConfig,
   updateConfig,
   DEFAULT_EXTERNAL_PROVIDER,
+  DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE,
   DEFAULT_HYBRID_SEARCH_CONFIG,
   type ExternalProviderConfig,
   type HybridSearchConfigPersisted,
 } from "../config";
+import { createEmptyTokenUsage } from "../tokenCounter";
 import { resolveProviderEndpoint } from "../externalProviderStream";
+import { listExternalProviderModels } from "../externalProviderModels";
 import * as secretsVault from "../secretsVault";
 import type {
+  ExternalProviderListModelsDraftOverrides,
   HybridSearchConfigInfo,
   HybridSearchConfigUpdate,
   SettingsData,
 } from "../../shared/types";
+import { EXTERNAL_PROVIDER_TYPES } from "../../shared/types";
 import {
   ExternalProviderApiKeySchema,
   ExternalProviderConfigSchema,
@@ -144,6 +149,52 @@ async function testExternalProviderConnection(
   } finally {
     clearTimeout(t);
   }
+}
+
+/**
+ * Best-effort parser for the optional `draft overrides` payload sent
+ * by the renderer's "List models" button. Unknown fields, wrong
+ * types, and missing fields are all silently dropped — the caller
+ * merges the resulting partial against the persisted config.
+ *
+ * Validation rules:
+ *   - `apiUrl`: must be a string (we accept any string here because
+ *     the same trim/empty/format-check runs downstream in the
+ *     handler and in `resolveProviderModelsEndpoint`).
+ *   - `providerType`: must be one of `EXTERNAL_PROVIDER_TYPES`.
+ *     Unrecognised types are dropped, NOT rejected — this lets a
+ *     newer renderer (with a future provider type the main process
+ *     doesn't know about) degrade gracefully rather than failing
+ *     the whole list-models call.
+ *   - `enabled`: must be a boolean. Lets a user who has just
+ *     toggled the provider on in the form (without saving) still
+ *     successfully list models — the handler gates on the EFFECTIVE
+ *     `enabled` after merging overrides atop the persisted config.
+ *     Devin Review round 12 ANALYSIS_002 flagged that the handler
+ *     previously gated on the PERSISTED `enabled` flag only, so
+ *     fresh-enable + List would fail with "External provider is
+ *     disabled" even though the form clearly intended otherwise.
+ */
+export function parseListModelsOverrides(
+  raw: unknown,
+): ExternalProviderListModelsDraftOverrides {
+  if (raw === null || typeof raw !== "object") return {};
+  const obj = raw as Record<string, unknown>;
+  const out: ExternalProviderListModelsDraftOverrides = {};
+  if (typeof obj.apiUrl === "string") {
+    out.apiUrl = obj.apiUrl;
+  }
+  if (
+    typeof obj.providerType === "string" &&
+    (EXTERNAL_PROVIDER_TYPES as readonly string[]).includes(obj.providerType)
+  ) {
+    out.providerType =
+      obj.providerType as ExternalProviderListModelsDraftOverrides["providerType"];
+  }
+  if (typeof obj.enabled === "boolean") {
+    out.enabled = obj.enabled;
+  }
+  return out;
 }
 
 export function registerSettingsHandlers(): void {
@@ -280,6 +331,143 @@ export function registerSettingsHandlers(): void {
       };
     },
   );
+
+  idempotentHandle(
+    "externalProvider:listModels",
+    // Accept an optional draft-overrides payload so the renderer's
+    // "List models" button works against the user's IN-FLIGHT
+    // form state — not the last-saved on-disk config. Without
+    // this, a user who pasted a new `apiUrl` (or switched
+    // `providerType` between openai_compatible and anthropic)
+    // would see the model list for the OLD provider, even though
+    // the form they're looking at points elsewhere. That mismatch
+    // is the exact failure mode flagged by Devin Review.
+    //
+    // The API key is intentionally NOT part of the overrides
+    // payload — we keep secrets out of IPC payloads as a hard
+    // rule. To list models against a NEW API key, the user must
+    // save the key first (the form distinguishes "set a new key"
+    // from "clear the key"); the listing then proceeds against
+    // the persisted vault entry.
+    async (_evt, rawOverrides?: unknown) => {
+      // Top-level try/catch so the handler ALWAYS returns a
+      // well-formed `ExternalProviderListModelsResult` rather than
+      // rejecting the IPC invoke. Without this guard, a thrown
+      // exception from `secretsVault.getSecret` (vault file
+      // corruption, keyring reset on Linux, OS-level decryption
+      // failure) would surface in the renderer as an unhandled
+      // promise rejection — the same defense-in-depth pattern the
+      // sibling `externalProvider:test` handler uses.
+      try {
+        const config = loadConfig();
+        const baseProvider = config.externalProvider;
+        // Defer the enabled-state check until AFTER overrides are
+        // merged. A user who just toggled the provider on in the
+        // form (without saving) should still be able to list models
+        // — the form's draft `enabled` is what reflects their
+        // intent, not the last-saved value. We only reject
+        // outright here if the provider record itself is missing
+        // (i.e. the user has never configured an external provider
+        // at all), in which case the override could not possibly
+        // provide enough state to proceed: no `apiKeyRef`, no
+        // `apiUrl` field shape, nothing for the vault lookup
+        // below to key off. The post-merge check at line ~370
+        // handles the enabled-toggle gate.
+        if (!baseProvider) {
+          return {
+            ok: false,
+            kind: "error",
+            error: "External provider is not configured",
+          };
+        }
+
+        // Validate overrides defensively — the renderer is trusted
+        // but we never want a malformed payload to crash the
+        // handler. Untrusted-shape fields are dropped silently and
+        // the persisted value is used as-is for that field.
+        const overrides = parseListModelsOverrides(rawOverrides);
+        const provider: ExternalProviderConfig = {
+          ...baseProvider,
+          ...(overrides.apiUrl !== undefined
+            ? { apiUrl: overrides.apiUrl }
+            : {}),
+          ...(overrides.providerType !== undefined
+            ? { providerType: overrides.providerType }
+            : {}),
+          ...(overrides.enabled !== undefined
+            ? { enabled: overrides.enabled }
+            : {}),
+        };
+
+        // Gate on the EFFECTIVE enabled flag (overrides merged
+        // atop persisted). This is the architectural fix to Devin
+        // Review round 12 ANALYSIS_002 — the form's draft `enabled`
+        // now reflects the user's intent for the listing call,
+        // matching what the renderer's button-enabled gate checks.
+        if (!provider.enabled) {
+          return {
+            ok: false,
+            kind: "error",
+            error: "External provider is disabled",
+          };
+        }
+
+        if (!provider.apiUrl.trim()) {
+          return {
+            ok: false,
+            kind: "error",
+            error: "API URL is required",
+          };
+        }
+        // The API key is always looked up against the PERSISTED
+        // `apiKeyRef` — this is what enforces the "no plaintext keys
+        // over IPC" invariant noted above.
+        if (!secretsVault.hasSecret(baseProvider.apiKeyRef)) {
+          return {
+            ok: false,
+            kind: "error",
+            error: "API key has not been stored",
+          };
+        }
+        const apiKey = secretsVault.getSecret(baseProvider.apiKeyRef);
+        if (!apiKey) {
+          return {
+            ok: false,
+            kind: "error",
+            error: "API key has not been stored",
+          };
+        }
+        return await listExternalProviderModels(provider, apiKey);
+      } catch (err) {
+        return {
+          ok: false,
+          kind: "error",
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  );
+
+  idempotentHandle("externalProvider:getTokenUsage", async () => {
+    const config = loadConfig();
+    return (
+      config.externalProviderTokenUsage ?? {
+        ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE,
+      }
+    );
+  });
+
+  idempotentHandle("externalProvider:resetTokenUsage", async () => {
+    // The reset writes a fresh record with `lastResetDate = now()`
+    // so the renderer's "since &lt;date&gt;" label updates
+    // immediately after the user clicks the button. The two
+    // counters drop to zero; the field is persisted via the same
+    // `updateConfig` write-through path settings updates use, so a
+    // subsequent main-process crash / kill cannot lose the reset.
+    const fresh = createEmptyTokenUsage();
+    updateConfig({ externalProviderTokenUsage: fresh });
+    return fresh;
+  });
 
   // ----- Hybrid retrieval config -----
   //

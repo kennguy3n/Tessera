@@ -343,6 +343,72 @@ export type ExternalProviderTestResult =
   | { ok: true; latencyMs: number }
   | { ok: false; error: string };
 
+/**
+ * Result of listing available models from an OpenAI-compatible
+ * provider via `GET /v1/models`. Discriminated on `ok` so renderer
+ * code can switch on success vs. failure without crashing on
+ * provider-not-supported or transport errors.
+ *
+ * - `ok: true, models: string[]`: at least one model id was
+ *   returned. Sorted alphabetically by id for stable display.
+ * - `ok: false, kind: "unsupported"`: the configured provider does
+ *   not expose a models endpoint (Anthropic). The renderer should
+ *   gracefully degrade to the manual text input.
+ * - `ok: false, kind: "error", error: string`: network or HTTP
+ *   error. The renderer should surface the message and keep the
+ *   manual text input.
+ */
+export type ExternalProviderListModelsResult =
+  | { ok: true; models: string[] }
+  | { ok: false; kind: "unsupported" }
+  | { ok: false; kind: "error"; error: string };
+
+/**
+ * Optional draft-state overrides accepted by
+ * `externalProvider:listModels`. Lets the renderer's "List models"
+ * button operate against in-flight form state (apiUrl /
+ * providerType) without forcing the user to save first. The
+ * main-process handler merges these atop the persisted
+ * `externalProvider` config — fields left undefined inherit the
+ * saved value.
+ *
+ * `apiKey` is intentionally NOT settable here: the IPC layer
+ * keeps plaintext keys out of the wire, and the persisted vault
+ * entry (looked up via `apiKeyRef`) is always used for the actual
+ * HTTP call. To list models against a NEW key, the user must save
+ * the key first.
+ *
+ * `enabled` IS settable so a user who has just toggled the
+ * provider on in the form (but not yet saved) can still click
+ * "List models" without first hitting Save. Devin Review round 12
+ * ANALYSIS_002 flagged the gap: previously the handler gated on
+ * the PERSISTED `enabled` flag, so a fresh-enable + List would
+ * fail with "External provider is disabled" even though the form
+ * the user is looking at clearly intends the provider to be on.
+ * Including `enabled` in the draft override lets the handler gate
+ * on the EFFECTIVE config (overrides merged atop persisted) so
+ * the UX matches the user's mental model.
+ */
+export interface ExternalProviderListModelsDraftOverrides {
+  apiUrl?: string;
+  providerType?: ExternalProviderType;
+  enabled?: boolean;
+}
+
+/**
+ * Cumulative external-provider token usage. The shape and units are
+ * documented in `electron/tokenCounter.ts`. Lives in `AppConfig` so
+ * it survives launches; the renderer reads it via
+ * `externalProvider.getTokenUsage` and resets it via
+ * `externalProvider.resetTokenUsage`.
+ */
+export interface ExternalProviderTokenUsage {
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  /** ISO-8601 timestamp when the counter was last reset. */
+  lastResetDate: string;
+}
+
 // -----------------------------------------------------------------
 // Tasks & decisions
 // -----------------------------------------------------------------
@@ -795,6 +861,24 @@ export interface ExternalProviderApi {
     apiKey: string | null,
   ) => Promise<ExternalProviderConfigView>;
   test: () => Promise<ExternalProviderTestResult>;
+  /** List available models from the configured OpenAI-compatible
+   *  provider via `GET /v1/models`. Anthropic providers return
+   *  `{ ok: false, kind: "unsupported" }`; network/HTTP errors
+   *  return `{ ok: false, kind: "error", error }`.
+   *
+   *  Accepts optional `overrides` so the renderer can list models
+   *  against IN-FLIGHT form state (apiUrl, providerType) without
+   *  saving first. The persisted `apiKeyRef` is always used for
+   *  the actual HTTP call — plaintext keys never travel over IPC. */
+  listModels: (
+    overrides?: ExternalProviderListModelsDraftOverrides,
+  ) => Promise<ExternalProviderListModelsResult>;
+  /** Read the cumulative external-provider token-usage counter.
+   *  See `electron/tokenCounter.ts` for the heuristic and rationale. */
+  getTokenUsage: () => Promise<ExternalProviderTokenUsage>;
+  /** Reset the cumulative external-provider token-usage counter to
+   *  zero (with `lastResetDate` updated to now). */
+  resetTokenUsage: () => Promise<ExternalProviderTokenUsage>;
 }
 
 export interface ModelApi {

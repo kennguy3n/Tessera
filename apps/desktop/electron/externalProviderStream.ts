@@ -402,7 +402,20 @@ interface BuildRequestResult {
 export function resolveProviderEndpoint(
   provider: ExternalProviderConfig,
 ): string {
-  const apiUrl = provider.apiUrl.replace(/\/+$/, "");
+  // Normalise trailing slashes AND a bare `/v1` version prefix
+  // before any suffix-matching. Without the bare-`/v1` strip a user
+  // who pastes `https://api.openai.com/v1` (just the version, no
+  // further path) ends up with `https://api.openai.com/v1/v1/chat/
+  // completions` because none of the longer `endsWith` checks below
+  // match. The strip is safe because `stripBareV1Suffix` only
+  // matches URLs ending in EXACTLY `/v1` — any longer composition
+  // that CONTAINS `/v1` as a sub-path (`/v1/chat/completions`,
+  // `/v1/messages`, `/v1/models`) does not end with bare `/v1` and
+  // is therefore left untouched by the strip. The subsequent
+  // `endsWith` checks then handle those longer forms correctly. See
+  // the strict-semantics block on `stripBareV1Suffix` for the full
+  // invariant.
+  const apiUrl = stripBareV1Suffix(provider.apiUrl.replace(/\/+$/, ""));
   if (provider.providerType === "anthropic") {
     // The `/v1/messages` form is the only documented Anthropic
     // Messages endpoint; older `/v1/complete` is for the legacy
@@ -417,6 +430,88 @@ export function resolveProviderEndpoint(
     apiUrl.endsWith("/v1/chat/completions") ||
     apiUrl.endsWith("/chat/completions");
   return endsWithCompletions ? apiUrl : `${apiUrl}/v1/chat/completions`;
+}
+
+/**
+ * Strip a bare `/v1` version-prefix suffix from a normalised
+ * (trailing-slash-trimmed) apiUrl. Used by both
+ * {@link resolveProviderEndpoint} and
+ * {@link resolveProviderModelsEndpoint} to handle the
+ * `https://api.openai.com/v1` paste form without producing a
+ * doubled `…/v1/v1/…` composition.
+ *
+ * Strict semantics: only strips the suffix when the apiUrl ends
+ * with EXACTLY `/v1` (i.e. the next-to-last segment is the host
+ * or some intermediate path — there's no trailing `/messages`,
+ * `/chat/completions`, `/models`, etc.). This is the only form
+ * that produces the duplication bug; any longer composition that
+ * happens to contain `/v1` as a non-terminal segment is left
+ * untouched.
+ *
+ * Callers must apply this AFTER the trailing-slash strip (so
+ * `…/v1/` is treated the same as `…/v1`) and BEFORE any
+ * longer-suffix `endsWith` check (so the result of this strip
+ * cleanly composes with the standard append-suffix branch).
+ */
+function stripBareV1Suffix(apiUrl: string): string {
+  return apiUrl.endsWith("/v1") ? apiUrl.slice(0, -"/v1".length) : apiUrl;
+}
+
+/**
+ * Compose the OpenAI-compatible `GET /v1/models` endpoint for the
+ * configured provider, applying the same "did the user paste a full
+ * URL?" trimming logic as {@link resolveProviderEndpoint}.
+ *
+ * Returns `null` for Anthropic — the Messages API has no
+ * `/v1/models` analogue, and asking the caller to handle a
+ * provider-type-aware decision higher up in the stack would
+ * duplicate the "is the listing supported?" predicate at every
+ * caller. Returning `null` lets the IPC handler short-circuit to a
+ * graceful "not supported" reply without an extra type-narrowing
+ * pass.
+ *
+ * For OpenAI-compatible / custom: the user's `apiUrl` may be a
+ * base (`https://api.openai.com`), a chat-completions endpoint
+ * (`https://api.openai.com/v1/chat/completions`), or even an
+ * already-resolved models endpoint
+ * (`https://api.openai.com/v1/models`). We strip the
+ * chat-completions suffix when present and append `/v1/models` if
+ * not already there. The handful of self-hosted shims that omit
+ * the `/v1` prefix on chat completions (LM Studio's
+ * `.../chat/completions`) generally ALSO omit it on `/models`, so
+ * we accept both endings.
+ */
+export function resolveProviderModelsEndpoint(
+  provider: ExternalProviderConfig,
+): string | null {
+  if (provider.providerType === "anthropic") return null;
+  let apiUrl = provider.apiUrl.replace(/\/+$/, "");
+  // If the user pasted a `…/v1/chat/completions` or
+  // `…/chat/completions` URL, strip the suffix so we can append the
+  // `/models` path below without composing
+  // `…/chat/completions/v1/models`. Check the longer suffix first
+  // — the shorter `/chat/completions` is a structural superset of
+  // `/v1/chat/completions`, and matching it first would only strip
+  // the inner `/chat/completions`, leaving a dangling `/v1`.
+  if (apiUrl.endsWith("/v1/chat/completions")) {
+    apiUrl = apiUrl.slice(0, -"/v1/chat/completions".length);
+  } else if (apiUrl.endsWith("/chat/completions")) {
+    apiUrl = apiUrl.slice(0, -"/chat/completions".length);
+  }
+  // After stripping any chat-completions suffix, ALSO strip a bare
+  // `/v1` version-prefix suffix. Without this, a user who pastes
+  // `https://api.openai.com/v1` would end up with
+  // `https://api.openai.com/v1/v1/models` because the existing
+  // longer-suffix `endsWith` checks for `/v1/models` / `/models`
+  // don't match. See `stripBareV1Suffix` for the ordering invariant.
+  apiUrl = stripBareV1Suffix(apiUrl);
+  if (
+    apiUrl.endsWith("/v1/models") ||
+    apiUrl.endsWith("/models")
+  ) {
+    return apiUrl;
+  }
+  return `${apiUrl}/v1/models`;
 }
 
 /** Build the HTTP request for a streaming call. Exported for tests
@@ -485,43 +580,572 @@ export function buildStreamRequest(
 }
 
 /**
+ * HTTP status codes that we treat as transient pre-stream failures
+ * and retry with exponential backoff. The set is deliberately
+ * narrow:
+ *
+ *   - **408 Request Timeout**: the server didn't respond in time;
+ *     a quick retry against the same edge often succeeds.
+ *   - **429 Too Many Requests**: rate limit hit; we honour the
+ *     `Retry-After` response header if present (see
+ *     {@link parseRetryAfter}) and otherwise fall back to the
+ *     standard exponential schedule.
+ *   - **500 Internal Server Error, 502 Bad Gateway, 503 Service
+ *     Unavailable, 504 Gateway Timeout**: edge / origin failures
+ *     that are routinely transient.
+ *
+ * Everything else — in particular **400/401/403/404/422** — is a
+ * client-side error (bad request shape, bad credentials, missing
+ * model, content-policy violation) that retrying cannot fix; we
+ * fail fast on those so the user sees the real error message
+ * immediately instead of waiting 7 seconds for the retry chain to
+ * exhaust against a permanent failure.
+ *
+ * This list mirrors the canonical "retryable upstream" set used by
+ * the OpenAI / Anthropic official client SDKs and by industry
+ * best-practice proxies (envoy, nginx-plus, traefik). Keeping it in
+ * sync means the desktop client doesn't develop its own opinion of
+ * which errors are transient versus permanent.
+ */
+const RETRYABLE_HTTP_STATUS_CODES: ReadonlySet<number> = new Set([
+  408, 429, 500, 502, 503, 504,
+]);
+
+/**
+ * Base delay for the first retry, in milliseconds. Subsequent
+ * retries double this on each step: attempt 1 waits `1000ms`,
+ * attempt 2 waits `2000ms`, attempt 3 waits `4000ms`, and so on
+ * (see {@link retryDelayMs}). We deliberately do NOT add jitter —
+ * the desktop app issues at most one streaming request at a time
+ * per user gesture, so the thundering-herd concern that motivates
+ * jitter in server-side retry policies doesn't apply here.
+ *
+ * The user-visible "Stop generating" button (`ipc/model.ts`'s
+ * `AbortController`) interrupts this delay via the standard
+ * `AbortSignal` polling inside `delayWithAbort`, so a long
+ * `Retry-After` header does NOT trap the user; they can always
+ * cancel.
+ */
+const RETRY_BASE_DELAY_MS = 1000;
+
+/**
+ * Safety cap on individual retry delays. The schema clamps
+ * `maxRetries` to `0..=10`; without a cap, a doubling schedule
+ * would request a ~17-minute wait before the 10th retry (1s, 2s,
+ * 4s, …, 512s, 1024s). The cap keeps any single wait under 30s so
+ * the user gets timely feedback even at the schema's upper bound.
+ * Note this is the cap on a SINGLE backoff step — the cumulative
+ * wait across 10 retries is still bounded but allows >7s overall
+ * when the user has explicitly raised `maxRetries`.
+ */
+const RETRY_MAX_DELAY_MS = 30_000;
+
+/**
+ * Compute the wait before retry `n` (1-indexed: `n=1` is the wait
+ * before the 1st retry, i.e. before attempt 2 overall). Exposed
+ * for tests; production callers go through the main retry loop.
+ *
+ * The formula is `RETRY_BASE_DELAY_MS * 2^(n-1)`, capped at
+ * {@link RETRY_MAX_DELAY_MS}. For the default `maxRetries=2` this
+ * yields the legacy schedule (1s, 2s); for higher values it
+ * continues doubling (4s, 8s, 16s, 30s, 30s, …).
+ */
+export function retryDelayMs(retryIndex1Based: number): number {
+  if (retryIndex1Based < 1) {
+    return 0;
+  }
+  return Math.min(
+    RETRY_MAX_DELAY_MS,
+    RETRY_BASE_DELAY_MS * 2 ** (retryIndex1Based - 1),
+  );
+}
+
+/**
+ * Parse an HTTP `Retry-After` header (RFC 7231 §7.1.3). Returns the
+ * delay in milliseconds, or `undefined` if the header is missing or
+ * unparseable. Accepts both numeric forms (delta-seconds) and
+ * HTTP-date forms.
+ *
+ * Returns `undefined` for negative or zero values so the caller
+ * falls through to the standard exponential schedule rather than
+ * retrying immediately (which would just thrash the upstream).
+ *
+ * Capped at 60 seconds: a server that asks for a multi-minute
+ * back-off effectively means the request will never succeed in
+ * this interactive session; the cap lets the retry chain exhaust
+ * and surface the 429 to the user, who can then back off manually.
+ */
+export function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+
+  // delta-seconds form.
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+    return Math.min(seconds * 1000, 60_000);
+  }
+
+  // HTTP-date form.
+  const ts = Date.parse(trimmed);
+  if (Number.isNaN(ts)) return undefined;
+  const deltaMs = ts - Date.now();
+  if (deltaMs <= 0) return undefined;
+  return Math.min(deltaMs, 60_000);
+}
+
+/**
+ * Sleep for `ms` milliseconds, but resolve early (and throw a
+ * `DOMException` named `"AbortError"`) if the supplied
+ * `AbortSignal` fires. The error shape matches what `fetch()`
+ * itself throws on `AbortController.abort()`, so the upstream
+ * caller's already-existing abort handling kicks in unchanged.
+ */
+function delayWithAbort(
+  ms: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * One attempt at the pre-stream HTTP exchange. Returns the open
+ * `Response` on a 2xx body, OR a sentinel describing a retryable
+ * status so the caller's loop can decide whether to back off and
+ * retry. Throws on non-retryable HTTP failures (the error message
+ * includes the upstream body so the user can see what went wrong)
+ * and on network-level failures (DNS, TLS, connection-refused).
+ *
+ * The function name reflects its scope: this is the PRE-STREAM
+ * boundary. Once the body opens (return value here), every
+ * subsequent failure is treated as mid-stream and is NOT retried
+ * — we don't want to silently re-deliver tokens the renderer has
+ * already shown to the user.
+ *
+ * # Per-attempt timeout
+ *
+ * `timeoutMs` is the upper bound on how long this single attempt
+ * waits for the upstream HTTP exchange to start producing a body.
+ * It is wired through `provider.timeoutSecs` (schema-validated to
+ * `1..=600` seconds in `electron/ipc/schemas.ts`). The timeout
+ * fires via a per-attempt `AbortController` whose signal is forked
+ * with the user's outer cancel signal so we can distinguish the
+ * two abort sources:
+ *
+ *   - **User cancel**: the user-provided `signal` aborts. We
+ *     propagate the `AbortError` upward so the caller's retry loop
+ *     terminates immediately (cancelling mid-retry is the whole
+ *     point of the Stop Generation button).
+ *   - **Per-attempt timeout**: only our internal controller
+ *     aborts. We return a `{ kind: "timeout" }` retryable
+ *     sentinel so the caller's loop can back off and re-attempt
+ *     (a slow-but-responsive upstream is exactly the case the
+ *     retry budget exists to handle).
+ *
+ * Without this distinction the retry budget is effectively
+ * useless against a slow-but-responsive upstream — attempt 1
+ * would hang forever waiting for the response, and the retry
+ * loop would never reach attempts 2…N. This was the gap Devin
+ * Review round 7 surfaced: `timeoutSecs` was wired into
+ * `testExternalProviderConnection` and (with a fixed 10 s)
+ * `listExternalProviderModels`, but the streaming path relied
+ * solely on the user's Stop button.
+ */
+interface OpenedResponse {
+  readonly status: "opened";
+  readonly response: Response;
+  /**
+   * Detach the per-attempt user-cancel forwarder from the user's
+   * outer `AbortSignal`. The caller MUST call this exactly once,
+   * after body reading completes (success, abort, or error), so the
+   * listener does not leak past the lifetime of the stream.
+   *
+   * Until this is called, a user-cancel on the outer signal will
+   * propagate to the per-attempt `AbortController` that backs the
+   * open response body, which is exactly what makes the "Stop
+   * generating" button cancel mid-stream. Detaching too early
+   * (e.g. in `openExternalProviderStream`'s own `finally`) would
+   * silently disconnect the user signal from the body stream and
+   * make the Stop button non-functional once the body opened.
+   */
+  readonly cleanupBodyForwarder: () => void;
+}
+/** Pre-stream attempt completed but the upstream returned a
+ *  retryable HTTP status (408/429/500/502/503/504). */
+interface RetryableHttp {
+  readonly status: "retryable";
+  readonly kind: "http";
+  readonly httpStatus: number;
+  readonly retryAfterMs: number | undefined;
+  readonly bodyPreview: string;
+}
+/** Pre-stream attempt timed out before the upstream produced a
+ *  response body. The user did NOT cancel — this is a transient
+ *  upstream slowness that the retry loop should back off and
+ *  re-attempt. */
+interface RetryableTimeout {
+  readonly status: "retryable";
+  readonly kind: "timeout";
+  readonly timeoutMs: number;
+}
+type RetryableStatus = RetryableHttp | RetryableTimeout;
+async function openExternalProviderStream(
+  req: BuildRequestResult,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<OpenedResponse | RetryableStatus> {
+  // Per-attempt cancel source: aborts EITHER when the user clicks
+  // Stop (via `signal`) OR when the per-attempt timer fires. We use
+  // a single composite controller so the `fetch` call sees one
+  // unified signal, then distinguish the two sources in the catch
+  // block by checking which underlying signal is aborted.
+  const attemptController = new AbortController();
+  const timer = setTimeout(() => attemptController.abort(), timeoutMs);
+
+  // Forward an already-aborted user signal immediately so we don't
+  // even kick off a request. Without this guard a user who clicks
+  // Stop during a backoff delay would still consume one wasted
+  // attempt before the retry loop saw the abort.
+  if (signal?.aborted) {
+    clearTimeout(timer);
+    throw new DOMException("Aborted", "AbortError");
+  }
+
+  // Forward a LATER user-cancel into our composite controller so
+  // `fetch` aborts immediately even though we passed it the
+  // composite signal (not the user's signal directly). The lifetime
+  // of this listener depends on the outcome:
+  //
+  //   - Pre-stream failure (retryable HTTP, non-retryable HTTP,
+  //     timeout, network error, propagated user-cancel) — the
+  //     listener is detached by this function's `finally` block
+  //     because the attempt is over.
+  //   - Body opens successfully — ownership of the listener transfers
+  //     to the caller via `cleanupBodyForwarder()`, so the user's
+  //     Stop signal continues to abort the underlying connection
+  //     while the caller reads the body. The caller MUST detach
+  //     exactly once after body reading completes.
+  //
+  // Without the ownership transfer, the listener would be detached
+  // here while the body stream is still bound to `attemptController.
+  // signal`, leaving the user's outer signal disconnected from the
+  // body stream and making the Stop button non-functional mid-
+  // stream. Devin Review round 8 surfaced exactly this regression.
+  const forwardUserAbort = (): void => attemptController.abort();
+  signal?.addEventListener("abort", forwardUserAbort, { once: true });
+  // Set to true when the body opens successfully so the `finally`
+  // block below leaves the listener attached for the caller. All
+  // other code paths exit with this still `false` and the listener
+  // is detached normally.
+  let ownershipTransferred = false;
+
+  try {
+    const res = await fetch(req.url, {
+      method: "POST",
+      headers: req.headers,
+      body: req.body,
+      signal: attemptController.signal,
+    });
+    // Headers arrived. The per-attempt timer's job is bounding the
+    // PRE-RESPONSE wait (how long we wait for the upstream to start
+    // producing a body); once `fetch` resolves we've passed that
+    // boundary and the timer should be cleared regardless of which
+    // status-code branch we take below. Devin Review round 12
+    // BUG_001 surfaced the regression: when the timer was only
+    // cleared in the `res.ok` branch, a slow body-drain on a non-
+    // retryable HTTP error (e.g. a `await res.text()` for a 401
+    // response that takes longer than `timeoutMs`) would trip the
+    // timer mid-drain, the `.catch(() => "")` would swallow the
+    // resulting abort error, and the explicit `throw new Error(...)`
+    // for "HTTP 401" would then enter the catch block where
+    // `attemptController.signal.aborted === true` would misclassify
+    // the failure as a retryable timeout. The user would see "pre-
+    // stream timeout (Nms) after K attempts" instead of "HTTP 401",
+    // and the retry loop would waste its budget on a permanent
+    // failure. Clearing the timer here, before any body-read, makes
+    // the misclassification structurally impossible.
+    clearTimeout(timer);
+    if (res.ok) {
+      // Body is open. Mid-stream slowness is bounded only by the
+      // user's Stop signal (see the long-running-streaming-response
+      // comment on `timeoutMs` in `streamExternalProvider`).
+      // Transfer listener ownership to the caller via
+      // `cleanupBodyForwarder`; the per-attempt timer was already
+      // cleared above.
+      ownershipTransferred = true;
+      return {
+        status: "opened",
+        response: res,
+        cleanupBodyForwarder: () => {
+          signal?.removeEventListener("abort", forwardUserAbort);
+        },
+      };
+    }
+    if (RETRYABLE_HTTP_STATUS_CODES.has(res.status)) {
+      // Drain the body so the connection can be reused and so we can
+      // include a preview in the eventual user-visible error (if the
+      // retry chain exhausts). Errors here are swallowed because the
+      // status code is the authoritative signal, not the body shape.
+      // Per the comment above, the timer was already cleared so this
+      // drain can take as long as the upstream needs without
+      // affecting classification.
+      const bodyPreview = await res.text().catch(() => "");
+      const retryAfterMs = parseRetryAfter(res.headers.get("retry-after"));
+      return {
+        status: "retryable",
+        kind: "http",
+        httpStatus: res.status,
+        retryAfterMs,
+        bodyPreview,
+      };
+    }
+    // Non-retryable client error (400/401/403/404/422/…). Surface
+    // immediately so the user sees the real problem without 7 s of
+    // pointless retry delay. Per the comment above, the timer was
+    // already cleared so a slow body-drain on the error response
+    // can't mid-classify this as a retryable timeout.
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `External provider HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`,
+    );
+  } catch (e) {
+    // The fetch threw — distinguish user-cancel from per-attempt
+    // timeout from genuine network-level failure (DNS, TLS,
+    // connection-refused). The order of checks matters: user
+    // intent takes priority over the timer, so a user-cancel that
+    // arrives during a hung request must propagate the AbortError
+    // upward rather than silently being mapped to a retryable
+    // timeout.
+    if (signal?.aborted) {
+      throw e;
+    }
+    // Only our internal timer fired — transient slowness from the
+    // upstream. Return a retryable sentinel so the caller's loop
+    // can back off and try again.
+    if (attemptController.signal.aborted) {
+      return {
+        status: "retryable",
+        kind: "timeout",
+        timeoutMs,
+      };
+    }
+    // Genuine network-level failure (DNS, TLS, connection-refused).
+    // Surface immediately — these are typically misconfiguration,
+    // not transient slowness, and retrying just wastes the budget.
+    // The existing line 549–554 comment block in this file
+    // documents the same design choice for the streaming half.
+    throw e;
+  } finally {
+    // Always clear the timer — idempotent if already cleared on the
+    // success path. Only detach the listener if ownership was NOT
+    // transferred to the caller (i.e. body never opened).
+    clearTimeout(timer);
+    if (!ownershipTransferred) {
+      signal?.removeEventListener("abort", forwardUserAbort);
+    }
+  }
+}
+
+/**
  * Stream tokens from the configured external provider, invoking
  * `emit` once per assembled chunk. Resolves with `void` when the
  * stream terminates (either by `[DONE]` / `message_stop` /
  * `finish_reason`, or by clean connection close).
  *
- * Throws on pre-stream errors (non-2xx status, network failure
- * before the body opens). Mid-stream errors propagate via the
- * `reader.read()` promise rejection.
+ * # Retry policy
+ *
+ * The PRE-STREAM HTTP exchange is wrapped in an exponential-backoff
+ * retry loop that retries transient upstream failures (408, 429,
+ * 500, 502, 503, 504) up to `provider.maxRetries` times (schema-
+ * validated `0..=10`, default `2`) with delays of 1s / 2s / 4s / …
+ * (see {@link retryDelayMs}). On 429, the `Retry-After` response
+ * header is honoured (see {@link parseRetryAfter}); otherwise the
+ * standard schedule applies. Non-retryable HTTP failures
+ * (400/401/403/404/422/…) and network-level failures (DNS, TLS
+ * handshake, connection refused) throw immediately so the user
+ * sees the real error.
+ *
+ * Once the response body opens, we are mid-stream and **do NOT**
+ * retry on any subsequent failure — retrying mid-stream could
+ * silently re-deliver tokens that the renderer has already shown
+ * to the user, breaking the at-most-once delivery contract that
+ * `ipc/model.ts`'s `model:token` channel assumes.
+ *
+ * Throws on pre-stream errors (non-retryable status, exhausted
+ * retry chain, network failure before the body opens). Mid-stream
+ * errors propagate via the `reader.read()` promise rejection.
  *
  * The caller is responsible for emitting a final `{content: "",
  * stop: true}` chunk to its renderer-facing channel; this function
  * deliberately does NOT inject that sentinel because the IPC layer
  * already has its own `sentDone` bookkeeping that needs to stay
  * authoritative for both local and external paths.
+ *
+ * # Body-opened signal (optional)
+ *
+ * The optional `onBodyOpened` callback fires EXACTLY ONCE, the
+ * moment the HTTP response body is confirmed open
+ * (`openedResponse` is set, before SSE parsing begins). Callers
+ * use this as the architectural ground truth for "the upstream
+ * provider accepted the request and the prompt was processed" —
+ * independent of whether the SSE body ever produces a non-empty
+ * content delta. The `emit` callback is NOT a valid substitute for
+ * this signal because the SSE dispatchers in this module
+ * (`dispatchOpenAIEvent` line 304, `dispatchAnthropicEvent` line
+ * 330) intentionally filter out role-only deltas, content_block_
+ * start, message_start, ping, and other framing-only events
+ * BEFORE calling emit. A provider that sends a role-assignment
+ * chunk and then errors mid-stream would therefore never trigger
+ * emit, but the prompt has unambiguously been processed and the
+ * user has unambiguously been billed.
+ *
+ * The token-usage accountant in `ipc/model.ts` uses this to gate
+ * `promptTokens` persistence: pre-stream failures (HTTP 401/403,
+ * retry-exhausted 5xx, DNS errors, TLS errors) all throw BEFORE
+ * `onBodyOpened` fires, so the counter never inflates on a
+ * misconfigured-API-key retry storm. See the long comment near
+ * the gate in `ipc/model.ts` for the full motivation.
  */
 export async function streamExternalProvider(
   inputs: ExternalProviderStreamInputs,
   emit: (chunk: ExternalProviderStreamChunk) => void,
+  onBodyOpened?: () => void,
 ): Promise<void> {
   const req = buildStreamRequest(inputs);
-  const res = await fetch(req.url, {
-    method: "POST",
-    headers: req.headers,
-    body: req.body,
-    signal: inputs.signal,
-  });
+  // Retry loop for the pre-stream HTTP exchange. `attempt` is
+  // 0-indexed: attempt 0 is the initial try, attempts 1..maxRetries
+  // are retries. We stop after exhausting the user-configured retry
+  // budget or once the body opens.
+  //
+  // `provider.maxRetries` is schema-clamped to `0..=10` in
+  // `electron/ipc/schemas.ts` and `electron/config.ts`'s loader, so
+  // it is safe to use directly here without a re-clamp.
+  const maxRetries = inputs.provider.maxRetries;
+  // `provider.timeoutSecs` is schema-clamped to `1..=600` in
+  // `electron/ipc/schemas.ts`, so we can convert directly without a
+  // re-clamp. The per-attempt timer applies to the PRE-STREAM
+  // exchange only — once the body opens (return value of
+  // `openExternalProviderStream`) we are mid-stream and the timer
+  // is cleared in `openExternalProviderStream`'s finally block.
+  // SSE reads after that point are bounded by the user's Stop
+  // signal, not by the configured timeout (a long-running
+  // legitimate streaming response can exceed `timeoutSecs`).
+  const timeoutMs = inputs.provider.timeoutSecs * 1000;
+  let openedResponse: Response | undefined;
+  let cleanupBodyForwarder: (() => void) | undefined;
+  let lastRetryable: RetryableStatus | undefined;
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const outcome = await openExternalProviderStream(
+      req,
+      inputs.signal,
+      timeoutMs,
+    );
+    if (outcome.status === "opened") {
+      openedResponse = outcome.response;
+      cleanupBodyForwarder = outcome.cleanupBodyForwarder;
+      break;
+    }
+    lastRetryable = outcome;
+    if (attempt === maxRetries) {
+      // Retry budget exhausted — surface the last transient error.
+      break;
+    }
+    // `attempt + 1` is the 1-indexed retry number we are about to
+    // perform: attempt=0 → about to do retry 1 → wait `retryDelayMs(1)`.
+    const baseDelay = retryDelayMs(attempt + 1);
+    // Honour `Retry-After` for the upcoming wait when the outcome
+    // is an HTTP retryable (only HTTP outcomes carry a
+    // `retryAfterMs` field). A timeout outcome has no server-sent
+    // back-off hint, so it uses the exponential schedule directly.
+    // We never wait LESS than the exponential schedule (so a
+    // server-sent `Retry-After: 0` can't trick us into a tight
+    // retry loop).
+    const retryAfterMs =
+      outcome.kind === "http" ? outcome.retryAfterMs ?? 0 : 0;
+    const delay = Math.max(baseDelay, retryAfterMs);
+    await delayWithAbort(delay, inputs.signal);
+  }
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
+  if (!openedResponse) {
+    // The retry chain exhausted without opening a body. Surface the
+    // last transient status to the user; for HTTP failures the
+    // body preview helps diagnose provider-side rate-limit / outage
+    // messages, for timeouts we show the configured timeout so the
+    // user can see whether they need to raise it. Attempts count
+    // appears mid-message (`… after N attempt(s)`) before any tail
+    // body preview so error monitoring / log aggregation can
+    // structure-match against the prefix without false-positives on
+    // attacker-controlled body text. The singular/plural form
+    // matters because `maxRetries=0` (no retries) produces a single
+    // attempt total — "after 1 attempts" reads as a bug to the
+    // user even though it isn't, so we pluralise correctly.
+    const last = lastRetryable as RetryableStatus;
+    const summary =
+      last.kind === "http"
+        ? `HTTP ${last.httpStatus}`
+        : `pre-stream timeout (${last.timeoutMs}ms)`;
+    const detail =
+      last.kind === "http" && last.bodyPreview
+        ? `: ${last.bodyPreview.slice(0, 200)}`
+        : "";
+    const totalAttempts = maxRetries + 1;
+    const attemptsWord = totalAttempts === 1 ? "attempt" : "attempts";
     throw new Error(
-      `External provider HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`,
+      `External provider ${summary} after ${totalAttempts} ${attemptsWord}${detail}`,
     );
   }
 
+  const res = openedResponse;
   const reader = res.body?.getReader();
   if (!reader) {
+    // Detach the user-cancel forwarder before throwing — we never
+    // reach the body-reading try/finally that normally invokes
+    // `cleanupBodyForwarder()`, so without this the listener leaks
+    // on the user's outer signal for the full lifetime of the
+    // controller (often the entire renderer session, since the
+    // controller is reused across generations in `ipc/model.ts`).
+    // The trigger condition (HTTP 200 OK with no body) is rare in
+    // practice but the `res.body?.getReader()` guard explicitly
+    // exists for it, so the cleanup must mirror the guard.
+    cleanupBodyForwarder?.();
     throw new Error("External provider response had no body to stream");
+  }
+
+  // Fire the body-opened signal exactly once now that we have a
+  // confirmed-open response WITH a readable body. We fire AFTER the
+  // reader-acquired guard above (line 822-825) because a response
+  // with no body is not actually "open" in the streaming-contract
+  // sense — it's a degenerate edge case (provider sent headers but
+  // no body) and the user has effectively gotten a pre-stream
+  // failure. Firing only after this point guarantees the
+  // architectural invariant the caller relies on: if
+  // `onBodyOpened` fired, the SSE parser is about to run AND the
+  // upstream provider has accepted the request. Surrounded in a
+  // try/catch because a caller-supplied callback that throws
+  // should NOT abort the stream — the caller's gate-update is
+  // their problem, not ours.
+  if (onBodyOpened) {
+    try {
+      onBodyOpened();
+    } catch {
+      // Caller-supplied callback errors are swallowed; see comment.
+    }
   }
 
   const decoder = new TextDecoder("utf-8");
@@ -577,5 +1201,12 @@ export async function streamExternalProvider(
         // Stream was already closed / errored; nothing to clean up.
       });
     }
+    // Detach the user-cancel forwarder from the user's outer signal.
+    // Ownership was transferred to us from `openExternalProviderStream`
+    // on the successful body-open; failure to detach here would leak
+    // the listener for the lifetime of the user's AbortController
+    // (which often outlives the stream because the controller is
+    // reused for the next generation in `ipc/model.ts`).
+    cleanupBodyForwarder?.();
   }
 }

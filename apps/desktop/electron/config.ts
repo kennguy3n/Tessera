@@ -8,15 +8,16 @@ import {
   THEMES,
   type ExportFormat,
   type ExternalProviderType,
+  type ExternalProviderTokenUsage,
   type Theme,
 } from "../shared/types";
 
-// Re-export so call sites that already pull `ExternalProviderType` from
-// `./config` keep working without churn. The canonical declaration lives
-// in `apps/desktop/shared/types.ts` so the IPC wire shape
-// (`ExternalProviderConfigInput`) and the on-disk config shape
-// (`ExternalProviderConfig`) cannot drift apart.
-export type { ExternalProviderType };
+// Re-export so call sites that already pull these types from
+// `./config` keep working without churn. The canonical
+// declarations live in `apps/desktop/shared/types.ts` so the IPC
+// wire shape (`ExternalProviderConfigInput`) and the on-disk
+// config shape (`ExternalProviderConfig`) cannot drift apart.
+export type { ExternalProviderType, ExternalProviderTokenUsage };
 
 export interface ExternalProviderConfig {
   enabled: boolean;
@@ -70,6 +71,9 @@ export interface AppConfig {
   lastOpenedArtifacts: string[];
   sourcePaths: string[];
   externalProvider: ExternalProviderConfig;
+  /** Cumulative external-provider token usage. See
+   *  `electron/tokenCounter.ts` for the heuristic and rationale. */
+  externalProviderTokenUsage: ExternalProviderTokenUsage;
   /** When true the renderer should auto-check for updates on launch. */
   autoUpdate: boolean;
   /**
@@ -123,6 +127,31 @@ export const DEFAULT_EXTERNAL_PROVIDER: Readonly<ExternalProviderConfig> =
     maxRetries: 2,
   });
 
+/**
+ * Default external-provider token usage. The `lastResetDate`
+ * captures the epoch (`1970-01-01`) so the "used since &lt;date&gt;"
+ * label in `SettingsPage` displays a sentinel date for fresh
+ * installs that have never been reset; `loadConfig` heals the
+ * value into the persisted record on first read, so the stored
+ * timestamp is stable across launches once the config file exists.
+ *
+ * Frozen (matches the sibling `DEFAULT_EXTERNAL_PROVIDER` /
+ * `DEFAULT_HYBRID_SEARCH_CONFIG` pattern) so an accidental
+ * mutation at one consumer can't silently corrupt every subsequent
+ * `loadConfig()` baseline. Every consumer in this module already
+ * spreads this constant (`{ ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE }`)
+ * which produces a fresh mutable object, so freezing at the
+ * declaration site is a no-op for read paths and a useful
+ * tripwire for write paths. See the sibling block above
+ * (lines 105-114) for the broader rationale.
+ */
+export const DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE: Readonly<ExternalProviderTokenUsage> =
+  Object.freeze({
+    totalPromptTokens: 0,
+    totalCompletionTokens: 0,
+    lastResetDate: new Date(0).toISOString(),
+  });
+
 const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   windowWidth: 1280,
   windowHeight: 800,
@@ -146,6 +175,7 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   lastOpenedArtifacts: Object.freeze([]) as readonly string[] as string[],
   sourcePaths: Object.freeze([]) as readonly string[] as string[],
   externalProvider: DEFAULT_EXTERNAL_PROVIDER,
+  externalProviderTokenUsage: DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE,
   autoUpdate: true,
   hybridSearchConfig: DEFAULT_HYBRID_SEARCH_CONFIG,
 });
@@ -202,6 +232,31 @@ const ExternalProviderConfigOnDiskSchema = z
   .loose()
   .catch(() => ({ ...DEFAULT_EXTERNAL_PROVIDER }));
 
+/**
+ * On-disk schema for `AppConfig.externalProviderTokenUsage`. Each
+ * field has a `.catch()` heal so a corrupted persisted value (e.g.
+ * a future version wrote `totalPromptTokens: "lots"` or someone
+ * hand-edited the JSON) doesn't blow up the entire config load.
+ *
+ * The reset-date factory `() => new Date(0).toISOString()` matches
+ * `DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE` and is intentionally
+ * `1970-01-01` rather than "now" — a corrupted timestamp shouldn't
+ * silently roll the displayed reset date forward, which would
+ * obscure the original first-launch date in the UI.
+ */
+const ExternalProviderTokenUsageOnDiskSchema = z
+  .object({
+    totalPromptTokens: z.number().int().min(0).catch(0),
+    totalCompletionTokens: z.number().int().min(0).catch(0),
+    lastResetDate: z
+      .string()
+      .min(1)
+      .max(64)
+      .catch(() => new Date(0).toISOString()),
+  })
+  .loose()
+  .catch(() => ({ ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE }));
+
 const AppConfigSchema = z
   .object({
     // `windowX` and `windowY` need their own `.catch(undefined)` (even
@@ -246,6 +301,7 @@ const AppConfigSchema = z
       .max(10_000)
       .catch(() => []),
     externalProvider: ExternalProviderConfigOnDiskSchema,
+    externalProviderTokenUsage: ExternalProviderTokenUsageOnDiskSchema,
     autoUpdate: z.boolean().catch(true),
     // Hybrid search config — every field has a `.catch()` fallback
     // matching the documented Rust default so a partially-corrupted
@@ -285,6 +341,7 @@ const AppConfigSchema = z
   .catch(() => ({
     ...DEFAULT_CONFIG,
     externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
+    externalProviderTokenUsage: { ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE },
     hybridSearchConfig: { ...DEFAULT_HYBRID_SEARCH_CONFIG },
   }));
 
@@ -464,6 +521,10 @@ function readConfigFromDisk(configPath: string): AppConfig {
         ...DEFAULT_EXTERNAL_PROVIDER,
         ...healed.externalProvider,
       };
+      const externalProviderTokenUsage: ExternalProviderTokenUsage = {
+        ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE,
+        ...healed.externalProviderTokenUsage,
+      };
       // Spread the persisted hybrid config over the defaults the same
       // way `externalProvider` does — if a user's on-disk file is
       // missing a newer subfield (forward compat with future versions
@@ -477,6 +538,7 @@ function readConfigFromDisk(configPath: string): AppConfig {
         ...DEFAULT_CONFIG,
         ...healed,
         externalProvider,
+        externalProviderTokenUsage,
         hybridSearchConfig,
       };
     }
@@ -489,6 +551,7 @@ function readConfigFromDisk(configPath: string): AppConfig {
   return {
     ...DEFAULT_CONFIG,
     externalProvider: { ...DEFAULT_EXTERNAL_PROVIDER },
+    externalProviderTokenUsage: { ...DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE },
     hybridSearchConfig: { ...DEFAULT_HYBRID_SEARCH_CONFIG },
   };
 }
@@ -546,8 +609,15 @@ export function saveConfig(config: AppConfig): void {
  * `updateConfig({ externalProvider: { enabled: true } })` without
  * accidentally clobbering `apiUrl`, `apiKeyRef`, etc.
  */
-export type AppConfigPartial = Omit<Partial<AppConfig>, "externalProvider"> & {
+export type AppConfigPartial = Omit<
+  Partial<AppConfig>,
+  "externalProvider" | "externalProviderTokenUsage"
+> & {
   externalProvider?: Partial<ExternalProviderConfig>;
+  /** Same field-by-field merge semantics as `externalProvider`:
+   *  passing `{ totalPromptTokens: 100 }` updates that field
+   *  without clobbering the other two. */
+  externalProviderTokenUsage?: Partial<ExternalProviderTokenUsage>;
 };
 
 /**
@@ -558,12 +628,20 @@ export type AppConfigPartial = Omit<Partial<AppConfig>, "externalProvider"> & {
  * Top-level fields are shallow-merged via spread. Nested objects
  * are handled in two different ways depending on the field:
  *
- *  - `externalProvider` is the only nested object that is
- *    *field-by-field* merged. If you pass
+ *  - `externalProvider` and `externalProviderTokenUsage` are
+ *    *field-by-field* merged. Passing
  *    `updateConfig({ externalProvider: { enabled: true } })` only
- *    `enabled` is overwritten; everything else (apiUrl, apiKeyRef,
- *    modelName, etc.) keeps its existing value. This is the
- *    behaviour callsites historically relied on, so we preserve it.
+ *    overwrites `enabled` (every other field — apiUrl, apiKeyRef,
+ *    modelName, etc. — keeps its existing value), and similarly
+ *    `updateConfig({ externalProviderTokenUsage: { totalPromptTokens
+ *    : n } })` only touches that field. This is the behaviour the
+ *    `model:generate`-finally-block accumulator and the
+ *    `externalProvider:resetTokenUsage` handler rely on so they can
+ *    write a single counter without re-reading the entire usage
+ *    record. Each field-by-field-merged type needs its own dedicated
+ *    branch in the implementation below (see the `mergedProvider` /
+ *    `mergedUsage` destructure), so adding a new such type is an
+ *    explicit change — there is no generic "merge if nested" path.
  *
  *  - **Every other nested object — including `hybridSearchConfig` —
  *    is REPLACED, not merged.** Passing
@@ -581,12 +659,13 @@ export type AppConfigPartial = Omit<Partial<AppConfig>, "externalProvider"> & {
  *    it is the canonical pattern.
  *
  *    If you ever add a callsite that needs a partial update for a
- *    nested object other than `externalProvider`, either (a) extend
- *    the merge logic below to handle the new field with explicit
- *    field-by-field merging, or (b) compose the full object at the
- *    call site before calling `updateConfig`. **Do not** rely on
- *    spread-style partial updates working — they will only work for
- *    `externalProvider`.
+ *    nested object outside the explicit field-by-field set
+ *    (`externalProvider`, `externalProviderTokenUsage`), either
+ *    (a) extend the merge logic below to handle the new field with
+ *    its own dedicated branch, or (b) compose the full object at
+ *    the call site before calling `updateConfig`. **Do not** rely
+ *    on spread-style partial updates working — they only work for
+ *    the explicit field-by-field-merged types listed above.
  *
  * **Ownership transfer.** Any nested array or object reference in
  * `partial` (e.g. `partial.ignorePatterns`, `partial.externalProvider`)
@@ -606,7 +685,11 @@ export type AppConfigPartial = Omit<Partial<AppConfig>, "externalProvider"> & {
  */
 export function updateConfig(partial: AppConfigPartial): void {
   const current = loadConfig();
-  const { externalProvider: providerPartial, ...topLevel } = partial;
+  const {
+    externalProvider: providerPartial,
+    externalProviderTokenUsage: usagePartial,
+    ...topLevel
+  } = partial;
   const mergedProvider: ExternalProviderConfig | undefined =
     providerPartial !== undefined
       ? {
@@ -614,10 +697,18 @@ export function updateConfig(partial: AppConfigPartial): void {
           ...providerPartial,
         }
       : undefined;
+  const mergedUsage: ExternalProviderTokenUsage | undefined =
+    usagePartial !== undefined
+      ? {
+          ...current.externalProviderTokenUsage,
+          ...usagePartial,
+        }
+      : undefined;
   const updated: AppConfig = {
     ...current,
     ...topLevel,
     ...(mergedProvider ? { externalProvider: mergedProvider } : {}),
+    ...(mergedUsage ? { externalProviderTokenUsage: mergedUsage } : {}),
   };
   saveConfig(updated);
 }
