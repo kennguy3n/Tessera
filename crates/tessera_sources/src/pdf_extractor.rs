@@ -81,6 +81,34 @@ const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 /// 60s window and blocks (caller-side) by returning `false` when
 /// the budget is exhausted — letting the caller decide whether to
 /// sleep, skip the page, or defer to the next pass.
+///
+/// Per-image vs per-page semantics
+/// -------------------------------
+/// The OCR pass and the chart pass share a single limiter instance
+/// (passed to both `vlm_ocr_chunks_for_pdf` and
+/// `vlm_chart_chunks_for_pdf` by the indexer) but consume tokens at
+/// different granularities:
+///
+/// * **OCR pass:** at most one VLM call per page (`pick_largest_dct_image`
+///   returns a single image), so it consumes **one token per page**.
+/// * **Chart pass:** one VLM call per chart-shaped image, and a single
+///   page may have multiple charts. A page with N chart-shaped images
+///   consumes **N tokens**, one per VLM call.
+///
+/// This is deliberate: the rate limit is modelling **VLM call cost**,
+/// not page count. A chart-heavy 1-page PDF that produces 5 VLM calls
+/// has the same sidecar load as a 5-page scanned PDF producing 1 OCR
+/// call each. Splitting the budget per-pass would either let a 5-chart
+/// page consume only 1 token (and exhaust 50 chart calls / minute,
+/// defeating the limit) or require buffering an intermediate
+/// page-level batch that the VLM sidecar cannot process atomically.
+///
+/// Net effect: a chart-heavy library can exhaust the budget faster
+/// than the literal "10 pages / minute" framing implies — but the
+/// downstream cost (10 VLM calls / minute) is the same regardless
+/// of which pass produced them. Devin Review pass-N flagged the
+/// per-page vs per-image asymmetry; the answer is "yes, intentional,
+/// the budget is per-VLM-call".
 #[derive(Debug)]
 pub struct PdfOcrRateLimiter {
     inner: Mutex<RateLimiterState>,
