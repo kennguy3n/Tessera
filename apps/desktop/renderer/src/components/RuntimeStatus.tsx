@@ -65,9 +65,25 @@ export default function RuntimeStatus({ compact = true }: RuntimeStatusProps) {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
     if (!api) return;
     try {
+      // Scope `getCurrentModel` to the text slot explicitly. The
+      // sidebar's runtime pill ONLY represents the text sidecar — it
+      // reads from `model.status()` which returns text-sidecar state,
+      // and the displayed model name / format pertain to the text
+      // slot. The IPC overload without an argument currently defaults
+      // to `"text"` for backward-compat (see
+      // `apps/desktop/shared/types.ts:1045-1061`), so behaviour is
+      // unchanged today — but threading `"text"` here matches the
+      // same scoping discipline `ModelRuntimeCard` ships in this
+      // PR (every IPC call from the text-slot UI carries the
+      // explicit capability) and removes the silent-break gap if the
+      // server-side default ever changes. Devin Review pass-N
+      // flagged the asymmetry between this call site and the rest
+      // of the text-slot UI.
       const [status, current] = await Promise.all([
         api.model.status(),
-        api.runtime ? api.runtime.getCurrentModel() : Promise.resolve(null),
+        api.runtime
+          ? api.runtime.getCurrentModel("text")
+          : Promise.resolve(null),
       ]);
       setSnap((prev) => ({ ...prev, status, current }));
     } catch {
