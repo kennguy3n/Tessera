@@ -68,6 +68,7 @@ export type {
   InstalledModelRecord,
   MarpExportRequest,
   ModelApi,
+  ModelCapability,
   ModelDownloadProgress,
   ModelFormat,
   ModelPlatform,
