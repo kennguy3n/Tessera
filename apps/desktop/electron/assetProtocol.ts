@@ -116,7 +116,26 @@ export function registerAssetProtocolHandler(assetsRoot: string): void {
       // filename containing spaces ("My Image.png") arrives
       // percent-encoded ("/My%20Image.png"). The `path.join` below
       // would otherwise mis-resolve against the literal `%20`.
-      const decoded = decodeURIComponent(url.pathname);
+      //
+      // A malformed percent-encoding (e.g. `%ZZ`, a bare `%`, or
+      // `%E0` with no continuation byte) makes `decodeURIComponent`
+      // throw `URIError`. Surface that as a 400 (Bad Request) rather
+      // than letting it fall through to the catch-all 500: the
+      // failure is unambiguously the caller's fault, not an internal
+      // bug, and the distinction makes debugging the renderer-side
+      // URL builder easier. Devin Review PR #38 pass-3 📝 finding.
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(url.pathname);
+      } catch (err) {
+        if (err instanceof URIError) {
+          return new Response(
+            `Bad Request: malformed percent-encoding in path: ${url.pathname}`,
+            { status: 400 },
+          );
+        }
+        throw err;
+      }
       const resolved = path.resolve(allowedRoot, "." + decoded);
       // Path-traversal guard: the resolved path must be strictly
       // INSIDE `allowedRoot`. The `+ path.sep` suffix prevents a

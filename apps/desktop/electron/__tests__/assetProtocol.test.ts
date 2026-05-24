@@ -333,6 +333,27 @@ describe("registerAssetProtocolHandler", () => {
     expect(fetchOpts?.bypassCustomProtocolHandlers).toBe(true);
   });
 
+  it("rejects malformed percent-encoding with 400 (not 500)", async () => {
+    // Devin Review PR #38 pass-3 📝 finding: `%ZZ` is not a valid
+    // percent-encoded byte (the two characters after `%` must each
+    // be a hex digit). `decodeURIComponent("/%ZZ")` throws
+    // `URIError`. Before the tightening, this fell through to the
+    // generic catch-all and returned 500 (Internal Server Error).
+    // The architecturally correct response is 400 (Bad Request)
+    // because the failure is unambiguously the caller's fault — an
+    // internal error would be e.g. the on-disk file unexpectedly
+    // missing after the path check succeeded.
+    //
+    // The security invariant (no file is served) is preserved on
+    // both paths; the test pins the status-code distinction so a
+    // future refactor can't silently regress the semantics.
+    const malformed = `${TESSERA_ASSET_SCHEME}://generated-images/%ZZ`;
+    const res = await invoke(malformed);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toMatch(/malformed percent-encoding/);
+    expect(netFetchMock).not.toHaveBeenCalled();
+  });
+
   it("decodes percent-encoded filename segments before composing the on-disk path", async () => {
     // Renderer requests `My%20Image.png` for a file named
     // `My Image.png` on disk. The handler must decode the
