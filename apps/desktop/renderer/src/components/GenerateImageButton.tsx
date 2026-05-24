@@ -209,6 +209,26 @@ export default function GenerateImageButton({
     }
   }, [artifactId, sectionIndex, prompt, preset, onGenerated]);
 
+  if (available === null) {
+    // Pending the first `isAvailable` IPC resolution. Render
+    // nothing rather than the full form-with-disabled-button so
+    // a host where imagegen is permanently unavailable (no GPU)
+    // doesn't flash a textarea + Generate button only to
+    // immediately replace it with the unavailable banner on
+    // every editor open. The IPC roundtrip is single-digit ms
+    // in practice (cheap stat on the active-model-imagegen.json
+    // record), so the empty interval is imperceptible — much
+    // less jarring than the flash. Devin Review PR #38 pass-8
+    // 📝 finding.
+    return (
+      <div
+        className="imagegen-pending"
+        data-testid="imagegen-pending"
+        aria-hidden="true"
+      />
+    );
+  }
+
   if (available === false) {
     // Render a brief explanation rather than just hiding the
     // affordance so the user can see WHY the button is missing —

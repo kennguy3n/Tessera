@@ -52,7 +52,7 @@ import {
   getDiffusionSidecar,
   isBridgeAvailable,
 } from "../appState";
-import { pathToAssetUrl } from "../assetProtocol";
+import { pathToAssetUrl, resolveAssetAllowedRoot } from "../assetProtocol";
 
 function userDataDir(): string {
   return app.getPath("userData");
@@ -345,10 +345,20 @@ export function registerImagegenHandlers(): void {
         // too (a `.` artifactId that somehow survives sanitisation
         // would otherwise resolve to the root itself, not a
         // subdirectory).
-        const generatedRoot = path.resolve(
-          userDataDir(),
-          "generated-images",
-        );
+        // Derive `generatedRoot` via the SAME helper that the
+        // protocol handler and `pathToAssetUrl` use, so the three
+        // call sites are byte-identical by construction. A future
+        // change to the on-disk layout (e.g. nesting under
+        // `assets/generated-images/`) only has to touch
+        // `resolveAssetAllowedRoot` and every consumer follows.
+        // Devin Review PR #38 pass-8 📝 finding: continuation of
+        // the pass-6 centralisation work — `userDataDir()` itself
+        // is `app.getPath("userData")` which is stable for the
+        // process lifetime, so calling it twice is safe, but the
+        // independent `path.resolve(..., "generated-images")` at
+        // this site was the last copy outside the helper.
+        const userData = userDataDir();
+        const generatedRoot = resolveAssetAllowedRoot(userData);
         const artifactDir = path.resolve(
           generatedRoot,
           sanitiseArtifactId(input.artifactId),
@@ -387,7 +397,7 @@ export function registerImagegenHandlers(): void {
         // null return here would indicate a logic bug rather
         // than untrusted input: throw rather than silently
         // shipping an empty URL to the renderer.
-        const assetUrl = pathToAssetUrl(outPath, userDataDir());
+        const assetUrl = pathToAssetUrl(outPath, userData);
         if (assetUrl === null) {
           throw new Error(
             "Internal error: generated image path is not under generated-images/ \u2014 refusing to return an unrouteable assetUrl",
