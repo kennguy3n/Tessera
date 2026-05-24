@@ -1,4 +1,5 @@
 import { ChildProcess, spawn, SpawnOptions } from "child_process";
+import * as fs from "fs";
 import * as path from "path";
 import { buildSpawnEnv } from "./sidecar";
 
@@ -430,5 +431,18 @@ export function resolveDiffusionBinary(
       binaryName,
     ),
   ].filter((p): p is string => typeof p === "string");
-  return candidates[0] ?? binaryName;
+  // Iterate the candidate list and pick the first path that actually
+  // exists, mirroring `resolveSidecarBinary()` in `appState.ts`.
+  // Returning the first candidate unconditionally would fail with
+  // ENOENT on any deployment (notably dev) where the binary lives at a
+  // later candidate — the resourcesPath candidate is built
+  // unconditionally when resourcesPath is provided, but in dev that
+  // directory doesn't exist.
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  // No candidate exists. Return the bare binary name and let PATH
+  // resolution (or the eventual `spawn()` ENOENT) surface the failure
+  // — matches the fallthrough in `resolveSidecarBinary()`.
+  return binaryName;
 }

@@ -1,0 +1,143 @@
+/**
+ * Tests for the diffusion sidecar's binary-resolution helper.
+ *
+ * The lifecycle methods of `DiffusionSidecar` itself are exercised
+ * indirectly through `imagegenIpc.test.ts` (which mocks the sidecar
+ * end-to-end via the `getDiffusionSidecar` accessor). This file
+ * focuses on `resolveDiffusionBinary` because it is the only piece
+ * of `diffusionSidecar.ts` that needs to talk to the real filesystem
+ * — and the bug-fix Devin Review flagged (returning `candidates[0]`
+ * unconditionally instead of checking existence) is exactly the
+ * kind of regression that warrants a direct test.
+ */
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import * as fs from "fs";
+import * as fsp from "fs/promises";
+import * as os from "os";
+import * as path from "path";
+
+import { resolveDiffusionBinary } from "../diffusionSidecar";
+
+describe("resolveDiffusionBinary", () => {
+  let tmpRoot: string;
+
+  beforeEach(async () => {
+    tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-diffusion-"));
+  });
+
+  afterEach(async () => {
+    await fsp.rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  function binaryName(): string {
+    return process.platform === "win32" ? "sd-server.exe" : "sd-server";
+  }
+
+  async function makeBinaryAt(relSegments: string[]): Promise<string> {
+    const dir = path.join(tmpRoot, ...relSegments);
+    await fsp.mkdir(dir, { recursive: true });
+    const target = path.join(dir, binaryName());
+    await fsp.writeFile(target, "#!/bin/sh\nexit 0\n");
+    if (process.platform !== "win32") {
+      await fsp.chmod(target, 0o755);
+    }
+    return target;
+  }
+
+  it("returns the resourcesPath candidate when the binary exists there", async () => {
+    const resources = path.join(tmpRoot, "resources");
+    const expected = await makeBinaryAt(["resources", "sidecars", "sd-server"]);
+
+    const resolved = resolveDiffusionBinary(
+      path.join(tmpRoot, "app"),
+      path.join(tmpRoot, "scripts"),
+      resources,
+    );
+
+    expect(resolved).toBe(expected);
+  });
+
+  it("falls through to the appPath candidate when the resourcesPath binary is absent", async () => {
+    // resourcesPath is supplied but no binary lives under it; the
+    // helper must iterate to the next candidate (appPath) before
+    // returning. Without the existence-check fix, this test fails
+    // because `candidates[0]` (the resourcesPath candidate) is
+    // returned even though no file exists there.
+    const resources = path.join(tmpRoot, "resources-empty");
+    const appPath = path.join(tmpRoot, "app");
+    const expected = await makeBinaryAt(["app", "sidecars", "sd-server"]);
+
+    const resolved = resolveDiffusionBinary(
+      appPath,
+      path.join(tmpRoot, "scripts"),
+      resources,
+    );
+
+    expect(resolved).toBe(expected);
+    // Existence sanity: the iterator must have skipped the
+    // resourcesPath candidate because no file exists there.
+    expect(
+      fs.existsSync(
+        path.join(resources, "sidecars", "sd-server", binaryName()),
+      ),
+    ).toBe(false);
+  });
+
+  it("falls through to the parent-of-appPath candidate when the appPath binary is absent", async () => {
+    // The dev layout often has sidecars at <repo>/sidecars/ and
+    // appPath at <repo>/apps/desktop, so the second candidate
+    // (appPath/.. + sidecars/sd-server) is the canonical hit on
+    // development machines.
+    const appPath = path.join(tmpRoot, "repo", "apps", "desktop");
+    const expected = await makeBinaryAt([
+      "repo",
+      "apps",
+      "sidecars",
+      "sd-server",
+    ]);
+
+    const resolved = resolveDiffusionBinary(
+      appPath,
+      path.join(tmpRoot, "scripts"),
+      undefined,
+    );
+
+    expect(resolved).toBe(expected);
+  });
+
+  it("falls back to the bare binary name when no candidate exists", () => {
+    // No binary anywhere on the candidate list — the helper must
+    // return the bare binary name so PATH-resolution can take over
+    // (or `spawn()` can surface a clean ENOENT). Returning the
+    // first candidate path in this case would have looked
+    // identical to a successful resolution to callers, which would
+    // mask "binary not installed" errors as opaque spawn failures.
+    const appPath = path.join(tmpRoot, "no-app");
+    const scriptsPath = path.join(tmpRoot, "no-scripts");
+
+    const resolved = resolveDiffusionBinary(
+      appPath,
+      scriptsPath,
+      undefined,
+    );
+
+    expect(resolved).toBe(binaryName());
+  });
+
+  it("ignores a missing resourcesPath entirely", async () => {
+    // When `resourcesPath` is undefined, the helper must skip the
+    // resourcesPath candidate cleanly rather than emitting a
+    // `path.join(undefined, ...)` (which would throw).
+    const appPath = path.join(tmpRoot, "app2");
+    const expected = await makeBinaryAt(["app2", "sidecars", "sd-server"]);
+
+    const resolved = resolveDiffusionBinary(
+      appPath,
+      path.join(tmpRoot, "scripts2"),
+      undefined,
+    );
+
+    expect(resolved).toBe(expected);
+  });
+});

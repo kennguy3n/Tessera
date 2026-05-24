@@ -61,15 +61,27 @@ function userDataDir(): string {
  * Cross-platform artifact-id sanitiser. The renderer passes its
  * own artifact identifiers, which are alphanumeric+dash by
  * construction today, but defence-in-depth strips any character
- * that could traverse the filesystem boundary. Empty result is
- * mapped to a deterministic fallback so the resulting path is
- * always well-formed.
+ * that could traverse the filesystem boundary. Empty result, or
+ * any result that resolves to a pure `.` / `..` (or any sequence
+ * of dots, which on some filesystems is also a parent-directory
+ * traversal), is mapped to a deterministic fallback so the
+ * resulting path is always well-formed AND can never escape the
+ * `generated-images/<id>/` containment via `path.join()`.
+ *
+ * The earlier implementation allowed `.` and `..` to pass through
+ * because dots are in the allowed character class, which let an
+ * attacker (or a careless caller passing the literal string
+ * `".."`) write the PNG directly into `<userData>/` instead of
+ * the artifact subdirectory.
  *
  * Exported for tests.
  */
 export function sanitiseArtifactId(raw: string): string {
   const cleaned = raw.replace(/[^A-Za-z0-9_\-.]/g, "");
-  return cleaned.length > 0 ? cleaned : "unknown-artifact";
+  if (cleaned.length === 0 || /^\.+$/.test(cleaned)) {
+    return "unknown-artifact";
+  }
+  return cleaned;
 }
 
 /**
@@ -256,11 +268,43 @@ export function registerImagegenHandlers(): void {
         const seedNum =
           seedBig <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(seedBig) : 0;
 
-        const artifactDir = path.join(
+        // Resolve the containment root and the artifact directory
+        // independently, then verify the artifact dir is strictly
+        // nested under the root before writing. `sanitiseArtifactId`
+        // is the first layer of defence (rejects pure `.` / `..` /
+        // dot-only strings); this prefix check is a redundant
+        // last-mile guard so any future regression in the sanitiser
+        // — or any platform-specific quirk we missed — still cannot
+        // escape `<userData>/generated-images/`. The check uses
+        // `path.sep` as the suffix so we reject the exact root path
+        // too (a `.` artifactId that somehow survives sanitisation
+        // would otherwise resolve to the root itself, not a
+        // subdirectory).
+        const generatedRoot = path.resolve(
           userDataDir(),
           "generated-images",
+        );
+        const artifactDir = path.resolve(
+          generatedRoot,
           sanitiseArtifactId(input.artifactId),
         );
+        if (
+          artifactDir !== generatedRoot &&
+          !artifactDir.startsWith(generatedRoot + path.sep)
+        ) {
+          throw new Error(
+            "Invalid artifactId — resolved path escapes the generated-images directory",
+          );
+        }
+        if (artifactDir === generatedRoot) {
+          // The sanitiser already maps `.` / `..` / `""` to
+          // `unknown-artifact`, so the only way to land back on the
+          // root is a future bug. Refuse rather than silently
+          // dumping PNGs into the shared root.
+          throw new Error(
+            "Invalid artifactId — resolved to the generated-images root",
+          );
+        }
         await fsp.mkdir(artifactDir, { recursive: true });
         const filename = `${nowIsoForFile()}-${seedNum}.png`;
         const outPath = path.join(artifactDir, filename);

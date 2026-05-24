@@ -127,6 +127,24 @@ describe("sanitiseArtifactId", () => {
     expect(sanitiseArtifactId("")).toBe("unknown-artifact");
     expect(sanitiseArtifactId("///")).toBe("unknown-artifact");
   });
+
+  it("falls back to a deterministic id for pure-dot inputs that would traverse via path.join", () => {
+    // Dots are in the allowed character class for the sanitiser, so
+    // the regex stripping passes them through. Without the pure-dot
+    // guard, `path.join(userData, "generated-images", "..")` resolves
+    // to `userData` itself, escaping the containment subdirectory.
+    expect(sanitiseArtifactId(".")).toBe("unknown-artifact");
+    expect(sanitiseArtifactId("..")).toBe("unknown-artifact");
+    expect(sanitiseArtifactId("...")).toBe("unknown-artifact");
+    expect(sanitiseArtifactId("....")).toBe("unknown-artifact");
+  });
+
+  it("preserves inputs that contain dots but are not pure-dot", () => {
+    // The pure-dot guard must not over-strip legitimate filenames.
+    expect(sanitiseArtifactId("v1.0.2")).toBe("v1.0.2");
+    expect(sanitiseArtifactId(".hidden")).toBe(".hidden");
+    expect(sanitiseArtifactId("a..b")).toBe("a..b");
+  });
 });
 
 describe("imagegen IPC handlers", () => {
@@ -305,6 +323,43 @@ describe("imagegen IPC handlers", () => {
       expect(out.path.endsWith(".png")).toBe(true);
       const written = await fsp.readFile(out.path);
       expect(written).toEqual(pngBytesStub());
+    });
+
+    it("does not escape generated-images even when artifactId is a pure-dot traversal", async () => {
+      // Without the sanitiser fix, artifactId=".." would
+      // `path.join(userData, "generated-images", "..")` to the
+      // `userData` root, dumping the PNG outside its containment
+      // directory. The fix rejects pure-dot inputs at the sanitiser
+      // level AND verifies the resolved directory stays under
+      // `<userData>/generated-images/` before writing.
+      getInstalledModelMock.mockResolvedValue({ path: "/m/flux.gguf" });
+      bridgeGenerateImageMock.mockResolvedValue({
+        pngBytes: pngBytesStub(),
+        seed: BigInt(42),
+      });
+      const handler = getHandler("imagegen:generate");
+      const out = (await handler(
+        {},
+        { ...validInput(), artifactId: ".." },
+      )) as { path: string };
+      const fallbackDir = path.join(
+        userDataDirValue,
+        "generated-images",
+        "unknown-artifact",
+      );
+      expect(out.path.startsWith(fallbackDir + path.sep)).toBe(true);
+      // Defence-in-depth: the resolved file MUST live under the
+      // generated-images root, never directly in userData.
+      const generatedRoot = path.resolve(
+        userDataDirValue,
+        "generated-images",
+      );
+      expect(out.path.startsWith(generatedRoot + path.sep)).toBe(true);
+      const writtenInRoot = await fsp.readdir(userDataDirValue);
+      // No stray PNGs should land at the userData root.
+      expect(
+        writtenInRoot.some((entry) => entry.endsWith(".png")),
+      ).toBe(false);
     });
 
     it("forwards optional sampling overrides to the bridge", async () => {
