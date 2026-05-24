@@ -36,8 +36,15 @@
  *      The first call MUST NOT return a rate-limit error (the
  *      bucket starts full at burst=5); the remaining calls also
  *      must not error on rate limit even though they may return
- *      other typed errors (e.g. "External provider is not
- *      configured" because the test stubs no provider record).
+ *      other typed errors (e.g. "External provider is disabled"
+ *      because the default config provides an externalProvider
+ *      record with enabled=false; the handler's gate at line ~423
+ *      of ipc/settings.ts returns that message before any vault or
+ *      network work).
+ *      The test asserts only that the non-rate-limit error message
+ *      does NOT match /Rate limit/ — the exact text is intentionally
+ *      not pinned so a future rephrase of the disabled-provider
+ *      message doesn't break the rate-limit regression.
  *   2. The 6th call within the same window must return
  *      `{ ok: false, kind: "error" }` with a message identifying
  *      the rate-limit channel by name.
@@ -110,12 +117,15 @@ describe("externalProvider:listModels — rate limiter", () => {
     registerSettingsHandlers();
     const handler = getHandler("externalProvider:listModels");
 
-    // Burst the bucket dry. Without a persisted external provider
-    // these calls will return `kind: "error", error: "External
-    // provider is not configured"` — but they STILL consume a
-    // token each, because the gate runs before the config check.
-    // We don't assert on the body of these results; only that
-    // they don't already trip the rate-limit gate.
+    // Burst the bucket dry. The default config provides an
+    // `externalProvider` record with `enabled: false`, so these
+    // calls return `kind: "error", error: "External provider is
+    // disabled"` — but they STILL consume a token each, because
+    // the rate-limit gate runs BEFORE the disabled check in the
+    // handler body. We don't assert on the exact text of the
+    // non-rate-limit error; only that it doesn't already match
+    // /Rate limit/, which is what the 6th-call assertion below
+    // pins.
     for (let i = 0; i < 5; i++) {
       const result = (await handler({})) as ExternalProviderListModelsResult;
       expect(result.ok).toBe(false);
