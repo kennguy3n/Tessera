@@ -315,10 +315,23 @@ export function registerImagegenHandlers(): void {
         // uses u64 to match sd-server's full range). Coerce to
         // Number — sd-server's seed space fits in 2^53 — but
         // clamp defensively so a future schema change can't
-        // silently round-trip through Infinity.
+        // silently round-trip through Infinity, AND reject
+        // negative values up front. The current Rust bridge
+        // (`crates/tessera_bridge/src/napi_exports.rs`)
+        // constructs the BigInt with `sign_bit: false` from a
+        // `u64`, so a negative value here would mean the bridge
+        // contract changed out from under us. We clamp to 0
+        // rather than throw because the seed is already non-
+        // critical to correctness — it just controls
+        // reproducibility — and surfacing a noisy error from
+        // every generate call after a hypothetical contract
+        // drift would be worse UX than silently using
+        // seed=0. Devin Review PR #38 pass-7 📝 finding.
         const seedBig = result.seed;
         const seedNum =
-          seedBig <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(seedBig) : 0;
+          seedBig >= 0n && seedBig <= BigInt(Number.MAX_SAFE_INTEGER)
+            ? Number(seedBig)
+            : 0;
 
         // Resolve the containment root and the artifact directory
         // independently, then verify the artifact dir is strictly

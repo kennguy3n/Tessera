@@ -414,6 +414,25 @@ describe("registerAssetProtocolHandler", () => {
     expect(netFetchMock).not.toHaveBeenCalled();
   });
 
+  it("rejects a NUL byte in the decoded path with 400 (not 500)", async () => {
+    // Devin Review PR #38 pass-7 📝 finding: a `%00` segment in the
+    // URL decodes to a NUL byte. Node's `fs` APIs throw
+    // `ERR_INVALID_ARG_VALUE` on any path containing `\0`, so this
+    // WOULD eventually fall through to the catch-all 500 below. We
+    // tightened the handler to surface NUL-byte paths as 400 (Bad
+    // Request) instead — structurally identical to the
+    // malformed-percent-encoding case (unambiguously caller-side
+    // fault, not an internal bug). The security invariant (no file
+    // served) is preserved on both code paths; the test pins the
+    // status code so a future refactor can't silently regress the
+    // semantics.
+    const nul = `${TESSERA_ASSET_SCHEME}://generated-images/foo.png%00bar`;
+    const res = await invoke(nul);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toMatch(/NUL byte in path/);
+    expect(netFetchMock).not.toHaveBeenCalled();
+  });
+
   it("decodes percent-encoded filename segments before composing the on-disk path", async () => {
     // Renderer requests `My%20Image.png` for a file named
     // `My Image.png` on disk. The handler must decode the

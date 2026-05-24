@@ -611,6 +611,31 @@ describe("imagegen IPC handlers", () => {
       expect(out.seed).toBe(0);
     });
 
+    it("clamps a negative BigInt seed to 0 instead of round-tripping a signed value", async () => {
+      // Devin Review PR #38 pass-7 📝 finding: the original
+      // clamp `seedBig <= BigInt(Number.MAX_SAFE_INTEGER)` lets
+      // negative values through because every negative BigInt
+      // satisfies the upper bound. The current Rust bridge
+      // constructs the BigInt with `sign_bit: false` from a u64,
+      // so a negative seed here would mean the bridge contract
+      // changed — but the existing clamp's silent acceptance of
+      // negative values would round-trip a negative seed straight
+      // into the editor's hero-image JSON, where the renderer's
+      // `sanitizeHeroImage` would then reject it on reload and
+      // the image would silently vanish after a save-reload
+      // cycle. Tighten the clamp to also reject `< 0n`. Pin the
+      // behaviour against a regression even though the current
+      // bridge contract makes the case unreachable.
+      getInstalledModelMock.mockResolvedValue({ path: "/m/flux.gguf" });
+      bridgeGenerateImageMock.mockResolvedValue({
+        pngBytes: pngBytesStub(),
+        seed: BigInt(-1),
+      });
+      const handler = getHandler("imagegen:generate");
+      const out = (await handler({}, validInput())) as { seed: number };
+      expect(out.seed).toBe(0);
+    });
+
     it("trips the rate limiter on the second call within the 5 s window", async () => {
       getInstalledModelMock.mockResolvedValue({ path: "/m/flux.gguf" });
       bridgeGenerateImageMock.mockResolvedValue({

@@ -203,6 +203,22 @@ export function registerAssetProtocolHandler(assetsRoot: string): void {
         }
         throw err;
       }
+      // A `%00` segment in the URL decodes to a NUL byte. Node's
+      // `fs` APIs throw `ERR_INVALID_ARG_VALUE` on any path
+      // containing `\0`, so this WOULD eventually fall through to
+      // the catch-all 500 below. Surface it as a 400 instead —
+      // it's structurally identical to the malformed-
+      // percent-encoding case above (unambiguously caller-side
+      // fault, not an internal bug), and a 500 in the logs for a
+      // request the renderer mis-encoded would be misleading
+      // when triaging a real server-side fault later. Devin
+      // Review PR #38 pass-7 📝 finding.
+      if (decoded.includes("\0")) {
+        return new Response(
+          `Bad Request: NUL byte in path: ${url.pathname}`,
+          { status: 400 },
+        );
+      }
       const resolved = path.resolve(allowedRoot, "." + decoded);
       // Path-traversal guard: the resolved path must be strictly
       // INSIDE `allowedRoot`. The `+ path.sep` suffix prevents a
