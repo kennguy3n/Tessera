@@ -1012,7 +1012,7 @@ mod tests {
 
     #[test]
     fn chunk_embeddings_cascade_fires_when_parent_chunk_is_deleted() {
-        // Defence-in-depth regression test for : with
+        // Defence-in-depth regression test: with
         // foreign_keys=ON, deleting a chunk must remove its
         // associated `chunk_embeddings` row via either the trigger
         // (belt) or the CASCADE clause (suspenders). We assert the

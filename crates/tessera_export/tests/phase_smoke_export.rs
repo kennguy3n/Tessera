@@ -142,8 +142,8 @@ fn csv_export_emits_a_comma_separated_table() {
 }
 
 // The pdf / docx / xlsx tests below previously wore
-// `#[cfg(feature = "pdf"|"docx"|"xlsx")]` attributes, but
-//  #0003 correctly flagged those guards as misleading: those
+// `#[cfg(feature = "pdf"|"docx"|"xlsx")]` attributes, but a
+// later audit correctly flagged those guards as misleading: those
 // three features are declared as empty arrays in `Cargo.toml`
 // (`pdf = []`, `docx = []`, `xlsx = []`) and only listed in `default`,
 // so they don't actually gate any code or dependency. The corresponding

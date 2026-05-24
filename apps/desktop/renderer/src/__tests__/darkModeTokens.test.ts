@@ -231,9 +231,9 @@ describe("dark-mode CSS variable enforcement", () => {
       "--color-relevance-medium-bg",
       "--color-relevance-low-fg",
       "--color-relevance-low-bg",
-      //  fix: --color-priority-high was added to
-      // give the "high" priority badge a dedicated dark value
-      // (#fb923c orange-400) for contrast on dark surfaces. If a
+      // --color-priority-high was added to give the "high" priority
+      // badge a dedicated dark value (#fb923c orange-400) for
+      // contrast on dark surfaces. If a
       // future patch drops the dark override, the badge silently
       // reverts to orange-700 which is unreadable on dark grey.
       "--color-priority-high",
@@ -274,7 +274,7 @@ describe("dark-mode CSS variable enforcement", () => {
     // Anchor on a property-name boundary so the `color` alternative
     // doesn't accidentally match as a suffix of `backgroundColor`,
     // `borderColor`, etc. (the previous regex relied on that
-    // accident — it).
+    // accident).
     const re =
       /(?:(?:^|[\s,;{])(?:color|backgroundColor|background-color|background|borderColor|border-color))\s*:\s*["'](?:#fff(?:fff)?|white)["']/gim;
     for (const file of walk(RENDERER_SRC)) {

@@ -740,7 +740,7 @@ interface CategoryEntry {
  * The previous regex-based approach was
  * fragile: a regex like `/\bname:\s*(["'])(...)\1/.exec(slice)` would
  * false-match if an earlier property's string value contained the
- * literal substring `name: "..."`.  then flagged the
+ * literal substring `name: "..."`. A later audit then flagged the
  * lexer-based replacement for duplicating the brace-tracking state
  * machine from `lexJsBraces`. The current incarnation is the proper
  * long-term fix to BOTH: this helper is now a thin observer on top of
@@ -767,9 +767,9 @@ interface CategoryEntry {
  *     in addition to the unquoted-identifier form (`{ id: "v" }`).
  *     CreatePage.tsx today uses unquoted keys exclusively, but a
  *     future refactor (or copy-paste from JSON) could introduce
- *     quoted keys; the previous
- *     identifier-only behaviour as a silent gap, and the long-term
- *     fix is to accept both. The string-event handler distinguishes
+ *     quoted keys; the previous identifier-only behaviour would
+ *     have been a silent gap, and the long-term fix is to accept
+ *     both. The string-event handler distinguishes
  *     "this string is a candidate KEY" (not awaiting after a colon)
  *     from "this string is the VALUE for the pending key" (awaiting)
  *     via the `awaitingValueAfterColon` flag.
@@ -1125,7 +1125,8 @@ describe("phase verification — internal helper invariants", () => {
   });
 
   test("extractObjectProperties is not fooled by 'name:' substring in another value", () => {
-    // Before , the regex /\bname:\s*(["'])(?:\\.|[^\\])*?\1/.exec(slice)
+    // Before the lexer refactor, the regex
+    // /\bname:\s*(["'])(?:\\.|[^\\])*?\1/.exec(slice)
     // applied to the entry slice as a whole would match the SUBSTRING
     // `name: 'imposter'` inside the description value, since the regex
     // doesn't know it's inside a string. The walker honours JS lexical
@@ -1164,9 +1165,9 @@ describe("phase verification — internal helper invariants", () => {
     // escape needed) or `'L\'Étranger'` (single-quoted with escape).
     // The walker has to decode the second form correctly.
     //
-    // that an earlier version of this
-    // helper used the YAML `''` convention by accident — adjacent
-    // single quotes are NOT a JS escape, they are two separate string
+    // An earlier version of this helper used the YAML `''`
+    // convention by accident — adjacent single quotes are NOT a
+    // JS escape, they are two separate string
     // literals, which is a syntax error inside an object literal.
     // The companion YAML scalar extractor (`extractTopLevelScalar`)
     // legitimately uses `''` because it parses YAML, but this helper

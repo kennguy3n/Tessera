@@ -1216,7 +1216,7 @@ mod compare_label_tests {
 
     #[test]
     fn disambiguate_labels_escalates_to_two_segments_on_collision() {
-        // : two sources sharing the same
+        // Disambiguation regression: two sources sharing the same
         // last segment should produce parent-qualified labels so the
         // modal heading isn't "Comparison: docs vs docs".
         assert_eq!(

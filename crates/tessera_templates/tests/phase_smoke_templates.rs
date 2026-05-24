@@ -406,7 +406,7 @@ fn every_renderer_only_template_is_well_formed_yaml() {
 ///   * `RENDERER_ONLY_TEMPLATE_DIRS` — well-formed-only check
 ///   * `NON_TEMPLATE_DIRS`         — not a template category (e.g. grammars/)
 ///
-/// This closes the failure mode : if a
+/// This closes the failure mode where, if a
 /// contributor adds a new category directory (say `templates/forms/`)
 /// without updating either list, the per-category tests above silently
 /// skip it. Walking the directory at runtime here forces the new
@@ -468,8 +468,8 @@ fn every_templates_subdirectory_is_classified() {
     // We collect the discovered names into a `HashSet<&str>` (not
     // `HashSet<&String>`) so the membership test below can hash a
     // borrowed `&str` directly — `HashSet::<&str>::contains(&str)`
-    // avoids allocating a fresh `String` per check.
-    //  / clippy `inefficient_to_string` flagged the previous
+    // avoids allocating a fresh `String` per check. clippy's
+    // `inefficient_to_string` lint flagged the previous
     // `discovered_set.contains(&name.to_string())` form for exactly
     // this reason.
     let discovered_set: HashSet<&str> = discovered.iter().map(String::as_str).collect();
