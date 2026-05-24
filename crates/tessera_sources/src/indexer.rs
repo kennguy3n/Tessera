@@ -427,6 +427,32 @@ impl Indexer {
         // chart).
         let mut vlm_passes_complete = true;
 
+        // PDF-preload failure case (Devin Review pass-12 finding on
+        // `indexer.rs:378-407`): when `ext == "pdf"` and the indexer-level
+        // `load_pdf_document` failed, `pdf_doc` is `None`. The
+        // `extract_text(path)?` fallback above can still succeed
+        // (it calls `Document::load` a SECOND time internally and
+        // may win a transient race the first call lost) — but the
+        // OCR + chart blocks below are guarded by
+        // `if let Some(doc) = pdf_doc.as_ref()`, so they're entirely
+        // skipped. Without this stamp, the row's hash would land
+        // as fully-indexed text-only and the OCR + chart passes
+        // would NEVER run on a future scan unless the file's
+        // content changed on disk. Flipping
+        // `vlm_passes_complete = false` here forces the next
+        // `index_file` call to re-attempt the preload + VLM
+        // passes. We only do this when a VLM is actually
+        // configured — without one, the OCR + chart passes
+        // wouldn't run anyway, so re-indexing buys nothing and
+        // would just churn the row.
+        if ext == "pdf" && pdf_doc.is_none() && self.vision_extractor.is_some() {
+            eprintln!(
+                "[tessera_sources] PDF preload failed for {}; stamping partial sentinel so OCR/chart retry on next pass",
+                path.display()
+            );
+            vlm_passes_complete = false;
+        }
+
         // Vision pass: when the file is an image AND a VLM-backed
         // extractor is attached, append a single VLM-derived chunk
         // alongside the metadata chunks emitted by `extract_text`.
