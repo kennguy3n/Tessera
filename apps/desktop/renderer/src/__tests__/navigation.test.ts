@@ -9,7 +9,7 @@ import {
 /**
  * Lock down the sidebar / keyboard-shortcut invariants.
  *
- * Phase 9 review caught a sibling-file desync where the visual
+ * review caught a sibling-file desync where the visual
  * sidebar order and the `Ctrl/Cmd+N` shortcut order had drifted
  * (keys 3 and 4 ended up swapped). The two now derive from a
  * single `SIDEBAR_ITEMS` source of truth in `navigation.ts`; these

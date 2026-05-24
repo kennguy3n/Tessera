@@ -6,7 +6,7 @@
 //! Each signal captures something the others miss:
 //!
 //! - **BM25 (FTS5)** rewards exact term matches and is dominant for
-//!   keyword queries ("WS3 hybrid retrieval"). It struggles with
+//!   keyword queries (e.g. "hybrid retrieval"). It struggles with
 //!   typos, abbreviations, paraphrases, and short queries.
 //! - **Vector cosine** rewards lexical-or-semantic similarity. With
 //!   the `HashTrickEmbedding` provider it captures character n-gram

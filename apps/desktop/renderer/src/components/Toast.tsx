@@ -32,7 +32,7 @@ export function useToast(): ToastContextValue {
 
 let toastCounter = 0;
 
-/** Auto-dismiss timeout per toast type, in milliseconds. Per Task 19:
+/** Auto-dismiss timeout per toast type, in milliseconds:
  *  - info / success: 5s
  *  - error: 10s so users have time to read the message
  */

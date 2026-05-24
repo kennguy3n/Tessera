@@ -1,5 +1,5 @@
 /**
- * Unified connector IPC handlers for all 6 providers (Tasks 1–6).
+ * Unified connector IPC handlers for all six providers.
  *
  * Replaces the hard-coded `if (provider !== 'google_drive')` path in
  * the legacy `ipc.ts` with a single dispatch table keyed by provider
@@ -18,7 +18,8 @@
  * `connectors:status`       reports `{ connected, status, offline }`
  *                            so the UI can render the Offline badge.
  *
- * Phase 10 additions:
+ * Additional guarantees layered on top of the dispatch table:
+ *
  *   - Rate-limit `connectors:authenticate` to 1 / 5s per provider.
  *   - Rate-limit `connectors:sync` to 1 / 30s per provider.
  *   - Validate provider id against the registry on every call.
@@ -390,7 +391,7 @@ export async function runConnectorSync(
   }
   try {
     const result = await runSync(ctx, provider, token, ctx.userDataDir(), options);
-    // Phase 10 / Task 17: log the sync delta counts on the `"synced"`
+    // log the sync delta counts on the `"synced"`
     // path only. The `"offline"` status returned below reflects a
     // transient network failure (no actual sync work happened) so an
     // audit row for it would pollute reports with noise.
@@ -401,8 +402,8 @@ export async function runConnectorSync(
     // AND the legacy `connectors:gdrive:sync` handler in
     // `connectorsLegacy.ts` (still reachable from the renderer via
     // `preload.ts`'s `gdrive:sync` channel), AND any future channel
-    // that delegates to this shared wrapper. Devin Review (round 2
-    // on PR #26) flagged this gap when the audit lived in the
+    // that delegates to this shared wrapper.
+    // Previously the audit lived in the
     // handler; moving it here closes it structurally instead of
     // requiring every future caller to remember to add the wrap.
     if (result.status === "synced") {
@@ -479,7 +480,7 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
     // `assertProvider` / `assertString` calls below are what produce a
     // narrowed `string`. Typing the handler parameters as `unknown`
     // matches that reality and keeps this module consistent with every
-    // other refactored handler in the WS6 split.
+    // other refactored handler in the per-domain split.
     async (
       _event,
       providerRaw: unknown,
@@ -534,7 +535,7 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
         clientSecret,
       });
       ctx.log.info("connector authenticated", { provider });
-      // Phase 10 / Task 17: log the connect event AFTER the tokens
+      // log the connect event AFTER the tokens
       // have been written to the vault. A failed audit append must
       // not roll back the user's successful OAuth flow — `safeAudit`
       // swallows the failure and logs a warning instead.
@@ -566,7 +567,7 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
         // best-effort
       }
       // `runDisconnect` returns the count of bridge sources actually
-      // removed from the index — Phase 10 / Task 17 plumbs this
+      // removed from the index — the audit code plumbs this
       // count through to the `ConnectorDisconnected` audit event so
       // an auditor can see how much state each disconnect cleaned
       // up. On cleanup failure we still log the disconnect (the

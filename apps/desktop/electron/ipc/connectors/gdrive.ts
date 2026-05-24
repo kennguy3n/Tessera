@@ -12,9 +12,9 @@
  *   - Skip files larger than 100 MB.
  *   - Persist the post-sync state in `<userData>/gdrive-sync/manifest.json`.
  *
- * This module is the canonical implementation post-Phase 10; the
- * legacy ipc.ts forwards `connectors:gdrive:sync` here so the public
- * IPC surface is unchanged.
+ * This module is the canonical implementation; the legacy ipc.ts
+ * forwards `connectors:gdrive:sync` here so the public IPC surface
+ * is unchanged.
  */
 
 import * as fsp from "fs/promises";
@@ -297,7 +297,7 @@ export async function syncGoogleDrive(ctx: {
  *
  * Returns the number of bridge sources that were successfully
  * removed so the calling IPC handler can include the count in the
- * `ConnectorDisconnected` audit event (Phase 10 / Task 17). The
+ * `ConnectorDisconnected` audit event (the audit code). The
  * `manifest.length` is intentionally NOT the right number to report
  * — a previous sync may have failed mid-flight, leaving some
  * manifest entries without corresponding bridge sources, or the

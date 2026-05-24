@@ -83,7 +83,7 @@ const mockApi = {
       // Match the real bridge's `BackfillEmbeddingsResult` shape
       // exactly — `embedded` + `progress` only. The earlier mock
       // also synthesised `failed` and `batchSize` fields that
-      // don't exist on the real type; Devin Review flagged that
+      // don't exist on the real type; that
       // as a footgun for the renderer code.
       embedded: 0,
       progress: {

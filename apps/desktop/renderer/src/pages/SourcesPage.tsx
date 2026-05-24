@@ -280,7 +280,7 @@ export default function SourcesPage() {
             refresh();
           }}
         />
-        {/* Phase 10 — the rest of the connectors (OneDrive / Notion /
+        {/* the rest of the connectors (OneDrive / Notion /
             Jira / Confluence / Figma) share the same multi-provider
             list. Connecting one of these triggers the OAuth flow and
             adds its synced files to the index. Google Drive is

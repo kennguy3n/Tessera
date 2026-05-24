@@ -12,7 +12,7 @@
 //!   by the renderer process via IPC) inlines the SVG directly.
 //! * `pdf.rs` — strips the DSL and emits a `[Diagram: <type>]` placeholder
 //!   since the basic PDF builder can't lay out SVG paths. The Typst PDF
-//!   pipeline (Task 14) handles real diagram embedding.
+//!   pipeline (see `crate::typst`) handles real diagram embedding.
 
 use std::fmt::Write as _;
 

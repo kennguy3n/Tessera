@@ -359,8 +359,8 @@ describe("externalProviderStream — buildStreamRequest wire format", () => {
     expect(req.url).toBe("https://api.openai.com/v1/chat/completions");
   });
 
-  it("does NOT double `/v1` when the user pastes a bare `/v1` apiUrl (Devin Review round 6 BUG_003)", () => {
-    // Regression for Devin Review round 6 BUG_003: a user who pastes
+  it("does NOT double `/v1` when the user pastes a bare `/v1` apiUrl", () => {
+    // Regression test: a user who pastes
     // the bare version prefix `https://api.openai.com/v1` previously
     // ended up routed to `https://api.openai.com/v1/v1/chat/completions`
     // because the existing `endsWith("/v1/chat/completions")` and
@@ -705,11 +705,10 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
   });
 
   it("honours provider.maxRetries=0 by NOT retrying — single attempt then failure", async () => {
-    // Devin Review (round 2 on PR #27) flagged that the retry loop
-    // used to hardcode a 3-retry schedule regardless of the
-    // user-configured `maxRetries`. This regression test pins the
-    // new behaviour: `maxRetries: 0` means "do not retry, surface
-    // the first transient failure immediately".
+    // The retry loop used to hardcode a 3-retry schedule regardless
+    // of the user-configured `maxRetries`. This regression test pins
+    // the new behaviour: `maxRetries: 0` means "do not retry,
+    // surface the first transient failure immediately".
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(makeErrorResponse(503, "service unavailable"));
@@ -730,7 +729,8 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
   it("honours the default provider.maxRetries=2 — 3 total attempts on persistent failure", async () => {
     // Companion to the maxRetries=0 test: with the schema default
     // (`2`), we expect 1 initial + 2 retries = 3 total attempts,
-    // NOT the legacy 4. This is the exact gap Devin Review flagged.
+    // NOT the legacy 4 that the old hardcoded retry constant
+    // produced.
     vi.useFakeTimers();
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
@@ -750,9 +750,9 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     vi.useRealTimers();
   });
 
-  it("does NOT misclassify a slow body-drain on a non-retryable HTTP error as a pre-stream timeout (BUG_001 regression)", async () => {
-    // Devin Review round 12 BUG_001 flagged that the per-attempt
-    // timer was only cleared in the `res.ok` branch of
+  it("does NOT misclassify a slow body-drain on a non-retryable HTTP error as a pre-stream timeout", async () => {
+    // The per-attempt timer was previously
+    // cleared only in the `res.ok` branch of
     // `openExternalProviderStream`. For a non-retryable status
     // (e.g. 401 invalid api key), the function reads the response
     // body via `await res.text().catch(() => "")` before throwing
@@ -881,8 +881,8 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     vi.useRealTimers();
   });
 
-  it("per-attempt timeout fires when the upstream never responds — treated as retryable, second attempt succeeds (Devin Review round 7)", async () => {
-    // Regression for Devin Review round 7 (ANALYSIS_006): the
+  it("per-attempt timeout fires when the upstream never responds — treated as retryable, second attempt succeeds", async () => {
+    // Regression test: the
     // streaming path previously had no per-attempt timeout, so a
     // slow-but-responsive upstream would hang attempt 1 forever and
     // the retry budget was effectively meaningless. The fix wires
@@ -929,7 +929,7 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     vi.useRealTimers();
   });
 
-  it("per-attempt timeout exhausts retry budget — error message reflects timeout, not HTTP status (Devin Review round 7)", async () => {
+  it("per-attempt timeout exhausts retry budget — error message reflects timeout, not HTTP status", async () => {
     // Companion to the success path: when EVERY attempt times out,
     // the retry-exhausted error must say `pre-stream timeout`
     // (with the configured timeoutMs) so the user can see the
@@ -969,7 +969,7 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     vi.useRealTimers();
   });
 
-  it("user-cancel during a hung request propagates AbortError, NOT a retryable timeout (Devin Review round 7)", async () => {
+  it("user-cancel during a hung request propagates AbortError, NOT a retryable timeout", async () => {
     // The critical safety property of the timeout work: the user's
     // Stop button must always win over the per-attempt timer. If
     // both signals are aborted, we MUST surface AbortError so the
@@ -1034,8 +1034,8 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     vi.useRealTimers();
   });
 
-  it("detaches user-cancel forwarder when response body is missing (Devin Review round 9 BUG_001)", async () => {
-    // Devin Review round 9 surfaced a listener-leak on the rare
+  it("detaches user-cancel forwarder when response body is missing", async () => {
+    // Pins a listener-leak on the rare
     // "200 OK with no body" path: `openExternalProviderStream`
     // transfers listener ownership to the caller via
     // `cleanupBodyForwarder`, but the body-reading try/finally
@@ -1048,8 +1048,8 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     // Pin the fix by intercepting add/removeEventListener on the
     // user's signal: count net `abort`-listener installations and
     // assert the implementation's forwarder was detached before
-    // the throw. Without the round-9 fix this count is +1 (leak);
-    // with the fix it is 0.
+    // the throw. Without the fix this count is +1 (leak); with
+    // the fix it is 0.
     const controller = new AbortController();
     let netAbortListeners = 0;
     const origAdd = controller.signal.addEventListener.bind(controller.signal);
@@ -1092,15 +1092,14 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     fetchSpy.mockRestore();
   });
 
-  it("user-cancel mid-stream aborts the body reader (Devin Review round 8 BUG_001)", async () => {
-    // Devin Review round 8 surfaced a regression: after the round 7
-    // per-attempt-timeout refactor split fetch onto a per-attempt
-    // `AbortController`, `openExternalProviderStream`'s `finally`
-    // block detached the user-cancel forwarder as soon as the body
-    // opened. The body reader was bound to the per-attempt signal,
-    // and the user's outer signal was never reconnected — so
-    // clicking "Stop generating" after tokens started flowing did
-    // nothing.
+  it("user-cancel mid-stream aborts the body reader", async () => {
+    // Pins a regression that emerged after the per-attempt-timeout
+    // refactor split fetch onto a per-attempt `AbortController`:
+    // `openExternalProviderStream`'s `finally` block detached the
+    // user-cancel forwarder as soon as the body opened. The body
+    // reader was bound to the per-attempt signal, and the user's
+    // outer signal was never reconnected — so clicking "Stop
+    // generating" after tokens started flowing did nothing.
     //
     // The fix transfers listener ownership to the caller via
     // `cleanupBodyForwarder()`, returned in the OpenedResponse. This
@@ -1156,9 +1155,10 @@ describe("externalProviderStream — pre-stream retry with exponential backoff",
     // arrives — we are now unambiguously mid-stream.
     await Promise.resolve();
     await Promise.resolve();
-    // Cancel. Without the round-8 fix the user signal is
-    // disconnected from the body reader and this rejects only
-    // when the test runner times out the entire it().
+    // Cancel. Without the abort-forwarder ownership-transfer fix
+    // the user signal is disconnected from the body reader and
+    // this rejects only when the test runner times out the
+    // entire it().
     controller.abort();
     await expect(streamPromise).rejects.toThrow(/Aborted/);
     expect(bodyController).not.toBeNull();

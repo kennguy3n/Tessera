@@ -26,8 +26,8 @@ pub fn export_pdf(artifact: &Artifact, citations: &[Citation]) -> Vec<u8> {
 
     // Content — mermaid fenced blocks get reduced to a one-line placeholder
     // because the minimal PDF builder cannot rasterize SVG. The Typst PDF
-    // pipeline (`crate::typst`, Phase 7 Task 14) handles real diagram
-    // embedding for documents that opt into high-quality export.
+    // pipeline (`crate::typst`) handles real diagram embedding for
+    // documents that opt into high-quality export.
     if !artifact.content.is_empty() {
         let content_for_pdf =
             mermaid::replace_blocks(&artifact.content, mermaid::to_pdf_placeholder);

@@ -400,7 +400,7 @@ export async function promptForVaultPassword(opts: {
   // branch is unreachable. But this is defense-in-depth for the day
   // someone migrates the prompt away from `data:` — e.g. to
   // `file://passwordPrompt.html` so the inline `<script>` actually
-  // gets CSP coverage (a real WS10-related ask the bot flagged
+  // gets CSP coverage (a real CSP-related ask the bot flagged
   // separately). At that point `loadURL` becomes capable of throwing
   // ENOENT / file-not-found / Chromium-init failures, and a thrown
   // `loadURL` here would orphan the BrowserWindow because the

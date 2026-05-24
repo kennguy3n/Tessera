@@ -238,7 +238,7 @@ mod tests {
         assert_eq!(source_events.len(), 1);
     }
 
-    /// Phase 10 / Task 17: pin each newly added helper to its
+    /// pin each newly added helper to its
     /// `AuditEventType`. The matrix tests both the routing (helper →
     /// event-type) and the detail-string contract so a future
     /// refactor of the underlying format strings cannot silently
@@ -290,7 +290,7 @@ mod tests {
         assert!(stopped[0].details.contains("user-requested"));
     }
 
-    /// Phase 10 / Task 28: `log_template_validation_failed` must
+    /// `log_template_validation_failed` must
     /// route to the new `TemplateValidationFailed` event type and
     /// fold the file path, the failure kind, and the underlying
     /// error message into the details payload so an auditor's grep

@@ -43,7 +43,7 @@ pub struct SearchResult {
     ///   positive and routinely exceeded 2.0, displaying as
     ///   "230%" etc.).
     ///
-    /// Compatibility note: chunks indexed prior to the WS3
+    /// Compatibility note: chunks indexed prior to the
     /// hybrid-retrieval landing have citation `confidence`
     /// values stored on disk in the *old* BM25-derived
     /// magnitude. Renderer code that needs to compare against
@@ -461,7 +461,7 @@ mod tests {
     /// score is in `(0.0, 1.0]`, the first result is exactly
     /// `1.0`, and the i-th (1-based) result is `1.0 / i`.
     ///
-    /// Before WS3 hybrid retrieval landed, this field held
+    /// Before hybrid retrieval landed, this field held
     /// `-FTS5_rank` (unbounded positive BM25-derived magnitude),
     /// which the renderer multiplied by 100 to produce a
     /// percentage — resulting in displays like "230%" for
@@ -517,7 +517,7 @@ mod tests {
 
     /// Pins the empty/whitespace-only query contract.
     ///
-    /// Before this guard landed, the WS3 hybrid path would:
+    /// Before this guard landed, the hybrid path would:
     ///   * skip the BM25 call (good — `build_fts_query("")` returns
     ///     ""), but then
     ///   * still build a "query embedding" via `embed("")` (which

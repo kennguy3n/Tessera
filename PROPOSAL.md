@@ -431,5 +431,5 @@ Tessera's UI follows the **KChat design system**.
 
 - [README.md](README.md) — project overview
 - [ARCHITECTURE.md](ARCHITECTURE.md) — technical architecture
-- [PROGRESS.md](PROGRESS.md) — phased delivery tracker
+- [CHANGELOG.md](CHANGELOG.md) — release changelog
 - [kennguy3n/knowledge](https://github.com/kennguy3n/knowledge) — local knowledge substrate

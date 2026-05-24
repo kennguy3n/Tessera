@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:smoke": "vitest run renderer/src/__tests__/smoke/phaseVerification.test.ts",
+    "test:smoke": "vitest run renderer/src/__tests__/smoke/featureVerification.test.ts",
     "lint": "eslint \"renderer/src/**/*.{ts,tsx}\" \"electron/**/*.ts\" \"shared/**/*.ts\"",
     "type-check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json"
   },

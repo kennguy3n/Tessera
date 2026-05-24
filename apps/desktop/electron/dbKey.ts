@@ -38,14 +38,14 @@
  *
  * # Two persistence paths
  *
- * As of Phase 10 / Task 13 there are TWO supported on-disk
+ * As of the audit code there are TWO supported on-disk
  * encodings for `<userData>/db.key`:
  *
  *   1. **safeStorage-wrapped** (the historical default; produced
  *      whenever `safeStorage.isEncryptionAvailable()` is true at
  *      first-launch). The wrapped blob has no magic prefix and is
  *      decrypted with `safeStorage.decryptString`.
- *   2. **Password-vault-wrapped** (new in Phase 10 / Task 13;
+ *   2. **Password-vault-wrapped** (new in the audit code;
  *      produced when `safeStorage` is unavailable AND the user has
  *      unlocked the password vault). The wrapped blob is AES-256-GCM
  *      ciphertext under a PBKDF2-SHA256 key derived from the
@@ -252,7 +252,7 @@ export function getOrCreateDbKey(): string {
     // `encryptionUnavailableReason()`. The vault-recovery hint
     // applies to the async {@link getOrCreateDbKeyAsync} entry
     // point (which DOES wrap the SQLCipher key under the vault on
-    // keyringless platforms — see Phase 10 / Task 13). The sync
+    // keyringless platforms — see the audit code). The sync
     // entry point is reachable only from callers that have
     // statically opted out of the vault (tests; the async-side
     // fall-through for non-TSPV blobs) so showing the

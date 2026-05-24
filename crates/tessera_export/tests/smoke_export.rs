@@ -1,20 +1,20 @@
-//! Phase-verification smoke test for the export engine.
+//! Tracking-integrity smoke test for the export engine.
 //!
-//! Part of the Phase 7/8 tracking-integrity guarantee: every export
-//! format PROGRESS.md claims must be backed by a real, importable
-//! top-level function (not a TODO marker or `unimplemented!()`).
+//! Every export format the README advertises must be backed by a
+//! real, importable top-level function (not a TODO marker or
+//! `unimplemented!()`).
 //!
 //! Companion suites:
 //!   * Renderer side — `apps/desktop/renderer/src/__tests__/smoke/
-//!     phaseVerification.test.ts`
+//!     featureVerification.test.ts`
 //!   * Connectors — `crates/tessera_connectors/tests/
-//!     phase_smoke_connectors.rs`
+//!     smoke_connectors.rs`
 //!   * Templates — `crates/tessera_templates/tests/
-//!     phase_smoke_templates.rs`
+//!     smoke_templates.rs`
 //!
 //! `cargo test --all` picks this up automatically; the root-level
 //! `npm run test:smoke` script invokes
-//! `cargo test -p tessera_export --test phase_smoke_export` for
+//! `cargo test -p tessera_export --test smoke_export` for
 //! focused fast feedback.
 //!
 //! Each test in this file verifies one of the eight shipping export
@@ -142,8 +142,8 @@ fn csv_export_emits_a_comma_separated_table() {
 }
 
 // The pdf / docx / xlsx tests below previously wore
-// `#[cfg(feature = "pdf"|"docx"|"xlsx")]` attributes, but Devin Review
-// round-12 #0003 correctly flagged those guards as misleading: those
+// `#[cfg(feature = "pdf"|"docx"|"xlsx")]` attributes, but a
+// later audit correctly flagged those guards as misleading: those
 // three features are declared as empty arrays in `Cargo.toml`
 // (`pdf = []`, `docx = []`, `xlsx = []`) and only listed in `default`,
 // so they don't actually gate any code or dependency. The corresponding

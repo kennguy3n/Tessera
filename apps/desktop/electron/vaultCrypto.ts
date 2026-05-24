@@ -156,7 +156,7 @@ export const PASSWORD_VAULT_RECOVERY_HINT =
  *      Linux; not applicable on macOS/Windows (their native keystores
  *      are always present unless the OS itself is misconfigured).
  *   2. **Restart and enter a vault password** — every platform supports
- *      this fallback. After WS10 the app prompts for a password on
+ *      this fallback. Later the app prompts for a password on
  *      startup when safeStorage is unavailable; the password-derived
  *      key unlocks the same encrypt/decrypt operations safeStorage
  *      would have done. If the user dismissed the prompt this session,

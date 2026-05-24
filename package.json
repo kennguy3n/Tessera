@@ -15,7 +15,7 @@
     "test:ui": "npm run test --workspace=apps/desktop",
     "test:rust": "cargo test --all",
     "test:smoke": "npm run test:smoke --workspace=apps/desktop && npm run test:smoke:rust",
-    "test:smoke:rust": "cargo test -p tessera_templates --test phase_smoke_templates && cargo test -p tessera_connectors --test phase_smoke_connectors && cargo test -p tessera_export --test phase_smoke_export",
+    "test:smoke:rust": "cargo test -p tessera_templates --test smoke_templates && cargo test -p tessera_connectors --test smoke_connectors && cargo test -p tessera_export --test smoke_export",
     "lint": "npm run lint --workspace=apps/desktop",
     "type-check": "npm run type-check --workspace=apps/desktop",
     "format": "prettier --write '**/*.{ts,tsx,json,css,md}'",

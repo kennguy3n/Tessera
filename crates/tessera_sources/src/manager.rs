@@ -849,7 +849,7 @@ mod tests {
 
     #[test]
     fn tracked_backfill_flips_to_failed_when_indexer_stalls() {
-        // Regression test for Devin Review finding: when every chunk
+        // Regression test for finding: when every chunk
         // in a batch fails to embed, the indexer's stall detector
         // breaks the loop and returns `Ok(BackfillOutcome::Stalled)`.
         // The manager MUST flip status to Failed (not Done) so the

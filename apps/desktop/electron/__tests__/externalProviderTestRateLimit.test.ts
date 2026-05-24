@@ -18,8 +18,7 @@
  * on their URL/model configuration would burn through tokens
  * orders of magnitude faster than mashing List.
  *
- * Devin Review on PR #29 round 1 (ANALYSIS_0003 on commit
- * `2d51fc6`) flagged the gap: PR #29 added rate-limiting to
+ * The earlier rate-limit landing added a token-bucket gate to
  * `listModels` but the sibling Test handler was left ungated,
  * inverting the protection priority. This test pins the fix.
  *

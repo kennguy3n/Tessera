@@ -42,7 +42,7 @@ describe("parseListModelsOverrides — happy paths", () => {
     });
   });
 
-  it("extracts enabled when provided as a boolean (round 12 ANALYSIS_002)", () => {
+  it("extracts enabled when provided as a boolean", () => {
     // The form's `enabled` is forwarded as a draft override so a
     // user who has just toggled the provider on in the form (but
     // not yet saved) can still successfully list models. The
@@ -105,7 +105,7 @@ describe("parseListModelsOverrides — defensive paths", () => {
     expect(parseListModelsOverrides({ providerType: null })).toEqual({});
   });
 
-  it("drops enabled when value is not a boolean (round 12 ANALYSIS_002)", () => {
+  it("drops enabled when value is not a boolean", () => {
     // Strings, numbers, null, and undefined all dropped — the
     // handler falls back to the persisted `enabled` for that field
     // (the documented degrade-gracefully invariant).

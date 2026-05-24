@@ -21,8 +21,8 @@
  * - All sibling outbound-network handlers
  *   (`connectors:authenticate`, `connectors:sync`,
  *   `runtime:downloadModel`) consume() at the top of their
- *   bodies. Missing the same posture on listModels was the gap
- *   the Devin Review on PR #27 flagged.
+ *   bodies. Missing the same posture on listModels was a
+ *   parallel gap closed here.
  *
  * The fix wires `defaultRateLimiter.consume(…)` at the head of
  * the handler body, before any vault read or config touch. The
@@ -52,8 +52,7 @@
  * The handler's top-level try/catch is what turns the thrown
  * `RateLimitError` into the typed result the renderer can
  * display, so this test also indirectly verifies that the catch
- * wrapping (added in PR #27 round 4) still covers the rate-limit
- * path.
+ * wrapping still covers the rate-limit path.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as fs from "fs";

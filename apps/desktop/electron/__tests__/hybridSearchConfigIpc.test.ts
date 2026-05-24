@@ -96,10 +96,10 @@ function makeBridge(initial: HybridSearchConfigInfo): {
 } {
   const current = { value: { ...initial } };
   const bridge = {
-    // Phase 10 / Task 17 audit pass-through. The
-    // `settings:updateHybridSearchConfig` handler routes an audit row
-    // per effective field through `bridgeLogSettingsChanged`; the
-    // mock just records calls so tests can assert the rows.
+    // Audit pass-through. The `settings:updateHybridSearchConfig`
+    // handler routes an audit row per effective field through
+    // `bridgeLogSettingsChanged`; the mock just records calls so
+    // tests can assert the rows.
     bridgeLogSettingsChanged: vi.fn(),
     bridgeGetHybridSearchConfig: vi.fn(() => ({ ...current.value })),
     bridgeUpdateHybridSearchConfig: vi.fn((patch: HybridSearchConfigUpdate) => {
@@ -301,9 +301,9 @@ describe("hybrid search config IPC", () => {
   });
 
   it("settings:updateHybridSearchConfig emits per-field audit rows for the effective post-clamp config", async () => {
-    // Devin Review (round 2 on PR #26) flagged that the hybrid
-    // config update IPC bypassed `bridgeLogSettingsChanged`. The
-    // hybrid weights and recency tuning are part of the user's
+    // The hybrid config update IPC previously bypassed
+    // `bridgeLogSettingsChanged`. The hybrid weights and recency
+    // tuning are part of the user's
     // search-tuning surface, so a mutation here is security-
     // relevant in the same way `theme` or `ignorePatterns` are.
     // This test pins the audit contract: one row per effective
@@ -331,9 +331,9 @@ describe("hybrid search config IPC", () => {
     // `HybridSearchConfigInfo`. The order matches the handler's
     // emission order so future maintainers can grep-trace the audit
     // feed back to the field rather than chasing a synthetic Set.
-    // Devin Review (round 3 on PR #26) flagged the original test as
-    // pinning only 5 of the 6 fields, masking the missing
-    // `candidatePoolSize` audit row in the handler.
+    // An earlier version of this test pinned only 5 of the 6
+    // fields, masking the missing `candidatePoolSize` audit row
+    // in the handler.
     expect(calls).toEqual([
       ["hybridSearch.bm25Weight", "0.8"],
       ["hybridSearch.vectorWeight", "0.6"],
@@ -351,11 +351,11 @@ describe("hybrid search config IPC", () => {
   });
 
   it("settings:updateHybridSearchConfig emits candidatePoolSize audit row when the user changes the pool size", async () => {
-    // Pin the contract that `candidatePoolSize` IS audited (the
-    // initial round-2 implementation missed it; round-3 Devin
-    // Review caught the omission). This test deliberately passes a
-    // non-zero pool size so a regression that drops the audit row
-    // would fail even if the test seed defaulted to a zero pool.
+    // Pin the contract that `candidatePoolSize` IS audited; an
+    // earlier implementation missed it. This test deliberately
+    // passes a non-zero pool size so a regression that drops the
+    // audit row would fail even if the test seed defaulted to a
+    // zero pool.
     const { bridge } = makeBridge(DEFAULT_HYBRID_SEARCH_CONFIG);
     stubBridge = bridge;
     registerSettingsHandlers();

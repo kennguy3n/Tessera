@@ -170,11 +170,10 @@ Localized templates live under `templates/<category>/locales/<locale>/<slug>.yam
 
 ## Security & hardening
 
-Tessera's Phase 10 production-hardening pass added five defense-in-depth
-controls on top of the baseline SQLCipher-encrypted local store. Each
-is documented in [ARCHITECTURE.md](ARCHITECTURE.md#defense-in-depth-controls-phase-10)
-and pinned with regression tests under
-`apps/desktop/electron/__tests__/`.
+Tessera layers five defense-in-depth controls on top of the baseline
+SQLCipher-encrypted local store. Each is documented in
+[ARCHITECTURE.md](ARCHITECTURE.md#defense-in-depth-controls) and pinned
+with regression tests under `apps/desktop/electron/__tests__/`.
 
 | Control | What it does |
 |---|---|
@@ -358,8 +357,7 @@ tessera/
 ├── SECURITY.md
 ├── PROPOSAL.md
 ├── ARCHITECTURE.md
-├── PHASES.md
-└── PROGRESS.md
+└── CHANGELOG.md
 ```
 
 ---
@@ -420,8 +418,7 @@ MIT — see [LICENSE](LICENSE).
 
 - [PROPOSAL.md](PROPOSAL.md) — full product proposal
 - [ARCHITECTURE.md](ARCHITECTURE.md) — technical architecture
-- [PHASES.md](PHASES.md) — one-page phase index
-- [PROGRESS.md](PROGRESS.md) — phased delivery tracker
+- [CHANGELOG.md](CHANGELOG.md) — release changelog
 - [CONTRIBUTING.md](CONTRIBUTING.md) — contribution guide
 - [SECURITY.md](SECURITY.md) — security policy
 - [kennguy3n/knowledge](https://github.com/kennguy3n/knowledge) — local knowledge substrate

@@ -1,5 +1,5 @@
 /**
- * Figma connector sync logic (Task 5).
+ * Figma connector sync logic.
  *
  * Authentication: Figma OAuth 2.0 (`figma.com/oauth`,
  * `api.figma.com/v1/oauth/token`).

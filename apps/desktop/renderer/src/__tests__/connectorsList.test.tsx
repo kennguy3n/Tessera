@@ -182,8 +182,8 @@ describe("ConnectorsList", () => {
     async () => {
       // The UI used to hard-code `127.0.0.1:9876` for Google Drive,
       // but the actual OAuth flow registers `localhost:9876` as the
-      // redirect URI (back-compat with users' pre-Phase-10 Google
-      // Cloud Console configuration). The UI must show the same URI
+      // redirect URI (back-compat with users' existing Google Cloud
+      // Console configuration). The UI must show the same URI
       // the OAuth flow sends, otherwise users see
       // `redirect_uri_mismatch` on every connect attempt.
       mockApi.connectors.status.mockResolvedValue({

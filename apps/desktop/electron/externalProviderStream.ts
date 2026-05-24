@@ -282,7 +282,7 @@ function dispatchEvent(
     return dispatchAnthropicEvent(eventName, parsed, emit);
   }
   // openai_compatible OR custom: both use the OpenAI chat-completions
-  // SSE shape per WS11 design.
+  // SSE shape design.
   return dispatchOpenAIEvent(parsed, emit);
 }
 
@@ -761,11 +761,10 @@ function delayWithAbort(
  * Without this distinction the retry budget is effectively
  * useless against a slow-but-responsive upstream — attempt 1
  * would hang forever waiting for the response, and the retry
- * loop would never reach attempts 2…N. This was the gap Devin
- * Review round 7 surfaced: `timeoutSecs` was wired into
- * `testExternalProviderConnection` and (with a fixed 10 s)
- * `listExternalProviderModels`, but the streaming path relied
- * solely on the user's Stop button.
+ * loop would never reach attempts 2…N. `timeoutSecs` was
+ * already wired into `testExternalProviderConnection` and
+ * (with a fixed 10 s) `listExternalProviderModels`; the
+ * streaming path here extends that contract.
  */
 interface OpenedResponse {
   readonly status: "opened";
@@ -846,7 +845,8 @@ async function openExternalProviderStream(
   // here while the body stream is still bound to `attemptController.
   // signal`, leaving the user's outer signal disconnected from the
   // body stream and making the Stop button non-functional mid-
-  // stream. Devin Review round 8 surfaced exactly this regression.
+  // stream. The regression tests in `externalProviderStream.test.ts`
+  // pin exactly this failure mode.
   const forwardUserAbort = (): void => attemptController.abort();
   signal?.addEventListener("abort", forwardUserAbort, { once: true });
   // Set to true when the body opens successfully so the `finally`
@@ -866,17 +866,17 @@ async function openExternalProviderStream(
     // PRE-RESPONSE wait (how long we wait for the upstream to start
     // producing a body); once `fetch` resolves we've passed that
     // boundary and the timer should be cleared regardless of which
-    // status-code branch we take below. Devin Review round 12
-    // BUG_001 surfaced the regression: when the timer was only
-    // cleared in the `res.ok` branch, a slow body-drain on a non-
+    // status-code branch we take below. Without unconditional
+    // clearance here, the regression resurfaces: when the timer was
+    // only cleared in the `res.ok` branch, a slow body-drain on a non-
     // retryable HTTP error (e.g. a `await res.text()` for a 401
     // response that takes longer than `timeoutMs`) would trip the
     // timer mid-drain, the `.catch(() => "")` would swallow the
     // resulting abort error, and the explicit `throw new Error(...)`
     // for "HTTP 401" would then enter the catch block where
     // `attemptController.signal.aborted === true` would misclassify
-    // the failure as a retryable timeout. The user would see "pre-
-    // stream timeout (Nms) after K attempts" instead of "HTTP 401",
+    // the failure as a retryable timeout. The user would see a
+    // pre-stream-timeout error after K attempts instead of "HTTP 401",
     // and the retry loop would waste its budget on a permanent
     // failure. Clearing the timer here, before any body-read, makes
     // the misclassification structurally impossible.

@@ -1,5 +1,5 @@
 /**
- * In-memory rate limiter for expensive IPC operations (Phase 10 Task 23).
+ * In-memory rate limiter for expensive IPC operations.
  *
  * Defense-in-depth against a buggy or compromised renderer that
  * hammers a single channel. The renderer already debounces user
@@ -95,7 +95,7 @@ export class RateLimiter {
 }
 
 /**
- * Default profile for the limits called out in the Phase 10 brief.
+ * Default profile pinning the expensive-IPC channels.
  *
  * - `connectors:authenticate` — 1 per 5s per provider.
  * - `connectors:sync` — 1 per 30s per provider.
@@ -137,8 +137,7 @@ export class RateLimiter {
  *   APIs. The test request is arguably MORE expensive than
  *   listModels (chat completion vs. cheap discovery endpoint), so
  *   leaving it ungated while limiting listModels would invert the
- *   protection priority. Adding this entry closes the gap Devin
- *   Review on PR #29 flagged (round 1 finding ANALYSIS_0003)
+ *   protection priority. Adding this entry closes the gap
  *   between `listModels` and its sibling outbound-network
  *   handler.
  */

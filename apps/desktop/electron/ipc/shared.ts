@@ -2,7 +2,7 @@
  * Cross-domain helpers shared by the per-domain IPC modules in this
  * directory. Each helper used to be a private file-scope function or
  * module-level constant inside `apps/desktop/electron/ipc.ts`. As part
- * of the WS6 split (one file per IPC domain), they were hoisted here
+ * of the per-domain split (one file per IPC domain), they were hoisted here
  * so every domain module can import them by name rather than
  * reimplementing the same logic.
  *

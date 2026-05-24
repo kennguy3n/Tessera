@@ -5,8 +5,8 @@
  * should be surfaced as an "Offline" status (and silently swallowed)
  * vs. propagated as a hard error the renderer must show to the user.
  *
- * The bug this test prevents :
- * the previous regex `/fetch failed|network|connect/i` matched the
+ * The bug this test prevents: the previous regex
+ * `/fetch failed|network|connect/i` matched the
  * bare token `connect`, which also appears inside the auth-state
  * error message `"${provider} is not connected — authenticate first"`.
  * That made every sync attempt against a disconnected provider silently

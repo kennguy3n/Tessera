@@ -1,9 +1,9 @@
-//! Phase-verification smoke test for the bundled template registry.
+//! Cross-tree smoke test for the bundled template registry.
 //!
-//! Part of the Phase 7/8 tracking-integrity guarantee: every bundled
-//! YAML template under `templates/` must (a) parse, (b) validate, and
-//! (c) appear in the registry that the renderer-side `CreatePage.tsx`
-//! sources its picker from.
+//! Tracking-integrity guarantee: every bundled YAML template under
+//! `templates/` must (a) parse, (b) validate, and (c) appear in the
+//! registry that the renderer-side `CreatePage.tsx` sources its
+//! picker from.
 //!
 //! This test is intentionally broader than `bundled_templates.rs` (the
 //! pre-existing per-category test). It walks the entire `templates/`
@@ -14,11 +14,11 @@
 //!
 //! Companion suites:
 //!   * Renderer side — `apps/desktop/renderer/src/__tests__/smoke/
-//!     phaseVerification.test.ts` (cross-checks template ids against
+//!     featureVerification.test.ts` (cross-checks template ids against
 //!     CreatePage.tsx CATEGORIES).
 //!   * Connectors — `crates/tessera_connectors/tests/
-//!     phase_smoke_connectors.rs`
-//!   * Export — `crates/tessera_export/tests/phase_smoke_export.rs`
+//!     smoke_connectors.rs`
+//!   * Export — `crates/tessera_export/tests/smoke_export.rs`
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -50,8 +50,7 @@ const RUST_TEMPLATE_DIRS: &[&str] = &["documents", "slides", "sheets", "bases"];
 /// YAML — a malformed `hero:` block in an infographic or landing-page
 /// template would crash the renderer at runtime. We use a minimal
 /// `serde_yaml::Value` parse below so this Rust test still gates
-/// malformed YAML before it can land on `main`, closing the gap
-/// flagged in Devin Review round-2.
+/// malformed YAML before it can land on `main`.
 const RENDERER_ONLY_TEMPLATE_DIRS: &[&str] = &["infographics", "landing_pages"];
 
 /// Subdirectories under `templates/` that are NOT template categories
@@ -98,7 +97,7 @@ fn collect_template_files(root: &Path) -> Vec<PathBuf> {
 /// repository-wide invariants (non-empty id, non-empty name, at least
 /// one section, at least one export format).
 ///
-/// Plan 2C calls for a "phase 9+" smoke test that catches templates
+/// The smoke suite calls for a smoke test that catches templates
 /// claimed in docs but not wired into the registry. This is exactly
 /// that test: it walks the on-disk fixtures so any new YAML file is
 /// automatically covered without an edit here.
@@ -147,7 +146,7 @@ fn every_bundled_template_parses_validates_and_has_required_fields() {
 
 /// Template ids are the registry key the renderer uses to look up
 /// templates by name. Duplicates would shadow each other silently in
-/// the picker, so the phase smoke suite makes uniqueness an explicit
+/// the picker, so the smoke suite makes uniqueness an explicit
 /// guarantee rather than relying on convention.
 #[test]
 fn every_bundled_template_has_a_unique_id() {
@@ -172,16 +171,15 @@ fn every_bundled_template_has_a_unique_id() {
 }
 
 /// Templates of each Rust-modelled artifact type must appear in the
-/// on-disk fixtures. This is the structural floor implied by
-/// PROGRESS.md: Phase 5/6 shipped at least one template per
-/// artifact category.
+/// on-disk fixtures. This is the structural floor implied by the
+/// README: at least one template per artifact category.
 ///
 /// Only the four categories that `tessera_templates::Template` can
 /// represent (Document, Slides, Sheet, Base) are covered here.
 /// Infographic and LandingPage templates use a richer renderer-side
 /// schema (with `hero:`, `features:`, `stats:`, `layout:`, etc.)
 /// that the Rust struct does not model — the renderer's
-/// `phaseVerification.test.ts` smoke suite enforces the floor for
+/// `featureVerification.test.ts` smoke suite enforces the floor for
 /// those two categories instead.
 #[test]
 fn every_rust_modelled_category_has_at_least_one_template() {
@@ -211,7 +209,7 @@ fn every_rust_modelled_category_has_at_least_one_template() {
     for ty in expected {
         assert!(
             seen.contains(&ty),
-            "no bundled template found with artifact_type = {ty:?} — phase 5/6 floor regressed; seen types: {seen:?}"
+            "no bundled template found with artifact_type = {ty:?} — bundled artifact-type floor regressed; seen types: {seen:?}"
         );
     }
 }
@@ -223,7 +221,7 @@ fn every_rust_modelled_category_has_at_least_one_template() {
 ///    sheets/, bases/) must appear in the registry. A regression in
 ///    `WalkDir` filtering or in `parse_template_file` that silently
 ///    skips a fixture would fail this check — which is the core
-///    Phase 7/8 tracking-integrity guarantee.
+///    tracking-integrity guarantee.
 ///
 /// 2. Every registry entry must correspond to a real .yaml/.yml file
 ///    on disk somewhere under templates/. A phantom template (e.g.
@@ -408,7 +406,7 @@ fn every_renderer_only_template_is_well_formed_yaml() {
 ///   * `RENDERER_ONLY_TEMPLATE_DIRS` — well-formed-only check
 ///   * `NON_TEMPLATE_DIRS`         — not a template category (e.g. grammars/)
 ///
-/// This closes the failure mode Devin Review round-6 flagged: if a
+/// This closes the failure mode where, if a
 /// contributor adds a new category directory (say `templates/forms/`)
 /// without updating either list, the per-category tests above silently
 /// skip it. Walking the directory at runtime here forces the new
@@ -417,7 +415,7 @@ fn every_renderer_only_template_is_well_formed_yaml() {
 /// (which is the only thing the renderer-side cross-check covers).
 ///
 /// The companion test on the TS side
-/// (`apps/desktop/renderer/src/__tests__/smoke/phaseVerification.test.ts::
+/// (`apps/desktop/renderer/src/__tests__/smoke/featureVerification.test.ts::
 /// "every templates/ subdirectory is a classified category"`) enforces
 /// the same invariant against `TEMPLATE_CATEGORIES` there, so all three
 /// hand-maintained lists (Rust × 2 + TS × 1) are gated by runtime
@@ -458,7 +456,7 @@ fn every_templates_subdirectory_is_classified() {
          uses the renderer's richer schema), or NON_TEMPLATE_DIRS (if it\n\
          is not a template category at all). See the doc comments above\n\
          each constant for the distinction. The renderer-side\n\
-         phaseVerification.test.ts must also be updated to reference the\n\
+         featureVerification.test.ts must also be updated to reference the\n\
          new category in TEMPLATE_CATEGORIES.",
     );
 
@@ -470,8 +468,8 @@ fn every_templates_subdirectory_is_classified() {
     // We collect the discovered names into a `HashSet<&str>` (not
     // `HashSet<&String>`) so the membership test below can hash a
     // borrowed `&str` directly — `HashSet::<&str>::contains(&str)`
-    // avoids allocating a fresh `String` per check. Devin Review
-    // round-10 / clippy `inefficient_to_string` flagged the previous
+    // avoids allocating a fresh `String` per check. clippy's
+    // `inefficient_to_string` lint flagged the previous
     // `discovered_set.contains(&name.to_string())` form for exactly
     // this reason.
     let discovered_set: HashSet<&str> = discovered.iter().map(String::as_str).collect();

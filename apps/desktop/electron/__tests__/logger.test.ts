@@ -14,7 +14,7 @@ import { createLogger } from "../logger";
 /**
  * Locks down the JSONL logger contract.
  *
- * Phase 9 review flagged a possible "tessera.log skipped on initial
+ * review flagged a possible "tessera.log skipped on initial
  * rename" bug in the rotation loop. We assert the actual behaviour
  * here: when `tessera.log` exceeds the size cap, it must rotate to
  * `tessera.1.log`, and existing numbered files must shift outward

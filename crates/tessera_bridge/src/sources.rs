@@ -387,7 +387,7 @@ pub fn update_hybrid_search_config(
     //      the wire-level semantics aligned with caller intent and
     //      prevents the API surface from drifting between "don't
     //      touch the flag" and "I'm setting halflife but not the
-    //      toggle". Devin Review flagged this gap on PR #25.
+    //      toggle".
     //   4. `None`         → otherwise, pass whatever halflife the
     //      renderer sent (could be `None`).
     let current_decay_enabled = manager
@@ -668,7 +668,7 @@ mod tests {
 
     #[test]
     fn bridge_update_hybrid_search_config_does_not_silently_re_enable_decay() {
-        // Regression test for Devin Review finding on PR #25: when a
+        // Regression test for finding: when a
         // caller sends `recency_decay_enabled: None` (don't touch
         // toggle) together with `recency_halflife_secs: Some(finite)`
         // against a manager whose current state has decay DISABLED

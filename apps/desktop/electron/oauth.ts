@@ -10,8 +10,8 @@
  * to live here and was consumed exclusively by the legacy
  * `oauthServer.ts` Google-Drive-only loopback server. That file was
  * superseded by the provider-agnostic dispatcher in
- * `ipc/connectors/providerOAuth.ts` during the Block A wiring of
- * Phase 10. That module owns the loopback redirect server, the
+ * `ipc/connectors/providerOAuth.ts` during the connector wiring.
+ * That module owns the loopback redirect server, the
  * authorization-URL construction, the token exchange, and the
  * refresh flow — replacing every export the deleted file used to
  * consume. With the legacy file deleted, the other exports here

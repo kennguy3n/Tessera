@@ -6,7 +6,7 @@
  * encryption modes simulated:
  *
  * - safeStorage available, no password vault → existing path
- * - safeStorage unavailable, password vault active → new path (WS10)
+ * - safeStorage unavailable, password vault active → new path
  * - Mixed: existing safeStorage blob, no keyring at read time → loud
  *   error with recovery instructions (not silent failure)
  * - Mixed: existing TSPV blob, no password cached → loud error

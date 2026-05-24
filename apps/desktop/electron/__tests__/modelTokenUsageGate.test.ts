@@ -4,9 +4,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // `apps/desktop/electron/ipc/model.ts` — the `if (streamOpened)`
 // branch in the external-provider `finally` block.
 //
-// The bug Devin Review flagged on PR #27: the original
-// implementation persisted the `promptTokens` estimate
-// unconditionally in `finally`, so a pre-stream failure (401, 403,
+// The bug: the original implementation persisted the `promptTokens`
+// estimate unconditionally in `finally`, so a pre-stream failure (401, 403,
 // retry-exhausted 503, DNS / TLS error — anything that surfaces as a
 // throw from `streamExternalProvider` BEFORE the body opens)
 // inflated the cumulative-usage counter by the prompt-token estimate
@@ -205,8 +204,8 @@ describe("model:generate — streamOpened gate", () => {
     expect(persistedUsage.totalCompletionTokens).toBeGreaterThan(0);
   });
 
-  it("body opens but only framing-only deltas arrive before error — prompt tokens STILL count (Devin Review round 6 BUG_002)", async () => {
-    // Regression for Devin Review round 6: the gate was originally
+  it("body opens but only framing-only deltas arrive before error — prompt tokens STILL count", async () => {
+    // Regression test: the gate was originally
     // keyed on the `emit` callback firing, but `dispatchOpenAIEvent`
     // and `dispatchAnthropicEvent` filter framing-only events
     // (role-only deltas, content_block_start, message_start, ping)
@@ -297,8 +296,8 @@ describe("model:generate — streamOpened gate", () => {
     expect(persistedUsage.totalCompletionTokens).toBeGreaterThan(0);
   });
 
-  it("completion-token count equals the BULK estimate of the concatenated stream, not the per-chunk sum (Devin Review round 5 BUG_001)", async () => {
-    // Regression for Devin Review round 5 BUG_001 on PR #27: the
+  it("completion-token count equals the BULK estimate of the concatenated stream, not the per-chunk sum", async () => {
+    // Regression test: the
     // earlier implementation summed `estimateTokens(chunk.content)`
     // per SSE chunk, applying `Math.ceil(length / 4)` independently
     // to each short delta. This systematically over-counted because

@@ -1,5 +1,5 @@
 /**
- * Regression test for Devin Review round 4 BUG_001 on PR #27.
+ * Regression test: the model dropdown must reset on providerType change.
  *
  * The bug: after a user clicked "List models" on an
  * `openai_compatible` provider (populating the model `<select>`
@@ -173,7 +173,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     ).not.toBeInTheDocument();
   });
 
-  // Devin Review round 10 (ANALYSIS_006) flagged a UX gap: the
+  // UX gap pinned: the
   // "List models" button was clickable even when the persisted
   // provider was not saved/enabled or had no API key in the vault,
   // producing a confusing "External provider is disabled" toast on a
@@ -183,7 +183,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
   // future maintainer who narrows the predicate to fewer dimensions
   // re-introduces a regression that the test suite flags.
 
-  it("disables List models when the persisted provider has no API key (ANALYSIS_006)", async () => {
+  it("disables List models when the persisted provider has no API key", async () => {
     const tessera = window.tessera;
     tessera.externalProvider.get = vi.fn().mockResolvedValue({
       enabled: true,
@@ -211,7 +211,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     );
   });
 
-  it("disables List models when the form has the provider toggled off (ANALYSIS_006)", async () => {
+  it("disables List models when the form has the provider toggled off", async () => {
     const tessera = window.tessera;
     tessera.externalProvider.get = vi.fn().mockResolvedValue({
       enabled: false,
@@ -244,11 +244,11 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     ).not.toBeInTheDocument();
   });
 
-  it("forwards the form's CURRENT enabled flag to listModels after the user toggles it (round 13 BUG_001)", async () => {
-    // Devin Review round 13 BUG_001: the `enabled` override I added
-    // in round 12 ANALYSIS_002 was captured by the `onListModels`
-    // useCallback at first render and never refreshed because
-    // `enabled` was missing from the deps array. Pin the fix here:
+  it("forwards the form's CURRENT enabled flag to listModels after the user toggles it", async () => {
+    // Stale-closure bug pinned: the `enabled` override was captured
+    // by the `onListModels` useCallback at first render and never
+    // refreshed because `enabled` was missing from the deps array.
+    // Pin the fix here:
     // after the user toggles the form's `enabled`, a subsequent
     // List models click must forward the CURRENT value, not the
     // stale closure capture from first render.
@@ -321,7 +321,7 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     );
   });
 
-  it("disables List models when apiUrl is empty (ANALYSIS_006 — pre-existing gate, pinned)", async () => {
+  it("disables List models when apiUrl is empty", async () => {
     const tessera = window.tessera;
     tessera.externalProvider.get = vi.fn().mockResolvedValue({
       enabled: true,
@@ -466,10 +466,10 @@ describe("ExternalProviderCard — model dropdown lifecycle across providerType 
     expect(alertText!).not.toMatch(/https?:\/\//);
   });
 
-  it("surfaces a deep failure from Test connection via setStatus instead of silently un-busying (round 14 ANALYSIS_001)", async () => {
-    // Devin Review round 14 ANALYSIS_001 flagged that `onTest` was the
-    // only handler in this file using `try/finally` instead of the
-    // sibling pattern `try/catch/finally`. If the IPC channel itself
+  it("surfaces a deep failure from Test connection via setStatus instead of silently un-busying", async () => {
+    // `onTest` was the only handler in this file using `try/finally`
+    // instead of the sibling pattern `try/catch/finally`. If the
+    // IPC channel itself
     // failed (bridge serialization error, contextIsolation violation,
     // the IPC handler throwing before its own try/catch wraps the
     // result), the rejected promise would propagate unhandled while

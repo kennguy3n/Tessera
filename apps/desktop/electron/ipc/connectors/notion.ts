@@ -1,5 +1,5 @@
 /**
- * Notion connector sync logic (Task 2).
+ * Notion connector sync logic.
  *
  * Authentication: OAuth 2.0 against `api.notion.com/v1/oauth/token`
  * using HTTP Basic auth (Notion's documented integration flow).

@@ -1,5 +1,5 @@
 /**
- * Confluence connector sync logic (Task 4).
+ * Confluence connector sync logic.
  *
  * Authentication: Atlassian OAuth 2.0 — same authorize/token URLs
  * as Jira; scopes differ.

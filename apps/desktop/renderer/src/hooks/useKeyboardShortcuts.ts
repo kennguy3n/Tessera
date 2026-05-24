@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { SIDEBAR_NAV_BY_KEY } from "../navigation";
 
 /**
- * Tessera's global keyboard shortcuts (Task 16).
+ * Tessera's global keyboard shortcuts.
  *
  * Registered once at the app root by `App.tsx`. Each shortcut is
  * implemented as a single keydown handler that consults

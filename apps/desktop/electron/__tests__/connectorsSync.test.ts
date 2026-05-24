@@ -2844,11 +2844,11 @@ describe("Token refresh + cascading deletions", () => {
   );
 
   // ---------------------------------------------------------------
-  // when the upstream file returns 404 and
-  // the file was previously tracked in the manifest, the connector
-  // must cascade: removeSource on the bridge, unlink the local
-  // markdown file, decrement entriesById, and increment `removed`.
-  // Previously this branch silently kept the local file + source.
+  // When the upstream file returns 404 and the file was previously
+  // tracked in the manifest, the connector must cascade:
+  // removeSource on the bridge, unlink the local markdown file,
+  // decrement entriesById, and increment `removed`. Previously this
+  // branch silently kept the local file + source.
   // ---------------------------------------------------------------
   it(
     "figma cascades upstream-deletion 404 to local file + bridge " +
@@ -2970,7 +2970,7 @@ describe("Token refresh + cascading deletions", () => {
         "utf8",
       );
 
-      // Phase 1 fetchPageById → 404. Phase 2 /search → empty.
+      // Phase 1: fetchPageById → 404. Phase 2: /search → empty.
       fetchMock
         .mockResolvedValueOnce({
           ok: false,

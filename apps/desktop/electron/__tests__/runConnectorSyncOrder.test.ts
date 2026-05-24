@@ -238,8 +238,7 @@ describe("runConnectorSync — token refresh offline path", () => {
 });
 
 describe("runConnectorSync — audit emission site", () => {
-  // Devin Review (round 2 on PR #26) flagged that the
-  // `ConnectorSynced` audit row used to live inside the
+  // The `ConnectorSynced` audit row used to live inside the
   // `connectors:sync` IPC handler instead of `runConnectorSync`
   // itself. The legacy `connectors:gdrive:sync` channel (still
   // reachable from the renderer's GDrive picker) also routes
