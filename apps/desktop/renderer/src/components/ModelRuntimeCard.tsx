@@ -77,11 +77,29 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
     if (!tessera) return;
     setState((s) => ({ ...s, loading: true, error: null }));
     try {
+      // Every IPC call on this card is text-slot scoped. The
+      // `recommendModel` / `getCurrentModel` overloads without a
+      // capability arg already default to `"text"` for backward
+      // compat (see `apps/desktop/shared/types.ts:1045-1061`), but
+      // `listModels()` with no arg explicitly returns ALL capabilities
+      // (see `apps/desktop/electron/ipc/runtime.ts:165-171`) so the
+      // multi-slot Settings UI can group them per-section in one
+      // round-trip. Without an explicit `"text"` here, the text
+      // card's "Show all available models" list would render vision
+      // + imagegen entries with actionable Download / Swap buttons.
+      // Clicking Download on a vision entry from this card would
+      // route to the vision slot (via the manifest capability) but
+      // set `state.current` to the returned vision record, leaving
+      // the text card showing a vision model as "Installed" with
+      // text-slot Start / Delete buttons — which would then call
+      // `model.start(visionPath)` against the text sidecar or
+      // `deleteModel()` (text-default) against the actual text slot.
+      // Scoping to `"text"` here closes the leak at the boundary.
       const [platform, models, recommended, current, status] = await Promise.all([
         tessera.runtime.detectPlatform(),
-        tessera.runtime.listModels(),
-        tessera.runtime.recommendModel(),
-        tessera.runtime.getCurrentModel(),
+        tessera.runtime.listModels("text"),
+        tessera.runtime.recommendModel("text"),
+        tessera.runtime.getCurrentModel("text"),
         tessera.model.status(),
       ]);
       setState((s) => ({
@@ -148,7 +166,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
       try {
         const [status, current] = await Promise.all([
           tessera.model.status(),
-          tessera.runtime.getCurrentModel(),
+          tessera.runtime.getCurrentModel("text"),
         ]);
         if (cancelled) return;
         setState((s) => {
@@ -201,11 +219,29 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
         // handle on the old model is released before unlink). Re-fetch
         // status so the UI doesn't keep showing the pre-swap "running"
         // indicator when the runtime is actually stopped.
-        const status = await tessera.model.status().catch(() => null);
+        //
+        // Also re-fetch the live `getCurrentModel("text")` record
+        // rather than using the synchronous `downloadModel` return
+        // value. The main process commits additional metadata to the
+        // active-model file AFTER the download finishes (sha256
+        // verification, content-length echo, mtime stamp), and there's
+        // a small window where the IPC response is in flight but the
+        // on-disk record hasn't yet picked up the final stamp. Using
+        // the live record matches the invariant that
+        // `state.current` == on-disk-truth on every settled boundary,
+        // identical to the pattern `ModelSlotPanel` uses for the
+        // vision / imagegen slots. The IPC return value is the
+        // fallback for the case where the post-download fetch fails
+        // (e.g. transient permission error) so we never leave
+        // `state.current` null on a successful download.
+        const [status, liveCurrent] = await Promise.all([
+          tessera.model.status().catch(() => null),
+          tessera.runtime.getCurrentModel("text").catch(() => null),
+        ]);
         setState((s) => ({
           ...s,
           busyModelId: null,
-          current: record,
+          current: liveCurrent ?? record,
           progress: null,
           status: status ?? s.status,
         }));
@@ -229,7 +265,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
         // mirroring that on failure restores the invariant
         // `state.current` == on-disk-truth on every settled boundary.
         const [liveCurrent, liveStatus] = await Promise.all([
-          tessera.runtime.getCurrentModel().catch(() => null),
+          tessera.runtime.getCurrentModel("text").catch(() => null),
           tessera.model.status().catch(() => null),
         ]);
         setState((s) => ({

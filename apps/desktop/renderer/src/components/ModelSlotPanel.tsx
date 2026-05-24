@@ -274,6 +274,18 @@ export default function ModelSlotPanel({
 
   const handleDelete = useCallback(async () => {
     if (!tessera) return;
+    // Defense-in-depth: the Delete button is only rendered when
+    // `state.current` is truthy (see the conditional in the
+    // installed-model section), so in practice this branch is
+    // unreachable. We still gate the IPC on `state.current` to
+    // match the pattern `ModelRuntimeCard.handleDelete` uses for
+    // the text slot — that way a future refactor that changes
+    // HOW the Delete button is gated (e.g. exposing it via a
+    // context-menu or keyboard shortcut that's not synchronised
+    // with the button's rendering condition) can't accidentally
+    // bypass this guard and issue a deleteModel call against an
+    // empty slot.
+    if (!state.current) return;
     setState((s) => ({ ...s, error: null, busyModelId: "__delete__" }));
     try {
       await tessera.runtime.deleteModel(capability);
@@ -300,7 +312,7 @@ export default function ModelSlotPanel({
         error: err instanceof Error ? err.message : String(err),
       }));
     }
-  }, [tessera, capability]);
+  }, [tessera, capability, state.current]);
 
   if (!tessera) {
     // Defensive: outside an Electron renderer (e.g. Storybook,
