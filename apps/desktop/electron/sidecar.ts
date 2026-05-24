@@ -7,6 +7,29 @@ export interface SidecarOptions {
   port: number;
   healthCheckIntervalMs: number;
   idleUnloadMs: number;
+  /**
+   * Extra CLI flags to append to the llama-server invocation, AFTER the
+   * core `--model / --port / --host` triple. Used to carry:
+   *
+   *   - `--mmproj <path>` for the vision sidecar (the multimodal
+   *     projector file ships alongside VLM weights and tells
+   *     llama-server which vision tower to load).
+   *   - `--parallel 1` for memory-constrained low-tier vision
+   *     (SmolVLM 256M targets <=1 GB RAM machines; parallel=1
+   *     halves the KV-cache budget over the default).
+   *   - `--ctx-size <N>` overrides per-capability (vision contexts
+   *     are typically smaller than text contexts).
+   *
+   * Empty by default so the text sidecar's existing behaviour is
+   * unchanged.
+   */
+  extraArgs: string[];
+  /**
+   * Diagnostic label used in log lines so the multi-sidecar
+   * deployments (text + vision + diffusion) emit distinguishable
+   * output. Free-form; never parsed.
+   */
+  label: string;
 }
 
 const DEFAULT_OPTIONS: SidecarOptions = {
@@ -15,6 +38,8 @@ const DEFAULT_OPTIONS: SidecarOptions = {
   port: 8384,
   healthCheckIntervalMs: 5000,
   idleUnloadMs: 60_000,
+  extraArgs: [],
+  label: "text",
 };
 
 const MAX_RESTART_RETRIES = 5;
@@ -71,6 +96,33 @@ export class ModelSidecar {
     this.options.modelPath = modelPath;
   }
 
+  /**
+   * Replace the appended llama-server CLI flags. Same precondition as
+   * `setModelPath`: cannot be changed while running because flags are
+   * baked into the `spawn` argv at start time and the process would
+   * have to be restarted to pick up a new value. Callers that need
+   * to re-flag mid-session must `await stop()` first.
+   *
+   * Used by `appState` when switching the vision model: the
+   * `--mmproj <path>` flag is per-model (Qwen3.5 and SmolVLM ship
+   * their own projector files) so it must be updated alongside
+   * `setModelPath`.
+   */
+  setExtraArgs(extraArgs: string[]): void {
+    if (this._isRunning) {
+      throw new Error("Cannot change extra args while sidecar is running");
+    }
+    this.options.extraArgs = [...extraArgs];
+  }
+
+  get extraArgs(): string[] {
+    return [...this.options.extraArgs];
+  }
+
+  get label(): string {
+    return this.options.label;
+  }
+
   async start(resetRetries = false): Promise<void> {
     if (this._isRunning) return;
     if (resetRetries) this.restartCount = 0;
@@ -86,6 +138,11 @@ export class ModelSidecar {
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     };
+    // Core arg triple comes first so any --model / --port / --host the
+    // caller fat-fingers into `extraArgs` is ignored by llama-server
+    // (it uses the first occurrence). `extraArgs` carries vision-only
+    // flags (--mmproj, --parallel, --ctx-size); empty for the text
+    // sidecar so behaviour is unchanged there.
     this.process = spawn(
       this.options.binaryPath,
       [
@@ -95,6 +152,7 @@ export class ModelSidecar {
         this.options.port.toString(),
         "--host",
         "127.0.0.1",
+        ...this.options.extraArgs,
       ],
       spawnOpts,
     );

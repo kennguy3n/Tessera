@@ -420,6 +420,33 @@ const mockApi = {
     deleteModel: vi.fn().mockResolvedValue(undefined),
     onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
   },
+  vision: {
+    // Default mock: vision is unavailable so renderer tests that
+    // don't explicitly install a VLM don't accidentally show vision
+    // UI. Tests that need vision flip this with `vi.spyOn`.
+    isAvailable: vi.fn().mockResolvedValue(false),
+    describe: vi.fn().mockResolvedValue({
+      content: "",
+      stop: true,
+      tokensPredicted: 0,
+      tokensEvaluated: 0,
+    }),
+  },
+  imagegen: {
+    // Default mock: imagegen is unavailable for the same reason —
+    // most renderer tests run on the CPU-only mock platform and
+    // shouldn't accidentally surface the Generate-image button.
+    isAvailable: vi.fn().mockResolvedValue(false),
+    generate: vi.fn().mockResolvedValue({
+      path: "/mock/generated.png",
+      seed: 0,
+      width: 1024,
+      height: 1024,
+      durationMs: 0,
+      sizeBytes: 0,
+    }),
+    cancel: vi.fn().mockResolvedValue({ scheduled: false }),
+  },
 };
 
 Object.defineProperty(window, "tessera", {

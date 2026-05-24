@@ -13,12 +13,14 @@ import { registerArtifactsHandlers } from "./artifacts";
 import { registerCitationsHandlers } from "./citations";
 import { registerConnectorsLegacyHandlers } from "./connectorsLegacy";
 import { registerDialogHandlers } from "./dialog";
+import { registerImagegenHandlers } from "./imagegen";
 import { registerModelHandlers } from "./model";
 import { registerRuntimeHandlers } from "./runtime";
 import { registerSettingsHandlers } from "./settings";
 import { registerSourcesHandlers } from "./sources";
 import { registerTasksHandlers } from "./tasks";
 import { registerTemplatesHandlers } from "./templates";
+import { registerVisionHandlers } from "./vision";
 
 export function registerAllIpcHandlers(): void {
   registerSourcesHandlers();
@@ -28,6 +30,8 @@ export function registerAllIpcHandlers(): void {
   registerSettingsHandlers();
   registerModelHandlers();
   registerRuntimeHandlers();
+  registerVisionHandlers();
+  registerImagegenHandlers();
   registerConnectorsLegacyHandlers();
   registerTasksHandlers();
   registerAutomationsHandlers();

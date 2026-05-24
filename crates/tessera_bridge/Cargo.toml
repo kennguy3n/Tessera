@@ -18,6 +18,8 @@ tessera_artifacts = { path = "../tessera_artifacts" }
 tessera_citations = { path = "../tessera_citations" }
 tessera_export = { path = "../tessera_export" }
 tessera_audit = { path = "../tessera_audit" }
+tessera_runtime = { path = "../tessera_runtime" }
+tokio = { workspace = true, features = ["rt"] }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

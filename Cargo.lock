@@ -3274,9 +3274,11 @@ dependencies = [
  "tessera_citations",
  "tessera_core",
  "tessera_export",
+ "tessera_runtime",
  "tessera_sources",
  "tessera_templates",
  "thiserror 1.0.69",
+ "tokio",
  "uuid",
 ]
 
@@ -3352,6 +3354,7 @@ dependencies = [
 name = "tessera_runtime"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "futures-util",
  "reqwest",
  "serde",

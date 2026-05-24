@@ -178,6 +178,30 @@ export const RATE_LIMIT_PROFILES = {
     intervalMs: 1_000,
     burst: 5,
   },
+  // Vision completion: ~5-15 s per call (image base64 + VLM
+  // forward pass on llama-server). Burst of 5 lets the indexing
+  // pipeline batch a few images quickly without the rate limiter
+  // tripping; the 1/s refill blocks a runaway component (e.g. a
+  // visual-sources panel that re-mounts in a render loop) from
+  // queueing thousands of vision calls.
+  "vision:describe": {
+    tokensPerInterval: 1,
+    intervalMs: 1_000,
+    burst: 5,
+  },
+  // Image generation: ~10-30 s per call on FLUX.2-klein on a
+  // consumer GPU. The IPC handler ALSO enforces 1 in-flight call
+  // at a time (the diffusion sidecar is single-threaded under the
+  // hood — running two concurrent generations would double VRAM
+  // pressure and tank both). This rate limiter is the defense-
+  // in-depth lower bound: 1 token per 5 s lets a user click
+  // "Generate" → review → click again steadily, while a frozen-
+  // button-mash attack settles into one start per 5 s instead of
+  // overwhelming the in-flight gate with rejected tries.
+  "imagegen:generate": {
+    tokensPerInterval: 1,
+    intervalMs: 5_000,
+  },
 } satisfies Record<string, RateLimitConfig>;
 
 /** Shared default limiter instance used by the IPC layer. */

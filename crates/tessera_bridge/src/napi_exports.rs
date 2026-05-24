@@ -1580,3 +1580,298 @@ pub fn bridge_log_connector_disconnected(provider: String, files_removed: u32) -
     }
     Ok(())
 }
+
+// --- Vision + image-generation bridges -------------------------------------
+//
+// Both call HTTP sidecars (llama-server with `--mmproj` for vision,
+// sd-server for image gen). The underlying `tessera_runtime`
+// functions are async (`reqwest::Client::send().await`), so each
+// bridge spins up a private current-thread tokio runtime inside the
+// napi `Task::compute` worker. That keeps the bridge crate
+// runtime-agnostic (we don't pull in a global #[tokio::main]) and
+// avoids contention with any future async work running on the
+// Electron main thread.
+//
+// We use `AsyncTask` so the JS side gets a Promise — vision and
+// image generation are 10-30 second calls; blocking the napi
+// callback thread would freeze every other IPC handler in the
+// Electron main process for the duration.
+
+/// JS-facing response shape for [`tessera_runtime::vision::VisionResponse`].
+/// Kept in napi-friendly form (no `Option`, no nested generics).
+#[napi(object)]
+pub struct VisionDescribeResult {
+    pub content: String,
+    pub stop: bool,
+    pub tokens_predicted: u32,
+    pub tokens_evaluated: u32,
+}
+
+/// One of the three pre-baked vision-completion modes. Mirrors the
+/// `vision_describe` / `vision_ocr` / `vision_describe_chart`
+/// convenience wrappers in `crates/tessera_runtime/src/vision.rs`.
+/// String enum on the JS side (`"describe"`, `"ocr"`, `"chart"`) so
+/// the renderer can statically discriminate without smuggling
+/// magic numbers.
+#[napi(string_enum)]
+pub enum VisionMode {
+    Describe,
+    Ocr,
+    Chart,
+}
+
+/// Task wrapper for the vision-completion bridge. Holds the
+/// endpoint URL, the on-disk image path, the prompt mode, and the
+/// max-tokens budget; the worker thread builds its own tokio
+/// runtime and calls into `tessera_runtime::vision`.
+pub struct VisionDescribeTask {
+    endpoint: String,
+    image_path: String,
+    mode: VisionMode,
+    max_tokens: u32,
+}
+
+impl Task for VisionDescribeTask {
+    type Output = tessera_runtime::vision::VisionResponse;
+    type JsValue = VisionDescribeResult;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        let endpoint = self.endpoint.clone();
+        let image_path = self.image_path.clone();
+        let max_tokens = self.max_tokens;
+        let mode = self.mode;
+
+        // Per-call current-thread runtime. Cheap to construct (it's
+        // a thin wrapper around mio); the alternative — sharing a
+        // single global runtime — would risk a deadlock if a future
+        // sync bridge call ever lands on the same worker thread and
+        // tries to acquire a tokio resource the previous async call
+        // dropped. Keeping each call self-contained avoids that.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| napi::Error::from_reason(format!("tokio runtime: {e}")))?;
+
+        rt.block_on(async move {
+            match mode {
+                VisionMode::Describe => {
+                    tessera_runtime::vision::vision_describe(&endpoint, &image_path, max_tokens)
+                        .await
+                }
+                VisionMode::Ocr => {
+                    tessera_runtime::vision::vision_ocr(&endpoint, &image_path, max_tokens).await
+                }
+                VisionMode::Chart => {
+                    tessera_runtime::vision::vision_describe_chart(
+                        &endpoint,
+                        &image_path,
+                        max_tokens,
+                    )
+                    .await
+                }
+            }
+        })
+        .map_err(napi::Error::from_reason)
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(VisionDescribeResult {
+            content: output.content,
+            stop: output.stop,
+            // Default to 0 if the sidecar omitted the field —
+            // matches the TS-side `VisionResult` declaration where
+            // these are `number` (not `number | undefined`).
+            tokens_predicted: output.tokens_predicted.unwrap_or(0),
+            tokens_evaluated: output.tokens_evaluated.unwrap_or(0),
+        })
+    }
+}
+
+/// Run a vision completion against a `llama-server --mmproj` sidecar.
+///
+/// `endpoint` is the sidecar base URL (e.g.
+/// `http://127.0.0.1:8385`). `image_path` is an absolute path to
+/// the image file on the user's disk — the bridge reads it,
+/// base64-encodes it, and posts it to the sidecar's `/completion`
+/// endpoint with the `[img-1]` placeholder substituted in.
+///
+/// The `mode` argument selects one of three pre-tuned prompts:
+///   - `"describe"`: searchable natural-language description of
+///     the image. Used by the indexing pipeline for image sources.
+///   - `"ocr"`: verbatim transcription of every visible character.
+///     Used for scanned PDFs and whiteboard captures.
+///   - `"chart"`: structured chart / diagram summary including
+///     axes, key data points, and conclusion.
+///
+/// Returns a Promise resolving to `{ content, stop, tokensPredicted,
+/// tokensEvaluated }`. Rejects with the sidecar's status line and
+/// body on HTTP failure, or with the underlying I/O error if the
+/// image file can't be read.
+#[napi]
+pub fn bridge_vision_describe(
+    endpoint: String,
+    image_path: String,
+    mode: VisionMode,
+    max_tokens: u32,
+) -> napi::Result<AsyncTask<VisionDescribeTask>> {
+    Ok(AsyncTask::new(VisionDescribeTask {
+        endpoint,
+        image_path,
+        mode,
+        max_tokens,
+    }))
+}
+
+/// JS-facing response shape for
+/// [`tessera_runtime::imagegen::ImageGenResponse`]. PNG bytes are
+/// returned as a `Buffer` on the JS side; the renderer / main
+/// process writes them to disk before showing the image in the
+/// editor preview.
+#[napi(object)]
+pub struct GenerateImageResult {
+    pub png_bytes: napi::bindgen_prelude::Buffer,
+    pub seed: napi::bindgen_prelude::BigInt,
+}
+
+/// JS-facing request shape for `bridge_generate_image`. Bundling
+/// the sampling knobs into a single struct keeps the napi
+/// signature ergonomic (one `request` object on the TS side
+/// instead of seven positional `null`s for omitted overrides)
+/// AND under clippy's `too_many_arguments` threshold. The struct
+/// maps to a plain JS object — every `Option<T>` becomes
+/// `T | null | undefined` on the renderer side.
+#[napi(object)]
+pub struct GenerateImageInput {
+    pub prompt: String,
+    pub width: u32,
+    pub height: u32,
+    /// Number of diffusion denoising steps. `None` defers to the
+    /// `ImageGenRequest` default (20 for FLUX.2-klein).
+    pub steps: Option<u32>,
+    /// Classifier-free guidance scale. `None` defers to the
+    /// `ImageGenRequest` default (3.5 for FLUX.2-klein). f64 on
+    /// the wire because JS Numbers are doubles; the bridge casts
+    /// to f32 for the Rust side, which is the diffusion-domain
+    /// precision.
+    pub cfg_scale: Option<f64>,
+    /// Sampler seed. `None` → sd-server picks one. The Rust side
+    /// is u64 to match sd-server's full range; the wire type is
+    /// i64 because that's what napi-rs exposes by default —
+    /// negative values are clamped to 0 defensively (the
+    /// renderer pre-validates positive).
+    pub seed: Option<i64>,
+    /// Optional negative prompt. `None` / empty string both
+    /// disable negative conditioning.
+    pub negative_prompt: Option<String>,
+}
+
+/// Task wrapper for the image-generation bridge. Carries the
+/// endpoint URL plus every diffusion sampling knob the renderer
+/// might want to control. Defaults that aren't covered here come
+/// from `ImageGenRequest::new`'s FLUX.2-klein presets — the
+/// `Option<u32>` / `Option<f32>` shape means the renderer can
+/// pass `null` from JS to fall back to the model's recommended
+/// values.
+pub struct GenerateImageTask {
+    endpoint: String,
+    prompt: String,
+    width: u32,
+    height: u32,
+    steps: Option<u32>,
+    cfg_scale: Option<f64>,
+    seed: Option<i64>,
+    negative_prompt: Option<String>,
+}
+
+impl Task for GenerateImageTask {
+    type Output = tessera_runtime::imagegen::ImageGenResponse;
+    type JsValue = GenerateImageResult;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        let endpoint = self.endpoint.clone();
+        let mut req = tessera_runtime::imagegen::ImageGenRequest::new(
+            self.prompt.clone(),
+            self.width,
+            self.height,
+        );
+        if let Some(steps) = self.steps {
+            req = req.with_steps(steps);
+        }
+        if let Some(cfg) = self.cfg_scale {
+            // ImageGenRequest stores cfg_scale as f32; the napi
+            // bridge surfaces it as f64 because JS Numbers are
+            // doubles. The lossy cast here is safe — diffusion
+            // CFG values fit in f32 (typically 1.0-15.0) and the
+            // FLUX.2-klein recommended range is 2.0-5.0.
+            req = req.with_cfg_scale(cfg as f32);
+        }
+        if let Some(seed) = self.seed {
+            // The renderer pre-validates seed >= 0; clamp to 0
+            // here as a defense-in-depth so a stray negative
+            // value can't break the unsigned cast.
+            let seed_u64 = if seed < 0 { 0 } else { seed as u64 };
+            req = req.with_seed(seed_u64);
+        }
+        if let Some(neg) = &self.negative_prompt {
+            req = req.with_negative_prompt(neg.clone());
+        }
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| napi::Error::from_reason(format!("tokio runtime: {e}")))?;
+
+        rt.block_on(async move { tessera_runtime::imagegen::generate_image(&endpoint, &req).await })
+            .map_err(napi::Error::from_reason)
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(GenerateImageResult {
+            png_bytes: output.png_bytes.into(),
+            // Seed is u64 → JS BigInt. Using a plain Number would
+            // truncate at 2^53, and seeds from sd-server are
+            // legitimately full u64 values (uniform random).
+            seed: napi::bindgen_prelude::BigInt {
+                sign_bit: false,
+                words: vec![output.seed],
+            },
+        })
+    }
+}
+
+/// Generate an image via the sd-server (stable-diffusion.cpp)
+/// sidecar.
+///
+/// `endpoint` is the sidecar base URL (e.g.
+/// `http://127.0.0.1:8386`). The diffusion sidecar is only started
+/// by the Electron main process on explicit user action (the
+/// "Generate image" button) — see
+/// `apps/desktop/electron/diffusionSidecar.ts` — so this bridge
+/// will reject if the sidecar isn't running.
+///
+/// Optional `steps` / `cfg_scale` / `seed` / `negative_prompt`
+/// override the FLUX.2-klein presets baked into `ImageGenRequest`.
+/// Pass `null` / `undefined` to keep the defaults.
+///
+/// Returns a Promise resolving to `{ pngBytes: Buffer, seed:
+/// BigInt }`. `pngBytes` is the raw PNG payload, ready to be
+/// written to `<userData>/generated-images/<artifactId>/<n>.png`
+/// by the IPC handler. The `seed` is the value sd-server actually
+/// used (caller-supplied or server-chosen) so the artifact can
+/// persist it for reproducibility.
+#[napi]
+pub fn bridge_generate_image(
+    endpoint: String,
+    request: GenerateImageInput,
+) -> napi::Result<AsyncTask<GenerateImageTask>> {
+    Ok(AsyncTask::new(GenerateImageTask {
+        endpoint,
+        prompt: request.prompt,
+        width: request.width,
+        height: request.height,
+        steps: request.steps,
+        cfg_scale: request.cfg_scale,
+        seed: request.seed,
+        negative_prompt: request.negative_prompt,
+    }))
+}

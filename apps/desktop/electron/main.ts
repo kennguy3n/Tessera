@@ -3,7 +3,7 @@ import * as path from "path";
 import { registerIpcHandlers } from "./ipc";
 import { replayPersistedHybridSearchConfigToBridge } from "./ipc/settings";
 import { loadConfig, saveWindowState } from "./config";
-import { initAppState } from "./appState";
+import { initAppState, stopAllSidecars } from "./appState";
 import { detectComputeBackends } from "./modelManagement";
 import { startScheduler, stopScheduler } from "./scheduler";
 import { getLogger } from "./logger";
@@ -638,6 +638,19 @@ app.on("will-quit", (event) => {
       // We're already on the quit path — log and continue rather than
       // hang the process indefinitely on a misbehaving tick.
       console.error("[tessera] scheduler shutdown failed:", e);
+    }
+    try {
+      // Drain text + vision + diffusion sidecars gracefully (SIGTERM
+      // with a 5 s SIGKILL fallback inside each sidecar) BEFORE
+      // calling `app.quit()`. Without this, every sidecar would only
+      // get the synchronous `process.on("exit")` SIGKILL fallback,
+      // which is correct for orphan-prevention but skips any cache
+      // flush / clean shutdown that llama-server / sd-server want
+      // to do on SIGTERM. Errors are swallowed (logged inside
+      // `stopAllSidecars`) so a hung sidecar can't block app exit.
+      await stopAllSidecars();
+    } catch (e) {
+      console.error("[tessera] sidecar shutdown failed:", e);
     } finally {
       app.quit();
     }

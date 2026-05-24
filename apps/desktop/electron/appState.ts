@@ -2,6 +2,7 @@ import { app } from "electron";
 import * as path from "path";
 import * as fs from "fs";
 import { ModelSidecar } from "./sidecar";
+import { DiffusionSidecar, resolveDiffusionBinary } from "./diffusionSidecar";
 import { getOrCreateDbKeyAsync, EncryptionUnavailableError } from "./dbKey";
 import type {
   AddCitationRequest,
@@ -187,10 +188,94 @@ export interface NativeBridge {
     removed: number,
   ): void;
   bridgeLogConnectorDisconnected(provider: string, filesRemoved: number): void;
+  // --- Vision + image generation ---
+  //
+  // Async bridges that talk to local sidecars:
+  //   - `bridgeVisionDescribe` → `llama-server --mmproj` on
+  //     port 8385 (managed by `visionSidecar` here).
+  //   - `bridgeGenerateImage`  → `sd-server` on port 8386
+  //     (managed by `diffusionSidecar` here, started on
+  //     explicit user action only).
+  // Both return Promises (the napi side wraps the inner async
+  // `tessera_runtime` calls in `AsyncTask`s) so the JS main
+  // process event loop stays free during the 10-30 s sidecar
+  // call.
+
+  /**
+   * Run a vision completion against a `llama-server --mmproj`
+   * sidecar. Used by the indexing pipeline (image description,
+   * OCR for scanned PDFs, chart extraction) and by Block-E user
+   * features (whiteboard transcription, ask-about-image).
+   *
+   * `mode` selects a pre-tuned prompt:
+   *   - `"describe"`: free-form image description for the search
+   *     index.
+   *   - `"ocr"`: verbatim text transcription, preserving layout
+   *     in markdown.
+   *   - `"chart"`: structured chart / diagram summary.
+   *
+   * Resolves with `{ content, stop, tokensPredicted,
+   * tokensEvaluated }`. Rejects with the sidecar's HTTP status
+   * line + body on failure (e.g. `HTTP 503: overloaded`) or with
+   * the underlying I/O error if `imagePath` can't be read.
+   */
+  bridgeVisionDescribe(
+    endpoint: string,
+    imagePath: string,
+    mode: "describe" | "ocr" | "chart",
+    maxTokens: number,
+  ): Promise<{
+    content: string;
+    stop: boolean;
+    tokensPredicted: number;
+    tokensEvaluated: number;
+  }>;
+  /**
+   * Generate one image via the sd-server diffusion sidecar.
+   * Used by the `imagegen:generate` IPC handler.
+   *
+   * `steps`, `cfgScale`, `seed`, and `negativePrompt` are
+   * optional — pass `null` to fall back to FLUX.2-klein's
+   * recommended sampling settings baked into the Rust side.
+   *
+   * Resolves with `{ pngBytes: Buffer, seed: BigInt }`.
+   * `pngBytes` is the raw PNG payload (the IPC handler writes it
+   * to `<userData>/generated-images/<artifactId>/<n>.png`).
+   * `seed` is what sd-server actually used (caller-supplied or
+   * server-chosen) so the artifact can persist it for
+   * "regenerate in the same style" workflows.
+   */
+  bridgeGenerateImage(
+    endpoint: string,
+    request: {
+      prompt: string;
+      width: number;
+      height: number;
+      steps: number | null;
+      cfgScale: number | null;
+      seed: number | null;
+      negativePrompt: string | null;
+    },
+  ): Promise<{ pngBytes: Buffer; seed: bigint }>;
 }
 
 let bridge: NativeBridge | null = null;
 let modelSidecar: ModelSidecar | null = null;
+// Vision sidecar runs the same `llama-server` binary as the text
+// sidecar but on a separate port (8385) and with `--mmproj`
+// appended so the multimodal projector is loaded alongside the
+// language model. Lifecycle is on-demand — the IPC handler that
+// answers vision requests warms it up on first use rather than at
+// app boot, so a machine that never asks for a VLM never pays the
+// memory cost. The 60 s idle-unload matches the text sidecar.
+let visionSidecar: ModelSidecar | null = null;
+// Diffusion sidecar (sd-server / stable-diffusion.cpp) is bigger
+// still (~6 GB VRAM for FLUX.2-klein) and starts ONLY on explicit
+// user action — the renderer's "Generate image" button — never at
+// boot, never on app focus, never on speculative warm-up. The 30 s
+// idle-unload reflects bursty user interaction (generate / edit /
+// re-generate) typical of the image-gen workflow.
+let diffusionSidecar: DiffusionSidecar | null = null;
 
 function resolveNativeAddon(): NativeBridge | null {
   // The compiled main bundle now lives at `dist-electron/electron/main.js`
@@ -302,8 +387,35 @@ export async function initAppState(): Promise<boolean> {
   modelSidecar = new ModelSidecar({
     binaryPath: resolveSidecarBinary(),
     port: 8384,
+    label: "text",
   });
-  console.log("[Tessera] Model sidecar configured");
+  // Vision sidecar reuses the same llama-server binary but binds a
+  // distinct port so it can run concurrently with the text sidecar
+  // — concurrent text + vision is a real workflow (the artifact
+  // generator pulls VLM descriptions of source images while the
+  // text generator is mid-stream).
+  //
+  // `modelPath` and `extraArgs` are unset here intentionally; the
+  // vision IPC handler populates both from the installed vision
+  // record (which carries `path` + `mmprojPath`) before calling
+  // `start()`. Starting now without a model would throw.
+  visionSidecar = new ModelSidecar({
+    binaryPath: resolveSidecarBinary(),
+    port: 8385,
+    label: "vision",
+  });
+  diffusionSidecar = new DiffusionSidecar({
+    binaryPath: resolveDiffusionBinary(
+      app.getAppPath(),
+      __dirname,
+      (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath,
+    ),
+    port: 8386,
+    label: "diffusion",
+  });
+  console.log(
+    "[Tessera] Model sidecars configured (text=8384 vision=8385 diffusion=8386)",
+  );
 
   return true;
 }
@@ -358,4 +470,80 @@ export function isBridgeAvailable(): boolean {
 
 export function getModelSidecar(): ModelSidecar | null {
   return modelSidecar;
+}
+
+/**
+ * Vision sidecar accessor. Returns `null` when the native bridge
+ * isn't initialised (fallback mode) or when initialisation was
+ * skipped — the caller is responsible for warming it up on demand
+ * once a vision request is made. The lifecycle contract is:
+ *   1. The vision IPC handler reads the current vision slot's
+ *      `InstalledModelRecord` (via `getCurrentModel(_, "vision")`).
+ *   2. If no record, surface "no vision model installed" to the
+ *      renderer and DO NOT call `setModelPath` (start() would
+ *      throw).
+ *   3. If a record exists, call `setModelPath(record.path)` and
+ *      `setExtraArgs(["--mmproj", record.mmprojPath, ...])` then
+ *      `start()`. For low-tier (`tier === "low"`) hosts, also append
+ *      `--parallel 1` to halve the KV-cache budget.
+ *   4. Idle-unload is automatic after 60 s; the next vision request
+ *      re-runs steps 1-3.
+ */
+export function getVisionSidecar(): ModelSidecar | null {
+  return visionSidecar;
+}
+
+/**
+ * Diffusion sidecar accessor. Same null-on-fallback contract as
+ * `getVisionSidecar`, but with a stricter on-demand contract: the
+ * sidecar must NEVER be started until the user explicitly clicks
+ * "Generate image" in the InfographicEditor / LandingPageEditor.
+ * Auto-starting would burn ~6 GB of VRAM at app boot on any host
+ * that has an imagegen model installed, which would brick the
+ * machine for anyone running other GPU workloads (gaming, CUDA
+ * compute, video editing).
+ */
+export function getDiffusionSidecar(): DiffusionSidecar | null {
+  return diffusionSidecar;
+}
+
+/**
+ * Graceful shutdown for every initialised sidecar. Called from
+ * `main.ts`'s `will-quit` handler so an orderly app exit delivers
+ * SIGTERM (with the 5 s SIGKILL fallback inside each sidecar's
+ * `stop()`) instead of relying on the synchronous `process.on("exit")`
+ * SIGKILL handler each sidecar installs as a last-resort orphan
+ * guard.
+ *
+ * Stops are best-effort: a stop failure on one sidecar must not
+ * prevent the others from being torn down, and must not block app
+ * exit — the process.on("exit") SIGKILL fallback is there exactly
+ * for the case where this graceful path doesn't complete in time.
+ * Errors are logged so an audit can tell graceful vs. forced
+ * shutdowns apart.
+ */
+export async function stopAllSidecars(): Promise<void> {
+  const tasks: Array<Promise<void>> = [];
+  if (modelSidecar) {
+    tasks.push(
+      modelSidecar.stop().catch((err) => {
+        console.error("[tessera] text sidecar stop failed:", err);
+      }),
+    );
+  }
+  if (visionSidecar) {
+    tasks.push(
+      visionSidecar.stop().catch((err) => {
+        console.error("[tessera] vision sidecar stop failed:", err);
+      }),
+    );
+  }
+  if (diffusionSidecar) {
+    tasks.push(
+      diffusionSidecar.stop().catch((err) => {
+        console.error("[tessera] diffusion sidecar stop failed:", err);
+      }),
+    );
+  }
+  await Promise.all(tasks);
 }
