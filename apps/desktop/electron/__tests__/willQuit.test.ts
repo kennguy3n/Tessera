@@ -101,7 +101,23 @@ vi.mock("../ipc/settings", () => ({
   replayPersistedHybridSearchConfigToBridge: vi.fn(),
 }));
 vi.mock("../config", () => ({
-  loadConfig: vi.fn().mockResolvedValue({}),
+  // Production `loadConfig` is synchronous (returns a deep-frozen
+  // `AppConfig` object, not a Promise — see `electron/config.ts:565`),
+  // and `createWindow()` consumes its return value directly to read
+  // `config.windowWidth` / `.windowHeight` / `.windowX` / `.windowY`.
+  // The will-quit tests never reach `createWindow` (the
+  // `app.whenReady()` mock at line 53 returns a never-resolving
+  // Promise so the `.then(createWindow)` chain in `main.ts` is
+  // unreachable), but we still ship a shape-correct mock so a future
+  // test in this file can trigger `createWindow` without silently
+  // getting `undefined` window dimensions. The values mirror
+  // `DEFAULT_CONFIG` in `electron/config.ts:155-157`.
+  loadConfig: vi.fn().mockReturnValue({
+    windowWidth: 1280,
+    windowHeight: 800,
+    windowX: undefined,
+    windowY: undefined,
+  }),
   saveWindowState: vi.fn(),
 }));
 vi.mock("../appState", () => ({
