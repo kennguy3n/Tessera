@@ -22,29 +22,25 @@ import { embedIcons } from "../services/iconResolver";
 import { sanitizeCssColor } from "../utils/cssColor";
 import { sanitizeIconSpec } from "../utils/iconSpec";
 import { sanitizeUrl } from "../utils/safeUrl";
+import { sanitizeHeroImage, type HeroImage } from "../utils/heroImage";
 import { Plus, Trash2, X } from "lucide-react";
 
 /**
- * Optional generated hero image. Persisted alongside the rest of
- * the landing-page spec so the editor can re-render the preview on
- * load without re-running `tessera.imagegen.generate`. See the
- * companion `InfographicHeroImage` interface for the same
- * rationale.
+ * Re-export of the shared `HeroImage` type under the editor-local
+ * `LandingPageHeroImage` alias so existing imports of this type
+ * (if any landed in third-party code) keep working. The shared
+ * type and the `sanitizeHeroImage` validator both live in
+ * `utils/heroImage.ts` — see that file for the rationale behind
+ * the `tessera-asset://` scheme gate and the five required fields.
  */
-export interface LandingPageHeroImage {
-  assetUrl: string;
-  prompt: string;
-  seed: number;
-  width: number;
-  height: number;
-}
+export type LandingPageHeroImage = HeroImage;
 
 export interface LandingPageHero {
   headline: string;
   subheadline: string;
   cta?: string;
   ctaUrl?: string;
-  image?: LandingPageHeroImage;
+  image?: HeroImage;
 }
 
 export interface LandingPageFeature {
@@ -175,36 +171,6 @@ export function parseLandingPageContent(content: string): LandingPageContent {
     // Fall back to default
   }
   return fallback;
-}
-
-/**
- * Validate a parsed `hero.image` payload from the on-disk JSON.
- * Returns `undefined` when the payload is incomplete or the
- * `assetUrl` is not a `tessera-asset://` URL — see the matching
- * `sanitizeHeroImage` in `InfographicEditor.tsx` for the rationale.
- */
-function sanitizeHeroImage(
-  raw: unknown,
-): LandingPageHeroImage | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const r = raw as Record<string, unknown>;
-  if (
-    typeof r.assetUrl !== "string" ||
-    !r.assetUrl.startsWith("tessera-asset://") ||
-    typeof r.prompt !== "string" ||
-    typeof r.seed !== "number" ||
-    typeof r.width !== "number" ||
-    typeof r.height !== "number"
-  ) {
-    return undefined;
-  }
-  return {
-    assetUrl: r.assetUrl,
-    prompt: r.prompt,
-    seed: r.seed,
-    width: r.width,
-    height: r.height,
-  };
 }
 
 export default function LandingPageEditor({

@@ -27,6 +27,7 @@ import GenerateImageButton, {
 import { embedIcons } from "../services/iconResolver";
 import { sanitizeCssColor } from "../utils/cssColor";
 import { sanitizeIconSpec } from "../utils/iconSpec";
+import { sanitizeHeroImage, type HeroImage } from "../utils/heroImage";
 import { Plus, Trash2, ArrowUp, ArrowDown, X } from "lucide-react";
 
 export type InfographicLayout = "vertical" | "horizontal" | "grid";
@@ -59,21 +60,14 @@ export interface InfographicColorScheme {
 }
 
 /**
- * Optional generated hero image. Persisted alongside the rest of
- * the infographic spec so the editor can re-render the preview on
- * load without re-running `tessera.imagegen.generate`. The body of
- * the field is intentionally minimal — the renderer only needs
- * `assetUrl` to drop into `<img src>`; the `prompt` and `seed` are
- * kept for the user's reference ("what prompt produced this?") and
- * for a future regenerate-with-same-seed affordance.
+ * Re-export of the shared `HeroImage` type under the editor-local
+ * `InfographicHeroImage` alias so existing imports of this type
+ * (if any landed in third-party code) keep working. The shared
+ * type and the `sanitizeHeroImage` validator both live in
+ * `utils/heroImage.ts` — see that file for the rationale behind
+ * the `tessera-asset://` scheme gate and the five required fields.
  */
-export interface InfographicHeroImage {
-  assetUrl: string;
-  prompt: string;
-  seed: number;
-  width: number;
-  height: number;
-}
+export type InfographicHeroImage = HeroImage;
 
 export interface InfographicContent {
   title: string;
@@ -82,7 +76,7 @@ export interface InfographicContent {
   colorScheme: InfographicColorScheme;
   defaultIconSet?: "lucide" | "phosphor";
   sections: InfographicSection[];
-  heroImage?: InfographicHeroImage;
+  heroImage?: HeroImage;
 }
 
 interface InfographicEditorProps {
@@ -147,46 +141,6 @@ export function parseInfographicContent(content: string): InfographicContent {
 
 function iconSpecFromPick(v: IconPickerValue): string {
   return `${v.set}:${v.name}`;
-}
-
-/**
- * Validate a parsed `heroImage` payload from the on-disk JSON.
- * Returns `undefined` (drop the field) when the payload is not a
- * complete object — a half-formed hero image would render a broken
- * `<img>` in the preview and we'd rather hide the field entirely.
- *
- * The `assetUrl` is also gated on starting with the
- * `tessera-asset://` scheme. A future code path that somehow
- * persisted a `file://` or `http://` URL here would otherwise let
- * the renderer load the unexpected resource on next open — not a
- * security issue in itself (the renderer's CSP allow-list is the
- * real boundary), but the wrong URL would silently fail to render
- * and the user would have no way to know why. Better to drop the
- * field and surface the Generate button again so the user can
- * regenerate cleanly.
- */
-function sanitizeHeroImage(
-  raw: unknown,
-): InfographicHeroImage | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const r = raw as Record<string, unknown>;
-  if (
-    typeof r.assetUrl !== "string" ||
-    !r.assetUrl.startsWith("tessera-asset://") ||
-    typeof r.prompt !== "string" ||
-    typeof r.seed !== "number" ||
-    typeof r.width !== "number" ||
-    typeof r.height !== "number"
-  ) {
-    return undefined;
-  }
-  return {
-    assetUrl: r.assetUrl,
-    prompt: r.prompt,
-    seed: r.seed,
-    width: r.width,
-    height: r.height,
-  };
 }
 
 export default function InfographicEditor({
