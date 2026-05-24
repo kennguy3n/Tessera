@@ -43,6 +43,48 @@
  * (`standard: true`, `secure: true`, `supportFetchAPI: true`,
  * `corsEnabled: true`) make it behave like `https://` from the
  * renderer's perspective.
+ *
+ * Threat model — what this guard does NOT defend against
+ * ------------------------------------------------------
+ * The path-traversal containment check uses
+ * `path.resolve(allowedRoot, "." + decoded).startsWith(allowedRoot
+ * + path.sep)`. `path.resolve` collapses `..` segments but does
+ * NOT resolve symlinks. A user (or process running with the
+ * user's filesystem privileges) who can write to
+ * `<userData>/generated-images/` could create a symlink there
+ * pointing outside the directory — e.g.
+ * `ln -s /etc/passwd <userData>/generated-images/evil` — and the
+ * renderer would then fetch the link target via
+ * `tessera-asset://generated-images/evil`. Devin Review PR #38
+ * pass-4 correctly flagged this.
+ *
+ * The fix would be to either (a) `fs.realpath` every request and
+ * re-check containment, or (b) open the file with `O_NOFOLLOW` on
+ * POSIX / `FILE_FLAG_OPEN_REPARSE_POINT` on Windows. We deliberately
+ * do NEITHER, for two reasons:
+ *
+ *   1. **Threat model.** Tessera's threat model assumes the local
+ *      filesystem under `<userData>/` is trusted — exploitation of
+ *      this gap requires the attacker to already have write access
+ *      to the user's data directory, at which point they can read
+ *      `/etc/passwd` directly without going through the renderer.
+ *      We are not a multi-tenant service; there is no privilege
+ *      boundary inside `<userData>/`.
+ *
+ *   2. **Cost.** The protocol handler fires on every `<img src>`
+ *      hydration. Adding an async stat per request would add disk
+ *      latency to renderer scroll-through of artifacts that carry
+ *      hero images, and the realpath approach still has a TOCTOU
+ *      window between resolve and read that only `O_NOFOLLOW`
+ *      closes.
+ *
+ * If the threat model later expands (e.g. shared Tessera install,
+ * untrusted plugin sandbox writing into `generated-images/`), the
+ * correct layered fix is to swap the prefix check for an
+ * `O_NOFOLLOW` / `FILE_FLAG_OPEN_REPARSE_POINT` file open rather
+ * than chase the `realpath` race. Until then, the prefix check +
+ * the host allow-list + the renderer-side `sanitizeHeroImage`
+ * mirror of the host allow-list are the layered defenses.
  */
 import { app, protocol, net } from "electron";
 import * as path from "path";
