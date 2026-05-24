@@ -178,6 +178,27 @@ impl PdfPageProbe {
     }
 }
 
+/// Load a PDF from disk once, returning the parsed [`Document`] so
+/// the caller can reuse it across the text / OCR / chart passes.
+///
+/// Indexing a single PDF runs three logical passes (text, OCR,
+/// chart). Each one walks the PDF page tree, so re-parsing the
+/// document for each is wasted I/O — for a multi-hundred-page scan
+/// it's the dominant cost in the indexing path. The indexer calls
+/// this once per file and threads the `Document` into
+/// [`extract_pdf_text_with_doc`], [`vlm_ocr_chunks_with_doc`], and
+/// [`vlm_chart_chunks_with_doc`]. The legacy path-taking
+/// `extract_pdf_text`, `vlm_ocr_chunks_for_pdf`, and
+/// `vlm_chart_chunks_for_pdf` wrappers still work — they just
+/// re-parse internally and are retained for tests / external
+/// callers that don't have a pre-loaded `Document` on hand.
+pub fn load_pdf_document(path: &Path) -> Result<Document> {
+    Document::load(path).map_err(|e| Error::Extraction {
+        path: path.display().to_string(),
+        message: format!("failed to load PDF: {e}"),
+    })
+}
+
 /// Extract the concatenated text layer of every page in the PDF at
 /// `path`. The output is the same shape `extract_text` produces for
 /// typed-text formats (txt / md / html / xlsx) — one long string,
@@ -186,14 +207,26 @@ impl PdfPageProbe {
 ///
 /// This is the **text pass**. Pages with no extractable text
 /// contribute the empty string here; the OCR pass picks them up.
+///
+/// Re-parses the PDF on every call. The indexer's hot path uses
+/// [`extract_pdf_text_with_doc`] with a pre-loaded `Document` to
+/// avoid the second / third parse during OCR + chart passes.
 pub fn extract_pdf_text(path: &Path) -> Result<String> {
-    let probes = probe_pdf_pages(path)?;
-    let joined = probes
+    let doc = load_pdf_document(path)?;
+    Ok(extract_pdf_text_with_doc(&doc))
+}
+
+/// Extract the concatenated text layer from an already-loaded PDF.
+/// Same semantics as [`extract_pdf_text`], but reuses the caller's
+/// `Document` so the text + OCR + chart passes can share a single
+/// parse.
+#[must_use]
+pub fn extract_pdf_text_with_doc(doc: &Document) -> String {
+    probe_pdf_pages_with_doc(doc)
         .into_iter()
         .map(|p| p.text)
         .collect::<Vec<_>>()
-        .join("\n\n");
-    Ok(joined)
+        .join("\n\n")
 }
 
 /// Probe every page of the PDF at `path`, returning a vector with
@@ -244,6 +277,33 @@ pub fn pdf_pages_needing_ocr(probes: &[PdfPageProbe]) -> Vec<u32> {
         .collect()
 }
 
+/// Outcome of a single PDF VLM pass (OCR or chart). Used by the
+/// indexer to decide whether the file's content hash should be
+/// stamped as "fully indexed" (so the next `index_file` short-
+/// circuits on hash match) or as "partially indexed, needs another
+/// pass" (so the next call re-runs the VLM passes).
+///
+/// Before this struct existed, both passes returned `Result<Vec<Chunk>>`
+/// and the indexer had no way to distinguish "this PDF had no
+/// OCR-eligible pages" (don't re-process) from "this PDF was
+/// interrupted by the rate limiter" (DO re-process next pass).
+/// The hash was always stamped on success, so rate-limited pages
+/// were silently lost until the file's content changed — a
+/// regression the Devin Review pass-7 🚩 finding called out.
+#[derive(Debug)]
+#[must_use]
+pub struct PdfPassOutcome {
+    /// The chunks the pass produced (one per OCR'd page / chart
+    /// image). May be empty when the pass found no candidates.
+    pub chunks: Vec<Chunk>,
+    /// `true` when every eligible page was processed; `false` when
+    /// the rate limiter cut the pass short. The indexer maps
+    /// `false` to a sentinel hash on the `indexed_files` row so
+    /// the next pass re-runs the VLM work for the unprocessed
+    /// remainder.
+    pub fully_processed: bool,
+}
+
 /// Produce VLM-OCR chunks for every raster page in the PDF at
 /// `path`. The text-pass chunks (from [`extract_pdf_text`]) are
 /// emitted separately by the indexer's normal `chunk_text` path —
@@ -273,26 +333,39 @@ pub fn vlm_ocr_chunks_for_pdf(
     pdf_path: &Path,
     limiter: &PdfOcrRateLimiter,
     starting_chunk_index: usize,
-) -> Result<Vec<Chunk>> {
-    // Load the PDF ONCE and reuse the parsed `Document` for both the
-    // page probe and the OCR loop. Earlier revisions called
-    // `probe_pdf_pages(pdf_path)` (which itself called
-    // `Document::load`) and then `Document::load(pdf_path)` again —
-    // doubling the parse cost for multi-hundred-page scans.
-    let doc = Document::load(pdf_path).map_err(|e| Error::Extraction {
-        path: pdf_path.display().to_string(),
-        message: format!("failed to load PDF for OCR pass: {e}"),
-    })?;
-    let probes = probe_pdf_pages_with_doc(&doc);
+) -> Result<PdfPassOutcome> {
+    // Legacy wrapper: load the PDF and delegate. Retained so
+    // external tests / callers that don't have a pre-loaded
+    // `Document` on hand keep working.
+    let doc = load_pdf_document(pdf_path)?;
+    vlm_ocr_chunks_with_doc(&doc, extractor, pdf_path, limiter, starting_chunk_index)
+}
+
+/// Like [`vlm_ocr_chunks_for_pdf`] but reuses a pre-loaded
+/// `Document`. The indexer threads a single `Document` from
+/// [`load_pdf_document`] through the text + OCR + chart passes so
+/// the PDF is parsed exactly once per `index_file` call.
+pub fn vlm_ocr_chunks_with_doc(
+    doc: &Document,
+    extractor: &dyn VisionExtractor,
+    pdf_path: &Path,
+    limiter: &PdfOcrRateLimiter,
+    starting_chunk_index: usize,
+) -> Result<PdfPassOutcome> {
+    let probes = probe_pdf_pages_with_doc(doc);
     let pages = pdf_pages_needing_ocr(&probes);
     if pages.is_empty() {
-        return Ok(Vec::new());
+        return Ok(PdfPassOutcome {
+            chunks: Vec::new(),
+            fully_processed: true,
+        });
     }
     let pages_map = doc.get_pages();
 
     let mut chunks = Vec::new();
     let mut chunk_index = starting_chunk_index;
     let pdf_path_str = pdf_path.to_string_lossy().to_string();
+    let mut fully_processed = true;
 
     for page_number in pages {
         let Some(page_id) = pages_map.get(&page_number).copied() else {
@@ -309,7 +382,7 @@ pub fn vlm_ocr_chunks_for_pdf(
         // any OCR output, starving subsequent pages and other PDFs
         // in the same window. Mirrors the order used by
         // `vlm_chart_chunks_for_pdf`.
-        let Some(image_path) = write_largest_image_for_ocr(&doc, page_id, pdf_path)? else {
+        let Some(image_path) = write_largest_image_for_ocr(doc, page_id, pdf_path)? else {
             eprintln!(
                 "[tessera_sources] pdf {} page {} has no decodable image (only non-DCTDecode filters available); skipping OCR for this page",
                 pdf_path_str, page_number
@@ -320,13 +393,16 @@ pub fn vlm_ocr_chunks_for_pdf(
         if !limiter.try_acquire() {
             // Budget exhausted — we've already written the temp
             // image but haven't issued the VLM call yet, so unlink
-            // and bail out of the loop. Remaining raster pages are
-            // deferred to the next indexing pass (the limiter
-            // refills on its 60 s wall-clock window).
+            // and bail out of the loop. Mark the outcome as
+            // partial so the indexer can stamp a sentinel hash on
+            // the `indexed_files` row — without that, the next
+            // `index_file` call would short-circuit on hash match
+            // and the remaining pages would be permanently lost.
             let _ = std::fs::remove_file(&image_path);
             eprintln!(
-                "[tessera_sources] pdf OCR rate limit reached at page {page_number} of {pdf_path_str}; skipping remaining pages this window"
+                "[tessera_sources] pdf OCR rate limit reached at page {page_number} of {pdf_path_str}; remaining pages deferred (file will be re-indexed on next pass)"
             );
+            fully_processed = false;
             break;
         }
 
@@ -366,7 +442,10 @@ pub fn vlm_ocr_chunks_for_pdf(
         });
         chunk_index += 1;
     }
-    Ok(chunks)
+    Ok(PdfPassOutcome {
+        chunks,
+        fully_processed,
+    })
 }
 
 /// Find the largest Image XObject on `page_id` that we can decode
@@ -431,17 +510,46 @@ fn temp_image_path(source_pdf: &Path, tag: &str, img: &PdfImage<'_>) -> std::pat
     dir.join(format!("tessera-pdf-{tag}-{unique}.jpg"))
 }
 
-/// Pick the largest (by pixel area) image whose filter list
-/// includes `DCTDecode`. Returns `None` if no DCTDecode image
-/// exists on the page.
+/// True when the supplied PDF stream filter list represents a
+/// stream whose raw bytes are a complete JPEG file as-is — i.e.
+/// **exactly one filter** and that filter is `DCTDecode`.
+///
+/// This is deliberately stricter than `filters.iter().any(== DCT)`:
+/// PDF allows cascaded filters (e.g. `[FlateDecode, DCTDecode]`),
+/// which on read are applied in pipeline order — Flate-decompress
+/// FIRST, then DCT-decompress — so the raw `img.content` bytes are
+/// the Flate-compressed wrapper, NOT a valid JPEG. Writing the raw
+/// bytes to a `.jpg` temp file would produce garbage that the VLM
+/// cannot decode (a quietly failing page rather than a noisy one).
+///
+/// PDF 32000-1:2008 §7.4.8 only guarantees the "complete JPEG file
+/// as-is" property when DCTDecode is the SOLE filter. Future work
+/// can add support for the cascaded forms (e.g. by piping through
+/// `flate2::Decoder` first) — the gate here is conservative on
+/// purpose so we don't ship invalid JPEGs to the VLM.
+///
+/// `None` filters indicate a stream with no decoding required
+/// (i.e. raw image data) — also rejected, since we have no way to
+/// tell whether the raw bytes are a JPEG without sniffing the
+/// magic, and the existing DCTDecode-only contract is sufficient
+/// for the dominant raster-PDF case.
+#[must_use]
+pub fn is_single_dct_filter(filters: &Option<Vec<String>>) -> bool {
+    filters
+        .as_ref()
+        .is_some_and(|fs| fs.len() == 1 && fs[0] == "DCTDecode")
+}
+
+/// Pick the largest (by pixel area) image whose filter list is
+/// exactly `[DCTDecode]`. Returns `None` if no such image exists
+/// on the page.
+///
+/// See [`is_single_dct_filter`] for why this is stricter than
+/// "filter list contains DCTDecode".
 fn pick_largest_dct_image<'a>(images: &'a [PdfImage<'a>]) -> Option<&'a PdfImage<'a>> {
     images
         .iter()
-        .filter(|img| {
-            img.filters
-                .as_ref()
-                .is_some_and(|fs| fs.iter().any(|f| f == "DCTDecode"))
-        })
+        .filter(|img| is_single_dct_filter(&img.filters))
         .max_by_key(|img| img.width.saturating_mul(img.height))
 }
 
@@ -546,17 +654,30 @@ pub fn vlm_chart_chunks_for_pdf(
     pdf_path: &Path,
     limiter: &PdfOcrRateLimiter,
     starting_chunk_index: usize,
-) -> Result<Vec<Chunk>> {
-    let doc = Document::load(pdf_path).map_err(|e| Error::Extraction {
-        path: pdf_path.display().to_string(),
-        message: format!("failed to load PDF for chart pass: {e}"),
-    })?;
+) -> Result<PdfPassOutcome> {
+    // Legacy wrapper: load the PDF and delegate. See
+    // [`vlm_chart_chunks_with_doc`] for the indexer-facing path.
+    let doc = load_pdf_document(pdf_path)?;
+    vlm_chart_chunks_with_doc(&doc, extractor, pdf_path, limiter, starting_chunk_index)
+}
 
+/// Like [`vlm_chart_chunks_for_pdf`] but reuses a pre-loaded
+/// `Document`. The indexer threads a single `Document` from
+/// [`load_pdf_document`] through the text + OCR + chart passes so
+/// the PDF is parsed exactly once per `index_file` call.
+pub fn vlm_chart_chunks_with_doc(
+    doc: &Document,
+    extractor: &dyn VisionExtractor,
+    pdf_path: &Path,
+    limiter: &PdfOcrRateLimiter,
+    starting_chunk_index: usize,
+) -> Result<PdfPassOutcome> {
     let mut chunks = Vec::new();
     let mut chunk_index = starting_chunk_index;
     let pdf_path_str = pdf_path.to_string_lossy().to_string();
+    let mut fully_processed = true;
 
-    for (page_number, page_id) in doc.get_pages() {
+    'outer: for (page_number, page_id) in doc.get_pages() {
         let Ok(images) = doc.get_page_images(page_id) else {
             continue;
         };
@@ -564,11 +685,7 @@ pub fn vlm_chart_chunks_for_pdf(
             if !is_likely_chart_image(img.width, img.height) {
                 continue;
             }
-            let is_dct = img
-                .filters
-                .as_ref()
-                .is_some_and(|fs| fs.iter().any(|f| f == "DCTDecode"));
-            if !is_dct {
+            if !is_single_dct_filter(&img.filters) {
                 eprintln!(
                     "[tessera_sources] pdf {} page {} chart-like image {}x{} uses non-DCTDecode filter; skipping chart description",
                     pdf_path_str, page_number, img.width, img.height
@@ -576,10 +693,18 @@ pub fn vlm_chart_chunks_for_pdf(
                 continue;
             }
             if !limiter.try_acquire() {
+                // Mark the outcome as partial so the indexer
+                // stamps a sentinel hash and the next pass
+                // resumes the chart work. Without this, charts
+                // beyond the budget on the FIRST indexing pass
+                // would be permanently lost \u2014 the file's content
+                // hash would short-circuit subsequent
+                // `index_file` calls.
                 eprintln!(
-                    "[tessera_sources] pdf chart rate limit reached at page {page_number} of {pdf_path_str}; skipping remaining charts this window"
+                    "[tessera_sources] pdf chart rate limit reached at page {page_number} of {pdf_path_str}; remaining charts deferred (file will be re-indexed on next pass)"
                 );
-                return Ok(chunks);
+                fully_processed = false;
+                break 'outer;
             }
             let image_path = match write_image_for_vlm(img, pdf_path, "chart") {
                 Ok(p) => p,
@@ -622,7 +747,10 @@ pub fn vlm_chart_chunks_for_pdf(
             chunk_index += 1;
         }
     }
-    Ok(chunks)
+    Ok(PdfPassOutcome {
+        chunks,
+        fully_processed,
+    })
 }
 
 /// Write a DCTDecode `PdfImage` to a temp JPEG and return the path.
@@ -795,9 +923,16 @@ mod tests {
         }
         let stub = OcrStub::new("ocr output", "test-vlm");
         let limiter = PdfOcrRateLimiter::with_budget(10, Duration::from_secs(60));
-        let chunks = vlm_ocr_chunks_for_pdf(&stub, &p, &limiter, 0)
+        let outcome = vlm_ocr_chunks_for_pdf(&stub, &p, &limiter, 0)
             .expect("typed.pdf should not error during OCR pass");
-        assert!(chunks.is_empty(), "typed PDF should not produce OCR chunks");
+        assert!(
+            outcome.chunks.is_empty(),
+            "typed PDF should not produce OCR chunks"
+        );
+        assert!(
+            outcome.fully_processed,
+            "typed PDF should be marked fully_processed (no OCR-eligible pages == no work to do)"
+        );
         assert!(
             stub.called_paths().is_empty(),
             "VLM must not be called for a typed PDF"
@@ -949,5 +1084,105 @@ mod tests {
         let limiter = PdfOcrRateLimiter::with_budget(10, Duration::from_secs(60));
         let result = vlm_chart_chunks_for_pdf(&stub, bogus, &limiter, 0);
         assert!(result.is_err());
+    }
+
+    // --- Single-filter DCTDecode predicate tests (Block C task 10 +
+    //     11 hardening; Devin Review pass-7 🟡 finding) -----------------
+    //
+    // Before this hardening, the OCR + chart passes accepted any
+    // image whose filter list contained "DCTDecode" anywhere (via
+    // `.any(|f| f == "DCTDecode")`). PDF 32000-1:2008 §7.4.8 only
+    // guarantees the "raw bytes are a complete JPEG file as-is"
+    // property when DCTDecode is the SOLE filter — cascaded forms
+    // like `[FlateDecode, DCTDecode]` have their bytes
+    // Flate-compressed and would produce garbage JPEGs the VLM
+    // can't decode. These tests pin the stricter single-filter
+    // contract.
+
+    #[test]
+    fn is_single_dct_filter_accepts_solo_dct_decode() {
+        let f = Some(vec!["DCTDecode".to_string()]);
+        assert!(is_single_dct_filter(&f));
+    }
+
+    #[test]
+    fn is_single_dct_filter_rejects_cascaded_flate_then_dct() {
+        // The exact regression case from the Devin Review finding:
+        // `[FlateDecode, DCTDecode]` — Flate is applied first on
+        // read, so the raw `img.content` bytes are still
+        // Flate-compressed, NOT valid JPEG.
+        let f = Some(vec!["FlateDecode".to_string(), "DCTDecode".to_string()]);
+        assert!(!is_single_dct_filter(&f));
+    }
+
+    #[test]
+    fn is_single_dct_filter_rejects_cascaded_dct_then_flate() {
+        // Reverse order: DCT-decompress first, then Flate. The
+        // post-DCT bytes are still wrapped in a Flate envelope, so
+        // they aren't a valid JPEG file. Rejected.
+        let f = Some(vec!["DCTDecode".to_string(), "FlateDecode".to_string()]);
+        assert!(!is_single_dct_filter(&f));
+    }
+
+    #[test]
+    fn is_single_dct_filter_rejects_solo_non_dct() {
+        let f = Some(vec!["FlateDecode".to_string()]);
+        assert!(!is_single_dct_filter(&f));
+        let f = Some(vec!["CCITTFaxDecode".to_string()]);
+        assert!(!is_single_dct_filter(&f));
+        let f = Some(vec!["JBIG2Decode".to_string()]);
+        assert!(!is_single_dct_filter(&f));
+        let f = Some(vec!["JPXDecode".to_string()]);
+        assert!(!is_single_dct_filter(&f));
+    }
+
+    #[test]
+    fn is_single_dct_filter_rejects_none_and_empty() {
+        assert!(!is_single_dct_filter(&None));
+        assert!(!is_single_dct_filter(&Some(vec![])));
+    }
+
+    #[test]
+    fn pick_largest_dct_image_skips_cascaded_dct_decode() {
+        // Direct test on `pick_largest_dct_image`: a larger image
+        // whose filter list is `[FlateDecode, DCTDecode]` MUST be
+        // skipped in favour of a smaller pure-DCTDecode image.
+        // Before the hardening, the larger cascaded image would
+        // be picked and its (non-JPEG) bytes shipped to the VLM.
+        let big_dict = lopdf::Dictionary::new();
+        let small_dict = lopdf::Dictionary::new();
+        let big_content = vec![0u8; 16];
+        let small_content = vec![0u8; 8];
+        let big = PdfImage {
+            id: (1, 0),
+            width: 1000,
+            height: 1000,
+            color_space: None,
+            // Cascaded form — would have been accepted by the old
+            // `.any(|f| f == "DCTDecode")` check.
+            filters: Some(vec!["FlateDecode".to_string(), "DCTDecode".to_string()]),
+            bits_per_component: None,
+            content: &big_content,
+            origin_dict: &big_dict,
+        };
+        let small = PdfImage {
+            id: (2, 0),
+            width: 100,
+            height: 100,
+            color_space: None,
+            filters: Some(vec!["DCTDecode".to_string()]),
+            bits_per_component: None,
+            content: &small_content,
+            origin_dict: &small_dict,
+        };
+        let images = vec![big, small];
+        let picked = pick_largest_dct_image(&images)
+            .expect("the pure-DCT image should be picked over the cascaded one");
+        assert_eq!(
+            picked.id,
+            (2, 0),
+            "picker MUST skip the cascaded {{FlateDecode, DCTDecode}} image \
+             and pick the pure-DCT one, even though the cascaded image is larger"
+        );
     }
 }

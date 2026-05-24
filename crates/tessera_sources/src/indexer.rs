@@ -9,7 +9,10 @@ use crate::embedding::{encode_vec, EmbeddingProvider};
 use crate::extractor::{extract_text, is_supported_extension};
 use crate::ignore::IgnoreRules;
 use crate::image_metadata::is_image_extension;
-use crate::pdf_extractor::{vlm_chart_chunks_for_pdf, vlm_ocr_chunks_for_pdf, PdfOcrRateLimiter};
+use crate::pdf_extractor::{
+    extract_pdf_text_with_doc, load_pdf_document, vlm_chart_chunks_with_doc,
+    vlm_ocr_chunks_with_doc, PdfOcrRateLimiter,
+};
 use crate::progress::{
     self, record_chunk_embed_failed, record_chunk_embedded, EmbeddingProgressSnapshot, IndexPhase,
     ProgressSnapshot,
@@ -278,8 +281,65 @@ impl Indexer {
         let file_id =
             store.upsert_indexed_file(source_id, &path_str, &file_hash, &last_modified)?;
 
-        let text = extract_text(path)?;
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default()
+            .to_lowercase();
+
+        // For PDFs, pre-load the `lopdf::Document` ONCE here and
+        // thread it through the text / OCR / chart passes so the
+        // file is parsed exactly once per `index_file` call rather
+        // than three times (text pass, OCR pass, chart pass each
+        // calling `Document::load` independently). lopdf re-reads
+        // the whole file on every `load`, so for a multi-hundred-
+        // page scanned PDF the redundant parses were the dominant
+        // cost of an OCR-bound indexing run. Devin Review pass-7
+        // 📝 finding on the chart-pass `Document::load` called this
+        // out; addressing it at the call site (rather than the
+        // extractor helpers) keeps the public helpers' signatures
+        // stable for external callers / tests that don't have a
+        // pre-loaded `Document` on hand.
+        //
+        // A `Document::load` failure here is logged and we fall
+        // through to the regular `extract_text(path)` path — that
+        // helper will also try to load the PDF and produce a
+        // structured `Error::Extraction`, which the caller already
+        // expects to handle. We don't want a parse failure to
+        // permanently skip indexing of a corrupted PDF without
+        // the user seeing a structured error.
+        let pdf_doc = if ext.eq_ignore_ascii_case("pdf") {
+            match load_pdf_document(path) {
+                Ok(doc) => Some(doc),
+                Err(e) => {
+                    eprintln!(
+                        "[tessera_sources] failed to preload PDF {} for shared parse: {e}; falling back to per-pass loads",
+                        path.display()
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let text = if let Some(doc) = pdf_doc.as_ref() {
+            extract_pdf_text_with_doc(doc)
+        } else {
+            extract_text(path)?
+        };
         let mut chunks = chunk_text(&path_str, &text, &self.chunker_config);
+
+        // Track whether the VLM passes finished every eligible page.
+        // The OCR + chart passes can be cut short by the shared
+        // rate limiter, in which case we stamp a `partial:` sentinel
+        // on the `indexed_files` row so the next `index_file` call
+        // re-runs them. Without this, the file's real BLAKE3 hash
+        // would already be stamped after the first call, the next
+        // call would short-circuit on hash match, and the
+        // remaining pages would be permanently lost until the
+        // user's file content changed on disk.
+        let mut pdf_passes_complete = true;
 
         // Vision pass: when the file is an image AND a VLM-backed
         // extractor is attached, append a single VLM-derived chunk
@@ -293,11 +353,6 @@ impl Indexer {
         // just the metadata chunks. The user still gets EXIF +
         // dimensions for search; they just lose the
         // natural-language description for that one file.
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or_default()
-            .to_lowercase();
         if is_image_extension(&ext) {
             if let Some(vlm) = &self.vision_extractor {
                 if let Some(slot) = progress_slot {
@@ -329,23 +384,35 @@ impl Indexer {
         // OCR failures (rate limit hit, undecodable image filters,
         // VLM error) are non-fatal — we log and continue with the
         // text-pass chunks already in the chunks vector.
-        if ext == "pdf" {
+        if let Some(doc) = pdf_doc.as_ref() {
             if let Some(vlm) = &self.vision_extractor {
                 if let Some(slot) = progress_slot {
                     progress::record_phase(slot, IndexPhase::OcrPdf);
                 }
-                match vlm_ocr_chunks_for_pdf(
+                match vlm_ocr_chunks_with_doc(
+                    doc,
                     vlm.as_ref(),
                     path,
                     self.pdf_ocr_rate_limiter.as_ref(),
                     chunks.len(),
                 ) {
-                    Ok(mut ocr_chunks) => chunks.append(&mut ocr_chunks),
+                    Ok(outcome) => {
+                        chunks.extend(outcome.chunks);
+                        if !outcome.fully_processed {
+                            pdf_passes_complete = false;
+                        }
+                    }
                     Err(e) => {
                         eprintln!(
                             "[tessera_sources] PDF OCR pass failed for {}: {e}",
                             path.display()
                         );
+                        // A hard error mid-pass also leaves the file
+                        // in an indeterminate state — treat it the
+                        // same as a rate-limit truncation so the
+                        // next pass retries from scratch rather than
+                        // short-circuiting on the just-stamped hash.
+                        pdf_passes_complete = false;
                     }
                 }
                 // Chart-extraction pass (Block C task 11): tier-gated.
@@ -359,18 +426,25 @@ impl Indexer {
                     if let Some(slot) = progress_slot {
                         progress::record_phase(slot, IndexPhase::DescribingCharts);
                     }
-                    match vlm_chart_chunks_for_pdf(
+                    match vlm_chart_chunks_with_doc(
+                        doc,
                         vlm.as_ref(),
                         path,
                         self.pdf_ocr_rate_limiter.as_ref(),
                         chunks.len(),
                     ) {
-                        Ok(mut chart_chunks) => chunks.append(&mut chart_chunks),
+                        Ok(outcome) => {
+                            chunks.extend(outcome.chunks);
+                            if !outcome.fully_processed {
+                                pdf_passes_complete = false;
+                            }
+                        }
                         Err(e) => {
                             eprintln!(
                                 "[tessera_sources] PDF chart pass failed for {}: {e}",
                                 path.display()
                             );
+                            pdf_passes_complete = false;
                         }
                     }
                 }
@@ -378,6 +452,28 @@ impl Indexer {
                     progress::record_phase(slot, IndexPhase::Scanning);
                 }
             }
+        }
+
+        // If any VLM pass was cut short by the rate limiter (or hit
+        // a hard error mid-pass), downgrade the just-stamped hash
+        // to a `partial:` sentinel so the next `index_file` call
+        // detects the mismatch and re-runs the file from scratch.
+        // Without this, the unprocessed pages would be permanently
+        // lost — the file's real BLAKE3 hash is already on the row
+        // and a future pass would short-circuit on hash match.
+        //
+        // Safe to call AFTER `insert_chunks_returning_ids` below
+        // (the chunks we DID produce are still useful for search),
+        // but stamping the sentinel here — BEFORE chunk insert —
+        // is also safe: `upsert_indexed_file` on the next pass will
+        // `DELETE FROM chunks WHERE indexed_file_id = file_id`
+        // (because the stored `partial:HEX` doesn't match the new
+        // raw `HEX`), so the partial chunks get cleaned up at the
+        // start of the retry anyway. We stamp here, before the
+        // chunk insert, so a panic between the two doesn't leave
+        // the row claiming "fully indexed".
+        if !pdf_passes_complete {
+            store.mark_file_needs_reindex(file_id)?;
         }
 
         let mut inline_embeddings_dropped: u64 = 0;

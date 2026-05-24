@@ -420,7 +420,8 @@ fn vlm_ocr_chunks_for_pdf_emits_one_chunk_per_raster_page() {
     let stub = OcrStub::new("INVOICE TOTAL: $1,234.56", "test-vlm-stub");
     let limiter = PdfOcrRateLimiter::with_budget(10, Duration::from_secs(60));
 
-    let chunks = vlm_ocr_chunks_for_pdf(&stub, &path, &limiter, 0).expect("OCR pass must succeed");
+    let outcome = vlm_ocr_chunks_for_pdf(&stub, &path, &limiter, 0).expect("OCR pass must succeed");
+    let chunks = &outcome.chunks;
 
     assert_eq!(
         chunks.len(),
@@ -429,7 +430,11 @@ fn vlm_ocr_chunks_for_pdf_emits_one_chunk_per_raster_page() {
         chunks.len(),
         probe_pdf_pages(&path).unwrap()
     );
-    for c in &chunks {
+    assert!(
+        outcome.fully_processed,
+        "every OCR-eligible page processed within budget → fully_processed must be true"
+    );
+    for c in chunks {
         assert_eq!(c.extraction_method, Some(ExtractionMethod::VlmOcr));
         assert_eq!(c.extraction_model_id.as_deref(), Some("test-vlm-stub"));
         assert_eq!(c.content, "INVOICE TOTAL: $1,234.56");
@@ -458,9 +463,17 @@ fn vlm_ocr_chunks_for_pdf_respects_rate_limit() {
     let stub = OcrStub::new("ocr-text", "test-vlm");
     let limiter = PdfOcrRateLimiter::with_budget(2, Duration::from_secs(60));
 
-    let chunks = vlm_ocr_chunks_for_pdf(&stub, &path, &limiter, 0).expect("must succeed");
+    let outcome = vlm_ocr_chunks_for_pdf(&stub, &path, &limiter, 0).expect("must succeed");
 
-    assert_eq!(chunks.len(), 2, "rate limiter must cap OCR at 2 chunks");
+    assert_eq!(
+        outcome.chunks.len(),
+        2,
+        "rate limiter must cap OCR at 2 chunks"
+    );
+    assert!(
+        !outcome.fully_processed,
+        "third page was skipped by rate limiter → pass MUST flag fully_processed=false so the indexer can defer the hash stamp and retry on the next pass"
+    );
     assert_eq!(stub.called().len(), 2);
 }
 
@@ -473,8 +486,15 @@ fn vlm_ocr_chunks_for_pdf_drops_empty_ocr_output() {
     let stub = OcrStub::new("   \n\t ", "test-vlm");
     let limiter = PdfOcrRateLimiter::new();
 
-    let chunks = vlm_ocr_chunks_for_pdf(&stub, &path, &limiter, 0).expect("must succeed");
-    assert!(chunks.is_empty(), "whitespace-only OCR must be dropped");
+    let outcome = vlm_ocr_chunks_for_pdf(&stub, &path, &limiter, 0).expect("must succeed");
+    assert!(
+        outcome.chunks.is_empty(),
+        "whitespace-only OCR must be dropped"
+    );
+    assert!(
+        outcome.fully_processed,
+        "the page WAS processed (the VLM returned a blank, which we filtered) → fully_processed must remain true"
+    );
 }
 
 #[test]
@@ -508,11 +528,15 @@ fn vlm_ocr_chunks_for_pdf_continues_when_one_page_vlm_call_fails() {
         calls: Mutex::new(0),
     };
     let limiter = PdfOcrRateLimiter::new();
-    let chunks = vlm_ocr_chunks_for_pdf(&stub, &path, &limiter, 0).expect("must succeed");
+    let outcome = vlm_ocr_chunks_for_pdf(&stub, &path, &limiter, 0).expect("must succeed");
     assert_eq!(
-        chunks.len(),
+        outcome.chunks.len(),
         2,
         "one failing VLM call should not abort the whole OCR pass"
+    );
+    assert!(
+        outcome.fully_processed,
+        "every page was visited (one VLM call failed but was logged-and-continued) → fully_processed remains true"
     );
 }
 
@@ -584,8 +608,9 @@ fn vlm_chart_chunks_for_pdf_emits_one_chunk_per_chart_image() {
     let stub = ChartStub::new("Bar chart: Q1=10, Q2=20, Q3=30, Q4=40.", "test-chart-vlm");
     let limiter = PdfOcrRateLimiter::with_budget(10, Duration::from_secs(60));
 
-    let chunks = vlm_chart_chunks_for_pdf(&stub, &path, &limiter, 5)
+    let outcome = vlm_chart_chunks_for_pdf(&stub, &path, &limiter, 5)
         .expect("chart pass must succeed on chart-bearing PDF");
+    let chunks = &outcome.chunks;
 
     assert_eq!(
         chunks.len(),
@@ -593,7 +618,11 @@ fn vlm_chart_chunks_for_pdf_emits_one_chunk_per_chart_image() {
         "expected one chart chunk per chart-image instance; chunks={:?}",
         chunks.iter().map(|c| &c.content).collect::<Vec<_>>()
     );
-    for c in &chunks {
+    assert!(
+        outcome.fully_processed,
+        "every chart-eligible page processed within budget → fully_processed must be true"
+    );
+    for c in chunks {
         assert_eq!(c.extraction_method, Some(ExtractionMethod::VlmChart));
         assert_eq!(c.extraction_model_id.as_deref(), Some("test-chart-vlm"));
         assert_eq!(c.content, "Bar chart: Q1=10, Q2=20, Q3=30, Q4=40.");
@@ -624,9 +653,16 @@ fn vlm_chart_chunks_for_pdf_skips_below_size_threshold_images() {
     let stub = ChartStub::new("should-not-appear", "test-chart-vlm");
     let limiter = PdfOcrRateLimiter::with_budget(10, Duration::from_secs(60));
 
-    let chunks = vlm_chart_chunks_for_pdf(&stub, &path, &limiter, 0)
+    let outcome = vlm_chart_chunks_for_pdf(&stub, &path, &limiter, 0)
         .expect("chart pass must not error on tiny images");
-    assert!(chunks.is_empty(), "tiny images must not trigger chart pass");
+    assert!(
+        outcome.chunks.is_empty(),
+        "tiny images must not trigger chart pass"
+    );
+    assert!(
+        outcome.fully_processed,
+        "the page WAS visited (the heuristic rejected it cleanly) → fully_processed must remain true"
+    );
     assert_eq!(stub.chart_call_count(), 0);
 }
 
@@ -640,11 +676,15 @@ fn vlm_chart_chunks_for_pdf_respects_rate_limit() {
     let stub = ChartStub::new("chart-text", "test-chart-vlm");
     let limiter = PdfOcrRateLimiter::with_budget(2, Duration::from_secs(60));
 
-    let chunks = vlm_chart_chunks_for_pdf(&stub, &path, &limiter, 0).expect("must succeed");
+    let outcome = vlm_chart_chunks_for_pdf(&stub, &path, &limiter, 0).expect("must succeed");
     assert_eq!(
-        chunks.len(),
+        outcome.chunks.len(),
         2,
         "rate limiter must cap chart pass at 2 chunks"
+    );
+    assert!(
+        !outcome.fully_processed,
+        "third chart page was skipped by rate limiter → pass MUST flag fully_processed=false so the indexer can defer the hash stamp and retry on the next pass"
     );
     assert_eq!(stub.chart_call_count(), 2);
 }

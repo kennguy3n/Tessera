@@ -509,6 +509,47 @@ impl SourceStore {
         Ok(rows)
     }
 
+    /// Stamp a `partial:`-prefixed sentinel on the stored hash for
+    /// `file_id` so the next `index_file` call's hash comparison
+    /// is guaranteed to miss — forcing a full re-process of the
+    /// file. Used by the PDF OCR + chart passes when the rate
+    /// limiter cuts processing short partway through a multi-
+    /// hundred-page document: without this, the file's real
+    /// content hash would already be stamped on the row, and the
+    /// next pass would short-circuit on hash match and the
+    /// unprocessed pages would be permanently lost until the file
+    /// content changes.
+    ///
+    /// The `partial:` prefix is collision-proof: BLAKE3 hex is 64
+    /// lowercase hex chars (`[0-9a-f]`), and `:` is not a hex
+    /// character. A real BLAKE3 hash can therefore never produce a
+    /// string that matches a `partial:`-prefixed sentinel, so a
+    /// `existing_hash == new_hash` comparison in
+    /// [`upsert_indexed_file`] is guaranteed to miss and the row
+    /// is re-processed (including a `DELETE FROM chunks` so the
+    /// partial chunks from the previous attempt are discarded
+    /// before the new pass writes its replacements).
+    ///
+    /// Idempotent: stamping twice keeps a single `partial:` prefix
+    /// (we look at the current value and only prepend when it
+    /// doesn't already start with the prefix). Without that guard,
+    /// repeated partial passes on the same file would compound to
+    /// `partial:partial:partial:…` and bloat the row.
+    pub fn mark_file_needs_reindex(&self, file_id: i64) -> Result<()> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        conn.execute(
+            "UPDATE indexed_files
+             SET hash = CASE
+                 WHEN hash LIKE 'partial:%' THEN hash
+                 ELSE 'partial:' || hash
+             END
+             WHERE id = ?1",
+            params![file_id],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
+    }
+
     pub fn get_file_hash(&self, path: &str) -> Result<Option<String>> {
         let result = self
             .conn
@@ -1043,6 +1084,100 @@ mod tests {
             .unwrap();
 
         assert_eq!(file_id1, file_id2);
+    }
+
+    #[test]
+    fn mark_file_needs_reindex_forces_next_pass_to_reprocess() {
+        // The partial-OCR / partial-chart recovery contract: when
+        // a VLM pass is cut short by the rate limiter, the indexer
+        // stamps a `partial:` sentinel on the row so the next
+        // `index_file` call's hash-equality check misses and the
+        // file is fully re-processed. This test pins the
+        // round-trip: upsert with hash H, mark partial, then call
+        // upsert AGAIN with the same hash H — the second upsert
+        // MUST see a mismatch (because the row now stores
+        // `partial:H` not `H`), delete the existing chunks, and
+        // stamp the row with the raw hash again.
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/test".to_string());
+        store.add_source(&source).unwrap();
+
+        let real_hash = "a".repeat(64); // realistic 64-hex-char BLAKE3
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/test/big.pdf", &real_hash, "2026-01-01")
+            .unwrap();
+
+        // Insert two chunks so we can verify the re-process
+        // actually deletes them.
+        let chunks = vec![crate::chunker::Chunk {
+            source_path: "/tmp/test/big.pdf".to_string(),
+            chunk_index: 0,
+            byte_offset: 0,
+            content: "page 1 ocr text".to_string(),
+            hash: "c1".to_string(),
+            extraction_method: Some(crate::chunker::ExtractionMethod::VlmOcr),
+            extraction_model_id: Some("test-vlm".to_string()),
+        }];
+        store.insert_chunks(file_id, &chunks).unwrap();
+        assert_eq!(
+            store
+                .all_chunks_for_path("/tmp/test/big.pdf")
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // Stamp partial sentinel.
+        store.mark_file_needs_reindex(file_id).unwrap();
+        let stored = store.get_file_hash("/tmp/test/big.pdf").unwrap().unwrap();
+        assert_eq!(stored, format!("partial:{real_hash}"));
+
+        // Now upsert with the same real hash — must DETECT mismatch
+        // (partial:H vs H) and delete the existing chunks.
+        let file_id_after = store
+            .upsert_indexed_file(&source.id, "/tmp/test/big.pdf", &real_hash, "2026-01-01")
+            .unwrap();
+        assert_eq!(file_id, file_id_after, "row identity must be preserved");
+        // Hash is now the real one again.
+        let stored_after = store.get_file_hash("/tmp/test/big.pdf").unwrap().unwrap();
+        assert_eq!(stored_after, real_hash);
+        // Previous partial chunks have been wiped.
+        assert!(
+            store
+                .all_chunks_for_path("/tmp/test/big.pdf")
+                .unwrap()
+                .is_empty(),
+            "upsert-after-partial MUST delete the partial chunks so the next pass writes a clean set"
+        );
+    }
+
+    #[test]
+    fn mark_file_needs_reindex_is_idempotent() {
+        // Re-stamping a row that's already `partial:` must NOT
+        // compound the prefix. Without the `WHEN hash LIKE 'partial:%'`
+        // guard in the UPDATE statement, repeated partial passes
+        // on the same file would produce `partial:partial:partial:HEX`
+        // and bloat the row over time.
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/test".to_string());
+        store.add_source(&source).unwrap();
+
+        let real_hash = "b".repeat(64);
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/test/big.pdf", &real_hash, "2026-01-01")
+            .unwrap();
+
+        // Stamp partial three times.
+        store.mark_file_needs_reindex(file_id).unwrap();
+        store.mark_file_needs_reindex(file_id).unwrap();
+        store.mark_file_needs_reindex(file_id).unwrap();
+
+        let stored = store.get_file_hash("/tmp/test/big.pdf").unwrap().unwrap();
+        assert_eq!(
+            stored,
+            format!("partial:{real_hash}"),
+            "repeated partial stamps must NOT compound: expected single `partial:` prefix, got `{stored}`"
+        );
     }
 
     #[test]
