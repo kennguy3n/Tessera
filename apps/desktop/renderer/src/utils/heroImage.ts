@@ -92,19 +92,26 @@ export function sanitizeHeroImage(raw: unknown): HeroImage | undefined {
   ) {
     return undefined;
   }
-  // Width / height: positive finite integers. `Number.isInteger` is
-  // false for NaN / Infinity / non-integers, so combined with the
-  // `> 0` check it rules out every non-pixel-count value.
+  // Width / height: positive safe-integers. `Number.isSafeInteger` is
+  // false for NaN / Infinity / non-integers / values above
+  // MAX_SAFE_INTEGER (2^53-1), so combined with the `> 0` check it
+  // rules out every non-pixel-count value AND stays consistent with
+  // the seed check above. Plain `Number.isInteger` would let `2^53`
+  // through (it's exactly representable as a double and is "integer"
+  // by IEEE-754 lights), letting a hand-edited artifact JSON sneak a
+  // dimension past the sanitizer that no realistic display could
+  // render. The defence-in-depth argument that justifies the seed
+  // safe-int gate applies symmetrically here.
   if (
     typeof r.width !== "number" ||
-    !Number.isInteger(r.width) ||
+    !Number.isSafeInteger(r.width) ||
     r.width <= 0
   ) {
     return undefined;
   }
   if (
     typeof r.height !== "number" ||
-    !Number.isInteger(r.height) ||
+    !Number.isSafeInteger(r.height) ||
     r.height <= 0
   ) {
     return undefined;

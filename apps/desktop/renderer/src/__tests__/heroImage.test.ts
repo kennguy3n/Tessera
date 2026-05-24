@@ -155,6 +155,57 @@ describe("sanitizeHeroImage", () => {
     it("rejects non-integer width (e.g. half a pixel)", () => {
       expect(sanitizeHeroImage({ ...valid, width: 1024.5 })).toBeUndefined();
     });
+
+    it("rejects width === Number.MAX_SAFE_INTEGER + 1 (= 2^53)", () => {
+      // Regression guard for the consistency gap Devin Review flagged
+      // between seed (uses isSafeInteger) and width/height (used
+      // isInteger). `Number.isInteger(Number.MAX_SAFE_INTEGER + 1)`
+      // returns `true` because 2^53 is exactly representable as a
+      // double and is mathematically integer — letting a hand-edited
+      // artifact JSON with `"width": 9007199254740992` past the
+      // sanitizer. No display can render that, but the defence-in-
+      // depth argument that justifies the seed safe-int gate applies
+      // symmetrically here, so width/height now use the same
+      // isSafeInteger predicate.
+      expect(
+        sanitizeHeroImage({
+          ...valid,
+          width: Number.MAX_SAFE_INTEGER + 1,
+        }),
+      ).toBeUndefined();
+    });
+
+    it("rejects height === Number.MAX_SAFE_INTEGER + 1 (= 2^53)", () => {
+      expect(
+        sanitizeHeroImage({
+          ...valid,
+          height: Number.MAX_SAFE_INTEGER + 1,
+        }),
+      ).toBeUndefined();
+    });
+
+    it("rejects width === Number.MAX_VALUE", () => {
+      expect(
+        sanitizeHeroImage({ ...valid, width: Number.MAX_VALUE }),
+      ).toBeUndefined();
+    });
+
+    it("rejects height === Number.MAX_VALUE", () => {
+      expect(
+        sanitizeHeroImage({ ...valid, height: Number.MAX_VALUE }),
+      ).toBeUndefined();
+    });
+
+    it("accepts width === Number.MAX_SAFE_INTEGER (boundary positive control)", () => {
+      // Confirms the upper bound is inclusive, mirroring the seed
+      // boundary test above. Realistically no UI will ever render
+      // this, but the contract is "anything inside the safe-int range
+      // is accepted, anything outside is rejected" — locking the
+      // boundary in both directions.
+      expect(
+        sanitizeHeroImage({ ...valid, width: Number.MAX_SAFE_INTEGER }),
+      ).toEqual({ ...valid, width: Number.MAX_SAFE_INTEGER });
+    });
   });
 
   describe("missing / wrong-type fields", () => {
