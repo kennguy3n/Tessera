@@ -370,11 +370,9 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
           </strong>
           <span>GPU:</span>
           <strong>{gpuLabel(state.platform.computeBackends)}</strong>
-          <span>Model format:</span>
+          <span>Preferred format:</span>
           <strong>
-            {state.platform.preferredFormat === "mlx"
-              ? "MLX 2-bit"
-              : "GGUF Q1_0_g128"}
+            {state.platform.preferredFormat === "mlx" ? "MLX" : "GGUF"}
           </strong>
         </div>
       )}

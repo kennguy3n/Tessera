@@ -868,12 +868,16 @@ describe("single-model enforcement", () => {
     }
   });
 
-  it("getCurrentModel returns null and quarantines a corrupted active-model.json", async () => {
-    // Simulate a power loss mid-write or a manual edit that left
-    // active-model.json with invalid JSON. Callers must NOT see this as
-    // a fatal IO error — they should see "no model installed" and the
-    // file should be moved aside so the next downloadModel can write a
-    // clean record.
+  it("getCurrentModel(text) quarantines a corrupted legacy active-model.json (migration path)", async () => {
+    // Simulate a power loss mid-write or a manual edit that left the
+    // legacy `active-model.json` with invalid JSON on an upgrading
+    // install. Callers must NOT see this as a fatal IO error — they
+    // should see "no model installed" and the file should be moved
+    // aside so the next downloadModel can write a clean record.
+    //
+    // Post-multi-slot, this corruption is caught by the legacy
+    // migration code (not by getCurrentModel's per-slot parse path).
+    // The per-slot corruption case is covered by the next test.
     const active = path.join(workdir, "active-model.json");
     await fsp.mkdir(workdir, { recursive: true });
     await fsp.writeFile(active, "{not valid json");
@@ -894,6 +898,44 @@ describe("single-model enforcement", () => {
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("active-model.json was unparseable JSON"),
       );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("getCurrentModel(capability) quarantines a corrupted per-slot active-model-<cap>.json (post-migration path)", async () => {
+    // Same contract as the legacy test above, but exercising the
+    // per-slot read path inside `getCurrentModel` itself — not the
+    // legacy migration. This is the steady-state corruption case
+    // (post-multi-slot, no legacy file present) and runs against every
+    // capability slot, including the ones that have no migration
+    // pathway (vision / imagegen).
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (const cap of ["text", "vision", "imagegen"] as const) {
+        const slot = activeModelPath(workdir, cap);
+        await fsp.mkdir(workdir, { recursive: true });
+        await fsp.writeFile(slot, "{not valid json");
+
+        const result = await getCurrentModel(workdir, cap);
+        expect(result).toBeNull();
+        expect(fs.existsSync(slot)).toBe(false);
+
+        const siblings = await fsp.readdir(workdir);
+        const expectedPrefix = path.basename(slot) + ".corrupt-";
+        const backup = siblings.find((f) => f.startsWith(expectedPrefix));
+        expect(
+          backup,
+          `expected ${expectedPrefix}<ts> backup for ${cap}`,
+        ).toBeDefined();
+        expect(
+          await fsp.readFile(path.join(workdir, backup!), "utf8"),
+        ).toBe("{not valid json");
+
+        // Clean up backups so the next loop iteration's `readdir`
+        // search isn't ambiguous.
+        await fsp.unlink(path.join(workdir, backup!));
+      }
     } finally {
       warnSpy.mockRestore();
     }
@@ -2235,6 +2277,43 @@ describe("per-slot isolation", () => {
     expect(afterText.text?.modelId).toBe(text.id);
     expect(afterText.vision).toBeNull();
     expect(afterText.imagegen).toBeNull();
+  });
+
+  it("DownloadProgress events carry the slot's capability so the renderer can route per-slot", async () => {
+    // The renderer's multi-capability Settings UI (Block F) subscribes
+    // to runtime:downloadProgress and routes each event to the
+    // correct per-slot progress bar. The capability field on the
+    // emitted progress object is what makes that routing safe — two
+    // concurrent downloads (text + vision) would otherwise be
+    // indistinguishable on the wire.
+    const events: Array<{ modelId: string; capability: string }> = [];
+
+    const vision = makeResolved({
+      id: "smolvlm-256m-vision-gguf",
+      capability: "vision",
+      filename: "v.gguf",
+    });
+    await downloadModel(
+      workdir,
+      vision,
+      (p) => {
+        events.push({ modelId: p.modelId, capability: p.capability });
+      },
+      {
+        fetcher: async (_url, onProgress, dest) => {
+          const buf = Buffer.from("v-bytes");
+          await fsp.writeFile(dest, buf);
+          onProgress(buf.byteLength, buf.byteLength);
+          return { totalBytes: buf.byteLength };
+        },
+      },
+    );
+
+    expect(events.length).toBeGreaterThan(0);
+    for (const ev of events) {
+      expect(ev.modelId).toBe(vision.id);
+      expect(ev.capability).toBe("vision");
+    }
   });
 
   it("concurrent downloads to different slots run in parallel (per-slot lock)", async () => {

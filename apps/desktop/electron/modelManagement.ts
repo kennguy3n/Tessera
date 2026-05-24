@@ -695,8 +695,22 @@ export function resolveManifestPlatform(
   return null;
 }
 
-function formatLabel(f: ModelFormat): string {
-  return f === "mlx" ? "MLX 2-bit" : "GGUF Q1_0_g128";
+/**
+ * Human-readable "{Format} {Quantization}" label for the renderer's
+ * model card. Derived from the manifest entry rather than hardcoded
+ * because each capability ships its own quantization scheme:
+ *
+ *   Bonsai text:    GGUF Q1_0_g128 / MLX 2-bit
+ *   Qwen3.5 vision: GGUF Q4_K_M   / MLX 4-bit
+ *   SmolVLM vision: GGUF Q4_K_S   / MLX 4-bit
+ *   FLUX imagegen:  GGUF Q4_0     / MLX 4-bit
+ *
+ * Hardcoding the text labels (the pre-Block-A behaviour) would have
+ * mislabelled every non-text entry in the Settings UI.
+ */
+function formatLabel(entry: ManifestModel): string {
+  const fmt = entry.format === "mlx" ? "MLX" : "GGUF";
+  return `${fmt} ${entry.quantization}`;
 }
 
 function toResolvedModel(entry: ManifestModel, target: Platform): ResolvedModel {
@@ -706,7 +720,7 @@ function toResolvedModel(entry: ManifestModel, target: Platform): ResolvedModel 
     parameters: entry.parameters,
     capability: manifestCapability(entry),
     format: entry.format,
-    formatLabel: formatLabel(entry.format),
+    formatLabel: formatLabel(entry),
     quantization: entry.quantization,
     platform: target,
     tier: entry.tier,
@@ -1372,6 +1386,17 @@ export function planDownload(
 
 export interface DownloadProgress {
   modelId: string;
+  /**
+   * Capability slot this progress event belongs to. Required so the
+   * renderer can route the event to the correct per-capability
+   * progress bar in the multi-slot Settings UI — without it, two
+   * concurrent downloads (e.g. text + vision) would be
+   * indistinguishable in the renderer.
+   *
+   * Mirrors `ModelDownloadProgress.capability` in
+   * `apps/desktop/shared/types.ts`.
+   */
+  capability: ModelCapability;
   format: ModelFormat;
   filename: string;
   downloadedMb: number;
@@ -1812,6 +1837,7 @@ async function downloadModelLocked(
         const percent = total > 0 ? (downloaded / total) * 100 : 0;
         onProgress({
           modelId: requested.id,
+          capability: requested.capability,
           format: requested.format,
           filename: requested.filename,
           downloadedMb,

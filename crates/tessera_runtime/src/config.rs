@@ -89,10 +89,19 @@ impl ModelFormat {
         }
     }
 
+    /// Format-level human label. Intentionally just the format name
+    /// without a hardcoded quantization — each capability ships its
+    /// own quantization (Bonsai text uses `Q1_0_g128` / `MLX 2-bit`,
+    /// Qwen3.5 vision uses `Q4_K_M` / `MLX 4-bit`, FLUX imagegen uses
+    /// `Q4_0` / `MLX 4-bit`), so pinning a single quantization here
+    /// would mislabel every non-text entry. Callers that want the
+    /// "format + quantization" pair should use `ModelInfo::display_label`
+    /// or the TS-side `ResolvedModel.formatLabel`, both of which read
+    /// the per-entry `quantization` field.
     pub fn display_label(&self) -> &'static str {
         match self {
-            Self::Gguf => "GGUF Q1_0_g128",
-            Self::Mlx => "MLX 2-bit",
+            Self::Gguf => "GGUF",
+            Self::Mlx => "MLX",
         }
     }
 }
@@ -264,6 +273,20 @@ pub struct ModelInfo {
 
 fn default_capability() -> ModelCapability {
     ModelCapability::Text
+}
+
+impl ModelInfo {
+    /// Human-readable "{Format} {Quantization}" label derived from the
+    /// entry's actual quantization. Mirrors the TS-side `formatLabel`
+    /// in `apps/desktop/electron/modelManagement.ts` so any future
+    /// Rust-side surface (logs, TUI, FFI consumer) gets the same
+    /// "GGUF Q4_K_M" / "MLX 4-bit" labels the renderer shows. Avoids
+    /// the trap that the bare `ModelFormat::display_label()` would
+    /// fall into, where a single hardcoded quantization mislabels
+    /// every non-text entry.
+    pub fn display_label(&self) -> String {
+        format!("{} {}", self.format.display_label(), self.quantization)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1704,8 +1727,42 @@ mod tests {
 
     #[test]
     fn model_format_labels() {
-        assert_eq!(ModelFormat::Gguf.display_label(), "GGUF Q1_0_g128");
-        assert_eq!(ModelFormat::Mlx.display_label(), "MLX 2-bit");
+        // `ModelFormat::display_label` is now just the format name; the
+        // quantization is per-entry and lives on `ModelInfo`.
+        assert_eq!(ModelFormat::Gguf.display_label(), "GGUF");
+        assert_eq!(ModelFormat::Mlx.display_label(), "MLX");
+    }
+
+    #[test]
+    fn model_info_display_label_uses_per_entry_quantization() {
+        // Pick one text, one vision, one imagegen entry from the
+        // registry and confirm each labels itself with ITS quantization
+        // (not a hardcoded text one). This is the regression guard for
+        // the pre-Block-A "GGUF Q1_0_g128" trap.
+        let reg = full_model_registry();
+        let bonsai_gguf = reg
+            .iter()
+            .find(|m| m.id == "ternary-bonsai-1.7b-gguf")
+            .expect("registry must contain ternary-bonsai-1.7b-gguf");
+        assert_eq!(bonsai_gguf.display_label(), "GGUF Q1_0_g128");
+
+        let qwen_vision_gguf = reg
+            .iter()
+            .find(|m| m.id == "qwen3.5-4b-vision-gguf")
+            .expect("registry must contain qwen3.5-4b-vision-gguf");
+        assert_eq!(qwen_vision_gguf.display_label(), "GGUF Q4_K_M");
+
+        let smolvlm_vision_mlx = reg
+            .iter()
+            .find(|m| m.id == "smolvlm-256m-vision-mlx")
+            .expect("registry must contain smolvlm-256m-vision-mlx");
+        assert_eq!(smolvlm_vision_mlx.display_label(), "MLX 4-bit");
+
+        let flux_imagegen_gguf = reg
+            .iter()
+            .find(|m| m.id == "flux2-klein-4b-gguf")
+            .expect("registry must contain flux2-klein-4b-gguf");
+        assert_eq!(flux_imagegen_gguf.display_label(), "GGUF Q4_0");
     }
 
     // ---------------------------------------------------------------
