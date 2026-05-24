@@ -990,16 +990,14 @@ pub fn bridge_compare_sources(
     // comparison ran — preserving the legacy markdown label so
     // anyone diffing artifacts from before/after this refactor
     // doesn't see a content shift.
-    let label_a = src_mgr
-        .get_source(&sid_a)
-        .ok()
-        .map(|src| friendly_source_label(&src.path))
-        .unwrap_or_else(|| "Source A".to_string());
-    let label_b = src_mgr
-        .get_source(&sid_b)
-        .ok()
-        .map(|src| friendly_source_label(&src.path))
-        .unwrap_or_else(|| "Source B".to_string());
+    let label_a = src_mgr.get_source(&sid_a).ok().map_or_else(
+        || "Source A".to_string(),
+        |src| friendly_source_label(&src.path),
+    );
+    let label_b = src_mgr.get_source(&sid_b).ok().map_or_else(
+        || "Source B".to_string(),
+        |src| friendly_source_label(&src.path),
+    );
 
     let chunks_a = src_mgr.get_chunks_for_source(&sid_a).unwrap_or_default();
     let chunks_b = src_mgr.get_chunks_for_source(&sid_b).unwrap_or_default();
