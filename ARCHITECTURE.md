@@ -514,9 +514,9 @@ tessera/
 │       │   ├── typstExport.ts       # Typst export wrapper
 │       │   ├── autoUpdater.ts       # `electron-updater` wrapper, `updates:*` channels, status broadcast
 │       │   ├── cspImageSources.ts   # Per-connector CSP image-source allow-list
-│       │   ├── dbKey.ts             # SQLCipher key generation + wrap via safeStorage; password-vault fallback (Task 13)
+│       │   ├── dbKey.ts             # SQLCipher key generation + wrap via safeStorage; password-vault fallback
 │       │   ├── exportPathSafety.ts  # Export-path containment (renderer-supplied paths constrained to allow-list)
-│       │   ├── extractedItemValidation.ts # zod-shape validation of bridge-supplied extracted items; XSS-escape (Task 16)
+│       │   ├── extractedItemValidation.ts # zod-shape validation of bridge-supplied extracted items; XSS-escape
 │       │   ├── externalProviderStream.ts  # Real SSE parser for OpenAI-compatible + Anthropic streaming
 │       │   ├── passwordVault.ts     # PBKDF2 + AES-256-GCM fallback when safeStorage is unavailable
 │       │   ├── vaultCrypto.ts       # AES-256-GCM primitives used by passwordVault

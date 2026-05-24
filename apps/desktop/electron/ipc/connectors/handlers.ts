@@ -1,5 +1,5 @@
 /**
- * Unified connector IPC handlers for all 6 providers (Tasks 1–6).
+ * Unified connector IPC handlers for all six providers.
  *
  * Replaces the hard-coded `if (provider !== 'google_drive')` path in
  * the legacy `ipc.ts` with a single dispatch table keyed by provider
@@ -18,6 +18,7 @@
  * `connectors:status`       reports `{ connected, status, offline }`
  *                            so the UI can render the Offline badge.
  *
+ * Additional guarantees layered on top of the dispatch table:
  *
  *   - Rate-limit `connectors:authenticate` to 1 / 5s per provider.
  *   - Rate-limit `connectors:sync` to 1 / 30s per provider.

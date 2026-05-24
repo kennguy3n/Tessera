@@ -209,7 +209,7 @@ fn every_rust_modelled_category_has_at_least_one_template() {
     for ty in expected {
         assert!(
             seen.contains(&ty),
-            "no bundled template found with artifact_type = {ty:?} — phase 5/6 floor regressed; seen types: {seen:?}"
+            "no bundled template found with artifact_type = {ty:?} — bundled artifact-type floor regressed; seen types: {seen:?}"
         );
     }
 }
