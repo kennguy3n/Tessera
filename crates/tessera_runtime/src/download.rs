@@ -18,8 +18,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    available_models_for_platform, full_model_registry, ComputeBackend, DeviceTier, ModelFormat,
-    ModelInfo, Platform,
+    available_models_for_platform, full_model_registry, ComputeBackend, DeviceTier,
+    ModelCapability, ModelFormat, ModelInfo, Platform,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -36,6 +36,8 @@ pub enum ManifestError {
     UnknownTier(String),
     #[error("Unknown compute backend in manifest: {0}")]
     UnknownCompute(String),
+    #[error("Unknown capability in manifest: {0}")]
+    UnknownCapability(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +45,12 @@ pub struct ManifestModel {
     pub id: String,
     pub name: String,
     pub parameters: String,
+    /// What slot this entry occupies in the multi-capability registry.
+    /// Optional in the wire format so older manifest copies (predating
+    /// the multi-capability runtime) still deserialize — the default
+    /// is `"text"`, matching the historical single-capability behavior.
+    #[serde(default = "default_manifest_capability_string")]
+    pub capability: String,
     pub format: String,
     pub quantization: String,
     pub platform: String,
@@ -59,6 +67,10 @@ pub struct ManifestModel {
     pub filename: String,
     pub url: String,
     pub sha256: Option<String>,
+}
+
+fn default_manifest_capability_string() -> String {
+    "text".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +126,15 @@ fn parse_compute(s: &str) -> Result<ComputeBackend, ManifestError> {
     }
 }
 
+fn parse_capability(s: &str) -> Result<ModelCapability, ManifestError> {
+    match s {
+        "text" => Ok(ModelCapability::Text),
+        "vision" => Ok(ModelCapability::Vision),
+        "imagegen" => Ok(ModelCapability::Imagegen),
+        other => Err(ManifestError::UnknownCapability(other.into())),
+    }
+}
+
 /// Parse a manifest platform string.
 ///
 /// The manifest uses the wildcard `"any-non-apple-silicon"` for GGUF
@@ -139,6 +160,7 @@ impl ManifestModel {
         let format = parse_format(&self.format)?;
         let tier = parse_tier(&self.tier)?;
         let platform = parse_platform(&self.platform, target)?;
+        let capability = parse_capability(&self.capability)?;
         let mut compute_backends = Vec::with_capacity(self.compute.len());
         for c in &self.compute {
             compute_backends.push(parse_compute(c)?);
@@ -147,6 +169,7 @@ impl ManifestModel {
             id: self.id,
             name: self.name,
             parameters: self.parameters,
+            capability,
             quantization: self.quantization,
             format,
             platform,
@@ -246,6 +269,15 @@ pub fn pick_llama_server_variant(
 #[serde(rename_all = "camelCase")]
 pub struct InstalledModel {
     pub model_id: String,
+    /// Capability slot this record belongs to. Mirrors the TS-side
+    /// `InstalledModelRecord.capability` field which the Electron main
+    /// process always stamps onto every record it writes
+    /// (`apps/desktop/electron/modelManagement.ts`). `#[serde(default)]`
+    /// because legacy `active-model.json` records pre-multi-slot did
+    /// not carry this field; for those, defaulting to `Text` matches
+    /// the legacy-migration target slot.
+    #[serde(default = "default_installed_capability")]
+    pub capability: ModelCapability,
     pub format: ModelFormat,
     pub filename: String,
     pub path: String,
@@ -272,6 +304,15 @@ pub struct InstalledModel {
     #[serde(default)]
     pub sha256: Option<String>,
     pub downloaded_at: String,
+}
+
+/// Default capability for legacy `active-model.json` records that
+/// predate the multi-slot layout. The legacy flat layout only ever
+/// held a text model (Ternary-Bonsai), and Block A's migration moves
+/// it specifically into the text slot — so `Text` is the only correct
+/// default for forward-compatible deserialization.
+fn default_installed_capability() -> ModelCapability {
+    ModelCapability::Text
 }
 
 impl InstalledModel {
@@ -471,47 +512,134 @@ mod tests {
     }
 
     #[test]
-    fn shipped_manifest_parses_and_has_six_variants() {
+    fn shipped_manifest_parses_and_has_expected_variants() {
+        // Three Ternary-Bonsai text variants × (MLX + GGUF) + two
+        // vision sizes × (MLX + GGUF) + one FLUX.2-klein imagegen ×
+        // (MLX + GGUF) = 6 + 4 + 2 = 12.
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecars/models.json");
         let manifest = load_manifest(&path).expect("ship manifest parses");
-        assert_eq!(manifest.models.len(), 6);
-        let mlx = manifest.models.iter().filter(|m| m.format == "mlx").count();
-        let gguf = manifest
+        assert_eq!(manifest.models.len(), 12);
+
+        let mlx_text = manifest
             .models
             .iter()
-            .filter(|m| m.format == "gguf")
+            .filter(|m| m.format == "mlx" && m.capability == "text")
             .count();
-        assert_eq!(mlx, 3);
-        assert_eq!(gguf, 3);
+        let gguf_text = manifest
+            .models
+            .iter()
+            .filter(|m| m.format == "gguf" && m.capability == "text")
+            .count();
+        assert_eq!(mlx_text, 3, "three Bonsai MLX text variants");
+        assert_eq!(gguf_text, 3, "three Bonsai GGUF text variants");
+
+        let mlx_vision = manifest
+            .models
+            .iter()
+            .filter(|m| m.format == "mlx" && m.capability == "vision")
+            .count();
+        let gguf_vision = manifest
+            .models
+            .iter()
+            .filter(|m| m.format == "gguf" && m.capability == "vision")
+            .count();
+        assert_eq!(mlx_vision, 2, "two MLX vision variants");
+        assert_eq!(gguf_vision, 2, "two GGUF vision variants");
+
+        let mlx_imagegen = manifest
+            .models
+            .iter()
+            .filter(|m| m.format == "mlx" && m.capability == "imagegen")
+            .count();
+        let gguf_imagegen = manifest
+            .models
+            .iter()
+            .filter(|m| m.format == "gguf" && m.capability == "imagegen")
+            .count();
+        assert_eq!(mlx_imagegen, 1, "one MLX imagegen variant");
+        assert_eq!(gguf_imagegen, 1, "one GGUF imagegen variant");
+
+        // Text models must NOT use Q4_K_M (Bonsai is 1.58-bit). Vision
+        // and imagegen entries do use Q4_K_M / Q4_K_S / Q4_0 / 4-bit
+        // — that's expected.
         for m in &manifest.models {
-            assert_ne!(m.quantization, "Q4_K_M");
+            if m.capability == "text" {
+                assert_ne!(
+                    m.quantization, "Q4_K_M",
+                    "text model {} must not use Q4_K_M",
+                    m.id
+                );
+            }
+        }
+
+        // Imagegen entries must NOT advertise the CPU compute path
+        // (FLUX on a quantized CPU dispatcher is unusably slow). The
+        // renderer keys off this to grey out the imagegen slot on
+        // CPU-only hosts; a stray `"cpu"` in the manifest would
+        // silently re-enable a job that never returns.
+        for m in &manifest.models {
+            if m.capability == "imagegen" {
+                assert!(
+                    !m.compute.iter().any(|c| c == "cpu"),
+                    "imagegen entry {} must not list cpu compute",
+                    m.id
+                );
+            }
         }
     }
 
     #[test]
-    fn ship_manifest_no_duplicate_platform_tier_combination() {
+    fn ship_manifest_no_duplicate_platform_tier_capability_combination() {
+        // Pre-multi-capability the (format, platform, tier) triple was
+        // unique. Adding capability widens the key: now
+        // (format, platform, tier, capability) is the unique
+        // identity — e.g. there's both a `(gguf, *, medium, text)`
+        // Bonsai-4B AND a `(gguf, *, medium, vision)` Qwen3.5-4B.
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecars/models.json");
         let manifest = load_manifest(&path).expect("ship manifest parses");
-        let mut seen: Vec<(String, String, String)> = Vec::new();
+        let mut seen: Vec<(String, String, String, String)> = Vec::new();
         for m in &manifest.models {
-            let key = (m.format.clone(), m.platform.clone(), m.tier.clone());
-            assert!(!seen.contains(&key), "duplicate manifest entry {key:?}");
+            let key = (
+                m.format.clone(),
+                m.platform.clone(),
+                m.tier.clone(),
+                m.capability.clone(),
+            );
+            assert!(
+                !seen.contains(&key),
+                "duplicate manifest entry {key:?} (model id {})",
+                m.id
+            );
             seen.push(key);
         }
     }
 
     #[test]
     fn ship_manifest_filename_extension_matches_format() {
+        // MLX entries can ship as `.mlx.tar.gz` (Bonsai's archive
+        // layout) or `.tar.gz` (the upstream community archives for
+        // Qwen3.5/SmolVLM/FLUX). The invariant we want to lock in is
+        // "MLX = archive, GGUF = single .gguf file".
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecars/models.json");
         let manifest = load_manifest(&path).expect("ship manifest parses");
         for m in &manifest.models {
             if m.format == "mlx" {
-                assert!(m.filename.ends_with(".mlx.tar.gz"), "{}", m.filename);
+                assert!(
+                    m.filename.ends_with(".tar.gz") || m.filename.ends_with(".tgz"),
+                    "MLX manifest entry {} has filename {} - expected archive",
+                    m.id,
+                    m.filename
+                );
             } else if m.format == "gguf" {
-                assert!(m.filename.ends_with(".gguf"), "{}", m.filename);
+                assert!(
+                    m.filename.ends_with(".gguf"),
+                    "GGUF manifest entry {} has filename {}",
+                    m.id,
+                    m.filename
+                );
             }
         }
     }
@@ -546,6 +674,7 @@ mod tests {
             .unwrap();
         let installed = InstalledModel {
             model_id: req.id.clone(),
+            capability: req.capability,
             format: req.format,
             filename: req.filename.clone(),
             path: "/tmp/x".into(),
@@ -578,6 +707,7 @@ mod tests {
             .clone();
         let installed = InstalledModel {
             model_id: installed_info.id.clone(),
+            capability: installed_info.capability,
             format: installed_info.format,
             filename: installed_info.filename.clone(),
             path: "/tmp/old".into(),
@@ -608,6 +738,7 @@ mod tests {
         // The swap decision must reflect disk usage, not network transfer.
         let installed = InstalledModel {
             model_id: "installed-archive".into(),
+            capability: ModelCapability::Text,
             format: ModelFormat::Mlx,
             filename: "installed.tar.gz".into(),
             path: "/tmp/installed".into(),
@@ -620,6 +751,7 @@ mod tests {
             id: "new-archive".into(),
             name: "New Archive".into(),
             parameters: "4B".into(),
+            capability: ModelCapability::Text,
             quantization: "2-bit".into(),
             format: ModelFormat::Mlx,
             platform: Platform::MacosAppleSilicon,
@@ -651,6 +783,7 @@ mod tests {
     fn installed_model_serialises_with_camel_case_keys_matching_ts() {
         let m = InstalledModel {
             model_id: "ternary-bonsai-1.7b-gguf".into(),
+            capability: ModelCapability::Text,
             format: ModelFormat::Gguf,
             filename: "ternary-bonsai-1.7b-q1_0_g128.gguf".into(),
             path: "/tmp/m".into(),
@@ -666,6 +799,7 @@ mod tests {
         // file shipped by the TS Electron main process.
         for key in [
             "modelId",
+            "capability",
             "format",
             "filename",
             "path",
@@ -704,6 +838,11 @@ mod tests {
         }"#;
         let parsed: InstalledModel = serde_json::from_str(written_by_ts).unwrap();
         assert_eq!(parsed.model_id, "ternary-bonsai-1.7b-gguf");
+        // No `capability` field in the JSON above (covers the
+        // pre-multi-slot legacy record shape). Must default to Text
+        // per `default_installed_capability` — the legacy flat layout
+        // only ever held text models.
+        assert_eq!(parsed.capability, ModelCapability::Text);
         assert_eq!(parsed.download_size_mb, 450);
         assert_eq!(parsed.disk_size_mb, 450);
         assert_eq!(
@@ -711,6 +850,42 @@ mod tests {
             Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
         );
         assert_eq!(parsed.downloaded_at, "2026-05-19T00:00:00Z");
+    }
+
+    #[test]
+    fn installed_model_deserialises_per_slot_records_for_every_capability() {
+        // Post-Block-A records carry a `capability` field stamped by
+        // the TS-side `writeCurrentModel`. The Rust side must round-
+        // trip the field for every slot so a future Rust-side reader
+        // (e.g. a future model-loader that wants to mmap directly)
+        // can distinguish text / vision / imagegen records.
+        for (json_cap, expected) in [
+            ("text", ModelCapability::Text),
+            ("vision", ModelCapability::Vision),
+            ("imagegen", ModelCapability::Imagegen),
+        ] {
+            let json = format!(
+                r#"{{
+                    "modelId": "x",
+                    "capability": "{json_cap}",
+                    "format": "gguf",
+                    "filename": "x.gguf",
+                    "path": "/x",
+                    "downloadSizeMb": 1,
+                    "diskSizeMb": 1,
+                    "sha256": null,
+                    "downloadedAt": "t"
+                }}"#
+            );
+            let parsed: InstalledModel = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed.capability, expected);
+            let reserialised = serde_json::to_value(&parsed).unwrap();
+            assert_eq!(
+                reserialised.get("capability").and_then(|v| v.as_str()),
+                Some(json_cap),
+                "Rust must preserve capability across deserialise->serialise round-trip",
+            );
+        }
     }
 
     #[test]
@@ -764,6 +939,7 @@ mod tests {
     fn installed_model_falls_back_to_download_size_when_disk_size_missing() {
         let m = InstalledModel {
             model_id: "legacy".into(),
+            capability: ModelCapability::Text,
             format: ModelFormat::Gguf,
             filename: "legacy.gguf".into(),
             path: "/tmp/legacy".into(),
@@ -814,13 +990,32 @@ mod tests {
 
     #[test]
     fn registry_for_host_falls_back_when_manifest_absent() {
+        // Fallback returns the entire GGUF subset of
+        // `full_model_registry()`: three Bonsai text variants + two
+        // vision + one imagegen.
         let v = registry_for_host(
             Some(std::path::Path::new("/nonexistent/manifest.json")),
             Platform::WindowsX64,
         );
-        assert_eq!(v.len(), 3);
+        assert_eq!(v.len(), 6, "3 text + 2 vision + 1 imagegen GGUF variants");
         for m in &v {
             assert_eq!(m.format, ModelFormat::Gguf);
+            assert_eq!(m.platform, Platform::WindowsX64);
         }
+        let text_count = v
+            .iter()
+            .filter(|m| m.capability == ModelCapability::Text)
+            .count();
+        let vision_count = v
+            .iter()
+            .filter(|m| m.capability == ModelCapability::Vision)
+            .count();
+        let imagegen_count = v
+            .iter()
+            .filter(|m| m.capability == ModelCapability::Imagegen)
+            .count();
+        assert_eq!(text_count, 3);
+        assert_eq!(vision_count, 2);
+        assert_eq!(imagegen_count, 1);
     }
 }

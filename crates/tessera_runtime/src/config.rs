@@ -18,11 +18,58 @@ impl DeviceTier {
     }
 }
 
-/// Weight format for a Ternary-Bonsai variant.
+/// What a model is good for.
 ///
-/// `Gguf` is the only GGUF quantization Tessera ships — the
-/// `Q1_0_g128` ternary repack from the PrismML llama.cpp fork.
-/// `Mlx` is the 2-bit MLX weight used on Apple Silicon.
+/// Tessera ships per-capability model slots — text generation is the
+/// long-standing Bonsai family, vision understanding is Qwen3.5-VL /
+/// SmolVLM, and image generation is FLUX.2-klein. A single device may
+/// have one model installed per capability simultaneously (the
+/// single-model-on-disk invariant is per-slot, not global). See
+/// `apps/desktop/electron/modelManagement.ts` for the matching
+/// TypeScript declaration and on-disk layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelCapability {
+    /// Text-only completion (Bonsai / Ternary-Bonsai).
+    Text,
+    /// Image+text → text. VLMs (Qwen3.5-VL, SmolVLM).
+    Vision,
+    /// Text → image. Diffusion models (FLUX.2-klein).
+    Imagegen,
+}
+
+impl ModelCapability {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Vision => "vision",
+            Self::Imagegen => "imagegen",
+        }
+    }
+
+    pub fn display_label(&self) -> &'static str {
+        match self {
+            Self::Text => "Text generation",
+            Self::Vision => "Vision understanding",
+            Self::Imagegen => "Image generation",
+        }
+    }
+
+    /// Every capability shipped by the registry. Ordering is stable —
+    /// callers (e.g. the Settings UI multi-section renderer) rely on
+    /// this for consistent display order.
+    pub fn all() -> [Self; 3] {
+        [Self::Text, Self::Vision, Self::Imagegen]
+    }
+}
+
+/// Weight format for a model variant.
+///
+/// `Gguf` is the GGUF quantization Tessera ships — for text it is the
+/// `Q1_0_g128` ternary repack from the PrismML llama.cpp fork; for
+/// vision it is Q4_K_M / Q4_K_S; for image generation it is Q4_0
+/// (FLUX.2-klein).  `Mlx` is the equivalent quantized MLX weight used
+/// on Apple Silicon.
 ///
 /// Serialised lowercase to match the TypeScript wire format used by
 /// `apps/desktop/electron/modelManagement.ts` and the `sidecars/models.json`
@@ -42,10 +89,19 @@ impl ModelFormat {
         }
     }
 
+    /// Format-level human label. Intentionally just the format name
+    /// without a hardcoded quantization — each capability ships its
+    /// own quantization (Bonsai text uses `Q1_0_g128` / `MLX 2-bit`,
+    /// Qwen3.5 vision uses `Q4_K_M` / `MLX 4-bit`, FLUX imagegen uses
+    /// `Q4_0` / `MLX 4-bit`), so pinning a single quantization here
+    /// would mislabel every non-text entry. Callers that want the
+    /// "format + quantization" pair should use `ModelInfo::display_label`
+    /// or the TS-side `ResolvedModel.formatLabel`, both of which read
+    /// the per-entry `quantization` field.
     pub fn display_label(&self) -> &'static str {
         match self {
-            Self::Gguf => "GGUF Q1_0_g128",
-            Self::Mlx => "MLX 2-bit",
+            Self::Gguf => "GGUF",
+            Self::Mlx => "MLX",
         }
     }
 }
@@ -84,6 +140,19 @@ impl ComputeBackend {
             Self::Vulkan => "Vulkan",
             Self::Metal => "Metal",
             Self::Rocm => "ROCm (AMD)",
+        }
+    }
+
+    /// Whether this backend dispatches work to a GPU.
+    ///
+    /// Used by [`is_capability_available`] to gate image generation
+    /// (FLUX.2-klein on a quantized CPU path is unusably slow, so
+    /// the slot is hidden on CPU-only hosts).
+    #[must_use]
+    pub fn is_gpu(&self) -> bool {
+        match self {
+            Self::Cpu => false,
+            Self::Cuda | Self::Vulkan | Self::Metal | Self::Rocm => true,
         }
     }
 }
@@ -173,8 +242,16 @@ pub struct ModelInfo {
     pub id: String,
     pub name: String,
     pub parameters: String,
-    /// Quantization label — for Ternary-Bonsai this is `Q1_0_g128` (GGUF)
-    /// or `2-bit` (MLX). Never `Q4_K_M`.
+    /// What slot this model occupies — text, vision, or image generation.
+    /// Defaults to [`ModelCapability::Text`] when the manifest predates
+    /// the capability field (kept on a `serde(default)` so historical
+    /// `active-model-*.json` records and older serialized blobs still
+    /// deserialize).
+    #[serde(default = "default_capability")]
+    pub capability: ModelCapability,
+    /// Quantization label. For text models this is `Q1_0_g128` /
+    /// `2-bit` (Ternary-Bonsai), for vision `Q4_K_M` / `Q4_K_S` /
+    /// `4-bit`, for image generation `Q4_0` / `4-bit`.
     pub quantization: String,
     pub format: ModelFormat,
     pub platform: Platform,
@@ -192,6 +269,24 @@ pub struct ModelInfo {
     pub url: Option<String>,
     pub checksum: Option<String>,
     pub local_path: Option<String>,
+}
+
+fn default_capability() -> ModelCapability {
+    ModelCapability::Text
+}
+
+impl ModelInfo {
+    /// Human-readable "{Format} {Quantization}" label derived from the
+    /// entry's actual quantization. Mirrors the TS-side `formatLabel`
+    /// in `apps/desktop/electron/modelManagement.ts` so any future
+    /// Rust-side surface (logs, TUI, FFI consumer) gets the same
+    /// "GGUF Q4_K_M" / "MLX 4-bit" labels the renderer shows. Avoids
+    /// the trap that the bare `ModelFormat::display_label()` would
+    /// fall into, where a single hardcoded quantization mislabels
+    /// every non-text entry.
+    pub fn display_label(&self) -> String {
+        format!("{} {}", self.format.display_label(), self.quantization)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,6 +370,18 @@ const GGUF_COMPUTE: [ComputeBackend; 4] = [
     ComputeBackend::Rocm,
 ];
 
+/// GPU-only compute backends for image generation.
+///
+/// Stable-diffusion.cpp's CPU path on a quantized FLUX.2-klein takes
+/// minutes per step on consumer hardware, so we treat image
+/// generation as GPU-only — the manifest entries deliberately omit
+/// [`ComputeBackend::Cpu`] and [`ComputeBackend::Rocm`] (the latter
+/// because sd-server's ROCm build is not yet shipped). The detection
+/// helpers [`available_models_for_capability`] and
+/// [`is_capability_available`] use this list to gate the image-gen
+/// slot on hosts without one of these backends.
+const IMAGEGEN_GGUF_COMPUTE: [ComputeBackend; 2] = [ComputeBackend::Cuda, ComputeBackend::Vulkan];
+
 const HF_BASE: &str = "https://huggingface.co";
 
 fn mlx_url(slug: &str, archive: &str) -> String {
@@ -313,6 +420,7 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             id: "ternary-bonsai-1.7b-mlx".into(),
             name: "Ternary-Bonsai 1.7B".into(),
             parameters: "1.7B".into(),
+            capability: ModelCapability::Text,
             quantization: "2-bit".into(),
             format: ModelFormat::Mlx,
             platform: Platform::MacosAppleSilicon,
@@ -343,6 +451,7 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             id: "ternary-bonsai-1.7b-gguf".into(),
             name: "Ternary-Bonsai 1.7B".into(),
             parameters: "1.7B".into(),
+            capability: ModelCapability::Text,
             quantization: "Q1_0_g128".into(),
             format: ModelFormat::Gguf,
             // Placeholder; rewritten by available_models_for_platform.
@@ -368,6 +477,7 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             id: "ternary-bonsai-4b-mlx".into(),
             name: "Ternary-Bonsai 4B".into(),
             parameters: "4B".into(),
+            capability: ModelCapability::Text,
             quantization: "2-bit".into(),
             format: ModelFormat::Mlx,
             platform: Platform::MacosAppleSilicon,
@@ -389,6 +499,7 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             id: "ternary-bonsai-4b-gguf".into(),
             name: "Ternary-Bonsai 4B".into(),
             parameters: "4B".into(),
+            capability: ModelCapability::Text,
             quantization: "Q1_0_g128".into(),
             format: ModelFormat::Gguf,
             // Placeholder; rewritten by available_models_for_platform.
@@ -412,6 +523,7 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             id: "ternary-bonsai-8b-mlx".into(),
             name: "Ternary-Bonsai 8B".into(),
             parameters: "8B".into(),
+            capability: ModelCapability::Text,
             quantization: "2-bit".into(),
             format: ModelFormat::Mlx,
             platform: Platform::MacosAppleSilicon,
@@ -433,6 +545,7 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             id: "ternary-bonsai-8b-gguf".into(),
             name: "Ternary-Bonsai 8B".into(),
             parameters: "8B".into(),
+            capability: ModelCapability::Text,
             quantization: "Q1_0_g128".into(),
             format: ModelFormat::Gguf,
             // Placeholder; rewritten by available_models_for_platform.
@@ -451,15 +564,168 @@ pub fn full_model_registry() -> Vec<ModelInfo> {
             checksum: None,
             local_path: None,
         },
+        // --- Vision (VLM) -------------------------------------------------
+        // Qwen3.5-4B Vision — mid-tier VLM. Served by llama-server with
+        // `--mmproj` for the multimodal projector. Q4_K_M GGUF on
+        // non-Apple platforms, 4-bit MLX on Apple Silicon.
+        ModelInfo {
+            id: "qwen3.5-4b-vision-gguf".into(),
+            name: "Qwen3.5-4B Vision".into(),
+            parameters: "4B".into(),
+            capability: ModelCapability::Vision,
+            quantization: "Q4_K_M".into(),
+            format: ModelFormat::Gguf,
+            // Placeholder; rewritten by available_models_for_platform.
+            platform: Platform::LinuxX64,
+            compute_backends: GGUF_COMPUTE.to_vec(),
+            required_ram_gb: 4.0,
+            download_size_mb: 2500,
+            disk_size_mb: 2500,
+            context_length: 4096,
+            tier: DeviceTier::Medium,
+            filename: "Qwen3.5-4B-Revised-q4_k_m.gguf".into(),
+            url: Some(gguf_url(
+                "Smoffyy/Qwen3.5-4B-Instruct-Revised-GGUF",
+                "Qwen3.5-4B-Revised-q4_k_m.gguf",
+            )),
+            checksum: None,
+            local_path: None,
+        },
+        ModelInfo {
+            id: "qwen3.5-4b-vision-mlx".into(),
+            name: "Qwen3.5-4B Vision".into(),
+            parameters: "4B".into(),
+            capability: ModelCapability::Vision,
+            quantization: "4-bit".into(),
+            format: ModelFormat::Mlx,
+            platform: Platform::MacosAppleSilicon,
+            compute_backends: MLX_COMPUTE.to_vec(),
+            required_ram_gb: 4.0,
+            download_size_mb: 2500,
+            disk_size_mb: 2750,
+            context_length: 4096,
+            tier: DeviceTier::Medium,
+            filename: "qwen3.5-4b-mlx-4bit.tar.gz".into(),
+            url: Some(mlx_url(
+                "mlx-community/Qwen3.5-4B-MLX-4bit",
+                "qwen3.5-4b-mlx-4bit.tar.gz",
+            )),
+            checksum: None,
+            local_path: None,
+        },
+        // SmolVLM 256M — low-tier VLM. Small enough to run on CPU
+        // at low device tier; both GGUF and MLX variants ship.
+        ModelInfo {
+            id: "smolvlm-256m-vision-gguf".into(),
+            name: "SmolVLM 256M Vision".into(),
+            parameters: "256M".into(),
+            capability: ModelCapability::Vision,
+            quantization: "Q4_K_S".into(),
+            format: ModelFormat::Gguf,
+            // Placeholder; rewritten by available_models_for_platform.
+            platform: Platform::LinuxX64,
+            compute_backends: GGUF_COMPUTE.to_vec(),
+            required_ram_gb: 1.0,
+            download_size_mb: 150,
+            disk_size_mb: 150,
+            context_length: 2048,
+            tier: DeviceTier::Low,
+            filename: "SmolVLM2-256M-Video-Instruct.Q4_K_S.gguf".into(),
+            url: Some(gguf_url(
+                "mradermacher/SmolVLM2-256M-Video-Instruct-GGUF",
+                "SmolVLM2-256M-Video-Instruct.Q4_K_S.gguf",
+            )),
+            checksum: None,
+            local_path: None,
+        },
+        ModelInfo {
+            id: "smolvlm-256m-vision-mlx".into(),
+            name: "SmolVLM 256M Vision".into(),
+            parameters: "256M".into(),
+            capability: ModelCapability::Vision,
+            quantization: "4-bit".into(),
+            format: ModelFormat::Mlx,
+            platform: Platform::MacosAppleSilicon,
+            compute_backends: MLX_COMPUTE.to_vec(),
+            required_ram_gb: 1.0,
+            download_size_mb: 150,
+            disk_size_mb: 170,
+            context_length: 2048,
+            tier: DeviceTier::Low,
+            filename: "smolvlm-256m-instruct-4bit.tar.gz".into(),
+            url: Some(mlx_url(
+                "mlx-community/SmolVLM-256M-Instruct-4bit",
+                "smolvlm-256m-instruct-4bit.tar.gz",
+            )),
+            checksum: None,
+            local_path: None,
+        },
+        // --- Image generation (FLUX.2-klein) -----------------------------
+        // GPU-only — `compute_backends` deliberately excludes CPU.
+        // Image generation is served by sd-server (stable-diffusion.cpp).
+        ModelInfo {
+            id: "flux2-klein-4b-gguf".into(),
+            name: "FLUX.2-klein 4B".into(),
+            parameters: "4B".into(),
+            capability: ModelCapability::Imagegen,
+            quantization: "Q4_0".into(),
+            format: ModelFormat::Gguf,
+            // Placeholder; rewritten by available_models_for_platform.
+            platform: Platform::LinuxX64,
+            compute_backends: IMAGEGEN_GGUF_COMPUTE.to_vec(),
+            required_ram_gb: 6.0,
+            download_size_mb: 2300,
+            disk_size_mb: 2300,
+            // Diffusion models don't have a transformer context window;
+            // the manifest carries `0` to make the absence explicit.
+            context_length: 0,
+            tier: DeviceTier::Medium,
+            filename: "flux-2-klein-4b-Q4_0.gguf".into(),
+            url: Some(gguf_url(
+                "leejet/FLUX.2-klein-4B-GGUF",
+                "flux-2-klein-4b-Q4_0.gguf",
+            )),
+            checksum: None,
+            local_path: None,
+        },
+        ModelInfo {
+            id: "flux2-klein-4b-mlx".into(),
+            name: "FLUX.2-klein 4B".into(),
+            parameters: "4B".into(),
+            capability: ModelCapability::Imagegen,
+            quantization: "4-bit".into(),
+            format: ModelFormat::Mlx,
+            platform: Platform::MacosAppleSilicon,
+            // Metal-only on Apple Silicon — sd-server falls back to CPU
+            // when Metal is unavailable, but we surface the GPU-only
+            // contract at the registry level so the UI can grey out
+            // the slot rather than start a job that hangs for minutes.
+            compute_backends: MLX_COMPUTE.to_vec(),
+            required_ram_gb: 6.0,
+            download_size_mb: 2300,
+            disk_size_mb: 2530,
+            context_length: 0,
+            tier: DeviceTier::Medium,
+            filename: "flux2-klein-4b-mlx-4bit.tar.gz".into(),
+            url: Some(mlx_url(
+                "themindstudio/flux2-klein-4b-mlx-4bit",
+                "flux2-klein-4b-mlx-4bit.tar.gz",
+            )),
+            checksum: None,
+            local_path: None,
+        },
     ]
 }
 
 /// Variants of the registry applicable to a specific platform.
 ///
-/// macOS Apple Silicon returns the three MLX variants; every other
-/// platform returns the three GGUF variants with the `platform`
-/// field rewritten so callers can introspect which platform the
-/// runtime is targeting.
+/// Returns every entry whose [`ModelFormat`] matches the platform's
+/// preferred format (MLX on Apple Silicon, GGUF elsewhere), with the
+/// `platform` field rewritten to the caller's `platform` so callers
+/// can introspect which platform the runtime is targeting. The list
+/// spans every capability (text, vision, imagegen) — callers that
+/// want a single capability should pair this with
+/// [`available_models_for_capability`].
 #[must_use]
 pub fn available_models_for_platform(platform: Platform) -> Vec<ModelInfo> {
     let preferred = platform.preferred_format();
@@ -471,6 +737,68 @@ pub fn available_models_for_platform(platform: Platform) -> Vec<ModelInfo> {
             m
         })
         .collect()
+}
+
+/// Variants of the registry applicable to a specific platform AND
+/// capability, gated by the detected compute backends.
+///
+/// This is the helper the renderer/UI calls to populate the model
+/// dropdown for a given slot. For text and vision capabilities the
+/// model entries always include `Cpu` in their `compute_backends`,
+/// so the intersection-with-detected-backends gate is always
+/// non-empty on any host. For `ImageGeneration` the entries
+/// deliberately omit `Cpu` (see [`IMAGEGEN_GGUF_COMPUTE`] and the
+/// MLX variant), so a host without a GPU returns an empty list —
+/// the UI uses that to grey out the image-gen slot.
+///
+/// The `detected_backends` parameter is taken explicitly (rather
+/// than calling [`detect_compute_backends`] internally) so unit
+/// tests can exercise the gating without depending on the test
+/// machine's hardware. Production callers typically pass the
+/// result of [`detect_compute_backends`].
+#[must_use]
+pub fn available_models_for_capability(
+    platform: Platform,
+    capability: ModelCapability,
+    detected_backends: &[ComputeBackend],
+) -> Vec<ModelInfo> {
+    available_models_for_platform(platform)
+        .into_iter()
+        .filter(|m| m.capability == capability)
+        .filter(|m| {
+            m.compute_backends
+                .iter()
+                .any(|b| detected_backends.contains(b))
+        })
+        .collect()
+}
+
+/// Whether the given capability is usable on a host of `tier` with
+/// `detected_backends`.
+///
+/// - `Text` is always available.
+/// - `Vision` is always available (SmolVLM 256M runs on CPU even at
+///   [`DeviceTier::Low`]).
+/// - `Imagegen` requires both [`DeviceTier::Medium`] or higher AND
+///   at least one GPU backend (CUDA/Vulkan/Metal/ROCm). CPU-only
+///   diffusion on a quantized FLUX is unusable in practice — the
+///   gate prevents a model that would never produce a result from
+///   appearing in the UI.
+#[must_use]
+pub fn is_capability_available(
+    tier: DeviceTier,
+    capability: ModelCapability,
+    detected_backends: &[ComputeBackend],
+) -> bool {
+    match capability {
+        ModelCapability::Text | ModelCapability::Vision => true,
+        ModelCapability::Imagegen => {
+            if matches!(tier, DeviceTier::Low) {
+                return false;
+            }
+            detected_backends.iter().any(ComputeBackend::is_gpu)
+        }
+    }
 }
 
 /// Models available on the current platform (compile-time detected).
@@ -493,20 +821,42 @@ pub fn available_models() -> Vec<ModelInfo> {
 /// developer empties [`full_model_registry`] entirely — that's a build
 /// bug, not a runtime condition.
 #[must_use]
-pub fn select_model(tier: DeviceTier, platform: Platform) -> ModelInfo {
-    let models = available_models_for_platform(platform);
-    if !models.is_empty() {
-        return pick_or_first(models, tier);
+pub fn select_model(
+    tier: DeviceTier,
+    platform: Platform,
+    capability: ModelCapability,
+) -> ModelInfo {
+    let candidates: Vec<ModelInfo> = available_models_for_platform(platform)
+        .into_iter()
+        .filter(|m| m.capability == capability)
+        .collect();
+    if !candidates.is_empty() {
+        return pick_or_first(candidates, tier);
     }
-    let mut all = full_model_registry();
+    // Per-(platform, capability) list was empty — every capability has
+    // at least one MLX and one GGUF entry today so this only triggers
+    // when a developer adds a `Platform` or `ModelCapability` variant
+    // without a matching registry entry. Fall back to any registry
+    // entry for the requested capability with the `platform` rewritten,
+    // so the call remains infallible for the caller. The final assert
+    // only fires if [`full_model_registry`] is empty entirely.
+    let mut fallback: Vec<ModelInfo> = full_model_registry()
+        .into_iter()
+        .filter(|m| m.capability == capability)
+        .map(|mut m| {
+            m.platform = platform;
+            m
+        })
+        .collect();
     assert!(
-        !all.is_empty(),
-        "full_model_registry() is empty — this is a build bug; the registry must always include at least one ModelInfo variant",
+        !fallback.is_empty(),
+        "full_model_registry() has no entry for capability {capability:?} — this is a build bug; the registry must include at least one variant per capability",
     );
-    for m in &mut all {
-        m.platform = platform;
+    if let Some(idx) = fallback.iter().position(|m| m.tier == tier) {
+        fallback.swap_remove(idx)
+    } else {
+        fallback.swap_remove(0)
     }
-    pick_or_first(all, tier)
 }
 
 /// Pick the entry whose tier matches; otherwise return the first entry.
@@ -521,10 +871,16 @@ fn pick_or_first(mut models: Vec<ModelInfo>, tier: DeviceTier) -> ModelInfo {
     }
 }
 
-/// Backwards-compatible wrapper that uses the current platform.
+/// Backwards-compatible wrapper that uses the current platform and
+/// the text-generation capability.
+///
+/// Kept for the long tail of call sites that pre-date capability
+/// dispatch and only ever cared about the text slot. New code should
+/// call [`select_model`] directly with an explicit
+/// [`ModelCapability`].
 #[must_use]
 pub fn select_model_for_tier(tier: DeviceTier) -> ModelInfo {
-    select_model(tier, detect_platform())
+    select_model(tier, detect_platform(), ModelCapability::Text)
 }
 
 // --- Compute-backend detection ------------------------------------------
@@ -634,37 +990,189 @@ pub fn has_rocm() -> bool {
 mod tests {
     use super::*;
 
-    fn assert_no_q4km(m: &ModelInfo) {
-        assert_ne!(
-            m.quantization, "Q4_K_M",
-            "model {} must not use Q4_K_M quantization",
-            m.id
-        );
+    fn assert_no_q4km_for_text(m: &ModelInfo) {
+        if m.capability == ModelCapability::Text {
+            assert_ne!(
+                m.quantization, "Q4_K_M",
+                "text model {} must not use Q4_K_M quantization",
+                m.id
+            );
+        }
     }
 
-    #[test]
-    fn registry_contains_three_sizes_per_format() {
-        let registry = full_model_registry();
-        let mlx: Vec<_> = registry
+    /// All MLX entries shipped by [`full_model_registry`] across every
+    /// capability. Used by the platform-list count assertions below —
+    /// adding a new MLX entry to the registry intentionally bumps the
+    /// expected count, and the failing assertion points at the gap.
+    fn count_mlx_in_registry() -> usize {
+        full_model_registry()
             .iter()
             .filter(|m| m.format == ModelFormat::Mlx)
-            .collect();
-        let gguf: Vec<_> = registry
+            .count()
+    }
+
+    fn count_gguf_in_registry() -> usize {
+        full_model_registry()
             .iter()
             .filter(|m| m.format == ModelFormat::Gguf)
-            .collect();
-        assert_eq!(mlx.len(), 3);
-        assert_eq!(gguf.len(), 3);
+            .count()
     }
 
     #[test]
-    fn no_model_uses_q4km() {
+    fn registry_contains_three_text_sizes_per_format() {
+        let registry = full_model_registry();
+        let mlx_text: Vec<_> = registry
+            .iter()
+            .filter(|m| m.format == ModelFormat::Mlx && m.capability == ModelCapability::Text)
+            .collect();
+        let gguf_text: Vec<_> = registry
+            .iter()
+            .filter(|m| m.format == ModelFormat::Gguf && m.capability == ModelCapability::Text)
+            .collect();
+        assert_eq!(mlx_text.len(), 3, "three Bonsai MLX text variants");
+        assert_eq!(gguf_text.len(), 3, "three Bonsai GGUF text variants");
+    }
+
+    #[test]
+    fn registry_contains_vision_entries_for_each_format() {
+        let registry = full_model_registry();
+        let mlx_vision: Vec<_> = registry
+            .iter()
+            .filter(|m| m.format == ModelFormat::Mlx && m.capability == ModelCapability::Vision)
+            .collect();
+        let gguf_vision: Vec<_> = registry
+            .iter()
+            .filter(|m| m.format == ModelFormat::Gguf && m.capability == ModelCapability::Vision)
+            .collect();
+        // One low-tier (SmolVLM 256M) + one mid-tier (Qwen3.5-4B-VL)
+        // per format.
+        assert_eq!(mlx_vision.len(), 2, "two MLX vision variants");
+        assert_eq!(gguf_vision.len(), 2, "two GGUF vision variants");
+    }
+
+    #[test]
+    fn registry_contains_imagegen_entry_for_each_format() {
+        let registry = full_model_registry();
+        let mlx_imagegen: Vec<_> = registry
+            .iter()
+            .filter(|m| m.format == ModelFormat::Mlx && m.capability == ModelCapability::Imagegen)
+            .collect();
+        let gguf_imagegen: Vec<_> = registry
+            .iter()
+            .filter(|m| m.format == ModelFormat::Gguf && m.capability == ModelCapability::Imagegen)
+            .collect();
+        // Single FLUX.2-klein 4B variant per format.
+        assert_eq!(mlx_imagegen.len(), 1, "one MLX imagegen variant");
+        assert_eq!(gguf_imagegen.len(), 1, "one GGUF imagegen variant");
+    }
+
+    #[test]
+    fn text_models_do_not_use_q4km() {
+        // Ternary-Bonsai is the canonical text family; it ships at
+        // 1.58-bit (Q1_0_g128 for GGUF, 2-bit for MLX). A Q4_K_M
+        // value would mean someone wired a non-Bonsai text model
+        // into the registry by accident and inflated the download
+        // sizes 4×. Vision/imagegen entries DO use Q4_K_M / Q4_0 /
+        // 4-bit — that's correct and intentional.
         for m in full_model_registry() {
-            assert_no_q4km(&m);
+            assert_no_q4km_for_text(&m);
+            if m.capability == ModelCapability::Text {
+                assert!(
+                    m.quantization == "Q1_0_g128" || m.quantization == "2-bit",
+                    "unexpected text quantization {} on {}",
+                    m.quantization,
+                    m.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn vision_models_use_expected_quantization() {
+        for m in full_model_registry() {
+            if m.capability != ModelCapability::Vision {
+                continue;
+            }
+            match m.format {
+                ModelFormat::Gguf => assert!(
+                    m.quantization == "Q4_K_M" || m.quantization == "Q4_K_S",
+                    "vision GGUF entry {} has unexpected quantization {}",
+                    m.id,
+                    m.quantization
+                ),
+                ModelFormat::Mlx => assert_eq!(
+                    m.quantization, "4-bit",
+                    "vision MLX entry {} must use 4-bit",
+                    m.id
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn imagegen_models_use_expected_quantization() {
+        for m in full_model_registry() {
+            if m.capability != ModelCapability::Imagegen {
+                continue;
+            }
+            match m.format {
+                ModelFormat::Gguf => assert_eq!(
+                    m.quantization, "Q4_0",
+                    "imagegen GGUF entry {} must use Q4_0",
+                    m.id
+                ),
+                ModelFormat::Mlx => assert_eq!(
+                    m.quantization, "4-bit",
+                    "imagegen MLX entry {} must use 4-bit",
+                    m.id
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn imagegen_models_exclude_cpu_backend() {
+        // CRITICAL invariant: image generation entries must NEVER
+        // include `Cpu` in their compute_backends. The renderer's UI
+        // gate keys off the compute-backends intersection to grey
+        // out the slot on CPU-only hosts, and a leaked CPU backend
+        // would re-enable a job that takes minutes per diffusion
+        // step. The corresponding TS-side guard lives in
+        // `apps/desktop/electron/modelManagement.ts`.
+        for m in full_model_registry() {
+            if m.capability != ModelCapability::Imagegen {
+                continue;
+            }
             assert!(
-                m.quantization == "Q1_0_g128" || m.quantization == "2-bit",
-                "unexpected quantization {} on {}",
-                m.quantization,
+                !m.compute_backends.contains(&ComputeBackend::Cpu),
+                "imagegen entry {} must NOT list Cpu as a compute backend; \
+                 see IMAGEGEN_GGUF_COMPUTE and the FLUX MLX variant",
+                m.id
+            );
+            // Plus at least one GPU backend must be listed (otherwise
+            // there's no host that can run it).
+            assert!(
+                m.compute_backends.iter().any(ComputeBackend::is_gpu),
+                "imagegen entry {} must list at least one GPU backend",
+                m.id
+            );
+        }
+    }
+
+    #[test]
+    fn imagegen_context_length_is_zero() {
+        // Diffusion models don't have a transformer context window
+        // and the manifest carries `0` to make that explicit. A
+        // non-zero value would imply we'd accidentally pasted a
+        // text-model context into an imagegen entry.
+        for m in full_model_registry() {
+            if m.capability != ModelCapability::Imagegen {
+                continue;
+            }
+            assert_eq!(
+                m.context_length, 0,
+                "imagegen entry {} must declare context_length=0 \
+                 (diffusion models have no transformer context)",
                 m.id
             );
         }
@@ -673,32 +1181,44 @@ mod tests {
     #[test]
     fn apple_silicon_returns_only_mlx() {
         let models = available_models_for_platform(Platform::MacosAppleSilicon);
-        assert_eq!(models.len(), 3);
+        assert_eq!(models.len(), count_mlx_in_registry());
         for m in &models {
             assert_eq!(m.format, ModelFormat::Mlx);
             assert_eq!(m.platform, Platform::MacosAppleSilicon);
             assert_eq!(m.compute_backends, vec![ComputeBackend::Metal]);
-            assert!(m.filename.ends_with(".mlx.tar.gz"));
+            // MLX entries ship as tar.gz archives. Bonsai uses the
+            // `.mlx.tar.gz` double-extension; upstream community
+            // archives (Qwen3.5/SmolVLM/FLUX) use plain `.tar.gz`.
+            // Both are valid — the contract is "archive, not a single
+            // raw weight file".
+            assert!(
+                m.filename.ends_with(".tar.gz") || m.filename.ends_with(".tgz"),
+                "MLX entry {} has filename {} - expected archive",
+                m.id,
+                m.filename
+            );
         }
     }
 
     #[test]
     fn windows_returns_only_gguf() {
         let models = available_models_for_platform(Platform::WindowsX64);
-        assert_eq!(models.len(), 3);
+        assert_eq!(models.len(), count_gguf_in_registry());
         for m in &models {
             assert_eq!(m.format, ModelFormat::Gguf);
             assert_eq!(m.platform, Platform::WindowsX64);
-            assert_eq!(m.quantization, "Q1_0_g128");
             assert!(m.filename.ends_with(".gguf"));
-            assert!(m.compute_backends.contains(&ComputeBackend::Cpu));
+            // Text/vision GGUF entries include CPU; imagegen GGUF
+            // entries deliberately exclude CPU. The mixed shape is
+            // the whole point of imagegen-on-GPU gating, so the
+            // per-platform list is allowed to contain both.
         }
     }
 
     #[test]
     fn linux_returns_only_gguf() {
         let models = available_models_for_platform(Platform::LinuxX64);
-        assert_eq!(models.len(), 3);
+        assert_eq!(models.len(), count_gguf_in_registry());
         for m in &models {
             assert_eq!(m.format, ModelFormat::Gguf);
             assert_eq!(m.platform, Platform::LinuxX64);
@@ -716,15 +1236,24 @@ mod tests {
 
     #[test]
     fn select_model_high_apple_silicon() {
-        let m = select_model(DeviceTier::High, Platform::MacosAppleSilicon);
+        let m = select_model(
+            DeviceTier::High,
+            Platform::MacosAppleSilicon,
+            ModelCapability::Text,
+        );
         assert_eq!(m.parameters, "8B");
         assert_eq!(m.format, ModelFormat::Mlx);
+        assert_eq!(m.capability, ModelCapability::Text);
         assert!((1100..=1300).contains(&m.download_size_mb));
     }
 
     #[test]
     fn select_model_high_windows() {
-        let m = select_model(DeviceTier::High, Platform::WindowsX64);
+        let m = select_model(
+            DeviceTier::High,
+            Platform::WindowsX64,
+            ModelCapability::Text,
+        );
         assert_eq!(m.parameters, "8B");
         assert_eq!(m.format, ModelFormat::Gguf);
         assert!((1800..=2200).contains(&m.download_size_mb));
@@ -733,14 +1262,22 @@ mod tests {
 
     #[test]
     fn select_model_medium_linux() {
-        let m = select_model(DeviceTier::Medium, Platform::LinuxX64);
+        let m = select_model(
+            DeviceTier::Medium,
+            Platform::LinuxX64,
+            ModelCapability::Text,
+        );
         assert_eq!(m.parameters, "4B");
         assert!((900..=1100).contains(&m.download_size_mb));
     }
 
     #[test]
     fn select_model_low_apple_silicon_size_reasonable() {
-        let m = select_model(DeviceTier::Low, Platform::MacosAppleSilicon);
+        let m = select_model(
+            DeviceTier::Low,
+            Platform::MacosAppleSilicon,
+            ModelCapability::Text,
+        );
         // 1.58-bit MLX, must NOT be Q4_K_M-inflated (~1.1 GB).
         assert!(m.download_size_mb < 400);
         assert_eq!(m.format, ModelFormat::Mlx);
@@ -748,10 +1285,36 @@ mod tests {
 
     #[test]
     fn select_model_low_windows_size_reasonable() {
-        let m = select_model(DeviceTier::Low, Platform::WindowsX64);
+        let m = select_model(DeviceTier::Low, Platform::WindowsX64, ModelCapability::Text);
         // 1.58-bit GGUF, must NOT be Q4_K_M-inflated (~1.1 GB).
         assert!(m.download_size_mb < 600);
         assert_eq!(m.format, ModelFormat::Gguf);
+    }
+
+    #[test]
+    fn select_model_vision_apple_silicon_returns_mlx_vision_entry() {
+        let m = select_model(
+            DeviceTier::Medium,
+            Platform::MacosAppleSilicon,
+            ModelCapability::Vision,
+        );
+        assert_eq!(m.capability, ModelCapability::Vision);
+        assert_eq!(m.format, ModelFormat::Mlx);
+        // Medium tier maps to Qwen3.5-4B.
+        assert_eq!(m.parameters, "4B");
+    }
+
+    #[test]
+    fn select_model_imagegen_linux_returns_gguf_imagegen_entry() {
+        let m = select_model(
+            DeviceTier::Medium,
+            Platform::LinuxX64,
+            ModelCapability::Imagegen,
+        );
+        assert_eq!(m.capability, ModelCapability::Imagegen);
+        assert_eq!(m.format, ModelFormat::Gguf);
+        assert!(!m.compute_backends.contains(&ComputeBackend::Cpu));
+        assert!(m.compute_backends.iter().any(ComputeBackend::is_gpu));
     }
 
     #[test]
@@ -849,24 +1412,262 @@ mod tests {
 
     #[test]
     fn select_model_low_tier_back_compat() {
-        // Existing call sites use the platform-less helper.
+        // Existing call sites use the platform-less helper, which
+        // defaults to the text capability.
         let m = select_model_for_tier(DeviceTier::Low);
         assert_eq!(m.context_length, 2048);
-        assert_no_q4km(&m);
+        assert_eq!(m.capability, ModelCapability::Text);
+        assert_no_q4km_for_text(&m);
     }
 
     #[test]
     fn select_model_medium_tier_back_compat() {
         let m = select_model_for_tier(DeviceTier::Medium);
         assert_eq!(m.context_length, 4096);
-        assert_no_q4km(&m);
+        assert_eq!(m.capability, ModelCapability::Text);
+        assert_no_q4km_for_text(&m);
     }
 
     #[test]
     fn select_model_high_tier_back_compat() {
         let m = select_model_for_tier(DeviceTier::High);
         assert_eq!(m.context_length, 8192);
-        assert_no_q4km(&m);
+        assert_eq!(m.capability, ModelCapability::Text);
+        assert_no_q4km_for_text(&m);
+    }
+
+    // --- ModelCapability helpers -------------------------------------
+
+    #[test]
+    fn capability_serialization_is_lowercase() {
+        // The serde wire format must match the TypeScript enum strings
+        // (`"text" | "vision" | "imagegen"`). A casing change here
+        // would silently break the renderer's manifest deserialization.
+        let cases = [
+            (ModelCapability::Text, "\"text\""),
+            (ModelCapability::Vision, "\"vision\""),
+            (ModelCapability::Imagegen, "\"imagegen\""),
+        ];
+        for (cap, expected) in cases {
+            assert_eq!(serde_json::to_string(&cap).unwrap(), expected);
+            let parsed: ModelCapability = serde_json::from_str(expected).unwrap();
+            assert_eq!(parsed, cap);
+        }
+    }
+
+    #[test]
+    fn capability_as_str_matches_serde() {
+        for c in ModelCapability::all() {
+            let serde = serde_json::to_string(&c).unwrap();
+            // Strip surrounding quotes.
+            let stripped = serde.trim_matches('"');
+            assert_eq!(
+                stripped,
+                c.as_str(),
+                "ModelCapability::as_str() must match the serde wire format"
+            );
+        }
+    }
+
+    #[test]
+    fn capability_all_is_stable_and_complete() {
+        // The Settings UI iterates `ModelCapability::all()` to render
+        // its three sections in a fixed order. The test locks the
+        // ordering in so a future addition to the enum doesn't
+        // silently reshuffle the UI.
+        assert_eq!(
+            ModelCapability::all(),
+            [
+                ModelCapability::Text,
+                ModelCapability::Vision,
+                ModelCapability::Imagegen
+            ]
+        );
+    }
+
+    // --- available_models_for_capability gating ---------------------
+
+    #[test]
+    fn available_models_for_capability_text_returns_text_only() {
+        // Apple Silicon MLX models dispatch to Metal; non-Apple GGUF
+        // models dispatch to CPU/CUDA/Vulkan/ROCm. Pass the host's
+        // matching backend so the compute-backend intersection is
+        // non-empty.
+        let cases: [(Platform, &[ComputeBackend]); 2] = [
+            (Platform::MacosAppleSilicon, &[ComputeBackend::Metal]),
+            (Platform::LinuxX64, &[ComputeBackend::Cpu]),
+        ];
+        for (platform, backends) in cases {
+            let models = available_models_for_capability(platform, ModelCapability::Text, backends);
+            assert!(
+                !models.is_empty(),
+                "text capability must always have at least one model on {platform:?}"
+            );
+            for m in models {
+                assert_eq!(m.capability, ModelCapability::Text);
+                assert_eq!(m.platform, platform);
+            }
+        }
+    }
+
+    #[test]
+    fn available_models_for_capability_vision_returns_vision_only() {
+        // Vision works on CPU at low tier (SmolVLM 256M) for GGUF
+        // platforms; on Apple Silicon vision MLX entries dispatch to
+        // Metal.
+        let cases: [(Platform, &[ComputeBackend]); 2] = [
+            (Platform::MacosAppleSilicon, &[ComputeBackend::Metal]),
+            (Platform::LinuxX64, &[ComputeBackend::Cpu]),
+        ];
+        for (platform, backends) in cases {
+            let models =
+                available_models_for_capability(platform, ModelCapability::Vision, backends);
+            assert!(
+                !models.is_empty(),
+                "vision capability must always have at least one model on {platform:?}"
+            );
+            for m in models {
+                assert_eq!(m.capability, ModelCapability::Vision);
+                assert_eq!(m.platform, platform);
+            }
+        }
+    }
+
+    #[test]
+    fn available_models_for_capability_imagegen_empty_on_cpu_only() {
+        // CPU-only Linux box — imagegen entries deliberately exclude
+        // CPU, so the intersection must be empty. The renderer keys
+        // off this to grey out the slot.
+        for platform in [
+            Platform::LinuxX64,
+            Platform::WindowsX64,
+            Platform::MacosIntel,
+        ] {
+            let models = available_models_for_capability(
+                platform,
+                ModelCapability::Imagegen,
+                &[ComputeBackend::Cpu],
+            );
+            assert!(
+                models.is_empty(),
+                "imagegen on CPU-only {platform:?} must be empty (got {} entries)",
+                models.len(),
+            );
+        }
+    }
+
+    #[test]
+    fn available_models_for_capability_imagegen_present_on_cuda_linux() {
+        let models = available_models_for_capability(
+            Platform::LinuxX64,
+            ModelCapability::Imagegen,
+            &[ComputeBackend::Cpu, ComputeBackend::Cuda],
+        );
+        assert_eq!(models.len(), 1, "expected the FLUX GGUF entry");
+        assert_eq!(models[0].capability, ModelCapability::Imagegen);
+        assert!(models[0].compute_backends.contains(&ComputeBackend::Cuda));
+    }
+
+    #[test]
+    fn available_models_for_capability_imagegen_present_on_metal_apple() {
+        let models = available_models_for_capability(
+            Platform::MacosAppleSilicon,
+            ModelCapability::Imagegen,
+            &[ComputeBackend::Metal],
+        );
+        assert_eq!(models.len(), 1, "expected the FLUX MLX entry");
+        assert_eq!(models[0].format, ModelFormat::Mlx);
+        assert_eq!(models[0].capability, ModelCapability::Imagegen);
+    }
+
+    // --- is_capability_available tier × backend gating -------------
+
+    #[test]
+    fn is_capability_available_text_always_true() {
+        for tier in [DeviceTier::Low, DeviceTier::Medium, DeviceTier::High] {
+            for backends in [
+                vec![ComputeBackend::Cpu],
+                vec![ComputeBackend::Cpu, ComputeBackend::Cuda],
+                vec![ComputeBackend::Metal],
+                vec![],
+            ] {
+                assert!(
+                    is_capability_available(tier, ModelCapability::Text, &backends),
+                    "text must be available for tier={tier:?} backends={backends:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn is_capability_available_vision_always_true() {
+        // Vision works on every tier because SmolVLM 256M runs on CPU.
+        for tier in [DeviceTier::Low, DeviceTier::Medium, DeviceTier::High] {
+            for backends in [vec![ComputeBackend::Cpu], vec![ComputeBackend::Metal]] {
+                assert!(
+                    is_capability_available(tier, ModelCapability::Vision, &backends),
+                    "vision must be available for tier={tier:?} backends={backends:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn is_capability_available_imagegen_low_tier_blocked() {
+        // Low tier × any-backend — imagegen is unavailable even with
+        // a GPU present because the device tier signals RAM headroom
+        // is insufficient.
+        for backends in [
+            vec![ComputeBackend::Cpu],
+            vec![ComputeBackend::Cuda],
+            vec![ComputeBackend::Metal],
+            vec![ComputeBackend::Cpu, ComputeBackend::Vulkan],
+        ] {
+            assert!(
+                !is_capability_available(DeviceTier::Low, ModelCapability::Imagegen, &backends),
+                "imagegen must be unavailable at low tier even with backends={backends:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_capability_available_imagegen_cpu_only_blocked() {
+        for tier in [DeviceTier::Medium, DeviceTier::High] {
+            assert!(
+                !is_capability_available(tier, ModelCapability::Imagegen, &[ComputeBackend::Cpu]),
+                "imagegen on CPU-only {tier:?} must be blocked"
+            );
+        }
+    }
+
+    #[test]
+    fn is_capability_available_imagegen_gpu_medium_or_high_allowed() {
+        for tier in [DeviceTier::Medium, DeviceTier::High] {
+            for backend in [
+                ComputeBackend::Cuda,
+                ComputeBackend::Vulkan,
+                ComputeBackend::Metal,
+                ComputeBackend::Rocm,
+            ] {
+                assert!(
+                    is_capability_available(
+                        tier,
+                        ModelCapability::Imagegen,
+                        &[ComputeBackend::Cpu, backend]
+                    ),
+                    "imagegen must be available at {tier:?} with GPU backend {backend:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compute_backend_is_gpu_classifies_correctly() {
+        assert!(!ComputeBackend::Cpu.is_gpu());
+        assert!(ComputeBackend::Cuda.is_gpu());
+        assert!(ComputeBackend::Vulkan.is_gpu());
+        assert!(ComputeBackend::Metal.is_gpu());
+        assert!(ComputeBackend::Rocm.is_gpu());
     }
 
     #[test]
@@ -926,8 +1727,42 @@ mod tests {
 
     #[test]
     fn model_format_labels() {
-        assert_eq!(ModelFormat::Gguf.display_label(), "GGUF Q1_0_g128");
-        assert_eq!(ModelFormat::Mlx.display_label(), "MLX 2-bit");
+        // `ModelFormat::display_label` is now just the format name; the
+        // quantization is per-entry and lives on `ModelInfo`.
+        assert_eq!(ModelFormat::Gguf.display_label(), "GGUF");
+        assert_eq!(ModelFormat::Mlx.display_label(), "MLX");
+    }
+
+    #[test]
+    fn model_info_display_label_uses_per_entry_quantization() {
+        // Pick one text, one vision, one imagegen entry from the
+        // registry and confirm each labels itself with ITS quantization
+        // (not a hardcoded text one). This is the regression guard for
+        // the pre-Block-A "GGUF Q1_0_g128" trap.
+        let reg = full_model_registry();
+        let bonsai_gguf = reg
+            .iter()
+            .find(|m| m.id == "ternary-bonsai-1.7b-gguf")
+            .expect("registry must contain ternary-bonsai-1.7b-gguf");
+        assert_eq!(bonsai_gguf.display_label(), "GGUF Q1_0_g128");
+
+        let qwen_vision_gguf = reg
+            .iter()
+            .find(|m| m.id == "qwen3.5-4b-vision-gguf")
+            .expect("registry must contain qwen3.5-4b-vision-gguf");
+        assert_eq!(qwen_vision_gguf.display_label(), "GGUF Q4_K_M");
+
+        let smolvlm_vision_mlx = reg
+            .iter()
+            .find(|m| m.id == "smolvlm-256m-vision-mlx")
+            .expect("registry must contain smolvlm-256m-vision-mlx");
+        assert_eq!(smolvlm_vision_mlx.display_label(), "MLX 4-bit");
+
+        let flux_imagegen_gguf = reg
+            .iter()
+            .find(|m| m.id == "flux2-klein-4b-gguf")
+            .expect("registry must contain flux2-klein-4b-gguf");
+        assert_eq!(flux_imagegen_gguf.display_label(), "GGUF Q4_0");
     }
 
     // ---------------------------------------------------------------
@@ -966,6 +1801,13 @@ mod tests {
         parameters: String,
         format: String,
         quantization: String,
+        // `capability` is optional during the manifest roll-out so a
+        // pre-capability manifest copy doesn't panic; once the field is
+        // required everywhere (Block A is fully landed) this becomes
+        // mandatory. Default `"text"` matches the Rust-side serde
+        // default on [`ModelInfo::capability`] for the same reason.
+        #[serde(default = "default_manifest_capability")]
+        capability: String,
         platform: String,
         compute: Vec<String>,
         tier: String,
@@ -975,6 +1817,10 @@ mod tests {
         context_length: u32,
         filename: String,
         url: Option<String>,
+    }
+
+    fn default_manifest_capability() -> String {
+        "text".to_string()
     }
 
     fn load_manifest() -> ManifestRoot {
@@ -1023,6 +1869,15 @@ mod tests {
         }
     }
 
+    fn capability_from_str(s: &str, model_id: &str) -> ModelCapability {
+        match s {
+            "text" => ModelCapability::Text,
+            "vision" => ModelCapability::Vision,
+            "imagegen" => ModelCapability::Imagegen,
+            other => panic!("manifest model {model_id} has unknown capability {other}"),
+        }
+    }
+
     #[test]
     fn manifest_matches_full_registry_exactly() {
         let manifest = load_manifest();
@@ -1055,6 +1910,16 @@ mod tests {
                 format_from_str(&mm.format, &mm.id),
                 "{}: format",
                 mm.id
+            );
+            assert_eq!(
+                rm.capability,
+                capability_from_str(&mm.capability, &mm.id),
+                "{}: capability registry={:?} manifest={:?} — update both \
+                 (manifest at sidecars/models.json and registry at \
+                 crates/tessera_runtime/src/config.rs::full_model_registry)",
+                mm.id,
+                rm.capability,
+                mm.capability
             );
             assert_eq!(rm.tier, tier_from_str(&mm.tier, &mm.id), "{}: tier", mm.id);
             assert_eq!(

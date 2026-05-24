@@ -4,6 +4,8 @@ import type {
   ExternalProviderConfigInput,
   ExternalProviderListModelsDraftOverrides,
   HybridSearchConfigUpdate,
+  InstalledModelsByCapability,
+  ModelCapability,
   ModelDownloadProgress,
   ReplaceCitationRequest,
   SaveDialogOptions,
@@ -56,8 +58,10 @@ export type {
   IndexedFileInfo,
   IndexingProgressInfo,
   InstalledModelRecord,
+  InstalledModelsByCapability,
   MarpExportRequest,
   ModelApi,
+  ModelCapability,
   ModelDownloadProgress,
   ModelFormat,
   ModelPlatform,
@@ -284,16 +288,29 @@ const api: TesseraApi = {
   },
   runtime: {
     detectPlatform: () => ipcRenderer.invoke("runtime:detectPlatform"),
-    recommendModel: () => ipcRenderer.invoke("runtime:recommendModel"),
-    listModels: () => ipcRenderer.invoke("runtime:listModels"),
-    getCurrentModel: () => ipcRenderer.invoke("runtime:getCurrentModel"),
+    // Each capability has its own slot: omitting the parameter
+    // preserves the historical "text" default so existing renderer
+    // call sites keep working unchanged.
+    recommendModel: (capability?: ModelCapability) =>
+      ipcRenderer.invoke("runtime:recommendModel", capability),
+    listModels: (capability?: ModelCapability) =>
+      ipcRenderer.invoke("runtime:listModels", capability),
+    getCurrentModel: (capability?: ModelCapability) =>
+      ipcRenderer.invoke("runtime:getCurrentModel", capability),
+    getInstalledModels: (): Promise<InstalledModelsByCapability> =>
+      ipcRenderer.invoke("runtime:getInstalledModels"),
+    isCapabilityAvailable: (capability: ModelCapability): Promise<boolean> =>
+      ipcRenderer.invoke("runtime:isCapabilityAvailable", capability),
     planDownload: (modelId: string) =>
       ipcRenderer.invoke("runtime:planDownload", modelId),
     // `downloadModel` handles both fresh-install and swap (delete-then-
     // fetch). There is intentionally no separate `swapModel` channel.
+    // The slot is derived from the manifest entry's capability so the
+    // renderer does not need to pass it explicitly.
     downloadModel: (modelId: string) =>
       ipcRenderer.invoke("runtime:downloadModel", modelId),
-    deleteModel: () => ipcRenderer.invoke("runtime:deleteModel"),
+    deleteModel: (capability?: ModelCapability) =>
+      ipcRenderer.invoke("runtime:deleteModel", capability),
     onDownloadProgress: (callback: (p: ModelDownloadProgress) => void) =>
       subscribeIpc<ModelDownloadProgress>("runtime:downloadProgress", callback),
   },

@@ -398,6 +398,17 @@ const mockApi = {
     recommendModel: vi.fn().mockResolvedValue(null),
     listModels: vi.fn().mockResolvedValue([]),
     getCurrentModel: vi.fn().mockResolvedValue(null),
+    getInstalledModels: vi.fn().mockResolvedValue({
+      text: null,
+      vision: null,
+      imagegen: null,
+    }),
+    isCapabilityAvailable: vi.fn(async (capability: string) => {
+      // Default mock: text+vision always available; imagegen
+      // unavailable because the default mocked platform reports a
+      // CPU-only backend.
+      return capability === "text" || capability === "vision";
+    }),
     planDownload: vi.fn().mockResolvedValue({
       kind: "direct-download",
       modelId: "ternary-bonsai-1.7b-gguf",

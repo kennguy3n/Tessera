@@ -13,6 +13,7 @@ import * as path from "path";
 import * as os from "os";
 
 import {
+  ALL_MODEL_CAPABILITIES,
   loadManifest,
   resetManifestCache,
   resetDownloadLocks,
@@ -25,17 +26,25 @@ import {
   effectiveDiskSizeMb,
   getCurrentModel,
   getInstalledModel,
+  getInstalledModels,
+  isCapabilityAvailable,
   isModelInstalled,
   deleteCurrentModel,
   downloadModel,
   activeModelPath,
+  legacyActiveModelPath,
+  legacyModelsDir,
   modelsDir,
   detectComputeBackends,
+  parseModelCapability,
+  manifestCapability,
   resetHardwareDetectionCache,
+  resetLegacyMigrationCache,
   type InstalledModelRecord,
   type ResolvedModel,
   type ModelManifest,
   type ManifestModel,
+  type ModelCapability,
 } from "../modelManagement";
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..", "..");
@@ -49,6 +58,7 @@ function makeResolved(overrides: Partial<ResolvedModel> = {}): ResolvedModel {
     format: "gguf",
     formatLabel: "GGUF Q1_0_g128",
     quantization: "Q1_0_g128",
+    capability: "text",
     platform: "linux-x64",
     tier: "low",
     computeBackends: ["cpu"],
@@ -91,6 +101,26 @@ describe("manifest loading", () => {
       expect(m.filename.length).toBeGreaterThan(0);
       if (m.format === "gguf") {
         expect(m.filename.endsWith(".gguf")).toBe(true);
+      } else {
+        // MLX archives ship as `.tar.gz` (legacy `.mlx.tar.gz` for the
+        // text bonsai entries; modern `.tar.gz` for vision/imagegen).
+        expect(/\.(tar\.gz|tgz|mlx)/.test(m.filename)).toBe(true);
+      }
+    }
+  });
+
+  it("text-capability entries use the Bonsai-specific quantizations", () => {
+    // The text bonsai models intentionally ship in 1.58-bit ternary
+    // (`Q1_0_g128` / `2-bit`) to fit on low-tier devices. Vision and
+    // imagegen entries use different quants (Q4_K_M, 4-bit) and
+    // are validated by their own block-specific tests.
+    const manifest = loadManifest(true);
+    const textModels = manifest.models.filter(
+      (m) => (m.capability ?? "text") === "text",
+    );
+    expect(textModels.length).toBeGreaterThan(0);
+    for (const m of textModels) {
+      if (m.format === "gguf") {
         expect(m.quantization).toBe("Q1_0_g128");
       } else {
         expect(m.quantization).toBe("2-bit");
@@ -143,7 +173,9 @@ describe("manifest loading", () => {
   it("MLX models are exclusively for macOS Apple Silicon", () => {
     const manifest = loadManifest(true);
     const mlx = manifest.models.filter((m) => m.format === "mlx");
-    expect(mlx.length).toBe(3);
+    // 3 text tiers (low/medium/high) + 2 vision (low+medium) + 1
+    // imagegen (medium) — the bonsai-only world had 3.
+    expect(mlx.length).toBeGreaterThanOrEqual(3);
     for (const m of mlx) {
       expect(m.platform).toBe("macos-apple-silicon");
       expect(m.compute).toEqual(["metal"]);
@@ -169,7 +201,9 @@ describe("manifest loading", () => {
   it("listModelsForPlatform returns only MLX on Apple Silicon", () => {
     const manifest = loadManifest(true);
     const models = listModelsForPlatform(manifest, "macos-apple-silicon");
-    expect(models.length).toBe(3);
+    // 3 text + 2 vision + 1 imagegen = 6 MLX entries today, but we
+    // assert lower-bounded since later blocks may add capabilities.
+    expect(models.length).toBeGreaterThanOrEqual(3);
     for (const m of models) {
       expect(m.format).toBe("mlx");
       expect(m.platform).toBe("macos-apple-silicon");
@@ -184,8 +218,16 @@ describe("manifest loading", () => {
       expect(models.length).toBeGreaterThan(0);
       for (const m of models) {
         expect(m.format).toBe("gguf");
-        expect(m.quantization).toBe("Q1_0_g128");
         expect(m.platform).toBe(target);
+      }
+      // Text-capability quantization is Bonsai-specific (Q1_0_g128);
+      // vision/imagegen entries use different quants. Verify the
+      // text-only filter still produces the expected quant.
+      const textModels = listModelsForPlatform(manifest, target, "text");
+      expect(textModels.length).toBeGreaterThan(0);
+      for (const m of textModels) {
+        expect(m.quantization).toBe("Q1_0_g128");
+        expect(m.capability).toBe("text");
       }
     }
   });
@@ -244,7 +286,7 @@ describe("single-model enforcement", () => {
   });
 
   it("getInstalledModel returns null when active-model.json is missing", async () => {
-    expect(await getInstalledModel(workdir)).toBeNull();
+    expect(await getInstalledModel(workdir, "text")).toBeNull();
   });
 
   it("getInstalledModel returns null when the referenced file is missing on disk", async () => {
@@ -263,18 +305,18 @@ describe("single-model enforcement", () => {
       sha256: null,
       downloadedAt: new Date().toISOString(),
     };
-    await fsp.writeFile(activeModelPath(workdir), JSON.stringify(ghost));
+    await fsp.writeFile(activeModelPath(workdir, "text"), JSON.stringify(ghost));
     // Sanity check: the raw record IS still readable — this is the bug.
-    const raw = await getCurrentModel(workdir);
+    const raw = await getCurrentModel(workdir, "text");
     expect(raw?.modelId).toBe("ternary-bonsai-1.7b-gguf");
     // But getInstalledModel correctly treats the ghost record as "not installed".
-    expect(await getInstalledModel(workdir)).toBeNull();
+    expect(await getInstalledModel(workdir, "text")).toBeNull();
     // And isModelInstalled, which composes on top, agrees.
-    expect(await isModelInstalled(workdir, "ternary-bonsai-1.7b-gguf")).toBeNull();
+    expect(await isModelInstalled(workdir, "text", "ternary-bonsai-1.7b-gguf")).toBeNull();
   });
 
   it("getInstalledModel returns the live record when the referenced file exists", async () => {
-    const dir = modelsDir(workdir);
+    const dir = modelsDir(workdir, "text");
     await fsp.mkdir(dir, { recursive: true });
     const filePath = path.join(dir, "ternary-bonsai-1.7b-q1_0_g128.gguf");
     await fsp.writeFile(filePath, "real bytes");
@@ -288,17 +330,17 @@ describe("single-model enforcement", () => {
       sha256: null,
       downloadedAt: new Date().toISOString(),
     };
-    await fsp.writeFile(activeModelPath(workdir), JSON.stringify(live));
-    const result = await getInstalledModel(workdir);
+    await fsp.writeFile(activeModelPath(workdir, "text"), JSON.stringify(live));
+    const result = await getInstalledModel(workdir, "text");
     expect(result).not.toBeNull();
     expect(result?.modelId).toBe("ternary-bonsai-1.7b-gguf");
     // isModelInstalled filters by id — same model returns the record,
     // different model returns null.
     expect(
-      await isModelInstalled(workdir, "ternary-bonsai-1.7b-gguf"),
+      await isModelInstalled(workdir, "text", "ternary-bonsai-1.7b-gguf"),
     ).not.toBeNull();
     expect(
-      await isModelInstalled(workdir, "ternary-bonsai-4b-gguf"),
+      await isModelInstalled(workdir, "text", "ternary-bonsai-4b-gguf"),
     ).toBeNull();
   });
 
@@ -478,13 +520,13 @@ describe("single-model enforcement", () => {
       },
     );
     expect(record.modelId).toBe(requested.id);
-    expect(record.path).toBe(path.join(modelsDir(workdir), requested.filename));
+    expect(record.path).toBe(path.join(modelsDir(workdir, "text"), requested.filename));
     expect(await fsp.readFile(record.path)).toEqual(payload);
     expect(progressEvents).toBeGreaterThan(0);
 
-    const written = await getCurrentModel(workdir);
+    const written = await getCurrentModel(workdir, "text");
     expect(written?.modelId).toBe(requested.id);
-    expect(fs.existsSync(activeModelPath(workdir))).toBe(true);
+    expect(fs.existsSync(activeModelPath(workdir, "text"))).toBe(true);
   });
 
   it("downloadModel returns existing record when re-requesting the same id", async () => {
@@ -576,7 +618,7 @@ describe("single-model enforcement", () => {
         },
       },
     );
-    const oldPath = path.join(modelsDir(workdir), "old.gguf");
+    const oldPath = path.join(modelsDir(workdir, "text"), "old.gguf");
     expect(fs.existsSync(oldPath)).toBe(true);
 
     // The new fetcher asserts the old file is gone at the moment we start
@@ -596,13 +638,13 @@ describe("single-model enforcement", () => {
         },
       },
     );
-    const current = await getCurrentModel(workdir);
+    const current = await getCurrentModel(workdir, "text");
     expect(current?.modelId).toBe("ternary-bonsai-4b-gguf");
-    expect(fs.existsSync(path.join(modelsDir(workdir), "new.gguf"))).toBe(true);
+    expect(fs.existsSync(path.join(modelsDir(workdir, "text"), "new.gguf"))).toBe(true);
     expect(fs.existsSync(oldPath)).toBe(false);
 
     // Disk should hold exactly ONE model file post-swap.
-    const onDisk = await fsp.readdir(modelsDir(workdir));
+    const onDisk = await fsp.readdir(modelsDir(workdir, "text"));
     expect(onDisk).toEqual(["new.gguf"]);
   });
 
@@ -657,11 +699,11 @@ describe("single-model enforcement", () => {
     expect(a.modelId).toBe("ternary-bonsai-1.7b-gguf");
     expect(b.modelId).toBe("ternary-bonsai-4b-gguf");
 
-    const current = await getCurrentModel(workdir);
+    const current = await getCurrentModel(workdir, "text");
     // The serialized chain commits A first then B, so the on-disk record
     // ends up as B — and crucially there is no A artifact left behind.
     expect(current?.modelId).toBe("ternary-bonsai-4b-gguf");
-    const onDisk = await fsp.readdir(modelsDir(workdir));
+    const onDisk = await fsp.readdir(modelsDir(workdir, "text"));
     expect(onDisk).toEqual(["b.gguf"]);
   });
 
@@ -694,7 +736,7 @@ describe("single-model enforcement", () => {
           // Verify the extractor sees the post-rename archive (not the
           // .partial sibling) inside the model cache dir.
           expect(archivePath).toBe(
-            path.join(modelsDir(workdir), requested.filename),
+            path.join(modelsDir(workdir, "text"), requested.filename),
           );
           expect(fs.existsSync(archivePath)).toBe(true);
           // Simulate what the real `tar` library does: produce some files
@@ -709,7 +751,7 @@ describe("single-model enforcement", () => {
     // The InstalledModelRecord.path must point at the extracted directory,
     // not the (now-deleted) archive.
     const expectedDir = path.join(
-      modelsDir(workdir),
+      modelsDir(workdir, "text"),
       "ternary-bonsai-1.7b-2bit.mlx",
     );
     expect(record.path).toBe(expectedDir);
@@ -719,11 +761,11 @@ describe("single-model enforcement", () => {
     // The .tar.gz archive must be gone (single-model invariant: we don't
     // keep both the archive and the directory on disk).
     expect(
-      fs.existsSync(path.join(modelsDir(workdir), requested.filename)),
+      fs.existsSync(path.join(modelsDir(workdir, "text"), requested.filename)),
     ).toBe(false);
 
     // active-model.json round-trips correctly.
-    const written = await getCurrentModel(workdir);
+    const written = await getCurrentModel(workdir, "text");
     expect(written?.path).toBe(expectedDir);
   });
 
@@ -749,11 +791,11 @@ describe("single-model enforcement", () => {
       }),
     ).rejects.toThrow(/tar: corrupt header/);
 
-    const onDisk = fs.existsSync(modelsDir(workdir))
-      ? await fsp.readdir(modelsDir(workdir))
+    const onDisk = fs.existsSync(modelsDir(workdir, "text"))
+      ? await fsp.readdir(modelsDir(workdir, "text"))
       : [];
     expect(onDisk).toEqual([]);
-    expect(await getCurrentModel(workdir)).toBeNull();
+    expect(await getCurrentModel(workdir, "text")).toBeNull();
   });
 
   it("deleteCurrentModel defensively sweeps stray .tar.gz archives next to the extracted dir", async () => {
@@ -763,7 +805,7 @@ describe("single-model enforcement", () => {
     // deleteCurrentModel call must sweep it up so the user doesn't have
     // to manually clean the cache directory to restore the
     // single-model-on-disk invariant.
-    const dir = modelsDir(workdir);
+    const dir = modelsDir(workdir, "text");
     await fsp.mkdir(dir, { recursive: true });
     const extractedDir = path.join(dir, "ternary-bonsai-1.7b-2bit.mlx");
     const strayArchive = path.join(
@@ -783,13 +825,13 @@ describe("single-model enforcement", () => {
       sha256: null,
       downloadedAt: new Date().toISOString(),
     };
-    await fsp.writeFile(activeModelPath(workdir), JSON.stringify(record));
+    await fsp.writeFile(activeModelPath(workdir, "text"), JSON.stringify(record));
 
-    await deleteCurrentModel(workdir);
+    await deleteCurrentModel(workdir, "text");
 
     expect(fs.existsSync(extractedDir)).toBe(false);
     expect(fs.existsSync(strayArchive)).toBe(false);
-    expect(await getCurrentModel(workdir)).toBeNull();
+    expect(await getCurrentModel(workdir, "text")).toBeNull();
   });
 
   it("deleteCurrentModel does not warn when no stray archive exists for a GGUF install", async () => {
@@ -798,7 +840,7 @@ describe("single-model enforcement", () => {
     // file) never trigger an unnecessary unlink-then-ENOENT path. This
     // test guards against a regression where the sweep accidentally
     // fires for every format and produces noisy ENOENT warnings.
-    const dir = modelsDir(workdir);
+    const dir = modelsDir(workdir, "text");
     await fsp.mkdir(dir, { recursive: true });
     const ggufPath = path.join(dir, "ternary-bonsai-1.7b-q1_0_g128.gguf");
     await fsp.writeFile(ggufPath, "fake gguf bytes");
@@ -812,10 +854,10 @@ describe("single-model enforcement", () => {
       sha256: null,
       downloadedAt: new Date().toISOString(),
     };
-    await fsp.writeFile(activeModelPath(workdir), JSON.stringify(record));
+    await fsp.writeFile(activeModelPath(workdir, "text"), JSON.stringify(record));
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      await deleteCurrentModel(workdir);
+      await deleteCurrentModel(workdir, "text");
       expect(fs.existsSync(ggufPath)).toBe(false);
       const sweepWarned = warnSpy.mock.calls.some(([msg]) =>
         typeof msg === "string" && msg.includes("sweep stray archive"),
@@ -826,18 +868,22 @@ describe("single-model enforcement", () => {
     }
   });
 
-  it("getCurrentModel returns null and quarantines a corrupted active-model.json", async () => {
-    // Simulate a power loss mid-write or a manual edit that left
-    // active-model.json with invalid JSON. Callers must NOT see this as
-    // a fatal IO error — they should see "no model installed" and the
-    // file should be moved aside so the next downloadModel can write a
-    // clean record.
+  it("getCurrentModel(text) quarantines a corrupted legacy active-model.json (migration path)", async () => {
+    // Simulate a power loss mid-write or a manual edit that left the
+    // legacy `active-model.json` with invalid JSON on an upgrading
+    // install. Callers must NOT see this as a fatal IO error — they
+    // should see "no model installed" and the file should be moved
+    // aside so the next downloadModel can write a clean record.
+    //
+    // Post-multi-slot, this corruption is caught by the legacy
+    // migration code (not by getCurrentModel's per-slot parse path).
+    // The per-slot corruption case is covered by the next test.
     const active = path.join(workdir, "active-model.json");
     await fsp.mkdir(workdir, { recursive: true });
     await fsp.writeFile(active, "{not valid json");
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      const result = await getCurrentModel(workdir);
+      const result = await getCurrentModel(workdir, "text");
       expect(result).toBeNull();
       // Original file is gone, replaced by a `.corrupt-<ts>` backup.
       expect(fs.existsSync(active)).toBe(false);
@@ -857,6 +903,44 @@ describe("single-model enforcement", () => {
     }
   });
 
+  it("getCurrentModel(capability) quarantines a corrupted per-slot active-model-<cap>.json (post-migration path)", async () => {
+    // Same contract as the legacy test above, but exercising the
+    // per-slot read path inside `getCurrentModel` itself — not the
+    // legacy migration. This is the steady-state corruption case
+    // (post-multi-slot, no legacy file present) and runs against every
+    // capability slot, including the ones that have no migration
+    // pathway (vision / imagegen).
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      for (const cap of ["text", "vision", "imagegen"] as const) {
+        const slot = activeModelPath(workdir, cap);
+        await fsp.mkdir(workdir, { recursive: true });
+        await fsp.writeFile(slot, "{not valid json");
+
+        const result = await getCurrentModel(workdir, cap);
+        expect(result).toBeNull();
+        expect(fs.existsSync(slot)).toBe(false);
+
+        const siblings = await fsp.readdir(workdir);
+        const expectedPrefix = path.basename(slot) + ".corrupt-";
+        const backup = siblings.find((f) => f.startsWith(expectedPrefix));
+        expect(
+          backup,
+          `expected ${expectedPrefix}<ts> backup for ${cap}`,
+        ).toBeDefined();
+        expect(
+          await fsp.readFile(path.join(workdir, backup!), "utf8"),
+        ).toBe("{not valid json");
+
+        // Clean up backups so the next loop iteration's `readdir`
+        // search isn't ambiguous.
+        await fsp.unlink(path.join(workdir, backup!));
+      }
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("getCurrentModel propagates non-ENOENT IO errors (e.g. ENOTDIR on bogus dir)", async () => {
     // Defense-in-depth: corruption is silently degraded (covered above),
     // but a real disk fault must still surface so an operator can act on
@@ -866,7 +950,7 @@ describe("single-model enforcement", () => {
     // ENOTDIR — a real OS error that is NOT ENOENT — and must propagate.
     const filePath = path.join(workdir, "not-a-directory");
     await fsp.writeFile(filePath, "x");
-    await expect(getCurrentModel(filePath)).rejects.toMatchObject({
+    await expect(getCurrentModel(filePath, "text")).rejects.toMatchObject({
       code: "ENOTDIR",
     });
   });
@@ -880,12 +964,12 @@ describe("single-model enforcement", () => {
         return { totalBytes: 7 };
       },
     });
-    expect(fs.existsSync(activeModelPath(workdir))).toBe(true);
-    await deleteCurrentModel(workdir);
-    expect(fs.existsSync(activeModelPath(workdir))).toBe(false);
-    const onDisk = await fsp.readdir(modelsDir(workdir));
+    expect(fs.existsSync(activeModelPath(workdir, "text"))).toBe(true);
+    await deleteCurrentModel(workdir, "text");
+    expect(fs.existsSync(activeModelPath(workdir, "text"))).toBe(false);
+    const onDisk = await fsp.readdir(modelsDir(workdir, "text"));
     expect(onDisk).toEqual([]);
-    expect(await getCurrentModel(workdir)).toBeNull();
+    expect(await getCurrentModel(workdir, "text")).toBeNull();
   });
 
   it("deleteCurrentModel waits for an in-flight downloadModel instead of racing it", async () => {
@@ -919,7 +1003,7 @@ describe("single-model enforcement", () => {
     const deletePromise = (async () => {
       // Yield once so the download has acquired the lock first.
       await Promise.resolve();
-      const p = deleteCurrentModel(workdir);
+      const p = deleteCurrentModel(workdir, "text");
       await p;
       events.push("delete-completed");
     })();
@@ -932,8 +1016,8 @@ describe("single-model enforcement", () => {
     ]);
     // And the final on-disk state is "no model" — the delete really did
     // delete, it didn't get clobbered by the download writing afterwards.
-    expect(fs.existsSync(activeModelPath(workdir))).toBe(false);
-    expect(await fsp.readdir(modelsDir(workdir))).toEqual([]);
+    expect(fs.existsSync(activeModelPath(workdir, "text"))).toBe(false);
+    expect(await fsp.readdir(modelsDir(workdir, "text"))).toEqual([]);
   });
 
   // ---------------------------------------------------------------
@@ -998,7 +1082,7 @@ describe("single-model enforcement", () => {
         return { totalBytes: 1 };
       },
     });
-    const aFile = path.join(modelsDir(workdir), a.filename);
+    const aFile = path.join(modelsDir(workdir, "text"), a.filename);
     expect(fs.existsSync(aFile)).toBe(true);
 
     // Swap to B. beforeMutation must fire BEFORE A's file is unlinked
@@ -1022,14 +1106,14 @@ describe("single-model enforcement", () => {
     expect(aFileExistedAtHook).toBe(true);
     // Post-conditions: A gone, B installed (single-model invariant).
     expect(fs.existsSync(aFile)).toBe(false);
-    expect(fs.existsSync(path.join(modelsDir(workdir), b.filename))).toBe(true);
+    expect(fs.existsSync(path.join(modelsDir(workdir, "text"), b.filename))).toBe(true);
   });
 
   it("deleteCurrentModel skips beforeMutation when there is nothing to delete", async () => {
     resetDownloadLocks();
     // No prior downloadModel — active-model.json doesn't exist.
     const hook = vi.fn(async () => {});
-    await deleteCurrentModel(workdir, { beforeMutation: hook });
+    await deleteCurrentModel(workdir, "text", { beforeMutation: hook });
     // Skipping the hook is the whole point: invoking
     // stopSidecarIfRunning() here would needlessly tear down a
     // sidecar that may be serving a different model the user
@@ -1047,19 +1131,19 @@ describe("single-model enforcement", () => {
         return { totalBytes: 7 };
       },
     });
-    const filePath = path.join(modelsDir(workdir), r.filename);
+    const filePath = path.join(modelsDir(workdir, "text"), r.filename);
     expect(fs.existsSync(filePath)).toBe(true);
 
     let fileExistedAtHook: boolean | null = null;
     const hook = vi.fn(async () => {
       fileExistedAtHook = fs.existsSync(filePath);
     });
-    await deleteCurrentModel(workdir, { beforeMutation: hook });
+    await deleteCurrentModel(workdir, "text", { beforeMutation: hook });
 
     expect(hook).toHaveBeenCalledTimes(1);
     expect(fileExistedAtHook).toBe(true);
     expect(fs.existsSync(filePath)).toBe(false);
-    expect(await getCurrentModel(workdir)).toBeNull();
+    expect(await getCurrentModel(workdir, "text")).toBeNull();
   });
 
   it("beforeMutation runs INSIDE the download lock (concurrent swap is serialised)", async () => {
@@ -1121,7 +1205,7 @@ describe("single-model enforcement", () => {
         beforeMutation: async () => {
           // Capture BEFORE the locked block evicts B and clears
           // active-model.json.
-          currentAtHook = await getCurrentModel(workdir);
+          currentAtHook = await getCurrentModel(workdir, "text");
           events.push("reinstall-beforeMutation");
         },
       });
@@ -1168,7 +1252,7 @@ describe("single-model enforcement", () => {
         },
       ),
     ).rejects.toThrow(/Checksum mismatch/);
-    const onDisk = await fsp.readdir(modelsDir(workdir));
+    const onDisk = await fsp.readdir(modelsDir(workdir, "text"));
     expect(onDisk).toEqual([]);
   });
 
@@ -1191,9 +1275,9 @@ describe("single-model enforcement", () => {
         },
       ),
     ).rejects.toThrow(/simulated network failure/);
-    const onDisk = await fsp.readdir(modelsDir(workdir));
+    const onDisk = await fsp.readdir(modelsDir(workdir, "text"));
     expect(onDisk).toEqual([]);
-    expect(fs.existsSync(activeModelPath(workdir))).toBe(false);
+    expect(fs.existsSync(activeModelPath(workdir, "text"))).toBe(false);
   });
 
   it("downloadModel writes to a .partial sibling and only renames after sha verification", async () => {
@@ -1210,7 +1294,7 @@ describe("single-model enforcement", () => {
       observedDestPaths.push(filePath);
       // Confirm hashing happens against the .partial, not the final filename.
       expect(filePath.endsWith(".partial")).toBe(true);
-      const finalPath = path.join(modelsDir(workdir), requested.filename);
+      const finalPath = path.join(modelsDir(workdir, "text"), requested.filename);
       expect(fs.existsSync(finalPath)).toBe(false);
       return validHash;
     };
@@ -1230,10 +1314,10 @@ describe("single-model enforcement", () => {
       },
     );
     expect(observedDestPaths.length).toBe(1);
-    const finalPath = path.join(modelsDir(workdir), requested.filename);
+    const finalPath = path.join(modelsDir(workdir, "text"), requested.filename);
     expect(fs.existsSync(finalPath)).toBe(true);
     expect(fs.existsSync(`${finalPath}.partial`)).toBe(false);
-    const onDisk = await fsp.readdir(modelsDir(workdir));
+    const onDisk = await fsp.readdir(modelsDir(workdir, "text"));
     expect(onDisk).toEqual([requested.filename]);
   });
 });
@@ -1362,7 +1446,7 @@ describe("downloadModel survives throwing onProgress", () => {
     expect(record.modelId).toBe(requested.id);
     expect(fs.existsSync(record.path)).toBe(true);
     expect(await fsp.readFile(record.path)).toEqual(payload);
-    const current = await getCurrentModel(workdir);
+    const current = await getCurrentModel(workdir, "text");
     expect(current?.modelId).toBe(requested.id);
     // The fetcher's onProgress invocations all ran (they didn't get
     // short-circuited by the throw because wrapProgressNoThrow caught
@@ -1402,7 +1486,7 @@ describe("writeCurrentModel atomic write ", () => {
     };
     await downloadModel(workdir, requested, () => {}, { fetcher });
 
-    const written = await fsp.readFile(activeModelPath(workdir), "utf8");
+    const written = await fsp.readFile(activeModelPath(workdir, "text"), "utf8");
     const parsed = JSON.parse(written) as { modelId: string };
     expect(parsed.modelId).toBe(requested.id);
 
@@ -1426,7 +1510,7 @@ describe("writeCurrentModel atomic write ", () => {
         return { totalBytes: 1 };
       },
     });
-    const before = await fsp.readFile(activeModelPath(workdir), "utf8");
+    const before = await fsp.readFile(activeModelPath(workdir, "text"), "utf8");
 
     // Now attempt a SWAP whose fetcher fails BEFORE writeCurrentModel
     // would have been called. Without atomic write a partially
@@ -1449,7 +1533,7 @@ describe("writeCurrentModel atomic write ", () => {
     // assert here is the *atomicity* one: active-model.json is never
     // a partially-written / truncated JSON document. Either it parses
     // cleanly or it is absent.
-    const afterRaw = await fsp.readFile(activeModelPath(workdir), "utf8").catch(
+    const afterRaw = await fsp.readFile(activeModelPath(workdir, "text"), "utf8").catch(
       (err) => {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
         throw err;
@@ -1498,7 +1582,7 @@ describe("defaultFetcher reader lifetime ", () => {
       // The destination file must not exist because we threw before
       // opening it.
       const expectedDest = path.join(
-        modelsDir(workdir),
+        modelsDir(workdir, "text"),
         requested.filename,
       );
       expect(fs.existsSync(expectedDest)).toBe(false);
@@ -1858,3 +1942,570 @@ describe("ModelRuntimeCard fetcher / defaultFetcher socket-leak guard", () => {
     await fsp.rm(work, { recursive: true, force: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Block A — multi-capability slots, migration, tier gating
+// ---------------------------------------------------------------------------
+
+describe("ModelCapability parsing + manifest defaulting", () => {
+  it("parseModelCapability accepts the canonical wire-format strings", () => {
+    expect(parseModelCapability("text")).toBe("text");
+    expect(parseModelCapability("vision")).toBe("vision");
+    expect(parseModelCapability("imagegen")).toBe("imagegen");
+  });
+
+  it("parseModelCapability returns null on any other value (no silent fallthrough)", () => {
+    // Common typos / wrong cases — must be rejected so the validator
+    // produces a precise diagnostic rather than silently dropping
+    // the entry from every capability filter.
+    expect(parseModelCapability("Text")).toBeNull();
+    expect(parseModelCapability("image-gen")).toBeNull();
+    expect(parseModelCapability("image_generation")).toBeNull();
+    expect(parseModelCapability("")).toBeNull();
+    expect(parseModelCapability("ocr")).toBeNull();
+  });
+
+  it("manifestCapability defaults to 'text' when the manifest omits the field", () => {
+    const noField: ManifestModel = {
+      id: "legacy-entry",
+      name: "Legacy",
+      parameters: "1B",
+      format: "gguf",
+      quantization: "Q1_0_g128",
+      platform: "linux-x64",
+      compute: ["cpu"],
+      tier: "low",
+      downloadSizeMb: 100,
+      diskSizeMb: 100,
+      requiredRamGb: 2,
+      contextLength: 2048,
+      filename: "legacy.gguf",
+      url: "https://example.invalid/legacy.gguf",
+      sha256: null,
+    };
+    expect(manifestCapability(noField)).toBe("text");
+    expect(manifestCapability({ ...noField, capability: "vision" })).toBe(
+      "vision",
+    );
+    expect(manifestCapability({ ...noField, capability: "imagegen" })).toBe(
+      "imagegen",
+    );
+  });
+
+  it("ALL_MODEL_CAPABILITIES enumerates exactly text/vision/imagegen", () => {
+    expect([...ALL_MODEL_CAPABILITIES]).toEqual(["text", "vision", "imagegen"]);
+  });
+});
+
+describe("isCapabilityAvailable tier × backend gating", () => {
+  // Mirror the Rust truth table in `crates/tessera_runtime/src/config.rs`
+  // — text and vision are always available; imagegen requires Medium+
+  // tier AND at least one non-cpu backend.
+
+  it("text is available on every tier with any backend (always-on)", () => {
+    for (const tier of ["low", "medium", "high"] as const) {
+      expect(isCapabilityAvailable(tier, "text", [])).toBe(true);
+      expect(isCapabilityAvailable(tier, "text", ["cpu"])).toBe(true);
+      expect(isCapabilityAvailable(tier, "text", ["cpu", "cuda"])).toBe(true);
+    }
+  });
+
+  it("vision is available on every tier with any backend (always-on, SmolVLM CPU low-tier path)", () => {
+    for (const tier of ["low", "medium", "high"] as const) {
+      expect(isCapabilityAvailable(tier, "vision", [])).toBe(true);
+      expect(isCapabilityAvailable(tier, "vision", ["cpu"])).toBe(true);
+      expect(isCapabilityAvailable(tier, "vision", ["metal"])).toBe(true);
+    }
+  });
+
+  it("imagegen is unavailable on Low tier regardless of backend (FLUX needs >=6GB RAM)", () => {
+    expect(isCapabilityAvailable("low", "imagegen", [])).toBe(false);
+    expect(isCapabilityAvailable("low", "imagegen", ["cpu"])).toBe(false);
+    expect(isCapabilityAvailable("low", "imagegen", ["cuda"])).toBe(false);
+    expect(isCapabilityAvailable("low", "imagegen", ["cuda", "vulkan"])).toBe(
+      false,
+    );
+  });
+
+  it("imagegen is unavailable on CPU-only devices regardless of tier (diffusion-on-cpu is too slow)", () => {
+    for (const tier of ["medium", "high"] as const) {
+      expect(isCapabilityAvailable(tier, "imagegen", [])).toBe(false);
+      expect(isCapabilityAvailable(tier, "imagegen", ["cpu"])).toBe(false);
+    }
+  });
+
+  it("imagegen is available on Medium+ tier with any GPU backend", () => {
+    for (const tier of ["medium", "high"] as const) {
+      for (const gpu of ["cuda", "vulkan", "metal", "rocm"] as const) {
+        expect(isCapabilityAvailable(tier, "imagegen", [gpu])).toBe(true);
+        expect(isCapabilityAvailable(tier, "imagegen", ["cpu", gpu])).toBe(
+          true,
+        );
+      }
+    }
+  });
+});
+
+describe("listModelsForPlatform capability filter (Block A)", () => {
+  beforeEach(() => {
+    process.env.TESSERA_MODELS_MANIFEST = MANIFEST;
+    resetManifestCache();
+  });
+
+  it("filters to vision entries on every non-Apple-Silicon platform", () => {
+    const manifest = loadManifest(true);
+    for (const target of [
+      "windows-x64",
+      "linux-x64",
+      "linux-arm64",
+      "macos-intel",
+    ] as const) {
+      const vision = listModelsForPlatform(manifest, target, "vision");
+      expect(vision.length).toBeGreaterThan(0);
+      for (const m of vision) {
+        expect(m.capability).toBe("vision");
+        expect(m.format).toBe("gguf");
+        expect(m.platform).toBe(target);
+      }
+    }
+  });
+
+  it("filters to vision MLX entries on Apple Silicon", () => {
+    const manifest = loadManifest(true);
+    const vision = listModelsForPlatform(
+      manifest,
+      "macos-apple-silicon",
+      "vision",
+    );
+    expect(vision.length).toBeGreaterThan(0);
+    for (const m of vision) {
+      expect(m.capability).toBe("vision");
+      expect(m.format).toBe("mlx");
+      expect(m.computeBackends).toEqual(["metal"]);
+    }
+  });
+
+  it("imagegen entries never include 'cpu' in compute backends (GPU-only product)", () => {
+    const manifest = loadManifest(true);
+    for (const target of [
+      "windows-x64",
+      "linux-x64",
+      "macos-apple-silicon",
+    ] as const) {
+      const ig = listModelsForPlatform(manifest, target, "imagegen");
+      for (const m of ig) {
+        expect(m.capability).toBe("imagegen");
+        expect(m.computeBackends).not.toContain("cpu");
+        expect(m.computeBackends.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("recommendModel(capability) returns a model whose capability matches the request", () => {
+    const manifest = loadManifest(true);
+    for (const cap of ALL_MODEL_CAPABILITIES) {
+      // Use a permissive platform so vision/imagegen entries are
+      // reachable. imagegen on macOS Apple Silicon at medium tier is
+      // the configuration most likely to recommend an entry.
+      const target = cap === "imagegen" ? "macos-apple-silicon" : "linux-x64";
+      const tier = cap === "imagegen" ? "medium" : "low";
+      const rec = recommendModel(manifest, target, tier, cap);
+      // imagegen on linux-x64 at low tier would correctly return null,
+      // but our chosen target/tier above guarantees a hit for every
+      // capability.
+      expect(rec).not.toBeNull();
+      expect(rec!.capability).toBe(cap);
+    }
+  });
+});
+
+describe("multi-slot storage paths", () => {
+  it("modelsDir produces a separate directory per capability", () => {
+    const base = "/tmp/tessera-test-userdata";
+    expect(modelsDir(base, "text")).toBe(path.join(base, "models", "text"));
+    expect(modelsDir(base, "vision")).toBe(path.join(base, "models", "vision"));
+    expect(modelsDir(base, "imagegen")).toBe(
+      path.join(base, "models", "imagegen"),
+    );
+    // Distinct slots cannot collide on disk.
+    expect(modelsDir(base, "text")).not.toBe(modelsDir(base, "vision"));
+    expect(modelsDir(base, "vision")).not.toBe(modelsDir(base, "imagegen"));
+  });
+
+  it("activeModelPath embeds the capability in the file name (one record per slot)", () => {
+    const base = "/tmp/tessera-test-userdata";
+    expect(activeModelPath(base, "text")).toBe(
+      path.join(base, "active-model-text.json"),
+    );
+    expect(activeModelPath(base, "vision")).toBe(
+      path.join(base, "active-model-vision.json"),
+    );
+    expect(activeModelPath(base, "imagegen")).toBe(
+      path.join(base, "active-model-imagegen.json"),
+    );
+  });
+});
+
+describe("per-slot isolation", () => {
+  let workdir: string;
+  beforeEach(async () => {
+    process.env.TESSERA_MODELS_MANIFEST = MANIFEST;
+    resetManifestCache();
+    resetDownloadLocks();
+    resetLegacyMigrationCache();
+    workdir = await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-slot-"));
+  });
+  afterEach(async () => {
+    await fsp.rm(workdir, { recursive: true, force: true });
+  });
+
+  it("downloading a vision model does not touch the text slot", async () => {
+    // Pre-install a text model.
+    const textModel = makeResolved({
+      id: "ternary-bonsai-1.7b-gguf",
+      capability: "text",
+      filename: "ternary-bonsai-1.7b.gguf",
+      url: "https://example.invalid/text-model.gguf",
+    });
+    const textPayload = Buffer.from("text-model-bytes");
+    await downloadModel(workdir, textModel, () => {}, {
+      fetcher: async (_url, onProgress, dest) => {
+        await fsp.writeFile(dest, textPayload);
+        onProgress(textPayload.byteLength, textPayload.byteLength);
+        return { totalBytes: textPayload.byteLength };
+      },
+    });
+    expect(
+      fs.existsSync(path.join(modelsDir(workdir, "text"), textModel.filename)),
+    ).toBe(true);
+
+    // Now install a vision model — the slot is derived from
+    // requested.capability, so it must land in models/vision/ and
+    // must NOT evict the text model.
+    const visionModel = makeResolved({
+      id: "smolvlm-256m-vision-gguf",
+      name: "SmolVLM 256M Vision",
+      capability: "vision",
+      filename: "SmolVLM2-256M-Video-Instruct.Q4_K_S.gguf",
+      url: "https://example.invalid/vision-model.gguf",
+      quantization: "Q4_K_S",
+    });
+    const visionPayload = Buffer.from("vision-model-bytes");
+    await downloadModel(workdir, visionModel, () => {}, {
+      fetcher: async (_url, onProgress, dest) => {
+        await fsp.writeFile(dest, visionPayload);
+        onProgress(visionPayload.byteLength, visionPayload.byteLength);
+        return { totalBytes: visionPayload.byteLength };
+      },
+    });
+
+    // Both slots are populated.
+    expect(
+      fs.existsSync(path.join(modelsDir(workdir, "text"), textModel.filename)),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(modelsDir(workdir, "vision"), visionModel.filename),
+      ),
+    ).toBe(true);
+
+    const textRecord = await getInstalledModel(workdir, "text");
+    expect(textRecord?.modelId).toBe(textModel.id);
+    expect(textRecord?.capability).toBe("text");
+
+    const visionRecord = await getInstalledModel(workdir, "vision");
+    expect(visionRecord?.modelId).toBe(visionModel.id);
+    expect(visionRecord?.capability).toBe("vision");
+
+    // imagegen slot remains empty.
+    expect(await getInstalledModel(workdir, "imagegen")).toBeNull();
+  });
+
+  it("deleting one slot does not affect the others", async () => {
+    const text = makeResolved({
+      id: "ternary-bonsai-1.7b-gguf",
+      capability: "text",
+      filename: "t.gguf",
+    });
+    const vision = makeResolved({
+      id: "smolvlm-256m-vision-gguf",
+      capability: "vision",
+      filename: "v.gguf",
+    });
+    for (const r of [text, vision]) {
+      await downloadModel(workdir, r, () => {}, {
+        fetcher: async (_url, onProgress, dest) => {
+          const buf = Buffer.from(`${r.capability}-payload`);
+          await fsp.writeFile(dest, buf);
+          onProgress(buf.byteLength, buf.byteLength);
+          return { totalBytes: buf.byteLength };
+        },
+      });
+    }
+    await deleteCurrentModel(workdir, "text");
+
+    expect(await getInstalledModel(workdir, "text")).toBeNull();
+    expect(
+      fs.existsSync(path.join(modelsDir(workdir, "text"), text.filename)),
+    ).toBe(false);
+
+    const visionRecord = await getInstalledModel(workdir, "vision");
+    expect(visionRecord?.modelId).toBe(vision.id);
+    expect(
+      fs.existsSync(path.join(modelsDir(workdir, "vision"), vision.filename)),
+    ).toBe(true);
+  });
+
+  it("getInstalledModels returns a per-slot snapshot reflecting on-disk state", async () => {
+    const empty = await getInstalledModels(workdir);
+    expect(empty).toEqual({ text: null, vision: null, imagegen: null });
+
+    const text = makeResolved({
+      id: "ternary-bonsai-1.7b-gguf",
+      capability: "text",
+      filename: "t.gguf",
+    });
+    await downloadModel(workdir, text, () => {}, {
+      fetcher: async (_url, onProgress, dest) => {
+        const buf = Buffer.from("t-bytes");
+        await fsp.writeFile(dest, buf);
+        onProgress(buf.byteLength, buf.byteLength);
+        return { totalBytes: buf.byteLength };
+      },
+    });
+    const afterText = await getInstalledModels(workdir);
+    expect(afterText.text?.modelId).toBe(text.id);
+    expect(afterText.vision).toBeNull();
+    expect(afterText.imagegen).toBeNull();
+  });
+
+  it("DownloadProgress events carry the slot's capability so the renderer can route per-slot", async () => {
+    // The renderer's multi-capability Settings UI (Block F) subscribes
+    // to runtime:downloadProgress and routes each event to the
+    // correct per-slot progress bar. The capability field on the
+    // emitted progress object is what makes that routing safe — two
+    // concurrent downloads (text + vision) would otherwise be
+    // indistinguishable on the wire.
+    const events: Array<{ modelId: string; capability: string }> = [];
+
+    const vision = makeResolved({
+      id: "smolvlm-256m-vision-gguf",
+      capability: "vision",
+      filename: "v.gguf",
+    });
+    await downloadModel(
+      workdir,
+      vision,
+      (p) => {
+        events.push({ modelId: p.modelId, capability: p.capability });
+      },
+      {
+        fetcher: async (_url, onProgress, dest) => {
+          const buf = Buffer.from("v-bytes");
+          await fsp.writeFile(dest, buf);
+          onProgress(buf.byteLength, buf.byteLength);
+          return { totalBytes: buf.byteLength };
+        },
+      },
+    );
+
+    expect(events.length).toBeGreaterThan(0);
+    for (const ev of events) {
+      expect(ev.modelId).toBe(vision.id);
+      expect(ev.capability).toBe("vision");
+    }
+  });
+
+  it("concurrent downloads to different slots run in parallel (per-slot lock)", async () => {
+    // Two concurrent downloads to text + vision slots should not be
+    // serialised against each other. The pre-multi-slot behaviour
+    // would serialise on the global per-userDataDir lock, capping
+    // concurrency at 1. We assert max concurrency reached 2 by
+    // counting overlapping fetcher windows.
+    let activeFetchers = 0;
+    let maxConcurrent = 0;
+    const slowFetcher = async (
+      _url: string,
+      onProgress: (a: number, b: number) => void,
+      dest: string,
+    ) => {
+      activeFetchers += 1;
+      maxConcurrent = Math.max(maxConcurrent, activeFetchers);
+      try {
+        await new Promise((r) => setTimeout(r, 40));
+        const buf = Buffer.from(`${path.basename(dest)}-bytes`);
+        await fsp.writeFile(dest, buf);
+        onProgress(buf.byteLength, buf.byteLength);
+        return { totalBytes: buf.byteLength };
+      } finally {
+        activeFetchers -= 1;
+      }
+    };
+
+    const text = makeResolved({
+      id: "ternary-bonsai-1.7b-gguf",
+      capability: "text",
+      filename: "t.gguf",
+    });
+    const vision = makeResolved({
+      id: "smolvlm-256m-vision-gguf",
+      capability: "vision",
+      filename: "v.gguf",
+    });
+
+    await Promise.all([
+      downloadModel(workdir, text, () => {}, { fetcher: slowFetcher }),
+      downloadModel(workdir, vision, () => {}, { fetcher: slowFetcher }),
+    ]);
+
+    // With per-slot locks this should be 2 (full parallel). Pre-fix
+    // the global lock would cap this at 1.
+    expect(maxConcurrent).toBe(2);
+  });
+});
+
+describe("legacy flat-layout migration", () => {
+  let workdir: string;
+  beforeEach(async () => {
+    process.env.TESSERA_MODELS_MANIFEST = MANIFEST;
+    resetManifestCache();
+    resetDownloadLocks();
+    resetLegacyMigrationCache();
+    workdir = await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-migrate-"));
+  });
+  afterEach(async () => {
+    await fsp.rm(workdir, { recursive: true, force: true });
+  });
+
+  async function seedLegacyInstall(record: Partial<InstalledModelRecord> = {}) {
+    const filename = record.filename ?? "ternary-bonsai-1.7b.gguf";
+    const legacyDir = legacyModelsDir(workdir);
+    await fsp.mkdir(legacyDir, { recursive: true });
+    const legacyArtifact = path.join(legacyDir, filename);
+    await fsp.writeFile(legacyArtifact, Buffer.from("legacy-bytes"));
+    const full: InstalledModelRecord = {
+      modelId: record.modelId ?? "ternary-bonsai-1.7b-gguf",
+      format: record.format ?? "gguf",
+      filename,
+      path: record.path ?? legacyArtifact,
+      downloadSizeMb: record.downloadSizeMb ?? 1,
+      diskSizeMb: record.diskSizeMb ?? 1,
+      sha256: record.sha256 ?? null,
+      downloadedAt: record.downloadedAt ?? new Date(0).toISOString(),
+      ...record,
+    };
+    await fsp.writeFile(legacyActiveModelPath(workdir), JSON.stringify(full));
+    return { legacyArtifact, record: full };
+  }
+
+  it("moves <models>/<file> into <models>/text/<file> and rewrites the active record", async () => {
+    const { legacyArtifact } = await seedLegacyInstall();
+    // Reading the text slot triggers migration.
+    const migrated = await getCurrentModel(workdir, "text");
+    expect(migrated).not.toBeNull();
+    expect(migrated!.modelId).toBe("ternary-bonsai-1.7b-gguf");
+    expect(migrated!.capability).toBe("text");
+
+    // The new per-slot artifact exists in models/text/ and the new
+    // active record points at it.
+    const newArtifact = path.join(
+      modelsDir(workdir, "text"),
+      migrated!.filename,
+    );
+    expect(fs.existsSync(newArtifact)).toBe(true);
+    expect(migrated!.path).toBe(newArtifact);
+
+    // The legacy active-model.json is gone.
+    expect(fs.existsSync(legacyActiveModelPath(workdir))).toBe(false);
+    // The legacy artifact was moved (no orphan left behind).
+    expect(fs.existsSync(legacyArtifact)).toBe(false);
+
+    // The new per-slot active file exists.
+    expect(fs.existsSync(activeModelPath(workdir, "text"))).toBe(true);
+  });
+
+  it("is idempotent: running twice leaves the slot unchanged", async () => {
+    await seedLegacyInstall();
+    const first = await getCurrentModel(workdir, "text");
+    resetLegacyMigrationCache();
+    const second = await getCurrentModel(workdir, "text");
+    expect(second).toEqual(first);
+  });
+
+  it("does not run when no legacy file exists (steady-state new install)", async () => {
+    // No seed. A fresh getCurrentModel returns null and creates no
+    // text/-directory or active-model-text.json on disk.
+    const result = await getCurrentModel(workdir, "text");
+    expect(result).toBeNull();
+    expect(fs.existsSync(activeModelPath(workdir, "text"))).toBe(false);
+    expect(fs.existsSync(legacyActiveModelPath(workdir))).toBe(false);
+  });
+
+  it("backs up an unparseable legacy record to .corrupt-<ts> instead of crashing", async () => {
+    await fsp.mkdir(legacyModelsDir(workdir), { recursive: true });
+    await fsp.writeFile(legacyActiveModelPath(workdir), "{this is not json");
+    const migrated = await getCurrentModel(workdir, "text");
+    expect(migrated).toBeNull();
+    // Original file moved aside.
+    expect(fs.existsSync(legacyActiveModelPath(workdir))).toBe(false);
+    const sibs = await fsp.readdir(workdir);
+    const backup = sibs.find((s) => s.startsWith("active-model.json.corrupt-"));
+    expect(backup).toBeDefined();
+  });
+
+  it("only migrates the text slot; reading vision/imagegen on a legacy install is a no-op", async () => {
+    await seedLegacyInstall();
+    // Reading vision must NOT trigger migration (a legacy install
+    // pre-dates vision support — there's nothing in that slot).
+    const visionBefore = await getCurrentModel(workdir, "vision");
+    expect(visionBefore).toBeNull();
+    // The legacy file is still there because vision/getCurrentModel
+    // didn't touch it.
+    expect(fs.existsSync(legacyActiveModelPath(workdir))).toBe(true);
+  });
+
+  it("concurrent first-time text reads dedupe via the memoised migration Promise", async () => {
+    await seedLegacyInstall();
+    const [a, b, c] = await Promise.all([
+      getCurrentModel(workdir, "text"),
+      getCurrentModel(workdir, "text"),
+      getCurrentModel(workdir, "text"),
+    ]);
+    expect(a?.modelId).toBe("ternary-bonsai-1.7b-gguf");
+    expect(b?.modelId).toBe(a?.modelId);
+    expect(c?.modelId).toBe(a?.modelId);
+    expect(fs.existsSync(legacyActiveModelPath(workdir))).toBe(false);
+  });
+
+  it("if the legacy artifact already moved (half-migrated), it still records the new path", async () => {
+    // Seed only the active-model.json (the artifact was already
+    // manually moved by an earlier half-completed run). After
+    // migration, the record points at the new (still-missing) path so
+    // `getInstalledModel` returns null and the user is prompted to
+    // re-download.
+    await fsp.writeFile(
+      legacyActiveModelPath(workdir),
+      JSON.stringify({
+        modelId: "ternary-bonsai-1.7b-gguf",
+        format: "gguf",
+        filename: "ternary-bonsai-1.7b.gguf",
+        path: path.join(
+          legacyModelsDir(workdir),
+          "ternary-bonsai-1.7b.gguf",
+        ),
+        downloadSizeMb: 1,
+        diskSizeMb: 1,
+        sha256: null,
+        downloadedAt: new Date(0).toISOString(),
+      } satisfies InstalledModelRecord),
+    );
+    // No artifact on disk anywhere.
+    const live = await getInstalledModel(workdir, "text");
+    expect(live).toBeNull();
+    // active-model.json is gone, active-model-text.json took over.
+    expect(fs.existsSync(legacyActiveModelPath(workdir))).toBe(false);
+    expect(fs.existsSync(activeModelPath(workdir, "text"))).toBe(true);
+  });
+});
+
+

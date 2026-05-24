@@ -502,6 +502,22 @@ export type ModelFormat = "gguf" | "mlx";
 export type ComputeBackend = "cpu" | "cuda" | "vulkan" | "metal" | "rocm";
 export type DeviceTier = "low" | "medium" | "high";
 
+/**
+ * Per-capability model slot. Tessera installs at most one model on
+ * disk per capability per device:
+ *   - `"text"`     — text generation (Ternary-Bonsai today).
+ *   - `"vision"`   — vision-language model (image description, OCR,
+ *                    chart extraction).
+ *   - `"imagegen"` — diffusion-based image generation. GPU-gated;
+ *                    not available on Low tier or CPU-only devices.
+ *
+ * Mirrors the Rust `ModelCapability` enum in
+ * `crates/tessera_runtime/src/config.rs`. The lowercase string form is
+ * the wire format used by both the manifest (`sidecars/models.json`)
+ * and the per-slot on-disk record file (`active-model-<capability>.json`).
+ */
+export type ModelCapability = "text" | "vision" | "imagegen";
+
 export interface PlatformInfo {
   platform: ModelPlatform;
   platformLabel: string;
@@ -516,6 +532,13 @@ export interface ResolvedModel {
   id: string;
   name: string;
   parameters: string;
+  /**
+   * Which slot this model occupies. Mirrors `ModelCapability` in the
+   * Rust runtime (`crates/tessera_runtime/src/config.rs`). The
+   * manifest defaults this to `"text"` when absent for forward
+   * compatibility with the single-slot era.
+   */
+  capability: ModelCapability;
   format: ModelFormat;
   formatLabel: string;
   quantization: string;
@@ -533,6 +556,15 @@ export interface ResolvedModel {
 
 export interface InstalledModelRecord {
   modelId: string;
+  /**
+   * Which slot the installed model occupies. Records persisted before
+   * multi-slot model storage was introduced have no `capability`
+   * field and are interpreted as `"text"` by
+   * `getCurrentModel` / `getInstalledModel` (the only slot that
+   * existed at the time). Kept optional here so the type matches
+   * legacy on-disk records.
+   */
+  capability?: ModelCapability;
   format: ModelFormat;
   filename: string;
   path: string;
@@ -547,6 +579,18 @@ export interface InstalledModelRecord {
   sha256: string | null;
   downloadedAt: string;
 }
+
+/**
+ * Aggregate of installed models across all slots. Used by
+ * `runtime:getInstalledModels` so the Settings UI can render disk
+ * usage and per-slot install state without N round-trips.
+ *
+ * Slots with no model installed map to `null`.
+ */
+export type InstalledModelsByCapability = Record<
+  ModelCapability,
+  InstalledModelRecord | null
+>;
 
 export type DownloadPlan =
   | { kind: "already-installed"; modelId: string }
@@ -571,6 +615,12 @@ export type DownloadPlan =
 
 export interface ModelDownloadProgress {
   modelId: string;
+  /**
+   * Which slot the in-flight download is targeting. Renderer event
+   * dispatch routes per-capability progress to the correct progress
+   * bar in the multi-slot Settings UI.
+   */
+  capability: ModelCapability;
   format: ModelFormat;
   filename: string;
   downloadedMb: number;
@@ -948,16 +998,54 @@ export interface ModelApi {
 
 export interface RuntimeApi {
   detectPlatform: () => Promise<PlatformInfo>;
-  recommendModel: () => Promise<ResolvedModel | null>;
-  listModels: () => Promise<ResolvedModel[]>;
-  getCurrentModel: () => Promise<InstalledModelRecord | null>;
+  /**
+   * Recommend a model for the given capability slot. When omitted,
+   * the text slot is used so existing single-slot callers keep
+   * working without changes.
+   */
+  recommendModel: (
+    capability?: ModelCapability,
+  ) => Promise<ResolvedModel | null>;
+  /**
+   * List candidate models for the current platform. When `capability`
+   * is omitted, returns every slot's candidates merged together; pass
+   * `"text"` / `"vision"` / `"imagegen"` to filter.
+   */
+  listModels: (capability?: ModelCapability) => Promise<ResolvedModel[]>;
+  /**
+   * Return the model currently installed in `capability`'s slot, or
+   * `null` if nothing is installed there. Defaults to the text slot
+   * for backwards compatibility with the single-slot UI.
+   */
+  getCurrentModel: (
+    capability?: ModelCapability,
+  ) => Promise<InstalledModelRecord | null>;
+  /**
+   * Snapshot of every per-capability slot's installed record. Used by
+   * the multi-capability Settings UI to render disk usage and
+   * install state across all slots in a single round-trip.
+   */
+  getInstalledModels: () => Promise<InstalledModelsByCapability>;
+  /**
+   * Return true iff the given capability is available on the current
+   * device (tier + GPU gating + always-on rules). Mirrors the Rust
+   * `is_capability_available` helper.
+   */
+  isCapabilityAvailable: (capability: ModelCapability) => Promise<boolean>;
   planDownload: (modelId: string) => Promise<DownloadPlan>;
   /**
-   * Handles both fresh-install and swap (delete-then-fetch). There is
-   * intentionally no separate `swapModel` channel.
+   * Handles both fresh-install and swap (delete-then-fetch) within
+   * the requested model's capability slot. There is intentionally no
+   * separate `swapModel` channel; the slot is derived from the
+   * model's manifest entry.
    */
   downloadModel: (modelId: string) => Promise<InstalledModelRecord>;
-  deleteModel: () => Promise<void>;
+  /**
+   * Delete the model currently installed in `capability`'s slot.
+   * Defaults to the text slot when omitted so legacy single-slot
+   * callers keep working unchanged.
+   */
+  deleteModel: (capability?: ModelCapability) => Promise<void>;
   onDownloadProgress: (
     callback: (p: ModelDownloadProgress) => void,
   ) => () => void;

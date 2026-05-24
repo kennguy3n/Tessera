@@ -34,10 +34,39 @@ export type ModelFormat = "gguf" | "mlx";
 export type ComputeBackend = "cpu" | "cuda" | "vulkan" | "metal" | "rocm";
 export type DeviceTier = "low" | "medium" | "high";
 
+/**
+ * Per-capability model slot. Tessera installs one model on disk per
+ * capability per device.
+ *
+ * Mirrors `ModelCapability` in `crates/tessera_runtime/src/config.rs`
+ * — both encodings use the same lowercase string form on the wire
+ * (manifest JSON, per-slot active-record filename, IPC payloads).
+ */
+export type ModelCapability = "text" | "vision" | "imagegen";
+
+/**
+ * Enumeration of every capability slot, in the order the multi-slot
+ * Settings UI renders sections. Iterated by `getInstalledModels` and
+ * by the legacy-flat-layout migration so a new slot variant only
+ * has to be added in one place.
+ */
+export const ALL_MODEL_CAPABILITIES: readonly ModelCapability[] = [
+  "text",
+  "vision",
+  "imagegen",
+] as const;
+
 export interface ManifestModel {
   id: string;
   name: string;
   parameters: string;
+  /**
+   * Slot this model occupies. Manifest entries written before the
+   * multi-capability era have no `capability` field; the loader
+   * defaults them to `"text"` (the only slot that existed at the
+   * time) so older builds keep parsing.
+   */
+  capability?: ModelCapability;
   format: ModelFormat;
   quantization: string;
   platform: string; // raw manifest string, includes wildcards
@@ -86,6 +115,12 @@ export interface ResolvedModel {
   id: string;
   name: string;
   parameters: string;
+  /**
+   * Slot this model occupies. Always populated for `ResolvedModel`
+   * — the manifest loader fills in `"text"` for legacy entries
+   * before they reach this shape.
+   */
+  capability: ModelCapability;
   format: ModelFormat;
   formatLabel: string;
   quantization: string;
@@ -103,6 +138,14 @@ export interface ResolvedModel {
 
 export interface InstalledModelRecord {
   modelId: string;
+  /**
+   * Slot the installed model occupies. Records persisted before
+   * multi-slot model storage was introduced have no `capability`
+   * field and are interpreted as `"text"` by readers (see
+   * `recordCapability` below). Kept optional here so the type
+   * matches legacy on-disk records.
+   */
+  capability?: ModelCapability;
   format: ModelFormat;
   filename: string;
   path: string;
@@ -113,6 +156,26 @@ export interface InstalledModelRecord {
   diskSizeMb?: number;
   sha256: string | null;
   downloadedAt: string;
+}
+
+/**
+ * Aggregate snapshot of every per-capability slot's installed record.
+ * Slots with no model installed map to `null`.
+ */
+export type InstalledModelsByCapability = Record<
+  ModelCapability,
+  InstalledModelRecord | null
+>;
+
+/**
+ * Resolve the capability slot of an installed record, defaulting to
+ * `"text"` when the field is absent (legacy single-slot install).
+ * Centralised so every consumer agrees on the same fallback.
+ */
+export function recordCapability(
+  record: InstalledModelRecord,
+): ModelCapability {
+  return record.capability ?? "text";
 }
 
 /**
@@ -400,6 +463,33 @@ export function parseComputeBackend(s: string): ComputeBackend | null {
     : null;
 }
 
+const KNOWN_MODEL_CAPABILITIES: ReadonlySet<ModelCapability> = new Set([
+  "text",
+  "vision",
+  "imagegen",
+]);
+
+/**
+ * Type-guard parser for capability strings. Returns `null` on
+ * unknown values so the manifest validator can produce a precise
+ * diagnostic (rather than letting a typo like `"image-gen"` flow
+ * through to filtering, where it would silently match nothing).
+ */
+export function parseModelCapability(s: string): ModelCapability | null {
+  return (KNOWN_MODEL_CAPABILITIES as ReadonlySet<string>).has(s)
+    ? (s as ModelCapability)
+    : null;
+}
+
+/**
+ * Resolve a manifest entry's declared capability, defaulting to
+ * `"text"` when the field is absent. Centralised so the Rust serde
+ * `default = "text"` decision and the TS loader stay in lock-step.
+ */
+export function manifestCapability(entry: ManifestModel): ModelCapability {
+  return entry.capability ?? "text";
+}
+
 export class ManifestValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -445,6 +535,12 @@ function isValidManifestPlatform(s: string): boolean {
 
 function validateManifest(manifest: ModelManifest): ModelManifest {
   const errors: string[] = [];
+  // Track per-(format, platform, tier, capability) keys so a stray
+  // duplicate entry is rejected at load time rather than silently
+  // shadowing the first match in `recommendModel`/`listModelsForPlatform`.
+  // Capability is part of the key because the same platform/tier may
+  // legitimately host a text *and* a vision *and* an imagegen entry.
+  const dupKeys = new Map<string, number>();
   const server = manifest.llama_server;
   if (server) {
     for (let i = 0; i < server.variants.length; i += 1) {
@@ -513,6 +609,60 @@ function validateManifest(manifest: ModelManifest): ModelManifest {
         }
       }
     }
+    // Capability defaults to "text" when absent (legacy entries); if
+    // present it MUST be a known capability or the loader rejects
+    // it. The validator runs before `manifestCapability` is consulted
+    // anywhere else, so a typo ("image-gen") fails fast with a clear
+    // message instead of silently dropping the entry from
+    // `available_models_for_capability` results downstream.
+    if (
+      m.capability !== undefined &&
+      !parseModelCapability(m.capability as unknown as string)
+    ) {
+      errors.push(
+        `models[${i}].capability="${String(
+          m.capability,
+        )}" is not one of: ${Array.from(KNOWN_MODEL_CAPABILITIES).join(", ")}`,
+      );
+    }
+    // Imagegen entries must NOT advertise a CPU backend — diffusion
+    // on CPU is too slow to be a real product path and the runtime
+    // refuses to dispatch to it. Catching this in manifest validation
+    // means a manifest update that accidentally widens compute to
+    // include "cpu" for an imagegen entry surfaces immediately at app
+    // startup rather than after a user tries to generate an image.
+    if (
+      m.capability === "imagegen" &&
+      Array.isArray(m.compute) &&
+      m.compute.includes("cpu")
+    ) {
+      errors.push(
+        `models[${i}].compute must not include "cpu" for imagegen entries (id=${String(
+          m.id,
+        )}) — diffusion is GPU-only by registry design.`,
+      );
+    }
+    // Detect duplicate (format, platform, tier, capability) tuples —
+    // these would otherwise silently shadow each other in
+    // `listModelsForPlatform`/`recommendModel`. Capability is part of
+    // the key so the multi-slot manifest legitimately has the same
+    // (format, platform, tier) reused once per capability slot.
+    if (
+      typeof m.format === "string" &&
+      typeof m.platform === "string" &&
+      typeof m.tier === "string"
+    ) {
+      const cap = (m.capability as ModelCapability | undefined) ?? "text";
+      const key = `${m.format}|${m.platform}|${m.tier}|${cap}`;
+      const prevIndex = dupKeys.get(key);
+      if (prevIndex !== undefined) {
+        errors.push(
+          `models[${i}] duplicates the (format, platform, tier, capability) tuple of models[${prevIndex}]: ${key}`,
+        );
+      } else {
+        dupKeys.set(key, i);
+      }
+    }
   }
   if (errors.length > 0) {
     throw new ManifestValidationError(
@@ -545,8 +695,22 @@ export function resolveManifestPlatform(
   return null;
 }
 
-function formatLabel(f: ModelFormat): string {
-  return f === "mlx" ? "MLX 2-bit" : "GGUF Q1_0_g128";
+/**
+ * Human-readable "{Format} {Quantization}" label for the renderer's
+ * model card. Derived from the manifest entry rather than hardcoded
+ * because each capability ships its own quantization scheme:
+ *
+ *   Bonsai text:    GGUF Q1_0_g128 / MLX 2-bit
+ *   Qwen3.5 vision: GGUF Q4_K_M   / MLX 4-bit
+ *   SmolVLM vision: GGUF Q4_K_S   / MLX 4-bit
+ *   FLUX imagegen:  GGUF Q4_0     / MLX 4-bit
+ *
+ * Hardcoding the text labels (the pre-Block-A behaviour) would have
+ * mislabelled every non-text entry in the Settings UI.
+ */
+function formatLabel(entry: ManifestModel): string {
+  const fmt = entry.format === "mlx" ? "MLX" : "GGUF";
+  return `${fmt} ${entry.quantization}`;
 }
 
 function toResolvedModel(entry: ManifestModel, target: Platform): ResolvedModel {
@@ -554,8 +718,9 @@ function toResolvedModel(entry: ManifestModel, target: Platform): ResolvedModel 
     id: entry.id,
     name: entry.name,
     parameters: entry.parameters,
+    capability: manifestCapability(entry),
     format: entry.format,
-    formatLabel: formatLabel(entry.format),
+    formatLabel: formatLabel(entry),
     quantization: entry.quantization,
     platform: target,
     tier: entry.tier,
@@ -570,14 +735,25 @@ function toResolvedModel(entry: ManifestModel, target: Platform): ResolvedModel 
   };
 }
 
+/**
+ * Resolve every manifest entry compatible with `target`, optionally
+ * filtered to a single capability slot. The `capability` parameter
+ * is optional so single-slot callers (e.g. legacy IPC handlers that
+ * default to text) and multi-slot callers (Settings UI iterating all
+ * slots) share one implementation.
+ */
 export function listModelsForPlatform(
   manifest: ModelManifest,
   target: Platform,
+  capability?: ModelCapability,
 ): ResolvedModel[] {
   const preferred = preferredFormatFor(target);
   const out: ResolvedModel[] = [];
   for (const m of manifest.models) {
     if (m.format !== preferred) continue;
+    if (capability !== undefined && manifestCapability(m) !== capability) {
+      continue;
+    }
     const resolved = resolveManifestPlatform(m.platform, target);
     if (!resolved) continue;
     out.push(toResolvedModel(m, resolved));
@@ -585,13 +761,57 @@ export function listModelsForPlatform(
   return out;
 }
 
+/**
+ * Recommend a model for `target` at `tier`. Optional `capability`
+ * restricts the search to one slot; when omitted, the text slot is
+ * used so existing single-slot callers (RuntimeStatus, the legacy
+ * ModelRuntimeCard top-of-page recommendation) keep their behaviour.
+ */
 export function recommendModel(
   manifest: ModelManifest,
   target: Platform,
   tier: DeviceTier,
+  capability: ModelCapability = "text",
 ): ResolvedModel | null {
-  const models = listModelsForPlatform(manifest, target);
+  const models = listModelsForPlatform(manifest, target, capability);
   return models.find((m) => m.tier === tier) ?? models[0] ?? null;
+}
+
+/**
+ * Tier + GPU gating for a capability slot. Mirrors
+ * `is_capability_available` in `crates/tessera_runtime/src/config.rs`:
+ *
+ *   - `"text"` and `"vision"` are always available (SmolVLM 256M
+ *     fits comfortably in low-tier RAM on CPU).
+ *   - `"imagegen"` requires Medium+ tier AND at least one GPU
+ *     compute backend (cuda/vulkan/metal/rocm). The CPU-only path is
+ *     intentionally not a product: diffusion on CPU is too slow to
+ *     ship a button for.
+ *
+ * The renderer uses this to hide the Image Generation section of the
+ * Settings card on devices where the capability is structurally
+ * unreachable, instead of presenting a download button that would
+ * lead to a model the runtime refuses to dispatch to.
+ */
+export function isCapabilityAvailable(
+  tier: DeviceTier,
+  capability: ModelCapability,
+  computeBackends: readonly ComputeBackend[],
+): boolean {
+  switch (capability) {
+    case "text":
+    case "vision":
+      return true;
+    case "imagegen": {
+      if (tier === "low") return false;
+      // Match `ComputeBackend::is_gpu` on the Rust side: every
+      // non-cpu backend counts as GPU. Keeping the predicate inline
+      // here (rather than calling a helper) avoids a one-line
+      // wrapper that would drift if the enum gains a non-GPU
+      // variant.
+      return computeBackends.some((b) => b !== "cpu");
+    }
+  }
 }
 
 export function pickLlamaServerVariant(
@@ -610,91 +830,377 @@ export function pickLlamaServerVariant(
   );
 }
 
-// --- Single-model enforcement -------------------------------------------
+// --- Per-capability slot storage ----------------------------------------
 
 /**
- * On-disk layout, anchored at the host-provided `userDataDir`.
+ * On-disk layout, anchored at the host-provided `userDataDir`. One slot
+ * per capability (text, vision, imagegen), each independently
+ * single-model:
  *
- *   <userDataDir>/active-model.json   ← currently-installed record (or absent)
- *   <userDataDir>/models/<filename>   ← the single model file/dir on disk
+ *   <userDataDir>/active-model-<capability>.json
+ *       ← currently-installed record for that slot (or absent)
+ *   <userDataDir>/models/<capability>/<filename>
+ *       ← the single model file/dir on disk for that slot
+ *
+ * The legacy single-slot layout
+ *
+ *   <userDataDir>/active-model.json
+ *   <userDataDir>/models/<filename>
+ *
+ * is auto-migrated to the text slot on first access — see
+ * `migrateLegacyFlatLayoutIfNeeded` below.
  */
-export function modelsDir(userDataDir: string): string {
-  return path.join(userDataDir, "models");
+export function modelsDir(
+  userDataDir: string,
+  capability: ModelCapability,
+): string {
+  return path.join(userDataDir, "models", capability);
 }
 
-export function activeModelPath(userDataDir: string): string {
+export function activeModelPath(
+  userDataDir: string,
+  capability: ModelCapability,
+): string {
+  return path.join(userDataDir, `active-model-${capability}.json`);
+}
+
+/**
+ * Legacy (pre-multi-slot) on-disk file names. Kept exported so the
+ * migration can locate them and so tests can assert post-migration
+ * cleanup without hard-coding the strings in multiple places.
+ *
+ * Production code MUST NOT reach for these directly outside of
+ * `migrateLegacyFlatLayoutIfNeeded` — every read/write goes through
+ * `activeModelPath(userDataDir, capability)` /
+ * `modelsDir(userDataDir, capability)` instead.
+ */
+export function legacyActiveModelPath(userDataDir: string): string {
   return path.join(userDataDir, "active-model.json");
 }
 
+export function legacyModelsDir(userDataDir: string): string {
+  return path.join(userDataDir, "models");
+}
+
+// --- Legacy-layout migration --------------------------------------------
+
 /**
- * Read the active-model.json record from disk.
+ * Per-`userDataDir` cache of migration outcomes. Migration only ever
+ * needs to run once per process per user-data directory; subsequent
+ * reads short-circuit through this cache instead of doing a stat()
+ * on the legacy file. Cleared by `resetLegacyMigrationCache()` for
+ * test isolation.
  *
- * Returns `null` if the file does not exist (no model installed yet) OR
- * if the file exists but is unparseable JSON. Corruption is treated as
- * "no record" and the offending file is moved aside to a timestamped
- * `.corrupt-<ts>` sibling so the user can re-download without manual
- * filesystem surgery, the next `downloadModel` call clears the slot,
- * and an operator can still recover the original bytes from disk for
- * forensic purposes.
- *
- * IO errors other than ENOENT (permission denied, etc.) are propagated
- * because they need explicit operator attention and silently masking
- * them would hide real disk faults.
+ * Holds a Promise so concurrent first-time readers from two windows
+ * all await the same migration, rather than each racing to move the
+ * legacy file.
  */
+const legacyMigrationCache = new Map<string, Promise<void>>();
+
+/**
+ * Detect the legacy single-slot layout
+ *
+ *   <userDataDir>/active-model.json
+ *   <userDataDir>/models/<filename>
+ *
+ * and move it into the text slot
+ *
+ *   <userDataDir>/active-model-text.json
+ *   <userDataDir>/models/text/<filename>
+ *
+ * so existing users transparently upgrade to the multi-slot layout
+ * without losing their installed model on first launch after the
+ * upgrade.
+ *
+ * Idempotent: safe to call on every read entry-point. The Promise
+ * is memoised per `userDataDir` so concurrent first-time callers all
+ * await the same migration. Failures are swallowed AFTER being
+ * logged — a partially-migrated state still leaves the legacy file
+ * in place and the next attempt will retry; we never want a
+ * migration error to make the app unusable.
+ *
+ * Concurrency: serialised purely through the in-process memoised
+ * Promise above. We deliberately do NOT take `withDownloadLock`
+ * here, because migration is called by `getCurrentModel` which is
+ * itself called from INSIDE the per-slot lock by
+ * `downloadModelLocked` / `deleteCurrentModelUnlocked`. Acquiring
+ * the lock here would deadlock. Cross-process concurrency is not
+ * a concern: Electron main is single-process, and `userDataDir`
+ * is exclusive to one running Tessera instance by design.
+ */
+export function migrateLegacyFlatLayoutIfNeeded(
+  userDataDir: string,
+): Promise<void> {
+  const cached = legacyMigrationCache.get(userDataDir);
+  if (cached) return cached;
+  const work = runLegacyMigration(userDataDir);
+  // Cache the resolved Promise (errors are swallowed inside
+  // `runLegacyMigration` so this Promise only ever resolves).
+  legacyMigrationCache.set(userDataDir, work);
+  return work;
+}
+
+async function runLegacyMigration(userDataDir: string): Promise<void> {
+  const legacyActive = legacyActiveModelPath(userDataDir);
+  // Fast existence check before doing any further work — migrations
+  // are a one-shot startup concern and the steady-state hot path is
+  // "no legacy file, nothing to do".
+  try {
+    await fsp.access(legacyActive, fs.constants.F_OK);
+  } catch {
+    // No legacy file — nothing to migrate. The cache entry stays in
+    // place so we don't re-stat on every subsequent read.
+    return;
+  }
+  // Serialisation is provided by the memoised Promise in
+  // `legacyMigrationCache` (the caller awaits the same Promise the
+  // first migrator created). We must not acquire the text-slot
+  // download lock here: this function is itself called from
+  // `getCurrentModel`, which runs inside the lock during
+  // download/delete, and re-entering would deadlock.
+  let raw: string;
+  try {
+    raw = await fsp.readFile(legacyActive, "utf8");
+  } catch (err) {
+    console.warn(
+      `[tessera] legacy active-model.json could not be read during migration; leaving it in place: ${(err as Error).message}`,
+    );
+    return;
+  }
+  let parsed: InstalledModelRecord;
+  try {
+    parsed = JSON.parse(raw) as InstalledModelRecord;
+  } catch (parseErr) {
+    // Corrupt legacy record — back it up out of the way so a
+    // subsequent retry of migration doesn't see a parse error
+    // forever. The text slot stays empty so the user is prompted to
+    // re-download, matching the corruption-recovery behaviour of
+    // `getCurrentModel`.
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const backup = `${legacyActive}.corrupt-${ts}`;
+    try {
+      await fsp.rename(legacyActive, backup);
+      console.warn(
+        `[tessera] legacy active-model.json was unparseable JSON; moved to ${backup}. ` +
+          `Parse error: ${(parseErr as Error).message}`,
+      );
+    } catch (renameErr) {
+      console.warn(
+        `[tessera] legacy active-model.json was unparseable JSON and could not be backed up ` +
+          `(${(renameErr as Error).message}); leaving the file in place. ` +
+          `Parse error: ${(parseErr as Error).message}`,
+      );
+    }
+    return;
+  }
+  // Move the actual model artifact from <userDataDir>/models/<filename>
+  // into <userDataDir>/models/text/<filename>. The legacy `path`
+  // field on the record may point at the old flat location (built by
+  // an older version of writeCurrentModel) — if it does, rewrite it
+  // to the new per-slot location.
+  const legacyDir = legacyModelsDir(userDataDir);
+  const newDir = modelsDir(userDataDir, "text");
+  await fsp.mkdir(newDir, { recursive: true });
+  const oldArtifactPath = parsed.path
+    ? parsed.path
+    : path.join(legacyDir, parsed.filename);
+  const newArtifactPath = path.join(newDir, parsed.filename);
+  let artifactMoved = false;
+  try {
+    // Only attempt the move if the legacy artifact still lives at
+    // the legacy location AND the new location is free. Both
+    // conditions allow the migration to be idempotent if a previous
+    // attempt half-completed.
+    const inLegacy = oldArtifactPath.startsWith(legacyDir + path.sep) ||
+      oldArtifactPath === legacyDir;
+    if (inLegacy) {
+      try {
+        await fsp.access(oldArtifactPath, fs.constants.F_OK);
+      } catch {
+        // Artifact is already gone (user manually deleted, or a
+        // previous migration attempt moved it). Record the new path
+        // anyway so the next `getInstalledModel` call sees "file
+        // missing" and prompts a re-download.
+        parsed.path = newArtifactPath;
+        parsed.capability = "text";
+        await atomicWriteJson(activeModelPath(userDataDir, "text"), parsed);
+        await fsp.unlink(legacyActive).catch(() => undefined);
+        return;
+      }
+      await fsp.rename(oldArtifactPath, newArtifactPath);
+      artifactMoved = true;
+    }
+  } catch (err) {
+    console.warn(
+      `[tessera] failed to move legacy model artifact ${oldArtifactPath} -> ${newArtifactPath} during migration: ${(err as Error).message}. ` +
+        "Leaving the legacy layout in place; the next call will retry.",
+    );
+    // Abort the migration but don't poison the cache — the next call
+    // should retry. Drop the cache entry so the retry actually
+    // happens.
+    legacyMigrationCache.delete(userDataDir);
+    return;
+  }
+  parsed.path = newArtifactPath;
+  parsed.capability = "text";
+  try {
+    await atomicWriteJson(activeModelPath(userDataDir, "text"), parsed);
+  } catch (err) {
+    console.warn(
+      `[tessera] failed to write active-model-text.json during migration: ${(err as Error).message}. ` +
+        "Attempting to roll back the artifact move.",
+    );
+    // Roll back the artifact move so retrying the migration on the
+    // next call still finds a coherent legacy layout.
+    if (artifactMoved) {
+      await fsp
+        .rename(newArtifactPath, oldArtifactPath)
+        .catch(() => undefined);
+    }
+    legacyMigrationCache.delete(userDataDir);
+    return;
+  }
+  // Finally drop the legacy active-model.json — the text slot now
+  // owns the record. Failure to unlink is non-fatal: the next
+  // migration attempt is a no-op because the migrated file already
+  // exists and the legacy file is harmless (we ignore it on
+  // subsequent reads because we read the per-slot file first), so
+  // we surface it as a warning rather than rolling back.
+  try {
+    await fsp.unlink(legacyActive);
+  } catch (err) {
+    console.warn(
+      `[tessera] failed to remove legacy active-model.json after migration: ${(err as Error).message}. ` +
+        "The new per-slot file is authoritative; this stale file is harmless and can be deleted manually.",
+    );
+  }
+}
+
+/**
+ * Drop the migration-cache entries so a follow-up
+ * `getCurrentModel`/`getInstalledModels` call re-checks the legacy
+ * layout from scratch. Production callers must not touch this; tests
+ * call it in `beforeEach` to ensure migration runs fresh for each
+ * fixture.
+ */
+export function resetLegacyMigrationCache(): void {
+  legacyMigrationCache.clear();
+}
+
+// --- Single-model enforcement (per slot) --------------------------------
+
 /**
  * Single source of truth for "what model is actually installed and
- * usable right now?" — model-id-agnostic. Returns the live record only
- * if the on-disk file referenced by `active-model.json` still exists;
- * otherwise returns `null`.
+ * usable right now in `capability`'s slot?" — model-id-agnostic.
+ * Returns the live record only if the on-disk file referenced by
+ * `active-model-<capability>.json` still exists; otherwise returns
+ * `null`.
  *
  * Used by:
- *   - `runtime:planDownload` IPC, so a stale `active-model.json`
+ *   - `runtime:planDownload` IPC, so a stale per-slot active record
  *     pointing at a manually-deleted file no longer makes the planner
- *     return `already-installed` .
- *   - `isModelInstalled(modelId)` below, which is a thin model-id
- *     filter over this.
+ *     return `already-installed`.
+ *   - `isModelInstalled(capability, modelId)` below, which is a thin
+ *     model-id filter over this.
+ *   - `getInstalledModels()`, which fans out across every slot.
  *
  * The active-model record can drift from reality if a user manually
- * deleted the file or a disk error removed it, so an existence check is
- * part of the "installed" definition — concentrating it here means
+ * deleted the file or a disk error removed it, so an existence check
+ * is part of the "installed" definition — concentrating it here means
  * every caller picks up new criteria (e.g. checksum-on-disk, or "file
  * is a directory but its expected contents are missing" for MLX)
  * uniformly.
  */
 export async function getInstalledModel(
   userDataDir: string,
+  capability: ModelCapability,
 ): Promise<InstalledModelRecord | null> {
-  const current = await getCurrentModel(userDataDir);
+  const current = await getCurrentModel(userDataDir, capability);
   if (!current) return null;
   if (!fs.existsSync(current.path)) return null;
   return current;
 }
 
 /**
+ * Snapshot every capability slot's installed record in a single pass.
+ * Slots with no model installed map to `null`. Used by
+ * `runtime:getInstalledModels` so the Settings UI can render
+ * aggregate disk usage and per-slot install state without one IPC
+ * round-trip per slot.
+ */
+export async function getInstalledModels(
+  userDataDir: string,
+): Promise<InstalledModelsByCapability> {
+  const entries = await Promise.all(
+    ALL_MODEL_CAPABILITIES.map(
+      async (c) => [c, await getInstalledModel(userDataDir, c)] as const,
+    ),
+  );
+  // Build the record explicitly so the type system enforces that every
+  // capability has an entry — `Object.fromEntries` widens the key type
+  // to `string` and would mask a missing slot if `ALL_MODEL_CAPABILITIES`
+  // ever drifted from `ModelCapability`.
+  const out: InstalledModelsByCapability = {
+    text: null,
+    vision: null,
+    imagegen: null,
+  };
+  for (const [cap, rec] of entries) {
+    out[cap] = rec;
+  }
+  return out;
+}
+
+/**
  * Single source of truth for "is `modelId` specifically the model that's
- * actually installed and usable right now?". Composes on top of
- * `getInstalledModel` so the file-exists definition can only live in
- * one place.
+ * actually installed and usable right now in `capability`'s slot?".
+ * Composes on top of `getInstalledModel` so the file-exists definition
+ * can only live in one place.
  *
  * Used by both the IPC fast-path (`runtime:downloadModel` — skip
  * sidecar restart when no download is needed) and by
  * `downloadModelLocked` itself (skip download when the requested model
- * is already on disk).
+ * is already on disk in its declared slot).
  */
 export async function isModelInstalled(
   userDataDir: string,
+  capability: ModelCapability,
   modelId: string,
 ): Promise<InstalledModelRecord | null> {
-  const live = await getInstalledModel(userDataDir);
+  const live = await getInstalledModel(userDataDir, capability);
   if (!live) return null;
   if (live.modelId !== modelId) return null;
   return live;
 }
 
+/**
+ * Read the per-slot active-model record from disk.
+ *
+ * Returns `null` if the file does not exist (no model installed in
+ * this slot yet) OR if the file exists but is unparseable JSON.
+ * Corruption is treated as "no record" and the offending file is
+ * moved aside to a timestamped `.corrupt-<ts>` sibling so the user
+ * can re-download without manual filesystem surgery, the next
+ * `downloadModel` call clears the slot, and an operator can still
+ * recover the original bytes from disk for forensic purposes.
+ *
+ * IO errors other than ENOENT (permission denied, etc.) are
+ * propagated because they need explicit operator attention and
+ * silently masking them would hide real disk faults.
+ */
 export async function getCurrentModel(
   userDataDir: string,
+  capability: ModelCapability,
 ): Promise<InstalledModelRecord | null> {
-  const p = activeModelPath(userDataDir);
+  // Migrate any legacy flat-layout artifacts the FIRST time we touch
+  // the text slot in this process. Other slots are post-multi-slot so
+  // there is nothing to migrate for them. Migration is idempotent and
+  // memoised per-userDataDir, so concurrent readers from two windows
+  // all await the same migration.
+  if (capability === "text") {
+    await migrateLegacyFlatLayoutIfNeeded(userDataDir);
+  }
+  const p = activeModelPath(userDataDir, capability);
   let raw: string;
   try {
     raw = await fsp.readFile(p, "utf8");
@@ -738,15 +1244,24 @@ export async function getCurrentModel(
     // Best-effort move-aside. If even this fails we still want to log
     // and degrade to `null` rather than rethrowing; a corrupt record
     // shouldn't block all model operations.
+    // Use the actual on-disk path (`p`) rather than the legacy
+    // `active-model.json` filename. Per-slot files are named
+    // `active-model-text.json` / `active-model-vision.json` /
+    // `active-model-imagegen.json`; the vision and imagegen variants
+    // have no legacy history at all, so saying "active-model.json was
+    // unparseable" in those log lines would actively mislead an
+    // operator. The pre-multi-slot phrasing is kept inside the legacy
+    // migration code, which is the only place an actual
+    // `active-model.json` ever shows up.
     try {
       await fsp.rename(p, backupPath);
       console.warn(
-        `[tessera] active-model.json was unparseable JSON; moved to ${backupPath}. ` +
+        `[tessera] ${p} was unparseable JSON; moved to ${backupPath}. ` +
           `Returning null so the next model operation starts clean. Parse error: ${(parseErr as Error).message}`,
       );
     } catch (renameErr) {
       console.warn(
-        `[tessera] active-model.json was unparseable JSON and could not be backed up ` +
+        `[tessera] ${p} was unparseable JSON and could not be backed up ` +
           `(${(renameErr as Error).message}); leaving the file in place and returning null. ` +
           `Parse error: ${(parseErr as Error).message}`,
       );
@@ -757,9 +1272,10 @@ export async function getCurrentModel(
 
 async function writeCurrentModel(
   userDataDir: string,
+  capability: ModelCapability,
   record: InstalledModelRecord | null,
 ): Promise<void> {
-  const p = activeModelPath(userDataDir);
+  const p = activeModelPath(userDataDir, capability);
   if (record === null) {
     try {
       await fsp.unlink(p);
@@ -769,7 +1285,11 @@ async function writeCurrentModel(
     return;
   }
   await fsp.mkdir(path.dirname(p), { recursive: true });
-  await atomicWriteJson(p, record);
+  // Ensure the record carries its slot tag so a later reader (which
+  // may be reading via getInstalledModels across all slots) can
+  // recover the capability without re-parsing the filename.
+  const stamped: InstalledModelRecord = { ...record, capability };
+  await atomicWriteJson(p, stamped);
 }
 
 /**
@@ -875,6 +1395,17 @@ export function planDownload(
 
 export interface DownloadProgress {
   modelId: string;
+  /**
+   * Capability slot this progress event belongs to. Required so the
+   * renderer can route the event to the correct per-capability
+   * progress bar in the multi-slot Settings UI — without it, two
+   * concurrent downloads (e.g. text + vision) would be
+   * indistinguishable in the renderer.
+   *
+   * Mirrors `ModelDownloadProgress.capability` in
+   * `apps/desktop/shared/types.ts`.
+   */
+  capability: ModelCapability;
   format: ModelFormat;
   filename: string;
   downloadedMb: number;
@@ -1021,15 +1552,20 @@ const defaultHasher: NonNullable<DownloadDeps["hasher"]> = async (filePath) => {
 };
 
 /**
- * Internal: delete the currently installed model file (if any) and clear
- * the active model record. Must only be called from within
- * `withDownloadLock` because it mutates the same shared on-disk state
- * (`active-model.json` + the model file) that `downloadModelLocked`
- * mutates. Recursive locking would deadlock the per-userDataDir promise
- * chain, so the lock is acquired at the public-API boundary only.
+ * Internal: delete the currently installed model file (if any) for one
+ * capability slot and clear that slot's active-model record. Must only
+ * be called from within `withDownloadLock(userDataDir, capability)`
+ * because it mutates the same shared on-disk state
+ * (`active-model-<capability>.json` + the model file) that
+ * `downloadModelLocked` mutates. Recursive locking would deadlock the
+ * per-(userDataDir, capability) promise chain, so the lock is acquired
+ * at the public-API boundary only.
  */
-async function deleteCurrentModelUnlocked(userDataDir: string): Promise<void> {
-  const current = await getCurrentModel(userDataDir);
+async function deleteCurrentModelUnlocked(
+  userDataDir: string,
+  capability: ModelCapability,
+): Promise<void> {
+  const current = await getCurrentModel(userDataDir, capability);
   if (!current) return;
   try {
     const stat = await fsp.stat(current.path);
@@ -1066,28 +1602,33 @@ async function deleteCurrentModelUnlocked(userDataDir: string): Promise<void> {
       }
     }
   }
-  await writeCurrentModel(userDataDir, null);
+  await writeCurrentModel(userDataDir, capability, null);
 }
 
 /**
- * Delete the currently installed model file (if any) and clear the active
- * model record.
+ * Delete the model currently installed in `capability`'s slot (if any)
+ * and clear that slot's active-model record.
  *
- * Serialized through the same per-`userDataDir` download lock as
- * `downloadModel` so the on-disk contract is "all model-file mutations
- * are mutually exclusive". Without the lock, the previous version
- * relied on Node's cooperative scheduling to keep a concurrent
- * `downloadModel` from clobbering or being clobbered by an in-flight
- * `delete` — that's correct today but fragile and breaks the moment
- * model management moves to a worker thread, an Electron utility
- * process, or any other parallel-execution context. The lock makes the
- * invariant explicit instead of implicit.
+ * Serialized through the same per-(userDataDir, capability) download
+ * lock as `downloadModel` so the on-disk contract is "all model-file
+ * mutations within a slot are mutually exclusive". Without the lock,
+ * the previous version relied on Node's cooperative scheduling to keep
+ * a concurrent `downloadModel` from clobbering or being clobbered by
+ * an in-flight `delete` — that's correct today but fragile and breaks
+ * the moment model management moves to a worker thread, an Electron
+ * utility process, or any other parallel-execution context. The lock
+ * makes the invariant explicit instead of implicit.
+ *
+ * Cross-slot operations (deleting vision while text is downloading)
+ * are independent and run in parallel by design — each capability
+ * has its own lock keyed on `(userDataDir, capability)`.
  */
 export async function deleteCurrentModel(
   userDataDir: string,
+  capability: ModelCapability,
   deps: DeleteDeps = {},
 ): Promise<void> {
-  return withDownloadLock(userDataDir, async () => {
+  return withDownloadLock(userDataDir, capability, async () => {
     // No-op fast path INSIDE the lock: if there is no installed model
     // we must not invoke `beforeMutation` at all (calling
     // `stopSidecarIfRunning()` for a no-op delete would needlessly
@@ -1097,36 +1638,52 @@ export async function deleteCurrentModel(
     // double-clicked Delete from a stale UI). Reading
     // `getCurrentModel` here is cheap (one JSON file read) compared
     // to the sidecar-stop it gates.
-    const current = await getCurrentModel(userDataDir);
+    const current = await getCurrentModel(userDataDir, capability);
     if (!current) return;
     if (deps.beforeMutation) {
       await deps.beforeMutation();
     }
-    return deleteCurrentModelUnlocked(userDataDir);
+    return deleteCurrentModelUnlocked(userDataDir, capability);
   });
 }
 
 // --- Concurrency guard ---------------------------------------------------
-// `downloadModel` mutates shared on-disk state: it reads `active-model.json`,
-// optionally deletes the existing model file, downloads to a `.partial`
-// sibling, verifies the checksum, and atomically renames it into place.
-// Without serialization, two concurrent calls (rapid double-click, two
-// renderer windows, two IPC channels racing) could BOTH pass the
-// `current.modelId === requested.id` check, both call `deleteCurrentModel`,
-// and both fight over the same destination filename — leaving the on-disk
-// state inconsistent with `active-model.json`.
-// We serialize per Electron main process. Hardware downloads are slow
-// (hundreds of MB), so a single in-flight Promise chain is the simplest
-// correct primitive — every new caller awaits the tail of the chain and
-// then runs. The lock is keyed by `userDataDir` so unit tests using
-// different temp dirs don't accidentally block each other.
+// `downloadModel` mutates shared on-disk state for one capability slot:
+// it reads `active-model-<capability>.json`, optionally deletes the
+// existing model file in `models/<capability>/`, downloads to a
+// `.partial` sibling, verifies the checksum, and atomically renames it
+// into place. Without serialization, two concurrent calls targeting
+// the same slot (rapid double-click, two renderer windows, two IPC
+// channels racing) could BOTH pass the `current.modelId === requested.id`
+// check, both call `deleteCurrentModel`, and both fight over the same
+// destination filename — leaving the slot's on-disk state inconsistent
+// with `active-model-<capability>.json`.
+//
+// We serialize per `(userDataDir, capability)` so different capability
+// slots run in parallel (vision download doesn't block text download)
+// but operations within the same slot are mutually exclusive.
+// Hardware downloads are slow (hundreds of MB), so a single in-flight
+// Promise chain per slot is the simplest correct primitive — every new
+// caller awaits the tail of the chain and then runs. The composite
+// key is keyed by `(userDataDir, capability)` so unit tests using
+// different temp dirs / different slots don't accidentally block each
+// other.
 const downloadLocks = new Map<string, Promise<unknown>>();
+
+function lockKey(userDataDir: string, capability: ModelCapability): string {
+  // `\u0000` is illegal in POSIX/NTFS file paths, so it cannot collide
+  // with any legitimate userDataDir value. Capability is a fixed
+  // lowercase enum literal so a structured separator suffices.
+  return `${userDataDir}\u0000${capability}`;
+}
 
 function withDownloadLock<T>(
   userDataDir: string,
+  capability: ModelCapability,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const prev = downloadLocks.get(userDataDir) ?? Promise.resolve();
+  const key = lockKey(userDataDir, capability);
+  const prev = downloadLocks.get(key) ?? Promise.resolve();
   // Swallow upstream errors in the chained `then` so a single failed
   // download does not poison subsequent callers — they should still get to
   // run with a clean slate.
@@ -1137,13 +1694,13 @@ function withDownloadLock<T>(
   // .catch). Subsequent callers chain off this swallowed tail and so
   // can't be poisoned by an earlier failure either.
   const swallowed = next.catch(() => undefined);
-  downloadLocks.set(userDataDir, swallowed);
+  downloadLocks.set(key, swallowed);
   // Clean up the slot once this call settles AND it's still the tail of
   // the chain. We can't unconditionally delete because another caller may
   // have already chained onto `swallowed`.
   swallowed.finally(() => {
-    if (downloadLocks.get(userDataDir) === swallowed) {
-      downloadLocks.delete(userDataDir);
+    if (downloadLocks.get(key) === swallowed) {
+      downloadLocks.delete(key);
     }
   });
   return next;
@@ -1194,13 +1751,20 @@ export async function downloadModel(
   deps: DownloadDeps = {},
 ): Promise<InstalledModelRecord> {
   const safeProgress = wrapProgressNoThrow(onProgress);
-  return withDownloadLock(userDataDir, () =>
-    downloadModelLocked(userDataDir, requested, safeProgress, deps),
+  // Each model's slot is derived from its manifest entry's capability
+  // field, so the slot is determined at download time (not at IPC
+  // time). This means a model can never be installed in the "wrong"
+  // slot — a vision GGUF resolves to the vision slot whether the call
+  // came from the Settings UI or an automatic recommendation pass.
+  const capability = requested.capability;
+  return withDownloadLock(userDataDir, capability, () =>
+    downloadModelLocked(userDataDir, capability, requested, safeProgress, deps),
   );
 }
 
 async function downloadModelLocked(
   userDataDir: string,
+  capability: ModelCapability,
   requested: ResolvedModel,
   onProgress: (p: DownloadProgress) => void,
   deps: DownloadDeps,
@@ -1209,11 +1773,16 @@ async function downloadModelLocked(
   const hasher = deps.hasher ?? defaultHasher;
   const nowFn = deps.now ?? (() => new Date());
 
-  // Fast path: requested model is already installed AND its file is
-  // still on disk. `isModelInstalled` is the single source of truth for
-  // that definition — the IPC fast-path in apps/desktop/electron/ipc.ts
-  // calls the same helper, so the two checks can no longer drift.
-  const alreadyInstalled = await isModelInstalled(userDataDir, requested.id);
+  // Fast path: requested model is already installed in its declared
+  // slot AND its file is still on disk. `isModelInstalled` is the
+  // single source of truth for that definition — the IPC fast-path
+  // in apps/desktop/electron/ipc.ts calls the same helper, so the
+  // two checks can no longer drift.
+  const alreadyInstalled = await isModelInstalled(
+    userDataDir,
+    capability,
+    requested.id,
+  );
   if (alreadyInstalled) {
     return alreadyInstalled;
   }
@@ -1221,38 +1790,41 @@ async function downloadModelLocked(
   // pre-mutation hook (e.g. sidecar-stop) exactly once now, INSIDE
   // the lock, so the entire `(stop → evict → download → commit)`
   // sequence is serialised against any other download/delete on this
-  // `userDataDir`. Skipped on the already-installed fast path above,
-  // and called BEFORE the eviction branch so callers can rely on
-  // "no filesystem mutation has happened yet" when the hook fires.
+  // `(userDataDir, capability)`. Skipped on the already-installed fast
+  // path above, and called BEFORE the eviction branch so callers can
+  // rely on "no filesystem mutation has happened yet" when the hook
+  // fires.
   if (deps.beforeMutation) {
     await deps.beforeMutation();
   }
 
-  // If a *stale* record exists (right model id but file missing, OR
-  // a different model entirely), clean it up first so the
+  // If a *stale* record exists in this slot (right model id but file
+  // missing, OR a different model entirely), clean it up first so the
   // post-download `writeCurrentModel` writes a clean state instead
-  // of merging with the stale one.
-  const current = await getCurrentModel(userDataDir);
+  // of merging with the stale one. Records in OTHER slots are
+  // untouched — this is the per-slot single-model invariant: swapping
+  // a vision model does not delete the text model.
+  const current = await getCurrentModel(userDataDir, capability);
   if (current) {
     if (current.modelId === requested.id) {
       // File missing under us — clear only the record; there is no
       // file to delete.
-      await writeCurrentModel(userDataDir, null);
+      await writeCurrentModel(userDataDir, capability, null);
     } else {
-      // Different model installed — evict it. We're already inside
-      // `withDownloadLock` for this `userDataDir`, so call the
-      // unlocked variant — going through the public locked
-      // `deleteCurrentModel` would deadlock the per-userDataDir
-      // promise chain (it would queue behind the very call that's
-      // awaiting it). Do NOT pass `deps.beforeMutation` through
-      // either: we already called it above, and calling it again
-      // here would double-invoke the sidecar-stop for the swap
-      // path.
-      await deleteCurrentModelUnlocked(userDataDir);
+      // Different model installed in this slot — evict it. We're
+      // already inside `withDownloadLock` for this
+      // `(userDataDir, capability)`, so call the unlocked variant —
+      // going through the public locked `deleteCurrentModel` would
+      // deadlock the per-slot promise chain (it would queue behind
+      // the very call that's awaiting it). Do NOT pass
+      // `deps.beforeMutation` through either: we already called it
+      // above, and calling it again here would double-invoke the
+      // sidecar-stop for the swap path.
+      await deleteCurrentModelUnlocked(userDataDir, capability);
     }
   }
 
-  const dir = modelsDir(userDataDir);
+  const dir = modelsDir(userDataDir, capability);
   await fsp.mkdir(dir, { recursive: true });
   const dest = path.join(dir, requested.filename);
   // Stream the download into a `.partial` sibling so the final filename
@@ -1274,6 +1846,7 @@ async function downloadModelLocked(
         const percent = total > 0 ? (downloaded / total) * 100 : 0;
         onProgress({
           modelId: requested.id,
+          capability: requested.capability,
           format: requested.format,
           filename: requested.filename,
           downloadedMb,
@@ -1362,6 +1935,7 @@ async function downloadModelLocked(
 
   const record: InstalledModelRecord = {
     modelId: requested.id,
+    capability,
     format: requested.format,
     filename: requested.filename,
     path: installedPath,
@@ -1370,7 +1944,7 @@ async function downloadModelLocked(
     sha256: requested.sha256,
     downloadedAt: nowFn().toISOString(),
   };
-  await writeCurrentModel(userDataDir, record);
+  await writeCurrentModel(userDataDir, capability, record);
   return record;
 }
 
