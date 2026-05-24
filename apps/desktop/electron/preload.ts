@@ -67,6 +67,8 @@ export type {
   ModelFormat,
   ModelPlatform,
   ModelStatus,
+  OpenImageDialogOptions,
+  OpenImageDialogResult,
   PlatformInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
