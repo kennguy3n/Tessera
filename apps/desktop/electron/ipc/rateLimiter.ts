@@ -115,6 +115,20 @@ export class RateLimiter {
  *   slider can fire many updates as the user drags it; rate-limiting
  *   prevents the IPC channel from becoming a bottleneck while still
  *   letting interactive feedback flow through.
+ * - `externalProvider:listModels` — 1 per second, burst 5. The
+ *   "List models" button on the External Provider settings card
+ *   issues an outbound HTTPS request with the user's API key on
+ *   every click. Without a limiter a misbehaving renderer (or a
+ *   user mashing the button while iterating on the URL field)
+ *   could flood the upstream provider, costing the user real money
+ *   on metered APIs and tripping per-IP throttling on the upstream
+ *   side (which would then cascade into failed `externalProvider:
+ *   test` calls). The 5-token burst lets a power user click
+ *   List → tweak URL → List → tweak again a few times without
+ *   hitting the gate, while the 1/s refill blocks scripted
+ *   abuse. Matches the sibling-handler posture (`connectors:
+ *   authenticate`, `connectors:sync`, `runtime:downloadModel`)
+ *   that also wrap outbound network calls.
  */
 export const RATE_LIMIT_PROFILES = {
   "connectors:authenticate": {
@@ -142,6 +156,11 @@ export const RATE_LIMIT_PROFILES = {
     tokensPerInterval: 5,
     intervalMs: 1_000,
     burst: 10,
+  },
+  "externalProvider:listModels": {
+    tokensPerInterval: 1,
+    intervalMs: 1_000,
+    burst: 5,
   },
 } satisfies Record<string, RateLimitConfig>;
 

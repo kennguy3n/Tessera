@@ -359,6 +359,22 @@ export function registerSettingsHandlers(): void {
       // promise rejection — the same defense-in-depth pattern the
       // sibling `externalProvider:test` handler uses.
       try {
+        // Rate-limit BEFORE any vault / config read so a flood of
+        // List-Models calls can't (a) hammer the OS keychain, (b)
+        // burn open-fd budget on the config file, or (c) trip
+        // upstream per-IP throttling at the provider with the
+        // user's authenticated key. Matches the sibling outbound-
+        // network handlers (`connectors:authenticate`,
+        // `connectors:sync`, `runtime:downloadModel`) which all
+        // consume() at the head of their bodies. The rate-limit
+        // error is caught by the surrounding try/catch and surfaced
+        // to the renderer as `kind: error, error: <message>`,
+        // matching the shape every other failure path on this
+        // handler returns.
+        defaultRateLimiter.consume(
+          "externalProvider:listModels",
+          RATE_LIMIT_PROFILES["externalProvider:listModels"],
+        );
         const config = loadConfig();
         const baseProvider = config.externalProvider;
         // Defer the enabled-state check until AFTER overrides are
