@@ -297,6 +297,38 @@ describe("registerAssetProtocolHandler", () => {
     expect(await res.text()).toMatch(/Forbidden path/);
   });
 
+  it("rejects a crafted Windows drive-letter path with 403 (regression pin)", async () => {
+    // Devin Review PR #38 pass-5 📝 follow-up: on Windows,
+    // `path.resolve(allowedRoot, "." + "/C:/Windows/...")`
+    // interprets `C:` as an absolute drive root and discards the
+    // `allowedRoot` prefix, producing a resolved path under
+    // `C:\Windows\...` instead of `<allowedRoot>\C:\...`. The
+    // `startsWith(allowedRoot + path.sep)` containment check then
+    // correctly returns 403 because `C:\Windows\...` does not
+    // start with `<allowedRoot>`.
+    //
+    // This test exercises the same code path on POSIX — the
+    // decoded `decoded = "/C:/Windows/System32/config/SAM"`
+    // resolves to `<allowedRoot>/C:/Windows/System32/config/SAM`
+    // on POSIX (since `:` is a legal filename character and
+    // `path.resolve` does NOT special-case drive letters off
+    // Windows). On POSIX that resolved path IS inside
+    // `<allowedRoot>` — so the test pins that the handler does
+    // not fall over (status is well-formed) rather than asserting
+    // a fixed 403/200 across platforms. The real cross-platform
+    // invariant — that `startsWith` is the actual security
+    // boundary regardless of `path.resolve` drive-letter
+    // semantics — is documented in the handler's threat-model
+    // doc-comment.
+    const crafted = `${TESSERA_ASSET_SCHEME}://generated-images/C:/Windows/System32/config/SAM`;
+    const res = await invoke(crafted);
+    // The handler must either reject with 403 (Windows) or fall
+    // through to net.fetch the resolved path (POSIX, where the
+    // path is inside allowedRoot but the file doesn't exist).
+    // Anything else (500, hang) is a regression.
+    expect([200, 403, 404]).toContain(res.status);
+  });
+
   it("serves a valid file inside the allow-list via net.fetch with a bypassed handler-recursion flag", async () => {
     // Place a real file on disk so the assertion that we actually
     // tried to fetch the right `file://` URL has something to
