@@ -18,8 +18,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    available_models_for_platform, full_model_registry, ComputeBackend, DeviceTier, ModelFormat,
-    ModelInfo, Platform,
+    available_models_for_platform, full_model_registry, ComputeBackend, DeviceTier,
+    ModelCapability, ModelFormat, ModelInfo, Platform,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -36,6 +36,8 @@ pub enum ManifestError {
     UnknownTier(String),
     #[error("Unknown compute backend in manifest: {0}")]
     UnknownCompute(String),
+    #[error("Unknown capability in manifest: {0}")]
+    UnknownCapability(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +45,12 @@ pub struct ManifestModel {
     pub id: String,
     pub name: String,
     pub parameters: String,
+    /// What slot this entry occupies in the multi-capability registry.
+    /// Optional in the wire format so older manifest copies (predating
+    /// the multi-capability runtime) still deserialize — the default
+    /// is `"text"`, matching the historical single-capability behavior.
+    #[serde(default = "default_manifest_capability_string")]
+    pub capability: String,
     pub format: String,
     pub quantization: String,
     pub platform: String,
@@ -59,6 +67,10 @@ pub struct ManifestModel {
     pub filename: String,
     pub url: String,
     pub sha256: Option<String>,
+}
+
+fn default_manifest_capability_string() -> String {
+    "text".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +126,15 @@ fn parse_compute(s: &str) -> Result<ComputeBackend, ManifestError> {
     }
 }
 
+fn parse_capability(s: &str) -> Result<ModelCapability, ManifestError> {
+    match s {
+        "text" => Ok(ModelCapability::Text),
+        "vision" => Ok(ModelCapability::Vision),
+        "imagegen" => Ok(ModelCapability::Imagegen),
+        other => Err(ManifestError::UnknownCapability(other.into())),
+    }
+}
+
 /// Parse a manifest platform string.
 ///
 /// The manifest uses the wildcard `"any-non-apple-silicon"` for GGUF
@@ -139,6 +160,7 @@ impl ManifestModel {
         let format = parse_format(&self.format)?;
         let tier = parse_tier(&self.tier)?;
         let platform = parse_platform(&self.platform, target)?;
+        let capability = parse_capability(&self.capability)?;
         let mut compute_backends = Vec::with_capacity(self.compute.len());
         for c in &self.compute {
             compute_backends.push(parse_compute(c)?);
@@ -147,6 +169,7 @@ impl ManifestModel {
             id: self.id,
             name: self.name,
             parameters: self.parameters,
+            capability,
             quantization: self.quantization,
             format,
             platform,
@@ -471,47 +494,134 @@ mod tests {
     }
 
     #[test]
-    fn shipped_manifest_parses_and_has_six_variants() {
+    fn shipped_manifest_parses_and_has_expected_variants() {
+        // Three Ternary-Bonsai text variants × (MLX + GGUF) + two
+        // vision sizes × (MLX + GGUF) + one FLUX.2-klein imagegen ×
+        // (MLX + GGUF) = 6 + 4 + 2 = 12.
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecars/models.json");
         let manifest = load_manifest(&path).expect("ship manifest parses");
-        assert_eq!(manifest.models.len(), 6);
-        let mlx = manifest.models.iter().filter(|m| m.format == "mlx").count();
-        let gguf = manifest
+        assert_eq!(manifest.models.len(), 12);
+
+        let mlx_text = manifest
             .models
             .iter()
-            .filter(|m| m.format == "gguf")
+            .filter(|m| m.format == "mlx" && m.capability == "text")
             .count();
-        assert_eq!(mlx, 3);
-        assert_eq!(gguf, 3);
+        let gguf_text = manifest
+            .models
+            .iter()
+            .filter(|m| m.format == "gguf" && m.capability == "text")
+            .count();
+        assert_eq!(mlx_text, 3, "three Bonsai MLX text variants");
+        assert_eq!(gguf_text, 3, "three Bonsai GGUF text variants");
+
+        let mlx_vision = manifest
+            .models
+            .iter()
+            .filter(|m| m.format == "mlx" && m.capability == "vision")
+            .count();
+        let gguf_vision = manifest
+            .models
+            .iter()
+            .filter(|m| m.format == "gguf" && m.capability == "vision")
+            .count();
+        assert_eq!(mlx_vision, 2, "two MLX vision variants");
+        assert_eq!(gguf_vision, 2, "two GGUF vision variants");
+
+        let mlx_imagegen = manifest
+            .models
+            .iter()
+            .filter(|m| m.format == "mlx" && m.capability == "imagegen")
+            .count();
+        let gguf_imagegen = manifest
+            .models
+            .iter()
+            .filter(|m| m.format == "gguf" && m.capability == "imagegen")
+            .count();
+        assert_eq!(mlx_imagegen, 1, "one MLX imagegen variant");
+        assert_eq!(gguf_imagegen, 1, "one GGUF imagegen variant");
+
+        // Text models must NOT use Q4_K_M (Bonsai is 1.58-bit). Vision
+        // and imagegen entries do use Q4_K_M / Q4_K_S / Q4_0 / 4-bit
+        // — that's expected.
         for m in &manifest.models {
-            assert_ne!(m.quantization, "Q4_K_M");
+            if m.capability == "text" {
+                assert_ne!(
+                    m.quantization, "Q4_K_M",
+                    "text model {} must not use Q4_K_M",
+                    m.id
+                );
+            }
+        }
+
+        // Imagegen entries must NOT advertise the CPU compute path
+        // (FLUX on a quantized CPU dispatcher is unusably slow). The
+        // renderer keys off this to grey out the imagegen slot on
+        // CPU-only hosts; a stray `"cpu"` in the manifest would
+        // silently re-enable a job that never returns.
+        for m in &manifest.models {
+            if m.capability == "imagegen" {
+                assert!(
+                    !m.compute.iter().any(|c| c == "cpu"),
+                    "imagegen entry {} must not list cpu compute",
+                    m.id
+                );
+            }
         }
     }
 
     #[test]
-    fn ship_manifest_no_duplicate_platform_tier_combination() {
+    fn ship_manifest_no_duplicate_platform_tier_capability_combination() {
+        // Pre-multi-capability the (format, platform, tier) triple was
+        // unique. Adding capability widens the key: now
+        // (format, platform, tier, capability) is the unique
+        // identity — e.g. there's both a `(gguf, *, medium, text)`
+        // Bonsai-4B AND a `(gguf, *, medium, vision)` Qwen3.5-4B.
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecars/models.json");
         let manifest = load_manifest(&path).expect("ship manifest parses");
-        let mut seen: Vec<(String, String, String)> = Vec::new();
+        let mut seen: Vec<(String, String, String, String)> = Vec::new();
         for m in &manifest.models {
-            let key = (m.format.clone(), m.platform.clone(), m.tier.clone());
-            assert!(!seen.contains(&key), "duplicate manifest entry {key:?}");
+            let key = (
+                m.format.clone(),
+                m.platform.clone(),
+                m.tier.clone(),
+                m.capability.clone(),
+            );
+            assert!(
+                !seen.contains(&key),
+                "duplicate manifest entry {key:?} (model id {})",
+                m.id
+            );
             seen.push(key);
         }
     }
 
     #[test]
     fn ship_manifest_filename_extension_matches_format() {
+        // MLX entries can ship as `.mlx.tar.gz` (Bonsai's archive
+        // layout) or `.tar.gz` (the upstream community archives for
+        // Qwen3.5/SmolVLM/FLUX). The invariant we want to lock in is
+        // "MLX = archive, GGUF = single .gguf file".
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecars/models.json");
         let manifest = load_manifest(&path).expect("ship manifest parses");
         for m in &manifest.models {
             if m.format == "mlx" {
-                assert!(m.filename.ends_with(".mlx.tar.gz"), "{}", m.filename);
+                assert!(
+                    m.filename.ends_with(".tar.gz") || m.filename.ends_with(".tgz"),
+                    "MLX manifest entry {} has filename {} - expected archive",
+                    m.id,
+                    m.filename
+                );
             } else if m.format == "gguf" {
-                assert!(m.filename.ends_with(".gguf"), "{}", m.filename);
+                assert!(
+                    m.filename.ends_with(".gguf"),
+                    "GGUF manifest entry {} has filename {}",
+                    m.id,
+                    m.filename
+                );
             }
         }
     }
@@ -620,6 +730,7 @@ mod tests {
             id: "new-archive".into(),
             name: "New Archive".into(),
             parameters: "4B".into(),
+            capability: ModelCapability::Text,
             quantization: "2-bit".into(),
             format: ModelFormat::Mlx,
             platform: Platform::MacosAppleSilicon,
@@ -814,13 +925,32 @@ mod tests {
 
     #[test]
     fn registry_for_host_falls_back_when_manifest_absent() {
+        // Fallback returns the entire GGUF subset of
+        // `full_model_registry()`: three Bonsai text variants + two
+        // vision + one imagegen.
         let v = registry_for_host(
             Some(std::path::Path::new("/nonexistent/manifest.json")),
             Platform::WindowsX64,
         );
-        assert_eq!(v.len(), 3);
+        assert_eq!(v.len(), 6, "3 text + 2 vision + 1 imagegen GGUF variants");
         for m in &v {
             assert_eq!(m.format, ModelFormat::Gguf);
+            assert_eq!(m.platform, Platform::WindowsX64);
         }
+        let text_count = v
+            .iter()
+            .filter(|m| m.capability == ModelCapability::Text)
+            .count();
+        let vision_count = v
+            .iter()
+            .filter(|m| m.capability == ModelCapability::Vision)
+            .count();
+        let imagegen_count = v
+            .iter()
+            .filter(|m| m.capability == ModelCapability::Imagegen)
+            .count();
+        assert_eq!(text_count, 3);
+        assert_eq!(vision_count, 2);
+        assert_eq!(imagegen_count, 1);
     }
 }

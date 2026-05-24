@@ -6,7 +6,7 @@ use tokio::time::{Duration, Instant};
 
 use crate::config::{
     available_models_for_platform, detect_platform, select_model as select_model_fn, DeviceTier,
-    ModelInfo, Platform, RuntimeConfig, RuntimeState, RuntimeStatus,
+    ModelCapability, ModelInfo, Platform, RuntimeConfig, RuntimeState, RuntimeStatus,
 };
 
 #[derive(thiserror::Error, Debug)]
@@ -61,12 +61,32 @@ impl RuntimeManager {
         }
     }
 
+    /// Pick the best text model for the detected platform/tier.
+    ///
+    /// This wrapper is kept for the existing call sites that only
+    /// ever cared about the text slot (the runtime manager itself
+    /// drives `llama-server` for text completion). Use
+    /// [`Self::select_model_for_capability`] for vision/imagegen slots.
     pub fn select_model(tier: DeviceTier) -> ModelInfo {
-        select_model_fn(tier, detect_platform())
+        select_model_fn(tier, detect_platform(), ModelCapability::Text)
     }
 
+    /// Pick the best text model for an explicit platform/tier.
     pub fn select_model_for_platform(tier: DeviceTier, platform: Platform) -> ModelInfo {
-        select_model_fn(tier, platform)
+        select_model_fn(tier, platform, ModelCapability::Text)
+    }
+
+    /// Pick the best model for an explicit capability slot.
+    ///
+    /// Block A adds vision and image-generation slots alongside the
+    /// text slot; callers that resolve a model for those slots route
+    /// through here.
+    pub fn select_model_for_capability(
+        tier: DeviceTier,
+        platform: Platform,
+        capability: ModelCapability,
+    ) -> ModelInfo {
+        select_model_fn(tier, platform, capability)
     }
 
     pub fn list_available_models() -> Vec<ModelInfo> {
