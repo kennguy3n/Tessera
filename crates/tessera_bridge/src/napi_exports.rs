@@ -990,14 +990,20 @@ pub fn bridge_compare_sources(
     // comparison ran — preserving the legacy markdown label so
     // anyone diffing artifacts from before/after this refactor
     // doesn't see a content shift.
-    let label_a = src_mgr.get_source(&sid_a).ok().map_or_else(
-        || "Source A".to_string(),
-        |src| friendly_source_label(&src.path),
-    );
-    let label_b = src_mgr.get_source(&sid_b).ok().map_or_else(
-        || "Source B".to_string(),
-        |src| friendly_source_label(&src.path),
-    );
+    // Resolve paths for both sources first so we can disambiguate
+    // the labels when both sources share the same last path segment
+    // (e.g. `/home/alice/docs` vs `/home/bob/docs`). `disambiguate_labels`
+    // escalates from 1-segment to 4-segment labels until the two
+    // are distinct, falling back to the full path only for fully
+    // prefix-identical sources (which are pathological in practice).
+    let path_a = src_mgr.get_source(&sid_a).ok().map(|src| src.path.clone());
+    let path_b = src_mgr.get_source(&sid_b).ok().map(|src| src.path.clone());
+    let (label_a, label_b) = match (path_a.as_deref(), path_b.as_deref()) {
+        (Some(a), Some(b)) => disambiguate_labels(a, b),
+        (Some(a), None) => (friendly_source_label(a), "Source B".to_string()),
+        (None, Some(b)) => ("Source A".to_string(), friendly_source_label(b)),
+        (None, None) => ("Source A".to_string(), "Source B".to_string()),
+    };
 
     let chunks_a = src_mgr.get_chunks_for_source(&sid_a).unwrap_or_default();
     let chunks_b = src_mgr.get_chunks_for_source(&sid_b).unwrap_or_default();
@@ -1101,9 +1107,61 @@ fn friendly_source_label(path: &str) -> String {
     }
 }
 
+/// Like `friendly_source_label` but returns the LAST `n` non-empty
+/// segments joined with `/`. Used by `disambiguate_labels` to
+/// produce parent-qualified labels when two sources have the same
+/// last segment (e.g. `/home/alice/docs` and `/home/bob/docs` would
+/// both collapse to `docs` under `friendly_source_label`; this
+/// returns `alice/docs` and `bob/docs` for n=2).
+fn friendly_source_label_n(path: &str, n: usize) -> String {
+    let trimmed = path.trim_end_matches(['/', '\\']);
+    let mut segments: Vec<&str> = trimmed
+        .rsplit(['/', '\\'])
+        .filter(|s| !s.is_empty())
+        .take(n)
+        .collect();
+    if segments.is_empty() {
+        return path.to_string();
+    }
+    segments.reverse();
+    segments.join("/")
+}
+
+/// Compute friendly labels for a pair of source paths, escalating
+/// from 1-segment to 2-segment (or further) labels until the two
+/// labels are distinct. Caps the escalation at 4 segments to avoid
+/// dumping a full absolute path when sources are deeply nested in
+/// the same prefix (e.g. `/a/b/c/d/docs` vs `/a/b/c/e/docs` — at
+/// n=2 both become `d/docs` / `e/docs` which is enough to disambig).
+/// If both paths are identical, returns `(label, "Source B")` so
+/// the modal still renders two distinct labels.
+fn disambiguate_labels(path_a: &str, path_b: &str) -> (String, String) {
+    if path_a == path_b {
+        // Pathological but possible if the user picks the same
+        // source twice through different routes — preserve A/B
+        // distinction in the UI so the modal isn't visually
+        // identical on both sides.
+        return (friendly_source_label(path_a), "Source B".to_string());
+    }
+    for n in 1..=4 {
+        let label_a = friendly_source_label_n(path_a, n);
+        let label_b = friendly_source_label_n(path_b, n);
+        if label_a != label_b {
+            return (label_a, label_b);
+        }
+    }
+    // Fully prefix-identical paths up to 4 segments — fall back to
+    // the full trimmed paths, which are guaranteed distinct because
+    // we ruled out `path_a == path_b` above.
+    (
+        path_a.trim_end_matches(['/', '\\']).to_string(),
+        path_b.trim_end_matches(['/', '\\']).to_string(),
+    )
+}
+
 #[cfg(test)]
 mod compare_label_tests {
-    use super::friendly_source_label;
+    use super::{disambiguate_labels, friendly_source_label, friendly_source_label_n};
 
     #[test]
     fn friendly_source_label_strips_path_prefix() {
@@ -1133,6 +1191,68 @@ mod compare_label_tests {
         // Pathological case: nothing but separators. Fall back to
         // the original input rather than returning an empty string.
         assert_eq!(friendly_source_label("/"), "/");
+    }
+
+    #[test]
+    fn friendly_source_label_n_returns_multi_segment() {
+        assert_eq!(friendly_source_label_n("/home/alice/docs", 2), "alice/docs");
+        assert_eq!(
+            friendly_source_label_n("/home/alice/docs", 3),
+            "home/alice/docs",
+        );
+        // Asking for more segments than the path has should just
+        // return the whole trimmed path.
+        assert_eq!(friendly_source_label_n("/docs", 4), "docs");
+    }
+
+    #[test]
+    fn disambiguate_labels_uses_single_segment_when_distinct() {
+        // Standard happy path — last segments are already distinct.
+        assert_eq!(
+            disambiguate_labels("/home/user/projects/alpha", "/home/user/projects/beta"),
+            ("alpha".to_string(), "beta".to_string()),
+        );
+    }
+
+    #[test]
+    fn disambiguate_labels_escalates_to_two_segments_on_collision() {
+        // Devin Review ANALYSIS_0003: two sources sharing the same
+        // last segment should produce parent-qualified labels so the
+        // modal heading isn't "Comparison: docs vs docs".
+        assert_eq!(
+            disambiguate_labels("/home/alice/docs", "/home/bob/docs"),
+            ("alice/docs".to_string(), "bob/docs".to_string()),
+        );
+    }
+
+    #[test]
+    fn disambiguate_labels_escalates_further_when_two_segments_also_collide() {
+        // `/a/x/notes` vs `/b/x/notes` — at n=1 both are `notes`, at
+        // n=2 both are `x/notes`, at n=3 they become `a/x/notes` /
+        // `b/x/notes` which is enough to disambiguate.
+        assert_eq!(
+            disambiguate_labels("/a/x/notes", "/b/x/notes"),
+            ("a/x/notes".to_string(), "b/x/notes".to_string()),
+        );
+    }
+
+    #[test]
+    fn disambiguate_labels_handles_identical_paths() {
+        // The user picked the same source twice through different
+        // routes. Preserve A/B distinction in the UI so the modal
+        // sides are visually different.
+        let (a, b) = disambiguate_labels("/home/user/docs", "/home/user/docs");
+        assert_eq!(a, "docs");
+        assert_eq!(b, "Source B");
+    }
+
+    #[test]
+    fn disambiguate_labels_handles_windows_paths() {
+        // Two Windows paths sharing the last segment.
+        assert_eq!(
+            disambiguate_labels("C:\\Users\\Alice\\docs", "C:\\Users\\Bob\\docs"),
+            ("Alice/docs".to_string(), "Bob/docs".to_string()),
+        );
     }
 }
 

@@ -56,8 +56,17 @@ export function downloadMarkdown(filename: string, markdown: string): void {
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    // Nest the anchor cleanup inside an inner try/finally so that
+    // if `a.click()` throws (cf. some Electron versions on Linux
+    // throw on missing display permissions), the anchor is still
+    // removed before we propagate the throw up to the outer
+    // `finally` that revokes the URL. Without this nesting a
+    // failed click would leak an invisible `<a>` into `document.body`.
+    try {
+      a.click();
+    } finally {
+      document.body.removeChild(a);
+    }
   } finally {
     URL.revokeObjectURL(url);
   }

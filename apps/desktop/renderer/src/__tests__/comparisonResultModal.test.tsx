@@ -403,5 +403,11 @@ describe("downloadMarkdown", () => {
       });
     expect(() => downloadMarkdown("x.md", "y")).toThrow("blocked");
     expect(revokeObjectURLSpy).toHaveBeenCalledTimes(1);
+    // Regression: even when `click()` throws, the anchor must be
+    // detached from `document.body` so the failed download doesn't
+    // leak an invisible `<a>` element. Inner try/finally inside
+    // `downloadMarkdown` is what makes this hold.
+    expect(appendSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy).toHaveBeenCalledTimes(1);
   });
 });
