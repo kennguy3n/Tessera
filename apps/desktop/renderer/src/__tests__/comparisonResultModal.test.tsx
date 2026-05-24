@@ -295,6 +295,23 @@ describe("sanitizeForFilename", () => {
     expect(sanitizeForFilename(longLabel).length).toBeLessThanOrEqual(60);
   });
 
+  it("neutralizes DEL and C1 control codepoints alongside C0", () => {
+    // Regression: the original implementation only covered the C0
+    // control range (\u0000-\u001f). DEL (\u007f) and the C1 control
+    // range (\u0080-\u009f) render as garbage in every shell / file
+    // picker we've tested, so they should be neutralized into the
+    // same dash separator as C0. Confirm both bands collapse cleanly.
+    expect(sanitizeForFilename("foo\u007fbar")).toBe("foo-bar");
+    expect(sanitizeForFilename("foo\u0080bar")).toBe("foo-bar");
+    expect(sanitizeForFilename("foo\u008cbar")).toBe("foo-bar");
+    expect(sanitizeForFilename("foo\u009fbar")).toBe("foo-bar");
+    // Mixed C0 + DEL + C1 + reserved all collapse into a single dash
+    // run, which the `-+/g` pass merges into one separator.
+    expect(sanitizeForFilename("a\u0001b\u007fc\u0080d\u009fe")).toBe(
+      "a-b-c-d-e",
+    );
+  });
+
   it("re-strips trailing dashes that survive the length cap", () => {
     // Regression: a label like "aaa<bbb<ccc<..." (60+ chars of
     // alternating alpha + reserved char) collapses to

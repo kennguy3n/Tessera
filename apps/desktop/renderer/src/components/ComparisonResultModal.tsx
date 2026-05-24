@@ -252,16 +252,25 @@ export function sanitizeForFilename(label: string): string {
   // would strip `\t` / `\n` BEFORE the whitespace collapse could
   // turn them into separators (producing "hello-worldtab" instead
   // of "hello-world-tab"). Then collapse runs and trim ends.
-  // The `\u0000-\u001f` range deliberately covers ASCII control
-  // codepoints (tab / newline / etc) so they get collapsed into the
-  // same dash separator as the other reserved characters and
-  // whitespace. eslint's `no-control-regex` flags this as suspect
-  // (security: control chars in URL parsers are typically a red
-  // flag) but here we are sanitizing FOR a filename, not parsing
-  // an input — keeping the control-range is necessary to neutralize
-  // them.
+  //
+  // The control-code ranges deliberately cover BOTH the C0 block
+  // (`\u0000-\u001f`: tab / newline / etc) AND the DEL + C1 block
+  // (`\u007f-\u009f`: DEL plus the secondary control range used by
+  // ISO-8859 etc). Filesystems on the three target platforms allow
+  // some of these in principle (Linux ext4 will accept `\u008c` in
+  // a filename) but they render as garbage in every shell / file
+  // picker we've tested, so neutralizing the whole control region
+  // is the defensive default. Source labels coming from
+  // `friendly_source_label` are filesystem-path-derived so should
+  // never contain these — but `sanitizeForFilename` is exported as
+  // a utility and a future caller could legitimately feed it
+  // user-typed input. eslint's `no-control-regex` flags both ranges
+  // as suspect (security: control chars in URL parsers are
+  // typically a red flag) but here we are sanitizing FOR a
+  // filename, not parsing an input — keeping the full control
+  // region is necessary to neutralize them.
   // eslint-disable-next-line no-control-regex
-  const reservedOrWhitespace = /[\u0000-\u001f<>:"/\\|?*\s]/g;
+  const reservedOrWhitespace = /[\u0000-\u001f\u007f-\u009f<>:"/\\|?*\s]/g;
   const stripped = label
     .replace(reservedOrWhitespace, "-")
     .replace(/-+/g, "-")
