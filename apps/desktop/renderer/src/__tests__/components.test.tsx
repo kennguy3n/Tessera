@@ -1310,6 +1310,21 @@ describe("ModelRuntimeCard handleDelete error path re-fetches state", () => {
       expect(statusMock.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
 
+    // Regression guard: every getCurrentModel call from this card must
+    // pass the explicit "text" capability — including the catch-block
+    // re-fetch after deleteModel throws. A previous pass left line 370
+    // unscoped (relying on the IPC default), which would silently break
+    // if the server-side default ever changes. The mount-time refresh
+    // and 5s poll have their own regression tests above; this one
+    // closes the gap on the delete catch path.
+    for (const call of getCurrentModelMock.mock.calls) {
+      expect(call[0]).toBe("text");
+    }
+    // deleteModel must also be explicitly text-scoped at the renderer
+    // boundary, even though the IPC default is "text". Matches the
+    // text-scoping invariant the card's header comment documents.
+    expect(deleteMock).toHaveBeenCalledWith("text");
+
     // After the re-fetch landed null, the installed-record text must
     // be gone — the UI now matches on-disk truth. If the fix were
     // missing, this assertion would fail because `state.current`

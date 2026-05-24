@@ -336,7 +336,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
         const status = await tessera.model.status();
         setState((s) => ({ ...s, status }));
       }
-      await tessera.runtime.deleteModel();
+      await tessera.runtime.deleteModel("text");
       // Always re-fetch status after a successful delete — not just on
       // the running-before-delete branch above. If the runtime was in
       // any non-running state when delete fired ("stopped", "error",
@@ -367,7 +367,7 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
       // future refactors. The success path already re-fetches; this
       // mirrors that for symmetry.
       const [liveCurrent, liveStatus] = await Promise.all([
-        tessera.runtime.getCurrentModel().catch(() => null),
+        tessera.runtime.getCurrentModel("text").catch(() => null),
         tessera.model.status().catch(() => null),
       ]);
       setState((s) => ({
