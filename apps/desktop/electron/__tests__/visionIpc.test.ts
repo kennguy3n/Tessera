@@ -24,6 +24,8 @@ const removeHandlerMock = vi.fn();
 const setModelPathMock = vi.fn();
 const setExtraArgsMock = vi.fn();
 const sidecarStartMock = vi.fn();
+const markGenerationActiveMock = vi.fn();
+const markGenerationIdleMock = vi.fn();
 const bridgeVisionDescribeMock = vi.fn();
 const getInstalledModelMock = vi.fn();
 const detectPlatformInfoMock = vi.fn();
@@ -39,6 +41,8 @@ const sidecarStub = {
   setModelPath: (p: string) => setModelPathMock(p),
   setExtraArgs: (args: string[]) => setExtraArgsMock(args),
   start: (resetRetries?: boolean) => sidecarStartMock(resetRetries),
+  markGenerationActive: () => markGenerationActiveMock(),
+  markGenerationIdle: () => markGenerationIdleMock(),
 };
 
 let bridgeStub: unknown = {
@@ -125,6 +129,8 @@ describe("vision IPC handlers", () => {
     setModelPathMock.mockClear();
     setExtraArgsMock.mockClear();
     sidecarStartMock.mockClear();
+    markGenerationActiveMock.mockClear();
+    markGenerationIdleMock.mockClear();
     bridgeVisionDescribeMock.mockClear();
     getInstalledModelMock.mockReset();
     detectPlatformInfoMock.mockReset();
@@ -338,6 +344,49 @@ describe("vision IPC handlers", () => {
         "describe",
         256,
       );
+    });
+
+    it("brackets the bridge call with markGenerationActive / markGenerationIdle", async () => {
+      // Companion to the diffusion sidecar regression: the
+      // vision sidecar uses `ModelSidecar`'s idle monitor (60 s
+      // window) which only refrains from unloading while
+      // `_generationActiveCount > 0`. OCR on big images can push
+      // past 60 s on slow hosts; without bracketing the sidecar
+      // would die mid-completion.
+      getInstalledModelMock.mockResolvedValue({
+        path: "/m/qwen.gguf",
+        mmprojPath: "/m/proj.gguf",
+      });
+      bridgeVisionDescribeMock.mockImplementation(async () => {
+        expect(markGenerationActiveMock).toHaveBeenCalledTimes(1);
+        expect(markGenerationIdleMock).toHaveBeenCalledTimes(0);
+        return {
+          content: "ok",
+          stop: true,
+          tokensPredicted: 1,
+          tokensEvaluated: 1,
+        };
+      });
+      const handler = getHandler("vision:describe");
+      await handler({}, { imagePath: "/i", mode: "describe" });
+      expect(markGenerationActiveMock).toHaveBeenCalledTimes(1);
+      expect(markGenerationIdleMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("releases markGenerationIdle even when the bridge throws", async () => {
+      getInstalledModelMock.mockResolvedValue({
+        path: "/m/qwen.gguf",
+        mmprojPath: "/m/proj.gguf",
+      });
+      bridgeVisionDescribeMock.mockRejectedValue(
+        new Error("vision sidecar died"),
+      );
+      const handler = getHandler("vision:describe");
+      await expect(
+        handler({}, { imagePath: "/i", mode: "describe" }),
+      ).rejects.toThrow(/vision sidecar died/);
+      expect(markGenerationActiveMock).toHaveBeenCalledTimes(1);
+      expect(markGenerationIdleMock).toHaveBeenCalledTimes(1);
     });
 
     it("rejects unknown modes with zod's error message", async () => {

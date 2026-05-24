@@ -232,6 +232,7 @@ export function registerImagegenHandlers(): void {
       const controller = new AbortController();
       generationInFlight = controller;
       const t0 = Date.now();
+      let activeSidecar: ReturnType<typeof getDiffusionSidecar> | null = null;
       try {
         await ensureDiffusionSidecarRunning();
         const sidecar = getDiffusionSidecar();
@@ -242,6 +243,19 @@ export function registerImagegenHandlers(): void {
         if (!bridge) {
           throw new Error("Native bridge not available");
         }
+        // Bracket the bridge call with markGenerationActive /
+        // markGenerationIdle so the idle monitor in
+        // `diffusionSidecar.ts` does NOT unload the sidecar
+        // mid-generation. The 30 s idle window is shorter than the
+        // typical 10–30 s sd-server generation, so without this
+        // bracketing the monitor reliably kills the sd-server
+        // process while it's still sampling — the JS side then
+        // sees `bridgeGenerateImage` reject with a
+        // connection-reset / ECONNRESET because the HTTP socket
+        // disappears under it. Mirrors the pattern in
+        // `ipc/model.ts` (text generation, lines ~372 / ~437).
+        activeSidecar = sidecar;
+        sidecar.markGenerationActive();
 
         const result = await bridge.bridgeGenerateImage(sidecar.endpoint, {
           prompt: input.prompt,
@@ -323,6 +337,15 @@ export function registerImagegenHandlers(): void {
           sizeBytes: stat.size,
         };
       } finally {
+        // Release the activity counter BEFORE clearing the
+        // in-flight slot. `activeSidecar` is only set after
+        // `ensureDiffusionSidecarRunning()` succeeded — if we
+        // failed earlier (e.g. capability gating, no model
+        // installed), the counter was never incremented and we
+        // skip the decrement to avoid driving the count negative.
+        if (activeSidecar !== null) {
+          activeSidecar.markGenerationIdle();
+        }
         // Clear ONLY if we are still the active controller. A
         // racing `imagegen:cancel` already aborted us but a
         // future call could have replaced the slot; this guards

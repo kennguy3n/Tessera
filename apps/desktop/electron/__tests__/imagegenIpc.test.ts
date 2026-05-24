@@ -36,6 +36,8 @@ const handleMock = vi.fn();
 const removeHandlerMock = vi.fn();
 const setModelPathMock = vi.fn();
 const sidecarStartMock = vi.fn();
+const markGenerationActiveMock = vi.fn();
+const markGenerationIdleMock = vi.fn();
 const bridgeGenerateImageMock = vi.fn();
 const getInstalledModelMock = vi.fn();
 const detectPlatformInfoMock = vi.fn();
@@ -52,6 +54,8 @@ const sidecarStub = {
   },
   setModelPath: (p: string) => setModelPathMock(p),
   start: (resetRetries?: boolean) => sidecarStartMock(resetRetries),
+  markGenerationActive: () => markGenerationActiveMock(),
+  markGenerationIdle: () => markGenerationIdleMock(),
 };
 
 let bridgeStub: unknown = {
@@ -153,6 +157,8 @@ describe("imagegen IPC handlers", () => {
     removeHandlerMock.mockClear();
     setModelPathMock.mockClear();
     sidecarStartMock.mockClear();
+    markGenerationActiveMock.mockClear();
+    markGenerationIdleMock.mockClear();
     bridgeGenerateImageMock.mockReset();
     getInstalledModelMock.mockReset();
     detectPlatformInfoMock.mockReset();
@@ -323,6 +329,61 @@ describe("imagegen IPC handlers", () => {
       expect(out.path.endsWith(".png")).toBe(true);
       const written = await fsp.readFile(out.path);
       expect(written).toEqual(pngBytesStub());
+    });
+
+    it("brackets the bridge call with markGenerationActive / markGenerationIdle so the idle monitor cannot kill mid-generation", async () => {
+      // Regression for the BUG_pr-review-job-..._0001 finding: the
+      // diffusion sidecar's idle monitor checks
+      // `_generationActiveCount === 0` before unloading, so a
+      // 10–30 s generation that doesn't increment the counter
+      // races the 30 s idle window and dies mid-sample.
+      getInstalledModelMock.mockResolvedValue({ path: "/m/flux.gguf" });
+      bridgeGenerateImageMock.mockImplementation(async () => {
+        // While the bridge call is parked, markGenerationActive
+        // MUST already have fired and markGenerationIdle MUST NOT
+        // have fired yet. This is the invariant the idle monitor
+        // relies on.
+        expect(markGenerationActiveMock).toHaveBeenCalledTimes(1);
+        expect(markGenerationIdleMock).toHaveBeenCalledTimes(0);
+        return {
+          pngBytes: pngBytesStub(),
+          seed: BigInt(99),
+        };
+      });
+      const handler = getHandler("imagegen:generate");
+      await handler({}, validInput());
+      // After the bridge resolves and the finally block runs,
+      // both bracket calls must have fired exactly once each so
+      // the counter returns to zero for the next request.
+      expect(markGenerationActiveMock).toHaveBeenCalledTimes(1);
+      expect(markGenerationIdleMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("releases markGenerationIdle even when the bridge throws", async () => {
+      // Without the finally block, a bridge rejection would leak
+      // an `_generationActiveCount` increment, permanently
+      // blocking the idle monitor from ever reclaiming VRAM
+      // until a successful generation re-paired the count.
+      getInstalledModelMock.mockResolvedValue({ path: "/m/flux.gguf" });
+      bridgeGenerateImageMock.mockRejectedValue(new Error("sd-server died"));
+      const handler = getHandler("imagegen:generate");
+      await expect(handler({}, validInput())).rejects.toThrow(/sd-server died/);
+      expect(markGenerationActiveMock).toHaveBeenCalledTimes(1);
+      expect(markGenerationIdleMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not call markGenerationIdle when the handler fails before the sidecar is reached", async () => {
+      // If `ensureDiffusionSidecarRunning` throws (no model
+      // installed, capability gating, etc.), we never
+      // incremented the counter — calling Idle anyway would
+      // drive the count negative on the next legitimate run.
+      getInstalledModelMock.mockResolvedValue(null);
+      const handler = getHandler("imagegen:generate");
+      await expect(handler({}, validInput())).rejects.toThrow(
+        /No image-generation model installed/,
+      );
+      expect(markGenerationActiveMock).toHaveBeenCalledTimes(0);
+      expect(markGenerationIdleMock).toHaveBeenCalledTimes(0);
     });
 
     it("does not escape generated-images even when artifactId is a pure-dot traversal", async () => {

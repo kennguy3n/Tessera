@@ -1613,7 +1613,17 @@ pub struct VisionDescribeResult {
 /// String enum on the JS side (`"describe"`, `"ocr"`, `"chart"`) so
 /// the renderer can statically discriminate without smuggling
 /// magic numbers.
-#[napi(string_enum)]
+///
+/// **Casing**: napi-rs's `string_enum` serialises variant
+/// identifiers VERBATIM by default (i.e. `Describe`, `Ocr`,
+/// `Chart`), which would mismatch the lowercase strings the
+/// TypeScript side sends (`VisionDescribeSchema` in
+/// `ipc/schemas.ts` validates `"describe" | "ocr" | "chart"`).
+/// The explicit `= "lowercase"` casing override forces napi-rs to
+/// emit / accept the lowercase form, so the FFI contract aligns
+/// with the renderer schema without forcing every TS caller to
+/// PascalCase its argument.
+#[napi(string_enum = "lowercase")]
 pub enum VisionMode {
     Describe,
     Ocr,

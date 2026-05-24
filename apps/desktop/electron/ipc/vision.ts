@@ -198,15 +198,29 @@ export function registerVisionHandlers(): void {
     const maxTokens =
       input.maxTokens ?? DEFAULT_MAX_TOKENS_BY_MODE[input.mode];
 
-    // bridgeVisionDescribe runs entirely on a libuv worker thread
-    // via napi-rs's AsyncTask, so the IPC handler returns to
-    // Electron's main loop while the 5-15 s VLM call is in flight
-    // — concurrent text generation and other IPCs stay responsive.
-    return await bridge.bridgeVisionDescribe(
-      sidecar.endpoint,
-      input.imagePath,
-      input.mode,
-      maxTokens,
-    );
+    // Bracket the bridge call with markGenerationActive /
+    // markGenerationIdle so `ModelSidecar`'s idle monitor (60 s
+    // window in `sidecar.ts`) does NOT unload the vision sidecar
+    // mid-call. Vision describe / OCR / chart calls run 5–15 s
+    // typically, but OCR on large multi-page images can push past
+    // the 60 s window on low-tier hosts — without bracketing the
+    // sidecar dies mid-completion and the bridge call rejects with
+    // an HTTP connection-reset error. Mirrors the pattern in
+    // `ipc/model.ts` (text generation, lines ~372 / ~437).
+    sidecar.markGenerationActive();
+    try {
+      // bridgeVisionDescribe runs entirely on a libuv worker thread
+      // via napi-rs's AsyncTask, so the IPC handler returns to
+      // Electron's main loop while the 5-15 s VLM call is in flight
+      // — concurrent text generation and other IPCs stay responsive.
+      return await bridge.bridgeVisionDescribe(
+        sidecar.endpoint,
+        input.imagePath,
+        input.mode,
+        maxTokens,
+      );
+    } finally {
+      sidecar.markGenerationIdle();
+    }
   });
 }
