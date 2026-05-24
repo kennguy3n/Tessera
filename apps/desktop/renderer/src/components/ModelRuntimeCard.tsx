@@ -106,9 +106,23 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
     refresh();
   }, [refresh]);
 
+  // Subscribe to download-progress events, but only paint events for
+  // the TEXT slot into this card. The multi-slot Settings UI added in
+  // Block F enables concurrent vision / imagegen downloads in the
+  // sibling `ModelSlotPanel` cards (the per-slot download lock at
+  // `modelManagement.ts:1909-1944` is keyed by `(userDataDir,
+  // capability)` so different slots can run in parallel once the
+  // global 5s rate-limiter gap has elapsed). Without this filter, a
+  // vision-slot progress event would overwrite the text card's
+  // progress bar with another slot's filename + percentage. Legacy
+  // events that predate the `capability` field (capability ===
+  // undefined) are treated as text-slot events for backward
+  // compatibility — the main process now always tags new events, so
+  // these only appear if a stale renderer is talking to a newer main.
   useEffect(() => {
     if (!tessera) return;
     return tessera.runtime.onDownloadProgress((p: ModelDownloadProgress) => {
+      if (p.capability !== undefined && p.capability !== "text") return;
       setState((s) => ({ ...s, progress: p }));
     });
   }, [tessera]);
