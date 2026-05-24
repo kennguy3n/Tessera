@@ -36,6 +36,7 @@ const handleMock = vi.fn();
 const removeHandlerMock = vi.fn();
 const setModelPathMock = vi.fn();
 const sidecarStartMock = vi.fn();
+const sidecarStopMock = vi.fn().mockResolvedValue(undefined);
 const sidecarWaitForReadyMock = vi.fn().mockResolvedValue(true);
 const markGenerationActiveMock = vi.fn();
 const markGenerationIdleMock = vi.fn();
@@ -55,6 +56,7 @@ const sidecarStub = {
   },
   setModelPath: (p: string) => setModelPathMock(p),
   start: (resetRetries?: boolean) => sidecarStartMock(resetRetries),
+  stop: () => sidecarStopMock(),
   waitForReady: (timeoutMs?: number) => sidecarWaitForReadyMock(timeoutMs),
   markGenerationActive: () => markGenerationActiveMock(),
   markGenerationIdle: () => markGenerationIdleMock(),
@@ -159,6 +161,8 @@ describe("imagegen IPC handlers", () => {
     removeHandlerMock.mockClear();
     setModelPathMock.mockClear();
     sidecarStartMock.mockClear();
+    sidecarStopMock.mockClear();
+    sidecarStopMock.mockResolvedValue(undefined);
     sidecarWaitForReadyMock.mockClear();
     sidecarWaitForReadyMock.mockResolvedValue(true);
     markGenerationActiveMock.mockClear();
@@ -290,6 +294,40 @@ describe("imagegen IPC handlers", () => {
         /failed to become ready/i,
       );
       expect(sidecarStartMock).toHaveBeenCalledWith(true);
+    });
+
+    it("stops the half-started sidecar when waitForReady times out so the next ensure call re-spawns from a clean state", async () => {
+      // Regression test for Devin Review follow-up (ANALYSIS_pr-review-job-095e635be43f4af68e37c59e0af14838_0001):
+      // start() flips `_isRunning=true` the moment spawn() returns,
+      // but if the HTTP listener never binds, leaving the flag set
+      // would cause the early-return at the top of
+      // ensureDiffusionSidecarRunning to silently no-op the next
+      // attempt — hiding the readiness failure from the user and
+      // letting the subsequent imagegen:generate race ECONNREFUSED
+      // against the dead sd-server we already gave up on. The
+      // ensure helper must call stop() to reset the flag before
+      // throwing the "failed to become ready" error.
+      getInstalledModelMock.mockResolvedValue({ path: "/m/flux.gguf" });
+      sidecarWaitForReadyMock.mockResolvedValueOnce(false);
+      await expect(ensureDiffusionSidecarRunning()).rejects.toThrow(
+        /failed to become ready/i,
+      );
+      expect(sidecarStopMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("swallows a stop() failure during the not-ready cleanup so the user-visible error is the readiness timeout, not the stop error", async () => {
+      // If sd-server already crashed before waitForReady noticed,
+      // stop() may reject (signalling a dead PID, IPC race, etc.).
+      // The ensure helper must surface the readiness timeout —
+      // which is the actionable diagnostic for the user — not the
+      // incidental stop failure.
+      getInstalledModelMock.mockResolvedValue({ path: "/m/flux.gguf" });
+      sidecarWaitForReadyMock.mockResolvedValueOnce(false);
+      sidecarStopMock.mockRejectedValueOnce(new Error("already dead"));
+      await expect(ensureDiffusionSidecarRunning()).rejects.toThrow(
+        /failed to become ready/i,
+      );
+      expect(sidecarStopMock).toHaveBeenCalledTimes(1);
     });
 
     it("rejects with structured error when no model is installed", async () => {

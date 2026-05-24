@@ -144,6 +144,21 @@ export function registerModelHandlers(): void {
     // is actually reachable, not just after spawn().
     const ready = await sidecar.waitForReady();
     if (!ready) {
+      // Drop the half-started sidecar so the next `model:start`
+      // re-spawns from a known-clean state. start() flips
+      // _isRunning=true the moment spawn() returns, but if the
+      // HTTP listener never bound (slow disk, OOM during model
+      // load, lost SIGCHLD) the early-return at line 137 would
+      // silently no-op the next attempt — masking the readiness
+      // failure as "model already started" while the bridge call
+      // races ECONNREFUSED. Matches the corresponding guard in
+      // `ensureVisionSidecarRunning` / `ensureDiffusionSidecarRunning`.
+      await sidecar.stop().catch(() => {
+        // stop() is best-effort: if the llama-server process is
+        // already dead (spawn crashed) or the SIGTERM fails, the
+        // OS reaper will collect it. The user-visible failure is
+        // the readiness timeout, not the stop failure.
+      });
       throw new Error(
         "Text sidecar failed to become ready within the startup window",
       );

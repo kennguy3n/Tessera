@@ -218,6 +218,17 @@ export class ModelSidecar {
       this._isRunning = false;
       this.stopHealthCheck();
       this.stopIdleMonitor();
+      // Mirror the `exit` handler: drop the synchronous SIGKILL
+      // fallback so a future abnormal Node-process exit doesn't
+      // try to SIGKILL a PID that already failed to spawn. In
+      // practice the `try/catch` inside the handler swallows the
+      // resulting ESRCH, but registering one process.on("exit")
+      // listener per failed spawn slowly leaks listener slots if
+      // the binary path is wrong and the sidecar keeps restarting
+      // — Node prints a MaxListenersExceededWarning at 10. Kept
+      // in lock-step with `DiffusionSidecar.error` for cleanup
+      // symmetry across the two sidecar classes.
+      this.clearCrashCleanup();
     });
 
     this._isRunning = true;

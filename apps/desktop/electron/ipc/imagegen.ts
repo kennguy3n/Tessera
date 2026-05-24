@@ -172,6 +172,21 @@ export async function ensureDiffusionSidecarRunning(): Promise<void> {
   // who is already waiting on a known-slow operation.
   const ready = await sidecar.waitForReady();
   if (!ready) {
+    // Drop the half-started sidecar so the next ensure call
+    // re-spawns from a known-clean state. Without this,
+    // `sidecar.isRunning` would still report `true` (start()
+    // set it the moment spawn() returned) and the early-return
+    // at the top of this function would silently no-op the next
+    // attempt, hiding the readiness failure from the user — and
+    // any subsequent `imagegen:generate` would race ECONNREFUSED
+    // against the dead sd-server we already gave up on. See the
+    // matching guard in `ensureVisionSidecarRunning`.
+    await sidecar.stop().catch(() => {
+      // stop() best-effort: if the sd-server process is already
+      // dead (spawn crashed) or the SIGTERM fails for any other
+      // reason, the OS reaper will collect it. The user-visible
+      // failure is the readiness timeout, not the stop.
+    });
     throw new Error(
       "Diffusion sidecar failed to become ready within the startup window",
     );

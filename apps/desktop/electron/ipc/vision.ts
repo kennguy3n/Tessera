@@ -180,6 +180,21 @@ export async function ensureVisionSidecarRunning(): Promise<void> {
   // covers VLM cold-starts including --mmproj load on slow disks.
   const ready = await sidecar.waitForReady();
   if (!ready) {
+    // Drop the half-started sidecar: start() set _isRunning=true
+    // the moment spawn() returned, but the HTTP listener never
+    // came up. Leaving _isRunning=true would cause the next
+    // ensure call (and any other consumer of
+    // `sidecar.isRunning`) to silently no-op, hiding the
+    // readiness failure from the user. Stop the sidecar first
+    // so the next attempt re-spawns from a known-clean state.
+    await sidecar.stop().catch(() => {
+      // stop() best-effort — swallowing this error is safe
+      // because the sidecar process is either already dead
+      // (readiness probe failed because spawn crashed) or
+      // will be reaped by the OS shortly. The user-visible
+      // error from this function is the readiness failure,
+      // not the stop failure.
+    });
     throw new Error(
       "Vision sidecar failed to become ready within the startup window",
     );

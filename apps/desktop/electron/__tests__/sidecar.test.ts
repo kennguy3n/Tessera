@@ -170,6 +170,32 @@ describe("ModelSidecar lifecycle (POSIX detached spawn)", () => {
     expect(process.listenerCount("exit")).toBe(exitListenersBefore);
   });
 
+  it("removes the exit handler when the child errors so a failed spawn doesn't leak a listener slot per restart attempt", async () => {
+    // Regression test for Devin Review follow-up
+    // (ANALYSIS_pr-review-job-095e635be43f4af68e37c59e0af14838_0002).
+    // The `error` handler was previously asymmetric with the
+    // `exit` handler: it dropped `_isRunning` and stopped the
+    // monitors, but left the `process.on("exit")` SIGKILL-fallback
+    // listener registered. A misconfigured binary path that keeps
+    // hitting ENOENT would slowly accumulate listeners and trip
+    // Node's MaxListenersExceededWarning (default 10). Stops at 1
+    // here because we only spawn once, but the assertion guards
+    // the cleanup contract.
+    const { ModelSidecar } = await import("../sidecar");
+    const sidecar = new ModelSidecar({ modelPath: "/tmp/model.gguf" });
+
+    const exitListenersBefore = process.listenerCount("exit");
+    await sidecar.start();
+    expect(process.listenerCount("exit")).toBe(exitListenersBefore + 1);
+
+    // Simulate child-process emitter firing the `error` event
+    // (e.g. ENOENT, spawn EPERM). The handler must drop its
+    // process.on("exit") listener so we end up back at the
+    // baseline count.
+    fakeChild.emit("error", new Error("ENOENT"));
+    expect(process.listenerCount("exit")).toBe(exitListenersBefore);
+  });
+
   it("does not register the unref/exit-handler pair on Windows (no detached spawn)", async () => {
     Object.defineProperty(process, "platform", { value: "win32" });
     const { ModelSidecar } = await import("../sidecar");

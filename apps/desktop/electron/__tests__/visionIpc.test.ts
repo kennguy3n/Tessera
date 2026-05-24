@@ -24,6 +24,7 @@ const removeHandlerMock = vi.fn();
 const setModelPathMock = vi.fn();
 const setExtraArgsMock = vi.fn();
 const sidecarStartMock = vi.fn();
+const sidecarStopMock = vi.fn().mockResolvedValue(undefined);
 const sidecarWaitForReadyMock = vi.fn().mockResolvedValue(true);
 const markGenerationActiveMock = vi.fn();
 const markGenerationIdleMock = vi.fn();
@@ -49,6 +50,7 @@ const sidecarStub = {
   setModelPath: (p: string) => setModelPathMock(p),
   setExtraArgs: (args: string[]) => setExtraArgsMock(args),
   start: (resetRetries?: boolean) => sidecarStartMock(resetRetries),
+  stop: () => sidecarStopMock(),
   waitForReady: (timeoutMs?: number) => sidecarWaitForReadyMock(timeoutMs),
   markGenerationActive: () => markGenerationActiveMock(),
   markGenerationIdle: () => markGenerationIdleMock(),
@@ -158,6 +160,8 @@ describe("vision IPC handlers", () => {
     setModelPathMock.mockClear();
     setExtraArgsMock.mockClear();
     sidecarStartMock.mockClear();
+    sidecarStopMock.mockClear();
+    sidecarStopMock.mockResolvedValue(undefined);
     sidecarWaitForReadyMock.mockClear();
     sidecarWaitForReadyMock.mockResolvedValue(true);
     markGenerationActiveMock.mockClear();
@@ -321,6 +325,38 @@ describe("vision IPC handlers", () => {
       // probe, not the spawn itself, so the rejection message is
       // about readiness specifically.
       expect(sidecarStartMock).toHaveBeenCalledWith(true);
+    });
+
+    it("stops the half-started sidecar when waitForReady times out so the next ensure call re-spawns from a clean state", async () => {
+      // Regression test for Devin Review follow-up
+      // (ANALYSIS_pr-review-job-095e635be43f4af68e37c59e0af14838_0001).
+      // start() flips _isRunning=true the moment spawn() returns;
+      // if waitForReady then times out, leaving the flag set
+      // would make the next ensureVisionSidecarRunning early-return
+      // and silently no-op. The handler must stop the sidecar
+      // before throwing so subsequent attempts re-spawn cleanly.
+      getInstalledModelMock.mockResolvedValue({
+        path: "/m/qwen.gguf",
+        mmprojPath: "/m/proj.gguf",
+      });
+      sidecarWaitForReadyMock.mockResolvedValueOnce(false);
+      await expect(ensureVisionSidecarRunning()).rejects.toThrow(
+        /failed to become ready/i,
+      );
+      expect(sidecarStopMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("swallows a stop() failure during the not-ready cleanup so the user-visible error remains the readiness timeout", async () => {
+      getInstalledModelMock.mockResolvedValue({
+        path: "/m/qwen.gguf",
+        mmprojPath: "/m/proj.gguf",
+      });
+      sidecarWaitForReadyMock.mockResolvedValueOnce(false);
+      sidecarStopMock.mockRejectedValueOnce(new Error("already dead"));
+      await expect(ensureVisionSidecarRunning()).rejects.toThrow(
+        /failed to become ready/i,
+      );
+      expect(sidecarStopMock).toHaveBeenCalledTimes(1);
     });
 
     it("rejects with structured error when mmproj is missing", async () => {
