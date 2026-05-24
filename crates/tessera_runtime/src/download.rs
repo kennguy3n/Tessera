@@ -269,6 +269,15 @@ pub fn pick_llama_server_variant(
 #[serde(rename_all = "camelCase")]
 pub struct InstalledModel {
     pub model_id: String,
+    /// Capability slot this record belongs to. Mirrors the TS-side
+    /// `InstalledModelRecord.capability` field which the Electron main
+    /// process always stamps onto every record it writes
+    /// (`apps/desktop/electron/modelManagement.ts`). `#[serde(default)]`
+    /// because legacy `active-model.json` records pre-multi-slot did
+    /// not carry this field; for those, defaulting to `Text` matches
+    /// the legacy-migration target slot.
+    #[serde(default = "default_installed_capability")]
+    pub capability: ModelCapability,
     pub format: ModelFormat,
     pub filename: String,
     pub path: String,
@@ -295,6 +304,15 @@ pub struct InstalledModel {
     #[serde(default)]
     pub sha256: Option<String>,
     pub downloaded_at: String,
+}
+
+/// Default capability for legacy `active-model.json` records that
+/// predate the multi-slot layout. The legacy flat layout only ever
+/// held a text model (Ternary-Bonsai), and Block A's migration moves
+/// it specifically into the text slot — so `Text` is the only correct
+/// default for forward-compatible deserialization.
+fn default_installed_capability() -> ModelCapability {
+    ModelCapability::Text
 }
 
 impl InstalledModel {
@@ -656,6 +674,7 @@ mod tests {
             .unwrap();
         let installed = InstalledModel {
             model_id: req.id.clone(),
+            capability: req.capability,
             format: req.format,
             filename: req.filename.clone(),
             path: "/tmp/x".into(),
@@ -688,6 +707,7 @@ mod tests {
             .clone();
         let installed = InstalledModel {
             model_id: installed_info.id.clone(),
+            capability: installed_info.capability,
             format: installed_info.format,
             filename: installed_info.filename.clone(),
             path: "/tmp/old".into(),
@@ -718,6 +738,7 @@ mod tests {
         // The swap decision must reflect disk usage, not network transfer.
         let installed = InstalledModel {
             model_id: "installed-archive".into(),
+            capability: ModelCapability::Text,
             format: ModelFormat::Mlx,
             filename: "installed.tar.gz".into(),
             path: "/tmp/installed".into(),
@@ -762,6 +783,7 @@ mod tests {
     fn installed_model_serialises_with_camel_case_keys_matching_ts() {
         let m = InstalledModel {
             model_id: "ternary-bonsai-1.7b-gguf".into(),
+            capability: ModelCapability::Text,
             format: ModelFormat::Gguf,
             filename: "ternary-bonsai-1.7b-q1_0_g128.gguf".into(),
             path: "/tmp/m".into(),
@@ -777,6 +799,7 @@ mod tests {
         // file shipped by the TS Electron main process.
         for key in [
             "modelId",
+            "capability",
             "format",
             "filename",
             "path",
@@ -815,6 +838,11 @@ mod tests {
         }"#;
         let parsed: InstalledModel = serde_json::from_str(written_by_ts).unwrap();
         assert_eq!(parsed.model_id, "ternary-bonsai-1.7b-gguf");
+        // No `capability` field in the JSON above (covers the
+        // pre-multi-slot legacy record shape). Must default to Text
+        // per `default_installed_capability` — the legacy flat layout
+        // only ever held text models.
+        assert_eq!(parsed.capability, ModelCapability::Text);
         assert_eq!(parsed.download_size_mb, 450);
         assert_eq!(parsed.disk_size_mb, 450);
         assert_eq!(
@@ -822,6 +850,42 @@ mod tests {
             Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
         );
         assert_eq!(parsed.downloaded_at, "2026-05-19T00:00:00Z");
+    }
+
+    #[test]
+    fn installed_model_deserialises_per_slot_records_for_every_capability() {
+        // Post-Block-A records carry a `capability` field stamped by
+        // the TS-side `writeCurrentModel`. The Rust side must round-
+        // trip the field for every slot so a future Rust-side reader
+        // (e.g. a future model-loader that wants to mmap directly)
+        // can distinguish text / vision / imagegen records.
+        for (json_cap, expected) in [
+            ("text", ModelCapability::Text),
+            ("vision", ModelCapability::Vision),
+            ("imagegen", ModelCapability::Imagegen),
+        ] {
+            let json = format!(
+                r#"{{
+                    "modelId": "x",
+                    "capability": "{json_cap}",
+                    "format": "gguf",
+                    "filename": "x.gguf",
+                    "path": "/x",
+                    "downloadSizeMb": 1,
+                    "diskSizeMb": 1,
+                    "sha256": null,
+                    "downloadedAt": "t"
+                }}"#
+            );
+            let parsed: InstalledModel = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed.capability, expected);
+            let reserialised = serde_json::to_value(&parsed).unwrap();
+            assert_eq!(
+                reserialised.get("capability").and_then(|v| v.as_str()),
+                Some(json_cap),
+                "Rust must preserve capability across deserialise->serialise round-trip",
+            );
+        }
     }
 
     #[test]
@@ -875,6 +939,7 @@ mod tests {
     fn installed_model_falls_back_to_download_size_when_disk_size_missing() {
         let m = InstalledModel {
             model_id: "legacy".into(),
+            capability: ModelCapability::Text,
             format: ModelFormat::Gguf,
             filename: "legacy.gguf".into(),
             path: "/tmp/legacy".into(),

@@ -1244,15 +1244,24 @@ export async function getCurrentModel(
     // Best-effort move-aside. If even this fails we still want to log
     // and degrade to `null` rather than rethrowing; a corrupt record
     // shouldn't block all model operations.
+    // Use the actual on-disk path (`p`) rather than the legacy
+    // `active-model.json` filename. Per-slot files are named
+    // `active-model-text.json` / `active-model-vision.json` /
+    // `active-model-imagegen.json`; the vision and imagegen variants
+    // have no legacy history at all, so saying "active-model.json was
+    // unparseable" in those log lines would actively mislead an
+    // operator. The pre-multi-slot phrasing is kept inside the legacy
+    // migration code, which is the only place an actual
+    // `active-model.json` ever shows up.
     try {
       await fsp.rename(p, backupPath);
       console.warn(
-        `[tessera] active-model.json was unparseable JSON; moved to ${backupPath}. ` +
+        `[tessera] ${p} was unparseable JSON; moved to ${backupPath}. ` +
           `Returning null so the next model operation starts clean. Parse error: ${(parseErr as Error).message}`,
       );
     } catch (renameErr) {
       console.warn(
-        `[tessera] active-model.json was unparseable JSON and could not be backed up ` +
+        `[tessera] ${p} was unparseable JSON and could not be backed up ` +
           `(${(renameErr as Error).message}); leaving the file in place and returning null. ` +
           `Parse error: ${(parseErr as Error).message}`,
       );
