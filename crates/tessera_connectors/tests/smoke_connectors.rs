@@ -3,7 +3,7 @@
 //! Every connector the README advertises must be backed by real,
 //! compileable code — not just a checked checkbox. The renderer-side
 //! companion is `apps/desktop/renderer/src/__tests__/smoke/
-//! phaseVerification.test.ts`.
+//! featureVerification.test.ts`.
 //!
 //! The plan asks us to verify that each connector "has a `connect` +
 //! `sync` + `disconnect` function". Tessera's connector trait actually
@@ -22,7 +22,7 @@
 //! The cargo build profile already runs `cargo test --all` in CI, so
 //! this file is picked up automatically. `npm run test:smoke` at the
 //! repo root invokes `cargo test -p tessera_connectors --test
-//! phase_smoke_connectors` for a focused, fast-feedback run.
+//! smoke_connectors` for a focused, fast-feedback run.
 //!
 //! ## Roster source of truth
 //!

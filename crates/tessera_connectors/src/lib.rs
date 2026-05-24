@@ -40,11 +40,11 @@ pub use types::{AuthConfig, ConnectorStatus, RemoteFile, SyncResult};
 ///   * `src/traits.rs::tests::fresh_state_is_disconnected` — pins
 ///     fresh-construction invariants (status, last_sync_time,
 ///     file_count).
-///   * `tests/phase_smoke_connectors.rs::every_connector_implements_remote_connector`
+///   * `tests/smoke_connectors.rs::every_connector_implements_remote_connector`
 ///     — external mirror of the trait-impl check.
-///   * `tests/phase_smoke_connectors.rs::connector_provider_names_are_stable`
+///   * `tests/smoke_connectors.rs::connector_provider_names_are_stable`
 ///     — external mirror of the provider-name pinning.
-///   * `tests/phase_smoke_connectors.rs::every_connector_exposes_authenticate_sync_revoke`
+///   * `tests/smoke_connectors.rs::every_connector_exposes_authenticate_sync_revoke`
 ///     — macro-driven lifecycle-method shape check. Each invocation
 ///     emits an anonymous `const _: () = { async fn check_lifecycle(
 ///     c: &mut $t, …) { c.authenticate(...).await; c.sync_changes(

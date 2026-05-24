@@ -6,15 +6,15 @@
 //!
 //! Companion suites:
 //!   * Renderer side — `apps/desktop/renderer/src/__tests__/smoke/
-//!     phaseVerification.test.ts`
+//!     featureVerification.test.ts`
 //!   * Connectors — `crates/tessera_connectors/tests/
-//!     phase_smoke_connectors.rs`
+//!     smoke_connectors.rs`
 //!   * Templates — `crates/tessera_templates/tests/
-//!     phase_smoke_templates.rs`
+//!     smoke_templates.rs`
 //!
 //! `cargo test --all` picks this up automatically; the root-level
 //! `npm run test:smoke` script invokes
-//! `cargo test -p tessera_export --test phase_smoke_export` for
+//! `cargo test -p tessera_export --test smoke_export` for
 //! focused fast feedback.
 //!
 //! Each test in this file verifies one of the eight shipping export

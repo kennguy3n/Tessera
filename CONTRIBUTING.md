@@ -126,10 +126,10 @@ npm run test:smoke
 
 The suite covers four targets:
 
-- `apps/desktop/renderer/src/__tests__/smoke/phaseVerification.test.ts` — renderer surfaces, editors, settings.
-- `crates/tessera_connectors/tests/phase_smoke_connectors.rs` — every connector module compiles and exposes its expected entry points.
-- `crates/tessera_export/tests/phase_smoke_export.rs` — every export format module is reachable.
-- `crates/tessera_templates/tests/phase_smoke_templates.rs` — every claimed template ships and validates.
+- `apps/desktop/renderer/src/__tests__/smoke/featureVerification.test.ts` — renderer surfaces, editors, settings.
+- `crates/tessera_connectors/tests/smoke_connectors.rs` — every connector module compiles and exposes its expected entry points.
+- `crates/tessera_export/tests/smoke_export.rs` — every export format module is reachable.
+- `crates/tessera_templates/tests/smoke_templates.rs` — every claimed template ships and validates.
 
 ### Lint and format checks
 

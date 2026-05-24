@@ -1,7 +1,7 @@
 //! Edge-case integration tests for the export engine.
 //!
 //! The inline unit tests in `src/*.rs` cover happy-path output shape;
-//! the smoke suite at `tests/phase_smoke_export.rs` verifies that the
+//! the smoke suite at `tests/smoke_export.rs` verifies that the
 //! eight shipping format functions exist and aren't stubbed. This file
 //! covers the *boundary* conditions that real users hit and that the
 //! happy-path tests miss:

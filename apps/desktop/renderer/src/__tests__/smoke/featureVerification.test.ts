@@ -11,11 +11,11 @@
  * a bundled YAML template id.
  *
  * Companion suites verify the Rust side:
- *   - crates/tessera_templates/tests/phase_smoke_templates.rs
+ *   - crates/tessera_templates/tests/smoke_templates.rs
  *     (every YAML loads + validates)
- *   - crates/tessera_connectors/tests/phase_smoke_connectors.rs
+ *   - crates/tessera_connectors/tests/smoke_connectors.rs
  *     (every connector exposes its OAuth / sync / revoke surface)
- *   - crates/tessera_export/tests/phase_smoke_export.rs
+ *   - crates/tessera_export/tests/smoke_export.rs
  *     (every export module exposes its top-level function)
  *
  * The combined entrypoint that runs every smoke check is
@@ -81,7 +81,7 @@ function findRepoRoot(startDir: string): string {
     const parent = dirname(dir);
     if (parent === dir) {
       throw new Error(
-        `phaseVerification.test.ts could not locate the Tessera workspace ` +
+        `featureVerification.test.ts could not locate the Tessera workspace ` +
           `root by walking up from ${startDir}: no ancestor directory ` +
           `contains both a Cargo.toml with [workspace] AND a templates/ ` +
           `directory. Either the test file was moved outside the repo, ` +
@@ -121,7 +121,7 @@ const TEMPLATE_CATEGORIES = [
 
 // Subdirectories under `templates/` that are NOT template categories.
 // Currently just `grammars/`. Mirrors `NON_TEMPLATE_DIRS` in the Rust
-// smoke test (`crates/tessera_templates/tests/phase_smoke_templates.rs`).
+// smoke test (`crates/tessera_templates/tests/smoke_templates.rs`).
 // If a future addition lands (e.g. `templates/shared/` for reusable
 // fragments), classify it here so the dynamic-discovery test still
 // passes without silently waving in a new template category.
@@ -1068,7 +1068,7 @@ describe("phase verification — bundled template registry", () => {
     // can pass.
     //
     // The Rust companion test
-    // (`crates/tessera_templates/tests/phase_smoke_templates.rs::
+    // (`crates/tessera_templates/tests/smoke_templates.rs::
     // every_templates_subdirectory_is_classified`) enforces the same
     // invariant against `RUST_TEMPLATE_DIRS` + `RENDERER_ONLY_TEMPLATE_DIRS`
     // + `NON_TEMPLATE_DIRS`, so all three hand-maintained lists (Rust × 2

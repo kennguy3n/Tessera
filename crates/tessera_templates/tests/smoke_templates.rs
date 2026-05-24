@@ -14,11 +14,11 @@
 //!
 //! Companion suites:
 //!   * Renderer side — `apps/desktop/renderer/src/__tests__/smoke/
-//!     phaseVerification.test.ts` (cross-checks template ids against
+//!     featureVerification.test.ts` (cross-checks template ids against
 //!     CreatePage.tsx CATEGORIES).
 //!   * Connectors — `crates/tessera_connectors/tests/
-//!     phase_smoke_connectors.rs`
-//!   * Export — `crates/tessera_export/tests/phase_smoke_export.rs`
+//!     smoke_connectors.rs`
+//!   * Export — `crates/tessera_export/tests/smoke_export.rs`
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -179,7 +179,7 @@ fn every_bundled_template_has_a_unique_id() {
 /// Infographic and LandingPage templates use a richer renderer-side
 /// schema (with `hero:`, `features:`, `stats:`, `layout:`, etc.)
 /// that the Rust struct does not model — the renderer's
-/// `phaseVerification.test.ts` smoke suite enforces the floor for
+/// `featureVerification.test.ts` smoke suite enforces the floor for
 /// those two categories instead.
 #[test]
 fn every_rust_modelled_category_has_at_least_one_template() {
@@ -415,7 +415,7 @@ fn every_renderer_only_template_is_well_formed_yaml() {
 /// (which is the only thing the renderer-side cross-check covers).
 ///
 /// The companion test on the TS side
-/// (`apps/desktop/renderer/src/__tests__/smoke/phaseVerification.test.ts::
+/// (`apps/desktop/renderer/src/__tests__/smoke/featureVerification.test.ts::
 /// "every templates/ subdirectory is a classified category"`) enforces
 /// the same invariant against `TEMPLATE_CATEGORIES` there, so all three
 /// hand-maintained lists (Rust × 2 + TS × 1) are gated by runtime
@@ -456,7 +456,7 @@ fn every_templates_subdirectory_is_classified() {
          uses the renderer's richer schema), or NON_TEMPLATE_DIRS (if it\n\
          is not a template category at all). See the doc comments above\n\
          each constant for the distinction. The renderer-side\n\
-         phaseVerification.test.ts must also be updated to reference the\n\
+         featureVerification.test.ts must also be updated to reference the\n\
          new category in TEMPLATE_CATEGORIES.",
     );
 

@@ -30,7 +30,7 @@
 //! out a Notion-only quirk we threaded the set through every
 //! connector for symmetry (each one ignores it iff its native delta
 //! API already covers deletes). The macro-driven lifecycle smoke
-//! check in `tests/phase_smoke_connectors.rs` leans on that uniform
+//! check in `tests/smoke_connectors.rs` leans on that uniform
 //! signature to type-check `sync_changes` calls on every connector
 //! from one macro arm. If a future 7th connector ever genuinely needs
 //! a divergent `sync_changes` shape, the smoke macro becomes a
@@ -92,7 +92,7 @@ mod tests {
     // Tests delegate to the crate-level `for_each_connector!` macro so
     // the connector roster lives in exactly one place (lib.rs). Adding
     // a 7th connector requires updating the macro and nothing else —
-    // both these in-crate tests AND the external `phase_smoke_connectors`
+    // both these in-crate tests AND the external `smoke_connectors`
     // suite expand to cover it automatically.
 
     /// Every connector must implement RemoteConnector. This test fails
