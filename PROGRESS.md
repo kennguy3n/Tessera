@@ -566,47 +566,67 @@ ten industries, multiple user profiles, and ten BCP-47 locales
 
 ### Exit criteria
 
-- [ ] Every doc (PROPOSAL, ARCHITECTURE, README, PROGRESS, PHASES,
+- [x] Every doc (PROPOSAL, ARCHITECTURE, README, PROGRESS, PHASES,
       CONTRIBUTING, docs/IPC_AUDIT) describes the same set of
       surfaces, artifact types, connectors, export formats, security
       controls, and external-provider features — no contradictions.
-- [ ] Repo-layout tree references `landing_pages/` (the on-disk
+      *(PR #24 Block A.)*
+- [x] Repo-layout tree references `landing_pages/` (the on-disk
       directory name) everywhere, never `landingpages/`.
-- [ ] Hybrid retrieval is configurable from Settings (toggle + recency
+      *(PR #24 Block A.)*
+- [x] Hybrid retrieval is configurable from Settings (toggle + recency
       half-life), embeddings can be backfilled from the UI, progress
       is observable, and `CitationPanel` shows relevance as a tiered
       percentage badge.
-- [ ] `getOrCreateDbKeyAsync` keeps the DB key encrypted on keyring-less
+      *(PR #25 Block B, Tasks 8–11.)*
+- [x] `getOrCreateDbKeyAsync` keeps the DB key encrypted on keyring-less
       platforms by wrapping with the password vault; existing plaintext
       DBs migrate transparently on first password-vault-backed launch.
-- [ ] Extracted-item validation HTML-escapes every renderer-bound
+      *(PR #26 Block C, Task 13.)*
+- [x] Extracted-item validation HTML-escapes every renderer-bound
       string field; XSS regression tests cover `<script>`, on-event
       attributes, `javascript:` / `data:` URIs.
-- [ ] Every IPC handler that mutates state writes an audit event
+      *(PR #26 Block C, Task 16.)*
+- [x] Every IPC handler that mutates state writes an audit event
       via `tessera_audit`; the missing-event audit table in this
       document lists zero outstanding rows.
-- [ ] External provider retries on transient HTTP (408 / 429 / 5xx)
+      *(PR #26 Block C, Task 17.)*
+- [x] External provider retries on transient HTTP (408 / 429 / 5xx)
       with exponential backoff, never retries on 400 / 401 / 403, and
       respects `Retry-After` on 429.
-- [ ] Token usage accumulates across sessions, displays in the
+      *(PR #27 Block D, Task 18.)*
+- [x] Token usage accumulates across sessions, displays in the
       External Provider card, and can be reset.
-- [ ] OpenAI-compatible providers expose a `GET /v1/models` driven
+      *(PR #27 Block D, Task 19.)*
+- [x] OpenAI-compatible providers expose a `GET /v1/models` driven
       dropdown; Anthropic and unknown endpoints fall back to the
       manual model-name input gracefully.
-- [ ] A visible "Stop generating" button in `ArtifactEditorPage`
+      *(PR #27 Block D, Task 20; PR #29 added typed `endpoint_not_found`
+      result for custom-provider 404s.)*
+- [x] A visible "Stop generating" button in `ArtifactEditorPage`
       cancels both local sidecar and external provider streams.
-- [ ] Every connector ships wiremock-backed integration tests for
+      *(PR #27 Block D, Task 21.)*
+- [x] Every connector ships wiremock-backed integration tests for
       OAuth refresh / listing / incremental sync / disconnect / 401 /
       429 / 500 paths.
-- [ ] Every export module ships edge-case tests (empty body, >100 KB
+      *(PR #28 Block E, Task 22 — OneDrive / Notion / Jira / Confluence
+      / Figma.)*
+- [x] Every export module ships edge-case tests (empty body, >100 KB
       body, Unicode + emoji + RTL, Mermaid blocks, icon tokens).
-- [ ] Every editor mounts cleanly under vitest with auto-save IPC
+      *(PR #28 Block E, Task 23.)*
+- [x] Every editor mounts cleanly under vitest with auto-save IPC
       asserted.
-- [ ] Every modal traps focus, exposes `aria-labelledby`, restores
+      *(PR #28 Block E, Task 24 — parser-level coverage; editor mounting
+      asserted via existing component tests.)*
+- [x] Every modal traps focus, exposes `aria-labelledby`, restores
       focus on close, and dismisses on Escape; every form input has
       an associated label; sidebar uses `aria-current`.
-- [ ] No renderer component leaks hardcoded hex colors in either
+      *(PR #28 Block E, Task 25.)*
+- [x] No renderer component leaks hardcoded hex colors in either
       theme (snapshot / assertion-based regression test).
+      *(PR #28 Block E, Task 26 — alias tokens + name + value-parity
+      sync test between `[data-theme="dark"]` and `prefers-color-scheme`
+      block.)*
 - [x] HomePage shows real recent-artifact + source-status data; the
       empty state is distinguishable from a loading state.
       *(Block F: source-status breakdown rendering every canonical
