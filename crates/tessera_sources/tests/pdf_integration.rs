@@ -802,8 +802,9 @@ fn vlm_ocr_chunks_for_pdf_preserves_earlier_chunks_when_one_page_has_broken_xobj
     let stub = OcrStub::new("PAGE ONE OCR TEXT", "test-vlm-broken-xobj");
     let limiter = PdfOcrRateLimiter::with_budget(10, Duration::from_secs(60));
 
-    let outcome = vlm_ocr_chunks_for_pdf(&stub, &path, &limiter, 0)
-        .expect("OCR pass must succeed end-to-end despite the broken page being silently filtered upstream");
+    let outcome = vlm_ocr_chunks_for_pdf(&stub, &path, &limiter, 0).expect(
+        "OCR pass must succeed end-to-end despite the broken page being silently filtered upstream",
+    );
 
     assert_eq!(
         outcome.chunks.len(),
