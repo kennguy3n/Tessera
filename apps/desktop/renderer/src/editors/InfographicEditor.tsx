@@ -565,7 +565,7 @@ export function buildPreviewHtml(data: InfographicContent): string {
   // braces. Width/height are written to the DOM so the layout
   // doesn't reflow when the image finishes decoding. Width/height
   // are also HTML-escaped — `sanitizeHeroImage` validates them as
-  // finite positive `Number.isInteger` values today (so
+  // finite positive `Number.isSafeInteger` values today (so
   // `Number(n).toString()` produces only digits, never HTML-special
   // characters), but the consistency with every other interpolation
   // in this template string defends against a future refactor that

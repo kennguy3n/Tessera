@@ -644,7 +644,7 @@ export function buildLandingPreviewHtml(data: LandingPageContent): string {
   // height are written to the DOM so the layout doesn't reflow when
   // the image finishes decoding. Width/height are also HTML-escaped
   // for the same belt-and-braces reason — `sanitizeHeroImage`
-  // validates them as finite positive `Number.isInteger` values
+  // validates them as finite positive `Number.isSafeInteger` values
   // today (so `Number(n).toString()` produces only digits, never
   // HTML-special characters), but escaping pins the invariant that
   // EVERY user-derived interpolation in this template string passes
