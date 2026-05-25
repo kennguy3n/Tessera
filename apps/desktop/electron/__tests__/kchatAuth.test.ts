@@ -96,6 +96,49 @@ describe("KchatAuthService.connect", () => {
     expect(vaultStore.has("kchat")).toBe(false);
   });
 
+  // Sixth-pass Devin Review (ANALYSIS_0001): the catch path in
+  // `connect()` previously called `setToken(null)` BEFORE re-throwing
+  // the error, so when the IPC layer's `toIpcError` later ran
+  // `scrubMessage` the literal-token redaction was a no-op (the
+  // client had no live token to scrub). The fix scrubs the error
+  // message IN PLACE with the live token before clearing it, so
+  // any future code path that embeds the PAT in an error string is
+  // redacted before the message ever leaves the auth service.
+  it("scrubs the live PAT from the error message before clearing the token", async () => {
+    const tokenLiteral = "PAT-conn-fail-secret-abcdefghij1234567890";
+    // The server echoes the token bytes back into the response
+    // body. KchatRequestError builds its message from
+    // `body.error` (truncated to 256 chars). Without the
+    // scrub-before-clear ordering, the rethrown error message
+    // would carry the PAT through to the IPC boundary.
+    const fetchFn = vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+      text: async () => JSON.stringify({
+        error: `request token ${tokenLiteral} rejected`,
+      }),
+      json: async () => ({
+        error: `request token ${tokenLiteral} rejected`,
+      }),
+      arrayBuffer: async () => new ArrayBuffer(0),
+    })) as unknown as typeof globalThis.fetch;
+    const client = new KchatClient({ fetchFn, sleep: async () => {} });
+    const svc = new KchatAuthService(client);
+    let captured: Error | null = null;
+    try {
+      await svc.connect(tokenLiteral, "https://kchat.example.com");
+    } catch (err) {
+      captured = err instanceof Error ? err : new Error(String(err));
+    }
+    expect(captured).toBeTruthy();
+    expect(captured!.message).not.toContain(tokenLiteral);
+    expect(captured!.message).toContain("[REDACTED]");
+    // The token is still cleared from the client after the scrub —
+    // the in-memory bad token cannot persist.
+    expect(vaultStore.has("kchat")).toBe(false);
+  });
+
   it("rejects empty tokens before touching the network", async () => {
     const fetchFn = vi.fn() as unknown as typeof globalThis.fetch;
     const client = new KchatClient({ fetchFn, sleep: async () => {} });

@@ -547,6 +547,101 @@ describe("KchatClient.scrubMessage", () => {
   });
 });
 
+describe("KchatClient.connectionState error-field scrubbing (sixth-pass invariant)", () => {
+  // Sixth-pass Devin Review (ANALYSIS_0004) flagged that the
+  // `kchat:status` IPC handler returned `svc.getState()` without
+  // running it through `scrubMessage`, so a state.error containing
+  // a token would cross the renderer boundary unscrubbed. The fix
+  // moved the scrub into `transition()` so the invariant
+  // "`connectionState.error` never contains the PAT" holds for
+  // every reader regardless of which IPC handler surfaces it.
+  // These tests pin the invariant at the write site, where it
+  // matters: any future reader (kchat:status, log dumps, state
+  // listeners) inherits the redaction automatically.
+  it("scrubs the active PAT from state.error when verifyConnection fails on 401", async () => {
+    const tokenLiteral = "PAT-supersecret-token-bytes-1234567890";
+    // The mock server echoes the token-bearing string verbatim
+    // back into the response body. KchatRequestError builds its
+    // message from `body.error` (truncated to 256 chars), so the
+    // un-scrubbed path would land the PAT in
+    // `connectionState.error` via verifyConnection's catch.
+    const { fn: fetchFn } = makeFetch([
+      {
+        status: 401,
+        statusText: "Unauthorized",
+        body: {
+          error: `request token ${tokenLiteral} rejected`,
+        },
+      },
+    ]);
+    const c = buildClient({ fetchFn });
+    c.setToken(tokenLiteral);
+    await expect(c.verifyConnection()).rejects.toBeInstanceOf(
+      KchatRequestError,
+    );
+    const state = c.getState();
+    expect(state.state).toBe("error");
+    expect(typeof state.error).toBe("string");
+    expect(state.error).not.toContain(tokenLiteral);
+    expect(state.error).toContain("[REDACTED]");
+  });
+
+  it("scrubs the PAT from state.error pushed to status listeners", async () => {
+    const tokenLiteral = "PAT-listener-secret-9876543210abcdef";
+    const { fn: fetchFn } = makeFetch([
+      {
+        status: 500,
+        statusText: "Internal Server Error",
+        body: {
+          error: `dumped Authorization header: Bearer ${tokenLiteral}`,
+        },
+      },
+    ]);
+    const c = buildClient({ fetchFn });
+    c.setToken(tokenLiteral);
+    const observed: string[] = [];
+    c.onStatusChange((s) => {
+      if (typeof s.error === "string") observed.push(s.error);
+    });
+    await expect(c.verifyConnection()).rejects.toBeInstanceOf(
+      KchatRequestError,
+    );
+    // Status listeners receive the scrubbed copy too — they cannot
+    // observe a transient pre-scrub state because scrubbing
+    // happens before the listener fan-out in `transition()`.
+    expect(observed.length).toBeGreaterThan(0);
+    for (const m of observed) {
+      expect(m).not.toContain(tokenLiteral);
+    }
+    // Generic Bearer regex catches the header-shape leakage too.
+    for (const m of observed) {
+      expect(m).not.toMatch(/Bearer\s+PAT-/);
+    }
+  });
+
+  it("leaves error untouched when it does not contain token bytes", async () => {
+    const { fn: fetchFn } = makeFetch([
+      {
+        status: 502,
+        statusText: "Bad Gateway",
+        body: { error: "upstream timeout" },
+      },
+    ]);
+    const c = buildClient({ fetchFn });
+    c.setToken("PAT-some-unrelated-token-here");
+    await expect(c.verifyConnection()).rejects.toBeInstanceOf(
+      KchatRequestError,
+    );
+    const state = c.getState();
+    expect(state.state).toBe("error");
+    // Non-token messages pass through unmodified — verifies the
+    // scrub is targeted (no false positives that would mask
+    // legitimate operator-visible error text).
+    expect(state.error).toContain("502");
+    expect(state.error).toContain("Bad Gateway");
+  });
+});
+
 describe("KchatClient server-id validation at deserialisation boundary", () => {
   // The KChat server is trusted for authentication but its
   // response bodies are NOT trusted for ids that will be

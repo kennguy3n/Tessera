@@ -172,7 +172,33 @@ export class KchatAuthService {
     try {
       user = await this.client.verifyConnection();
     } catch (err) {
-      // Surface the error untouched; do not write a known-bad token.
+      // Defence-in-depth ordering (sixth-pass Devin Review
+      // ANALYSIS_0001): scrub the error message IN PLACE before
+      // clearing the token in the client. `KchatClient.scrubMessage`
+      // performs two redactions — (a) a literal-substring replace of
+      // `this.token` with `[REDACTED]`, and (b) a generic
+      // `Bearer \s+...` regex. Branch (a) is strictly stronger
+      // because it catches the live PAT regardless of context
+      // (URL-encoded, base64-fragmented, embedded inside a logged
+      // header buffer, …), but it depends on `this.token` still
+      // being non-null. If we cleared the token first and let the
+      // error bubble through to the IPC layer's `toIpcError(err)`,
+      // by the time the scrub ran branch (a) would be a no-op and
+      // only the weaker generic regex would catch leakage — for any
+      // future error path that embeds the PAT in a non-Bearer
+      // shape (a URL query param, a JSON value, etc.) the redaction
+      // would silently miss. By scrubbing here, with the live
+      // token, the IPC-layer re-scrub (which still runs as
+      // belt-and-braces) operates on an already-clean string.
+      //
+      // Today's `KchatRequestError` messages are built from
+      // response metadata that doesn't contain the PAT, so this is
+      // forward-looking insurance against a future code path that
+      // does embed it (e.g. a server that echoes the auth header
+      // in a 5xx body, a fetch error that includes a logged URL).
+      if (err instanceof Error) {
+        err.message = this.client.scrubMessage(err.message);
+      }
       this.client.setToken(null);
       throw err;
     }

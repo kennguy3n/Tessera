@@ -775,10 +775,31 @@ export class KchatClient {
   // --- Internal helpers ------------------------------------------------
 
   private transition(next: KchatConnectionState): void {
-    this.connectionState = next;
+    // Defence-in-depth: scrub the `error` field at write time so
+    // every reader (the `kchat:status` IPC handler, all subscribed
+    // status listeners, log dumps that inspect `connectionState`
+    // directly, future N-API bridge consumers) observes an
+    // already-scrubbed message. Centralising the scrub here pins
+    // the invariant "`connectionState.error` never contains the
+    // PAT" to a single write site — any future code path that
+    // transitions into an `error` state (the `verifyConnection`
+    // catch, `emitStatusError`, websocket error handlers, a future
+    // request-layer error) inherits the redaction without having
+    // to remember to call `scrubMessage` at every call site.
+    // Sixth-pass Devin Review (ANALYSIS_0004) flagged the
+    // `kchat:status` handler as the one IPC surface that bypassed
+    // `toIpcError` (and therefore `scrubMessage`); the fix lives
+    // here rather than in the handler so it cannot be re-introduced
+    // by a future refactor that surfaces state through any other
+    // path.
+    const scrubbed: KchatConnectionState =
+      typeof next.error === "string" && next.error.length > 0
+        ? { ...next, error: this.scrubMessage(next.error) }
+        : next;
+    this.connectionState = scrubbed;
     for (const l of this.statusListeners) {
       try {
-        l({ ...next });
+        l({ ...scrubbed });
       } catch {
         // Listener errors must not break the client.
       }

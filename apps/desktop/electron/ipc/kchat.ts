@@ -347,16 +347,48 @@ export function registerKchatHandlers(): void {
           );
 
         // Phase 3: optionally upload evidence pack.
+        //
+        // Audit-trail integrity (sixth-pass Devin Review
+        // ANALYSIS_0007): the primary export is already in the
+        // channel by this point. If the evidence-pack upload below
+        // fails (rate-limit, network blip, KChat quota, etc.), we
+        // must NOT leave the primary share unaudited — that would
+        // produce a silent inconsistency where the channel contains
+        // a file the audit log has no record of, defeating the
+        // tamper-evidence guarantee operators rely on. We track the
+        // evidence outcome separately and the audit row records
+        // what actually landed in the channel, not what the user
+        // requested. On evidence-pack failure we still emit the
+        // audit row (with `evidenceShared=false`) before
+        // re-throwing so the renderer surfaces the partial-failure
+        // error and operators can see the divergence between
+        // "requested" and "delivered".
+        let evidenceShared = false;
         if (wantEvidence) {
-          const packBytes = bridge.bridgeEvidencePackBytes(artifact);
-          await svc
-            .getClient()
-            .uploadFile(
+          try {
+            const packBytes = bridge.bridgeEvidencePackBytes(artifact);
+            await svc
+              .getClient()
+              .uploadFile(
+                channel,
+                `${exportResult.basename}-evidence.zip`,
+                packBytes,
+                "application/zip",
+              );
+            evidenceShared = true;
+          } catch (err) {
+            // Primary already in channel — audit it with the
+            // actual (failed) evidence outcome and re-throw so the
+            // renderer learns about the partial failure.
+            bridge.bridgeLogKchatArtifactShared(
+              artifact,
               channel,
-              `${exportResult.basename}-evidence.zip`,
-              packBytes,
-              "application/zip",
+              fmt,
+              wantCitations,
+              false,
             );
+            throw err;
+          }
         }
 
         bridge.bridgeLogKchatArtifactShared(
@@ -364,7 +396,7 @@ export function registerKchatHandlers(): void {
           channel,
           fmt,
           wantCitations,
-          wantEvidence,
+          evidenceShared,
         );
         return { fileId: primary.id, fileName: primary.name };
       } catch (err) {

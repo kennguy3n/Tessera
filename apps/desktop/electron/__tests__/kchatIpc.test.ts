@@ -457,6 +457,108 @@ describe("kchat:shareArtifact", () => {
     expect(call[3]).toBeNull(); // contentOverride
     expect(call[4]).toBe(false); // includeCitations forwarded
   });
+
+  // Sixth-pass Devin Review (ANALYSIS_0007): pin the
+  // audit-to-channel consistency invariant under partial failure.
+  // If the primary export uploads successfully but the evidence
+  // pack upload fails afterwards, the audit log MUST still record
+  // the primary share (with `evidenceShared=false`) — otherwise
+  // the audit log is silently inconsistent with what landed in
+  // the channel, defeating the tamper-evidence guarantee.
+  it("audits the primary share with evidenceShared=false when evidence-pack upload fails", async () => {
+    // First uploadFile call succeeds (primary). Second call fails
+    // (evidence pack upload). The handler must:
+    //   1. Audit the primary share with the actual evidenceShared
+    //      flag (`false`, since the pack didn't land).
+    //   2. Re-throw the upload error so the renderer learns of
+    //      the partial-failure state.
+    clientMock.uploadFile
+      .mockResolvedValueOnce({
+        id: "fidprimary00000000000abc",
+        name: "Quarterly-Roadmap.md",
+      })
+      .mockRejectedValueOnce(new Error("KChat 429 Too Many Requests"));
+    await expect(
+      handler("kchat:shareArtifact")(
+        EVENT,
+        "550e8400-e29b-41d4-a716-446655440000",
+        "chid0000000000000000abcd",
+        "markdown",
+        true,
+        true, // includeEvidencePack — primary will succeed, pack will fail
+      ),
+    ).rejects.toThrow(/429|Too Many Requests/);
+    // Both uploads were attempted in order — primary first, then pack.
+    expect(clientMock.uploadFile).toHaveBeenCalledTimes(2);
+    expect(clientMock.uploadFile.mock.calls[1][1]).toBe(
+      "Quarterly-Roadmap-evidence.zip",
+    );
+    // The audit row IS emitted despite the partial-failure error
+    // re-throw, and it records `evidenceShared=false` (actual
+    // outcome) — NOT `wantEvidence=true` (user request).
+    expect(bridgeMock.bridgeLogKchatArtifactShared).toHaveBeenCalledTimes(1);
+    expect(bridgeMock.bridgeLogKchatArtifactShared).toHaveBeenCalledWith(
+      "550e8400-e29b-41d4-a716-446655440000",
+      "chid0000000000000000abcd",
+      "markdown",
+      true, // wantCitations (user request, threaded through)
+      false, // evidenceShared (actual on-channel outcome)
+    );
+  });
+
+  it("audits with evidenceShared=true ONLY when the pack actually uploaded", async () => {
+    // Both uploads succeed → audit row reflects the requested
+    // evidence flag (which here equals the actual outcome).
+    clientMock.uploadFile.mockResolvedValue({
+      id: "fid000000000000000000abc",
+      name: "Quarterly-Roadmap.md",
+    });
+    await handler("kchat:shareArtifact")(
+      EVENT,
+      "550e8400-e29b-41d4-a716-446655440000",
+      "chid0000000000000000abcd",
+      "markdown",
+      true,
+      true,
+    );
+    expect(clientMock.uploadFile).toHaveBeenCalledTimes(2);
+    expect(bridgeMock.bridgeLogKchatArtifactShared).toHaveBeenCalledTimes(1);
+    expect(bridgeMock.bridgeLogKchatArtifactShared).toHaveBeenCalledWith(
+      "550e8400-e29b-41d4-a716-446655440000",
+      "chid0000000000000000abcd",
+      "markdown",
+      true,
+      true, // evidenceShared = true: both files actually in the channel
+    );
+  });
+
+  it("does NOT audit anything when the primary upload fails (nothing in channel)", async () => {
+    // Primary upload fails — channel is unchanged, so emitting an
+    // audit row would create a phantom record. The existing
+    // catch/toIpcError flow re-throws WITHOUT calling
+    // `bridgeLogKchatArtifactShared`. Pin this so a future
+    // refactor that moves audit logging earlier doesn't reintroduce
+    // phantom rows.
+    clientMock.uploadFile.mockRejectedValue(
+      new Error("KChat 500 Internal Server Error"),
+    );
+    await expect(
+      handler("kchat:shareArtifact")(
+        EVENT,
+        "550e8400-e29b-41d4-a716-446655440000",
+        "chid0000000000000000abcd",
+        "markdown",
+        true,
+        true,
+      ),
+    ).rejects.toThrow(/500|Internal Server Error/);
+    expect(clientMock.uploadFile).toHaveBeenCalledTimes(1);
+    expect(bridgeMock.bridgeLogKchatArtifactShared).not.toHaveBeenCalled();
+    // Evidence-pack producer never runs because the primary failed
+    // first and the `if (wantEvidence)` branch is reached only on
+    // primary success.
+    expect(bridgeMock.bridgeEvidencePackBytes).not.toHaveBeenCalled();
+  });
 });
 
 describe("sources:addKchatChannel — path-traversal hardening", () => {
