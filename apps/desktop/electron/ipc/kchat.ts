@@ -431,12 +431,19 @@ interface ProducedExport {
  * returns a string; PDF/DOCX flush to a tempfile via
  * `bridgeExportArtifactToFile` and read it back as bytes so the
  * binary content survives the IPC boundary.
+ *
+ * `includeCitations` is forwarded all the way to the Rust dispatch
+ * layer (`tessera_export::exporter`) which suppresses the citation
+ * list at source when the flag is `false`. This keeps the user-facing
+ * toggle, the audit row, and the actual export bytes in lockstep —
+ * earlier versions accepted and audited the boolean but ignored it in
+ * the export, producing audit rows that disagreed with the bytes.
  */
 async function produceExportBytes(
   bridge: NonNullable<ReturnType<typeof getBridge>>,
   artifactId: string,
   format: string,
-  _includeCitations: boolean,
+  includeCitations: boolean,
 ): Promise<ProducedExport> {
   const meta = bridge.bridgeGetArtifact(artifactId);
   const safeTitle = (meta.title || "artifact")
@@ -444,7 +451,12 @@ async function produceExportBytes(
     .slice(0, 80);
 
   if (format === "markdown" || format === "html" || format === "json") {
-    const result = bridge.bridgeExportArtifact(artifactId, format, null);
+    const result = bridge.bridgeExportArtifact(
+      artifactId,
+      format,
+      null,
+      includeCitations,
+    );
     const ext = format === "markdown" ? "md" : format;
     return {
       filename: `${safeTitle}.${ext}`,
@@ -461,7 +473,13 @@ async function produceExportBytes(
     `tessera-kchat-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   const tempPath = `${tempBase}.${ext}`;
-  bridge.bridgeExportArtifactToFile(artifactId, format, tempPath, null);
+  bridge.bridgeExportArtifactToFile(
+    artifactId,
+    format,
+    tempPath,
+    null,
+    includeCitations,
+  );
   try {
     const bytes = await fs.readFile(tempPath);
     return {

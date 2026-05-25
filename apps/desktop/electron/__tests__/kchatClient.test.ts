@@ -333,6 +333,65 @@ describe("KchatClient.uploadFile + downloadFile", () => {
     const out = await c.downloadFile("fid000000000000000000abcd");
     expect(out).toEqual(bytes);
   });
+
+  // Defense-in-depth: even though the production call sites validate
+  // channelId, filename, and contentType upstream, the upload method
+  // itself must reject CR/LF in any of those values so a future
+  // caller that bypasses upstream validation cannot inject a forged
+  // multipart part.
+  it("rejects CR/LF injection in filename", async () => {
+    const c = buildClient();
+    c.setToken("T");
+    await expect(
+      c.uploadFile(
+        "chid0000000000000000abcd",
+        'evil.md"\r\nContent-Disposition: form-data; name="injected',
+        Buffer.from("x"),
+      ),
+    ).rejects.toThrow(/filename must not contain quotes|CR or LF/);
+  });
+
+  it("rejects CR/LF injection in contentType", async () => {
+    const c = buildClient();
+    c.setToken("T");
+    await expect(
+      c.uploadFile(
+        "chid0000000000000000abcd",
+        "x.md",
+        Buffer.from("x"),
+        "text/plain\r\nX-Injected: yes",
+      ),
+    ).rejects.toThrow(/CR or LF/);
+  });
+
+  it("rejects CR/LF injection in channelId", async () => {
+    const c = buildClient();
+    c.setToken("T");
+    await expect(
+      c.uploadFile(
+        "chid\r\n--evil",
+        "x.md",
+        Buffer.from("x"),
+      ),
+    ).rejects.toThrow(/CR or LF/);
+  });
+});
+
+describe("KchatClient.setToken null invariant", () => {
+  // setToken(null) must tear down the WebSocket so the reconnect
+  // loop cannot fire `connectWebSocket()` with no token and produce
+  // an infinite "KChat token is not configured" loop.
+  it("clears the active WebSocket and cancels reconnect when token becomes null", async () => {
+    const { ctor, instances } = mockWebSocketCtor();
+    const c = buildClient({ webSocketCtor: ctor });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("T");
+    await c.connectWebSocket();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].closed).toBe(false);
+    c.setToken(null);
+    expect(instances[0].closed).toBe(true);
+  });
 });
 
 describe("KchatClient.connectWebSocket", () => {

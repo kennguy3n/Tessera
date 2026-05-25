@@ -123,13 +123,23 @@ export class KchatAuthService {
    * is loud.
    */
   async connect(token: string, serverUrl: string): Promise<KchatUser> {
-    if (!token || token.trim().length === 0) {
+    // Normalise at the boundary: trim once here so every downstream
+    // path (in-memory `client.setToken`, vault persistence, future
+    // callers that bypass the renderer) sees the canonical token
+    // shape. Without this, a caller that pastes a PAT with stray
+    // whitespace would land that whitespace in the keychain and the
+    // Authorization header — KChat tolerates the leading space in
+    // some builds but not all, producing intermittent 401s that are
+    // hard to diagnose.
+    const trimmedToken =
+      typeof token === "string" ? token.trim() : "";
+    if (trimmedToken.length === 0) {
       throw new Error("KChat token is required");
     }
     const url = (serverUrl || DEFAULT_KCHAT_SERVER).trim();
 
     this.client.setServerUrl(url);
-    this.client.setToken(token);
+    this.client.setToken(trimmedToken);
 
     let user: KchatUser;
     try {
@@ -141,7 +151,7 @@ export class KchatAuthService {
     }
 
     writeStoredAuth({
-      token,
+      token: trimmedToken,
       serverUrl: url,
       userId: user.id,
       verifiedAt: new Date().toISOString(),

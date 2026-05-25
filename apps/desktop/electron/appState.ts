@@ -126,12 +126,20 @@ export interface NativeBridge {
     artifactId: string,
     format: string,
     contentOverride?: string | null,
+    /**
+     * When `false`, the artifact's citation list is suppressed at the
+     * Rust dispatch layer before any format-specific exporter sees it.
+     * `null` / `undefined` / `true` keep existing behaviour (citations
+     * are rendered into the export bytes when present).
+     */
+    includeCitations?: boolean | null,
   ): ExportResult;
   bridgeExportArtifactToFile(
     artifactId: string,
     format: string,
     path: string,
     contentOverride?: string | null,
+    includeCitations?: boolean | null,
   ): void;
   bridgeListTemplates(): TemplateInfo[];
   bridgeGetTemplate(templateId: string): TemplateInfo | null;

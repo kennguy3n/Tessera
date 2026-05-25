@@ -557,11 +557,17 @@ pub fn bridge_delete_artifact(artifact_id: String) -> napi::Result<()> {
 
 // --- Export ---
 
+/// Exports an artifact to the given format.
+///
+/// `include_citations` defaults to `true` (existing behaviour) when
+/// the JS caller passes `null` or omits it. Callers that want a
+/// citation-free export must pass `false` explicitly.
 #[napi]
 pub fn bridge_export_artifact(
     artifact_id: String,
     format: String,
     content_override: Option<String>,
+    include_citations: Option<bool>,
 ) -> napi::Result<exporter::ExportResult> {
     let s = state()?;
     let art_mgr = s
@@ -578,6 +584,7 @@ pub fn bridge_export_artifact(
         &artifact_id,
         &format,
         content_override.as_deref(),
+        include_citations.unwrap_or(true),
     )
     .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     // Audit-after-action (sequential non-overlapping pattern B): a
@@ -594,12 +601,16 @@ pub fn bridge_export_artifact(
     Ok(result)
 }
 
+/// Binary-aware variant of [`bridge_export_artifact`]. Same
+/// `include_citations` default semantics — `None`/null/omitted means
+/// citations are included (back-compat).
 #[napi]
 pub fn bridge_export_artifact_to_file(
     artifact_id: String,
     format: String,
     path: String,
     content_override: Option<String>,
+    include_citations: Option<bool>,
 ) -> napi::Result<()> {
     let s = state()?;
     let art_mgr = s
@@ -617,6 +628,7 @@ pub fn bridge_export_artifact_to_file(
         &format,
         &path,
         content_override.as_deref(),
+        include_citations.unwrap_or(true),
     )
     .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     // Audit AFTER the export commits to disk so a failed write

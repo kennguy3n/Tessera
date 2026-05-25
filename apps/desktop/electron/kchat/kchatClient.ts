@@ -109,6 +109,20 @@ export type KchatWebSocketListener = (event: KchatWebSocketEvent) => void;
 export type KchatStatusListener = (state: KchatConnectionState) => void;
 
 /**
+ * Reject strings containing CR or LF before they reach the wire.
+ * Used to guard multipart request bodies against header-injection
+ * attacks if a future caller bypasses upstream validators.
+ */
+function assertNoCRLF(value: string, name: string): void {
+  if (typeof value !== "string") {
+    throw new Error(`KChat ${name} must be a string`);
+  }
+  if (value.indexOf("\r") !== -1 || value.indexOf("\n") !== -1) {
+    throw new Error(`KChat ${name} must not contain CR or LF`);
+  }
+}
+
+/**
  * Error thrown when a request is rejected after exhausting retries
  * or when the response status is non-2xx and not retryable.
  */
@@ -189,6 +203,17 @@ export class KchatClient {
    */
   setToken(token: string | null): void {
     this.token = token;
+    // When the token is cleared, the WebSocket loop has no
+    // authentication material to send on its next reconnect. Without
+    // this guard, `scheduleWsReconnect` would keep firing
+    // `connectWebSocket()` — which throws `"KChat token is not
+    // configured"` — and the close handler would loop forever. The
+    // invariant that `shutdown()` always tears down the WS first was
+    // implicit; we now enforce it for every caller path (including
+    // future callers that might invoke `setToken(null)` directly).
+    if (token === null) {
+      this.disconnectWebSocket();
+    }
   }
 
   /** Returns the user struct from the last successful `/users/me` probe. */
@@ -341,6 +366,27 @@ export class KchatClient {
     bytes: Uint8Array | Buffer,
     contentType = "application/octet-stream",
   ): Promise<KchatFileInfo> {
+    // Defense-in-depth against multipart header injection. The
+    // current call sites all pass strictly validated `channelId`
+    // (assertKchatId), a renderer-controlled `filename` (URI-encoded
+    // below), and a hardcoded `contentType` from `mimeForFormat`. A
+    // future caller that bypasses any of those guarantees and lets
+    // an attacker-controlled string reach this method must NOT be
+    // able to inject a `\r\n` and forge a second multipart part. We
+    // reject anything containing CR / LF outright here so the guard
+    // is enforced at the network boundary, not at every caller.
+    assertNoCRLF(channelId, "channelId");
+    assertNoCRLF(filename, "filename");
+    assertNoCRLF(contentType, "contentType");
+    // Also forbid embedded quotes in `filename` — the value lands
+    // inside a quoted `filename="..."` parameter and an embedded `"`
+    // would terminate it early. `encodeURIComponent` happens to
+    // encode `"` to `%22` so this is also defense-in-depth, but
+    // making the rule explicit means a future refactor that swaps
+    // the encoder cannot accidentally regress.
+    if (filename.includes('"')) {
+      throw new Error("KChat upload filename must not contain quotes");
+    }
     // Upload limiter is keyed globally (not per-channel). The KChat
     // server enforces a single per-server upload quota; carving it
     // into per-channel buckets would let a user sharing into N

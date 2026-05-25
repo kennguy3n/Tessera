@@ -15,12 +15,20 @@ pub struct ExportResult {
     pub format: String,
 }
 
+/// Run an in-memory export for `artifact_id`.
+///
+/// `include_citations` controls whether the artifact's citations are
+/// rendered into the export output. The flag is the authoritative
+/// switch — every format exporter sees an empty citation slice when
+/// it is `false`, so the export bytes and any caller-side audit row
+/// recording "citations included? false" stay consistent.
 pub fn export_artifact(
     artifact_manager: &ArtifactManager,
     citation_tracker: &CitationTracker,
     artifact_id: &str,
     format: &str,
     content_override: Option<&str>,
+    include_citations: bool,
 ) -> BridgeResult<ExportResult> {
     let uuid =
         uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
@@ -42,8 +50,8 @@ pub fn export_artifact(
         .list_for_artifact(&ArtifactId(uuid))
         .map_err(BridgeError::Core)?;
 
-    let content =
-        exporter::export(&artifact, &citations, export_format).map_err(BridgeError::Core)?;
+    let content = exporter::export(&artifact, &citations, export_format, include_citations)
+        .map_err(BridgeError::Core)?;
 
     Ok(ExportResult {
         content,
@@ -51,6 +59,10 @@ pub fn export_artifact(
     })
 }
 
+/// Binary-aware variant of [`export_artifact`]. Same
+/// `include_citations` semantics — the flag is propagated through to
+/// the format exporter so the citation list is suppressed at the
+/// dispatch layer when the caller opts out.
 pub fn export_artifact_to_file(
     artifact_manager: &ArtifactManager,
     citation_tracker: &CitationTracker,
@@ -58,6 +70,7 @@ pub fn export_artifact_to_file(
     format: &str,
     path: &str,
     content_override: Option<&str>,
+    include_citations: bool,
 ) -> BridgeResult<()> {
     let uuid =
         uuid::Uuid::parse_str(artifact_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
@@ -81,6 +94,7 @@ pub fn export_artifact_to_file(
         &citations,
         export_format,
         std::path::Path::new(path),
+        include_citations,
     )
     .map_err(BridgeError::Core)
 }
@@ -104,6 +118,7 @@ mod tests {
             &artifact.id.to_string(),
             "markdown",
             None,
+            true,
         )
         .unwrap();
         assert!(result.content.contains("# Test Document"));
@@ -131,6 +146,7 @@ mod tests {
             &artifact.id.to_string(),
             "markdown",
             Some(override_body),
+            true,
         )
         .unwrap();
         assert!(exported.content.contains("<svg>"));
@@ -149,8 +165,15 @@ mod tests {
             .create("Test".to_string(), ArtifactType::Document, None)
             .unwrap();
 
-        let result =
-            export_artifact(&manager, &tracker, &artifact.id.to_string(), "html", None).unwrap();
+        let result = export_artifact(
+            &manager,
+            &tracker,
+            &artifact.id.to_string(),
+            "html",
+            None,
+            true,
+        )
+        .unwrap();
         assert!(result.content.contains("<html"));
     }
 
@@ -171,6 +194,7 @@ mod tests {
             "markdown",
             path.to_str().unwrap(),
             None,
+            true,
         )
         .unwrap();
 
@@ -195,6 +219,7 @@ mod tests {
             "docx",
             path.to_str().unwrap(),
             None,
+            true,
         )
         .unwrap();
         let bytes = std::fs::read(&path).unwrap();
@@ -218,6 +243,7 @@ mod tests {
             "xlsx",
             path.to_str().unwrap(),
             None,
+            true,
         )
         .unwrap();
         let bytes = std::fs::read(&path).unwrap();

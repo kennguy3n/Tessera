@@ -105,6 +105,39 @@ describe("KchatAuthService.connect", () => {
     );
     expect(fetchFn).not.toHaveBeenCalled();
   });
+
+  it("rejects whitespace-only tokens before touching the network", async () => {
+    const fetchFn = vi.fn() as unknown as typeof globalThis.fetch;
+    const client = new KchatClient({ fetchFn, sleep: async () => {} });
+    const svc = new KchatAuthService(client);
+    await expect(
+      svc.connect("   \t\n", "https://kchat.example.com"),
+    ).rejects.toThrow(/token is required/);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  // Boundary normalisation: a PAT pasted with stray whitespace must
+  // be trimmed once at the entry point so the in-memory `setToken`,
+  // the vault, and the Authorization header all see the canonical
+  // value. Earlier versions only trimmed for the empty-check and
+  // stored the untrimmed string.
+  it("trims surrounding whitespace from the token before persisting + sending", async () => {
+    let captured: { url: string; init: RequestInit } | null = null;
+    const fetchFn = vi.fn(async (url: unknown, init: unknown) => {
+      captured = { url: String(url), init: init as RequestInit };
+      return userResponse();
+    }) as unknown as typeof globalThis.fetch;
+    const client = new KchatClient({ fetchFn, sleep: async () => {} });
+    const svc = new KchatAuthService(client);
+    await svc.connect("  PAT-trimmed  \n", "https://kchat.example.com");
+    // Authorization header carries the trimmed value (no stray
+    // leading/trailing whitespace).
+    const headers = (captured!.init.headers as Record<string, string>) || {};
+    expect(headers.Authorization).toBe("Bearer PAT-trimmed");
+    // Vault entry is also the trimmed canonical form.
+    const stored = vaultStore.get("kchat");
+    expect(stored!.accessToken).toBe("PAT-trimmed");
+  });
 });
 
 describe("KchatAuthService.disconnect", () => {

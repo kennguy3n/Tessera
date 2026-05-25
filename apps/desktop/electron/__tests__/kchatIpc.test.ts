@@ -291,6 +291,7 @@ describe("kchat:shareArtifact", () => {
       "550e8400-e29b-41d4-a716-446655440000",
       "markdown",
       null,
+      true,
     );
     expect(clientMock.uploadFile).toHaveBeenCalledTimes(1);
     expect(clientMock.uploadFile.mock.calls[0][1]).toBe("Quarterly-Roadmap.md");
@@ -320,6 +321,14 @@ describe("kchat:shareArtifact", () => {
       false,
       true,
     );
+    // Toggle is forwarded — includeCitations=false plumbs through to
+    // the Rust dispatch layer, not just to the audit row.
+    expect(bridgeMock.bridgeExportArtifact).toHaveBeenCalledWith(
+      "550e8400-e29b-41d4-a716-446655440000",
+      "markdown",
+      null,
+      false,
+    );
     expect(bridgeMock.bridgeEvidencePackBytes).toHaveBeenCalledWith(
       "550e8400-e29b-41d4-a716-446655440000",
     );
@@ -343,6 +352,37 @@ describe("kchat:shareArtifact", () => {
     ).rejects.toThrow(/format must be one of/);
     expect(bridgeMock.bridgeExportArtifact).not.toHaveBeenCalled();
     expect(clientMock.uploadFile).not.toHaveBeenCalled();
+  });
+
+  it("forwards includeCitations=false to bridgeExportArtifactToFile for binary formats (pdf/docx)", async () => {
+    // PDF/DOCX go through the tempfile path; verify the toggle is
+    // threaded the same way as the text-format path.
+    clientMock.uploadFile.mockResolvedValue({ id: "fid", name: "x.pdf" });
+    // The bridge function is synchronous in its TS signature, so the
+    // mock must stage the temp file synchronously — using async fs
+    // would race with the immediately-following `fs.readFile` in
+    // `produceExportBytes`.
+    const fsSync = await import("node:fs");
+    bridgeMock.bridgeExportArtifactToFile.mockImplementation(
+      (_id: string, _fmt: string, p: string) => {
+        fsSync.writeFileSync(p, Buffer.from([0x25, 0x50, 0x44, 0x46])); // %PDF
+      },
+    );
+    await handler("kchat:shareArtifact")(
+      EVENT,
+      "550e8400-e29b-41d4-a716-446655440000",
+      "chid0000000000000000abcd",
+      "pdf",
+      false,
+      false,
+    );
+    expect(bridgeMock.bridgeExportArtifactToFile).toHaveBeenCalledTimes(1);
+    const call = bridgeMock.bridgeExportArtifactToFile.mock.calls[0];
+    expect(call[0]).toBe("550e8400-e29b-41d4-a716-446655440000");
+    expect(call[1]).toBe("pdf");
+    expect(typeof call[2]).toBe("string"); // tempPath
+    expect(call[3]).toBeNull(); // contentOverride
+    expect(call[4]).toBe(false); // includeCitations forwarded
   });
 });
 
