@@ -23,6 +23,7 @@ calamine = { workspace = true }
 ignore = { workspace = true }
 kamadak-exif = { workspace = true }
 image = { workspace = true }
+lopdf = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

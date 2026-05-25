@@ -80,6 +80,8 @@ fn seed_corpus(provider: &dyn EmbeddingProvider, files: &[FileSeed]) -> SourceSt
                 byte_offset: chunk_idx * 256,
                 content: (*content).to_string(),
                 hash: (*hash).to_string(),
+                extraction_method: None,
+                extraction_model_id: None,
             })
             .collect();
 

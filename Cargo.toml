@@ -46,6 +46,7 @@ ignore = "0.4"
 kamadak-exif = "0.6"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "tiff", "webp"] }
 base64 = "0.22"
+lopdf = { version = "0.34", default-features = false, features = ["nom_parser"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

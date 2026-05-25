@@ -13,6 +13,7 @@ use crate::progress::{
 use crate::search::{SearchEngine, SearchResult};
 use crate::source::Source;
 use crate::store::{IndexedFile, SourceStore};
+use crate::vision_extractor::VisionExtractor;
 
 pub struct SourceManager {
     store: SourceStore,
@@ -70,6 +71,31 @@ impl SourceManager {
             embedder,
             hybrid_config: Mutex::new(hybrid_config),
         })
+    }
+
+    /// Install / replace / remove the vision extractor on the
+    /// underlying indexer. Block C task 9 / 10 / 11 plumbing: the
+    /// bridge calls this after the vision sidecar reaches the
+    /// `Ready` state with the installed-model record so subsequent
+    /// `index_folder` / `reindex_source` calls describe images,
+    /// OCR scanned PDFs, and (when chart extraction is enabled)
+    /// describe charts.
+    ///
+    /// Pass `None` to detach \\- typically when the user uninstalls
+    /// the vision model or the host transitions to a CPU-only
+    /// configuration where vision is unavailable.
+    pub fn set_vision_extractor(&mut self, extractor: Option<Arc<dyn VisionExtractor>>) {
+        self.indexer.set_vision_extractor(extractor);
+    }
+
+    /// Toggle the chart-extraction pass on / off. Block C task 11
+    /// plumbing: the bridge enables this after detecting `tier >=
+    /// medium` AND a vision model is installed, because chart
+    /// description requires the spatial-reasoning grade of
+    /// Qwen3.5-VL (the recommended medium-tier vision model).
+    /// Low-tier hosts running SmolVLM-256M leave this off.
+    pub fn set_chart_extraction_enabled(&mut self, enabled: bool) {
+        self.indexer.set_chart_extraction_enabled(enabled);
     }
 
     /// Returns a clone of the current hybrid retrieval config. Used

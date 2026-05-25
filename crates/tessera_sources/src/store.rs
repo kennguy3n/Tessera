@@ -87,6 +87,15 @@ impl SourceStore {
                 byte_offset INTEGER NOT NULL,
                 content TEXT NOT NULL,
                 hash TEXT NOT NULL,
+                -- Provenance columns added by Block C (vision-powered
+                -- indexing). NULL on legacy / native-extraction rows;
+                -- set to the lower-snake-case `ExtractionMethod`
+                -- discriminant and the manifest entry id of the
+                -- vision model that produced VLM-derived rows. See
+                -- `crate::chunker::ExtractionMethod` for the value
+                -- catalogue.
+                extraction_method TEXT,
+                extraction_model_id TEXT,
                 FOREIGN KEY (indexed_file_id) REFERENCES indexed_files(id)
             );
 
@@ -127,6 +136,53 @@ impl SourceStore {
             ",
             )
             .map_err(|e| Error::Database(e.to_string()))?;
+
+        // Block C migration: databases created by earlier Tessera
+        // builds have a `chunks` table WITHOUT the
+        // `extraction_method` / `extraction_model_id` columns. The
+        // CREATE TABLE above is a no-op against an existing table, so
+        // we have to ALTER explicitly. SQLite has no
+        // `ADD COLUMN IF NOT EXISTS`, so we make this idempotent by
+        // querying `PRAGMA table_info` for the existing columns
+        // FIRST and only issuing the ALTER for ones that don't
+        // already exist. This is structurally robust — unlike the
+        // "execute then match the rusqlite error string" approach
+        // which would silently mis-detect a future rusqlite version
+        // that reworded the duplicate-column message.
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let existing_columns: std::collections::HashSet<String> = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(chunks)")
+                .map_err(|e| Error::Database(format!("table_info(chunks): {e}")))?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| Error::Database(format!("table_info(chunks) query: {e}")))?;
+            rows.filter_map(std::result::Result::ok).collect()
+        };
+        for column in &["extraction_method", "extraction_model_id"] {
+            if existing_columns.contains(*column) {
+                continue;
+            }
+            let sql = format!("ALTER TABLE chunks ADD COLUMN {column} TEXT");
+            conn.execute(&sql, [])
+                .map_err(|e| Error::Database(format!("failed to add chunks.{column}: {e}")))?;
+        }
+
+        // Partial index on the new column. Created AFTER the ALTERs
+        // above so legacy databases (where the column didn't exist
+        // when the batch ran) still get the index. `WHERE … IS NOT
+        // NULL` keeps the index dense — the index only holds rows
+        // for VLM-derived chunks, which is the only access pattern
+        // ("delete all chunks produced by the previously-installed
+        // vision model so we can re-extract").
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_extraction_model
+             ON chunks(extraction_model_id)
+             WHERE extraction_model_id IS NOT NULL",
+            [],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+
         Ok(())
     }
 
@@ -371,8 +427,11 @@ impl SourceStore {
         {
             let mut stmt = conn
                 .prepare(
-                    "INSERT INTO chunks (indexed_file_id, chunk_index, byte_offset, content, hash)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO chunks (
+                        indexed_file_id, chunk_index, byte_offset, content, hash,
+                        extraction_method, extraction_model_id
+                     )
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 )
                 .map_err(|e| Error::Database(e.to_string()))?;
 
@@ -383,6 +442,10 @@ impl SourceStore {
                     chunk.byte_offset as i64,
                     chunk.content,
                     chunk.hash,
+                    chunk
+                        .extraction_method
+                        .map(crate::chunker::ExtractionMethod::as_str),
+                    chunk.extraction_model_id.as_deref(),
                 ])
                 .map_err(|e| Error::Database(e.to_string()))?;
                 ids.push(conn.last_insert_rowid());
@@ -396,6 +459,95 @@ impl SourceStore {
         .map_err(|e| Error::Database(e.to_string()))?;
 
         Ok(ids)
+    }
+
+    /// Return every chunk (including provenance columns) attached
+    /// to the `indexed_files` row matching `path`, ordered by
+    /// `chunk_index`. Used by tests + the renderer's per-file
+    /// "show chunks" panel.
+    ///
+    /// The query joins `indexed_files` so callers can pass the
+    /// canonical `source_path` they already have on hand (rather
+    /// than threading the synthetic `indexed_file_id` through). The
+    /// shape mirrors [`Chunk`] one-to-one — including the new Block
+    /// C `extraction_method` / `extraction_model_id` columns — so
+    /// callers can round-trip rows back into the chunker's data
+    /// model.
+    pub fn all_chunks_for_path(&self, path: &str) -> Result<Vec<Chunk>> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT c.chunk_index, c.byte_offset, c.content, c.hash,
+                        c.extraction_method, c.extraction_model_id
+                 FROM chunks c
+                 JOIN indexed_files f ON f.id = c.indexed_file_id
+                 WHERE f.path = ?1
+                 ORDER BY c.chunk_index ASC",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![path], |row| {
+                let extraction_method: Option<String> = row.get(4)?;
+                let extraction_model_id: Option<String> = row.get(5)?;
+                let chunk_index: i64 = row.get(0)?;
+                let byte_offset: i64 = row.get(1)?;
+                Ok(Chunk {
+                    source_path: path.to_string(),
+                    chunk_index: chunk_index as usize,
+                    byte_offset: byte_offset as usize,
+                    content: row.get(2)?,
+                    hash: row.get(3)?,
+                    extraction_method: extraction_method
+                        .as_deref()
+                        .and_then(crate::chunker::ExtractionMethod::from_wire),
+                    extraction_model_id,
+                })
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+        Ok(rows)
+    }
+
+    /// Stamp a `partial:`-prefixed sentinel on the stored hash for
+    /// `file_id` so the next `index_file` call's hash comparison
+    /// is guaranteed to miss — forcing a full re-process of the
+    /// file. Used by the PDF OCR + chart passes when the rate
+    /// limiter cuts processing short partway through a multi-
+    /// hundred-page document: without this, the file's real
+    /// content hash would already be stamped on the row, and the
+    /// next pass would short-circuit on hash match and the
+    /// unprocessed pages would be permanently lost until the file
+    /// content changes.
+    ///
+    /// The `partial:` prefix is collision-proof: BLAKE3 hex is 64
+    /// lowercase hex chars (`[0-9a-f]`), and `:` is not a hex
+    /// character. A real BLAKE3 hash can therefore never produce a
+    /// string that matches a `partial:`-prefixed sentinel, so a
+    /// `existing_hash == new_hash` comparison in
+    /// [`upsert_indexed_file`] is guaranteed to miss and the row
+    /// is re-processed (including a `DELETE FROM chunks` so the
+    /// partial chunks from the previous attempt are discarded
+    /// before the new pass writes its replacements).
+    ///
+    /// Idempotent: stamping twice keeps a single `partial:` prefix
+    /// (we look at the current value and only prepend when it
+    /// doesn't already start with the prefix). Without that guard,
+    /// repeated partial passes on the same file would compound to
+    /// `partial:partial:partial:…` and bloat the row.
+    pub fn mark_file_needs_reindex(&self, file_id: i64) -> Result<()> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        conn.execute(
+            "UPDATE indexed_files
+             SET hash = CASE
+                 WHEN hash LIKE 'partial:%' THEN hash
+                 ELSE 'partial:' || hash
+             END
+             WHERE id = ?1",
+            params![file_id],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
     }
 
     pub fn get_file_hash(&self, path: &str) -> Result<Option<String>> {
@@ -897,6 +1049,8 @@ mod tests {
                 byte_offset: 0,
                 content: "Tessera is a local-first productivity workspace".to_string(),
                 hash: "hash1".to_string(),
+                extraction_method: None,
+                extraction_model_id: None,
             },
             crate::chunker::Chunk {
                 source_path: "/tmp/test/doc.txt".to_string(),
@@ -904,6 +1058,8 @@ mod tests {
                 byte_offset: 48,
                 content: "It indexes local folders and files for search".to_string(),
                 hash: "hash2".to_string(),
+                extraction_method: None,
+                extraction_model_id: None,
             },
         ];
 
@@ -931,6 +1087,100 @@ mod tests {
     }
 
     #[test]
+    fn mark_file_needs_reindex_forces_next_pass_to_reprocess() {
+        // The partial-OCR / partial-chart recovery contract: when
+        // a VLM pass is cut short by the rate limiter, the indexer
+        // stamps a `partial:` sentinel on the row so the next
+        // `index_file` call's hash-equality check misses and the
+        // file is fully re-processed. This test pins the
+        // round-trip: upsert with hash H, mark partial, then call
+        // upsert AGAIN with the same hash H — the second upsert
+        // MUST see a mismatch (because the row now stores
+        // `partial:H` not `H`), delete the existing chunks, and
+        // stamp the row with the raw hash again.
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/test".to_string());
+        store.add_source(&source).unwrap();
+
+        let real_hash = "a".repeat(64); // realistic 64-hex-char BLAKE3
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/test/big.pdf", &real_hash, "2026-01-01")
+            .unwrap();
+
+        // Insert two chunks so we can verify the re-process
+        // actually deletes them.
+        let chunks = vec![crate::chunker::Chunk {
+            source_path: "/tmp/test/big.pdf".to_string(),
+            chunk_index: 0,
+            byte_offset: 0,
+            content: "page 1 ocr text".to_string(),
+            hash: "c1".to_string(),
+            extraction_method: Some(crate::chunker::ExtractionMethod::VlmOcr),
+            extraction_model_id: Some("test-vlm".to_string()),
+        }];
+        store.insert_chunks(file_id, &chunks).unwrap();
+        assert_eq!(
+            store
+                .all_chunks_for_path("/tmp/test/big.pdf")
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // Stamp partial sentinel.
+        store.mark_file_needs_reindex(file_id).unwrap();
+        let stored = store.get_file_hash("/tmp/test/big.pdf").unwrap().unwrap();
+        assert_eq!(stored, format!("partial:{real_hash}"));
+
+        // Now upsert with the same real hash — must DETECT mismatch
+        // (partial:H vs H) and delete the existing chunks.
+        let file_id_after = store
+            .upsert_indexed_file(&source.id, "/tmp/test/big.pdf", &real_hash, "2026-01-01")
+            .unwrap();
+        assert_eq!(file_id, file_id_after, "row identity must be preserved");
+        // Hash is now the real one again.
+        let stored_after = store.get_file_hash("/tmp/test/big.pdf").unwrap().unwrap();
+        assert_eq!(stored_after, real_hash);
+        // Previous partial chunks have been wiped.
+        assert!(
+            store
+                .all_chunks_for_path("/tmp/test/big.pdf")
+                .unwrap()
+                .is_empty(),
+            "upsert-after-partial MUST delete the partial chunks so the next pass writes a clean set"
+        );
+    }
+
+    #[test]
+    fn mark_file_needs_reindex_is_idempotent() {
+        // Re-stamping a row that's already `partial:` must NOT
+        // compound the prefix. Without the `WHEN hash LIKE 'partial:%'`
+        // guard in the UPDATE statement, repeated partial passes
+        // on the same file would produce `partial:partial:partial:HEX`
+        // and bloat the row over time.
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/test".to_string());
+        store.add_source(&source).unwrap();
+
+        let real_hash = "b".repeat(64);
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/test/big.pdf", &real_hash, "2026-01-01")
+            .unwrap();
+
+        // Stamp partial three times.
+        store.mark_file_needs_reindex(file_id).unwrap();
+        store.mark_file_needs_reindex(file_id).unwrap();
+        store.mark_file_needs_reindex(file_id).unwrap();
+
+        let stored = store.get_file_hash("/tmp/test/big.pdf").unwrap().unwrap();
+        assert_eq!(
+            stored,
+            format!("partial:{real_hash}"),
+            "repeated partial stamps must NOT compound: expected single `partial:` prefix, got `{stored}`"
+        );
+    }
+
+    #[test]
     fn store_update_changed_file() {
         let store = SourceStore::open_in_memory().unwrap();
         let source = Source::new_local_folder("/tmp/test".to_string());
@@ -945,6 +1195,8 @@ mod tests {
             byte_offset: 0,
             content: "old content".to_string(),
             hash: "oldhash".to_string(),
+            extraction_method: None,
+            extraction_model_id: None,
         }];
         store.insert_chunks(fid, &chunks).unwrap();
 
@@ -1107,6 +1359,8 @@ mod tests {
                 byte_offset: i * 100,
                 content: format!("chunk body {i}"),
                 hash: format!("hash{i}"),
+                extraction_method: None,
+                extraction_model_id: None,
             })
             .collect();
         store.insert_chunks(file_id, &chunks).unwrap();
@@ -1186,6 +1440,8 @@ mod tests {
                 byte_offset: i * 100,
                 content: format!("body {i}"),
                 hash: format!("h{i}"),
+                extraction_method: None,
+                extraction_model_id: None,
             })
             .collect();
         store.insert_chunks(file_id, &chunks).unwrap();

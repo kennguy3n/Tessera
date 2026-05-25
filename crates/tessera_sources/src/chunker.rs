@@ -1,5 +1,78 @@
 use serde::{Deserialize, Serialize};
 
+/// Provenance tag for a chunk's content. `None` means the chunk
+/// came from the native text-extraction pipeline (txt / md / csv /
+/// json / html / xlsx / image-metadata); a `Some(_)` value records
+/// which non-text pipeline emitted the chunk so the indexer can
+/// re-generate stale chunks when the underlying model changes.
+///
+/// Stored as the lower-snake-case discriminant in
+/// `chunks.extraction_method` (e.g. `"vlm"`, `"vlm_ocr"`,
+/// `"vlm_chart"`). The accompanying `extraction_model_id` column
+/// pins which VLM produced the description — when the user swaps
+/// out their vision model the indexer can `DELETE` chunks whose
+/// `extraction_model_id` does NOT match the new model's id and
+/// re-run the VLM pass against them, instead of re-indexing the
+/// whole corpus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractionMethod {
+    /// VLM description of an image file (JPEG/PNG/...). The chunk
+    /// content is the VLM's freeform description; the EXIF-metadata
+    /// chunk for the same file is kept separately with
+    /// `extraction_method = None`.
+    Vlm,
+    /// VLM-driven OCR of a PDF page that had effectively no text
+    /// layer. The chunk content is the OCRed text; one chunk per
+    /// OCRed page is emitted.
+    VlmOcr,
+    /// Structured VLM description of an embedded chart / figure
+    /// image extracted from a PDF (or PPTX in future). The chunk
+    /// content is the structured prose returned by
+    /// `vision_describe_chart`.
+    VlmChart,
+}
+
+impl ExtractionMethod {
+    /// Discriminant string written to the `chunks.extraction_method`
+    /// column. We hand-roll this rather than relying on
+    /// `serde_json::to_value` so the column value is a stable wire
+    /// contract (changing the serde rename would silently invalidate
+    /// every existing row).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Vlm => "vlm",
+            Self::VlmOcr => "vlm_ocr",
+            Self::VlmChart => "vlm_chart",
+        }
+    }
+
+    /// Parse the discriminant string back into the enum. Returns
+    /// `None` for the empty / NULL case so callers can pattern-match
+    /// `extraction_method = None` for legacy / native chunks without
+    /// needing a sentinel variant.
+    ///
+    /// Named `from_wire` (not `from_str`) so the function signature
+    /// — returning `Option<Self>` rather than `Result<Self, _>` —
+    /// doesn't collide with the standard [`std::str::FromStr`]
+    /// trait method, which would otherwise produce a
+    /// `clippy::should-implement-trait` warning. Implementing
+    /// `FromStr` itself isn't worth the boilerplate here: callers
+    /// always know they're reading the SQLite-stored discriminant
+    /// and `None == legacy native chunk` is more ergonomic than
+    /// `Err(())`.
+    #[must_use]
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "vlm" => Some(Self::Vlm),
+            "vlm_ocr" => Some(Self::VlmOcr),
+            "vlm_chart" => Some(Self::VlmChart),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chunk {
     pub source_path: String,
@@ -7,6 +80,16 @@ pub struct Chunk {
     pub byte_offset: usize,
     pub content: String,
     pub hash: String,
+    /// Provenance of this chunk's content. `None` for legacy /
+    /// native extraction; `Some(_)` for VLM-derived content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_method: Option<ExtractionMethod>,
+    /// Identifier of the model that produced this chunk's content,
+    /// when applicable. `None` for native extraction; for VLM
+    /// chunks this is the manifest entry id of the vision model
+    /// that generated the description (e.g. `"qwen3.5-4b-vision-gguf"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_model_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +129,18 @@ pub fn chunk_text(source_path: &str, text: &str, config: &ChunkerConfig) -> Vec<
     }
 
     if text.len() <= config.chunk_size {
+        // Mirror the long-text path's whitespace guard at line ~158:
+        // a fully-scanned multi-page PDF with no text layer joins to a
+        // string of only `\n\n` page separators (see
+        // `extract_pdf_text_from_probes`), which falls into this
+        // short-text branch but has zero search value. Without the
+        // guard we'd emit a whitespace-only chunk into the store and
+        // FTS index — wasting a row, an FTS entry, and (if an
+        // embedder is attached) an embedding computation. Devin
+        // Review pass-11 🟡 finding on chunker.rs:131-142.
+        if text.trim().is_empty() {
+            return Vec::new();
+        }
         let hash = blake3::hash(text.as_bytes()).to_hex().to_string();
         return vec![Chunk {
             source_path: source_path.to_string(),
@@ -53,6 +148,8 @@ pub fn chunk_text(source_path: &str, text: &str, config: &ChunkerConfig) -> Vec<
             byte_offset: 0,
             content: text.to_string(),
             hash,
+            extraction_method: None,
+            extraction_model_id: None,
         }];
     }
 
@@ -78,6 +175,8 @@ pub fn chunk_text(source_path: &str, text: &str, config: &ChunkerConfig) -> Vec<
                 byte_offset: offset,
                 content: chunk_str.to_string(),
                 hash,
+                extraction_method: None,
+                extraction_model_id: None,
             });
             index += 1;
         }
@@ -140,6 +239,26 @@ mod tests {
         assert_eq!(chunks[0].chunk_index, 0);
         assert_eq!(chunks[0].byte_offset, 0);
         assert!(!chunks[0].hash.is_empty());
+    }
+
+    #[test]
+    fn short_whitespace_only_text_produces_no_chunks() {
+        // Devin Review pass-11 🟡 regression guard: when a fully
+        // scanned PDF has no text layer, `extract_pdf_text_from_probes`
+        // joins per-page empty strings with `\n\n`, producing a
+        // whitespace-only string under the default 1024-byte chunk
+        // size. The short-text path used to emit that as a chunk
+        // — wasting a row, an FTS entry, and (if an embedder is
+        // attached) an embedding computation on zero-search-value
+        // content. The long-text path's existing `.trim().is_empty()`
+        // guard is now mirrored in the short-text path.
+        let config = ChunkerConfig::default();
+        for whitespace in &["\n\n", "\n\n\n\n", "   ", " \t\n ", "\r\n\r\n\r\n"] {
+            assert!(
+                chunk_text("scan.pdf", whitespace, &config).is_empty(),
+                "whitespace-only short text {whitespace:?} must produce no chunks",
+            );
+        }
     }
 
     #[test]
