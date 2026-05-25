@@ -65,7 +65,7 @@ export interface InfographicColorScheme {
  * (if any landed in third-party code) keep working. The shared
  * type and the `sanitizeHeroImage` validator both live in
  * `utils/heroImage.ts` — see that file for the rationale behind
- * the `tessera-asset://` scheme gate and the five required fields.
+ * the `tessera-asset://generated-images/` prefix gate and the five required fields.
  */
 export type InfographicHeroImage = HeroImage;
 
@@ -557,9 +557,10 @@ export function buildPreviewHtml(data: InfographicContent): string {
     .join("\n");
 
   // Hero image (optional). The `assetUrl` was already validated to
-  // start with `tessera-asset://` by `sanitizeHeroImage`, but the
-  // value is still user-derived (the IPC handler returns the URL
-  // and the editor persists it verbatim) so we HTML-escape it
+  // start with `tessera-asset://generated-images/` by
+  // `sanitizeHeroImage`, but the value is still user-derived (the
+  // IPC handler returns the URL and the editor persists it
+  // verbatim) so we HTML-escape it
   // before interpolating into the `src` attribute as belt-and-
   // braces. Width/height are written to the DOM so the layout
   // doesn't reflow when the image finishes decoding.

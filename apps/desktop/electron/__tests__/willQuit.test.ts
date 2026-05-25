@@ -91,6 +91,24 @@ vi.mock("electron", () => ({
     buildFromTemplate: vi.fn().mockReturnValue({}),
     setApplicationMenu: vi.fn(),
   },
+  // `main.ts` now imports `assetProtocol.ts` at module load and
+  // synchronously calls `registerAssetProtocolScheme()` (which
+  // forwards to `protocol.registerSchemesAsPrivileged`). The
+  // will-quit tests never reach the handler installation path
+  // (`whenReady` is stubbed to a never-resolving Promise), but the
+  // scheme-registration call DOES run during module evaluation, so
+  // the mock must expose `protocol` as an importable shape
+  // otherwise the module load throws `No "protocol" export is
+  // defined on the "electron" mock`. `net` is included for the
+  // same reason — it's imported by `assetProtocol.ts` even though
+  // its `net.fetch` is unreachable here.
+  protocol: {
+    registerSchemesAsPrivileged: vi.fn(),
+    handle: vi.fn(),
+  },
+  net: {
+    fetch: vi.fn(),
+  },
 }));
 
 // Stub the heavy transitive imports so the module loads. None of

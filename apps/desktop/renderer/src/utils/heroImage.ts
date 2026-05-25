@@ -54,23 +54,39 @@ export interface HeroImage {
 /**
  * Validate a parsed `heroImage` payload from on-disk JSON.
  * Returns `undefined` when the payload is incomplete or the
- * `assetUrl` is not a `tessera-asset://` URL — the caller (the
- * editor's parse path) treats `undefined` as "no hero image set"
- * and surfaces the Generate UI again so the user can regenerate
- * cleanly.
+ * `assetUrl` is not a `tessera-asset://generated-images/...` URL —
+ * the caller (the editor's parse path) treats `undefined` as
+ * "no hero image set" and surfaces the Generate UI again so the
+ * user can regenerate cleanly.
  *
- * The `tessera-asset://` prefix check is a defence-in-depth alongside
- * the CSP `img-src` allowlist — if a user hand-edits an artifact
- * JSON to inject a remote URL, this rejects the entire payload at
- * parse time rather than letting it through and relying on the CSP
- * to block the network fetch at render time.
+ * The `tessera-asset://generated-images/` prefix check is a
+ * defence-in-depth alongside the CSP `img-src` allowlist AND the
+ * main-process `assetProtocol.ts` host allow-list. It mirrors the
+ * single permitted host (`generated-images`) the protocol handler
+ * serves — see `apps/desktop/electron/assetProtocol.ts:174-189`,
+ * where the handler returns 403 for any URL whose host is not
+ * `generated-images`. Without matching the host portion of the
+ * URL at parse time, a hand-edited artifact JSON containing
+ * `"assetUrl": "tessera-asset://evil-host/img.png"` would pass
+ * the sanitizer, get dropped into `<img src>` in both editors,
+ * and the protocol handler would 403 the request — the user
+ * would see a broken image with no path to recovery. By
+ * rejecting the URL at parse time we surface the Generate UI
+ * again so they can produce a fresh, well-formed hero image.
+ *
+ * The earlier-pass check on the scheme alone also rejected a
+ * hostile `http://evil.example.com/...` injection (the CSP
+ * `img-src` allowlist is the outer defence); tightening to the
+ * host segment closes the in-scheme variant of the same attack.
+ * Devin Review PR #38 pass-N 🚩 finding
+ * `BUG_pr-review-job-07d6d965…_0001`.
  */
 export function sanitizeHeroImage(raw: unknown): HeroImage | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
   if (
     typeof r.assetUrl !== "string" ||
-    !r.assetUrl.startsWith("tessera-asset://") ||
+    !r.assetUrl.startsWith("tessera-asset://generated-images/") ||
     typeof r.prompt !== "string"
   ) {
     return undefined;

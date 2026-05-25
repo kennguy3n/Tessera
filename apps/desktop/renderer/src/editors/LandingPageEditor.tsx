@@ -31,7 +31,7 @@ import { Plus, Trash2, X } from "lucide-react";
  * (if any landed in third-party code) keep working. The shared
  * type and the `sanitizeHeroImage` validator both live in
  * `utils/heroImage.ts` — see that file for the rationale behind
- * the `tessera-asset://` scheme gate and the five required fields.
+ * the `tessera-asset://generated-images/` prefix gate and the five required fields.
  */
 export type LandingPageHeroImage = HeroImage;
 
@@ -637,8 +637,9 @@ export function buildLandingPreviewHtml(data: LandingPageContent): string {
     : "";
 
   // Hero image (optional). The `assetUrl` is already validated to
-  // start with `tessera-asset://` by `sanitizeHeroImage`, but the
-  // value still comes from user-derived JSON, so we HTML-escape it
+  // start with `tessera-asset://generated-images/` by
+  // `sanitizeHeroImage`, but the value still comes from
+  // user-derived JSON, so we HTML-escape it
   // before interpolating into `src` as defence-in-depth. Width and
   // height are written to the DOM so the layout doesn't reflow when
   // the image finishes decoding.
