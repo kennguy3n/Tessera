@@ -3,6 +3,7 @@ import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
 import Button from "../components/Button";
 import ModelRuntimeCard from "../components/ModelRuntimeCard";
+import ModelSlotPanel from "../components/ModelSlotPanel";
 import ExternalProviderCard from "../components/ExternalProviderCard";
 import HybridSearchCard from "../components/HybridSearchCard";
 import { useSettings, useUpdateSetting } from "../hooks/useSettings";
@@ -167,6 +168,30 @@ export default function SettingsPage() {
         </Card>
 
         <ModelRuntimeCard />
+
+        {/*
+         * Vision and image-generation slots — separate cards because
+         * each slot has its own active-model-<capability>.json file,
+         * its own download lifecycle, and its own lazy-start sidecar.
+         * The `ModelSlotPanel` component handles install / recommend /
+         * delete for one capability at a time; Start/Stop is omitted
+         * because the vision + diffusion sidecars start on the first
+         * `vision:describe` / `imagegen:generate` call and there is no
+         * point pre-warming them (each consumes multi-GB of RAM).
+         */}
+        <ModelSlotPanel
+          capability="vision"
+          title="Vision model"
+          description="Used by the Vision page (describe, OCR, chart extraction) and by source indexing for image / PDF understanding. Sidecar starts on the first vision call."
+          testIdPrefix="vision-slot"
+        />
+
+        <ModelSlotPanel
+          capability="imagegen"
+          title="Image-generation model"
+          description="Used by the infographic and landing-page editors to generate hero images. Requires a supported GPU (Metal / CUDA / Vulkan) or Apple Silicon. Sidecar starts on the first generation call."
+          testIdPrefix="imagegen-slot"
+        />
 
         <ExternalProviderCard />
 

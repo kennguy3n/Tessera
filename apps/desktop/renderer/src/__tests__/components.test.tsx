@@ -435,6 +435,13 @@ describe("ModelRuntimeCard download-progress lifecycle", () => {
           id: "ternary-bonsai-1.7b-gguf",
           name: "Ternary-Bonsai 1.7B",
           parameters: "1.7B",
+          // Required `ResolvedModel.capability` field (shared/types.ts:541).
+          // The text card only ever receives text-slot records via the
+          // `capability="text"`-scoped IPC, so the test fixtures must
+          // match that wire shape — a vision/imagegen record would
+          // imply a cross-slot bug at the IPC boundary, not a valid
+          // mock for this card.
+          capability: "text",
           format: "gguf",
           formatLabel: "GGUF Q1_0_g128",
           quantization: "Q1_0_g128",
@@ -515,6 +522,335 @@ describe("ModelRuntimeCard download-progress lifecycle", () => {
   });
 });
 
+describe("ModelRuntimeCard onDownloadProgress capability filter", () => {
+  // Block F added sibling `ModelSlotPanel` cards for vision + imagegen
+  // that can run concurrent downloads alongside the text-slot card.
+  // The per-slot download lock in the main process is keyed by
+  // `(userDataDir, capability)`, so a text download and a vision
+  // download CAN be in flight at the same time once the global 5s
+  // rate-limiter gap has elapsed. Without a capability filter on
+  // `ModelRuntimeCard`'s `onDownloadProgress` subscriber, vision /
+  // imagegen progress events would overwrite the text card's progress
+  // bar with another slot's filename + percentage. This guards the
+  // filter shipped alongside Block F.
+  type ProgressEvent = {
+    modelId: string;
+    format: string;
+    filename: string;
+    downloadedMb: number;
+    totalMb: number;
+    percent: number;
+    capability?: "text" | "vision" | "imagegen";
+  };
+  type Listener = (p: ProgressEvent) => void;
+
+  function buildApi(opts: { withDownloadable?: boolean } = {}) {
+    let listener: Listener | null = null;
+    // Hold the downloadModel promise open so the renderer sits in
+    // the `busyModelId` state and the progress gate `busyModelId &&
+    // progress` evaluates against a live download. This lets the
+    // test directly observe what the filter does with each event
+    // category (vision / imagegen / legacy / text) — not just that
+    // the listener was invoked, but that the gated render either
+    // paints or doesn't paint the progress region in response.
+    let resolveDownload: ((v: unknown) => void) | null = null;
+    const downloadModel = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveDownload = resolve;
+        }),
+    );
+    const recommended = opts.withDownloadable
+      ? {
+          id: "ternary-bonsai-1.7b-gguf",
+          name: "Ternary-Bonsai 1.7B",
+          parameters: "1.7B",
+          // See note in the buildApi above — this matches
+          // ResolvedModel.capability (required by shared/types.ts:541).
+          capability: "text" as const,
+          format: "gguf",
+          formatLabel: "GGUF Q1_0_g128",
+          quantization: "Q1_0_g128",
+          platform: "linux-x64",
+          tier: "low",
+          computeBackends: ["cpu"],
+          downloadSizeMb: 450,
+          diskSizeMb: 450,
+          requiredRamGb: 2,
+          contextLength: 2048,
+          filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+          url: "https://example.com/m.gguf",
+          sha256: null,
+        }
+      : null;
+    const api = {
+      ...window.tessera,
+      model: {
+        ...window.tessera.model,
+        status: vi.fn().mockResolvedValue({
+          available: false,
+          modelName: null,
+          status: "stopped",
+        }),
+      },
+      runtime: {
+        ...window.tessera.runtime,
+        detectPlatform: vi.fn().mockResolvedValue({
+          platform: "linux-x64",
+          platformLabel: "Linux x64",
+          totalRamGb: 16,
+          tier: "high",
+          tierLabel: "High (8+ GB RAM)",
+          computeBackends: ["cpu"],
+          preferredFormat: "gguf",
+        }),
+        recommendModel: vi.fn().mockResolvedValue(recommended),
+        listModels: vi.fn().mockResolvedValue([]),
+        getCurrentModel: vi.fn().mockResolvedValue(null),
+        deleteModel: vi.fn().mockResolvedValue(undefined),
+        downloadModel,
+        onDownloadProgress: vi.fn().mockImplementation((cb: Listener) => {
+          listener = cb;
+          return () => {
+            listener = null;
+          };
+        }),
+      },
+    } as unknown as Window["tessera"];
+    return {
+      api,
+      emit: (p: ProgressEvent) => listener?.(p),
+      resolveDownload: () => resolveDownload?.({}),
+    };
+  }
+
+  it("ignores vision-slot progress events (does not paint into the text card)", async () => {
+    const { api, emit } = buildApi();
+    render(<ModelRuntimeCard api={api} />);
+    // Wait for the subscriber to attach (post-mount effect).
+    await waitFor(() => {
+      expect(
+        (api.runtime.onDownloadProgress as unknown as { mock: { calls: unknown[] } })
+          .mock.calls.length,
+      ).toBeGreaterThan(0);
+    });
+    emit({
+      modelId: "siglip-vision-base",
+      format: "gguf",
+      filename: "siglip-vision.gguf",
+      downloadedMb: 120,
+      totalMb: 300,
+      percent: 40,
+      capability: "vision",
+    });
+    // A vision-slot progress event must NOT cause the text card to
+    // render its progress region.
+    await Promise.resolve();
+    expect(
+      screen.queryByTestId("model-runtime-progress"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("ignores imagegen-slot progress events (does not paint into the text card)", async () => {
+    const { api, emit } = buildApi();
+    render(<ModelRuntimeCard api={api} />);
+    await waitFor(() => {
+      expect(
+        (api.runtime.onDownloadProgress as unknown as { mock: { calls: unknown[] } })
+          .mock.calls.length,
+      ).toBeGreaterThan(0);
+    });
+    emit({
+      modelId: "sd-turbo-q5",
+      format: "gguf",
+      filename: "sd-turbo.gguf",
+      downloadedMb: 200,
+      totalMb: 6000,
+      percent: 3,
+      capability: "imagegen",
+    });
+    await Promise.resolve();
+    expect(
+      screen.queryByTestId("model-runtime-progress"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("accepts legacy progress events with no capability field (backward compat)", async () => {
+    // Strengthened test (Devin Review pass-N): not just "filter
+    // didn't throw" but "filter actually paints the legacy event
+    // into the text card's progress bar after a Download click puts
+    // the gate in the busyModelId state".
+    //
+    // A stale renderer running against a newer main process should
+    // never be the path this filter sees — the main process tags
+    // every outgoing event. But if for any reason the field is
+    // missing, the filter must treat it as a text event so the
+    // historical behaviour is preserved.
+    const { api, emit } = buildApi({ withDownloadable: true });
+    render(<ModelRuntimeCard api={api} />);
+    // Click Download to enter the busy state so the progress region
+    // is gated open. The downloadModel mock returns a pending
+    // Promise, so the renderer sits in busyModelId=<modelId> for
+    // the duration of the test.
+    const downloadBtn = await screen.findByRole("button", {
+      name: /^Download$/i,
+    });
+    fireEvent.click(downloadBtn);
+    await waitFor(() => {
+      expect(api.runtime.downloadModel).toHaveBeenCalledTimes(1);
+    });
+    // Now emit a legacy event (capability intentionally omitted).
+    // The filter must accept it and the progress region must render.
+    emit({
+      modelId: "ternary-bonsai-1.7b-gguf",
+      format: "gguf",
+      filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+      downloadedMb: 80,
+      totalMb: 450,
+      percent: 17,
+      // capability intentionally omitted
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("model-runtime-progress"),
+      ).toBeInTheDocument();
+    });
+    // The painted progress reflects the legacy event's numbers,
+    // proving the filter actually committed the event to state
+    // (not just "didn't throw").
+    expect(screen.getByTestId("model-runtime-progress")).toHaveTextContent(
+      /17%/,
+    );
+  });
+
+  it("accepts capability=text progress events (paints into the text card)", async () => {
+    // Positive control alongside the legacy case: an explicit
+    // `capability: "text"` event must paint, in the same gated
+    // state the vision/imagegen drop tests above set up. This
+    // closes the loop: the filter rejects non-text events AND
+    // accepts text-or-missing events.
+    const { api, emit } = buildApi({ withDownloadable: true });
+    render(<ModelRuntimeCard api={api} />);
+    const downloadBtn = await screen.findByRole("button", {
+      name: /^Download$/i,
+    });
+    fireEvent.click(downloadBtn);
+    await waitFor(() => {
+      expect(api.runtime.downloadModel).toHaveBeenCalledTimes(1);
+    });
+    emit({
+      modelId: "ternary-bonsai-1.7b-gguf",
+      format: "gguf",
+      filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+      downloadedMb: 90,
+      totalMb: 450,
+      percent: 20,
+      capability: "text",
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("model-runtime-progress"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("model-runtime-progress")).toHaveTextContent(
+      /20%/,
+    );
+  });
+});
+
+describe("ModelRuntimeCard listModels is text-scoped", () => {
+  // Devin Review pass-N flagged that `refresh()` previously called
+  // `tessera.runtime.listModels()` with no capability arg. Per the
+  // RuntimeApi contract (apps/desktop/shared/types.ts:1050-1053)
+  // that returns EVERY slot's candidates merged together — so vision
+  // and imagegen models would leak into the text card's
+  // "Show all available models" disclosure, with actionable
+  // Download / Swap buttons. Clicking those from the text card
+  // would route the download to the vision / imagegen slot (by
+  // manifest capability) while the text card's state.current
+  // updated with the cross-slot record — corrupting text-card UI
+  // state until the next 5s poll. This test guards the
+  // `listModels("text")` scoping fix.
+  it("calls listModels with capability='text' on mount refresh", async () => {
+    const listModelsMock = vi.fn().mockResolvedValue([]);
+    const api = {
+      ...window.tessera,
+      model: {
+        ...window.tessera.model,
+        status: vi.fn().mockResolvedValue({
+          available: false,
+          modelName: null,
+          status: "stopped",
+        }),
+      },
+      runtime: {
+        ...window.tessera.runtime,
+        detectPlatform: vi.fn().mockResolvedValue({
+          platform: "linux-x64",
+          platformLabel: "Linux x64",
+          totalRamGb: 16,
+          tier: "high",
+          tierLabel: "High (8+ GB RAM)",
+          computeBackends: ["cpu"],
+          preferredFormat: "gguf",
+        }),
+        recommendModel: vi.fn().mockResolvedValue(null),
+        listModels: listModelsMock,
+        getCurrentModel: vi.fn().mockResolvedValue(null),
+        deleteModel: vi.fn().mockResolvedValue(undefined),
+        onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
+      },
+    } as unknown as Window["tessera"];
+    render(<ModelRuntimeCard api={api} />);
+    await waitFor(() => {
+      expect(listModelsMock).toHaveBeenCalledTimes(1);
+    });
+    expect(listModelsMock).toHaveBeenCalledWith("text");
+  });
+
+  it("calls recommendModel and getCurrentModel with capability='text' on mount refresh", async () => {
+    // Defense-in-depth: both overloads default to "text" on the
+    // main-process side, but passing the cap explicitly at the
+    // renderer boundary makes the scoping self-documenting and
+    // catches any future server-side default flip.
+    const recommendMock = vi.fn().mockResolvedValue(null);
+    const getCurrentMock = vi.fn().mockResolvedValue(null);
+    const api = {
+      ...window.tessera,
+      model: {
+        ...window.tessera.model,
+        status: vi.fn().mockResolvedValue({
+          available: false,
+          modelName: null,
+          status: "stopped",
+        }),
+      },
+      runtime: {
+        ...window.tessera.runtime,
+        detectPlatform: vi.fn().mockResolvedValue({
+          platform: "linux-x64",
+          platformLabel: "Linux x64",
+          totalRamGb: 16,
+          tier: "high",
+          tierLabel: "High (8+ GB RAM)",
+          computeBackends: ["cpu"],
+          preferredFormat: "gguf",
+        }),
+        recommendModel: recommendMock,
+        listModels: vi.fn().mockResolvedValue([]),
+        getCurrentModel: getCurrentMock,
+        deleteModel: vi.fn().mockResolvedValue(undefined),
+        onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
+      },
+    } as unknown as Window["tessera"];
+    render(<ModelRuntimeCard api={api} />);
+    await waitFor(() => {
+      expect(recommendMock).toHaveBeenCalledWith("text");
+      expect(getCurrentMock).toHaveBeenCalledWith("text");
+    });
+  });
+});
+
 describe("ModelRuntimeCard failed-swap re-fetches current model", () => {
   // `performDownload` on the swap path used to leave `state.current`
   // holding the pre-swap record after a failed download. The main
@@ -579,6 +915,7 @@ describe("ModelRuntimeCard failed-swap re-fetches current model", () => {
           id: "ternary-bonsai-8b-gguf",
           name: "Ternary-Bonsai 8B",
           parameters: "8B",
+          capability: "text",
           format: "gguf",
           formatLabel: "GGUF Q1_0_g128",
           quantization: "Q1_0_g128",
@@ -598,6 +935,7 @@ describe("ModelRuntimeCard failed-swap re-fetches current model", () => {
             id: "ternary-bonsai-8b-gguf",
             name: "Ternary-Bonsai 8B",
             parameters: "8B",
+            capability: "text",
             format: "gguf",
             formatLabel: "GGUF Q1_0_g128",
             quantization: "Q1_0_g128",
@@ -723,6 +1061,7 @@ describe("ModelRuntimeCard 5s poll respects busyModelId gate", () => {
           id: "ternary-bonsai-8b-gguf",
           name: "Ternary-Bonsai 8B",
           parameters: "8B",
+          capability: "text",
           format: "gguf",
           formatLabel: "GGUF Q1_0_g128",
           quantization: "Q1_0_g128",
@@ -984,6 +1323,21 @@ describe("ModelRuntimeCard handleDelete error path re-fetches state", () => {
       expect(statusMock.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
 
+    // Regression guard: every getCurrentModel call from this card must
+    // pass the explicit "text" capability — including the catch-block
+    // re-fetch after deleteModel throws. A previous pass left line 370
+    // unscoped (relying on the IPC default), which would silently break
+    // if the server-side default ever changes. The mount-time refresh
+    // and 5s poll have their own regression tests above; this one
+    // closes the gap on the delete catch path.
+    for (const call of getCurrentModelMock.mock.calls) {
+      expect(call[0]).toBe("text");
+    }
+    // deleteModel must also be explicitly text-scoped at the renderer
+    // boundary, even though the IPC default is "text". Matches the
+    // text-scoping invariant the card's header comment documents.
+    expect(deleteMock).toHaveBeenCalledWith("text");
+
     // After the re-fetch landed null, the installed-record text must
     // be gone — the UI now matches on-disk truth. If the fix were
     // missing, this assertion would fail because `state.current`
@@ -993,5 +1347,182 @@ describe("ModelRuntimeCard handleDelete error path re-fetches state", () => {
         screen.queryByText(/ternary-bonsai-1.7b-gguf/i),
       ).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("ModelRuntimeCard handleDelete success path re-fetches current", () => {
+  // `handleDelete`'s success path used to hardcode `current: null` after
+  // a successful `deleteModel("text")`. The new contract: re-fetch
+  // `getCurrentModel("text")` and adopt whatever the main process
+  // reports — matches the same on-disk-truth invariant the error path,
+  // both `performDownload` paths, and `ModelSlotPanel.handleDelete`
+  // already maintain. The expected reading is `null` (we just
+  // deleted), but reading from disk is the only way to guarantee it
+  // and is robust against a concurrent install in another window.
+  it("calls getCurrentModel('text') after deleteModel resolves and adopts the live value", async () => {
+    const installedRecord = {
+      modelId: "ternary-bonsai-1.7b-gguf",
+      format: "gguf" as const,
+      filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+      path: "/var/tmp/m.gguf",
+      downloadSizeMb: 450,
+      diskSizeMb: 450,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+
+    // Initial mount → installedRecord. Post-delete re-fetch → null
+    // (which is what we'd see after a normal delete settled cleanly
+    // and `active-model-text.json` was cleared).
+    const getCurrentModelMock = vi
+      .fn()
+      .mockResolvedValueOnce(installedRecord) // initial mount
+      .mockResolvedValue(null); // post-success re-fetch + any poll ticks
+    const statusMock = vi
+      .fn()
+      .mockResolvedValue({
+        available: false,
+        modelName: null,
+        status: "stopped",
+      });
+    const deleteMock = vi.fn().mockResolvedValue(undefined);
+
+    const api = {
+      ...window.tessera,
+      model: {
+        ...window.tessera.model,
+        status: statusMock,
+        stop: vi.fn().mockResolvedValue(undefined),
+      },
+      runtime: {
+        ...window.tessera.runtime,
+        detectPlatform: vi.fn().mockResolvedValue({
+          platform: "linux-x64",
+          platformLabel: "Linux x64",
+          totalRamGb: 16,
+          tier: "high",
+          tierLabel: "High (8+ GB RAM)",
+          computeBackends: ["cpu"],
+          preferredFormat: "gguf",
+        }),
+        recommendModel: vi.fn().mockResolvedValue(null),
+        listModels: vi.fn().mockResolvedValue([]),
+        getCurrentModel: getCurrentModelMock,
+        deleteModel: deleteMock,
+        onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
+      },
+    } as unknown as Window["tessera"];
+
+    render(<ModelRuntimeCard api={api} />);
+
+    await screen.findByText(/ternary-bonsai-1.7b-gguf/i);
+
+    const deleteBtn = screen.getByRole("button", { name: /Delete model/i });
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(deleteMock).toHaveBeenCalledTimes(1);
+    });
+
+    // getCurrentModel must have been called AT LEAST twice — once on
+    // mount, once on the success path's live re-fetch. If the fix were
+    // reverted (hardcoded `current: null`), only the mount call would
+    // happen and this assertion would fail.
+    await waitFor(() => {
+      expect(getCurrentModelMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+    // Every call must be explicitly text-scoped — locks the same
+    // text-scoping invariant the catch-path regression guards above.
+    for (const call of getCurrentModelMock.mock.calls) {
+      expect(call[0]).toBe("text");
+    }
+
+    // The on-disk record is `null` (we just deleted) — the UI must
+    // reflect that. If the renderer had ignored the re-fetch and
+    // hardcoded `null` blindly, this would still pass; the
+    // call-count + argument assertions above are what lock the new
+    // contract.
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/ternary-bonsai-1.7b-gguf/i),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("adopts a non-null record if a concurrent install lands between deleteModel and the re-fetch", async () => {
+    // Edge case: another renderer window or a background download
+    // completes between our `deleteModel` call and the re-fetch, so
+    // the on-disk truth is a DIFFERENT model record rather than
+    // `null`. The renderer must adopt that record — hardcoding `null`
+    // would lie to the user until the next 5s poll tick caught up.
+    const beforeDelete = {
+      modelId: "ternary-bonsai-1.7b-gguf",
+      format: "gguf" as const,
+      filename: "ternary-bonsai-1.7b-q1_0_g128.gguf",
+      path: "/var/tmp/m1.gguf",
+      downloadSizeMb: 450,
+      diskSizeMb: 450,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+    const concurrentInstall = {
+      modelId: "ternary-bonsai-8b-gguf",
+      format: "gguf" as const,
+      filename: "ternary-bonsai-8b-q1_0_g128.gguf",
+      path: "/var/tmp/m2.gguf",
+      downloadSizeMb: 2000,
+      diskSizeMb: 2000,
+      sha256: null,
+      downloadedAt: new Date().toISOString(),
+    };
+    const getCurrentModelMock = vi
+      .fn()
+      .mockResolvedValueOnce(beforeDelete) // initial mount
+      .mockResolvedValue(concurrentInstall); // post-delete + polls
+
+    const api = {
+      ...window.tessera,
+      model: {
+        ...window.tessera.model,
+        status: vi.fn().mockResolvedValue({
+          available: false,
+          modelName: null,
+          status: "stopped",
+        }),
+        stop: vi.fn().mockResolvedValue(undefined),
+      },
+      runtime: {
+        ...window.tessera.runtime,
+        detectPlatform: vi.fn().mockResolvedValue({
+          platform: "linux-x64",
+          platformLabel: "Linux x64",
+          totalRamGb: 16,
+          tier: "high",
+          tierLabel: "High (8+ GB RAM)",
+          computeBackends: ["cpu"],
+          preferredFormat: "gguf",
+        }),
+        recommendModel: vi.fn().mockResolvedValue(null),
+        listModels: vi.fn().mockResolvedValue([]),
+        getCurrentModel: getCurrentModelMock,
+        deleteModel: vi.fn().mockResolvedValue(undefined),
+        onDownloadProgress: vi.fn().mockReturnValue(() => undefined),
+      },
+    } as unknown as Window["tessera"];
+
+    render(<ModelRuntimeCard api={api} />);
+
+    await screen.findByText(/ternary-bonsai-1.7b-gguf/i);
+
+    const deleteBtn = screen.getByRole("button", { name: /Delete model/i });
+    fireEvent.click(deleteBtn);
+
+    // The renderer must adopt the concurrent install's record — NOT
+    // the hardcoded null we used to write. If the fix were reverted,
+    // the assertion that the 8B record appears would never resolve.
+    await screen.findByText(/ternary-bonsai-8b-gguf/i);
+    expect(
+      screen.queryByText(/ternary-bonsai-1.7b-gguf/i),
+    ).not.toBeInTheDocument();
   });
 });
