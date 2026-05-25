@@ -27,6 +27,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as nodeOs from "os";
 import * as nodePath from "path";
 import * as nodeFs from "fs";
+import { promises as dnsPromises } from "dns";
 
 const handleMock = vi.fn();
 const removeHandlerMock = vi.fn();
@@ -317,6 +318,128 @@ describe("kchat:connect — SSRF guard (eighth-pass invariant)", () => {
       } else {
         process.env.TESSERA_KCHAT_ALLOW_INTERNAL = prev;
       }
+    }
+  });
+});
+
+// Ninth-pass Devin Review BUG_0001: the IPv6 ULA / link-local
+// prefix checks (`fc`/`fd`/`fe80:`) must NOT misfire on regular DNS
+// hostnames that happen to begin with the same two-letter prefix.
+// Real-world examples flagged by the bot: `fcc.example.com`,
+// `fdic.gov`, `fchat.example.com`. A hostname-form string never
+// contains `:`, so we gate the IPv6 prefix match on `host.includes(":")`.
+describe("kchat:connect — IPv6 ULA prefix check does not false-positive on DNS hostnames (ninth-pass invariant)", () => {
+  const lookalikeHosts = [
+    "https://fcc.example.com/",
+    "https://fdic.gov/",
+    "https://fchat.example.com/",
+    "https://fe80-corp.io/",
+  ];
+  for (const u of lookalikeHosts) {
+    it(`accepts ${u} as a public hostname (literal-IP check must not match)`, async () => {
+      // Pin DNS to a public IP so the second-layer DNS guard also
+      // passes and the call reaches the service. Tests asserting
+      // the literal-IP layer alone would only assert "not
+      // private/loopback" — we want a stronger end-to-end
+      // assertion that the connect path completes.
+      // `dns.lookup` is overloaded — with `{ all: true }` it
+      // returns `LookupAddress[]`, with a string it returns a
+      // single `LookupAddress`. We always call with `{ all: true }`,
+      // so pin the spy to that branch via a typed cast.
+      const spy = vi
+        .spyOn(dnsPromises, "lookup")
+        .mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
+      try {
+        serviceMock.connect.mockResolvedValue({
+          id: "user1234567890abcdefgh",
+          username: "pub",
+          email: "p@e.com",
+          first_name: "P",
+          last_name: "U",
+        });
+        const out = await handler("kchat:connect")(EVENT, "PAT", u);
+        expect(out).toMatchObject({ id: "user1234567890abcdefgh" });
+        expect(serviceMock.connect).toHaveBeenCalledWith("PAT", u);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  }
+});
+
+// Ninth-pass Devin Review ANALYSIS_0002: the SSRF guard's DNS-
+// based check must NOT silently pass when the lookup throws a
+// non-ENOTFOUND error. A malicious or slow DNS resolver could time
+// out our pre-flight lookup but still hand `fetch` a private IP on
+// the actual connect, bypassing the rebinding mitigation entirely.
+// Correct posture: fail-closed on any DNS error except
+// ENOTFOUND/EAI_NONAME (those mean "host doesn't exist" and the
+// network layer will report it cleanly anyway).
+describe("kchat:connect — DNS error fail-closed posture (ninth-pass invariant)", () => {
+  it("allows ENOTFOUND through so the network layer can surface a clean error", async () => {
+    const spy = vi.spyOn(dnsPromises, "lookup").mockImplementation(() => {
+      const e = new Error("getaddrinfo ENOTFOUND") as Error & {
+        code: string;
+      };
+      e.code = "ENOTFOUND";
+      throw e;
+    });
+    try {
+      serviceMock.connect.mockResolvedValue({
+        id: "user1234567890abcdefgh",
+        username: "ku",
+        email: "k@u.com",
+        first_name: "K",
+        last_name: "U",
+      });
+      const out = await handler(
+        "kchat:connect",
+      )(EVENT, "PAT", "https://nope.invalid/");
+      expect(out).toMatchObject({ id: "user1234567890abcdefgh" });
+      expect(serviceMock.connect).toHaveBeenCalledWith(
+        "PAT",
+        "https://nope.invalid/",
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  const failClosedCodes = ["ETIMEOUT", "EAI_AGAIN", "ESERVFAIL", "ECONNREFUSED"];
+  for (const code of failClosedCodes) {
+    it(`fails closed on DNS error '${code}' (does not call the service)`, async () => {
+      const spy = vi.spyOn(dnsPromises, "lookup").mockImplementation(() => {
+        const e = new Error(`getaddrinfo ${code}`) as Error & {
+          code: string;
+        };
+        e.code = code;
+        throw e;
+      });
+      try {
+        await expect(
+          handler("kchat:connect")(EVENT, "PAT", "https://kchat.example.com/"),
+        ).rejects.toThrow(/SSRF guard|DNS error/);
+        expect(serviceMock.connect).not.toHaveBeenCalled();
+        expect(bridgeMock.bridgeLogKchatConnected).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  }
+
+  it("fails closed on an unexpected non-coded DNS error", async () => {
+    const spy = vi
+      .spyOn(dnsPromises, "lookup")
+      .mockImplementation(() => {
+        throw new Error("DNS layer exploded");
+      });
+    try {
+      await expect(
+        handler("kchat:connect")(EVENT, "PAT", "https://kchat.example.com/"),
+      ).rejects.toThrow(/SSRF guard|DNS error/);
+      expect(serviceMock.connect).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
     }
   });
 });

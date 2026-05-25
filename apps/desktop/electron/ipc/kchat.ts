@@ -218,8 +218,18 @@ function isPrivateOrLoopbackHost(hostname: string): boolean {
     return false;
   }
   if (h === "::1" || h === "::") return true;
-  if (h.startsWith("fe80:")) return true; // IPv6 link-local
-  if (h.startsWith("fc") || h.startsWith("fd")) return true; // ULA fc00::/7
+  // IPv6 prefix checks are gated on `h.includes(":")` so they cannot
+  // misfire on regular DNS hostnames that happen to begin with the
+  // same two letters (`fcc.example.com`, `fdic.gov`, `fe80-corp.io`,
+  // …). Hostnames in DNS-name form never contain `:`, while every
+  // IPv6 literal contains at least one. ninth-pass Devin Review
+  // BUG_0001 caught this when the `fc`/`fd` prefix match was
+  // unconditional and rejected `fchat.example.com`-style domains.
+  const isV6Literal = h.includes(":");
+  if (isV6Literal) {
+    if (h.startsWith("fe80:")) return true; // IPv6 link-local
+    if (h.startsWith("fc") || h.startsWith("fd")) return true; // ULA fc00::/7
+  }
   const mapped = h.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
   if (mapped) return isPrivateOrLoopbackHost(mapped[1]);
   return false;
@@ -257,11 +267,26 @@ async function enforceKchatServerUrl(rawUrl: string): Promise<URL> {
   // private/loopback space. This catches the case of a public-
   // looking hostname (e.g. `kchat.example.com`) that resolves to
   // `10.0.0.5` via DNS (intranet split-horizon or a malicious DNS
-  // server pointed at internal infrastructure). Failure to resolve
-  // is *not* a hard error here — the underlying `fetch` will
-  // surface a clearer "ENOTFOUND" / "EAI_AGAIN" further down the
-  // call stack — we treat lookup failure as "no internal target
-  // detected by us, let the network layer decide".
+  // server pointed at internal infrastructure).
+  //
+  // Fail-closed on DNS errors (ninth-pass Devin Review
+  // ANALYSIS_0002): a previous version of this guard swallowed
+  // *all* `dns.lookup` failures — the rationale was that the
+  // subsequent `fetch` would surface a clearer ENOTFOUND. The bot
+  // pointed out that a malicious/slow DNS server could time out
+  // *our* lookup but still respond to `fetch`'s lookup with a
+  // private IP, bypassing the rebinding mitigation entirely. We
+  // now distinguish:
+  //   * `ENOTFOUND` / `EAI_NONAME` — the host genuinely does not
+  //     exist; the network layer would fail too, so allow the
+  //     attempt through so the user sees the network-layer error
+  //     (and to avoid a confusing "refusing to connect" message
+  //     for typos and offline cases).
+  //   * any other DNS error (timeout, refused, server-side error,
+  //     unexpected throw) — fail-closed and require the user to
+  //     retry or opt out via `TESSERA_KCHAT_ALLOW_INTERNAL=1`.
+  //     This is the correct posture for an SSRF guard: "if we
+  //     can't verify the destination, refuse to send the PAT."
   try {
     const addrs = await dnsPromises.lookup(parsed.hostname, { all: true });
     for (const a of addrs) {
@@ -272,14 +297,28 @@ async function enforceKchatServerUrl(rawUrl: string): Promise<URL> {
       }
     }
   } catch (err) {
-    // Re-throw our own "private/loopback" error; swallow DNS-layer
-    // errors so the connect attempt itself can surface them.
+    // Re-throw our own "private/loopback" error untouched.
     if (
       err instanceof Error &&
       err.message.startsWith("serverUrl resolves to a private")
     ) {
       throw err;
     }
+    // Allow ENOTFOUND through — host doesn't exist, the network
+    // layer will report it. Fail-closed on any other DNS error so
+    // a slow/hostile DNS resolver cannot bypass the rebinding
+    // mitigation.
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? String((err as { code: unknown }).code)
+        : "";
+    if (code === "ENOTFOUND" || code === "EAI_NONAME") {
+      // Host doesn't exist — let `fetch` surface the network error.
+      return parsed;
+    }
+    throw new Error(
+      `serverUrl could not be validated against the SSRF guard (DNS error: ${code || "unknown"}); refusing to connect. Retry once the DNS resolver is reachable, or set TESSERA_KCHAT_ALLOW_INTERNAL=1 to override (dev only).`,
+    );
   }
   return parsed;
 }
