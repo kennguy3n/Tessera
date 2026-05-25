@@ -94,6 +94,44 @@ const SCHEME = "tessera-asset";
 const ALLOWED_SUBDIR = "generated-images";
 
 /**
+ * Module-level latch flipped to `true` once
+ * `registerAssetProtocolScheme()` has run. Read via
+ * `assertAssetProtocolSchemeRegistered()` so callers that depend on
+ * the scheme being privileged (the CSP `img-src` widening in
+ * `installContentSecurityPolicy()`, the `protocol.handle` install
+ * in `registerAssetProtocolHandler()`) can fail fast at startup if
+ * a future refactor reorders or removes the registration call.
+ *
+ * The Electron API itself only enforces "registration must precede
+ * `app.whenReady()` resolution" — it does NOT bind the privileged
+ * scheme to the CSP source list. So a developer who deletes the
+ * `registerAssetProtocolScheme()` call in `main.ts` would see the
+ * app boot cleanly and only discover the silent breakage when an
+ * image tries to render (CSP refuses the `tessera-asset:` source
+ * because the scheme isn't privileged, image fails, no obvious
+ * error in the log). The latch makes the dependency programmatic:
+ * `installContentSecurityPolicy()` will throw at startup if the
+ * scheme wasn't registered first. Devin Review PR #38 pass-N 📝
+ * finding `ANALYSIS_pr-review-job-7e44dd41…_0005`.
+ */
+let assetProtocolSchemeRegistered = false;
+
+/**
+ * Assert that `registerAssetProtocolScheme()` has already run.
+ * Intended for callers (CSP installer, protocol handler installer)
+ * whose correctness silently depends on the scheme being
+ * privileged — throwing at startup is strictly better than
+ * shipping a renderer that silently 403s all generated images.
+ */
+export function assertAssetProtocolSchemeRegistered(): void {
+  if (!assetProtocolSchemeRegistered) {
+    throw new Error(
+      `assertAssetProtocolSchemeRegistered: registerAssetProtocolScheme() must be called at module load time before any code that depends on the "${SCHEME}" scheme being privileged (the CSP \`img-src\` widening, the \`protocol.handle\` install). See \`apps/desktop/electron/main.ts\` for the canonical call site.`,
+    );
+  }
+}
+
+/**
  * Resolve the absolute allow-list root for `tessera-asset://`
  * requests. Both the protocol handler (registered once at
  * `app.whenReady`) and the renderer-side `pathToAssetUrl` helper
@@ -148,6 +186,11 @@ export function registerAssetProtocolScheme(): void {
       },
     },
   ]);
+  // Flip the latch AFTER the underlying Electron call resolves so a
+  // failed registration (e.g. duplicate-scheme throw, or a future
+  // Electron version rejecting the privilege flags) does not leave
+  // the latch in a misleading "registered" state.
+  assetProtocolSchemeRegistered = true;
 }
 
 /**
@@ -162,6 +205,14 @@ export function registerAssetProtocolScheme(): void {
  * touching real user state.
  */
 export function registerAssetProtocolHandler(assetsRoot: string): void {
+  // Programmatic enforcement of the
+  // `registerAssetProtocolScheme()`-must-run-first invariant. The
+  // handler can only ship meaningful behaviour if the scheme is
+  // privileged at the Chromium level; if a future refactor deletes
+  // the `registerAssetProtocolScheme()` call in `main.ts` we want a
+  // loud startup failure rather than silent broken-image renders.
+  assertAssetProtocolSchemeRegistered();
+
   // Resolve the allow-list root ONCE at registration time. The
   // handler then compares each incoming request against this
   // pre-resolved absolute path, so a later `process.chdir()` or

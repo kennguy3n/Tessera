@@ -12,6 +12,7 @@ import { cspImageSources } from "./cspImageSources";
 import {
   registerAssetProtocolScheme,
   registerAssetProtocolHandler,
+  assertAssetProtocolSchemeRegistered,
   TESSERA_ASSET_SCHEME,
 } from "./assetProtocol";
 import {
@@ -80,6 +81,21 @@ process.on("unhandledRejection", (reason) => {
  * BrowserWindow is constructed.
  */
 function installContentSecurityPolicy(): void {
+  // The CSP `img-src` widening below includes `tessera-asset:` as a
+  // recognised source. Chromium will silently strip that source if
+  // the scheme is not registered as privileged before the app's
+  // ready state resolves — at which point every
+  // `<img src="tessera-asset://generated-images/...">` would fail
+  // with no obvious error in the log. Devin Review PR #38 pass-N 📝
+  // finding `ANALYSIS_pr-review-job-7e44dd41…_0005` correctly noted
+  // the dependency was comment-documented but not programmatically
+  // enforced; this assertion makes the dependency a startup-time
+  // invariant. If a future refactor deletes the
+  // `registerAssetProtocolScheme()` call at the top of this file,
+  // the app fails fast at boot with an explicit error rather than
+  // shipping a renderer that silently 403s every generated image.
+  assertAssetProtocolSchemeRegistered();
+
   const isDev = !app.isPackaged;
   const connectSrc = isDev
     ? "connect-src 'self' ws://localhost:5173 http://localhost:5173"

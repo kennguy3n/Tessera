@@ -113,6 +113,7 @@ vi.mock("electron", () => ({
 
 // Imported AFTER the mock so the module picks up the stubbed electron.
 import {
+  assertAssetProtocolSchemeRegistered,
   pathToAssetUrl,
   registerAssetProtocolHandler,
   registerAssetProtocolScheme,
@@ -137,6 +138,18 @@ beforeEach(async () => {
   allowedRoot = path.join(workdir, "generated-images");
   await fsp.mkdir(allowedRoot, { recursive: true });
   capturedHandler = null;
+  // Flip the module-level "scheme registered" latch before every test
+  // so the `registerAssetProtocolHandler` and CSP-installer assertions
+  // pass. Devin Review PR #38 pass-N introduced
+  // `assertAssetProtocolSchemeRegistered` as a programmatic enforcement
+  // of the "scheme must be privileged before any caller depends on it"
+  // invariant — production satisfies the invariant by calling
+  // `registerAssetProtocolScheme()` at module load time in `main.ts`.
+  // Tests pre-flip it here, then `.mockClear()` resets the call-count
+  // observability for the `registerAssetProtocolScheme` test below
+  // (which still asserts the underlying Electron API was called
+  // exactly once).
+  registerAssetProtocolScheme();
   protocolHandleMock.mockClear();
   registerSchemesMock.mockClear();
   netFetchMock.mockClear();
@@ -484,5 +497,20 @@ describe("registerAssetProtocolScheme", () => {
     expect(schemes[0].privileges.supportFetchAPI).toBe(true);
     expect(schemes[0].privileges.corsEnabled).toBe(true);
     expect(schemes[0].privileges.stream).toBe(true);
+  });
+
+  it("flips the assertAssetProtocolSchemeRegistered latch so dependent callers can fail fast at startup", () => {
+    // Devin Review PR #38 pass-N 📝 finding
+    // `ANALYSIS_pr-review-job-7e44dd41…_0005`: the CSP `img-src`
+    // widening in `main.ts:installContentSecurityPolicy` and the
+    // `protocol.handle` install in
+    // `registerAssetProtocolHandler` both silently depend on the
+    // scheme being privileged. `assertAssetProtocolSchemeRegistered`
+    // makes the dependency programmatic — it throws if
+    // `registerAssetProtocolScheme` hasn't been called yet.
+    //
+    // `beforeEach` already flipped the latch (see the comment in
+    // the suite's setup); calling the assert here must NOT throw.
+    expect(() => assertAssetProtocolSchemeRegistered()).not.toThrow();
   });
 });
