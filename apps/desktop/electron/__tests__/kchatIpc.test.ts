@@ -24,6 +24,9 @@
  *      before any service call.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as nodeOs from "os";
+import * as nodePath from "path";
+import * as nodeFs from "fs";
 
 const handleMock = vi.fn();
 const removeHandlerMock = vi.fn();
@@ -41,6 +44,22 @@ vi.mock("electron", () => ({
     fromWebContents: () => null,
   },
 }));
+
+// Redirect `os.homedir()` to a per-suite tmpdir so the
+// `sources:addKchatChannel` handler does not pollute the real user
+// home with test fixtures (the handler writes downloaded channel
+// files to `<homedir>/.tessera/kchat-channels/<channelId>/`).
+const TEST_HOME = nodeFs.mkdtempSync(
+  nodePath.join(nodeOs.tmpdir(), "tessera-kchat-ipc-test-"),
+);
+vi.mock("os", async () => {
+  const actual = await vi.importActual<typeof import("os")>("os");
+  return {
+    ...actual,
+    default: actual,
+    homedir: () => TEST_HOME,
+  };
+});
 
 // Bridge stub captures every audit + export call.
 const bridgeMock = {
@@ -324,5 +343,118 @@ describe("kchat:shareArtifact", () => {
     ).rejects.toThrow(/format must be one of/);
     expect(bridgeMock.bridgeExportArtifact).not.toHaveBeenCalled();
     expect(clientMock.uploadFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("sources:addKchatChannel — path-traversal hardening", () => {
+  // The KChat server is treated as untrusted: a compromised or
+  // malicious server can return file names containing path-traversal
+  // sequences. The handler MUST sanitise these so writes are scoped
+  // to the per-channel cache directory. Exercise the real fs path
+  // (the handler uses `fs.writeFile` to land bytes on disk under
+  // `~/.tessera/kchat-channels/<id>/`); after the call we read the
+  // cache directory back and assert no file landed outside of it.
+
+  async function readCacheDir(dir: string): Promise<string[]> {
+    const fs = await import("fs/promises");
+    try {
+      return await fs.readdir(dir);
+    } catch {
+      return [];
+    }
+  }
+
+  it("strips directory components from server-supplied filenames", async () => {
+    const path = await import("path");
+    const fs = await import("fs/promises");
+    clientMock.listChannelFiles.mockResolvedValue([
+      {
+        id: "fid-safe",
+        name: "report.pdf",
+        size: 100,
+        mime_type: "application/pdf",
+        extension: "pdf",
+        create_at: 1,
+      },
+      {
+        id: "fid-evil",
+        name: "../../../etc/passwd",
+        size: 100,
+        mime_type: "text/plain",
+        extension: "",
+        create_at: 2,
+      },
+    ]);
+    clientMock.downloadFile.mockResolvedValue(new Uint8Array([1, 2, 3]));
+
+    const out = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chid0000000000000000abcd",
+      "design",
+    )) as { sourceId: string; cacheDir: string };
+
+    // Both files end up inside the per-channel cache dir.
+    expect(out.cacheDir).toMatch(/kchat-channels[\\/]chid0000000000000000abcd$/);
+    const entries = await readCacheDir(out.cacheDir);
+    // The traversal-bearing entry is rewritten to `passwd` (basename
+    // strips `../../../etc/`); the safe entry survives unchanged.
+    expect(entries).toContain("report.pdf");
+    expect(entries).toContain("passwd");
+
+    // Critical: assert no file landed at the would-be escape target.
+    // If sanitisation regressed we would see writes under
+    // `<cache>/../../../etc/passwd`. Walking the resolved parent of
+    // the cache dir tells us if any sibling directory was created.
+    const cacheParent = path.dirname(out.cacheDir);
+    const siblings = await readCacheDir(cacheParent);
+    // The only entry under `<.tessera>/kchat-channels` should be the
+    // per-channel subdir; the path-traversal payload would have
+    // created an `etc` sibling if sanitisation failed.
+    expect(siblings).not.toContain("etc");
+
+    // Clean up the test artefacts so a re-run starts fresh.
+    for (const e of entries) {
+      await fs.rm(path.join(out.cacheDir, e), { force: true });
+    }
+  });
+
+  it("substitutes a synthetic name when basename strips to '.' or '..'", async () => {
+    const path = await import("path");
+    const fs = await import("fs/promises");
+    clientMock.listChannelFiles.mockResolvedValue([
+      {
+        id: "fid-dot",
+        name: ".",
+        size: 1,
+        mime_type: "",
+        extension: "",
+        create_at: 1,
+      },
+      {
+        id: "fid-dotdot",
+        name: "..",
+        size: 1,
+        mime_type: "",
+        extension: "",
+        create_at: 2,
+      },
+    ]);
+    clientMock.downloadFile.mockResolvedValue(new Uint8Array([1]));
+
+    const out = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chid0000000000000000abcd",
+      "design",
+    )) as { sourceId: string; cacheDir: string };
+
+    const entries = await readCacheDir(out.cacheDir);
+    // Both writes land inside the cache dir under the synthetic
+    // `kchat-file-<id>` naming; the cache directory itself is not
+    // overwritten because `.` and `..` are rejected by the sanitiser.
+    expect(entries).toContain("kchat-file-fid-dot");
+    expect(entries).toContain("kchat-file-fid-dotdot");
+    for (const e of entries) {
+      await fs.rm(path.join(out.cacheDir, e), { force: true });
+    }
   });
 });

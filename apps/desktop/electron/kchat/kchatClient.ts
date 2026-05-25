@@ -218,9 +218,21 @@ export class KchatClient {
    * cached `user` + state on success, transitions to `error` on
    * failure. Returns the verified user so the caller can persist it
    * in the audit log.
+   *
+   * Pass `silent: true` to skip the `connecting` state transition on
+   * success. The periodic health check uses this so a healthy
+   * connection does not flicker through `connecting → connected`
+   * every tick (which would cause spurious UI loading states in any
+   * renderer that subscribes to state pushes). On failure the
+   * silent path still transitions to `error` so the renderer learns
+   * the connection has degraded.
    */
-  async verifyConnection(): Promise<KchatUser> {
-    this.transition({ state: "connecting", serverUrl: this.serverUrl });
+  async verifyConnection(
+    opts: { silent?: boolean } = {},
+  ): Promise<KchatUser> {
+    if (!opts.silent) {
+      this.transition({ state: "connecting", serverUrl: this.serverUrl });
+    }
     try {
       const user = await this.request<KchatUser>("GET", "/api/v4/users/me");
       this.user = user;
@@ -257,7 +269,11 @@ export class KchatClient {
     if (this.healthCheckTimer) return;
     this.healthCheckTimer = setInterval(() => {
       // Fire-and-forget; verifyConnection updates the state itself.
-      void this.verifyConnection().catch(() => {});
+      // `silent: true` suppresses the transient `connecting`
+      // transition on a successful probe — we only want renderer-
+      // visible state changes when the connection actually degrades,
+      // not on every routine health-check tick.
+      void this.verifyConnection({ silent: true }).catch(() => {});
     }, HEALTH_CHECK_INTERVAL_MS);
   }
 
@@ -325,8 +341,17 @@ export class KchatClient {
     bytes: Uint8Array | Buffer,
     contentType = "application/octet-stream",
   ): Promise<KchatFileInfo> {
+    // Upload limiter is keyed globally (not per-channel). The KChat
+    // server enforces a single per-server upload quota; carving it
+    // into per-channel buckets would let a user sharing into N
+    // channels concurrently exceed the server-side throttle by Nx.
+    // The general REST limiter (`kchat:request`) below is also
+    // global for the same reason — pick consistency over per-
+    // channel fairness, which is meaningless on a single-tenant
+    // outgoing connection.
+    void channelId;
     this.rateLimiter.consume(
-      `kchat:upload:${channelId}`,
+      "kchat:upload",
       RATE_LIMIT_PROFILES["kchat:upload"],
     );
 
@@ -390,8 +415,29 @@ export class KchatClient {
     if (this.ws) return;
     if (!this.token) throw new Error("KChat token is not configured");
 
-    const wsUrl =
-      this.serverUrl.replace(/^http/, "ws") + "/api/v4/websocket";
+    // Derive the WebSocket URL via the `URL` constructor instead of
+    // a `String#replace` so we handle `https → wss` / `http → ws`
+    // explicitly and reject any non-http(s) scheme outright. The
+    // IPC validator already gates on `http(s)://` prefix, but doing
+    // this defensively here means a future caller that bypasses
+    // that validator (e.g. a config restore from disk) cannot
+    // produce a malformed `ws://` URL silently.
+    const wsUrl = (() => {
+      const u = new URL(this.serverUrl);
+      if (u.protocol === "https:") u.protocol = "wss:";
+      else if (u.protocol === "http:") u.protocol = "ws:";
+      else {
+        throw new Error(
+          `KChat server URL must use http or https, got ${u.protocol}`,
+        );
+      }
+      // Preserve a non-root base path if the operator deployed
+      // KChat behind a reverse-proxy prefix; we append the well-
+      // known websocket path to whatever the configured base path is.
+      const base = u.pathname.replace(/\/+$/, "");
+      u.pathname = `${base}/api/v4/websocket`;
+      return u.toString();
+    })();
     this.wsClosedByUser = false;
     const ws = new this.webSocketCtor(wsUrl);
     this.ws = ws;

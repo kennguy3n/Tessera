@@ -28,11 +28,15 @@ vi.mock("electron", () => ({
   },
 }));
 
+// The napi bridge surfaces serde-serialized `AuditEventType` strings.
+// The Rust enum uses `#[serde(rename_all = "snake_case")]`, so the
+// wire format is e.g. `"kchat_connected"` (not `"KchatConnected"`).
+// Mirror that here so the test fixture matches production output.
 const bridgeMock = {
   bridgeRecentAuditEvents: vi.fn().mockReturnValue([
     {
       id: "00000000-0000-0000-0000-000000000001",
-      eventType: "KchatConnected",
+      eventType: "kchat_connected",
       timestamp: "2025-01-01T00:00:00Z",
       details: "ok",
     },
@@ -57,7 +61,7 @@ beforeEach(() => {
   bridgeMock.bridgeRecentAuditEvents.mockReturnValue([
     {
       id: "00000000-0000-0000-0000-000000000001",
-      eventType: "KchatConnected",
+      eventType: "kchat_connected",
       timestamp: "2025-01-01T00:00:00Z",
       details: "ok",
     },
@@ -109,7 +113,7 @@ describe("audit:listRecent IPC handler", () => {
     expect(rows).toEqual([
       {
         id: "00000000-0000-0000-0000-000000000001",
-        eventType: "KchatConnected",
+        eventType: "kchat_connected",
         timestamp: "2025-01-01T00:00:00Z",
         details: "ok",
       },

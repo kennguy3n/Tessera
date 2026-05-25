@@ -1780,12 +1780,17 @@ pub fn bridge_recent_audit_events(limit: u32, offset: u32) -> napi::Result<Vec<A
         .into_iter()
         .map(|ev| AuditEventView {
             id: ev.id,
-            // Strip the surrounding quotes from the serde-json
-            // representation ("\"KchatConnected\"" → "KchatConnected")
-            // so the JS side gets a bare enum name. If serialisation
-            // fails (it can't in practice, the enum is `Serialize`
-            // and `Deserialize`), fall back to a debug rendering so
-            // the row still surfaces in the UI.
+            // `AuditEventType` derives `Serialize` with
+            // `#[serde(rename_all = "snake_case")]`, so the JSON
+            // representation of `KchatConnected` is the string
+            // `"\"kchat_connected\""` (quoted). Strip the surrounding
+            // quotes so the JS side receives a bare snake_case enum
+            // name (e.g. `kchat_connected`). The renderer's
+            // audit-activity card filters on snake_case prefixes
+            // (`kchat_`, `source_`, …) to match this contract. If
+            // serialisation fails (it can't in practice, the enum
+            // is `Serialize` and `Deserialize`), fall back to a
+            // debug rendering so the row still surfaces in the UI.
             event_type: serde_json::to_string(&ev.event_type).map_or_else(
                 |_| format!("{:?}", ev.event_type),
                 |s| s.trim_matches('"').to_string(),

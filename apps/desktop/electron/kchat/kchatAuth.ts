@@ -109,12 +109,18 @@ export class KchatAuthService {
   }
 
   /**
-   * Persist `token` for `serverUrl`, verify against KChat, and start
-   * the health check. The token is written to the vault BEFORE
-   * verification so a transient network failure leaves the token in
-   * place (the user can retry without re-typing it). On a hard
-   * authentication failure the vault entry is rolled back so a
-   * subsequent restore does not loop on a known-bad token.
+   * Verify `token` against `serverUrl` and, ONLY on success, persist
+   * it to the vault and start the periodic health check.
+   *
+   * Security ordering: the token is verified BEFORE it touches the
+   * vault. On any verification failure (network error, 401, bad
+   * server URL, etc.) the in-memory token is cleared and the error
+   * propagates with no vault write — so a known-bad token can never
+   * cause `restore()` to loop on an unauthenticated server. The
+   * caller is responsible for prompting the user to retry; a
+   * transient network blip costs a re-paste of the PAT, which is
+   * the right trade-off because PATs are revocable and the failure
+   * is loud.
    */
   async connect(token: string, serverUrl: string): Promise<KchatUser> {
     if (!token || token.trim().length === 0) {

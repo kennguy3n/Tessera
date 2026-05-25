@@ -370,16 +370,42 @@ export function registerKchatHandlers(): void {
       // Download the channel's existing file roster into the cache so
       // the initial index pass has content to work with. Subsequent
       // poll cycles (block B) re-fetch deltas.
+      //
+      // Security: the KChat server is treated as untrusted with
+      // respect to filename contents. Server-supplied `fi.name`
+      // values can include path-traversal sequences
+      // (`../../../.ssh/authorized_keys`, absolute paths on
+      // Windows, NUL bytes, etc.). We sanitise twice: first with
+      // `path.basename` to strip any directory component the server
+      // may have injected, then by resolving the final target path
+      // and asserting it is *inside* `cacheDir`. The defence-in-depth
+      // check catches edge cases (e.g. symlinks under the cache dir,
+      // case-folding differences on macOS/Windows) that pure name
+      // sanitisation would miss.
       try {
         const files = await svc.getClient().listChannelFiles(id);
+        const resolvedCacheDir = path.resolve(cacheDir);
         for (const fi of files) {
+          const baseName = path.basename(fi.name);
+          const safeName =
+            baseName && baseName !== "." && baseName !== ".."
+              ? baseName
+              : `kchat-file-${fi.id}`;
+          const targetPath = path.resolve(cacheDir, safeName);
+          if (
+            targetPath !== resolvedCacheDir &&
+            !targetPath.startsWith(resolvedCacheDir + path.sep)
+          ) {
+            // The sanitised path still escaped — skip and audit-log
+            // the rejection so operators can see a misbehaving
+            // server. We continue to the next file rather than
+            // aborting the entire sync.
+            bridge.bridgeLogKchatFileDownloaded(id, safeName, 0);
+            continue;
+          }
           const bytes = await svc.getClient().downloadFile(fi.id);
-          await fs.writeFile(path.join(cacheDir, fi.name), bytes);
-          bridge.bridgeLogKchatFileDownloaded(
-            id,
-            fi.name,
-            bytes.byteLength,
-          );
+          await fs.writeFile(targetPath, bytes);
+          bridge.bridgeLogKchatFileDownloaded(id, safeName, bytes.byteLength);
         }
       } catch (err) {
         throw toIpcError(err);

@@ -27,6 +27,19 @@ import type {
 const POLL_INTERVAL_MS = 30_000;
 const SEEN_LS_KEY = "tessera.kchat.lastSeenAt";
 
+/**
+ * Cap the per-tick channel-files fetch fan-out. The KChat REST
+ * limiter is global (5 req/s burst 20); each polled channel
+ * consumes one token, so walking 50 channels would burn the whole
+ * burst budget every 30 s and starve user-initiated requests
+ * during the poll window. Ten channels gives accurate-enough
+ * unread counts for the common case (most users belong to a
+ * handful of active channels) while leaving headroom for typing,
+ * shares, and source syncs. Channels beyond the cap simply do not
+ * contribute to the badge until the user opens them explicitly.
+ */
+const MAX_POLL_CHANNELS = 10;
+
 function getLastSeen(): number {
   try {
     const raw = window.localStorage.getItem(SEEN_LS_KEY);
@@ -127,12 +140,17 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
       return;
     }
     const seen = getLastSeen();
+    // Cap fan-out to `MAX_POLL_CHANNELS` to stay well under the
+    // global `kchat:request` rate-limit budget. We walk serially
+    // (not in parallel) because the limiter is token-bucket: bursts
+    // beyond the budget would `await` inside `consume`, so
+    // parallelism cannot actually speed the poll up — it would just
+    // make each individual request slower while still consuming the
+    // same number of tokens.
+    const polled = channels.slice(0, MAX_POLL_CHANNELS);
     try {
       let total = 0;
-      // Walk channels serially to respect the upload limiter (the
-      // limiter sleeps between requests anyway, so parallelism
-      // wouldn't actually speed things up).
-      for (const ch of channels) {
+      for (const ch of polled) {
         const files = await kchat.listChannelFiles(ch.id, 0, 20);
         for (const f of files) {
           if (f.create_at > seen) total += 1;

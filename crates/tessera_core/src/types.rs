@@ -185,14 +185,6 @@ pub enum SourceType {
     Jira,
     Confluence,
     Figma,
-    /// Email connector — multiplexes Gmail (Google Workspace) and
-    /// Microsoft Graph (Outlook / Microsoft 365) under one `email`
-    /// `SourceType`. The specific provider is recorded on the
-    /// per-connector config alongside the source row.
-    Email,
-    /// HubSpot CRM connector — pulls contacts / companies / deals /
-    /// notes from the HubSpot v3 API.
-    HubSpot,
     /// KChat channel connector — files shared into a KChat channel
     /// surface as an indexed source. The renderer downloads the
     /// channel files via the Node-side KChat client and indexes the
@@ -223,8 +215,6 @@ impl std::fmt::Display for SourceType {
             Self::Jira => write!(f, "jira"),
             Self::Confluence => write!(f, "confluence"),
             Self::Figma => write!(f, "figma"),
-            Self::Email => write!(f, "email"),
-            Self::HubSpot => write!(f, "hubspot"),
             Self::Kchat => write!(f, "kchat"),
         }
     }

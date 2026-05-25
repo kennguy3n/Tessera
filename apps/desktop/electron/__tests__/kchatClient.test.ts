@@ -419,4 +419,149 @@ describe("KchatClient rate limiter integration", () => {
     const args = consumeSpy.mock.calls[0];
     expect(args[0]).toBe("kchat:request");
   });
+
+  it("uses a single global upload key (not per-channel) so concurrent shares share one bucket", async () => {
+    // Per-channel scoping would let a user sharing into N channels
+    // simultaneously consume Nx the server-side upload quota. We
+    // assert the key is the bare profile name so the bucket is
+    // shared across channels.
+    const uploadResp = ok({
+      file_infos: [
+        {
+          id: "fid",
+          name: "x.bin",
+          size: 1,
+          mime_type: "application/octet-stream",
+          extension: "bin",
+          create_at: 1,
+        },
+      ],
+    });
+    const { fn: fetchFn } = makeFetch([uploadResp, uploadResp]);
+    const consumeSpy = vi.fn();
+    const stubLimiter = {
+      consume: consumeSpy,
+    } as unknown as RateLimiter;
+    const c = buildClient({ fetchFn, rateLimiter: stubLimiter });
+    c.setToken("T");
+    await c.uploadFile("chid-a", "x.bin", new Uint8Array([0]));
+    await c.uploadFile("chid-b", "x.bin", new Uint8Array([0]));
+    const uploadCalls = consumeSpy.mock.calls.filter(
+      (cl) => cl[0] === "kchat:upload",
+    );
+    expect(uploadCalls).toHaveLength(2);
+    // Neither call should embed the channel id in the key.
+    for (const cl of uploadCalls) {
+      expect(cl[0]).not.toContain("chid-a");
+      expect(cl[0]).not.toContain("chid-b");
+    }
+  });
+});
+
+describe("KchatClient.verifyConnection({ silent })", () => {
+  // The periodic health check fires `verifyConnection({ silent: true })`
+  // every 30s. A healthy probe must NOT push a transient
+  // `connecting` state to subscribers — that would flicker any
+  // renderer surface that mirrors the connection state.
+  it("does not transition to 'connecting' on a successful silent probe", async () => {
+    const userResp = ok({
+      id: "user1234567890abcdefgh",
+      username: "ken",
+      email: "k@e.com",
+      first_name: "K",
+      last_name: "N",
+      roles: "system_user",
+    });
+    const { fn: fetchFn } = makeFetch([userResp, userResp]);
+    const c = buildClient({ fetchFn });
+    c.setToken("T");
+    // Prime: one normal verification so we start in `connected`.
+    await c.verifyConnection();
+
+    const transitions: string[] = [];
+    const unsubscribe = c.onStatusChange((s) => transitions.push(s.state));
+    await c.verifyConnection({ silent: true });
+    unsubscribe();
+    // The only transition emitted should be `connected` (or none,
+    // if the new state equals the previous). It MUST NOT include
+    // `connecting`.
+    expect(transitions).not.toContain("connecting");
+  });
+
+  it("still transitions to 'error' on a failed silent probe", async () => {
+    const userResp = ok({
+      id: "user1234567890abcdefgh",
+      username: "ken",
+      email: "k@e.com",
+      first_name: "K",
+      last_name: "N",
+      roles: "system_user",
+    });
+    const failResp: MockResponse = {
+      status: 401,
+      body: '{"message":"bad token"}',
+      headers: { "content-type": "application/json" },
+    };
+    const { fn: fetchFn } = makeFetch([userResp, failResp]);
+    const c = buildClient({ fetchFn });
+    c.setToken("T");
+    await c.verifyConnection();
+
+    const transitions: string[] = [];
+    const unsubscribe = c.onStatusChange((s) => transitions.push(s.state));
+    await expect(c.verifyConnection({ silent: true })).rejects.toBeDefined();
+    unsubscribe();
+    expect(transitions).toContain("error");
+  });
+});
+
+describe("KchatClient.connectWebSocket — URL derivation", () => {
+  // The WS URL is built via the `URL` constructor so scheme
+  // conversion is explicit (https → wss, http → ws) and any other
+  // scheme is rejected outright.
+  it("converts https to wss and preserves a non-root base path", async () => {
+    const userResp = ok({
+      id: "user1234567890abcdefgh",
+      username: "ken",
+      email: "k@e.com",
+      first_name: "K",
+      last_name: "N",
+      roles: "system_user",
+    });
+    const { fn: fetchFn } = makeFetch([userResp]);
+    const { ctor, instances } = mockWebSocketCtor();
+    const c = buildClient({ fetchFn, webSocketCtor: ctor });
+    c.setServerUrl("https://kchat.example.com/k");
+    c.setToken("T");
+    await c.connectWebSocket();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].url).toBe(
+      "wss://kchat.example.com/k/api/v4/websocket",
+    );
+  });
+
+  it("converts http to ws and tolerates trailing slashes", async () => {
+    const { ctor, instances } = mockWebSocketCtor();
+    const c = buildClient({ webSocketCtor: ctor });
+    c.setServerUrl("http://localhost:8065/");
+    c.setToken("T");
+    await c.connectWebSocket();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].url).toBe(
+      "ws://localhost:8065/api/v4/websocket",
+    );
+  });
+
+  it("rejects non-http(s) server URLs", async () => {
+    const { ctor } = mockWebSocketCtor();
+    const c = buildClient({ webSocketCtor: ctor });
+    // `setServerUrl` doesn't validate (the IPC handler does), so
+    // an attacker-injected `ftp://` would land here. The WS path
+    // must refuse rather than silently produce a bogus URL.
+    c.setServerUrl("ftp://kchat.example.com");
+    c.setToken("T");
+    await expect(c.connectWebSocket()).rejects.toThrow(
+      /must use http or https/,
+    );
+  });
 });

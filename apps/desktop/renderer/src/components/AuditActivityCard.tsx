@@ -22,24 +22,45 @@ import Button from "./Button";
 import type { AuditEventView } from "../../../shared/types";
 
 // Filter category → event-type-name prefix used to match against
-// the audit row's `eventType`. The audit store emits exact enum
-// names like "KchatConnected" so we substring-match on prefix.
-// Pill labels intentionally end in "events" so they don't collide
-// with Settings section headings like "Sources" or "Model Runtime"
-// (a `getByText("Sources")` in another test must remain unambiguous).
+// the audit row's `eventType`. The Rust `AuditEventType` enum uses
+// `#[serde(rename_all = "snake_case")]`, so the napi bridge surfaces
+// strings like `"kchat_connected"`, `"source_added"`,
+// `"connector_synced"`, `"artifact_created"`, `"model_started"`,
+// etc. We substring-match on the snake_case prefix (with a trailing
+// underscore so e.g. `"kchat_"` does not accidentally match a
+// future `"kchat"` standalone variant). Pill labels intentionally
+// end in "events" so they don't collide with Settings section
+// headings like "Sources" or "Model Runtime" (a
+// `getByText("Sources")` in another test must remain unambiguous).
 const CATEGORIES: ReadonlyArray<{
   key: string;
   label: string;
   prefix: string | null;
 }> = [
   { key: "All", label: "All events", prefix: null },
-  { key: "KChat", label: "KChat events", prefix: "Kchat" },
-  { key: "Sources", label: "Source events", prefix: "Source" },
-  { key: "Connectors", label: "Connector events", prefix: "Connector" },
-  { key: "Artifacts", label: "Artifact events", prefix: "Artifact" },
-  { key: "Models", label: "Model events", prefix: "Model" },
+  { key: "KChat", label: "KChat events", prefix: "kchat_" },
+  { key: "Sources", label: "Source events", prefix: "source_" },
+  { key: "Connectors", label: "Connector events", prefix: "connector_" },
+  { key: "Artifacts", label: "Artifact events", prefix: "artifact_" },
+  { key: "Models", label: "Model events", prefix: "model_" },
 ];
 type Category = (typeof CATEGORIES)[number]["key"];
+
+// Convert a snake_case `AuditEventType` (e.g. `"kchat_connected"`)
+// into a human-readable label (e.g. `"KChat Connected"`). The Rust
+// enum is the source of truth for the wire format; this is a
+// pure-presentation transform applied at render time.
+function formatEventType(raw: string): string {
+  return raw
+    .split("_")
+    .filter((part) => part.length > 0)
+    .map((part) => {
+      if (part === "kchat") return "KChat";
+      if (part === "slm") return "SLM";
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(" ");
+}
 
 interface AuditActivityCardProps {
   /** Override `window.tessera.audit` (used by tests). */
@@ -210,7 +231,7 @@ export default function AuditActivityCard({ api }: AuditActivityCardProps = {}) 
                     color: "var(--color-text-headline)",
                   }}
                 >
-                  {ev.eventType}
+                  {formatEventType(ev.eventType)}
                 </span>
                 <time
                   dateTime={ev.timestamp}

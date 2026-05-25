@@ -7,28 +7,34 @@ import {
 } from "@testing-library/react";
 import AuditActivityCard from "../components/AuditActivityCard";
 
+// The Rust `AuditEventType` enum uses `#[serde(rename_all =
+// "snake_case")]`, so the napi bridge emits strings like
+// `"kchat_connected"`, `"artifact_created"`, etc. These fixtures
+// mirror the production wire format so the filter prefixes are
+// exercised against the same input shape the renderer sees in
+// release builds.
 const fixtures = [
   {
     id: "ev-5",
-    eventType: "KchatConnected",
+    eventType: "kchat_connected",
     timestamp: new Date(Date.now() - 60_000).toISOString(),
     details: "Connected as @alice on https://kchat.example",
   },
   {
     id: "ev-6",
-    eventType: "KchatArtifactShared",
+    eventType: "kchat_artifact_shared",
     timestamp: new Date(Date.now() - 120_000).toISOString(),
     details: "Shared art-1 to channel chan-1 as pdf",
   },
   {
     id: "ev-7",
-    eventType: "ArtifactCreated",
+    eventType: "artifact_created",
     timestamp: new Date(Date.now() - 200_000).toISOString(),
     details: "Created artifact 'Q4 PRD'",
   },
   {
     id: "ev-8",
-    eventType: "SourceAdded",
+    eventType: "source_added",
     timestamp: new Date(Date.now() - 300_000).toISOString(),
     details: "Added /docs",
   },
@@ -52,8 +58,8 @@ describe("AuditActivityCard", () => {
     expect(api.listRecent).toHaveBeenCalledWith(100, 0);
     const rows = await screen.findAllByTestId("audit-event-row");
     expect(rows).toHaveLength(fixtures.length);
-    // First row is the newest event.
-    expect(rows[0]).toHaveTextContent("KchatConnected");
+    // First row is the newest event (rendered as a humanized label).
+    expect(rows[0]).toHaveTextContent("KChat Connected");
   });
 
   it("filters to KChat events when the filter pill is clicked", async () => {
@@ -63,8 +69,8 @@ describe("AuditActivityCard", () => {
     fireEvent.click(screen.getByTestId("audit-filter-kchat"));
     const rows = await screen.findAllByTestId("audit-event-row");
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveTextContent("KchatConnected");
-    expect(rows[1]).toHaveTextContent("KchatArtifactShared");
+    expect(rows[0]).toHaveTextContent("KChat Connected");
+    expect(rows[1]).toHaveTextContent("KChat Artifact Shared");
   });
 
   it("filters to Sources events when the Sources pill is clicked", async () => {
@@ -74,7 +80,7 @@ describe("AuditActivityCard", () => {
     fireEvent.click(screen.getByTestId("audit-filter-sources"));
     const rows = await screen.findAllByTestId("audit-event-row");
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toHaveTextContent("SourceAdded");
+    expect(rows[0]).toHaveTextContent("Source Added");
   });
 
   it("shows an empty state when no rows match the active filter", async () => {

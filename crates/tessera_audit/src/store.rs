@@ -246,10 +246,7 @@ mod tests {
         // DESC ordering yields the same sequence as the insertion
         // order (newest = i=9 first, oldest = i=0 last).
         for i in 0..10u32 {
-            let mut ev = AuditEvent::new(
-                AuditEventType::SettingsChanged,
-                format!("change {i}"),
-            );
+            let mut ev = AuditEvent::new(AuditEventType::SettingsChanged, format!("change {i}"));
             // chrono::Utc::now() advances between calls but on
             // particularly fast systems two appends can collide in
             // the same nanosecond, which would make the ORDER BY
