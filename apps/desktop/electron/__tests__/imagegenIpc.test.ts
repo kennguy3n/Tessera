@@ -176,8 +176,24 @@ describe("imagegen IPC handlers", () => {
     diffusionSidecarStub = sidecarStub;
     bridgeStub = { bridgeGenerateImage: bridgeGenerateImageMock };
 
+    // Realpath the tmpdir prefix before mkdtemp — on macOS
+    // `os.tmpdir()` returns `/var/folders/...` which is a symlink to
+    // `/private/var/folders/...`. `path.resolve` does not follow
+    // symlinks but `fs.realpathSync.native` does. Production code in
+    // both `pathToAssetUrl` (assetProtocol.ts) and the imagegen
+    // handler's `generatedRoot` derives from the same `userDataDir()`
+    // call today, so the `startsWith(allowedRoot + path.sep)` check
+    // is symlink-stable by construction — but matching the
+    // `assetProtocol.test.ts:135` discipline (which DOES realpath
+    // explicitly) future-proofs this test against a refactor that
+    // makes the two derivations source from different APIs (e.g. one
+    // through `app.getPath('userData')` and one through a hand-rolled
+    // `path.join(os.homedir(), ...)` that doesn't go through
+    // Electron's symlink-resolved cache). Devin Review pass-N 📝
+    // finding flagged the inconsistency.
+    const tmpBase = fs.realpathSync.native(os.tmpdir());
     userDataDirValue = fs.mkdtempSync(
-      path.join(os.tmpdir(), "tessera-imagegen-test-"),
+      path.join(tmpBase, "tessera-imagegen-test-"),
     );
 
     defaultRateLimiter.reset();
