@@ -1150,11 +1150,28 @@ export function registerKchatHandlers(): void {
     // The returned `sourceId` is stable across re-syncs (we
     // reuse the existing row), so citations and evidence-pack
     // references survive.
-    const outcome = bridge.bridgeAddKchatChannel(cacheDir);
-    if (outcome.newlyCreated) {
-      bridge.bridgeLogKchatChannelLinked(id, name, cacheDir);
+    //
+    // Error consistency (fourteenth-pass Devin Review ANALYSIS_0002):
+    // the bridge call lives OUTSIDE the download/sync try/catch
+    // above (which catches network/disk errors and re-throws as
+    // `toIpcError`). Bridge errors are infrastructure-level
+    // (SQLite lock contention, corrupted database, native-addon
+    // panic) and don't contain the KChat token, but routing them
+    // through the same `toIpcError` wrapper keeps the renderer's
+    // error-handling surface uniform: every error coming out of
+    // `sources:addKchatChannel` lands as the same `Error` shape
+    // regardless of which phase failed. The scrub also defends
+    // against a future native-addon change that might surface a
+    // stack trace containing transient request URLs.
+    try {
+      const outcome = bridge.bridgeAddKchatChannel(cacheDir);
+      if (outcome.newlyCreated) {
+        bridge.bridgeLogKchatChannelLinked(id, name, cacheDir);
+      }
+      return { sourceId: outcome.source.id, cacheDir };
+    } catch (err) {
+      throw toIpcError(err);
     }
-    return { sourceId: outcome.source.id, cacheDir };
   }
 
   idempotentHandle(

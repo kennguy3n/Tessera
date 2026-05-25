@@ -219,6 +219,35 @@ export function assertKchatServerObjectId(
 }
 
 /**
+ * Validate a KChat object id that originated from a **caller**
+ * inside the main process (e.g. a future scheduled sync loop or
+ * an internal helper) before interpolating it into a URL path
+ * segment.
+ *
+ * The IPC layer already runs renderer-supplied ids through
+ * `assertKchatId` (`electron/ipc/kchat.ts`), so today every
+ * caller that reaches the public client methods has already
+ * validated. This helper is defense-in-depth for future callers
+ * that bypass the IPC layer (background polling, internal tests,
+ * batch sync workers) so the URL-path-segment guarantees the
+ * client relies on are enforced AT the client boundary, not
+ * upstream-of-it (fourteenth-pass Devin Review ANALYSIS_0004).
+ *
+ * Throws a plain `Error` rather than a `KchatRequestError` —
+ * server-response validation failures and caller-input failures
+ * are distinct, and the latter should not masquerade as a 502
+ * from the wire.
+ */
+function assertCallerObjectId(value: string, name: string): string {
+  if (!KCHAT_OBJECT_ID_RE.test(value)) {
+    throw new Error(
+      `${name} is not a valid KChat object id (expected 20–32 lowercase alphanumeric chars)`,
+    );
+  }
+  return value;
+}
+
+/**
  * Escape every regex metacharacter so the value is matched
  * literally when used inside `new RegExp(...)`. Used by
  * {@link KchatClient.scrubMessage} to redact the active token
@@ -530,6 +559,14 @@ export class KchatClient {
    * endpoint, all of which interpolate the id into a URL path.
    */
   async listChannels(teamId: string): Promise<KchatChannel[]> {
+    // Defense-in-depth caller-input validation (fourteenth-pass
+    // Devin Review ANALYSIS_0004): the IPC layer already validates
+    // renderer-supplied ids with `assertKchatId`, but a future
+    // internal caller (scheduled sync, batch worker) that bypasses
+    // IPC would otherwise interpolate an unchecked string into the
+    // URL path. We re-validate at the client boundary so the URL-
+    // path-segment guarantee is enforced HERE, not upstream-of-here.
+    assertCallerObjectId(teamId, "teamId");
     const me = this.user ?? (await this.verifyConnection());
     // KChat exposes the "channels for me on this team" endpoint as
     // /users/{me}/teams/{team}/channels. The /teams/{id}/channels
@@ -558,6 +595,7 @@ export class KchatClient {
     page = 0,
     perPage = 200,
   ): Promise<KchatChannelMember[]> {
+    assertCallerObjectId(channelId, "channelId");
     const members = await this.request<KchatChannelMember[]>(
       "GET",
       `/api/v4/channels/${channelId}/members?page=${page}&per_page=${perPage}`,
@@ -584,6 +622,7 @@ export class KchatClient {
     page = 0,
     perPage = 60,
   ): Promise<KchatFileInfo[]> {
+    assertCallerObjectId(channelId, "channelId");
     const files = await this.request<KchatFileInfo[]>(
       "GET",
       `/api/v4/channels/${channelId}/files?page=${page}&per_page=${perPage}`,
@@ -899,8 +938,19 @@ export class KchatClient {
     endpoint: string,
     body?: unknown,
   ): Promise<T> {
+    // Only attach `Content-Type: application/json` when a body is
+    // actually being sent. HTTP servers ignore Content-Type on
+    // bodyless requests per RFC 9110 §8.3, but strict reverse
+    // proxies and WAF rules sometimes flag the mismatch (e.g.
+    // "GET with declared JSON body but Content-Length: 0") and
+    // either rewrite the request or drop it. Sending the header
+    // only on body-carrying methods removes the foot-gun without
+    // affecting any current call site (fourteenth-pass Devin
+    // Review ANALYSIS_0006).
+    const headers: Record<string, string> =
+      body === undefined ? {} : { "Content-Type": "application/json" };
     const resp = await this.rawRequest(method, endpoint, {
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (resp.status === 204) return undefined as unknown as T;

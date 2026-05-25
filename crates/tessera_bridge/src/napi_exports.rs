@@ -1811,21 +1811,19 @@ pub fn bridge_recent_audit_events(limit: u32, offset: u32) -> napi::Result<Vec<A
         .into_iter()
         .map(|ev| AuditEventView {
             id: ev.id,
-            // `AuditEventType` derives `Serialize` with
-            // `#[serde(rename_all = "snake_case")]`, so the JSON
-            // representation of `KchatConnected` is the string
-            // `"\"kchat_connected\""` (quoted). Strip the surrounding
-            // quotes so the JS side receives a bare snake_case enum
-            // name (e.g. `kchat_connected`). The renderer's
-            // audit-activity card filters on snake_case prefixes
-            // (`kchat_`, `source_`, …) to match this contract. If
-            // serialisation fails (it can't in practice, the enum
-            // is `Serialize` and `Deserialize`), fall back to a
-            // debug rendering so the row still surfaces in the UI.
-            event_type: serde_json::to_string(&ev.event_type).map_or_else(
-                |_| format!("{:?}", ev.event_type),
-                |s| s.trim_matches('"').to_string(),
-            ),
+            // `AuditEventType` exposes the canonical snake_case
+            // identifier via {@link AuditEventType::as_snake_case},
+            // which is the same value emitted by the serde
+            // `rename_all = "snake_case"` derive but without the
+            // JSON-string + quote-trim round-trip the bridge
+            // previously used (fourteenth-pass Devin Review
+            // ANALYSIS_0007). The serde form remains the
+            // authoritative on-disk representation in SQLite; this
+            // helper just keeps the napi → JS conversion direct.
+            // A unit test in `tessera_audit::event::tests`
+            // (`as_snake_case_matches_serde_form`) asserts the two
+            // representations stay in lockstep across enum changes.
+            event_type: ev.event_type.as_snake_case().to_string(),
             timestamp: ev.timestamp.to_rfc3339(),
             details: ev.details,
         })
