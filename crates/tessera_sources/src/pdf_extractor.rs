@@ -930,6 +930,27 @@ pub fn vlm_chart_chunks_for_pdf(
 /// `Document`. The indexer threads a single `Document` from
 /// [`load_pdf_document`] through the text + OCR + chart passes so
 /// the PDF is parsed exactly once per `index_file` call.
+///
+/// Walks `doc.get_pages()` directly (no probe filter). Devin
+/// Review pass-N 📝 finding suggested filtering pages by the
+/// probe's `image_count > 0` BEFORE entering the chart loop to
+/// skip the redundant `get_page_images` calls on text-only pages
+/// — declined deliberately. The probe's `image_count` field uses
+/// `.map_or(0, |imgs| imgs.len())` which collapses ALL `Err`
+/// variants (DictKey-benign, ObjectNotFound-corrupt, Stream/Type-
+/// malformed) to `image_count = 0`, destroying the discrimination
+/// the chart pass relies on to flag genuine corruption via
+/// `fully_processed = false`. Without the second walk + variant
+/// match, a PDF with a corrupted XObject reference would skip the
+/// page silently (image_count happens to be 0 from the probe's
+/// swallowed Err) and the file would be stamped fully-indexed
+/// despite the missed page. Achieving the optimization correctly
+/// would require enriching the probe with a per-page
+/// `xobject_walk_error: Option<lopdf::Error>` (or similar) so the
+/// chart loop can re-discriminate — a larger refactor that
+/// touches the probe shape AND every existing test fixture, and
+/// for a "future optimization, not a performance bug in practice"
+/// per the bot's own framing. Kept as-is.
 pub fn vlm_chart_chunks_with_doc(
     doc: &Document,
     extractor: &dyn VisionExtractor,
