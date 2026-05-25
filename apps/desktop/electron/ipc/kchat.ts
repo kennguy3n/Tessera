@@ -65,6 +65,98 @@ type RendererFileInfo = Pick<
   "id" | "name" | "size" | "mime_type" | "extension" | "create_at"
 >;
 
+/**
+ * On-disk record of which KChat files have already been downloaded
+ * to a channel's local cache, and under which on-disk name.
+ *
+ * The manifest is the source of truth for convergent sync: on every
+ * `sources:addKchatChannel` (re-)sync we (a) skip re-downloading
+ * files whose `fi.id` already appears in the manifest AND whose
+ * recorded on-disk file still exists, and (b) unlink any files
+ * whose `fi.id` is no longer present on the server roster (server-
+ * side deletion between syncs). Without the manifest the previous
+ * behaviour was "download what's there, never clean up" — stale
+ * files that had been removed from the channel remained on disk
+ * and continued to be indexed (seventh-pass Devin Review
+ * ANALYSIS_0003).
+ *
+ * The manifest deliberately lives OUTSIDE `cacheDir` (it sits as a
+ * sibling next to the per-channel cache directory) so the indexer
+ * — which scans every file inside `cacheDir` — never picks it up
+ * as a corpus document.
+ */
+interface KchatChannelManifest {
+  /** Schema version; bumped when the on-disk shape changes. */
+  version: 1;
+  /** Channel id the manifest belongs to (sanity-check on load). */
+  channelId: string;
+  /**
+   * Map from KChat file id (`fi.id`) to the on-disk basename inside
+   * `cacheDir` we wrote the bytes under. Recorded names are the
+   * already-sanitised, already-deduped form (i.e. the same string
+   * we passed to `fs.writeFile` last time around), so consumers do
+   * not need to re-run the dedupe step.
+   */
+  files: Record<string, string>;
+}
+
+/** Path of the sidecar manifest file for a given channel cacheDir. */
+function manifestPathFor(cacheDir: string): string {
+  // `<parent>/<id>/` → `<parent>/<id>.manifest.json` so the manifest
+  // is a sibling of `cacheDir`, never inside it. This guarantees
+  // `bridgeAddKchatChannel(cacheDir)` — which scans `cacheDir` —
+  // cannot accidentally index the manifest as a corpus document.
+  return `${cacheDir.replace(/[/\\]$/, "")}.manifest.json`;
+}
+
+async function readManifest(
+  cacheDir: string,
+  channelId: string,
+): Promise<KchatChannelManifest> {
+  try {
+    const raw = await fs.readFile(manifestPathFor(cacheDir), "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      (parsed as { version?: unknown }).version === 1 &&
+      (parsed as { channelId?: unknown }).channelId === channelId &&
+      typeof (parsed as { files?: unknown }).files === "object" &&
+      (parsed as { files: unknown }).files !== null
+    ) {
+      // Re-validate each entry so a tampered manifest cannot inject
+      // arbitrary disk names.
+      const files: Record<string, string> = {};
+      for (const [k, v] of Object.entries(
+        (parsed as { files: Record<string, unknown> }).files,
+      )) {
+        if (typeof k === "string" && typeof v === "string") files[k] = v;
+      }
+      return { version: 1, channelId, files };
+    }
+  } catch {
+    // No manifest yet (first sync) or the file is unreadable / not
+    // JSON / wrong shape. Treat as empty — the worst case is one
+    // extra re-download of existing files on the next run.
+  }
+  return { version: 1, channelId, files: {} };
+}
+
+async function writeManifest(
+  cacheDir: string,
+  manifest: KchatChannelManifest,
+): Promise<void> {
+  // Write to a temp file then rename to make the manifest update
+  // atomic from a crash-recovery perspective: a torn JSON file
+  // would be rejected by `readManifest` and the next sync would
+  // fall back to "download everything", which is wasteful but not
+  // unsafe. The atomic-rename keeps the steady-state case clean.
+  const target = manifestPathFor(cacheDir);
+  const tmp = `${target}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(manifest));
+  await fs.rename(tmp, target);
+}
+
 const VALID_FORMATS = new Set([
   "markdown",
   "html",
@@ -482,21 +574,73 @@ export function registerKchatHandlers(): void {
       // so a single suffixing step always produces a fresh name —
       // but we still guard against the impossible double-collision
       // by appending the running count if it ever recurs.
+      //
+      // Convergent sync (seventh-pass Devin Review ANALYSIS_0003):
+      // we persist a manifest mapping `fi.id → finalName` after
+      // every sync so subsequent re-syncs are convergent rather
+      // than additive. The previous implementation re-downloaded
+      // (and overwrote) every file on every retry but never
+      // cleaned up files that had been removed server-side between
+      // syncs — a deleted file would remain on disk and continue
+      // to be indexed indefinitely. With the manifest we:
+      //   1. Skip downloads for `fi.id`s whose recorded local file
+      //      still exists (KChat file content is immutable per
+      //      object-id, so the bytes on disk are still valid).
+      //   2. Unlink local files whose `fi.id` is no longer in the
+      //      server roster after we've finished walking ALL pages
+      //      (deleting mid-pagination would mis-delete files we
+      //      haven't yet listed).
+      //   3. Persist the new manifest in a `finally` block so a
+      //      partial-failure mid-sync still leaves a consistent
+      //      manifest reflecting whatever bytes did land on disk
+      //      — the next retry skips them and downloads only the
+      //      remainder.
+      const PER_PAGE = 60;
+      const MAX_PAGES = 1000;
+      const resolvedCacheDir = path.resolve(cacheDir);
+      const previousManifest = await readManifest(cacheDir, id);
+      const seenNames = new Set<string>(Object.values(previousManifest.files));
+      const currentFiles: Record<string, string> = {};
+      const seenServerIds = new Set<string>();
+      let paginationCompleted = false;
       try {
-        const PER_PAGE = 60;
-        const MAX_PAGES = 1000;
-        const resolvedCacheDir = path.resolve(cacheDir);
-        const seenNames = new Set<string>();
         for (let page = 0; page < MAX_PAGES; page += 1) {
           const files = await svc
             .getClient()
             .listChannelFiles(id, page, PER_PAGE);
           for (const fi of files) {
+            if (typeof fi.id !== "string" || fi.id.length === 0) continue;
+            seenServerIds.add(fi.id);
+
+            // Fast-path: this file was downloaded in a previous run
+            // and the bytes are (presumably) still on disk. KChat
+            // file content is immutable per `fi.id` so we can skip
+            // the download and just carry the manifest entry
+            // forward. We still verify on-disk presence (and
+            // containment) so a user who manually deleted the file
+            // out of `cacheDir` triggers a re-download.
+            const recorded = previousManifest.files[fi.id];
+            if (typeof recorded === "string" && recorded.length > 0) {
+              const recordedPath = path.resolve(cacheDir, recorded);
+              if (
+                recordedPath !== resolvedCacheDir &&
+                recordedPath.startsWith(resolvedCacheDir + path.sep)
+              ) {
+                try {
+                  await fs.access(recordedPath);
+                  currentFiles[fi.id] = recorded;
+                  continue;
+                } catch {
+                  // File missing on disk — fall through and
+                  // re-download. Drop the stale dedupe entry so the
+                  // re-download can reuse the same name.
+                  seenNames.delete(recorded);
+                }
+              }
+            }
+
             const baseName = path.basename(fi.name);
-            const sanitisedId =
-              typeof fi.id === "string"
-                ? fi.id.replace(/[^a-zA-Z0-9_-]/g, "_")
-                : "";
+            const sanitisedId = fi.id.replace(/[^a-zA-Z0-9_-]/g, "_");
             const idFallback = sanitisedId
               ? `kchat-file-${sanitisedId}`
               : `kchat-file-${page}-${files.indexOf(fi)}`;
@@ -540,6 +684,7 @@ export function registerKchatHandlers(): void {
             seenNames.add(finalName);
             const bytes = await svc.getClient().downloadFile(fi.id);
             await fs.writeFile(targetPath, bytes);
+            currentFiles[fi.id] = finalName;
             bridge.bridgeLogKchatFileDownloaded(
               id,
               finalName,
@@ -548,8 +693,71 @@ export function registerKchatHandlers(): void {
           }
           if (files.length < PER_PAGE) break;
         }
+        paginationCompleted = true;
+
+        // Convergent cleanup: ONLY after we've walked every page
+        // and the server roster is complete. Anything in the
+        // previous manifest whose `fi.id` is not in the current
+        // server roster has been deleted server-side — unlink it
+        // locally so the indexer doesn't keep crawling phantom
+        // files. Skip cleanup if pagination didn't complete
+        // (`seenServerIds` would be a partial view of the roster
+        // and we'd mis-delete files we just hadn't fetched yet).
+        for (const [oldId, oldName] of Object.entries(
+          previousManifest.files,
+        )) {
+          if (seenServerIds.has(oldId)) continue;
+          if (currentFiles[oldId]) continue;
+          if (typeof oldName !== "string" || oldName.length === 0) continue;
+          const stalePath = path.resolve(cacheDir, oldName);
+          if (
+            stalePath === resolvedCacheDir ||
+            !stalePath.startsWith(resolvedCacheDir + path.sep)
+          ) {
+            // Containment check failed — the manifest is corrupt
+            // or was tampered with. Skip without unlinking (we
+            // refuse to operate on paths outside `cacheDir`).
+            continue;
+          }
+          try {
+            await fs.unlink(stalePath);
+          } catch {
+            // File may have been removed manually or the unlink
+            // raced with the indexer; either way it's safe to
+            // drop the manifest entry below — the next sync will
+            // see the missing file and converge.
+          }
+        }
       } catch (err) {
         throw toIpcError(err);
+      } finally {
+        // Persist whatever progress was made so a subsequent retry
+        // sees a consistent view of disk. On partial-failure this
+        // is a strict subset of the server roster (only files we
+        // actually wrote in this run); on full success it IS the
+        // server roster after deletions. Either way the manifest
+        // is the source of truth for the next run.
+        try {
+          // Merge: on partial failure currentFiles only contains
+          // files we wrote / verified this run — anything from the
+          // previous manifest that we didn't touch should still be
+          // recorded (we haven't unlinked it because we didn't
+          // reach the cleanup phase). On full success the deletion
+          // loop already pruned previousManifest entries we wanted
+          // gone, and seenServerIds is the authoritative roster.
+          const merged: Record<string, string> = paginationCompleted
+            ? currentFiles
+            : { ...previousManifest.files, ...currentFiles };
+          await writeManifest(cacheDir, {
+            version: 1,
+            channelId: id,
+            files: merged,
+          });
+        } catch {
+          // Best-effort: a failed manifest write is non-fatal. The
+          // worst case is the next sync re-downloads files that
+          // are already on disk, which is wasteful but correct.
+        }
       }
 
       const source = bridge.bridgeAddKchatChannel(cacheDir);

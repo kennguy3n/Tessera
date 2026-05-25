@@ -1006,3 +1006,383 @@ describe("sources:addKchatChannel — filename collision dedupe", () => {
     }
   });
 });
+
+describe("sources:addKchatChannel — convergent sync via download manifest", () => {
+  // Seventh-pass Devin Review ANALYSIS_0003.
+  //
+  // The handler writes a sidecar manifest (`<cacheDir>.manifest.json`)
+  // recording every `fi.id → on-disk filename` it has successfully
+  // downloaded. On the NEXT sync the handler:
+  //   1. Skips re-downloading files whose `fi.id` is still in the
+  //      manifest AND whose recorded file still exists on disk
+  //      (KChat file content is immutable per object-id).
+  //   2. Unlinks files whose `fi.id` is no longer in the server
+  //      roster (server-side deletion between syncs).
+  //   3. Persists a refreshed manifest even on partial failure so
+  //      a subsequent retry knows what's already on disk.
+  //
+  // The previous behaviour was "download what's there, never clean
+  // up" — server-side deletions left orphaned bytes on disk that
+  // continued to be indexed indefinitely. These tests pin the
+  // convergent-sync contract.
+
+  it("skips re-downloading files that were already downloaded in a previous sync", async () => {
+    // First sync: 2 files. downloadFile called twice.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      {
+        id: "fidcccccccccccccccccccc",
+        name: "a.md",
+        size: 2,
+        mime_type: "text/markdown",
+        extension: "md",
+        create_at: 1,
+      },
+      {
+        id: "fidddddddddddddddddddd",
+        name: "b.md",
+        size: 2,
+        mime_type: "text/markdown",
+        extension: "md",
+        create_at: 2,
+      },
+    ]);
+    clientMock.downloadFile
+      .mockResolvedValueOnce(new Uint8Array([1, 1]))
+      .mockResolvedValueOnce(new Uint8Array([2, 2]));
+
+    const out = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chidconvsync1111111one1",
+      "design-convsync-one",
+    )) as { sourceId: string; cacheDir: string };
+
+    expect(clientMock.downloadFile).toHaveBeenCalledTimes(2);
+
+    // Second sync: same 2 files in the roster. The handler MUST
+    // skip both downloads because the manifest carries them
+    // forward.
+    clientMock.downloadFile.mockClear();
+    clientMock.listChannelFiles.mockReset();
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      {
+        id: "fidcccccccccccccccccccc",
+        name: "a.md",
+        size: 2,
+        mime_type: "text/markdown",
+        extension: "md",
+        create_at: 1,
+      },
+      {
+        id: "fidddddddddddddddddddd",
+        name: "b.md",
+        size: 2,
+        mime_type: "text/markdown",
+        extension: "md",
+        create_at: 2,
+      },
+    ]);
+
+    const out2 = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chidconvsync1111111one1",
+      "design-convsync-one",
+    )) as { sourceId: string; cacheDir: string };
+
+    // Zero re-downloads: the manifest fast-path skipped both.
+    expect(clientMock.downloadFile).not.toHaveBeenCalled();
+
+    const fs = await import("fs/promises");
+    const entries = (await fs.readdir(out.cacheDir)).sort();
+    try {
+      expect(entries).toEqual(["a.md", "b.md"]);
+      expect(out2.cacheDir).toBe(out.cacheDir);
+    } finally {
+      await fs.rm(out.cacheDir, { recursive: true, force: true });
+      await fs
+        .rm(`${out.cacheDir}.manifest.json`, { force: true })
+        .catch(() => {});
+    }
+  });
+
+  it("unlinks files that were deleted server-side between syncs", async () => {
+    // First sync: 3 files.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      {
+        id: "fideeeeeeeeeeeeeeeeeee1",
+        name: "keep1.txt",
+        size: 1,
+        mime_type: "text/plain",
+        extension: "txt",
+        create_at: 1,
+      },
+      {
+        id: "fideeeeeeeeeeeeeeeeeee2",
+        name: "delete-me.txt",
+        size: 1,
+        mime_type: "text/plain",
+        extension: "txt",
+        create_at: 2,
+      },
+      {
+        id: "fideeeeeeeeeeeeeeeeeee3",
+        name: "keep2.txt",
+        size: 1,
+        mime_type: "text/plain",
+        extension: "txt",
+        create_at: 3,
+      },
+    ]);
+    clientMock.downloadFile
+      .mockResolvedValueOnce(new Uint8Array([1]))
+      .mockResolvedValueOnce(new Uint8Array([2]))
+      .mockResolvedValueOnce(new Uint8Array([3]));
+
+    const out = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chidconvsync2222222two2",
+      "design-convsync-two",
+    )) as { sourceId: string; cacheDir: string };
+
+    const fs = await import("fs/promises");
+    try {
+      // Pre-condition: all 3 files on disk after first sync.
+      const after1 = (await fs.readdir(out.cacheDir)).sort();
+      expect(after1).toEqual(["delete-me.txt", "keep1.txt", "keep2.txt"]);
+
+      // Second sync: server returns only 2 files (delete-me.txt
+      // was deleted server-side between syncs).
+      clientMock.downloadFile.mockClear();
+      clientMock.listChannelFiles.mockReset();
+      clientMock.listChannelFiles.mockResolvedValueOnce([
+        {
+          id: "fideeeeeeeeeeeeeeeeeee1",
+          name: "keep1.txt",
+          size: 1,
+          mime_type: "text/plain",
+          extension: "txt",
+          create_at: 1,
+        },
+        {
+          id: "fideeeeeeeeeeeeeeeeeee3",
+          name: "keep2.txt",
+          size: 1,
+          mime_type: "text/plain",
+          extension: "txt",
+          create_at: 3,
+        },
+      ]);
+
+      await handler("sources:addKchatChannel")(
+        EVENT,
+        "chidconvsync2222222two2",
+        "design-convsync-two",
+      );
+
+      // Convergent-sync contract: the stale file MUST be unlinked
+      // after the second sync completes, leaving only the two
+      // files that are still in the server roster.
+      const after2 = (await fs.readdir(out.cacheDir)).sort();
+      expect(after2).toEqual(["keep1.txt", "keep2.txt"]);
+      // And no re-downloads (both kept files were carried by the
+      // manifest fast-path).
+      expect(clientMock.downloadFile).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(out.cacheDir, { recursive: true, force: true });
+      await fs
+        .rm(`${out.cacheDir}.manifest.json`, { force: true })
+        .catch(() => {});
+    }
+  });
+
+  it("re-downloads a file that was manually deleted from cacheDir between syncs", async () => {
+    // First sync: 1 file.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      {
+        id: "fidffffffffffffffffffff",
+        name: "report.md",
+        size: 2,
+        mime_type: "text/markdown",
+        extension: "md",
+        create_at: 1,
+      },
+    ]);
+    clientMock.downloadFile.mockResolvedValueOnce(new Uint8Array([7, 7]));
+
+    const out = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chidconvsync3333thr3ee3",
+      "design-convsync-three",
+    )) as { sourceId: string; cacheDir: string };
+
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    try {
+      // User manually deletes the file from disk (e.g. via Finder).
+      await fs.unlink(path.join(out.cacheDir, "report.md"));
+
+      // Second sync: server still has the file.
+      clientMock.downloadFile.mockClear();
+      clientMock.listChannelFiles.mockReset();
+      clientMock.listChannelFiles.mockResolvedValueOnce([
+        {
+          id: "fidffffffffffffffffffff",
+          name: "report.md",
+          size: 2,
+          mime_type: "text/markdown",
+          extension: "md",
+          create_at: 1,
+        },
+      ]);
+      clientMock.downloadFile.mockResolvedValueOnce(new Uint8Array([8, 8]));
+
+      await handler("sources:addKchatChannel")(
+        EVENT,
+        "chidconvsync3333thr3ee3",
+        "design-convsync-three",
+      );
+
+      // The handler MUST re-download because the recorded file
+      // was missing from disk — manifest fast-path verifies
+      // on-disk presence before skipping.
+      expect(clientMock.downloadFile).toHaveBeenCalledTimes(1);
+      const bytes = await fs.readFile(path.join(out.cacheDir, "report.md"));
+      expect(Array.from(bytes)).toEqual([8, 8]);
+    } finally {
+      await fs.rm(out.cacheDir, { recursive: true, force: true });
+      await fs
+        .rm(`${out.cacheDir}.manifest.json`, { force: true })
+        .catch(() => {});
+    }
+  });
+
+  it("persists partial-failure progress so a retry resumes from where it stopped", async () => {
+    // Mid-sync failure: download #2 throws, but we already wrote
+    // file #1 to disk. The manifest written in `finally` must
+    // record file #1 so the retry sync skips it.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      {
+        id: "fidggggggggggggggggggg1",
+        name: "first.md",
+        size: 1,
+        mime_type: "text/markdown",
+        extension: "md",
+        create_at: 1,
+      },
+      {
+        id: "fidggggggggggggggggggg2",
+        name: "second.md",
+        size: 1,
+        mime_type: "text/markdown",
+        extension: "md",
+        create_at: 2,
+      },
+    ]);
+    clientMock.downloadFile
+      .mockResolvedValueOnce(new Uint8Array([1]))
+      .mockRejectedValueOnce(new Error("network blip"));
+
+    await expect(
+      handler("sources:addKchatChannel")(
+        EVENT,
+        "chidconvsync4444four4ee",
+        "design-convsync-four",
+      ),
+    ).rejects.toThrow(/network blip/);
+
+    // Retry: server returns the same 2 files. The first one was
+    // already on disk + recorded in the manifest, so the retry
+    // must download only the second.
+    clientMock.downloadFile.mockClear();
+    clientMock.listChannelFiles.mockReset();
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      {
+        id: "fidggggggggggggggggggg1",
+        name: "first.md",
+        size: 1,
+        mime_type: "text/markdown",
+        extension: "md",
+        create_at: 1,
+      },
+      {
+        id: "fidggggggggggggggggggg2",
+        name: "second.md",
+        size: 1,
+        mime_type: "text/markdown",
+        extension: "md",
+        create_at: 2,
+      },
+    ]);
+    clientMock.downloadFile.mockResolvedValueOnce(new Uint8Array([2]));
+
+    const out = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chidconvsync4444four4ee",
+      "design-convsync-four",
+    )) as { sourceId: string; cacheDir: string };
+
+    expect(clientMock.downloadFile).toHaveBeenCalledTimes(1);
+    expect(clientMock.downloadFile).toHaveBeenCalledWith(
+      "fidggggggggggggggggggg2",
+    );
+
+    const fs = await import("fs/promises");
+    try {
+      const entries = (await fs.readdir(out.cacheDir)).sort();
+      expect(entries).toEqual(["first.md", "second.md"]);
+    } finally {
+      await fs.rm(out.cacheDir, { recursive: true, force: true });
+      await fs
+        .rm(`${out.cacheDir}.manifest.json`, { force: true })
+        .catch(() => {});
+    }
+  });
+
+  it("manifest lives OUTSIDE cacheDir so the indexer never picks it up as a corpus document", async () => {
+    // The manifest is a sibling file (`<cacheDir>.manifest.json`),
+    // never inside `cacheDir`. This guarantees
+    // `bridgeAddKchatChannel(cacheDir)` — which scans the contents
+    // of cacheDir — cannot accidentally index the manifest as a
+    // corpus document.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      {
+        id: "fidhhhhhhhhhhhhhhhhhhhh",
+        name: "only.md",
+        size: 1,
+        mime_type: "text/markdown",
+        extension: "md",
+        create_at: 1,
+      },
+    ]);
+    clientMock.downloadFile.mockResolvedValueOnce(new Uint8Array([1]));
+
+    const out = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chidconvsync555five555a",
+      "design-convsync-five",
+    )) as { sourceId: string; cacheDir: string };
+
+    const fs = await import("fs/promises");
+    try {
+      // Manifest exists as a sibling.
+      const manifestPath = `${out.cacheDir}.manifest.json`;
+      const manifestStat = await fs.stat(manifestPath);
+      expect(manifestStat.isFile()).toBe(true);
+      const manifestJson = JSON.parse(
+        await fs.readFile(manifestPath, "utf-8"),
+      );
+      expect(manifestJson).toEqual({
+        version: 1,
+        channelId: "chidconvsync555five555a",
+        files: { fidhhhhhhhhhhhhhhhhhhhh: "only.md" },
+      });
+      // And only the corpus file inside cacheDir — NO manifest.
+      const inside = (await fs.readdir(out.cacheDir)).sort();
+      expect(inside).toEqual(["only.md"]);
+    } finally {
+      await fs.rm(out.cacheDir, { recursive: true, force: true });
+      await fs
+        .rm(`${out.cacheDir}.manifest.json`, { force: true })
+        .catch(() => {});
+    }
+  });
+});

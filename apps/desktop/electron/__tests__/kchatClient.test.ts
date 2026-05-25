@@ -377,6 +377,172 @@ describe("KchatClient.uploadFile + downloadFile", () => {
   });
 });
 
+describe("KchatClient.uploadFile retry semantics (seventh-pass invariant)", () => {
+  // `POST /api/v4/files` is non-idempotent: the KChat server may
+  // persist the file and crash before sending us the response, in
+  // which case a retry would produce a duplicate file in the
+  // channel. The seventh-pass fix (Devin Review ANALYSIS_0005)
+  // constrains uploadFile's retry-set to 408/429 only — transport-
+  // layer codes where the server is documented to NOT have processed
+  // the request. 5xx responses must surface to the caller on the
+  // first attempt rather than being retried into a duplicate.
+  //
+  // These tests pin that contract by counting the number of fetches
+  // the client issues per status code.
+
+  function freshLimiter() {
+    return new RateLimiter();
+  }
+
+  it("does NOT retry uploadFile on 503 (5xx is server-may-have-processed)", async () => {
+    const { fn: fetchFn, calls } = makeFetch([
+      { status: 503, statusText: "Overloaded", body: { error: "x" } },
+    ]);
+    const c = buildClient({ fetchFn, rateLimiter: freshLimiter() });
+    c.setToken("T");
+    await expect(
+      c.uploadFile(
+        "chid0000000000000000abcd",
+        "report.md",
+        Buffer.from("hi"),
+        "text/markdown",
+      ),
+    ).rejects.toThrow(/KChat 503|Overloaded/);
+    // Single attempt: the 503 surfaces immediately rather than
+    // being retried into a possible duplicate upload.
+    expect(calls.length).toBe(1);
+  });
+
+  it("does NOT retry uploadFile on 500 / 502 / 504 (every 5xx is non-retryable for POST /files)", async () => {
+    for (const status of [500, 502, 504]) {
+      const { fn: fetchFn, calls } = makeFetch([
+        { status, statusText: "Server error", body: { error: "x" } },
+      ]);
+      const c = buildClient({ fetchFn, rateLimiter: freshLimiter() });
+      c.setToken("T");
+      await expect(
+        c.uploadFile(
+          "chid0000000000000000abcd",
+          "report.md",
+          Buffer.from("hi"),
+          "text/markdown",
+        ),
+      ).rejects.toThrow(new RegExp(`KChat ${status}|Server error`));
+      expect(calls.length).toBe(1);
+    }
+  });
+
+  it("DOES retry uploadFile on 429 (rate-limit — server did not process)", async () => {
+    const sleepSpy = vi.fn(async () => {});
+    const { fn: fetchFn, calls } = makeFetch([
+      { status: 429, statusText: "Too Many Requests", body: { error: "rl" } },
+      {
+        status: 200,
+        statusText: "OK",
+        body: {
+          file_infos: [
+            {
+              id: "fid000000000000000000abcd",
+              user_id: "uid",
+              channel_id: "chid",
+              name: "report.md",
+              size: 2,
+              mime_type: "text/markdown",
+              extension: "md",
+              create_at: 0,
+              update_at: 0,
+            },
+          ],
+        },
+      },
+    ]);
+    const c = buildClient({
+      fetchFn,
+      sleep: sleepSpy,
+      rateLimiter: freshLimiter(),
+    });
+    c.setToken("T");
+    const info = await c.uploadFile(
+      "chid0000000000000000abcd",
+      "report.md",
+      Buffer.from("hi"),
+      "text/markdown",
+    );
+    expect(info.id).toBe("fid000000000000000000abcd");
+    // 2 attempts: 429 then 200. 429 is in the
+    // NON_IDEMPOTENT_RETRYABLE_STATUSES set because the server is
+    // documented to NOT have processed the request.
+    expect(calls.length).toBe(2);
+    expect(sleepSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("DOES retry uploadFile on 408 (request timeout — server did not process)", async () => {
+    const sleepSpy = vi.fn(async () => {});
+    const { fn: fetchFn, calls } = makeFetch([
+      { status: 408, statusText: "Request Timeout", body: { error: "to" } },
+      {
+        status: 200,
+        statusText: "OK",
+        body: {
+          file_infos: [
+            {
+              id: "fid000000000000000000abcd",
+              user_id: "uid",
+              channel_id: "chid",
+              name: "report.md",
+              size: 2,
+              mime_type: "text/markdown",
+              extension: "md",
+              create_at: 0,
+              update_at: 0,
+            },
+          ],
+        },
+      },
+    ]);
+    const c = buildClient({
+      fetchFn,
+      sleep: sleepSpy,
+      rateLimiter: freshLimiter(),
+    });
+    c.setToken("T");
+    const info = await c.uploadFile(
+      "chid0000000000000000abcd",
+      "report.md",
+      Buffer.from("hi"),
+      "text/markdown",
+    );
+    expect(info.id).toBe("fid000000000000000000abcd");
+    expect(calls.length).toBe(2);
+    expect(sleepSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("idempotent GET listChannelFiles still retries on 503 (default retry-set unchanged)", async () => {
+    // Belt-and-braces: the seventh-pass change must NOT regress
+    // retry behaviour for idempotent verbs. listChannelFiles is a
+    // GET; a 503 there is safe to retry because GETs cannot
+    // produce duplicate side-effects.
+    const sleepSpy = vi.fn(async () => {});
+    const { fn: fetchFn, calls } = makeFetch([
+      { status: 503, statusText: "Overloaded", body: { error: "x" } },
+      { status: 200, statusText: "OK", body: [] },
+    ]);
+    const c = buildClient({
+      fetchFn,
+      sleep: sleepSpy,
+      rateLimiter: freshLimiter(),
+    });
+    c.setToken("T");
+    const files = await c.listChannelFiles(
+      "chid0000000000000000abcd",
+      0,
+      60,
+    );
+    expect(files).toEqual([]);
+    expect(calls.length).toBe(2);
+  });
+});
+
 describe("KchatClient.setToken null invariant", () => {
   // setToken(null) must tear down the WebSocket so the reconnect
   // loop cannot fire `connectWebSocket()` with no token and produce

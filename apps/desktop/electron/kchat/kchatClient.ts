@@ -38,8 +38,36 @@ import {
 /** Default KChat-hosted endpoint. Self-hosted servers override via `setServerUrl`. */
 export const DEFAULT_KCHAT_SERVER = "https://kchat.com";
 
-/** Status codes treated as transient and retried with backoff. */
+/**
+ * Status codes treated as transient and retried with backoff.
+ *
+ * Default set used by all idempotent verbs (GET, PUT, DELETE) and by
+ * POST endpoints whose server-side semantics make a duplicate
+ * invocation harmless (e.g. `/users/login` — repeated logins replace
+ * the previous session token).
+ *
+ * Non-idempotent POSTs (file uploads, post creation) MUST opt into
+ * the narrower {@link NON_IDEMPOTENT_RETRYABLE_STATUSES} set. Retrying
+ * a 500/502/503/504 on a non-idempotent POST can produce duplicate
+ * server-side effects (a second file in the channel, a second message
+ * in the timeline) because the server may have processed the first
+ * request and crashed before sending the response — see seventh-pass
+ * Devin Review ANALYSIS_0005.
+ */
 const RETRYABLE_STATUSES = new Set<number>([408, 429, 500, 502, 503, 504]);
+
+/**
+ * Retryable-status subset for non-idempotent POST endpoints.
+ *
+ * 408 (Request Timeout) and 429 (Too Many Requests) are the only
+ * codes where the server is documented to NOT have processed the
+ * request — a retry cannot cause a duplicate side-effect. Every
+ * 5xx is excluded because the server received the request bytes
+ * and may have committed the side-effect before the connection
+ * dropped; we surface the 5xx to the caller so the user (or the
+ * audit layer) decides whether to retry.
+ */
+const NON_IDEMPOTENT_RETRYABLE_STATUSES = new Set<number>([408, 429]);
 
 /** Total attempts before a retryable failure is surfaced to the caller. */
 const MAX_ATTEMPTS = 4;
@@ -630,11 +658,23 @@ export class KchatClient {
       Buffer.from(tail, "utf-8"),
     ]);
 
+    // `uploadFile` POSTs to a non-idempotent endpoint — retrying on
+    // 5xx would risk duplicate files in the channel because the
+    // KChat server may have persisted the file before the response
+    // failed to reach us. Constrain retries to the codes where the
+    // server is documented to NOT have processed the request
+    // (408/429); a 5xx surfaces immediately so the caller (the IPC
+    // handler in `ipc/kchat.ts`) can decide whether to re-attempt.
+    // The handler then re-runs the entire share flow with a fresh
+    // export, which is the right behaviour: the user can see the
+    // failure, the audit log records it (via the partial-success
+    // path), and there's no silent duplication.
     const resp = await this.rawRequest("POST", "/api/v4/files", {
       headers: {
         "Content-Type": `multipart/form-data; boundary=${boundary}`,
       },
       body,
+      retryableStatuses: NON_IDEMPOTENT_RETRYABLE_STATUSES,
     });
     const parsed = (await resp.json()) as KchatFileUploadResponse;
     if (!parsed.file_infos || parsed.file_infos.length === 0) {
@@ -877,7 +917,22 @@ export class KchatClient {
   private async rawRequest(
     method: string,
     endpoint: string,
-    init: { headers?: Record<string, string>; body?: BodyInit | undefined } = {},
+    init: {
+      headers?: Record<string, string>;
+      body?: BodyInit | undefined;
+      /**
+       * Per-call override of the retryable-status set. Non-idempotent
+       * POSTs (`uploadFile`) pass {@link NON_IDEMPOTENT_RETRYABLE_STATUSES}
+       * so 5xx responses are NOT retried; all idempotent verbs use
+       * the default {@link RETRYABLE_STATUSES}. The override is
+       * scoped per-call (rather than per-endpoint or per-method)
+       * because the safe-to-retry property is a function of
+       * endpoint semantics, not HTTP verb — KChat's `users/login`
+       * is a POST that IS safe to retry, and `posts` create is a
+       * POST that ISN'T.
+       */
+      retryableStatuses?: Set<number>;
+    } = {},
   ): Promise<Response> {
     if (!this.token) throw new Error("KChat token is not configured");
 
@@ -892,6 +947,7 @@ export class KchatClient {
       Accept: "application/json",
       ...(init.headers ?? {}),
     };
+    const retryable = init.retryableStatuses ?? RETRYABLE_STATUSES;
 
     let lastError: unknown = null;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -902,7 +958,7 @@ export class KchatClient {
           body: init.body as BodyInit,
         });
         if (resp.ok) return resp;
-        if (!RETRYABLE_STATUSES.has(resp.status)) {
+        if (!retryable.has(resp.status)) {
           const text = await safeReadText(resp);
           throw new KchatRequestError(
             resp.status,
@@ -918,7 +974,7 @@ export class KchatClient {
           await safeReadText(resp),
         );
       } catch (err) {
-        if (err instanceof KchatRequestError && !RETRYABLE_STATUSES.has(err.status)) {
+        if (err instanceof KchatRequestError && !retryable.has(err.status)) {
           throw err;
         }
         lastError = err;
