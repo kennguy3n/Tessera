@@ -476,8 +476,15 @@ describe("LandingPageEditor hero image", () => {
       testimonials: [],
       colorScheme: {},
     });
+    // Assert the full escaped substring under the exact attribute
+    // key so this test specifically pins the width/height escape
+    // behaviour — a weaker `toContain("&quot;")` would pass even
+    // without the wrap because `escapeHtml(assetUrl)` /
+    // `escapeHtml(headline)` already produce `&quot;` elsewhere in
+    // the template. Devin Review PR #41 follow-up tightening.
     expect(html).not.toContain('onload="alert(1)');
     expect(html).not.toContain('onerror="alert(2)');
-    expect(html).toContain("&quot;");
+    expect(html).toContain('width="1024&quot; onload=&quot;alert(1)"');
+    expect(html).toContain('height="1024&quot; onerror=&quot;alert(2)"');
   });
 });

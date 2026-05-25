@@ -464,12 +464,21 @@ describe("InfographicEditor hero image", () => {
         height: hostileHeight,
       },
     });
-    // The hostile quote+attribute injection must be HTML-escaped
-    // — the raw `onload="alert(1)` must NOT appear in the
-    // output, and the escaped `&quot; onload=&quot;alert(1)` form
-    // (or equivalent) must.
+    // The hostile quote+attribute injection must be HTML-escaped:
+    // the raw `onload="alert(1)` / `onerror="alert(2)` sequence must
+    // NOT appear in the output, and the escaped form must be
+    // confined INSIDE the `width="..."` / `height="..."` attribute
+    // slot (i.e. the closing `"` after the hostile payload is the
+    // attribute terminator, not an attacker-controlled one). Assert
+    // the full escaped substring under the exact attribute key so
+    // this test specifically pins the width/height escape
+    // behaviour — a weaker `toContain("&quot;")` would pass even
+    // without the wrap because `escapeHtml(assetUrl)` and
+    // `escapeHtml(title)` already produce `&quot;` elsewhere in
+    // the template. Devin Review PR #41 follow-up tightening.
     expect(html).not.toContain('onload="alert(1)');
     expect(html).not.toContain('onerror="alert(2)');
-    expect(html).toContain("&quot;");
+    expect(html).toContain('width="1024&quot; onload=&quot;alert(1)"');
+    expect(html).toContain('height="1024&quot; onerror=&quot;alert(2)"');
   });
 });
