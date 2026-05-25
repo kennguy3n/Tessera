@@ -77,9 +77,22 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // Settings is reflected without a page reload. 10s is much
   // shorter than the file-poll interval because the status read is
   // cheap (a single in-memory lookup in main process).
+  //
+  // Polling teardown when the feature is unavailable: when
+  // `kchat:isAvailable` returns false (enterprise licence not
+  // active, future opt-out flag, etc.), the component renders
+  // `null` — but without this early return the 10s interval would
+  // continue burning an IPC call on every tick for the lifetime of
+  // the page. The effect depends on `available`, so once the first
+  // probe resolves to `false` it re-runs with the new value and
+  // bails out before arming the next interval. This was raised in
+  // Devin Review fifth-pass as ANALYSIS_0005.
   useEffect(() => {
     if (!kchat) {
       setAvailable(false);
+      return;
+    }
+    if (available === false) {
       return;
     }
     let cancelled = false;

@@ -112,6 +112,46 @@ describe("KchatSidebarSection", () => {
     );
   });
 
+  it("stops polling kchat.status() when isAvailable() returns false", async () => {
+    // When the KChat feature is gated off (enterprise licence not
+    // active, future opt-out flag, etc.), `isAvailable()` returns
+    // false and the component renders `null`. The 10s status-probe
+    // interval must NOT continue firing in that state — otherwise
+    // the page would burn an IPC call every tick for its entire
+    // lifetime. Regression pin for Devin Review ANALYSIS_0005
+    // (fifth pass).
+    const status = vi.fn().mockResolvedValue({ state: "disconnected" });
+    const api = makeApi({
+      isAvailable: vi.fn().mockResolvedValue(false),
+      status,
+    });
+    const { container } = render(<KchatSidebarSection api={api} />);
+    // Let the initial probe resolve (it learns `available=false`
+    // and bails) and React commit the re-render.
+    await waitFor(() => expect(api.isAvailable).toHaveBeenCalledTimes(1));
+    // Nothing rendered — the feature is unavailable.
+    expect(
+      container.querySelector('[data-testid="kchat-sidebar"]'),
+    ).toBeNull();
+    // The initial probe MAY have invoked `status` once before the
+    // effect re-ran with `available=false` (race-free with the
+    // `if (available === null)` gate above), but importantly: now
+    // that `available` is `false`, neither `status` nor
+    // `isAvailable` should fire again, no matter how much time
+    // passes.
+    const statusCallsAfterProbe = status.mock.calls.length;
+    const isAvailableCallsAfterProbe = (
+      api.isAvailable as ReturnType<typeof vi.fn>
+    ).mock.calls.length;
+    // Advance well past several 10s ticks. With the bug present, the
+    // interval would fire 3 more times → 3 more `status` calls.
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(status.mock.calls.length).toBe(statusCallsAfterProbe);
+    expect(
+      (api.isAvailable as ReturnType<typeof vi.fn>).mock.calls.length,
+    ).toBe(isAvailableCallsAfterProbe);
+  });
+
   it("caps per-poll listChannelFiles fan-out to MAX_POLL_CHANNELS", async () => {
     // 25 channels in the default team — the sidebar must only fetch
     // file lists for the first MAX_POLL_CHANNELS (= 10) to avoid

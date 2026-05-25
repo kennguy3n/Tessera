@@ -433,10 +433,28 @@ export function registerKchatHandlers(): void {
       // here so the safeName cannot escape `cacheDir` even via the
       // fallback path. The downstream containment check still runs
       // — this is belt-and-braces, not a replacement for it.
+      //
+      // Filename-collision handling: KChat channels have a flat file
+      // namespace, so two users can upload `report.pdf` to the same
+      // channel without any server-side rename. If we wrote both to
+      // disk under the same `safeName`, the second `fs.writeFile`
+      // would silently overwrite the first — the audit log would
+      // still record both downloads, but only one set of bytes would
+      // persist, and the indexer would see fewer files than the
+      // channel actually contains. We dedupe by tracking the names
+      // already written across the entire pagination loop (a single
+      // `Set<string>` spanning every page); on collision we insert
+      // the sanitised KChat file id between the stem and the
+      // extension (`report.pdf` → `report-fid…xyz.pdf`). The id is
+      // unique per file (KChat object-id invariant validated above),
+      // so a single suffixing step always produces a fresh name —
+      // but we still guard against the impossible double-collision
+      // by appending the running count if it ever recurs.
       try {
         const PER_PAGE = 60;
         const MAX_PAGES = 1000;
         const resolvedCacheDir = path.resolve(cacheDir);
+        const seenNames = new Set<string>();
         for (let page = 0; page < MAX_PAGES; page += 1) {
           const files = await svc
             .getClient()
@@ -454,7 +472,28 @@ export function registerKchatHandlers(): void {
               baseName && baseName !== "." && baseName !== ".."
                 ? baseName
                 : idFallback;
-            const targetPath = path.resolve(cacheDir, safeName);
+            // Dedupe within this channel sync: if we already wrote a
+            // file with this name on an earlier page (or earlier in
+            // this page), suffix the sanitised id between stem and
+            // extension so both files survive on disk. The fallback
+            // suffix uses the running `seenNames.size` if the
+            // primary `<stem>-<id>.<ext>` is also taken (shouldn't
+            // happen given the object-id invariant, but the
+            // containment + dedupe contract should hold even if a
+            // future server change relaxes id uniqueness).
+            let finalName = safeName;
+            if (seenNames.has(finalName)) {
+              const ext = path.extname(safeName);
+              const stem = ext
+                ? safeName.slice(0, safeName.length - ext.length)
+                : safeName;
+              const suffix = sanitisedId || `${page}-${files.indexOf(fi)}`;
+              finalName = `${stem}-${suffix}${ext}`;
+              if (seenNames.has(finalName)) {
+                finalName = `${stem}-${suffix}-${seenNames.size}${ext}`;
+              }
+            }
+            const targetPath = path.resolve(cacheDir, finalName);
             if (
               targetPath !== resolvedCacheDir &&
               !targetPath.startsWith(resolvedCacheDir + path.sep)
@@ -463,14 +502,15 @@ export function registerKchatHandlers(): void {
               // the rejection so operators can see a misbehaving
               // server. We continue to the next file rather than
               // aborting the entire sync.
-              bridge.bridgeLogKchatFileDownloaded(id, safeName, 0);
+              bridge.bridgeLogKchatFileDownloaded(id, finalName, 0);
               continue;
             }
+            seenNames.add(finalName);
             const bytes = await svc.getClient().downloadFile(fi.id);
             await fs.writeFile(targetPath, bytes);
             bridge.bridgeLogKchatFileDownloaded(
               id,
-              safeName,
+              finalName,
               bytes.byteLength,
             );
           }

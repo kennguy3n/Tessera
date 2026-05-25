@@ -707,3 +707,200 @@ describe("sources:addKchatChannel — pagination", () => {
     }
   });
 });
+
+describe("sources:addKchatChannel — filename collision dedupe", () => {
+  // KChat channels have a flat file namespace — two users can each
+  // upload `report.pdf` to the same channel. The previous handler
+  // wrote each file using `path.basename(fi.name)` directly, so the
+  // second `fs.writeFile` silently overwrote the first. The fix
+  // tracks an in-loop `Set<string>` of names already written and
+  // suffixes the sanitised KChat file id between stem and extension
+  // when a collision is detected. This pins that contract: two files
+  // with the same `name` (and even three!) must all persist on disk
+  // and each one must be audit-logged with its on-disk filename.
+
+  // The handler derives cacheDir from `<homedir>/.tessera/kchat-channels/<channelId>/`,
+  // so we vary the channelId per test to keep on-disk state
+  // hermetic without cross-test interference.
+
+  it("preserves all files when two share the same basename within one page", async () => {
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      {
+        id: "fidaaaaaaaaaaaaaaaaaa",
+        name: "report.pdf",
+        size: 3,
+        mime_type: "application/pdf",
+        extension: "pdf",
+        create_at: 1,
+      },
+      {
+        id: "fidbbbbbbbbbbbbbbbbbb",
+        name: "report.pdf",
+        size: 4,
+        mime_type: "application/pdf",
+        extension: "pdf",
+        create_at: 2,
+      },
+    ]);
+    clientMock.downloadFile
+      .mockResolvedValueOnce(new Uint8Array([1, 2, 3]))
+      .mockResolvedValueOnce(new Uint8Array([9, 9, 9, 9]));
+
+    const out = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chiddedupe11111111111one",
+      "design-dedupe-one",
+    )) as { sourceId: string; cacheDir: string };
+
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const entries = (await fs.readdir(out.cacheDir)).sort();
+    try {
+      // Both files must persist: the first under its original name,
+      // the second under `report-<sanitised-id>.pdf`.
+      expect(entries).toEqual([
+        "report-fidbbbbbbbbbbbbbbbbbb.pdf",
+        "report.pdf",
+      ]);
+      const firstBytes = await fs.readFile(
+        path.join(out.cacheDir, "report.pdf"),
+      );
+      const secondBytes = await fs.readFile(
+        path.join(out.cacheDir, "report-fidbbbbbbbbbbbbbbbbbb.pdf"),
+      );
+      expect(Array.from(firstBytes)).toEqual([1, 2, 3]);
+      expect(Array.from(secondBytes)).toEqual([9, 9, 9, 9]);
+      // Audit log must record BOTH downloads — one under the
+      // original name, one under the deduped name. This is the
+      // audit-to-disk consistency invariant the original bug broke.
+      const auditedNames = bridgeMock.bridgeLogKchatFileDownloaded.mock.calls
+        .map((c) => c[1] as string)
+        .sort();
+      expect(auditedNames).toEqual([
+        "report-fidbbbbbbbbbbbbbbbbbb.pdf",
+        "report.pdf",
+      ]);
+    } finally {
+      await fs.rm(out.cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it("dedupes across pages, not just within a single page", async () => {
+    // The dedupe Set must span the entire pagination loop, not
+    // reset between pages. We exercise this by emitting two full
+    // pages (PER_PAGE = 60) where page 0 contains a `notes.pdf`
+    // and page 1 contains a second `notes.pdf` (after 59 filler
+    // files). The handler must continue past page 0 because the
+    // page-length terminator only fires on a SHORT page; only when
+    // both `notes.pdf` files are on disk under distinct names is
+    // the invariant satisfied.
+    const PER_PAGE = 60;
+    const page0: unknown[] = [
+      {
+        id: "fidpage0aaaaaaaaaaaa",
+        name: "notes.pdf",
+        size: 1,
+        mime_type: "application/pdf",
+        extension: "pdf",
+        create_at: 1,
+      },
+    ];
+    for (let i = 0; i < PER_PAGE - 1; i += 1) {
+      page0.push({
+        id: `fidpage0filler${String(i).padStart(2, "0")}aa`,
+        name: `filler-${i}.txt`,
+        size: 1,
+        mime_type: "text/plain",
+        extension: "txt",
+        create_at: 100 + i,
+      });
+    }
+    const page1: unknown[] = [
+      {
+        id: "fidpage1bbbbbbbbbbbb",
+        name: "notes.pdf",
+        size: 2,
+        mime_type: "application/pdf",
+        extension: "pdf",
+        create_at: 200,
+      },
+    ];
+    clientMock.listChannelFiles
+      .mockResolvedValueOnce(page0)
+      .mockResolvedValueOnce(page1);
+    clientMock.downloadFile.mockResolvedValue(new Uint8Array([0]));
+
+    const out = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chiddedupe22222222222two",
+      "design-dedupe-two",
+    )) as { sourceId: string; cacheDir: string };
+
+    const fs = await import("fs/promises");
+    const entries = (await fs.readdir(out.cacheDir)).sort();
+    try {
+      // The two `notes.pdf` files must BOTH exist — one under the
+      // original name, one under the dedupe-suffixed name. The
+      // filler files prove the loop did walk into page 1.
+      expect(entries).toContain("notes.pdf");
+      expect(entries).toContain("notes-fidpage1bbbbbbbbbbbb.pdf");
+      expect(entries.length).toBe(PER_PAGE + 1);
+    } finally {
+      await fs.rm(out.cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it("dedupes more than two collisions on the same name", async () => {
+    // Three `screenshot.png` uploads. The first keeps the original
+    // name; the next two get suffixed forms. All three bytes must
+    // persist on disk.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      {
+        id: "fid111111111111111111",
+        name: "screenshot.png",
+        size: 1,
+        mime_type: "image/png",
+        extension: "png",
+        create_at: 1,
+      },
+      {
+        id: "fid222222222222222222",
+        name: "screenshot.png",
+        size: 2,
+        mime_type: "image/png",
+        extension: "png",
+        create_at: 2,
+      },
+      {
+        id: "fid333333333333333333",
+        name: "screenshot.png",
+        size: 3,
+        mime_type: "image/png",
+        extension: "png",
+        create_at: 3,
+      },
+    ]);
+    clientMock.downloadFile
+      .mockResolvedValueOnce(new Uint8Array([0xa]))
+      .mockResolvedValueOnce(new Uint8Array([0xb, 0xb]))
+      .mockResolvedValueOnce(new Uint8Array([0xc, 0xc, 0xc]));
+
+    const out = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chiddedupe333333333333three",
+      "design-dedupe-three",
+    )) as { sourceId: string; cacheDir: string };
+
+    const fs = await import("fs/promises");
+    const entries = (await fs.readdir(out.cacheDir)).sort();
+    try {
+      expect(entries).toEqual([
+        "screenshot-fid222222222222222222.png",
+        "screenshot-fid333333333333333333.png",
+        "screenshot.png",
+      ]);
+    } finally {
+      await fs.rm(out.cacheDir, { recursive: true, force: true });
+    }
+  });
+});
