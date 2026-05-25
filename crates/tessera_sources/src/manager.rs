@@ -15,6 +15,26 @@ use crate::source::Source;
 use crate::store::{IndexedFile, SourceStore};
 use crate::vision_extractor::VisionExtractor;
 
+/// Result of registering (or reindexing) a KChat-channel source via
+/// [`SourceManager::add_kchat_channel`].
+///
+/// The Node-side `sources:addKchatChannel` IPC handler is the only
+/// caller and uses `newly_created` to decide whether to emit a
+/// `KchatChannelLinked` audit event: a first sync emits it, every
+/// subsequent re-sync of the same `cache_dir` is treated as a
+/// reindex and does not duplicate the audit row.
+#[derive(Debug, Clone)]
+pub struct KchatChannelAddOutcome {
+    /// The source row as persisted (refreshed after reindexing so
+    /// `last_indexed` / `file_count` reflect the run that just
+    /// completed).
+    pub source: Source,
+    /// `true` when this call inserted a brand-new row, `false` when
+    /// an existing `SourceType::Kchat` row with the same `path` was
+    /// reindexed in place.
+    pub newly_created: bool,
+}
+
 pub struct SourceManager {
     store: SourceStore,
     indexer: Indexer,
@@ -271,20 +291,67 @@ impl SourceManager {
         self.store.get_source(&source.id)
     }
 
-    /// Register a KChat-channel source backed by an on-disk cache
-    /// directory. The Node-side KChat client owns downloading the
-    /// channel's files into `cache_dir`; this call wires the
+    /// Register-or-reindex a KChat-channel source backed by an on-disk
+    /// cache directory. The Node-side KChat client owns downloading
+    /// the channel's files into `cache_dir`; this call wires the
     /// directory through the normal local-folder indexing pipeline
     /// (text extraction, chunking, embeddings, FTS5).
+    ///
+    /// **Idempotent on `cache_dir`.** The Node-side
+    /// `sources:addKchatChannel` handler is invoked once per channel
+    /// sync — first on add and again on every re-sync. An earlier
+    /// implementation always inserted a fresh `Source` row with a
+    /// new `SourceId`, so every re-sync produced a duplicate entry
+    /// in the sources table (one per sync), unbounded source-table
+    /// growth, and duplicate indexing of the same `cache_dir`.
+    /// This method now queries for an existing `SourceType::Kchat`
+    /// row with the same `path` and, when found, reindexes that
+    /// source in place rather than inserting a new one. The
+    /// `newly_created` flag in the return value lets callers gate
+    /// "channel linked" audit events to the first-sync path only —
+    /// re-syncs do not emit a fresh "linked" event.
     ///
     /// `cache_dir` must already exist on disk — the Node side
     /// creates it on first sync. We reject non-existent or
     /// non-directory paths up-front so a misconfigured channel does
     /// not silently add an empty, un-indexable source.
-    pub fn add_kchat_channel(&self, cache_dir: &str) -> Result<Source> {
+    pub fn add_kchat_channel(&self, cache_dir: &str) -> Result<KchatChannelAddOutcome> {
         let dir_path = Path::new(cache_dir);
         if !dir_path.is_dir() {
             return Err(Error::InvalidPath(dir_path.to_path_buf()));
+        }
+
+        // Look for an existing KChat source pointing at the same
+        // cache_dir. We do an exact string match on `path` because
+        // the Node side always constructs `cacheDir` deterministically
+        // (kchatCacheDirFor(channelId) → `<root>/<channelId>`), so two
+        // calls for the same channel pass the same `path`. We do NOT
+        // canonicalise (e.g. via `Path::canonicalize`) because doing
+        // so would change behaviour on systems where the cache dir
+        // is reachable via multiple paths (symlinks, network mounts);
+        // the Node side is the single source of truth for cache
+        // location.
+        if let Some(existing) = self
+            .store
+            .list_sources()?
+            .into_iter()
+            .find(|s| {
+                matches!(s.source_type, tessera_core::SourceType::Kchat)
+                    && s.path == cache_dir
+            })
+        {
+            // Reindex in place to pick up files the Node side has
+            // just downloaded since the last sync. Reusing the
+            // existing SourceId keeps citations, evidence-pack
+            // references, and any other persisted source-id pointers
+            // valid across re-syncs.
+            self.indexer
+                .index_folder(&existing.id, dir_path, &self.store)?;
+            let refreshed = self.store.get_source(&existing.id)?;
+            return Ok(KchatChannelAddOutcome {
+                source: refreshed,
+                newly_created: false,
+            });
         }
 
         let source = Source::new_kchat_channel(cache_dir.to_string());
@@ -292,7 +359,11 @@ impl SourceManager {
         self.indexer
             .index_folder(&source.id, dir_path, &self.store)?;
 
-        self.store.get_source(&source.id)
+        let refreshed = self.store.get_source(&source.id)?;
+        Ok(KchatChannelAddOutcome {
+            source: refreshed,
+            newly_created: true,
+        })
     }
 
     pub fn remove_source(&self, source_id: &SourceId) -> Result<()> {
@@ -577,6 +648,107 @@ mod tests {
         let manager = SourceManager::new_in_memory(&[]).unwrap();
         let result = manager.add_local_folder("/nonexistent/path/12345");
         assert!(result.is_err());
+    }
+
+    // ----------------------------------------------------------------
+    // KChat-channel idempotency (eighth-pass Devin Review BUG_0001)
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn add_kchat_channel_first_call_creates_source_and_returns_newly_created_true() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "kchat content").unwrap();
+
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let outcome = manager
+            .add_kchat_channel(dir.path().to_str().unwrap())
+            .unwrap();
+
+        assert!(
+            outcome.newly_created,
+            "first add_kchat_channel call must report newly_created=true"
+        );
+        assert!(matches!(
+            outcome.source.source_type,
+            tessera_core::SourceType::Kchat
+        ));
+        let sources = manager.list_sources().unwrap();
+        assert_eq!(sources.len(), 1, "exactly one source row after first add");
+    }
+
+    #[test]
+    fn add_kchat_channel_second_call_reindexes_in_place_no_duplicate_row() {
+        // Convergent-sync invariant: calling add_kchat_channel twice
+        // with the same cache_dir must NOT create a second row in the
+        // sources table. A regression here would cause one duplicate
+        // source per re-sync, leading to unbounded growth and double
+        // indexing of every file.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "kchat content").unwrap();
+
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let first = manager
+            .add_kchat_channel(dir.path().to_str().unwrap())
+            .unwrap();
+
+        // Drop a second file into the cache dir to simulate a new
+        // file arriving between syncs.
+        std::fs::write(dir.path().join("file2.txt"), "more content").unwrap();
+
+        let second = manager
+            .add_kchat_channel(dir.path().to_str().unwrap())
+            .unwrap();
+
+        assert!(
+            !second.newly_created,
+            "second add_kchat_channel call for same cache_dir must report newly_created=false"
+        );
+        assert_eq!(
+            first.source.id, second.source.id,
+            "second call must return the same SourceId (in-place reindex, not a new row)"
+        );
+
+        let sources = manager.list_sources().unwrap();
+        assert_eq!(
+            sources.len(),
+            1,
+            "exactly one source row after two add_kchat_channel calls for the same cache_dir"
+        );
+        // The reindex must have picked up the second file.
+        assert!(
+            sources[0].file_count >= 2,
+            "reindex on re-sync should pick up newly arrived files (got file_count={})",
+            sources[0].file_count
+        );
+    }
+
+    #[test]
+    fn add_kchat_channel_different_cache_dirs_get_separate_rows() {
+        // Two distinct channels live in two distinct cache dirs and
+        // must produce two distinct source rows. The idempotency
+        // contract is on `(SourceType::Kchat, path)`, NOT on
+        // SourceType alone — a regression that matched on type only
+        // would collapse every channel into one row.
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        std::fs::write(dir_a.path().join("a.txt"), "channel A").unwrap();
+        std::fs::write(dir_b.path().join("b.txt"), "channel B").unwrap();
+
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let a = manager
+            .add_kchat_channel(dir_a.path().to_str().unwrap())
+            .unwrap();
+        let b = manager
+            .add_kchat_channel(dir_b.path().to_str().unwrap())
+            .unwrap();
+
+        assert!(a.newly_created);
+        assert!(b.newly_created);
+        assert_ne!(
+            a.source.id, b.source.id,
+            "distinct cache dirs must get distinct SourceIds"
+        );
+        assert_eq!(manager.list_sources().unwrap().len(), 2);
     }
 
     // ----------------------------------------------------------------

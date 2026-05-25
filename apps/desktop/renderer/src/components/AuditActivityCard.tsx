@@ -4,10 +4,14 @@
  * Reads from `audit:listRecent` (the new IPC channel introduced in
  * Phase 11 Task 6) and renders the latest 100 events newest-first
  * with an event-type filter. The "KChat" filter shortcut
- * concentrates the renderer view on the new
- * `Kchat*` event-type variants (KchatConnected,
- * KchatDisconnected, KchatArtifactShared, KchatChannelLinked,
- * KchatChannelUnlinked, KchatFileDownloaded).
+ * concentrates the renderer view on the snake_case `kchat_*`
+ * event-type variants on the wire — i.e. `kchat_connected`,
+ * `kchat_disconnected`, `kchat_artifact_shared`,
+ * `kchat_channel_linked`, `kchat_channel_unlinked`,
+ * `kchat_file_downloaded`. The Rust `AuditEventType` enum is
+ * annotated with `#[serde(rename_all = "snake_case")]`, so the
+ * napi bridge surfaces snake_case strings; the prefix match below
+ * is on `"kchat_"` for that reason.
  *
  * Per spec Task 6: "Show: who shared what, when, to which
  * channel." — the details column carries the channel/file/etc

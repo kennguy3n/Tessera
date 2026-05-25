@@ -199,27 +199,46 @@ pub fn bridge_add_local_file(path: String) -> napi::Result<sources::SourceInfo> 
     Ok(info)
 }
 
-/// Register a KChat-channel source backed by a local cache directory
-/// populated by the Node-side KChat client. Re-uses the local-folder
-/// indexing pipeline (text extraction → chunking → embeddings → FTS5)
-/// and emits the same `SourceAdded` audit event so the KChat sync
-/// surface lives in the same audit trail as every other connector.
+/// Register-or-reindex a KChat-channel source backed by a local cache
+/// directory populated by the Node-side KChat client. Re-uses the
+/// local-folder indexing pipeline (text extraction → chunking →
+/// embeddings → FTS5).
+///
+/// **Idempotent on `cache_dir`** — the Node side calls this on every
+/// channel re-sync (the convergent-sync pattern owned by the
+/// `sources:addKchatChannel` handler). A previous implementation
+/// generated a fresh `SourceId` on every call, leaving duplicate
+/// source rows per sync. The returned outcome's `newly_created` flag
+/// is true only on the call that inserted the row; subsequent re-
+/// syncs return the same `SourceId` with `newly_created=false`.
+///
+/// We only emit the `SourceAdded` audit event when the call actually
+/// inserted a row — re-syncs do not add a row, so they do not emit
+/// a duplicate "source added" audit either. The Node-side handler
+/// applies the same gate to `KchatChannelLinked`.
 #[napi]
-pub fn bridge_add_kchat_channel(cache_dir: String) -> napi::Result<sources::SourceInfo> {
+pub fn bridge_add_kchat_channel(
+    cache_dir: String,
+) -> napi::Result<sources::KchatChannelAddOutcomeInfo> {
     let s = state()?;
     let mgr = s
         .source_manager
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let info = sources::add_kchat_channel(&mgr, &cache_dir)
+    let outcome = sources::add_kchat_channel(&mgr, &cache_dir)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let newly_created = outcome.newly_created;
     // Audit AFTER the add commits — same phantom-row prevention
-    // discipline as `bridge_add_local_folder`.
+    // discipline as `bridge_add_local_folder`. Skipped on re-sync so
+    // the audit log doesn't accumulate one "source added" event per
+    // re-sync of the same cache_dir.
     drop(mgr);
-    if let Ok(logger) = s.audit_logger.lock() {
-        let _ = logger.log_source_added(&cache_dir);
+    if newly_created {
+        if let Ok(logger) = s.audit_logger.lock() {
+            let _ = logger.log_source_added(&cache_dir);
+        }
     }
-    Ok(info)
+    Ok(outcome)
 }
 
 #[napi]

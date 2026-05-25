@@ -18,6 +18,7 @@ import type {
   HybridSearchConfigInfo,
   HybridSearchConfigUpdate,
   IndexingProgressInfo,
+  KchatChannelAddOutcomeInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
   SearchHitInfo,
@@ -44,6 +45,7 @@ export type {
   HybridSearchConfigUpdate,
   IndexedFileInfo,
   IndexingProgressInfo,
+  KchatChannelAddOutcomeInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
   SearchHit,
@@ -70,16 +72,27 @@ export interface NativeBridge {
   bridgeAddLocalFolder(path: string): SourceInfo;
   bridgeAddLocalFile(path: string): SourceInfo;
   /**
-   * Register a KChat-channel source backed by a local cache
-   * directory the Node-side KChat client populates with files
+   * Register-or-reindex a KChat-channel source backed by a local
+   * cache directory the Node-side KChat client populates with files
    * downloaded from a KChat channel's file store. The directory is
    * indexed through the standard local-folder pipeline; the
    * `SourceType::Kchat` tag lets the renderer render a KChat-
    * specific icon / detail surface and lets the KChat scheduler
    * poll the corresponding channel for new files on its own
    * interval.
+   *
+   * **Idempotent on `cacheDir`.** The `sources:addKchatChannel`
+   * IPC handler invokes this on every channel re-sync (the
+   * convergent-sync pattern). An earlier implementation always
+   * generated a fresh `SourceId`, leaving one duplicate source row
+   * per sync (unbounded source-table growth + double indexing). The
+   * returned outcome's `newlyCreated` flag is true only on the call
+   * that inserted the row; subsequent re-syncs return the same
+   * `SourceId` with `newlyCreated=false`, and the handler uses the
+   * flag to gate the `KchatChannelLinked` audit event to first-sync
+   * only.
    */
-  bridgeAddKchatChannel(cacheDir: string): SourceInfo;
+  bridgeAddKchatChannel(cacheDir: string): KchatChannelAddOutcomeInfo;
   bridgeListSources(): SourceInfo[];
   bridgeRemoveSource(sourceId: string): void;
   bridgeSearchSources(query: string, limit: number): SearchHitInfo[];

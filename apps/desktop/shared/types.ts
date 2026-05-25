@@ -136,6 +136,24 @@ export interface SourceDetailInfo {
 }
 
 /**
+ * Result of `bridgeAddKchatChannel(cacheDir)`.
+ *
+ * The Rust-side `SourceManager::add_kchat_channel` is idempotent on
+ * `cacheDir`: a first call inserts a `SourceType::Kchat` row and
+ * returns `{ newlyCreated: true, source }`; every subsequent call
+ * for the same `cacheDir` reindexes that source in place and
+ * returns `{ newlyCreated: false, source }` carrying the *original*
+ * `SourceId`. The Node-side `sources:addKchatChannel` handler uses
+ * `newlyCreated` to gate the `KchatChannelLinked` audit event so a
+ * channel that is re-synced 100 times does not produce 100 audit
+ * rows.
+ */
+export interface KchatChannelAddOutcomeInfo {
+  source: SourceInfo;
+  newlyCreated: boolean;
+}
+
+/**
  * Renderer-facing search result. The IPC handler maps from the
  * Rust-side `SearchHitInfo` (which uses `content` / `relevance` /
  * `chunkIndex`) to this shape (`chunkContent` / `relevanceScore`,
@@ -1444,9 +1462,14 @@ export interface KchatApi {
 /**
  * A single audit row, as seen by the renderer.
  *
- * `eventType` is the bare enum name (`KchatConnected`,
- * `ArtifactShared`, …) — see `AuditEventType` in
- * `crates/tessera_audit/src/event.rs` for the closed set.
+ * `eventType` is the **snake_case** wire form of the
+ * `AuditEventType` enum — `"kchat_connected"`, `"artifact_shared"`,
+ * `"source_added"`, etc. The Rust enum is annotated with
+ * `#[serde(rename_all = "snake_case")]` (see `AuditEventType` in
+ * `crates/tessera_audit/src/event.rs`), which is the form that
+ * survives the napi bridge and lands in the renderer. The renderer
+ * groups events by snake_case prefix (`kchat_`, `source_`,
+ * `artifact_`, `connector_`, etc.) in `AuditActivityCard.tsx`.
  *
  * `timestamp` is an RFC 3339 / ISO 8601 string in UTC.
  */

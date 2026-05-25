@@ -70,7 +70,18 @@ const bridgeMock = {
   })),
   bridgeExportArtifactToFile: vi.fn(),
   bridgeEvidencePackBytes: vi.fn(() => Buffer.from([0x50, 0x4b, 0x03, 0x04])), // ZIP magic
-  bridgeAddKchatChannel: vi.fn(() => ({ id: "src-uuid", name: "src" })),
+  bridgeAddKchatChannel: vi.fn(() => ({
+    source: {
+      id: "src-uuid",
+      sourceType: "kchat",
+      path: "",
+      status: "indexed",
+      createdAt: "2024-01-01T00:00:00Z",
+      lastIndexed: null,
+      fileCount: 0,
+    },
+    newlyCreated: true,
+  })),
   bridgeLogKchatConnected: vi.fn(),
   bridgeLogKchatDisconnected: vi.fn(),
   bridgeLogKchatArtifactShared: vi.fn(),
@@ -145,8 +156,16 @@ beforeEach(() => {
     Buffer.from([0x50, 0x4b, 0x03, 0x04]),
   );
   bridgeMock.bridgeAddKchatChannel.mockReturnValue({
-    id: "src-uuid",
-    name: "src",
+    source: {
+      id: "src-uuid",
+      sourceType: "kchat",
+      path: "",
+      status: "indexed",
+      createdAt: "2024-01-01T00:00:00Z",
+      lastIndexed: null,
+      fileCount: 0,
+    },
+    newlyCreated: true,
   });
   for (const fn of Object.values(clientMock)) {
     fn.mockReset();
@@ -230,6 +249,75 @@ describe("kchat:connect", () => {
       handler("kchat:connect")(EVENT, "PAT", "ftp://kchat.example.com"),
     ).rejects.toThrow(/http:\/\/ or https:\/\//);
     expect(serviceMock.connect).not.toHaveBeenCalled();
+  });
+});
+
+// Eighth-pass Devin Review ANALYSIS_0006: SSRF guard on kchat:connect.
+// The renderer-supplied serverUrl must not point at private,
+// loopback, link-local, or CGNAT address space. If the user pastes
+// (or the renderer is tricked into supplying) a URL like
+// `http://127.0.0.1:8080/` or `http://10.0.0.5/`, the connect must
+// fail BEFORE the auth service issues an `Authorization: Bearer
+// <PAT>` request to that internal endpoint.
+describe("kchat:connect — SSRF guard (eighth-pass invariant)", () => {
+  const internalUrls = [
+    "http://127.0.0.1:8080/",
+    "http://localhost/",
+    "http://0.0.0.0/",
+    "http://10.0.0.5/",
+    "http://192.168.1.10/",
+    "http://172.16.5.5/",
+    "http://169.254.169.254/", // EC2 instance metadata
+    "http://100.64.0.1/", // CGNAT
+    "http://[::1]/",
+    "http://[fe80::1]/", // IPv6 link-local
+    "http://[fc00::1]/", // IPv6 ULA
+  ];
+  for (const u of internalUrls) {
+    it(`rejects ${u} as a private/loopback target before touching the service`, async () => {
+      await expect(
+        handler("kchat:connect")(EVENT, "PAT", u),
+      ).rejects.toThrow(/private|loopback|link-local/i);
+      expect(serviceMock.connect).not.toHaveBeenCalled();
+      expect(bridgeMock.bridgeLogKchatConnected).not.toHaveBeenCalled();
+    });
+  }
+
+  it("rejects malformed URLs before touching the service", async () => {
+    await expect(
+      handler("kchat:connect")(EVENT, "PAT", "not a url"),
+    ).rejects.toThrow(/not a valid URL|http:\/\/ or https:\/\//);
+    expect(serviceMock.connect).not.toHaveBeenCalled();
+  });
+
+  it("allows internal URLs when TESSERA_KCHAT_ALLOW_INTERNAL=1 is set (dev opt-out)", async () => {
+    const prev = process.env.TESSERA_KCHAT_ALLOW_INTERNAL;
+    process.env.TESSERA_KCHAT_ALLOW_INTERNAL = "1";
+    try {
+      serviceMock.connect.mockResolvedValue({
+        id: "user1234567890abcdefgh",
+        username: "dev",
+        email: "d@e.com",
+        first_name: "D",
+        last_name: "V",
+      });
+      const out = await handler("kchat:connect")(
+        EVENT,
+        "PAT",
+        "http://127.0.0.1:8080/",
+      );
+      expect(out).toMatchObject({ id: "user1234567890abcdefgh" });
+      expect(serviceMock.connect).toHaveBeenCalledWith(
+        "PAT",
+        "http://127.0.0.1:8080/",
+      );
+    } finally {
+      if (prev === undefined) {
+        delete process.env.TESSERA_KCHAT_ALLOW_INTERNAL;
+      } else {
+        process.env.TESSERA_KCHAT_ALLOW_INTERNAL = prev;
+      }
+    }
   });
 });
 
@@ -1382,6 +1470,251 @@ describe("sources:addKchatChannel — convergent sync via download manifest", ()
       await fs.rm(out.cacheDir, { recursive: true, force: true });
       await fs
         .rm(`${out.cacheDir}.manifest.json`, { force: true })
+        .catch(() => {});
+    }
+  });
+});
+
+// Eighth-pass Devin Review BUG_0001 + ANALYSIS_0002 regression suite.
+// BUG_0001: sources:addKchatChannel previously created a fresh source
+// row with a new UUID on every re-sync because `bridgeAddKchatChannel`
+// always inserted. The Rust side is now idempotent on `cache_dir`
+// (returns `newlyCreated: false` for re-syncs), and the handler must
+// (a) reuse the returned source id and (b) skip the
+// `KchatChannelLinked` audit on re-sync.
+//
+// ANALYSIS_0002: `seenNames` previously seeded from the previous
+// manifest, which reserved names of files that had been deleted
+// server-side between syncs. The seeding now happens lazily — only
+// when a file is *kept* — so a deletion + same-name re-upload no
+// longer poisons the dedupe set or causes the cleanup loop to
+// unlink the new file's bytes.
+describe("sources:addKchatChannel — idempotent source registration (eighth-pass invariant)", () => {
+  it("returns the same sourceId across re-syncs and audits 'channel linked' ONLY on the first sync", async () => {
+    clientMock.listChannelFiles.mockResolvedValue([]);
+
+    // First sync: bridge reports newlyCreated=true.
+    bridgeMock.bridgeAddKchatChannel.mockReturnValueOnce({
+      source: {
+        id: "src-stable-1",
+        sourceType: "kchat",
+        path: "",
+        status: "indexed",
+        createdAt: "2024-01-01T00:00:00Z",
+        lastIndexed: null,
+        fileCount: 0,
+      },
+      newlyCreated: true,
+    });
+    const first = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chidstableabcdefghi123",
+      "stable-channel",
+    )) as { sourceId: string; cacheDir: string };
+    expect(first.sourceId).toBe("src-stable-1");
+    expect(bridgeMock.bridgeLogKchatChannelLinked).toHaveBeenCalledTimes(1);
+    expect(bridgeMock.bridgeLogKchatChannelLinked).toHaveBeenCalledWith(
+      "chidstableabcdefghi123",
+      "stable-channel",
+      first.cacheDir,
+    );
+
+    // Second sync: bridge reports newlyCreated=false (same row reindexed).
+    bridgeMock.bridgeAddKchatChannel.mockReturnValueOnce({
+      source: {
+        id: "src-stable-1",
+        sourceType: "kchat",
+        path: "",
+        status: "indexed",
+        createdAt: "2024-01-01T00:00:00Z",
+        lastIndexed: "2024-01-02T00:00:00Z",
+        fileCount: 0,
+      },
+      newlyCreated: false,
+    });
+    const second = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chidstableabcdefghi123",
+      "stable-channel",
+    )) as { sourceId: string; cacheDir: string };
+    expect(second.sourceId).toBe("src-stable-1");
+    expect(second.cacheDir).toBe(first.cacheDir);
+    // No second "channel linked" audit row — the handler must gate
+    // the call on newlyCreated.
+    expect(bridgeMock.bridgeLogKchatChannelLinked).toHaveBeenCalledTimes(1);
+
+    // Third sync: still idempotent.
+    bridgeMock.bridgeAddKchatChannel.mockReturnValueOnce({
+      source: {
+        id: "src-stable-1",
+        sourceType: "kchat",
+        path: "",
+        status: "indexed",
+        createdAt: "2024-01-01T00:00:00Z",
+        lastIndexed: "2024-01-03T00:00:00Z",
+        fileCount: 0,
+      },
+      newlyCreated: false,
+    });
+    const third = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chidstableabcdefghi123",
+      "stable-channel",
+    )) as { sourceId: string };
+    expect(third.sourceId).toBe("src-stable-1");
+    expect(bridgeMock.bridgeLogKchatChannelLinked).toHaveBeenCalledTimes(1);
+
+    const fs = await import("fs/promises");
+    await fs.rm(first.cacheDir, { recursive: true, force: true });
+    await fs
+      .rm(`${first.cacheDir}.manifest.json`, { force: true })
+      .catch(() => {});
+  });
+});
+
+describe("sources:addKchatChannel — seenNames eighth-pass invariant", () => {
+  it("does NOT reserve names of server-deleted files; same-name re-upload keeps the clean name", async () => {
+    // Sync 1: write `report.pdf` (fid `fid-A`).
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      {
+        id: "fidaaaaaaaaaaaaaaaaaaaaa",
+        name: "report.pdf",
+        size: 4,
+        mime_type: "application/pdf",
+        extension: "pdf",
+        create_at: 1,
+      },
+    ]);
+    clientMock.downloadFile.mockResolvedValueOnce(new Uint8Array([1, 2, 3, 4]));
+
+    const first = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chidseennames555555555a",
+      "seen-names",
+    )) as { sourceId: string; cacheDir: string };
+
+    // Sync 2: original fid is gone server-side; a DIFFERENT fid
+    // arrives with the same name. Without the eighth-pass fixes, the
+    // new file would receive a dedupe suffix (`report-fid…b.pdf`)
+    // and / or the cleanup loop would unlink `report.pdf` AFTER we
+    // just wrote the new file's bytes there.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      {
+        id: "fidbbbbbbbbbbbbbbbbbbbbb",
+        name: "report.pdf",
+        size: 3,
+        mime_type: "application/pdf",
+        extension: "pdf",
+        create_at: 2,
+      },
+    ]);
+    clientMock.downloadFile.mockResolvedValueOnce(new Uint8Array([9, 9, 9]));
+
+    const second = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chidseennames555555555a",
+      "seen-names",
+    )) as { sourceId: string; cacheDir: string };
+
+    const fs = await import("fs/promises");
+    try {
+      // The new file lives at the clean name `report.pdf` — no
+      // dedupe suffix.
+      const inside = (await fs.readdir(second.cacheDir)).sort();
+      expect(inside).toEqual(["report.pdf"]);
+      // And the bytes are the NEW file's bytes, not the old ones
+      // (the cleanup loop did NOT unlink them).
+      const bytes = await fs.readFile(`${second.cacheDir}/report.pdf`);
+      expect([...bytes]).toEqual([9, 9, 9]);
+      // The manifest now maps the new fid → the clean name.
+      const manifest = JSON.parse(
+        await fs.readFile(`${second.cacheDir}.manifest.json`, "utf-8"),
+      );
+      expect(manifest.files).toEqual({
+        fidbbbbbbbbbbbbbbbbbbbbb: "report.pdf",
+      });
+    } finally {
+      await fs.rm(first.cacheDir, { recursive: true, force: true });
+      await fs
+        .rm(`${first.cacheDir}.manifest.json`, { force: true })
+        .catch(() => {});
+    }
+  });
+
+  it("still dedupes a new file whose name collides with a kept (still-present) file", async () => {
+    // First sync writes fid-A as `report.pdf`.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      {
+        id: "fidaaaaaaaaaaaaaaaaaaaaa",
+        name: "report.pdf",
+        size: 4,
+        mime_type: "application/pdf",
+        extension: "pdf",
+        create_at: 1,
+      },
+    ]);
+    clientMock.downloadFile.mockResolvedValueOnce(new Uint8Array([1, 2, 3, 4]));
+
+    const first = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chidseennames666666666a",
+      "seen-names-keep",
+    )) as { sourceId: string; cacheDir: string };
+
+    // Second sync: fid-A is STILL on the server (fast-path skip
+    // keeps `report.pdf`), and a new fid-B arrives with the same
+    // name. The dedupe must kick in for fid-B because the original
+    // bytes are kept, otherwise we'd overwrite them.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      {
+        id: "fidaaaaaaaaaaaaaaaaaaaaa",
+        name: "report.pdf",
+        size: 4,
+        mime_type: "application/pdf",
+        extension: "pdf",
+        create_at: 1,
+      },
+      {
+        id: "fidbbbbbbbbbbbbbbbbbbbbb",
+        name: "report.pdf",
+        size: 3,
+        mime_type: "application/pdf",
+        extension: "pdf",
+        create_at: 2,
+      },
+    ]);
+    // The fast-path skip means we should NOT call downloadFile for
+    // fid-A again — only for fid-B.
+    clientMock.downloadFile.mockResolvedValueOnce(new Uint8Array([9, 9, 9]));
+
+    const second = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chidseennames666666666a",
+      "seen-names-keep",
+    )) as { sourceId: string; cacheDir: string };
+
+    const fs = await import("fs/promises");
+    try {
+      // Both files live on disk: the original `report.pdf` (fid-A
+      // bytes preserved) and a deduped `report-fid….pdf` (fid-B).
+      const inside = (await fs.readdir(second.cacheDir)).sort();
+      expect(inside.length).toBe(2);
+      expect(inside).toContain("report.pdf");
+      const dedupName = inside.find((n) => n !== "report.pdf");
+      expect(dedupName).toBeDefined();
+      // Original bytes preserved.
+      const origBytes = await fs.readFile(`${second.cacheDir}/report.pdf`);
+      expect([...origBytes]).toEqual([1, 2, 3, 4]);
+      // New bytes at deduped name.
+      const newBytes = await fs.readFile(`${second.cacheDir}/${dedupName}`);
+      expect([...newBytes]).toEqual([9, 9, 9]);
+      // Only ONE downloadFile call this sync (fid-B); fid-A was
+      // fast-path skipped.
+      expect(clientMock.downloadFile).toHaveBeenCalledTimes(2);
+    } finally {
+      await fs.rm(first.cacheDir, { recursive: true, force: true });
+      await fs
+        .rm(`${first.cacheDir}.manifest.json`, { force: true })
         .catch(() => {});
     }
   });

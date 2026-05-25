@@ -24,6 +24,7 @@
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
+import { promises as dnsPromises } from "dns";
 import { getBridge, getKchatAuthService } from "../appState";
 import { idempotentHandle } from "./register";
 import {
@@ -165,6 +166,124 @@ const VALID_FORMATS = new Set([
   "json",
 ]);
 
+/**
+ * Return `true` when `hostname` is a literal IP in private,
+ * loopback, link-local, or otherwise reserved RFC-1918-style space
+ * — or one of the reserved hostnames (`localhost`,
+ * `*.localhost`). These targets are never legitimate KChat servers
+ * (KChat is a hosted multi-tenant service) so refusing to direct
+ * an authenticated `Authorization: Bearer <PAT>` request at them
+ * is safe; the goal is to prevent the renderer (or a user pasting
+ * a crafted URL) from using the KChat connection to probe internal
+ * services on the operator's network (SSRF — eighth-pass Devin
+ * Review ANALYSIS_0006).
+ *
+ * Coverage:
+ *   - IPv4 loopback (127.0.0.0/8), 0.0.0.0/8
+ *   - RFC1918 private space (10/8, 172.16/12, 192.168/16)
+ *   - RFC6598 CGNAT (100.64/10)
+ *   - Link-local (169.254/16)
+ *   - IPv6 loopback (::1, ::) and unspecified
+ *   - IPv6 unique-local (fc00::/7 → `fc*`, `fd*`)
+ *   - IPv6 link-local (fe80::/10 → `fe80:`)
+ *   - IPv4-mapped IPv6 (`::ffff:<ipv4>`) recurses into the v4 check
+ *
+ * Not covered: DNS rebinding. We check the hostname literal (here)
+ * and the DNS-resolved A/AAAA records at connect time
+ * (`enforceKchatServerUrl`), but a malicious DNS server could
+ * return different IPs on subsequent requests. Mitigation: KChat
+ * uses HTTPS in production, so a rebinding to an internal HTTP
+ * service fails the TLS handshake. A defense-in-depth pinned-IP
+ * dispatcher would close this gap; out of scope for this PR.
+ */
+function isPrivateOrLoopbackHost(hostname: string): boolean {
+  // Strip surrounding brackets from IPv6 literals (`new URL` keeps
+  // them in `hostname` for bracketed v6, depending on Node version).
+  const h = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const a = Number(v4[1]);
+    const b = Number(v4[2]);
+    if ([a, b, Number(v4[3]), Number(v4[4])].some((n) => n > 255)) {
+      return false;
+    }
+    if (a === 0) return true; // 0.0.0.0/8 (current network / unspecified)
+    if (a === 127) return true; // 127.0.0.0/8 loopback
+    if (a === 10) return true; // 10.0.0.0/8 private
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 private
+    if (a === 192 && b === 168) return true; // 192.168.0.0/16 private
+    if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local
+    if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT
+    return false;
+  }
+  if (h === "::1" || h === "::") return true;
+  if (h.startsWith("fe80:")) return true; // IPv6 link-local
+  if (h.startsWith("fc") || h.startsWith("fd")) return true; // ULA fc00::/7
+  const mapped = h.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (mapped) return isPrivateOrLoopbackHost(mapped[1]);
+  return false;
+}
+
+/**
+ * Validate a renderer-supplied `serverUrl` before opening a KChat
+ * connection. Throws if the URL is malformed, uses a non-http(s)
+ * scheme, points at a literal private/loopback IP, or DNS-resolves
+ * to one. Operators can opt out of the SSRF guard (e.g. to point
+ * at a dev KChat instance on `127.0.0.1`) by setting the env var
+ * `TESSERA_KCHAT_ALLOW_INTERNAL=1` before launching the desktop
+ * app; the guard is on by default in production builds.
+ */
+async function enforceKchatServerUrl(rawUrl: string): Promise<URL> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("serverUrl is not a valid URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("serverUrl must use http:// or https://");
+  }
+  const allowInternal = process.env.TESSERA_KCHAT_ALLOW_INTERNAL === "1";
+  if (allowInternal) {
+    return parsed;
+  }
+  if (isPrivateOrLoopbackHost(parsed.hostname)) {
+    throw new Error(
+      "serverUrl points at a private, loopback, or link-local address; refusing to connect to internal targets. Set TESSERA_KCHAT_ALLOW_INTERNAL=1 to override (dev only).",
+    );
+  }
+  // Resolve the hostname and reject if any A/AAAA record lands in
+  // private/loopback space. This catches the case of a public-
+  // looking hostname (e.g. `kchat.example.com`) that resolves to
+  // `10.0.0.5` via DNS (intranet split-horizon or a malicious DNS
+  // server pointed at internal infrastructure). Failure to resolve
+  // is *not* a hard error here — the underlying `fetch` will
+  // surface a clearer "ENOTFOUND" / "EAI_AGAIN" further down the
+  // call stack — we treat lookup failure as "no internal target
+  // detected by us, let the network layer decide".
+  try {
+    const addrs = await dnsPromises.lookup(parsed.hostname, { all: true });
+    for (const a of addrs) {
+      if (isPrivateOrLoopbackHost(a.address)) {
+        throw new Error(
+          `serverUrl resolves to a private/loopback address (${a.address}); refusing to connect to internal targets. Set TESSERA_KCHAT_ALLOW_INTERNAL=1 to override (dev only).`,
+        );
+      }
+    }
+  } catch (err) {
+    // Re-throw our own "private/loopback" error; swallow DNS-layer
+    // errors so the connect attempt itself can surface them.
+    if (
+      err instanceof Error &&
+      err.message.startsWith("serverUrl resolves to a private")
+    ) {
+      throw err;
+    }
+  }
+  return parsed;
+}
+
 function sanitizeTeam(t: KchatTeam): RendererTeam {
   return {
     id: t.id,
@@ -286,11 +405,22 @@ export function registerKchatHandlers(): void {
     async (_event, token: unknown, serverUrl: unknown) => {
       const tok = assertString(token, "token", { maxLen: 4096 });
       const url = assertString(serverUrl, "serverUrl", { maxLen: 1024 });
-      // Reject anything that isn't an http(s) URL; KChat does not
-      // accept non-TLS connections in production.
-      if (!/^https?:\/\//i.test(url)) {
-        throw new Error("serverUrl must start with http:// or https://");
-      }
+      // SSRF guard (eighth-pass Devin Review ANALYSIS_0006): reject
+      // non-http(s) URLs AND URLs that resolve to a private,
+      // loopback, link-local, or CGNAT address. Without this, the
+      // renderer could direct the authenticated `Bearer <PAT>`
+      // request at any internal endpoint (Jenkins, internal admin
+      // UI, etc.) reachable from the main process. The PAT is
+      // useless to a non-KChat server, but the request itself
+      // probes the internal service and the response can be
+      // exfiltrated back through the IPC error path.
+      //
+      // We pass the renderer-supplied `url` string through to the
+      // service rather than `validated.toString()` because the
+      // latter canonicalises the URL (adds a trailing slash to
+      // bare-host URLs, etc.); the service / `KchatClient` is the
+      // single owner of URL normalisation downstream.
+      await enforceKchatServerUrl(url);
 
       const svc = getKchatAuthService();
       try {
@@ -599,7 +729,21 @@ export function registerKchatHandlers(): void {
       const MAX_PAGES = 1000;
       const resolvedCacheDir = path.resolve(cacheDir);
       const previousManifest = await readManifest(cacheDir, id);
-      const seenNames = new Set<string>(Object.values(previousManifest.files));
+      // `seenNames` starts EMPTY (eighth-pass Devin Review
+      // ANALYSIS_0002). A previous implementation seeded it from
+      // `Object.values(previousManifest.files)` to prevent same-name
+      // collisions with pre-existing files, but that also reserved
+      // names of files that had been deleted server-side between
+      // syncs — if a new file arrived in this sync with the same
+      // base name as a since-deleted file, it would receive an
+      // unnecessary `-<fid>` dedupe suffix permanently (since the
+      // new manifest then carries the deduped name forward). We
+      // now only mark a name as "seen" when we actually decide to
+      // *keep* a file at that name (either via the fast-path skip
+      // when the previous file is still on disk and still in the
+      // server roster, or after writing a fresh download), so
+      // server-side deletions don't poison the dedupe set.
+      const seenNames = new Set<string>();
       const currentFiles: Record<string, string> = {};
       const seenServerIds = new Set<string>();
       let paginationCompleted = false;
@@ -629,12 +773,19 @@ export function registerKchatHandlers(): void {
                 try {
                   await fs.access(recordedPath);
                   currentFiles[fi.id] = recorded;
+                  // Mark the kept name as taken so a later file in
+                  // this same sync that happens to have the same
+                  // base name gets the dedupe suffix and doesn't
+                  // overwrite our kept bytes.
+                  seenNames.add(recorded);
                   continue;
                 } catch {
                   // File missing on disk — fall through and
-                  // re-download. Drop the stale dedupe entry so the
-                  // re-download can reuse the same name.
-                  seenNames.delete(recorded);
+                  // re-download. (Previously we also called
+                  // `seenNames.delete(recorded)` here to undo the
+                  // stale seeding from `previousManifest`; with
+                  // `seenNames` starting empty that delete is
+                  // unnecessary — the name was never added.)
                 }
               }
             }
@@ -703,12 +854,25 @@ export function registerKchatHandlers(): void {
         // files. Skip cleanup if pagination didn't complete
         // (`seenServerIds` would be a partial view of the roster
         // and we'd mis-delete files we just hadn't fetched yet).
+        //
+        // Eighth-pass invariant (Devin Review ANALYSIS_0002): we
+        // ALSO skip unlinking when some file in *this* sync
+        // currently claims the same on-disk name. This protects
+        // against the "deletion + same-name re-upload" race —
+        // the old fi.id is gone server-side, but a new fi.id has
+        // arrived with the same base name and just overwrote the
+        // bytes at that path. Unlinking by the old name here
+        // would delete the new file's bytes.
+        const namesClaimedByCurrentSync = new Set<string>(
+          Object.values(currentFiles),
+        );
         for (const [oldId, oldName] of Object.entries(
           previousManifest.files,
         )) {
           if (seenServerIds.has(oldId)) continue;
           if (currentFiles[oldId]) continue;
           if (typeof oldName !== "string" || oldName.length === 0) continue;
+          if (namesClaimedByCurrentSync.has(oldName)) continue;
           const stalePath = path.resolve(cacheDir, oldName);
           if (
             stalePath === resolvedCacheDir ||
@@ -760,9 +924,20 @@ export function registerKchatHandlers(): void {
         }
       }
 
-      const source = bridge.bridgeAddKchatChannel(cacheDir);
-      bridge.bridgeLogKchatChannelLinked(id, name, cacheDir);
-      return { sourceId: source.id, cacheDir };
+      // BUG_0001 (eighth-pass Devin Review): `bridgeAddKchatChannel`
+      // is now idempotent on `cacheDir`. The Rust side returns
+      // `newlyCreated: true` only on the call that inserted the
+      // source row; every subsequent re-sync flips it to `false`
+      // and we skip the `KchatChannelLinked` audit append so the
+      // audit log doesn't accumulate one "linked" event per sync.
+      // The returned `sourceId` is stable across re-syncs (we
+      // reuse the existing row), so citations and evidence-pack
+      // references survive.
+      const outcome = bridge.bridgeAddKchatChannel(cacheDir);
+      if (outcome.newlyCreated) {
+        bridge.bridgeLogKchatChannelLinked(id, name, cacheDir);
+      }
+      return { sourceId: outcome.source.id, cacheDir };
     },
   );
 }
