@@ -563,10 +563,19 @@ export function buildPreviewHtml(data: InfographicContent): string {
   // verbatim) so we HTML-escape it
   // before interpolating into the `src` attribute as belt-and-
   // braces. Width/height are written to the DOM so the layout
-  // doesn't reflow when the image finishes decoding.
+  // doesn't reflow when the image finishes decoding. Width/height
+  // are also HTML-escaped — `sanitizeHeroImage` validates them as
+  // finite positive `Number.isInteger` values today (so
+  // `Number(n).toString()` produces only digits, never HTML-special
+  // characters), but the consistency with every other interpolation
+  // in this template string defends against a future refactor that
+  // might relax the type to accept e.g. a string-typed `"100%"`
+  // dimension and would otherwise silently open an injection vector
+  // through the now-unescaped `width="${...}"` slot. Devin Review PR
+  // #38 post-merge follow-up.
   const heroHtml = data.heroImage
     ? `<figure class="infographic-hero">
-  <img src="${escapeHtml(data.heroImage.assetUrl)}" alt="${escapeHtml(data.title)}" width="${data.heroImage.width}" height="${data.heroImage.height}" />
+  <img src="${escapeHtml(data.heroImage.assetUrl)}" alt="${escapeHtml(data.title)}" width="${escapeHtml(String(data.heroImage.width))}" height="${escapeHtml(String(data.heroImage.height))}" />
 </figure>`
     : "";
 

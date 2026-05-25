@@ -437,5 +437,47 @@ describe("LandingPageEditor hero image", () => {
       'src="tessera-asset://generated-images/landing-006/h.png"',
     );
     expect(html).toMatch(/<figure[^>]*landing-hero-image/);
+    // Width/height must appear unchanged for the normal numeric
+    // case — `escapeHtml(String(1024))` is `"1024"`, so the new
+    // belt-and-braces escape wrap added in the PR #38 post-merge
+    // follow-up is a no-op for valid inputs and must not regress
+    // the dimension contract.
+    expect(html).toContain('width="1024"');
+    expect(html).toContain('height="1024"');
+  });
+
+  it("HTML-escapes width/height in the preview HTML — defends against future type-relaxation injection", () => {
+    // Devin Review PR #38 post-merge follow-up: same invariant as
+    // `infographicEditor.test.tsx` — `width="..."` and
+    // `height="..."` slots in `buildLandingPreviewHtml`'s
+    // `<figure>` template now pass through `escapeHtml(String(...))`
+    // to pin the consistency invariant that EVERY user-derived
+    // interpolation passes through `escapeHtml`. This defends
+    // against a future refactor that relaxes the dimension type
+    // to accept a string-typed `"100%"` and would otherwise
+    // silently open an injection vector.
+    const hostileWidth = '1024" onload="alert(1)' as unknown as number;
+    const hostileHeight = '1024" onerror="alert(2)' as unknown as number;
+    const html = buildLandingPreviewHtml({
+      title: "Hero",
+      hero: {
+        headline: "h",
+        subheadline: "s",
+        image: {
+          assetUrl: "tessera-asset://generated-images/landing-006/h.png",
+          prompt: "p",
+          seed: 1,
+          width: hostileWidth,
+          height: hostileHeight,
+        },
+      },
+      features: [],
+      stats: [],
+      testimonials: [],
+      colorScheme: {},
+    });
+    expect(html).not.toContain('onload="alert(1)');
+    expect(html).not.toContain('onerror="alert(2)');
+    expect(html).toContain("&quot;");
   });
 });

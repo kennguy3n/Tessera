@@ -642,9 +642,18 @@ export function buildLandingPreviewHtml(data: LandingPageContent): string {
   // user-derived JSON, so we HTML-escape it
   // before interpolating into `src` as defence-in-depth. Width and
   // height are written to the DOM so the layout doesn't reflow when
-  // the image finishes decoding.
+  // the image finishes decoding. Width/height are also HTML-escaped
+  // for the same belt-and-braces reason — `sanitizeHeroImage`
+  // validates them as finite positive `Number.isInteger` values
+  // today (so `Number(n).toString()` produces only digits, never
+  // HTML-special characters), but escaping pins the invariant that
+  // EVERY user-derived interpolation in this template string passes
+  // through `escapeHtml`, so a future refactor that relaxes the
+  // type to accept e.g. a string-typed `"100%"` dimension cannot
+  // silently open an injection vector through the unescaped
+  // `width="${...}"` slot. Devin Review PR #38 post-merge follow-up.
   const heroImageHtml = data.hero.image
-    ? `<figure class="landing-hero-image">\n      <img src="${escapeHtml(data.hero.image.assetUrl)}" alt="${escapeHtml(data.hero.headline)}" width="${data.hero.image.width}" height="${data.hero.image.height}" />\n    </figure>`
+    ? `<figure class="landing-hero-image">\n      <img src="${escapeHtml(data.hero.image.assetUrl)}" alt="${escapeHtml(data.hero.headline)}" width="${escapeHtml(String(data.hero.image.width))}" height="${escapeHtml(String(data.hero.image.height))}" />\n    </figure>`
     : "";
 
   const html = `<div class="landing" style="--lp-primary:${primary};--lp-secondary:${secondary};--lp-accent:${accent};">
