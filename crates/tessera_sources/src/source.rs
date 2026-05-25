@@ -37,4 +37,20 @@ impl Source {
             file_count: 0,
         }
     }
+
+    /// Construct a source backed by the local cache directory the
+    /// Node-side KChat client populates from a channel's file store.
+    /// The `path` must be the absolute directory where downloaded
+    /// files live; the indexer treats it like any other local folder.
+    pub fn new_kchat_channel(cache_dir: String) -> Self {
+        Self {
+            id: SourceId::new(),
+            source_type: SourceType::Kchat,
+            path: cache_dir,
+            status: SourceStatus::Connected,
+            created_at: Utc::now(),
+            last_indexed: None,
+            file_count: 0,
+        }
+    }
 }

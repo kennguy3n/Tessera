@@ -46,6 +46,7 @@ extra scrutiny.
 | `sources:getDetail`                   | scalar-helper   |      |
 | `sources:reindex`                     | scalar-helper   |      |
 | `sources:getIndexingProgress`         | scalar-helper   |      |
+| `sources:addKchatChannel`             | scalar-helper (KChat-id + name) | ✓ — uses KChat token from vault to download channel files |
 
 ## Artifacts
 
@@ -154,6 +155,44 @@ extra scrutiny.
 | Channel                               | Strategy                                  | Auth |
 |---------------------------------------|-------------------------------------------|------|
 | `dialog:showSaveDialog`               | zod-schema (`SaveDialogOptionsSchema`)    |      |
+
+## KChat
+
+These channels expose the KChat (Mattermost v4) REST + WebSocket
+integration to the renderer. Every channel runs through the shared
+`KchatAuthService` singleton in `electron/appState.ts`
+(`getKchatAuthService()`), which owns the `KchatClient` and the
+encrypted token vault entry. The personal access token NEVER crosses
+the IPC boundary — `kchat:connect` takes it as input but the handler
+hands it directly to `KchatAuthService.connect` and only returns the
+sanitised `KchatUserView`; `kchat:status` and every other read
+returns connection state with no token field. The renderer hides
+the entire KChat UI when `kchat:isAvailable` returns `false`.
+
+| Channel                               | Strategy                                                  | Auth |
+|---------------------------------------|-----------------------------------------------------------|------|
+| `kchat:isAvailable`                   | no-input                                                  |      |
+| `kchat:status`                        | no-input                                                  | ✓ — surfaces connection state (no token) |
+| `kchat:connect`                       | scalar-helper (token + URL)                               | ✓ — writes PAT to vault, verifies via `/users/me` |
+| `kchat:disconnect`                    | no-input                                                  | ✓ — clears vault entry, stops WebSocket |
+| `kchat:listTeams`                     | no-input                                                  |      |
+| `kchat:listChannels`                  | scalar-helper (KChat-id)                                  |      |
+| `kchat:listMembers`                   | scalar-helper (KChat-id)                                  |      |
+| `kchat:listChannelFiles`              | scalar-helper (KChat-id + paging ints)                    |      |
+| `kchat:shareArtifact`                 | scalar-helper (artifact-id + KChat-id + format + bool×2)  | ✓ — uploads bytes via KChat token |
+
+## Audit
+
+Read-only renderer-facing view of the append-only `tessera_audit`
+SQLite store. There is intentionally NO write channel — every audit
+row is appended through the existing `bridgeLog*` pass-throughs
+inside main-process IPC handlers, so the renderer cannot forge a
+row. The reader clamps `limit` to `[1, 500]` so a renderer bug
+cannot OOM the main process.
+
+| Channel                               | Strategy                                                  | Auth |
+|---------------------------------------|-----------------------------------------------------------|------|
+| `audit:listRecent`                    | scalar-helper (`limit?`, `offset?` — both clamped ints)   |      |
 
 ## Updates (auto-updater)
 

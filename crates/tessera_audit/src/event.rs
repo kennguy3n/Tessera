@@ -40,6 +40,36 @@ pub enum AuditEventType {
     /// operators reviewing the audit log can tell exactly which
     /// template needs fixing.
     TemplateValidationFailed,
+    /// KChat connection established — the user's personal access
+    /// token was stored in the OS keychain and a `/users/me` probe
+    /// succeeded. Details carry the KChat server URL + KChat
+    /// `user_id` so auditors can correlate channel events with a
+    /// specific KChat identity without exposing the token itself.
+    KchatConnected,
+    /// KChat connection torn down. Details carry the KChat
+    /// `user_id` of the disconnected account so the audit trail
+    /// reflects which identity left the workspace.
+    KchatDisconnected,
+    /// An artifact was exported and uploaded into a KChat channel's
+    /// file store. Details carry artifact id, channel id, export
+    /// format, and whether citations + evidence pack were attached
+    /// so operators can answer "who shared this artifact" without
+    /// needing access to the KChat audit log itself.
+    KchatArtifactShared,
+    /// A KChat channel was linked as an indexed source. Details
+    /// carry channel id, channel name, and the local cache
+    /// directory the Node-side client populates with downloaded
+    /// files.
+    KchatChannelLinked,
+    /// A previously linked KChat channel was unlinked from the
+    /// Sources surface. Details carry channel id and the number
+    /// of cached files removed from disk.
+    KchatChannelUnlinked,
+    /// A file was downloaded from a KChat channel into the local
+    /// cache so the indexer could pick it up. Details carry channel
+    /// id and the file name; bytes are not logged so the audit
+    /// trail stays cheap.
+    KchatFileDownloaded,
 }
 
 impl AuditEvent {

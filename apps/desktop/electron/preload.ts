@@ -415,6 +415,46 @@ const api: TesseraApi = {
     onStatus: (cb: (s: UpdateStatusInfo) => void) =>
       subscribeIpc<UpdateStatusInfo>("updates:status", cb),
   },
+  kchat: {
+    isAvailable: () => ipcRenderer.invoke("kchat:isAvailable"),
+    status: () => ipcRenderer.invoke("kchat:status"),
+    connect: (token: string, serverUrl: string) =>
+      ipcRenderer.invoke("kchat:connect", token, serverUrl),
+    disconnect: () => ipcRenderer.invoke("kchat:disconnect"),
+    listTeams: () => ipcRenderer.invoke("kchat:listTeams"),
+    listChannels: (teamId: string) =>
+      ipcRenderer.invoke("kchat:listChannels", teamId),
+    listMembers: (channelId: string) =>
+      ipcRenderer.invoke("kchat:listMembers", channelId),
+    listChannelFiles: (channelId: string, page?: number, perPage?: number) =>
+      ipcRenderer.invoke(
+        "kchat:listChannelFiles",
+        channelId,
+        page ?? null,
+        perPage ?? null,
+      ),
+    shareArtifact: (
+      artifactId: string,
+      channelId: string,
+      format: "markdown" | "html" | "pdf" | "docx" | "json",
+      includeCitations: boolean,
+      includeEvidencePack: boolean,
+    ) =>
+      ipcRenderer.invoke(
+        "kchat:shareArtifact",
+        artifactId,
+        channelId,
+        format,
+        includeCitations,
+        includeEvidencePack,
+      ),
+    addChannelSource: (channelId: string, channelName: string) =>
+      ipcRenderer.invoke("sources:addKchatChannel", channelId, channelName),
+  },
+  audit: {
+    listRecent: (limit?: number, offset?: number) =>
+      ipcRenderer.invoke("audit:listRecent", limit, offset),
+  },
 };
 
 contextBridge.exposeInMainWorld("tessera", api);

@@ -1327,4 +1327,138 @@ export interface TesseraApi {
   automations: AutomationApi;
   dialog: DialogApi;
   updates: UpdatesApi;
+  kchat: KchatApi;
+  audit: AuditApi;
+}
+
+// --- KChat (Phase 11) -----------------------------------------------------
+//
+// The KChat REST + WebSocket integration. Everything here is renderer-safe:
+// the personal access token never crosses the IPC boundary.
+
+/** Sanitised view of a KChat user surfaced to the renderer. */
+export interface KchatUserView {
+  id: string;
+  username: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+}
+
+/** Sanitised KChat team. */
+export interface KchatTeamView {
+  id: string;
+  name: string;
+  display_name: string;
+  description?: string;
+  type: "O" | "I";
+}
+
+/** Sanitised KChat channel. */
+export interface KchatChannelView {
+  id: string;
+  team_id: string;
+  name: string;
+  display_name: string;
+  type: "O" | "P" | "D" | "G";
+  purpose?: string;
+  header?: string;
+}
+
+/** Sanitised KChat channel member. */
+export interface KchatChannelMemberView {
+  channel_id: string;
+  user_id: string;
+  roles: string;
+}
+
+/** Sanitised KChat file metadata. */
+export interface KchatFileView {
+  id: string;
+  name: string;
+  size: number;
+  mime_type: string;
+  extension: string;
+  create_at: number;
+}
+
+/** Connection state surfaced via `kchat:status`. */
+export interface KchatConnectionStateView {
+  state: "disconnected" | "connecting" | "connected" | "error";
+  user?: {
+    id: string;
+    username: string;
+    email: string;
+    first_name: string;
+    last_name: string;
+  };
+  serverUrl?: string;
+  error?: string;
+  lastHealthyAt?: string;
+}
+
+/** Renderer-facing KChat API namespace. */
+export interface KchatApi {
+  isAvailable: () => Promise<boolean>;
+  status: () => Promise<KchatConnectionStateView>;
+  connect: (token: string, serverUrl: string) => Promise<KchatUserView>;
+  disconnect: () => Promise<{ disconnected: boolean }>;
+  listTeams: () => Promise<KchatTeamView[]>;
+  listChannels: (teamId: string) => Promise<KchatChannelView[]>;
+  listMembers: (channelId: string) => Promise<KchatChannelMemberView[]>;
+  listChannelFiles: (
+    channelId: string,
+    page?: number,
+    perPage?: number,
+  ) => Promise<KchatFileView[]>;
+  shareArtifact: (
+    artifactId: string,
+    channelId: string,
+    format: "markdown" | "html" | "pdf" | "docx" | "json",
+    includeCitations: boolean,
+    includeEvidencePack: boolean,
+  ) => Promise<{ fileId: string; fileName: string }>;
+  addChannelSource: (
+    channelId: string,
+    channelName: string,
+  ) => Promise<{ sourceId: string; cacheDir: string }>;
+}
+
+// --- Audit (Phase 11 Task 6) ----------------------------------------------
+//
+// Read-only renderer-facing view of the append-only `tessera_audit`
+// SQLite store. The renderer renders the recent-activity list on
+// Settings and the KChat audit filter; both go through
+// `audit:listRecent` which returns events newest-first.
+
+/**
+ * A single audit row, as seen by the renderer.
+ *
+ * `eventType` is the bare enum name (`KchatConnected`,
+ * `ArtifactShared`, …) — see `AuditEventType` in
+ * `crates/tessera_audit/src/event.rs` for the closed set.
+ *
+ * `timestamp` is an RFC 3339 / ISO 8601 string in UTC.
+ */
+export interface AuditEventView {
+  /**
+   * UUID assigned at append time. Audit rows use TEXT-typed UUIDs
+   * (`uuid::Uuid::new_v4`) rather than auto-increment integers so
+   * concurrent appenders cannot collide on a primary key — the
+   * renderer should treat the value as opaque.
+   */
+  id: string;
+  eventType: string;
+  timestamp: string;
+  details: string;
+}
+
+export interface AuditApi {
+  /**
+   * Return the `limit` most recent audit rows, newest first.
+   * `limit` defaults to 100 and is clamped to `[1, 500]` in the
+   * main process. `offset` defaults to 0 and lets the renderer
+   * page backwards through history.
+   */
+  listRecent: (limit?: number, offset?: number) => Promise<AuditEventView[]>;
 }

@@ -138,6 +138,39 @@ impl AuditStore {
         Ok(events)
     }
 
+    /// Return the `limit` most recent audit rows, newest first. The
+    /// audit UI in Settings reads from this method so the renderer
+    /// can render a "recent activity" list without having to query
+    /// every event type individually. `offset` lets the caller page
+    /// backwards through history when scrolling.
+    pub fn recent_events(&self, limit: u32, offset: u32) -> Result<Vec<AuditEvent>> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, event_type, timestamp, details FROM audit_events \
+                 ORDER BY timestamp DESC, id DESC LIMIT ?1 OFFSET ?2",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let events = stmt
+            .query_map(params![limit as i64, offset as i64], |row| {
+                let type_s: String = row.get(1)?;
+                let ts_s: String = row.get(2)?;
+                Ok(AuditEvent {
+                    id: row.get(0)?,
+                    event_type: serde_json::from_str(&type_s)
+                        .unwrap_or(AuditEventType::SettingsChanged),
+                    timestamp: parse_datetime(&ts_s),
+                    details: row.get(3)?,
+                })
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+
+        Ok(events)
+    }
+
     pub fn count(&self) -> Result<u64> {
         let count: i64 = self
             .conn
@@ -204,6 +237,51 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(store.count().unwrap(), 5);
+    }
+
+    #[test]
+    fn recent_events_returns_newest_first_and_respects_limit_offset() {
+        let store = AuditStore::open_in_memory().unwrap();
+        // Insert ten rows with slightly-increasing timestamps so the
+        // DESC ordering yields the same sequence as the insertion
+        // order (newest = i=9 first, oldest = i=0 last).
+        for i in 0..10u32 {
+            let mut ev = AuditEvent::new(
+                AuditEventType::SettingsChanged,
+                format!("change {i}"),
+            );
+            // chrono::Utc::now() advances between calls but on
+            // particularly fast systems two appends can collide in
+            // the same nanosecond, which would make the ORDER BY
+            // timestamp non-deterministic. Force monotonic spacing
+            // by overriding the timestamp before append.
+            ev.timestamp = chrono::Utc::now() + chrono::Duration::milliseconds(i as i64);
+            store.append(&ev).unwrap();
+        }
+
+        // limit=3, offset=0 → newest 3 rows.
+        let top3 = store.recent_events(3, 0).unwrap();
+        assert_eq!(top3.len(), 3);
+        assert!(top3[0].details.contains("change 9"));
+        assert!(top3[1].details.contains("change 8"));
+        assert!(top3[2].details.contains("change 7"));
+
+        // limit=3, offset=3 → next page (rows 6,5,4 in the newest
+        // ordering).
+        let page2 = store.recent_events(3, 3).unwrap();
+        assert_eq!(page2.len(), 3);
+        assert!(page2[0].details.contains("change 6"));
+        assert!(page2[2].details.contains("change 4"));
+
+        // limit=100, offset=20 → past the end, expect an empty page.
+        let empty = store.recent_events(100, 20).unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn recent_events_on_empty_store_returns_empty() {
+        let store = AuditStore::open_in_memory().unwrap();
+        assert!(store.recent_events(100, 0).unwrap().is_empty());
     }
 
     #[test]

@@ -145,6 +145,89 @@ impl AuditLogger {
         )
     }
 
+    /// Record that KChat was connected — the user's personal access
+    /// token landed in the OS keychain and the `/users/me` probe
+    /// returned a `user_id`. Token bytes are never logged.
+    pub fn log_kchat_connected(&self, server_url: &str, kchat_user_id: &str) -> Result<()> {
+        self.log(
+            AuditEventType::KchatConnected,
+            format!("KChat connected: server={server_url} user_id={kchat_user_id}"),
+        )
+    }
+
+    /// Record that KChat was disconnected. We deliberately log the
+    /// outgoing `kchat_user_id` so the audit trail makes the
+    /// identity change visible across a re-connect under a
+    /// different account.
+    pub fn log_kchat_disconnected(&self, kchat_user_id: &str) -> Result<()> {
+        self.log(
+            AuditEventType::KchatDisconnected,
+            format!("KChat disconnected: user_id={kchat_user_id}"),
+        )
+    }
+
+    /// Record that an artifact was uploaded into a KChat channel.
+    /// `format` is the export format (`pdf`, `docx`, …), the boolean
+    /// flags reflect whether citations and an evidence pack were
+    /// attached.
+    pub fn log_kchat_artifact_shared(
+        &self,
+        artifact_id: &str,
+        channel_id: &str,
+        format: &str,
+        include_citations: bool,
+        include_evidence_pack: bool,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::KchatArtifactShared,
+            format!(
+                "Artifact shared to KChat: artifact={artifact_id} channel={channel_id} \
+                 format={format} citations={include_citations} \
+                 evidence_pack={include_evidence_pack}"
+            ),
+        )
+    }
+
+    /// Record that a KChat channel was linked as a Tessera source.
+    /// `cache_dir` is the local directory the channel's files
+    /// download into so the indexer can treat them as local files.
+    pub fn log_kchat_channel_linked(
+        &self,
+        channel_id: &str,
+        channel_name: &str,
+        cache_dir: &str,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::KchatChannelLinked,
+            format!(
+                "KChat channel linked: channel={channel_id} name={channel_name} \
+                 cache_dir={cache_dir}"
+            ),
+        )
+    }
+
+    /// Record that a previously linked KChat channel was unlinked.
+    pub fn log_kchat_channel_unlinked(&self, channel_id: &str, files_removed: usize) -> Result<()> {
+        self.log(
+            AuditEventType::KchatChannelUnlinked,
+            format!("KChat channel unlinked: channel={channel_id} files_removed={files_removed}"),
+        )
+    }
+
+    /// Record that a file was downloaded from a KChat channel into
+    /// the local cache. File contents are not logged.
+    pub fn log_kchat_file_downloaded(
+        &self,
+        channel_id: &str,
+        file_name: &str,
+        bytes: u64,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::KchatFileDownloaded,
+            format!("KChat file downloaded: channel={channel_id} name={file_name} bytes={bytes}"),
+        )
+    }
+
     pub fn log_citation_added(
         &self,
         artifact_id: &str,
@@ -217,6 +300,11 @@ impl AuditLogger {
 
     pub fn event_count(&self) -> Result<u64> {
         self.store.count()
+    }
+
+    /// Return the `limit` most recent audit rows, newest first.
+    pub fn recent_events(&self, limit: u32, offset: u32) -> Result<Vec<AuditEvent>> {
+        self.store.recent_events(limit, offset)
     }
 }
 

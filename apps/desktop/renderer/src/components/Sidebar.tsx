@@ -1,5 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { SIDEBAR_ITEMS, SIDEBAR_SHORTCUT_HINTS } from "../navigation";
+import KchatSidebarSection from "./KchatSidebarSection";
 
 export default function Sidebar() {
   return (
@@ -39,6 +40,7 @@ export default function Sidebar() {
           );
         })}
       </ul>
+      <KchatSidebarSection />
       <style>{`
         .sidebar {
           width: 220px;

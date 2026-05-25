@@ -10,6 +10,7 @@ import EmptyState from "../components/EmptyState";
 import ConnectorStatus from "../components/ConnectorStatus";
 import ConnectorsList from "../components/ConnectorsList";
 import DriveFilePicker from "../components/DriveFilePicker";
+import KchatChannelSourcePicker from "../components/KchatChannelSourcePicker";
 import { useSourceList, useAddSource, useRemoveSource } from "../hooks/useSources";
 import type {
   CompareSourcesResult,
@@ -49,6 +50,38 @@ export default function SourcesPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerBusy, setPickerBusy] = useState(false);
   const [pickerError, setPickerError] = useState<string | null>(null);
+
+  const [kchatConnected, setKchatConnected] = useState<boolean | null>(null);
+  const [kchatPickerOpen, setKchatPickerOpen] = useState(false);
+
+  // Probe KChat status on mount. We re-probe whenever the modal
+  // closes so a fresh connect from Settings is picked up without a
+  // page reload.
+  useEffect(() => {
+    const k = window.tessera?.kchat;
+    if (!k) {
+      setKchatConnected(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const available = await k.isAvailable();
+        if (cancelled) return;
+        if (!available) {
+          setKchatConnected(false);
+          return;
+        }
+        const status = await k.status();
+        if (!cancelled) setKchatConnected(status.state === "connected");
+      } catch {
+        if (!cancelled) setKchatConnected(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [kchatPickerOpen]);
 
   const refreshDriveStatus = useCallback(async () => {
     const api = typeof window !== "undefined" ? window.tessera : undefined;
@@ -256,6 +289,15 @@ export default function SourcesPage() {
             >
               {comparing ? "Comparing…" : `Compare (${selectedIds.size}/2)`}
             </Button>
+            {kchatConnected && (
+              <Button
+                variant="secondary"
+                onClick={() => setKchatPickerOpen(true)}
+                data-testid="add-kchat-channel"
+              >
+                Add KChat Channel
+              </Button>
+            )}
             <Button onClick={() => setModalOpen(true)}>Add Source</Button>
           </div>
         }
@@ -555,6 +597,17 @@ export default function SourcesPage() {
           isOpen={comparisonResult !== null}
           onClose={() => setComparisonResult(null)}
           result={comparisonResult}
+        />
+      )}
+
+      {kchatPickerOpen && (
+        <KchatChannelSourcePicker
+          isOpen={kchatPickerOpen}
+          onClose={() => setKchatPickerOpen(false)}
+          onAdded={() => {
+            refresh();
+            setKchatPickerOpen(false);
+          }}
         />
       )}
     </div>

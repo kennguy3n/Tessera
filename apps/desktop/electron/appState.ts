@@ -3,6 +3,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { ModelSidecar } from "./sidecar";
 import { DiffusionSidecar, resolveDiffusionBinary } from "./diffusionSidecar";
+import { KchatAuthService } from "./kchat/kchatAuth";
 import { getOrCreateDbKeyAsync, EncryptionUnavailableError } from "./dbKey";
 import type {
   AddCitationRequest,
@@ -68,6 +69,17 @@ export interface NativeBridge {
   initBridge(dbPath: string, templateDir: string, dbKey?: string | null): void;
   bridgeAddLocalFolder(path: string): SourceInfo;
   bridgeAddLocalFile(path: string): SourceInfo;
+  /**
+   * Register a KChat-channel source backed by a local cache
+   * directory the Node-side KChat client populates with files
+   * downloaded from a KChat channel's file store. The directory is
+   * indexed through the standard local-folder pipeline; the
+   * `SourceType::Kchat` tag lets the renderer render a KChat-
+   * specific icon / detail surface and lets the KChat scheduler
+   * poll the corresponding channel for new files on its own
+   * interval.
+   */
+  bridgeAddKchatChannel(cacheDir: string): SourceInfo;
   bridgeListSources(): SourceInfo[];
   bridgeRemoveSource(sourceId: string): void;
   bridgeSearchSources(query: string, limit: number): SearchHitInfo[];
@@ -141,6 +153,13 @@ export interface NativeBridge {
     sourceIdB: string,
   ): CompareSourcesResult;
   bridgeExportEvidencePack(artifactId: string, outputPath: string): string;
+  /**
+   * In-memory evidence-pack variant. Builds the same ZIP archive as
+   * `bridgeExportEvidencePack` but returns the bytes directly so
+   * the share-to-KChat path can stream them straight into the
+   * channel upload without staging on disk.
+   */
+  bridgeEvidencePackBytes(artifactId: string): Buffer;
   // --- Tasks ---
   // `req_json` is a JSON-encoded `tessera_bridge::tasks::CreateTaskRequest`
   // / `UpdateTaskRequest`. JSON-tunneling is used because the napi macro
@@ -188,6 +207,50 @@ export interface NativeBridge {
     removed: number,
   ): void;
   bridgeLogConnectorDisconnected(provider: string, filesRemoved: number): void;
+  // --- KChat audit pass-throughs ---
+  //
+  // Each method is a no-throw best-effort append into the
+  // `tessera_audit` SQLite store so the KChat audit trail lives in
+  // the same place as every other source / connector event. See
+  // `napi_exports.rs:bridge_log_kchat_*` for the corresponding
+  // Rust side.
+  bridgeLogKchatConnected(serverUrl: string, kchatUserId: string): void;
+  bridgeLogKchatDisconnected(kchatUserId: string): void;
+  bridgeLogKchatArtifactShared(
+    artifactId: string,
+    channelId: string,
+    format: string,
+    includeCitations: boolean,
+    includeEvidencePack: boolean,
+  ): void;
+  bridgeLogKchatChannelLinked(
+    channelId: string,
+    channelName: string,
+    cacheDir: string,
+  ): void;
+  bridgeLogKchatChannelUnlinked(channelId: string, filesRemoved: number): void;
+  bridgeLogKchatFileDownloaded(
+    channelId: string,
+    fileName: string,
+    bytes: number,
+  ): void;
+  // --- Audit query ---
+  //
+  // Renderer-facing read API over the audit store. The renderer
+  // calls this through `audit:listRecent` IPC to render the recent
+  // activity list on Settings. Limit is clamped main-side to
+  // `[1, 500]` so a bad caller cannot OOM the main process; the
+  // renderer schema rejects out-of-range values before this point.
+  bridgeRecentAuditEvents(
+    limit: number,
+    offset: number,
+  ): Array<{
+    /** UUID. `audit_events.id` is TEXT-typed, not autoincrement. */
+    id: string;
+    eventType: string;
+    timestamp: string;
+    details: string;
+  }>;
   // --- Vision + image generation ---
   //
   // Async bridges that talk to local sidecars:
@@ -261,6 +324,14 @@ export interface NativeBridge {
 
 let bridge: NativeBridge | null = null;
 let modelSidecar: ModelSidecar | null = null;
+// KChat auth + REST + WebSocket client. Singleton because every IPC
+// handler reads the same connection state (sidebar presence, share
+// button enable/disable, channel browser) and a stray second
+// instance would either hand out stale state or duplicate the
+// outgoing WebSocket connection. Lazy-initialised on first
+// `getKchatAuthService()` call to keep cold-start cheap when the
+// user never connects KChat.
+let kchatAuthService: KchatAuthService | null = null;
 // Vision sidecar runs the same `llama-server` binary as the text
 // sidecar but on a separate port (8385) and with `--mmproj`
 // appended so the multimodal projector is loaded alongside the
@@ -505,6 +576,30 @@ export function getVisionSidecar(): ModelSidecar | null {
  */
 export function getDiffusionSidecar(): DiffusionSidecar | null {
   return diffusionSidecar;
+}
+
+/**
+ * Lazy accessor for the singleton KChat auth service. First call
+ * constructs a `KchatAuthService` (which in turn constructs a
+ * `KchatClient`); subsequent calls return the same instance. Tests
+ * that want a fresh instance can call {@link resetKchatAuthService}
+ * between cases.
+ */
+export function getKchatAuthService(): KchatAuthService {
+  if (!kchatAuthService) {
+    kchatAuthService = new KchatAuthService();
+  }
+  return kchatAuthService;
+}
+
+/**
+ * Replace (or clear) the singleton KChat auth service. Used by
+ * tests to inject a stub or a fresh instance between cases.
+ */
+export function resetKchatAuthService(
+  next: KchatAuthService | null = null,
+): void {
+  kchatAuthService = next;
 }
 
 /**

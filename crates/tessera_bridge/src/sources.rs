@@ -96,6 +96,21 @@ pub fn add_local_file(manager: &SourceManager, path: &str) -> BridgeResult<Sourc
     Ok(SourceInfo::from(&source))
 }
 
+/// Register a KChat-channel source backed by a local cache directory
+/// the Node-side KChat client populates with files downloaded from a
+/// channel's file store. The directory is indexed through the
+/// standard local-folder pipeline; the only difference from
+/// `add_local_folder` is the `SourceType::Kchat` tag that lets the
+/// renderer render a KChat-specific icon / detail surface and lets
+/// the KChat scheduler poll the corresponding channel for new files
+/// on its own interval.
+pub fn add_kchat_channel(manager: &SourceManager, cache_dir: &str) -> BridgeResult<SourceInfo> {
+    let source = manager
+        .add_kchat_channel(cache_dir)
+        .map_err(BridgeError::Core)?;
+    Ok(SourceInfo::from(&source))
+}
+
 pub fn list_sources(manager: &SourceManager) -> BridgeResult<Vec<SourceInfo>> {
     let sources = manager.list_sources().map_err(BridgeError::Core)?;
     Ok(sources.iter().map(SourceInfo::from).collect())

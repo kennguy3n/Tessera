@@ -271,6 +271,30 @@ impl SourceManager {
         self.store.get_source(&source.id)
     }
 
+    /// Register a KChat-channel source backed by an on-disk cache
+    /// directory. The Node-side KChat client owns downloading the
+    /// channel's files into `cache_dir`; this call wires the
+    /// directory through the normal local-folder indexing pipeline
+    /// (text extraction, chunking, embeddings, FTS5).
+    ///
+    /// `cache_dir` must already exist on disk — the Node side
+    /// creates it on first sync. We reject non-existent or
+    /// non-directory paths up-front so a misconfigured channel does
+    /// not silently add an empty, un-indexable source.
+    pub fn add_kchat_channel(&self, cache_dir: &str) -> Result<Source> {
+        let dir_path = Path::new(cache_dir);
+        if !dir_path.is_dir() {
+            return Err(Error::InvalidPath(dir_path.to_path_buf()));
+        }
+
+        let source = Source::new_kchat_channel(cache_dir.to_string());
+        self.store.add_source(&source)?;
+        self.indexer
+            .index_folder(&source.id, dir_path, &self.store)?;
+
+        self.store.get_source(&source.id)
+    }
+
     pub fn remove_source(&self, source_id: &SourceId) -> Result<()> {
         self.store.remove_source(source_id)
     }
@@ -336,7 +360,7 @@ impl SourceManager {
         let slot = self.progress.start(source_id);
 
         let outcome = match source.source_type {
-            tessera_core::SourceType::LocalFolder => self
+            tessera_core::SourceType::LocalFolder | tessera_core::SourceType::Kchat => self
                 .indexer
                 .index_folder_with_progress(source_id, path, &self.store, Some(&slot))
                 .map(|_| ()),

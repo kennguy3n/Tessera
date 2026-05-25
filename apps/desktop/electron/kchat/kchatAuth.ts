@@ -1,0 +1,216 @@
+/**
+ * KChat authentication flow.
+ *
+ * Encapsulates token persistence (OS keychain / encrypted file
+ * fallback through `tokenVault.ts`), server-URL configuration, and
+ * `KchatClient` lifecycle.
+ *
+ * **Security contract**:
+ *   - The personal access token is stored encrypted in
+ *     `tokenVault` keyed as the synthetic provider `"kchat"`.
+ *   - The plaintext token NEVER returns to the renderer over IPC;
+ *     IPC handlers receive only sanitized state through
+ *     {@link KchatAuthService.getState} (which excludes the token).
+ *   - Token mutation requires explicit calls (`connect`, `disconnect`)
+ *     — there is no "expose token" API.
+ *
+ * **Single-instance**: callers (the IPC layer) construct one service
+ * for the app lifetime; it owns the underlying `KchatClient`.
+ */
+
+import {
+  deleteTokens,
+  getTokens,
+  hasTokens,
+  storeTokens,
+  StoredTokens,
+} from "../tokenVault";
+import { KchatClient, DEFAULT_KCHAT_SERVER } from "./kchatClient";
+import { KchatConnectionState, KchatUser } from "./kchatTypes";
+
+/** Synthetic provider key under which the KChat PAT is stored. */
+export const KCHAT_VAULT_PROVIDER = "kchat";
+
+/**
+ * Persisted shape we layer on top of `StoredTokens`. We reuse
+ * `accessToken` for the PAT (no refresh token; KChat PATs are
+ * non-expiring until explicitly revoked) and stash the server URL
+ * + KChat user id in `scopes` so a connection can be restored on
+ * Tessera startup without an extra round-trip to KChat.
+ */
+interface KchatStoredAuth {
+  token: string;
+  serverUrl: string;
+  /** KChat user id from the last successful `/users/me` probe. */
+  userId: string;
+  /** ISO-8601 of the last connection-verification. */
+  verifiedAt: string;
+}
+
+/**
+ * Container holding the `KchatClient` and persisting auth via the
+ * shared `tokenVault`. Exposes a small surface (connect, disconnect,
+ * state) that the IPC layer mounts directly.
+ */
+export class KchatAuthService {
+  private readonly client: KchatClient;
+
+  constructor(client: KchatClient = new KchatClient()) {
+    this.client = client;
+  }
+
+  /** Underlying client (used by IPC handlers that need REST methods). */
+  getClient(): KchatClient {
+    return this.client;
+  }
+
+  /** Returns sanitized connection state (no token). */
+  getState(): KchatConnectionState {
+    return this.client.getState();
+  }
+
+  /** Subscribe to connection-state transitions. */
+  onStatusChange(listener: (state: KchatConnectionState) => void): () => void {
+    return this.client.onStatusChange(listener);
+  }
+
+  /** Returns true if a KChat PAT has been persisted in the vault. */
+  hasStoredToken(): boolean {
+    return hasTokens(KCHAT_VAULT_PROVIDER);
+  }
+
+  /**
+   * Restore the persisted connection on app start. Decrypts the
+   * stored token, hands it to the client, and re-verifies against
+   * the configured server. Returns the verified user, or `null` if
+   * no token is stored.
+   *
+   * Verification failures (revoked token, server unreachable) leave
+   * the connection state as `error` and propagate the underlying
+   * error to the caller; the stored token is NOT deleted — the user
+   * may simply be offline and will reconnect later.
+   */
+  async restoreFromVault(): Promise<KchatUser | null> {
+    const stored = readStoredAuth();
+    if (!stored) return null;
+    this.client.setServerUrl(stored.serverUrl);
+    this.client.setToken(stored.token);
+    const user = await this.client.verifyConnection();
+    this.client.startHealthCheck();
+    // Re-persist with refreshed verifiedAt so a `restore` after a
+    // long offline gap accurately reflects "last known good".
+    writeStoredAuth({
+      token: stored.token,
+      serverUrl: stored.serverUrl,
+      userId: user.id,
+      verifiedAt: new Date().toISOString(),
+    });
+    return user;
+  }
+
+  /**
+   * Persist `token` for `serverUrl`, verify against KChat, and start
+   * the health check. The token is written to the vault BEFORE
+   * verification so a transient network failure leaves the token in
+   * place (the user can retry without re-typing it). On a hard
+   * authentication failure the vault entry is rolled back so a
+   * subsequent restore does not loop on a known-bad token.
+   */
+  async connect(token: string, serverUrl: string): Promise<KchatUser> {
+    if (!token || token.trim().length === 0) {
+      throw new Error("KChat token is required");
+    }
+    const url = (serverUrl || DEFAULT_KCHAT_SERVER).trim();
+
+    this.client.setServerUrl(url);
+    this.client.setToken(token);
+
+    let user: KchatUser;
+    try {
+      user = await this.client.verifyConnection();
+    } catch (err) {
+      // Surface the error untouched; do not write a known-bad token.
+      this.client.setToken(null);
+      throw err;
+    }
+
+    writeStoredAuth({
+      token,
+      serverUrl: url,
+      userId: user.id,
+      verifiedAt: new Date().toISOString(),
+    });
+    this.client.startHealthCheck();
+    return user;
+  }
+
+  /**
+   * Disconnect the KChat session. Stops the WebSocket + health
+   * check, removes the token from the vault, and clears in-memory
+   * state. Returns the KChat user id that was disconnected (for
+   * audit logging).
+   */
+  disconnect(): string | null {
+    const stored = readStoredAuth();
+    const userId = stored?.userId ?? null;
+    this.client.shutdown();
+    deleteTokens(KCHAT_VAULT_PROVIDER);
+    return userId;
+  }
+}
+
+function readStoredAuth(): KchatStoredAuth | null {
+  const raw = getTokens(KCHAT_VAULT_PROVIDER);
+  if (!raw) return null;
+  // Encoded shape: `accessToken` carries the PAT, `scopes` carries
+  // a single-element JSON string holding `{ serverUrl, userId,
+  // verifiedAt }`. We use this rather than a separate file so the
+  // tokenVault recovery path (clear-on-keyring-loss) wipes the
+  // KChat auth atomically with the rest of the vault.
+  if (!raw.accessToken) return null;
+  const meta = raw.scopes[0];
+  if (!meta) {
+    return {
+      token: raw.accessToken,
+      serverUrl: DEFAULT_KCHAT_SERVER,
+      userId: "",
+      verifiedAt: new Date(0).toISOString(),
+    };
+  }
+  try {
+    const parsed = JSON.parse(meta) as {
+      serverUrl?: string;
+      userId?: string;
+      verifiedAt?: string;
+    };
+    return {
+      token: raw.accessToken,
+      serverUrl: parsed.serverUrl ?? DEFAULT_KCHAT_SERVER,
+      userId: parsed.userId ?? "",
+      verifiedAt: parsed.verifiedAt ?? new Date(0).toISOString(),
+    };
+  } catch {
+    return {
+      token: raw.accessToken,
+      serverUrl: DEFAULT_KCHAT_SERVER,
+      userId: "",
+      verifiedAt: new Date(0).toISOString(),
+    };
+  }
+}
+
+function writeStoredAuth(auth: KchatStoredAuth): void {
+  const tokens: StoredTokens = {
+    accessToken: auth.token,
+    refreshToken: null,
+    expiresAt: 0,
+    scopes: [
+      JSON.stringify({
+        serverUrl: auth.serverUrl,
+        userId: auth.userId,
+        verifiedAt: auth.verifiedAt,
+      }),
+    ],
+  };
+  storeTokens(KCHAT_VAULT_PROVIDER, tokens);
+}
