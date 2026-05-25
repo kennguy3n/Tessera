@@ -113,6 +113,7 @@ vi.mock("electron", () => ({
 
 // Imported AFTER the mock so the module picks up the stubbed electron.
 import {
+  _resetAssetProtocolSchemeRegisteredForTests,
   assertAssetProtocolSchemeRegistered,
   pathToAssetUrl,
   registerAssetProtocolHandler,
@@ -473,6 +474,11 @@ describe("registerAssetProtocolHandler", () => {
 
 describe("registerAssetProtocolScheme", () => {
   it("declares tessera-asset with the documented privilege flags", () => {
+    // Reset the latch (the suite-wide `beforeEach` flipped it to
+    // `true`) so the idempotency guard added in pass-N doesn't
+    // short-circuit this test's measurement of
+    // `registerSchemesMock` call-count.
+    _resetAssetProtocolSchemeRegisteredForTests();
     registerAssetProtocolScheme();
     expect(registerSchemesMock).toHaveBeenCalledTimes(1);
     const [schemes] = registerSchemesMock.mock.calls[0] as [
@@ -511,6 +517,27 @@ describe("registerAssetProtocolScheme", () => {
     //
     // `beforeEach` already flipped the latch (see the comment in
     // the suite's setup); calling the assert here must NOT throw.
+    expect(() => assertAssetProtocolSchemeRegistered()).not.toThrow();
+  });
+
+  it("is idempotent — a second call is a no-op and does not throw or re-invoke Electron", () => {
+    // Devin Review PR #38 pass-N 📝 finding
+    // `ANALYSIS_pr-review-job-3069e807…_0001`: Electron's
+    // `protocol.registerSchemesAsPrivileged` documents itself as
+    // "can only be called once" — a second call would throw at
+    // boot, after the first call has already registered side
+    // effects. The idempotency guard returns early if the latch
+    // is already set, so a future refactor that accidentally
+    // double-calls this from two import paths cannot break
+    // production startup.
+    _resetAssetProtocolSchemeRegisteredForTests();
+    registerAssetProtocolScheme();
+    expect(registerSchemesMock).toHaveBeenCalledTimes(1);
+    // Second call should early-return without invoking the
+    // underlying Electron API.
+    expect(() => registerAssetProtocolScheme()).not.toThrow();
+    expect(registerSchemesMock).toHaveBeenCalledTimes(1);
+    // Latch stays true so dependent callers continue to pass.
     expect(() => assertAssetProtocolSchemeRegistered()).not.toThrow();
   });
 });

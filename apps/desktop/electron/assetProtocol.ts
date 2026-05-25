@@ -132,6 +132,20 @@ export function assertAssetProtocolSchemeRegistered(): void {
 }
 
 /**
+ * Test-only escape hatch — resets the `assetProtocolSchemeRegistered`
+ * latch so a test can verify the idempotency guard branch or
+ * exercise the post-registration code path repeatedly. The underscore
+ * prefix marks this as not for production use; the
+ * `auditPassThroughs.test.ts` source-scan keeps it out of production
+ * code paths by convention. Matches the established
+ * `_resetWillQuitLatchForTests` / `_markAppInitCompleteForTests`
+ * pattern in `main.ts`.
+ */
+export function _resetAssetProtocolSchemeRegisteredForTests(): void {
+  assetProtocolSchemeRegistered = false;
+}
+
+/**
  * Resolve the absolute allow-list root for `tessera-asset://`
  * requests. Both the protocol handler (registered once at
  * `app.whenReady`) and the renderer-side `pathToAssetUrl` helper
@@ -169,6 +183,17 @@ export function resolveAssetAllowedRoot(userDataDir: string): string {
  * call site rather than hidden in a top-level import side-effect.
  */
 export function registerAssetProtocolScheme(): void {
+  // Idempotency guard. Production calls this exactly once from
+  // `main.ts` at module load. The guard is defence-in-depth against
+  // a future refactor that might accidentally call it twice —
+  // Electron's `protocol.registerSchemesAsPrivileged` is documented
+  // as "this method can only be called once", and the failure mode
+  // (a thrown error during app boot, after the second caller has
+  // already registered side-effects) is worth the one-branch cost.
+  // Devin Review PR #38 pass-N 📝 finding
+  // `ANALYSIS_pr-review-job-3069e807…_0001`.
+  if (assetProtocolSchemeRegistered) return;
+
   protocol.registerSchemesAsPrivileged([
     {
       scheme: SCHEME,
