@@ -19,8 +19,8 @@ function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
       id: "user-1",
       username: "alice",
       email: "alice@example.com",
-      first_name: "Alice",
-      last_name: "Anderson",
+      firstName: "Alice",
+      lastName: "Anderson",
     }),
     disconnect: vi.fn().mockResolvedValue({ disconnected: true }),
     listTeams: vi.fn().mockResolvedValue([
@@ -70,8 +70,8 @@ describe("KchatSettingsCard", () => {
         id: "user-1",
         username: "alice",
         email: "a@x.io",
-        first_name: "Alice",
-        last_name: "Anderson",
+        firstName: "Alice",
+        lastName: "Anderson",
       },
     };
     const api = makeApi();
@@ -127,8 +127,8 @@ describe("KchatSettingsCard", () => {
         id: "user-1",
         username: "alice",
         email: "a@x.io",
-        first_name: "A",
-        last_name: "A",
+        firstName: "A",
+        lastName: "A",
       },
     });
 
@@ -151,8 +151,8 @@ describe("KchatSettingsCard", () => {
           id: "user-1",
           username: "alice",
           email: "a@x.io",
-          first_name: "A",
-          last_name: "A",
+          firstName: "A",
+          lastName: "A",
         },
       })
       .mockResolvedValue({ state: "disconnected" as const });

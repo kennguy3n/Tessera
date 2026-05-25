@@ -392,6 +392,159 @@ describe("KchatClient.setToken null invariant", () => {
     c.setToken(null);
     expect(instances[0].closed).toBe(true);
   });
+
+  // Replacing the token with a different non-null value must also
+  // tear down the WS — the identity of the underlying user/session
+  // has changed, so the existing WebSocket is no longer
+  // authoritative. Leaving it open would let events bound to the
+  // previous user keep streaming into the renderer.
+  it("tears down the active WebSocket when the token is rotated", async () => {
+    const { ctor, instances } = mockWebSocketCtor();
+    const c = buildClient({ webSocketCtor: ctor });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-original");
+    await c.connectWebSocket();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].closed).toBe(false);
+    c.setToken("PAT-rotated");
+    expect(instances[0].closed).toBe(true);
+  });
+
+  // Same-value setToken calls must be no-ops on the WebSocket;
+  // otherwise a re-render that re-applies the cached token would
+  // bounce the WS unnecessarily.
+  it("is a no-op on the WebSocket when the token is unchanged", async () => {
+    const { ctor, instances } = mockWebSocketCtor();
+    const c = buildClient({ webSocketCtor: ctor });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-stable");
+    await c.connectWebSocket();
+    expect(instances).toHaveLength(1);
+    c.setToken("PAT-stable");
+    expect(instances[0].closed).toBe(false);
+  });
+});
+
+describe("KchatClient.setServerUrl invariant", () => {
+  // A KChat instance switch (self-hosted → kchat.com or vice
+  // versa) must tear down any existing WebSocket pointing at the
+  // old server. Otherwise the renderer would receive events from
+  // the previous instance while REST calls have already moved to
+  // the new one.
+  it("tears down the active WebSocket when the server URL changes", async () => {
+    const { ctor, instances } = mockWebSocketCtor();
+    const c = buildClient({ webSocketCtor: ctor });
+    c.setServerUrl("https://old.kchat.example.com");
+    c.setToken("PAT");
+    await c.connectWebSocket();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].closed).toBe(false);
+    c.setServerUrl("https://new.kchat.example.com");
+    expect(instances[0].closed).toBe(true);
+  });
+
+  // Same-value setServerUrl calls must NOT bounce the WebSocket.
+  it("is a no-op on the WebSocket when the URL is unchanged (after slash trim)", async () => {
+    const { ctor, instances } = mockWebSocketCtor();
+    const c = buildClient({ webSocketCtor: ctor });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT");
+    await c.connectWebSocket();
+    expect(instances).toHaveLength(1);
+    // Same canonical URL after trailing-slash normalisation.
+    c.setServerUrl("https://kchat.example.com/");
+    expect(instances[0].closed).toBe(false);
+  });
+});
+
+describe("KchatClient.downloadFile server-id validation", () => {
+  // downloadFile() interpolates `fileId` into the request URL.
+  // The fileId may have come from a `listChannelFiles()` response
+  // (server-supplied) — the trust-boundary check inside
+  // downloadFile must reject anything that doesn't match the KChat
+  // object-id shape, regardless of how it got there.
+  it("rejects fileId values containing path-control bytes", async () => {
+    const c = buildClient();
+    c.setToken("T");
+    await expect(c.downloadFile("../etc/passwd")).rejects.toThrow(
+      /not a valid KChat object id/,
+    );
+  });
+
+  it("rejects fileId values that are too short", async () => {
+    const c = buildClient();
+    c.setToken("T");
+    await expect(c.downloadFile("short")).rejects.toThrow(
+      /not a valid KChat object id/,
+    );
+  });
+
+  it("rejects fileId values containing uppercase characters", async () => {
+    const c = buildClient();
+    c.setToken("T");
+    await expect(
+      c.downloadFile("FID000000000000000000ABCD"),
+    ).rejects.toThrow(/not a valid KChat object id/);
+  });
+
+  it("rejects fileId values containing URL-control characters", async () => {
+    const c = buildClient();
+    c.setToken("T");
+    await expect(
+      c.downloadFile("fid000000000000?query=1"),
+    ).rejects.toThrow(/not a valid KChat object id/);
+  });
+});
+
+describe("KchatClient.scrubMessage", () => {
+  it("replaces the active PAT with [REDACTED]", () => {
+    const c = buildClient();
+    c.setToken("PAT-supersecret-token");
+    const scrubbed = c.scrubMessage(
+      "request failed: Authorization: Bearer PAT-supersecret-token; reason=401",
+    );
+    expect(scrubbed).not.toContain("PAT-supersecret-token");
+    expect(scrubbed).toContain("[REDACTED]");
+  });
+
+  it("replaces Bearer patterns even when no active token is set", () => {
+    const c = buildClient();
+    const scrubbed = c.scrubMessage(
+      "logged header: Bearer abcdef0123456789",
+    );
+    expect(scrubbed).toContain("Bearer [REDACTED]");
+    expect(scrubbed).not.toContain("abcdef0123456789");
+  });
+
+  it("returns the message unchanged when it contains no token bytes", () => {
+    const c = buildClient();
+    c.setToken("PAT-T");
+    expect(c.scrubMessage("KChat 502 Bad Gateway: /api/v4/users/me")).toBe(
+      "KChat 502 Bad Gateway: /api/v4/users/me",
+    );
+  });
+
+  it("does not redact short tokens that would alias on words", () => {
+    const c = buildClient();
+    // Length guard in scrubMessage: tokens shorter than 8 chars are
+    // not redacted because they would alias on common English text.
+    c.setToken("short");
+    expect(c.scrubMessage("the short story")).toBe("the short story");
+  });
+
+  it("escapes regex metacharacters in the active token", () => {
+    const c = buildClient();
+    // PATs in some KChat deployments include `.` and `+` — the
+    // escape pass must treat them as literals so the redaction is
+    // accurate and doesn't accidentally consume more bytes.
+    c.setToken("a.b+c/d=e1234");
+    const out = c.scrubMessage(
+      "failed for token=a.b+c/d=e1234 and aXbYcZdQe1234",
+    );
+    expect(out).toContain("[REDACTED]");
+    expect(out).toContain("aXbYcZdQe1234");
+    expect(out).not.toContain("a.b+c/d=e1234");
+  });
 });
 
 describe("KchatClient.connectWebSocket", () => {

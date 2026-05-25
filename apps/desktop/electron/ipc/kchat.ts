@@ -132,16 +132,45 @@ function assertKchatId(val: unknown, name: string): string {
 /**
  * Translate any error coming out of the KChat client (network
  * failure, 4xx/5xx, JSON parse error) into a stable error shape
- * the renderer can rely on. The renderer renders the `message`
- * verbatim, so we strip token bytes from the message just in
- * case a future server returns one in an error payload.
+ * the renderer can rely on.
+ *
+ * The renderer renders `error.message` verbatim into the UI, so
+ * any token bytes that leak into the message would be visible to
+ * anyone watching the screen — including a screen-share, a
+ * crash-reporter upload, or a renderer-process log dump. We run
+ * the message through the active `KchatClient.scrubMessage`
+ * before crossing the boundary, which replaces both the live PAT
+ * (when the client knows it) and any `Bearer <…>` pattern with
+ * `[REDACTED]`.
+ *
+ * `KchatRequestError` instances are *re-synthesised* from
+ * `status`/`statusText`/`endpoint` rather than `err.message`
+ * because those three fields are constructed from server response
+ * metadata that never contains a token. The bare `Error` path,
+ * however, can carry arbitrary strings (e.g. a fetch failure that
+ * embeds the request URL in its message), which is exactly why
+ * the scrub runs on that branch.
  */
 function toIpcError(err: unknown): Error {
+  const svc = getKchatAuthService();
+  // The auth service may not have been initialised yet (very
+  // early startup, or in a renderer-only unit test) — fall back
+  // to a no-op scrub in that case. Once the client exists the
+  // scrub always runs.
+  const scrub = (msg: string): string => {
+    try {
+      return svc.getClient().scrubMessage(msg);
+    } catch {
+      return msg;
+    }
+  };
   if (err instanceof KchatRequestError) {
-    return new Error(`KChat ${err.status} ${err.statusText}: ${err.endpoint}`);
+    return new Error(
+      scrub(`KChat ${err.status} ${err.statusText}: ${err.endpoint}`),
+    );
   }
-  if (err instanceof Error) return err;
-  return new Error(String(err));
+  if (err instanceof Error) return new Error(scrub(err.message));
+  return new Error(scrub(String(err)));
 }
 
 export function registerKchatHandlers(): void {
@@ -371,6 +400,18 @@ export function registerKchatHandlers(): void {
       // the initial index pass has content to work with. Subsequent
       // poll cycles (block B) re-fetch deltas.
       //
+      // Pagination: KChat caps `GET /channels/{id}/files` at 200
+      // results per page (default 60 in our client). A channel with
+      // more than `perPage` files would otherwise silently truncate
+      // at the first page — the renderer would see a "synced" badge
+      // while only the most-recent N files actually reached the
+      // indexer. We loop until the server returns a short page
+      // (`< perPage` results), which is the documented end-of-list
+      // signal. We bound the loop with `MAX_PAGES` so a misbehaving
+      // server that always returns a full page (infinite list)
+      // cannot wedge the initial sync forever; in practice no real
+      // KChat channel hits this cap.
+      //
       // Security: the KChat server is treated as untrusted with
       // respect to filename contents. Server-supplied `fi.name`
       // values can include path-traversal sequences
@@ -382,30 +423,58 @@ export function registerKchatHandlers(): void {
       // check catches edge cases (e.g. symlinks under the cache dir,
       // case-folding differences on macOS/Windows) that pure name
       // sanitisation would miss.
+      //
+      // `fi.id` is also server-supplied. `downloadFile()` revalidates
+      // it against the KChat object-id shape before interpolating it
+      // into the request URL (defence at the network boundary), but
+      // the fallback `safeName = `kchat-file-${fi.id}`` would
+      // otherwise embed unsanitised bytes from the id directly into
+      // the on-disk filename. We sanitise the id to an allow-list
+      // here so the safeName cannot escape `cacheDir` even via the
+      // fallback path. The downstream containment check still runs
+      // — this is belt-and-braces, not a replacement for it.
       try {
-        const files = await svc.getClient().listChannelFiles(id);
+        const PER_PAGE = 60;
+        const MAX_PAGES = 1000;
         const resolvedCacheDir = path.resolve(cacheDir);
-        for (const fi of files) {
-          const baseName = path.basename(fi.name);
-          const safeName =
-            baseName && baseName !== "." && baseName !== ".."
-              ? baseName
-              : `kchat-file-${fi.id}`;
-          const targetPath = path.resolve(cacheDir, safeName);
-          if (
-            targetPath !== resolvedCacheDir &&
-            !targetPath.startsWith(resolvedCacheDir + path.sep)
-          ) {
-            // The sanitised path still escaped — skip and audit-log
-            // the rejection so operators can see a misbehaving
-            // server. We continue to the next file rather than
-            // aborting the entire sync.
-            bridge.bridgeLogKchatFileDownloaded(id, safeName, 0);
-            continue;
+        for (let page = 0; page < MAX_PAGES; page += 1) {
+          const files = await svc
+            .getClient()
+            .listChannelFiles(id, page, PER_PAGE);
+          for (const fi of files) {
+            const baseName = path.basename(fi.name);
+            const sanitisedId =
+              typeof fi.id === "string"
+                ? fi.id.replace(/[^a-zA-Z0-9_-]/g, "_")
+                : "";
+            const idFallback = sanitisedId
+              ? `kchat-file-${sanitisedId}`
+              : `kchat-file-${page}-${files.indexOf(fi)}`;
+            const safeName =
+              baseName && baseName !== "." && baseName !== ".."
+                ? baseName
+                : idFallback;
+            const targetPath = path.resolve(cacheDir, safeName);
+            if (
+              targetPath !== resolvedCacheDir &&
+              !targetPath.startsWith(resolvedCacheDir + path.sep)
+            ) {
+              // The sanitised path still escaped — skip and audit-log
+              // the rejection so operators can see a misbehaving
+              // server. We continue to the next file rather than
+              // aborting the entire sync.
+              bridge.bridgeLogKchatFileDownloaded(id, safeName, 0);
+              continue;
+            }
+            const bytes = await svc.getClient().downloadFile(fi.id);
+            await fs.writeFile(targetPath, bytes);
+            bridge.bridgeLogKchatFileDownloaded(
+              id,
+              safeName,
+              bytes.byteLength,
+            );
           }
-          const bytes = await svc.getClient().downloadFile(fi.id);
-          await fs.writeFile(targetPath, bytes);
-          bridge.bridgeLogKchatFileDownloaded(id, safeName, bytes.byteLength);
+          if (files.length < PER_PAGE) break;
         }
       } catch (err) {
         throw toIpcError(err);

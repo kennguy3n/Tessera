@@ -93,6 +93,13 @@ export class KchatAuthService {
   async restoreFromVault(): Promise<KchatUser | null> {
     const stored = readStoredAuth();
     if (!stored) return null;
+    // `restoreFromVault` runs at startup, but it may also be
+    // called manually after a long offline gap. In either case the
+    // client may carry an active WS pinned to a previous server
+    // URL or a previous token. `setServerUrl` and `setToken` both
+    // now tear down the stale WS internally when the value changes
+    // (see their docstrings), so we get a clean state here without
+    // having to call `disconnectWebSocket()` explicitly.
     this.client.setServerUrl(stored.serverUrl);
     this.client.setToken(stored.token);
     const user = await this.client.verifyConnection();
@@ -138,6 +145,15 @@ export class KchatAuthService {
     }
     const url = (serverUrl || DEFAULT_KCHAT_SERVER).trim();
 
+    // `setServerUrl` and `setToken` both now tear down any active
+    // WebSocket internally when the value actually changes. That
+    // means a re-`connect()` to a different KChat instance (e.g.
+    // user switches from self-hosted to kchat.com in Settings)
+    // cannot leave a stale WebSocket pointing at the old server
+    // while REST calls move to the new one. The previous
+    // implementation relied on the caller invoking `disconnect()`
+    // first; the WS-teardown invariants make that implicit
+    // requirement explicit at the client layer.
     this.client.setServerUrl(url);
     this.client.setToken(trimmedToken);
 

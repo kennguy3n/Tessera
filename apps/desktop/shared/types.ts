@@ -1382,16 +1382,26 @@ export interface KchatFileView {
   create_at: number;
 }
 
+/**
+ * Sanitised view of the authenticated KChat user inside
+ * `KchatConnectionStateView`. Uses camelCase to match
+ * `KchatUserView` (returned by `kchat:connect`) so the renderer
+ * sees one canonical shape everywhere — earlier revisions exposed
+ * snake_case here, which forced every consumer to special-case
+ * the connection-state branch.
+ */
+export interface KchatConnectionUserView {
+  id: string;
+  username: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+}
+
 /** Connection state surfaced via `kchat:status`. */
 export interface KchatConnectionStateView {
   state: "disconnected" | "connecting" | "connected" | "error";
-  user?: {
-    id: string;
-    username: string;
-    email: string;
-    first_name: string;
-    last_name: string;
-  };
+  user?: KchatConnectionUserView;
   serverUrl?: string;
   error?: string;
   lastHealthyAt?: string;

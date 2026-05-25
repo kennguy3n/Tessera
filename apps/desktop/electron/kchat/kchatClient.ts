@@ -139,6 +139,69 @@ export class KchatRequestError extends Error {
 }
 
 /**
+ * Shape of a KChat (Mattermost) object id: 20–32 lowercase
+ * alphanumerics. The REST API consistently emits 26-char ids, but
+ * we tolerate the documented 20–32 range to stay forward-compatible
+ * with the server's stated invariant rather than over-fitting to
+ * the current implementation.
+ *
+ * This regex is reused for renderer-supplied ids (via the IPC
+ * validator `assertKchatId`) AND for server-supplied ids that are
+ * about to be interpolated into a URL path or filename (via
+ * {@link assertKchatServerObjectId}).
+ */
+const KCHAT_OBJECT_ID_RE = /^[a-z0-9]{20,32}$/;
+
+/**
+ * Validate a KChat object id that originated from the **server**
+ * (e.g. an `id` field on a `KchatFileInfo` returned by
+ * `listChannelFiles`). The renderer-facing IPC validator
+ * `assertKchatId` covers ids that came in over IPC; this helper
+ * covers the trust boundary on the other side of the client.
+ *
+ * Per the documented threat model, the KChat server is trusted to
+ * authenticate the user but its response bodies are otherwise
+ * treated as untrusted — a compromised or malicious server could
+ * emit ids containing `../`, `?`, `#`, or other URL-control bytes
+ * to alter request paths. Rejecting anything that does not match
+ * the published id shape closes that vector at the network
+ * boundary regardless of any defence-in-depth checks downstream.
+ */
+export function assertKchatServerObjectId(
+  value: unknown,
+  name: string,
+): string {
+  if (typeof value !== "string") {
+    throw new KchatRequestError(
+      502,
+      "Malformed server response",
+      name,
+      `${name} must be a string, got ${typeof value}`,
+    );
+  }
+  if (!KCHAT_OBJECT_ID_RE.test(value)) {
+    throw new KchatRequestError(
+      502,
+      "Malformed server response",
+      name,
+      `${name} is not a valid KChat object id`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Escape every regex metacharacter so the value is matched
+ * literally when used inside `new RegExp(...)`. Used by
+ * {@link KchatClient.scrubMessage} to redact the active token
+ * regardless of which special characters KChat happens to use in
+ * its PAT format.
+ */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * KChat REST + WebSocket client.
  *
  * The client is **stateful** — it owns the server URL, the active
@@ -185,10 +248,30 @@ export class KchatClient {
     this.random = options.random ?? Math.random;
   }
 
-  /** Replace the configured KChat server URL. Used for self-hosted setups. */
+  /**
+   * Replace the configured KChat server URL. Used for self-hosted
+   * setups and reconnect-to-a-different-server flows.
+   *
+   * **Invariant**: changing the server URL ALSO tears down the
+   * current WebSocket. Without this, a caller that points the
+   * client at a new server (e.g. `KchatAuthService.connect()`
+   * after a server-URL change in Settings) would leave the WS
+   * pinned to the old server while REST calls switch over —
+   * silently sourcing real-time events from the wrong account.
+   * The cost is one extra reconnect when the URL genuinely
+   * changes, which is cheap and explicit. URL-equal calls are
+   * no-ops (we compare AFTER trailing-slash normalisation), so
+   * idempotent callers do not incur a reconnect.
+   */
   setServerUrl(url: string): void {
     // Trim trailing slash so endpoint concatenation produces clean URLs.
-    this.serverUrl = url.replace(/\/+$/, "") || DEFAULT_KCHAT_SERVER;
+    const next = url.replace(/\/+$/, "") || DEFAULT_KCHAT_SERVER;
+    if (next !== this.serverUrl) {
+      this.disconnectWebSocket();
+      // Any cached user identity belonged to the old server.
+      this.user = null;
+    }
+    this.serverUrl = next;
   }
 
   /** Currently configured server URL. */
@@ -200,20 +283,62 @@ export class KchatClient {
    * Install or replace the personal access token. The token never
    * leaves the main process; only its presence/absence influences
    * downstream requests.
+   *
+   * **Invariants enforced here**:
+   *   - `setToken(null)` tears down any active WebSocket. Otherwise
+   *     the reconnect loop would call `connectWebSocket()` with no
+   *     auth material and spin on `"KChat token is not configured"`.
+   *   - `setToken(newToken)` where a different token was previously
+   *     installed ALSO tears down the WebSocket. The WS performs an
+   *     `authentication_challenge` send with the active token after
+   *     `onopen`; keeping a stale WS open after the token has been
+   *     swapped would push events tied to the wrong identity.
    */
   setToken(token: string | null): void {
+    const previous = this.token;
     this.token = token;
-    // When the token is cleared, the WebSocket loop has no
-    // authentication material to send on its next reconnect. Without
-    // this guard, `scheduleWsReconnect` would keep firing
-    // `connectWebSocket()` — which throws `"KChat token is not
-    // configured"` — and the close handler would loop forever. The
-    // invariant that `shutdown()` always tears down the WS first was
-    // implicit; we now enforce it for every caller path (including
-    // future callers that might invoke `setToken(null)` directly).
-    if (token === null) {
+    if (token === null || (previous !== null && previous !== token)) {
       this.disconnectWebSocket();
     }
+  }
+
+  /**
+   * Return `message` with any occurrence of the active PAT — or a
+   * bearer-authorization pattern — replaced by `[REDACTED]`. Used
+   * by the IPC layer's `toIpcError` to ensure that error messages
+   * crossing the renderer boundary cannot leak token bytes even if
+   * a future code path inadvertently embeds them.
+   *
+   * Defence-in-depth: today's error paths all originate from
+   * `KchatRequestError` (rebuilt from status/statusText/endpoint —
+   * no token) or low-level network errors (no token). A future
+   * change to `rawRequest` that logged the outgoing headers, or a
+   * server that echoed the `Authorization` header back in an error
+   * payload, would otherwise expose the PAT to the renderer. The
+   * scrub runs unconditionally so the renderer can rely on
+   * "error.message never contains the PAT" as an invariant.
+   */
+  scrubMessage(message: string): string {
+    if (typeof message !== "string" || message.length === 0) return message;
+    let scrubbed = message;
+    if (this.token && this.token.length >= 8) {
+      // Length guard avoids replacing trivially-short tokens that
+      // would alias on common English words. KChat PATs are 26+
+      // chars in practice; we still keep the guard for safety.
+      scrubbed = scrubbed.replace(
+        new RegExp(escapeRegExp(this.token), "g"),
+        "[REDACTED]",
+      );
+    }
+    // Match `Bearer <opaque token>` and `Authorization: Bearer ...`
+    // shapes regardless of whether the active token in `this.token`
+    // matches — a stale token from a previous session could appear
+    // in a logged header buffer.
+    scrubbed = scrubbed.replace(
+      /Bearer\s+[A-Za-z0-9._\-+/=]+/gi,
+      "Bearer [REDACTED]",
+    );
+    return scrubbed;
   }
 
   /** Returns the user struct from the last successful `/users/me` probe. */
@@ -268,8 +393,8 @@ export class KchatClient {
           id: user.id,
           username: user.username,
           email: user.email,
-          first_name: user.first_name,
-          last_name: user.last_name,
+          firstName: user.first_name,
+          lastName: user.last_name,
         },
         lastHealthyAt: new Date().toISOString(),
       });
@@ -438,8 +563,21 @@ export class KchatClient {
    * Download `fileId` from the KChat server. Returns the raw bytes
    * (the indexer extracts text from them via the standard
    * extraction pipeline).
+   *
+   * **Trust boundary**: `fileId` typically arrives via
+   * `listChannelFiles()` (server-supplied) or via an IPC handler
+   * that validates renderer-supplied ids with `assertKchatId`.
+   * Either way the value is interpolated into a URL path here, so
+   * we re-validate at the network boundary. A KChat object id must
+   * match the documented `^[a-z0-9]{20,32}$` shape — anything else
+   * could rewrite the request path (`../`), inject a query string
+   * (`?`), or split off a fragment (`#`). Rejecting at this layer
+   * means the path-traversal defence holds even if a caller
+   * forgets `assertKchatId` and even if a malicious server emits a
+   * malformed id in `listChannelFiles`.
    */
   async downloadFile(fileId: string): Promise<Uint8Array> {
+    assertKchatServerObjectId(fileId, "fileId");
     const resp = await this.rawRequest(
       "GET",
       `/api/v4/files/${fileId}`,

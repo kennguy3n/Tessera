@@ -80,7 +80,9 @@ const bridgeMock = {
 };
 
 // `KchatAuthService` stub. `getClient()` returns an object with the
-// REST methods the IPC handlers call.
+// REST methods the IPC handlers call. `scrubMessage` is exercised by
+// the IPC layer's `toIpcError` to redact token bytes from error
+// messages before they cross the renderer boundary.
 interface StubClient {
   listTeams: ReturnType<typeof vi.fn>;
   listChannels: ReturnType<typeof vi.fn>;
@@ -88,6 +90,7 @@ interface StubClient {
   listChannelFiles: ReturnType<typeof vi.fn>;
   uploadFile: ReturnType<typeof vi.fn>;
   downloadFile: ReturnType<typeof vi.fn>;
+  scrubMessage: ReturnType<typeof vi.fn>;
 }
 const clientMock: StubClient = {
   listTeams: vi.fn(),
@@ -96,6 +99,9 @@ const clientMock: StubClient = {
   listChannelFiles: vi.fn(),
   uploadFile: vi.fn(),
   downloadFile: vi.fn(),
+  // Default: pass-through. Tests that need to assert scrub
+  // behaviour replace this implementation in their own `beforeEach`.
+  scrubMessage: vi.fn((msg: string) => msg),
 };
 const serviceMock = {
   getClient: () => clientMock,
@@ -145,6 +151,11 @@ beforeEach(() => {
   for (const fn of Object.values(clientMock)) {
     fn.mockReset();
   }
+  // Re-establish the default scrubMessage pass-through after
+  // `mockReset()` cleared the implementation, so other tests don't
+  // accidentally end up with `Error.message === undefined` when
+  // `toIpcError` routes through the client.
+  clientMock.scrubMessage.mockImplementation((msg: string) => msg);
   serviceMock.getState.mockReset();
   serviceMock.connect.mockReset();
   serviceMock.disconnect.mockReset();
@@ -270,6 +281,68 @@ describe("kchat:listTeams / listChannels / listMembers", () => {
       handler("kchat:listChannels")(EVENT, "not-a-valid-id"),
     ).rejects.toThrow(/KChat object id/);
     expect(clientMock.listChannels).not.toHaveBeenCalled();
+  });
+});
+
+describe("toIpcError redaction", () => {
+  // The renderer renders `error.message` verbatim into toasts and
+  // status banners. `toIpcError` must run any underlying error
+  // through `KchatClient.scrubMessage` before the message crosses
+  // the renderer boundary, so token bytes or `Bearer ...` patterns
+  // accidentally embedded in an error string are redacted at the
+  // last possible point. This test asserts both the wiring (the
+  // client's `scrubMessage` is actually called) and the outcome
+  // (the rendered message contains `[REDACTED]`, not the token).
+  it("runs error messages through KchatClient.scrubMessage before throwing across IPC", async () => {
+    clientMock.scrubMessage.mockImplementation((m: string) =>
+      m.replace(/PAT-secret-token/g, "[REDACTED]").replace(
+        /Bearer\s+[A-Za-z0-9._\-+/=]+/gi,
+        "Bearer [REDACTED]",
+      ),
+    );
+    // Simulate a low-level network error that embedded the PAT in
+    // its message (the most realistic path through which a token
+    // could leak — fetch errors carry the request URL/headers in
+    // their `message` on some platforms).
+    clientMock.listTeams.mockRejectedValue(
+      new Error(
+        "fetch failed: Authorization: Bearer PAT-secret-token (host unreachable)",
+      ),
+    );
+
+    let caught: Error | undefined;
+    try {
+      await handler("kchat:listTeams")(EVENT);
+    } catch (err) {
+      caught = err as Error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught?.message).not.toContain("PAT-secret-token");
+    expect(caught?.message).toContain("[REDACTED]");
+    expect(clientMock.scrubMessage).toHaveBeenCalled();
+  });
+
+  it("also scrubs synthetic KchatRequestError messages (status/endpoint path)", async () => {
+    clientMock.scrubMessage.mockImplementation((m: string) =>
+      m.replace(/secret-endpoint/g, "[REDACTED]"),
+    );
+    const { KchatRequestError } = await import("../kchat/kchatClient");
+    clientMock.listTeams.mockRejectedValue(
+      new KchatRequestError(
+        401,
+        "Unauthorized",
+        "/api/v4/users/me?token=secret-endpoint",
+        "token expired",
+      ),
+    );
+    let caught: Error | undefined;
+    try {
+      await handler("kchat:listTeams")(EVENT);
+    } catch (err) {
+      caught = err as Error;
+    }
+    expect(caught?.message).not.toContain("secret-endpoint");
+    expect(caught?.message).toContain("[REDACTED]");
   });
 });
 
@@ -493,6 +566,142 @@ describe("sources:addKchatChannel — path-traversal hardening", () => {
     // overwritten because `.` and `..` are rejected by the sanitiser.
     expect(entries).toContain("kchat-file-fid-dot");
     expect(entries).toContain("kchat-file-fid-dotdot");
+    for (const e of entries) {
+      await fs.rm(path.join(out.cacheDir, e), { force: true });
+    }
+  });
+
+  // `fi.id` is also untrusted server input. The fallback name
+  // `kchat-file-${fi.id}` would otherwise embed unsanitised bytes
+  // from the id into the on-disk filename. Sanitisation strips
+  // every byte outside `[A-Za-z0-9_-]` to underscore, so a
+  // traversal-bearing id can't escape the cache dir via the
+  // fallback path.
+  it("sanitises traversal-bearing fi.id values in the fallback safeName", async () => {
+    const path = await import("path");
+    const fs = await import("fs/promises");
+    clientMock.listChannelFiles.mockResolvedValue([
+      {
+        // `fi.name` strips to `.` so the fallback safeName branch fires.
+        id: "../../../etc/passwd",
+        name: ".",
+        size: 1,
+        mime_type: "",
+        extension: "",
+        create_at: 1,
+      },
+    ]);
+    clientMock.downloadFile.mockResolvedValue(new Uint8Array([1]));
+
+    const out = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chid0000000000000000abcd",
+      "design",
+    )) as { sourceId: string; cacheDir: string };
+
+    const entries = await readCacheDir(out.cacheDir);
+    // Every byte outside `[A-Za-z0-9_-]` becomes `_`, so the entry
+    // lands as `kchat-file-______________etc_passwd` inside the
+    // per-channel cache.
+    expect(
+      entries.some((e) => e.startsWith("kchat-file-") && e.includes("etc_passwd")),
+    ).toBe(true);
+    // Defence-in-depth: no `etc` sibling directory should exist.
+    const siblings = await readCacheDir(path.dirname(out.cacheDir));
+    expect(siblings).not.toContain("etc");
+
+    for (const e of entries) {
+      await fs.rm(path.join(out.cacheDir, e), { force: true });
+    }
+  });
+});
+
+describe("sources:addKchatChannel — pagination", () => {
+  // KChat returns at most `per_page` files per call. The handler
+  // must loop until a short page is observed; otherwise channels
+  // with more than 60 files would silently truncate at the
+  // first page.
+  it("walks all pages until the server returns a short page", async () => {
+    const PER_PAGE = 60;
+    // Pages: 0 full, 1 full, 2 partial (10) → terminates.
+    function page(pageIdx: number, count: number): unknown[] {
+      return Array.from({ length: count }, (_, i) => ({
+        id: `fid${String(pageIdx).padStart(2, "0")}p${String(i).padStart(2, "0")}xxxxxxxxx`,
+        name: `report-${pageIdx}-${i}.txt`,
+        size: 4,
+        mime_type: "text/plain",
+        extension: "txt",
+        create_at: pageIdx * 1000 + i,
+      }));
+    }
+    clientMock.listChannelFiles
+      .mockResolvedValueOnce(page(0, PER_PAGE))
+      .mockResolvedValueOnce(page(1, PER_PAGE))
+      .mockResolvedValueOnce(page(2, 10));
+    clientMock.downloadFile.mockResolvedValue(new Uint8Array([1, 2, 3, 4]));
+
+    const out = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chid0000000000000000abcd",
+      "design",
+    )) as { sourceId: string; cacheDir: string };
+
+    // Three calls: pages 0, 1, 2. The handler stops at page 2 because
+    // its result is shorter than `per_page`.
+    expect(clientMock.listChannelFiles).toHaveBeenCalledTimes(3);
+    expect(clientMock.listChannelFiles).toHaveBeenNthCalledWith(
+      1,
+      "chid0000000000000000abcd",
+      0,
+      PER_PAGE,
+    );
+    expect(clientMock.listChannelFiles).toHaveBeenNthCalledWith(
+      2,
+      "chid0000000000000000abcd",
+      1,
+      PER_PAGE,
+    );
+    expect(clientMock.listChannelFiles).toHaveBeenNthCalledWith(
+      3,
+      "chid0000000000000000abcd",
+      2,
+      PER_PAGE,
+    );
+    // 130 total downloads = 60 + 60 + 10.
+    expect(clientMock.downloadFile).toHaveBeenCalledTimes(130);
+
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const entries = await fs.readdir(out.cacheDir);
+    expect(entries.length).toBe(130);
+    for (const e of entries) {
+      await fs.rm(path.join(out.cacheDir, e), { force: true });
+    }
+  });
+
+  it("stops after a single page when the first response is short", async () => {
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      {
+        id: "fid0000000000000000only",
+        name: "only.txt",
+        size: 1,
+        mime_type: "text/plain",
+        extension: "txt",
+        create_at: 1,
+      },
+    ]);
+    clientMock.downloadFile.mockResolvedValue(new Uint8Array([1]));
+
+    const out = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chid0000000000000000abcd",
+      "design",
+    )) as { sourceId: string; cacheDir: string };
+
+    expect(clientMock.listChannelFiles).toHaveBeenCalledTimes(1);
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const entries = await fs.readdir(out.cacheDir);
     for (const e of entries) {
       await fs.rm(path.join(out.cacheDir, e), { force: true });
     }

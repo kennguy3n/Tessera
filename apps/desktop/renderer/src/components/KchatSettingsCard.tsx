@@ -188,7 +188,7 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
 
   const connectedLabel = useMemo(() => {
     if (state.state !== "connected" || !state.user) return null;
-    const fullName = `${state.user.first_name ?? ""} ${state.user.last_name ?? ""}`.trim();
+    const fullName = `${state.user.firstName ?? ""} ${state.user.lastName ?? ""}`.trim();
     return fullName ? `${fullName} (@${state.user.username})` : `@${state.user.username}`;
   }, [state]);
 

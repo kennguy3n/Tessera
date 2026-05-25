@@ -91,7 +91,17 @@ pub fn export_to_file(
             ));
         }
         other => {
-            let content = export(artifact, effective, other, true)?;
+            // Forward `include_citations` rather than hardcoding `true`.
+            // Behaviour is identical because `effective` is already the
+            // pre-filtered slice (empty when `include_citations` is
+            // false), but threading the flag through removes a reader
+            // double-take — a future maintainer scanning this branch
+            // could otherwise reasonably worry that the text-format
+            // fallback was ignoring the toggle. Passing the same flag
+            // both here and to the inner `export` keeps the dispatch
+            // contract obvious: the caller's intent is preserved at
+            // every layer.
+            let content = export(artifact, effective, other, include_citations)?;
             std::fs::write(path, content)?;
         }
     }

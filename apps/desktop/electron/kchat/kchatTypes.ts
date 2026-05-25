@@ -128,12 +128,30 @@ export interface KchatChannelMembershipEvent {
 }
 
 /**
+ * Sanitised view of the authenticated KChat user surfaced to the
+ * renderer through `KchatConnectionState`. Uses camelCase to
+ * match the rest of the renderer-facing surface (`KchatUserView`,
+ * the result of `kchat:connect`) — earlier revisions used
+ * snake_case here and forced the renderer to special-case the
+ * connection-state shape. Keeping a single canonical case avoids
+ * "did you mean first_name or firstName?" mistakes at every call
+ * site.
+ */
+export interface KchatConnectedUserView {
+  id: string;
+  username: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+}
+
+/**
  * Connection state surfaced to the renderer via `kchat:status`.
  * `error` carries a human-readable reason when `state === "error"`.
  */
 export interface KchatConnectionState {
   state: "disconnected" | "connecting" | "connected" | "error";
-  user?: Pick<KchatUser, "id" | "username" | "email" | "first_name" | "last_name">;
+  user?: KchatConnectedUserView;
   serverUrl?: string;
   error?: string;
   /** ISO-8601 timestamp of the last successful health check. */
