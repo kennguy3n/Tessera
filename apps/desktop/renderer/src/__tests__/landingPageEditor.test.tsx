@@ -1,5 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  render,
+  screen,
+  fireEvent,
+  act,
+  waitFor,
+} from "@testing-library/react";
 import LandingPageEditor, {
   buildLandingPreviewHtml,
   parseLandingPageContent,
@@ -191,5 +197,245 @@ describe("LandingPageEditor", () => {
     fireEvent.click(screen.getByLabelText("Add feature"));
     const afterAdd = screen.getAllByLabelText(/Feature \d+ title/).length;
     expect(afterAdd).toBe(initialCount + 1);
+  });
+
+  it("hides the hero-image UI when no artifactId is supplied", () => {
+    // Tests that construct an editor without going through
+    // ArtifactEditorPage (which threads the artifact's id down)
+    // must not see the Generate-image affordance. This guards
+    // against accidentally rendering it in the no-artifact case
+    // where `tessera.imagegen.generate` would have nowhere to
+    // route the asset.
+    render(<LandingPageEditor content="" onSave={() => {}} autoSaveMs={10} />);
+    expect(screen.queryByTestId("imagegen-button")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("imagegen-unavailable"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("LandingPageEditor hero image", () => {
+  beforeEach(() => {
+    // Default mock from setup.ts has imagegen.isAvailable === false.
+    // Override per-test where needed.
+    vi.spyOn(window.tessera.imagegen, "isAvailable").mockResolvedValue(true);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows the unavailable banner when imagegen.isAvailable resolves false", async () => {
+    vi.spyOn(window.tessera.imagegen, "isAvailable").mockResolvedValue(false);
+    render(
+      <LandingPageEditor
+        content=""
+        onSave={() => {}}
+        artifactId="landing-001"
+        autoSaveMs={10}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("imagegen-unavailable")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("imagegen-button")).not.toBeInTheDocument();
+  });
+
+  it("shows the prompt + Generate button when imagegen.isAvailable resolves true", async () => {
+    render(
+      <LandingPageEditor
+        content=""
+        onSave={() => {}}
+        artifactId="landing-002"
+        autoSaveMs={10}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("imagegen-button")).toBeInTheDocument();
+    });
+    // Prompt is seeded from the default headline.
+    expect(
+      (screen.getByLabelText("Image prompt") as HTMLTextAreaElement).value,
+    ).toContain("Marketing hero image");
+  });
+
+  it("persists the generated assetUrl into the JSON on save", async () => {
+    const generate = vi
+      .spyOn(window.tessera.imagegen, "generate")
+      .mockResolvedValue({
+        path: "/mock/landing-003/hero.png",
+        assetUrl: "tessera-asset://generated-images/landing-003/hero.png",
+        seed: 99,
+        width: 1536,
+        height: 1024,
+        durationMs: 8000,
+        sizeBytes: 350000,
+      });
+    const onSave = vi.fn();
+    vi.useFakeTimers();
+    try {
+      render(
+        <LandingPageEditor
+          content=""
+          onSave={onSave}
+          artifactId="landing-003"
+          autoSaveMs={50}
+        />,
+      );
+      // Wait for isAvailable() to resolve and the button to render.
+      await act(async () => {
+        await Promise.resolve();
+      });
+      // Edit the prompt and click Generate.
+      fireEvent.change(screen.getByLabelText("Image prompt"), {
+        target: { value: "Bright cinematic SaaS hero composition" },
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByLabelText("Generate image"));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      // Drain the autosave debounce.
+      act(() => {
+        vi.advanceTimersByTime(60);
+      });
+      expect(generate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: "Bright cinematic SaaS hero composition",
+          artifactId: "landing-003",
+        }),
+      );
+      const lastCall = onSave.mock.calls.at(-1) as [string];
+      const saved = JSON.parse(lastCall[0]);
+      expect(saved.hero.image).toEqual({
+        assetUrl: "tessera-asset://generated-images/landing-003/hero.png",
+        prompt: "Bright cinematic SaaS hero composition",
+        seed: 99,
+        width: 1536,
+        height: 1024,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders the generated image as a preview and lets the user remove it", async () => {
+    const content = JSON.stringify({
+      title: "Existing Landing Page",
+      hero: {
+        headline: "H",
+        subheadline: "S",
+        image: {
+          assetUrl:
+            "tessera-asset://generated-images/landing-004/old-hero.png",
+          prompt: "Old prompt",
+          seed: 3,
+          width: 1024,
+          height: 1024,
+        },
+      },
+      features: [{ title: "T", description: "D" }],
+      stats: [],
+      testimonials: [],
+      colorScheme: {},
+    });
+    render(
+      <LandingPageEditor
+        content={content}
+        onSave={() => {}}
+        artifactId="landing-004"
+        autoSaveMs={10}
+      />,
+    );
+    const preview = await screen.findByTestId("landing-hero-image-preview");
+    const img = preview.querySelector("img");
+    expect(img?.getAttribute("src")).toBe(
+      "tessera-asset://generated-images/landing-004/old-hero.png",
+    );
+    // The Generate button is hidden while a hero image exists.
+    expect(screen.queryByTestId("imagegen-button")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Remove hero image"));
+    // After removing, the Generate UI returns.
+    await waitFor(() => {
+      expect(screen.getByTestId("imagegen-button")).toBeInTheDocument();
+    });
+  });
+
+  it("surfaces the bridge error message when generate() rejects", async () => {
+    vi.spyOn(window.tessera.imagegen, "generate").mockRejectedValue(
+      new Error("Rate limit exceeded"),
+    );
+    render(
+      <LandingPageEditor
+        content=""
+        onSave={() => {}}
+        artifactId="landing-005"
+        autoSaveMs={10}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("imagegen-button")).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByLabelText("Image prompt"), {
+      target: { value: "Anything" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Generate image"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const errorBox = await screen.findByTestId("imagegen-error");
+    expect(errorBox.textContent).toContain("Rate limit exceeded");
+  });
+
+  it("drops a hero image payload whose assetUrl is not tessera-asset://generated-images/", () => {
+    const parsed = parseLandingPageContent(
+      JSON.stringify({
+        title: "X",
+        hero: {
+          headline: "h",
+          subheadline: "s",
+          image: {
+            assetUrl: "http://evil.example.com/img.png",
+            prompt: "x",
+            seed: 1,
+            width: 1024,
+            height: 1024,
+          },
+        },
+        features: [],
+        stats: [],
+        testimonials: [],
+        colorScheme: {},
+      }),
+    );
+    // Hostile scheme is rejected; field is dropped so the renderer
+    // falls back to the Generate UI rather than loading the URL.
+    expect(parsed.hero.image).toBeUndefined();
+  });
+
+  it("renders the hero image as a <figure> in the preview HTML", () => {
+    const html = buildLandingPreviewHtml({
+      title: "Hero",
+      hero: {
+        headline: "h",
+        subheadline: "s",
+        image: {
+          assetUrl: "tessera-asset://generated-images/landing-006/h.png",
+          prompt: "p",
+          seed: 1,
+          width: 1024,
+          height: 1024,
+        },
+      },
+      features: [],
+      stats: [],
+      testimonials: [],
+      colorScheme: {},
+    });
+    expect(html).toContain("landing-hero-image");
+    expect(html).toContain(
+      'src="tessera-asset://generated-images/landing-006/h.png"',
+    );
+    expect(html).toMatch(/<figure[^>]*landing-hero-image/);
   });
 });

@@ -7,7 +7,17 @@ describe("sanitizeHeroImage", () => {
   // the sanitizer either accepts the result (positive control) or
   // returns `undefined` (rejection).
   const valid = {
-    assetUrl: "tessera-asset://abcd1234.png",
+    // Must include the `generated-images/` host segment — see the
+    // sanitizer's docstring and the regression test at the bottom
+    // of the scheme-guard describe block. Previously this fixture
+    // omitted the host (`tessera-asset://abcd1234.png`), which
+    // Devin Review PR #38 pass-N flagged: the protocol handler at
+    // `assetProtocol.ts:174-189` returns 403 for any URL whose
+    // host is not `generated-images`, so the prior fixture
+    // demonstrated the very bug the sanitizer was supposed to
+    // prevent (a URL the sanitizer accepted but the handler would
+    // refuse to serve).
+    assetUrl: "tessera-asset://generated-images/abcd1234.png",
     prompt: "a serene mountain landscape at dawn",
     seed: 42,
     width: 1024,
@@ -58,6 +68,102 @@ describe("sanitizeHeroImage", () => {
 
     it("rejects non-string assetUrl", () => {
       expect(sanitizeHeroImage({ ...valid, assetUrl: 42 })).toBeUndefined();
+    });
+
+    // Devin Review PR #38 pass-N 🚩 finding
+    // `BUG_pr-review-job-07d6d965…_0001`: the previous prefix check
+    // accepted any `tessera-asset://<host>/...` URL because it only
+    // tested the scheme portion. The protocol handler at
+    // `assetProtocol.ts:174-189` returns 403 for any URL whose host
+    // is not `generated-images` — so a hand-edited artifact JSON
+    // with `tessera-asset://evil-host/img.png` would pass the
+    // sanitizer, get dropped into `<img src>`, and the handler
+    // would refuse to serve it, producing a broken image with no
+    // recovery path. The fix tightens the prefix to
+    // `tessera-asset://generated-images/`; these tests pin that
+    // contract.
+    it("rejects a tessera-asset:// URL with a different host (the hand-edited-host attack)", () => {
+      expect(
+        sanitizeHeroImage({
+          ...valid,
+          assetUrl: "tessera-asset://evil-host/img.png",
+        }),
+      ).toBeUndefined();
+    });
+
+    it("rejects a tessera-asset:// URL with no path under generated-images/ (bare scheme+slash)", () => {
+      // `tessera-asset:///foo.png` parses as host="" path="/foo.png"
+      // — the host is the empty string, not `generated-images`,
+      // and the handler 403s the empty-host case anyway. Sanitizer
+      // must mirror.
+      expect(
+        sanitizeHeroImage({ ...valid, assetUrl: "tessera-asset:///foo.png" }),
+      ).toBeUndefined();
+    });
+
+    it("rejects a tessera-asset:// URL with a host that is a prefix of generated-images", () => {
+      // Defends against `tessera-asset://generated-image/x.png`
+      // (missing the final `s`). The prefix check uses
+      // `startsWith("tessera-asset://generated-images/")` so the
+      // trailing slash on `generated-images/` is load-bearing —
+      // without it, `generated-imagesy` would also pass.
+      expect(
+        sanitizeHeroImage({
+          ...valid,
+          assetUrl: "tessera-asset://generated-image/x.png",
+        }),
+      ).toBeUndefined();
+    });
+
+    it("rejects a tessera-asset:// URL with a host that extends generated-images (the trailing-slash discipline)", () => {
+      // `tessera-asset://generated-imagesy/x.png` would pass a
+      // naive `startsWith("tessera-asset://generated-images")`
+      // (no trailing slash). The trailing `/` in the prefix is the
+      // segment delimiter that forces an exact host match.
+      expect(
+        sanitizeHeroImage({
+          ...valid,
+          assetUrl: "tessera-asset://generated-imagesy/x.png",
+        }),
+      ).toBeUndefined();
+    });
+
+    it("rejects the bare directory-root URL `tessera-asset://generated-images/`", () => {
+      // Devin Review PR #38 pass-N 📝 finding
+      // `ANALYSIS_pr-review-job-4d834ff9…_0003`: the prior implementation
+      // accepted the bare-root form because `startsWith(prefix)` is true
+      // for the exact-prefix string. The main-process protocol handler
+      // at `assetProtocol.ts:241-244` 403s this URL (no directory
+      // listing) and `pathToAssetUrl` refuses to mint it, so the only
+      // way to smuggle this through was a hand-edited artifact JSON.
+      // The strict-greater length check in the sanitizer closes that
+      // gap so the parse-time guarantee matches the render-time one
+      // byte-for-byte. This test pins the new behaviour and would
+      // regress to the prior `toEqual(payload)` shape if a future
+      // refactor relaxes the length check (e.g. switches back to a
+      // plain `startsWith` without the length guard).
+      expect(
+        sanitizeHeroImage({
+          ...valid,
+          assetUrl: "tessera-asset://generated-images/",
+        }),
+      ).toBeUndefined();
+    });
+
+    it("accepts a nested path under generated-images/ (the production shape minted by pathToAssetUrl)", () => {
+      // `pathToAssetUrl` mints URLs of the form
+      // `tessera-asset://generated-images/<artifactId>/<file>`
+      // — nested under at least one directory segment.
+      expect(
+        sanitizeHeroImage({
+          ...valid,
+          assetUrl:
+            "tessera-asset://generated-images/artifact-42/hero.png",
+        }),
+      ).toEqual({
+        ...valid,
+        assetUrl: "tessera-asset://generated-images/artifact-42/hero.png",
+      });
     });
   });
 

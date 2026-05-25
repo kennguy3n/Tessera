@@ -52,6 +52,7 @@ import {
   getDiffusionSidecar,
   isBridgeAvailable,
 } from "../appState";
+import { pathToAssetUrl, resolveAssetAllowedRoot } from "../assetProtocol";
 
 function userDataDir(): string {
   return app.getPath("userData");
@@ -204,6 +205,16 @@ function nowIsoForFile(): string {
 export interface ImageGenResult {
   /** Absolute path to the written PNG. */
   path: string;
+  /**
+   * `tessera-asset://` URL the renderer can drop directly into
+   * `<img src>`. Always set when the PNG was written under
+   * `<userData>/generated-images/` (the only path the handler
+   * writes to). Derived from `path` via `pathToAssetUrl` so the
+   * renderer never has to compute it itself — the renderer has
+   * no access to `<userData>` and can’t turn an absolute path
+   * into a protocol URL on its own.
+   */
+  assetUrl: string;
   /** Seed sd-server actually used. */
   seed: number;
   /** Width / height as resolved (echoes the request). */
@@ -304,10 +315,23 @@ export function registerImagegenHandlers(): void {
         // uses u64 to match sd-server's full range). Coerce to
         // Number — sd-server's seed space fits in 2^53 — but
         // clamp defensively so a future schema change can't
-        // silently round-trip through Infinity.
+        // silently round-trip through Infinity, AND reject
+        // negative values up front. The current Rust bridge
+        // (`crates/tessera_bridge/src/napi_exports.rs`)
+        // constructs the BigInt with `sign_bit: false` from a
+        // `u64`, so a negative value here would mean the bridge
+        // contract changed out from under us. We clamp to 0
+        // rather than throw because the seed is already non-
+        // critical to correctness — it just controls
+        // reproducibility — and surfacing a noisy error from
+        // every generate call after a hypothetical contract
+        // drift would be worse UX than silently using
+        // seed=0. Devin Review PR #38 pass-7 📝 finding.
         const seedBig = result.seed;
         const seedNum =
-          seedBig <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(seedBig) : 0;
+          seedBig >= 0n && seedBig <= BigInt(Number.MAX_SAFE_INTEGER)
+            ? Number(seedBig)
+            : 0;
 
         // Resolve the containment root and the artifact directory
         // independently, then verify the artifact dir is strictly
@@ -321,10 +345,20 @@ export function registerImagegenHandlers(): void {
         // too (a `.` artifactId that somehow survives sanitisation
         // would otherwise resolve to the root itself, not a
         // subdirectory).
-        const generatedRoot = path.resolve(
-          userDataDir(),
-          "generated-images",
-        );
+        // Derive `generatedRoot` via the SAME helper that the
+        // protocol handler and `pathToAssetUrl` use, so the three
+        // call sites are byte-identical by construction. A future
+        // change to the on-disk layout (e.g. nesting under
+        // `assets/generated-images/`) only has to touch
+        // `resolveAssetAllowedRoot` and every consumer follows.
+        // Devin Review PR #38 pass-8 📝 finding: continuation of
+        // the pass-6 centralisation work — `userDataDir()` itself
+        // is `app.getPath("userData")` which is stable for the
+        // process lifetime, so calling it twice is safe, but the
+        // independent `path.resolve(..., "generated-images")` at
+        // this site was the last copy outside the helper.
+        const userData = userDataDir();
+        const generatedRoot = resolveAssetAllowedRoot(userData);
         const artifactDir = path.resolve(
           generatedRoot,
           sanitiseArtifactId(input.artifactId),
@@ -355,8 +389,23 @@ export function registerImagegenHandlers(): void {
         await fsp.writeFile(outPath, result.pngBytes);
 
         const stat = await fsp.stat(outPath);
+        // Compute the asset URL inside the main process — the
+        // renderer has no userData path and cannot build this
+        // string itself. `pathToAssetUrl` re-runs the same
+        // prefix check the IPC handler already enforced above
+        // (`artifactDir` strictly under `generatedRoot`), so a
+        // null return here would indicate a logic bug rather
+        // than untrusted input: throw rather than silently
+        // shipping an empty URL to the renderer.
+        const assetUrl = pathToAssetUrl(outPath, userData);
+        if (assetUrl === null) {
+          throw new Error(
+            "Internal error: generated image path is not under generated-images/ \u2014 refusing to return an unrouteable assetUrl",
+          );
+        }
         return {
           path: outPath,
+          assetUrl,
           seed: seedNum,
           width: input.width,
           height: input.height,

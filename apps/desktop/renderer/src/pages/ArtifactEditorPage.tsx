@@ -589,6 +589,7 @@ function EditorSwitch({
           content={artifact.content}
           onSave={onSave}
           onDraftChange={onDraftChange}
+          artifactId={artifact.id}
         />
       );
     case "landing_page":
@@ -597,6 +598,7 @@ function EditorSwitch({
           content={artifact.content}
           onSave={onSave}
           onDraftChange={onDraftChange}
+          artifactId={artifact.id}
         />
       );
     default:

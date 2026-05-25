@@ -15,17 +15,32 @@
  */
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import IconPicker, { type IconPickerValue } from "../components/IconPicker";
+import GenerateImageButton, {
+  type GenerateImageResult,
+} from "../components/GenerateImageButton";
 import { embedIcons } from "../services/iconResolver";
 import { sanitizeCssColor } from "../utils/cssColor";
 import { sanitizeIconSpec } from "../utils/iconSpec";
 import { sanitizeUrl } from "../utils/safeUrl";
+import { sanitizeHeroImage, type HeroImage } from "../utils/heroImage";
 import { Plus, Trash2, X } from "lucide-react";
+
+/**
+ * Re-export of the shared `HeroImage` type under the editor-local
+ * `LandingPageHeroImage` alias so existing imports of this type
+ * (if any landed in third-party code) keep working. The shared
+ * type and the `sanitizeHeroImage` validator both live in
+ * `utils/heroImage.ts` — see that file for the rationale behind
+ * the `tessera-asset://generated-images/` prefix gate and the five required fields.
+ */
+export type LandingPageHeroImage = HeroImage;
 
 export interface LandingPageHero {
   headline: string;
   subheadline: string;
   cta?: string;
   ctaUrl?: string;
+  image?: HeroImage;
 }
 
 export interface LandingPageFeature {
@@ -71,6 +86,15 @@ interface LandingPageEditorProps {
   /** See SheetEditor.onDraftChange — published synchronously on every edit. */
   onDraftChange?: (content: string) => void;
   autoSaveMs?: number;
+  /**
+   * The owning artifact's id — threaded into the imagegen IPC so
+   * generated hero images land in
+   * `<userData>/generated-images/<artifactId>/`. Optional because
+   * existing tests that drive the editor directly (without going
+   * through `ArtifactEditorPage`) shouldn't have to construct a
+   * fake id; the hero-image UI is hidden when no id is supplied.
+   */
+  artifactId?: string;
 }
 
 const DEFAULT_PRIMARY = "#7C3AED";
@@ -127,6 +151,7 @@ export function parseLandingPageContent(content: string): LandingPageContent {
           subheadline: parsed.hero.subheadline ?? fallback.hero.subheadline,
           cta: parsed.hero.cta ?? "",
           ctaUrl: parsed.hero.ctaUrl ?? "",
+          image: sanitizeHeroImage(parsed.hero.image),
         },
         features:
           parsed.features.length > 0 ? parsed.features : fallback.features,
@@ -153,6 +178,7 @@ export default function LandingPageEditor({
   onSave,
   onDraftChange,
   autoSaveMs = 2000,
+  artifactId,
 }: LandingPageEditorProps) {
   const [data, setData] = useState<LandingPageContent>(() =>
     parseLandingPageContent(content),
@@ -266,6 +292,40 @@ export default function LandingPageEditor({
       cta: { ...(data.cta ?? { headline: "", buttonText: "" }), ...patch },
     });
 
+  const onHeroImageGenerated = useCallback(
+    (result: GenerateImageResult) => {
+      setData((prev) => {
+        const next: LandingPageContent = {
+          ...prev,
+          hero: {
+            ...prev.hero,
+            image: {
+              assetUrl: result.assetUrl,
+              prompt: result.prompt,
+              seed: result.seed,
+              width: result.width,
+              height: result.height,
+            },
+          },
+        };
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  const clearHeroImage = useCallback(() => {
+    setData((prev) => {
+      const next: LandingPageContent = {
+        ...prev,
+        hero: { ...prev.hero, image: undefined },
+      };
+      debouncedSave(next);
+      return next;
+    });
+  }, [debouncedSave]);
+
   const previewHtml = useMemo(() => buildLandingPreviewHtml(data), [data]);
 
   return (
@@ -296,6 +356,41 @@ export default function LandingPageEditor({
           onChange={(e) => updateHero({ ctaUrl: e.target.value })}
           placeholder="CTA URL"
         />
+        {artifactId && (
+          <div className="landing-hero-image">
+            <h3>Hero image</h3>
+            {data.hero.image ? (
+              <div
+                className="landing-hero-image-preview"
+                data-testid="landing-hero-image-preview"
+              >
+                <img
+                  src={data.hero.image.assetUrl}
+                  alt={`Hero image for ${data.hero.headline}`}
+                  width={data.hero.image.width}
+                  height={data.hero.image.height}
+                />
+                <button
+                  type="button"
+                  onClick={clearHeroImage}
+                  aria-label="Remove hero image"
+                >
+                  <Trash2 size={16} /> Remove
+                </button>
+              </div>
+            ) : (
+              <GenerateImageButton
+                artifactId={artifactId}
+                initialPrompt={
+                  data.hero.subheadline
+                    ? `Marketing hero image for "${data.hero.headline}" — ${data.hero.subheadline}`
+                    : `Marketing hero image for "${data.hero.headline}"`
+                }
+                onGenerated={onHeroImageGenerated}
+              />
+            )}
+          </div>
+        )}
 
         <h2>Features</h2>
         {data.features.map((f, i) => (
@@ -541,11 +636,23 @@ export function buildLandingPreviewHtml(data: LandingPageContent): string {
 </section>`
     : "";
 
+  // Hero image (optional). The `assetUrl` is already validated to
+  // start with `tessera-asset://generated-images/` by
+  // `sanitizeHeroImage`, but the value still comes from
+  // user-derived JSON, so we HTML-escape it
+  // before interpolating into `src` as defence-in-depth. Width and
+  // height are written to the DOM so the layout doesn't reflow when
+  // the image finishes decoding.
+  const heroImageHtml = data.hero.image
+    ? `<figure class="landing-hero-image">\n      <img src="${escapeHtml(data.hero.image.assetUrl)}" alt="${escapeHtml(data.hero.headline)}" width="${data.hero.image.width}" height="${data.hero.image.height}" />\n    </figure>`
+    : "";
+
   const html = `<div class="landing" style="--lp-primary:${primary};--lp-secondary:${secondary};--lp-accent:${accent};">
   <header class="landing-hero">
     <h1>${escapeHtml(data.hero.headline)}</h1>
     <p>${escapeHtml(data.hero.subheadline)}</p>
     ${heroCta}
+    ${heroImageHtml}
   </header>
   <section class="landing-features">
     ${featuresHtml}

@@ -176,8 +176,24 @@ describe("imagegen IPC handlers", () => {
     diffusionSidecarStub = sidecarStub;
     bridgeStub = { bridgeGenerateImage: bridgeGenerateImageMock };
 
+    // Realpath the tmpdir prefix before mkdtemp — on macOS
+    // `os.tmpdir()` returns `/var/folders/...` which is a symlink to
+    // `/private/var/folders/...`. `path.resolve` does not follow
+    // symlinks but `fs.realpathSync.native` does. Production code in
+    // both `pathToAssetUrl` (assetProtocol.ts) and the imagegen
+    // handler's `generatedRoot` derives from the same `userDataDir()`
+    // call today, so the `startsWith(allowedRoot + path.sep)` check
+    // is symlink-stable by construction — but matching the
+    // `assetProtocol.test.ts:135` discipline (which DOES realpath
+    // explicitly) future-proofs this test against a refactor that
+    // makes the two derivations source from different APIs (e.g. one
+    // through `app.getPath('userData')` and one through a hand-rolled
+    // `path.join(os.homedir(), ...)` that doesn't go through
+    // Electron's symlink-resolved cache). Devin Review pass-N 📝
+    // finding flagged the inconsistency.
+    const tmpBase = fs.realpathSync.native(os.tmpdir());
     userDataDirValue = fs.mkdtempSync(
-      path.join(os.tmpdir(), "tessera-imagegen-test-"),
+      path.join(tmpBase, "tessera-imagegen-test-"),
     );
 
     defaultRateLimiter.reset();
@@ -370,6 +386,7 @@ describe("imagegen IPC handlers", () => {
       const handler = getHandler("imagegen:generate");
       const out = (await handler({}, validInput())) as {
         path: string;
+        assetUrl: string;
         seed: number;
         width: number;
         height: number;
@@ -389,6 +406,17 @@ describe("imagegen IPC handlers", () => {
       expect(out.path.endsWith(".png")).toBe(true);
       const written = await fsp.readFile(out.path);
       expect(written).toEqual(pngBytesStub());
+      // The handler MUST also return a `tessera-asset://` URL so the
+      // renderer can drop it into `<img src>` without computing the
+      // mapping itself. Pin the shape directly: must start with the
+      // `generated-images` host and end with the same filename the
+      // on-disk path uses. Pass-1 advisory note: this assertion was
+      // missing and Devin Review flagged it as a gap.
+      expect(out.assetUrl.startsWith("tessera-asset://generated-images/")).toBe(
+        true,
+      );
+      expect(out.assetUrl).toContain("art-001/");
+      expect(out.assetUrl.endsWith(path.basename(out.path))).toBe(true);
     });
 
     it("brackets the bridge call with markGenerationActive / markGenerationIdle so the idle monitor cannot kill mid-generation", async () => {
@@ -593,6 +621,31 @@ describe("imagegen IPC handlers", () => {
       bridgeGenerateImageMock.mockResolvedValue({
         pngBytes: pngBytesStub(),
         seed: huge,
+      });
+      const handler = getHandler("imagegen:generate");
+      const out = (await handler({}, validInput())) as { seed: number };
+      expect(out.seed).toBe(0);
+    });
+
+    it("clamps a negative BigInt seed to 0 instead of round-tripping a signed value", async () => {
+      // Devin Review PR #38 pass-7 📝 finding: the original
+      // clamp `seedBig <= BigInt(Number.MAX_SAFE_INTEGER)` lets
+      // negative values through because every negative BigInt
+      // satisfies the upper bound. The current Rust bridge
+      // constructs the BigInt with `sign_bit: false` from a u64,
+      // so a negative seed here would mean the bridge contract
+      // changed — but the existing clamp's silent acceptance of
+      // negative values would round-trip a negative seed straight
+      // into the editor's hero-image JSON, where the renderer's
+      // `sanitizeHeroImage` would then reject it on reload and
+      // the image would silently vanish after a save-reload
+      // cycle. Tighten the clamp to also reject `< 0n`. Pin the
+      // behaviour against a regression even though the current
+      // bridge contract makes the case unreachable.
+      getInstalledModelMock.mockResolvedValue({ path: "/m/flux.gguf" });
+      bridgeGenerateImageMock.mockResolvedValue({
+        pngBytes: pngBytesStub(),
+        seed: BigInt(-1),
       });
       const handler = getHandler("imagegen:generate");
       const out = (await handler({}, validInput())) as { seed: number };

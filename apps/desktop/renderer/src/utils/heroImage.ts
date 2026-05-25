@@ -12,9 +12,21 @@
  * same in both editors:
  *
  *   - reject when `assetUrl` is not a string that starts with
- *     `tessera-asset://` (so a hostile artifact JSON can't inject an
- *     `http://evil.example.com/...` URL that the CSP would block at
- *     load time but better-caught at parse time);
+ *     `tessera-asset://generated-images/` (the stricter prefix mirrors
+ *     the single permitted host the main-process protocol handler at
+ *     `apps/desktop/electron/assetProtocol.ts:174-189` will actually
+ *     serve — every other host returns 403). This rejects both the
+ *     outer `http://evil.example.com/...` CSP-bypass attempt AND the
+ *     in-scheme `tessera-asset://evil-host/...` injection that would
+ *     otherwise pass the sanitizer but get 403'd at render time. The
+ *     module-level docstring was tightened from the earlier "starts
+ *     with `tessera-asset://`" wording in the same pass that
+ *     tightened the code check (Devin Review PR #38
+ *     `BUG_pr-review-job-07d6d965…_0001`) — keeping both in sync is
+ *     load-bearing because a reader who skims the module header
+ *     should not underestimate the strictness of the validation.
+ *     See the function-level docstring on `sanitizeHeroImage` for
+ *     the full chain of layered defences;
  *   - reject when `prompt` / `seed` / `width` / `height` are missing
  *     or the wrong type (so the editor can never render a half-formed
  *     hero image);
@@ -54,23 +66,64 @@ export interface HeroImage {
 /**
  * Validate a parsed `heroImage` payload from on-disk JSON.
  * Returns `undefined` when the payload is incomplete or the
- * `assetUrl` is not a `tessera-asset://` URL — the caller (the
- * editor's parse path) treats `undefined` as "no hero image set"
- * and surfaces the Generate UI again so the user can regenerate
- * cleanly.
+ * `assetUrl` is not a `tessera-asset://generated-images/...` URL —
+ * the caller (the editor's parse path) treats `undefined` as
+ * "no hero image set" and surfaces the Generate UI again so the
+ * user can regenerate cleanly.
  *
- * The `tessera-asset://` prefix check is a defence-in-depth alongside
- * the CSP `img-src` allowlist — if a user hand-edits an artifact
- * JSON to inject a remote URL, this rejects the entire payload at
- * parse time rather than letting it through and relying on the CSP
- * to block the network fetch at render time.
+ * The `tessera-asset://generated-images/` prefix check is a
+ * defence-in-depth alongside the CSP `img-src` allowlist AND the
+ * main-process `assetProtocol.ts` host allow-list. It mirrors the
+ * single permitted host (`generated-images`) the protocol handler
+ * serves — see `apps/desktop/electron/assetProtocol.ts:174-189`,
+ * where the handler returns 403 for any URL whose host is not
+ * `generated-images`. Without matching the host portion of the
+ * URL at parse time, a hand-edited artifact JSON containing
+ * `"assetUrl": "tessera-asset://evil-host/img.png"` would pass
+ * the sanitizer, get dropped into `<img src>` in both editors,
+ * and the protocol handler would 403 the request — the user
+ * would see a broken image with no path to recovery. By
+ * rejecting the URL at parse time we surface the Generate UI
+ * again so they can produce a fresh, well-formed hero image.
+ *
+ * The earlier-pass check on the scheme alone also rejected a
+ * hostile `http://evil.example.com/...` injection (the CSP
+ * `img-src` allowlist is the outer defence); tightening to the
+ * host segment closes the in-scheme variant of the same attack.
+ * Devin Review PR #38 pass-N 🚩 finding
+ * `BUG_pr-review-job-07d6d965…_0001`.
  */
+// Required prefix for a well-formed hero `assetUrl`. The trailing
+// slash is part of the host→path boundary — see the sanitizer
+// comment below for why we ALSO require at least one character
+// after this prefix.
+const HERO_ASSET_URL_PREFIX = "tessera-asset://generated-images/";
+
 export function sanitizeHeroImage(raw: unknown): HeroImage | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
+  // `r.assetUrl` must START with the prefix AND have at least one
+  // path character after it. The earlier-pass check accepted the
+  // bare directory-root URL `tessera-asset://generated-images/`
+  // (Devin Review PR #38 pass-N 📝 finding
+  // `ANALYSIS_pr-review-job-4d834ff9…_0003`) because
+  // `startsWith(prefix)` is true for the exact-prefix string. The
+  // main-process protocol handler at `assetProtocol.ts:241-244`
+  // returns 403 for that exact URL (no directory listing under
+  // `generated-images/`), and `pathToAssetUrl` at
+  // `assetProtocol.ts:296-300` refuses to MINT such a URL in the
+  // first place — so a hand-edited artifact JSON containing
+  // `"assetUrl": "tessera-asset://generated-images/"` was the only
+  // way to smuggle the bare-root form through. The strict-greater
+  // length check below closes that gap so the parse-time guarantee
+  // matches the render-time one byte-for-byte. The handler is the
+  // outer defence (still 403s the bare root even if the sanitizer
+  // missed it); this is the inner defence (the editor never
+  // persists a URL the handler would refuse to serve).
   if (
     typeof r.assetUrl !== "string" ||
-    !r.assetUrl.startsWith("tessera-asset://") ||
+    !r.assetUrl.startsWith(HERO_ASSET_URL_PREFIX) ||
+    r.assetUrl.length <= HERO_ASSET_URL_PREFIX.length ||
     typeof r.prompt !== "string"
   ) {
     return undefined;
