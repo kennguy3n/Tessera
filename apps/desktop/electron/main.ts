@@ -620,7 +620,57 @@ export function _appInitCompleteForTests(): boolean {
 // stop the scheduler we know the process is committed to terminating.
 let schedulerShutdownStarted = false;
 
-app.on("will-quit", (event) => {
+/**
+ * Reset the will-quit deduplication latch.
+ *
+ * The `schedulerShutdownStarted` flag exists to make the will-quit
+ * handler idempotent under repeated `app.quit()` calls (the deferred
+ * `app.quit()` inside the async cleanup re-emits `will-quit`, so the
+ * handler MUST short-circuit on the second emission to avoid stopping
+ * the scheduler twice and double-awaiting the sidecar drain). Tests
+ * call this between cases to start each case from a clean state.
+ *
+ * Production code never calls this — the flag is set exactly once
+ * per process lifetime and the process exits immediately after.
+ */
+export function _resetWillQuitLatchForTests(): void {
+  schedulerShutdownStarted = false;
+}
+
+/**
+ * The will-quit handler body, lifted out of the inline callback so the
+ * vitest suite can drive the integration directly (the inline callback
+ * captures `app` from "electron", which makes mocking `app.quit()`
+ * awkward; the exported function takes `app.quit` as an explicit
+ * dependency).
+ *
+ * Returns the cleanup promise so tests can await it. Production callers
+ * (the `app.on("will-quit")` registration below) fire-and-forget the
+ * returned promise — Electron only cares that `event.preventDefault()`
+ * was called synchronously and that `app.quit()` is eventually re-fired.
+ *
+ * Behaviour contract (verified by `__tests__/willQuit.test.ts`):
+ *
+ *   1. Calls `event.preventDefault()` synchronously so Electron defers
+ *      the quit until our async cleanup finishes.
+ *   2. Stops the scheduler FIRST so no new bridge calls start while
+ *      the sidecars are being torn down.
+ *   3. Drains text + vision + diffusion sidecars via `stopAllSidecars`.
+ *   4. Calls `app.quit()` in a `finally` block so a throw in either
+ *      step still terminates the process.
+ *   5. A throw in `stopScheduler` does NOT skip `stopAllSidecars` —
+ *      the two `try` blocks are sequential, not nested.
+ *   6. Reentrant `will-quit` emissions (from the deferred `app.quit()`)
+ *      no-op via the `schedulerShutdownStarted` latch.
+ */
+export async function handleWillQuit(
+  event: { preventDefault: () => void },
+  deps: {
+    stopScheduler: () => Promise<void>;
+    stopAllSidecars: () => Promise<void>;
+    quit: () => void;
+  },
+): Promise<void> {
   if (schedulerShutdownStarted) return;
   schedulerShutdownStarted = true;
   // Stop the interval immediately so no NEW ticks start, then wait
@@ -631,9 +681,26 @@ app.on("will-quit", (event) => {
   // `event.preventDefault()` + deferred `app.quit()` pattern Electron
   // documents for async cleanup in quit handlers.
   event.preventDefault();
-  void (async () => {
+  // Outer `try/finally` guarantees `deps.quit()` runs even if one of
+  // the inner `console.error` calls were to throw (e.g. a custom
+  // `console` override in a future test/wrapper). The two inner
+  // `try/catch` blocks remain sequential — a throw in `stopScheduler`
+  // must NOT skip `stopAllSidecars`, since each represents an
+  // independent shutdown responsibility (the indexer tick AND the
+  // sidecar drain must both be attempted on every quit).
+  //
+  // Before this refactor, `deps.quit()` was attached to the inner
+  // `finally` of the second `try` block only — a (pathological)
+  // throw from `console.error` in the FIRST `catch` would skip the
+  // second block entirely and the process would hang forever waiting
+  // for an `app.quit()` that never fires. `console.error` doesn't
+  // throw in practice, but pinning the bullet-proof guarantee in code
+  // (rather than relying on Node.js implementation details) matches
+  // the docstring's "in a `finally` block so a throw in either step
+  // still terminates the process" promise.
+  try {
     try {
-      await stopScheduler();
+      await deps.stopScheduler();
     } catch (e) {
       // We're already on the quit path — log and continue rather than
       // hang the process indefinitely on a misbehaving tick.
@@ -648,11 +715,34 @@ app.on("will-quit", (event) => {
       // flush / clean shutdown that llama-server / sd-server want
       // to do on SIGTERM. Errors are swallowed (logged inside
       // `stopAllSidecars`) so a hung sidecar can't block app exit.
-      await stopAllSidecars();
+      await deps.stopAllSidecars();
     } catch (e) {
       console.error("[tessera] sidecar shutdown failed:", e);
-    } finally {
-      app.quit();
     }
-  })();
+  } finally {
+    deps.quit();
+  }
+}
+
+app.on("will-quit", (event) => {
+  // Attach a `.catch()` so an exception thrown inside `handleWillQuit`
+  // (the pathological "logger throws inside the scheduler catch" case
+  // pinned by `willQuit.test.ts`'s
+  // "calls app.quit() even when a logger inside the scheduler catch throws"
+  // test) doesn't surface as an `unhandledRejection`. The outer
+  // `try { … } finally { deps.quit() }` inside `handleWillQuit`
+  // guarantees `app.quit()` has already fired by the time control
+  // reaches this `.catch()`, so the process is on its way out
+  // anyway — we just log the original error so a post-mortem can
+  // see what broke. Using `void` alone would let the rejection
+  // bubble up to `process.on("unhandledRejection")` (registered at
+  // `main.ts:31`), which is functionally equivalent but produces
+  // a noisier log line right at shutdown.
+  handleWillQuit(event, {
+    stopScheduler,
+    stopAllSidecars,
+    quit: () => app.quit(),
+  }).catch((e) => {
+    console.error("[tessera] handleWillQuit rejected during quit:", e);
+  });
 });
