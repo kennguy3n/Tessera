@@ -207,6 +207,15 @@ pub fn mark_failed(slot: &Arc<Mutex<ProgressSnapshot>>, error: &str) {
     s.status = IndexStatus::Failed;
     s.last_error = Some(error.to_string());
     s.current_path = None;
+    // Reset phase to Scanning so the UI doesn't display a stale
+    // VLM-pass phase ("DescribingCharts", "OcrPdf", …) alongside a
+    // failed status. Symmetric with `finish` above. Today every
+    // VLM-pass error in `index_file_after_hash_stamp` resets the
+    // phase to `Scanning` before propagation, so this is defense-in-
+    // depth — but a future code path that propagates `?` from inside
+    // a VLM pass would otherwise leak stale phase to the renderer.
+    // Devin Review pass-N 📝 finding flagged the asymmetry.
+    s.phase = IndexPhase::Scanning;
 }
 
 // =====================================================================
@@ -442,6 +451,33 @@ mod tests {
         let snap = t.snapshot(&id);
         assert_eq!(snap.status, IndexStatus::Failed);
         assert_eq!(snap.last_error.as_deref(), Some("io error"));
+    }
+
+    #[test]
+    fn mark_failed_resets_phase_to_scanning() {
+        // Devin Review pass-N 📝 finding regression guard: `finish`
+        // resets `phase` to `Scanning` (line 202); `mark_failed`
+        // must do the same so the UI doesn't display a stale VLM-
+        // pass phase ("DescribingCharts", "OcrPdf", …) alongside a
+        // failed status. Today every VLM error in
+        // `index_file_after_hash_stamp` resets the phase before
+        // propagation, but this regression guard ensures a future
+        // path that propagates `?` from inside a VLM pass cannot
+        // leak stale phase to the renderer.
+        let t = ProgressTracker::new();
+        let id = sid();
+        let slot = t.start(&id);
+        record_phase(&slot, IndexPhase::DescribingCharts);
+        assert_eq!(t.snapshot(&id).phase, IndexPhase::DescribingCharts);
+        mark_failed(&slot, "vlm timeout");
+        let snap = t.snapshot(&id);
+        assert_eq!(snap.status, IndexStatus::Failed);
+        assert_eq!(snap.last_error.as_deref(), Some("vlm timeout"));
+        assert_eq!(
+            snap.phase,
+            IndexPhase::Scanning,
+            "mark_failed must reset phase to Scanning so the UI doesn't display a stale VLM-pass phase next to a failed status (symmetric with finish)"
+        );
     }
 
     #[test]
