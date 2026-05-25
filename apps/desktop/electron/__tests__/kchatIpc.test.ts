@@ -514,6 +514,74 @@ describe("kchat:connect — SSRF guard catches non-dotted-decimal IPv4 forms (el
   });
 });
 
+// Twelfth-pass Devin Review ANALYSIS_0002: IPv4-mapped IPv6 has two
+// textual forms — `::ffff:<dotted-decimal>` (the legacy / human form
+// `inet_pton` emits) AND `::ffff:<hi-hextet>:<lo-hextet>` (the
+// canonical compact-hex form produced by some browsers and resolvers
+// that aren't aware of the mapped-IPv4 special case). The dotted
+// form was already caught by the literal-IP check; the hex form
+// previously fell through to the DNS layer. We now canonicalise the
+// hex form back to dotted IPv4 and recurse the v4 check so both
+// shapes are rejected at the literal layer (defense-in-depth — the
+// literal check is the first line of defence and shouldn't lean on
+// DNS).
+describe("kchat:connect — SSRF guard catches hex-form IPv4-mapped IPv6 literals (twelfth-pass invariant)", () => {
+  const hexMappedInternalUrls = [
+    "http://[::ffff:7f00:1]/", // 127.0.0.1 (loopback)
+    "http://[::ffff:0a00:5]/", // 10.0.0.5 (RFC1918)
+    "http://[::ffff:c0a8:1]/", // 192.168.0.1 (RFC1918)
+    "http://[::ffff:a9fe:1]/", // 169.254.0.1 (link-local)
+    "http://[::ffff:6440:1]/", // 100.64.0.1 (CGNAT)
+  ];
+  for (const u of hexMappedInternalUrls) {
+    it(`rejects ${u} at the literal-IP layer (before DNS)`, async () => {
+      // Pin DNS to a public IP — if the test fails despite this it
+      // means the DNS layer was relied on to catch the address,
+      // exactly the defense-in-depth gap we want to close.
+      const spy = vi
+        .spyOn(dnsPromises, "lookup")
+        .mockResolvedValue([
+          { address: "93.184.216.34", family: 4 },
+        ] as never);
+      try {
+        await expect(
+          handler("kchat:connect")(EVENT, "PAT", u),
+        ).rejects.toThrow(/private|loopback|link-local/i);
+        expect(serviceMock.connect).not.toHaveBeenCalled();
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  }
+
+  it("still accepts hex-form mapped IPv6 that decodes to a public IPv4", async () => {
+    // `::ffff:5db8:d822` → 93.184.216.34 (example.com)
+    const spy = vi
+      .spyOn(dnsPromises, "lookup")
+      .mockResolvedValue([
+        { address: "93.184.216.34", family: 4 },
+      ] as never);
+    try {
+      serviceMock.connect.mockResolvedValue({
+        id: "user1234567890abcdefgh",
+        username: "pub",
+        email: "p@e.com",
+        first_name: "P",
+        last_name: "U",
+      });
+      const out = await handler("kchat:connect")(
+        EVENT,
+        "PAT",
+        "http://[::ffff:5db8:d822]/",
+      );
+      expect(out).toMatchObject({ id: "user1234567890abcdefgh" });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("kchat:disconnect", () => {
   it("audits with the previously-connected user id", async () => {
     serviceMock.disconnect.mockReturnValue("user1234567890abcdefgh");

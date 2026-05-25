@@ -148,32 +148,52 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
     };
   }, [kchat, state.state]);
 
-  const pollUnread = useCallback(async () => {
-    if (!kchat || state.state !== "connected" || channels.length === 0) {
-      return;
-    }
-    const seen = getLastSeen();
-    // Cap fan-out to `MAX_POLL_CHANNELS` to stay well under the
-    // global `kchat:request` rate-limit budget. We walk serially
-    // (not in parallel) because the limiter is token-bucket: bursts
-    // beyond the budget would `await` inside `consume`, so
-    // parallelism cannot actually speed the poll up — it would just
-    // make each individual request slower while still consuming the
-    // same number of tokens.
-    const polled = channels.slice(0, MAX_POLL_CHANNELS);
-    try {
-      let total = 0;
-      for (const ch of polled) {
-        const files = await kchat.listChannelFiles(ch.id, 0, 20);
-        for (const f of files) {
-          if (f.create_at > seen) total += 1;
-        }
+  // `isCancelled` is an optional callback the caller can pass to
+  // short-circuit the poll cycle. We check it (a) before issuing
+  // each `listChannelFiles` request — so a teardown stops burning
+  // rate-limit tokens on a cycle whose result will be discarded —
+  // and (b) right before `setUnread`, so an unmount that races with
+  // the in-flight Promise's resolution doesn't fire a state update
+  // against an unmounted component (twelfth-pass Devin Review
+  // ANALYSIS_0006). The cancellation is a getter (not a snapshot
+  // boolean) so the effect's `cancelled` mutation is observed
+  // immediately by the running cycle rather than at the next
+  // `pollUnread` invocation. This is correct long-term: React 18
+  // silently no-ops state updates on unmounted components today,
+  // but stricter future modes (and the in-development concurrent
+  // renderer) may surface warnings — and the rate-limiter savings
+  // are real today.
+  const pollUnread = useCallback(
+    async (isCancelled?: () => boolean) => {
+      if (!kchat || state.state !== "connected" || channels.length === 0) {
+        return;
       }
-      setUnread(total);
-    } catch {
-      /* swallow — keep last-known count */
-    }
-  }, [kchat, state.state, channels]);
+      const seen = getLastSeen();
+      // Cap fan-out to `MAX_POLL_CHANNELS` to stay well under the
+      // global `kchat:request` rate-limit budget. We walk serially
+      // (not in parallel) because the limiter is token-bucket:
+      // bursts beyond the budget would `await` inside `consume`, so
+      // parallelism cannot actually speed the poll up — it would
+      // just make each individual request slower while still
+      // consuming the same number of tokens.
+      const polled = channels.slice(0, MAX_POLL_CHANNELS);
+      try {
+        let total = 0;
+        for (const ch of polled) {
+          if (isCancelled?.()) return;
+          const files = await kchat.listChannelFiles(ch.id, 0, 20);
+          for (const f of files) {
+            if (f.create_at > seen) total += 1;
+          }
+        }
+        if (isCancelled?.()) return;
+        setUnread(total);
+      } catch {
+        /* swallow — keep last-known count */
+      }
+    },
+    [kchat, state.state, channels],
+  );
 
   // Recursive `setTimeout` instead of `setInterval` (eleventh-pass
   // Devin Review ANALYSIS_0004). `setInterval` would fire every
@@ -188,6 +208,13 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // `POLL_INTERVAL_MS`, and any `pollUnread` Promise rejection
   // (swallowed inside the function so a future change couldn't
   // accidentally re-throw) cannot leave a dangling interval.
+  //
+  // The `cancelled` flag is also passed *into* `pollUnread` via the
+  // `isCancelled` getter so an in-flight cycle short-circuits the
+  // moment the effect tears down (twelfth-pass Devin Review
+  // ANALYSIS_0006) — both to save rate-limit tokens on a cycle whose
+  // `setUnread` would be discarded, and to avoid the post-unmount
+  // state update entirely.
   useEffect(() => {
     if (state.state !== "connected" || channels.length === 0) return;
     let cancelled = false;
@@ -195,7 +222,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
     const tick = async () => {
       if (cancelled) return;
       try {
-        await pollUnread();
+        await pollUnread(() => cancelled);
       } finally {
         if (!cancelled) {
           timeoutId = window.setTimeout(tick, POLL_INTERVAL_MS);

@@ -243,19 +243,19 @@ function parseIpv4(s: string): [number, number, number, number] | null {
   const last = nums[nums.length - 1];
   const lastMaxBits = (5 - nums.length) * 8; // 4-part:8, 3-part:16, 2-part:24, 1-part:32
   if (last < 0 || last > 2 ** lastMaxBits - 1) return null;
+  // Each octet comes from an explicit token when one is available
+  // (`nums[i]`) and otherwise falls back to the corresponding byte of
+  // `last`. The 1-part case (single integer) takes all four bytes
+  // from `last`; the 2-part case takes byte 0 from `nums[0]` and
+  // bytes 1–3 from `last`; the 3-part case takes bytes 0–1 from
+  // `nums[0..1]` and bytes 2–3 from `last`; the 4-part case takes
+  // bytes 0–2 from `nums[0..2]` and byte 3 from `last`. The
+  // unified shape avoids the redundant `(last >>> N) & 0xff` ternary
+  // branches the older form had (twelfth-pass Devin Review
+  // ANALYSIS_0001).
   const a = nums.length >= 2 ? nums[0] : (last >>> 24) & 0xff;
-  const b =
-    nums.length >= 3
-      ? nums[1]
-      : nums.length === 2
-        ? (last >>> 16) & 0xff
-        : (last >>> 16) & 0xff;
-  const c =
-    nums.length === 4
-      ? nums[2]
-      : nums.length === 3
-        ? (last >>> 8) & 0xff
-        : (last >>> 8) & 0xff;
+  const b = nums.length >= 3 ? nums[1] : (last >>> 16) & 0xff;
+  const c = nums.length >= 4 ? nums[2] : (last >>> 8) & 0xff;
   const d = last & 0xff;
   return [a, b, c, d];
 }
@@ -327,8 +327,46 @@ function isPrivateOrLoopbackHost(hostname: string): boolean {
     if (h.startsWith("fe80:")) return true; // IPv6 link-local
     if (h.startsWith("fc") || h.startsWith("fd")) return true; // ULA fc00::/7
   }
-  const mapped = h.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-  if (mapped) return isPrivateOrLoopbackHost(mapped[1]);
+  // IPv4-mapped IPv6 (RFC 4291 §2.5.5.2) covers BOTH textual forms:
+  //   * `::ffff:127.0.0.1`  — dotted-decimal tail (legacy form most
+  //     humans type and what `inet_pton` emits)
+  //   * `::ffff:7f00:1`     — two-hextet tail (compact hex form, the
+  //     canonical IPv6-text encoding when the tool isn't aware of the
+  //     mapped-IPv4 special case; e.g. some browsers and resolvers
+  //     produce this). Twelfth-pass Devin Review ANALYSIS_0002 caught
+  //     that the previous regex only matched the dotted-decimal form,
+  //     so `http://[::ffff:7f00:1]/` (loopback) silently fell through
+  //     the literal-check and relied on the DNS layer alone.
+  //
+  // We accept any IPv6 literal whose final two hextets canonicalise
+  // into a 32-bit IPv4 address (e.g. `::ffff:7f00:1` → 0x7f000001 →
+  // 127.0.0.1) and recurse the IPv4 check on the canonicalised dotted
+  // form. The first match (decimal-tail) keeps the existing fast path
+  // for the human-typed form; the second match (hex-tail) covers the
+  // tool-emitted form. Other compressed `::` forms with embedded
+  // private/loopback IPv4 don't exist because the v4 octets only
+  // round-trip through the `::ffff:` prefix.
+  const mappedDec = h.match(
+    /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/,
+  );
+  if (mappedDec) return isPrivateOrLoopbackHost(mappedDec[1]);
+  const mappedHex = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (mappedHex) {
+    const hi = Number.parseInt(mappedHex[1], 16);
+    const lo = Number.parseInt(mappedHex[2], 16);
+    if (
+      Number.isFinite(hi) &&
+      Number.isFinite(lo) &&
+      hi <= 0xffff &&
+      lo <= 0xffff
+    ) {
+      const a = (hi >>> 8) & 0xff;
+      const b = hi & 0xff;
+      const c = (lo >>> 8) & 0xff;
+      const d = lo & 0xff;
+      return isPrivateOrLoopbackHost(`${a}.${b}.${c}.${d}`);
+    }
+  }
   return false;
 }
 

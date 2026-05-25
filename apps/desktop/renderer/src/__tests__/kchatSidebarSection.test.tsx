@@ -289,3 +289,77 @@ describe("KchatSidebarSection — unread poll does not overlap when slow (eleven
     expect(listChannelFiles.mock.calls[channels.length][0]).toBe("chan-0");
   });
 });
+
+// Twelfth-pass Devin Review ANALYSIS_0006: when the sidebar is
+// unmounted while a poll cycle is mid-flight, the in-flight
+// `listChannelFiles` Promise still resolves, and the awaiting
+// `pollUnread` continues running through to `setUnread`. React 18
+// silently no-ops state updates on unmounted components, but
+// stricter future modes surface a warning, and the wasted rate-
+// limiter tokens are real today. We pass an `isCancelled` getter
+// into `pollUnread` that the effect's `cancelled` flag flips on
+// teardown; the cycle then short-circuits both before issuing each
+// `listChannelFiles` call and right before `setUnread`.
+//
+// We can observe the short-circuit indirectly: after unmount,
+// resolving the in-flight Promise should NOT lead to additional
+// `listChannelFiles` calls (the cancellation aborts the serial
+// loop), and no state-update warning should be emitted. We can also
+// observe directly: the effect's cleanup runs before the Promise
+// settles, so a teardown that arrives between channel 1 and channel
+// 2 of a cycle leaves the channel-2+ requests unfired.
+describe("KchatSidebarSection — unread poll short-circuits on unmount (twelfth-pass invariant)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not issue further `listChannelFiles` calls once the component has unmounted", async () => {
+    const channels = Array.from({ length: 5 }, (_, i) => ({
+      id: `chan-${i}`,
+      team_id: "team-1",
+      name: `c${i}`,
+      display_name: `C${i}`,
+      type: "O" as const,
+    }));
+    const resolvers: Array<(v: unknown[]) => void> = [];
+    const listChannelFiles = vi.fn().mockImplementation(() => {
+      return new Promise<unknown[]>((resolve) => {
+        resolvers.push(resolve);
+      });
+    });
+    const api = makeApi({
+      listChannels: vi.fn().mockResolvedValue(channels),
+      listChannelFiles,
+    });
+    const { unmount } = render(<KchatSidebarSection api={api} />);
+
+    // Wait until the first call is in-flight, then unmount while
+    // the cycle is stuck on chan-0's resolver.
+    await waitFor(() => expect(listChannelFiles).toHaveBeenCalledTimes(1));
+    expect(listChannelFiles.mock.calls[0][0]).toBe("chan-0");
+
+    unmount();
+
+    // Resolve chan-0. With the cancellation token plumbed into
+    // `pollUnread`, the next iteration of the loop checks
+    // `isCancelled?.()` and returns BEFORE issuing chan-1's call.
+    // Without the fix, chan-1, chan-2, … would fire as the loop
+    // continues to drain.
+    resolvers[0]([]);
+    // Give the microtask queue a chance to advance the loop past
+    // the (now-cancelled) `isCancelled` check.
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(listChannelFiles).toHaveBeenCalledTimes(1);
+
+    // Advance through several poll intervals — confirm no further
+    // ticks fire either (the effect cleanup cleared the pending
+    // setTimeout AND the `cancelled` getter short-circuits any
+    // already-in-flight cycle).
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(listChannelFiles).toHaveBeenCalledTimes(1);
+  });
+});
