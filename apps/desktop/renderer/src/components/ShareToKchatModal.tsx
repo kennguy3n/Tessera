@@ -16,7 +16,14 @@
  * The modal is rendered only when KChat is `connected` — the caller
  * gates visibility on `window.tessera.kchat.status()`.
  */
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Modal from "./Modal";
 import Button from "./Button";
 import { useToast } from "./Toast";
@@ -80,6 +87,24 @@ export default function ShareToKchatModal({
   const [error, setError] = useState<string | null>(null);
   const [loadingChannels, setLoadingChannels] = useState(false);
 
+  // Read the current `teamId` through a ref inside the teams-load
+  // effect so the effect does NOT need `teamId` in its dependency
+  // array. The previous shape included `teamId` and mutated it from
+  // inside the effect (`setTeamId(list[0].id)` when no team had been
+  // chosen), which made the effect self-triggering: every modal
+  // open issued two `kchat:listTeams` IPC calls back-to-back — one
+  // before the default-team-id was resolved, one after — even
+  // though the second response was identical to the first.
+  // Sixteenth-pass Devin Review flagged the pattern across
+  // `KchatChannelSourcePicker` and `ShareToKchatModal`. The ref
+  // keeps the "pick a default when none is set" semantics intact
+  // while removing the self-trigger; the IPC call now fires exactly
+  // once per modal open or `kchat` ref change.
+  const teamIdRef = useRef(teamId);
+  useEffect(() => {
+    teamIdRef.current = teamId;
+  }, [teamId]);
+
   // Load teams when the modal opens (and stay subscribed so a
   // background "connection lost" → reconnect can refresh the list).
   useEffect(() => {
@@ -91,7 +116,7 @@ export default function ShareToKchatModal({
         const list = await kchat.listTeams();
         if (cancelled) return;
         setTeams(list);
-        if (!teamId && list[0]) {
+        if (!teamIdRef.current && list[0]) {
           setTeamId(list[0].id);
           setStoredDefaultTeamId(list[0].id);
         }
@@ -104,7 +129,7 @@ export default function ShareToKchatModal({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, kchat, teamId]);
+  }, [isOpen, kchat]);
 
   // Load channels whenever the team changes (or modal opens with a
   // pre-selected team).

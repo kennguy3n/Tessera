@@ -11,7 +11,14 @@
  * Rendered only when KChat is `connected` — the caller (SourcesPage)
  * gates visibility on `window.tessera.kchat.status()`.
  */
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Modal from "./Modal";
 import Button from "./Button";
 import { useToast } from "./Toast";
@@ -56,6 +63,25 @@ export default function KchatChannelSourcePicker({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Read the current `selectedTeam` through a ref inside the teams-
+  // load effect so the effect does NOT need `selectedTeam` in its
+  // dependency array. The previous shape included `selectedTeam` and
+  // mutated it from inside the effect (`setSelectedTeam(list[0].id)`
+  // when no team had been chosen), which made the effect self-
+  // triggering: every modal open issued two `kchat:listTeams` IPC
+  // calls back-to-back — one before the default selection was
+  // resolved, one after — even though the second response was
+  // identical to the first. Sixteenth-pass Devin Review flagged the
+  // pattern across `KchatChannelSourcePicker`, `ShareToKchatModal`,
+  // and (previously) `KchatSettingsCard`. The ref keeps the "pick a
+  // default when none is set" semantics intact while removing the
+  // self-trigger; the IPC call now fires exactly once per modal
+  // open or `kchat` ref change.
+  const selectedTeamRef = useRef(selectedTeam);
+  useEffect(() => {
+    selectedTeamRef.current = selectedTeam;
+  }, [selectedTeam]);
+
   useEffect(() => {
     if (!isOpen || !kchat) return;
     let cancelled = false;
@@ -65,7 +91,7 @@ export default function KchatChannelSourcePicker({
         const list = await kchat.listTeams();
         if (cancelled) return;
         setTeams(list);
-        if (!selectedTeam && list[0]) {
+        if (!selectedTeamRef.current && list[0]) {
           setSelectedTeam(list[0].id);
           setStoredDefaultTeamId(list[0].id);
         }
@@ -76,7 +102,7 @@ export default function KchatChannelSourcePicker({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, kchat, selectedTeam]);
+  }, [isOpen, kchat]);
 
   useEffect(() => {
     if (!isOpen || !kchat || !selectedTeam) return;
