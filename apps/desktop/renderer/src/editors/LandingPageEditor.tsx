@@ -23,6 +23,7 @@ import { sanitizeCssColor } from "../utils/cssColor";
 import { sanitizeIconSpec } from "../utils/iconSpec";
 import { sanitizeUrl } from "../utils/safeUrl";
 import { sanitizeHeroImage, type HeroImage } from "../utils/heroImage";
+import { escapeHtml } from "../utils/htmlEscape";
 import { Plus, Trash2, X } from "lucide-react";
 
 /**
@@ -671,15 +672,6 @@ export function buildLandingPreviewHtml(data: LandingPageContent): string {
   ${finalCta}
 </div>`;
   return embedIcons(html);
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 /**

@@ -28,6 +28,7 @@ import { embedIcons } from "../services/iconResolver";
 import { sanitizeCssColor } from "../utils/cssColor";
 import { sanitizeIconSpec } from "../utils/iconSpec";
 import { sanitizeHeroImage, type HeroImage } from "../utils/heroImage";
+import { escapeHtml } from "../utils/htmlEscape";
 import { Plus, Trash2, ArrowUp, ArrowDown, X } from "lucide-react";
 
 export type InfographicLayout = "vertical" | "horizontal" | "grid";
@@ -590,15 +591,6 @@ export function buildPreviewHtml(data: InfographicContent): string {
   </div>
 </div>`;
   return embedIcons(html);
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 /**
