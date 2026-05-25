@@ -185,6 +185,13 @@ pub enum SourceType {
     Jira,
     Confluence,
     Figma,
+    /// KChat channel connector — files shared into a KChat channel
+    /// surface as an indexed source. The renderer downloads the
+    /// channel files via the Node-side KChat client and indexes the
+    /// cached copies through the standard local-file pipeline. The
+    /// `Source.path` for a `Kchat` source points at the on-disk
+    /// cache directory for the channel.
+    Kchat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,6 +215,7 @@ impl std::fmt::Display for SourceType {
             Self::Jira => write!(f, "jira"),
             Self::Confluence => write!(f, "confluence"),
             Self::Figma => write!(f, "figma"),
+            Self::Kchat => write!(f, "kchat"),
         }
     }
 }

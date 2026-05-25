@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use napi::bindgen_prelude::AsyncTask;
+use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Task};
 use napi_derive::napi;
 
@@ -197,6 +197,48 @@ pub fn bridge_add_local_file(path: String) -> napi::Result<sources::SourceInfo> 
         let _ = logger.log_source_added(&path);
     }
     Ok(info)
+}
+
+/// Register-or-reindex a KChat-channel source backed by a local cache
+/// directory populated by the Node-side KChat client. Re-uses the
+/// local-folder indexing pipeline (text extraction → chunking →
+/// embeddings → FTS5).
+///
+/// **Idempotent on `cache_dir`** — the Node side calls this on every
+/// channel re-sync (the convergent-sync pattern owned by the
+/// `sources:addKchatChannel` handler). A previous implementation
+/// generated a fresh `SourceId` on every call, leaving duplicate
+/// source rows per sync. The returned outcome's `newly_created` flag
+/// is true only on the call that inserted the row; subsequent re-
+/// syncs return the same `SourceId` with `newly_created=false`.
+///
+/// We only emit the `SourceAdded` audit event when the call actually
+/// inserted a row — re-syncs do not add a row, so they do not emit
+/// a duplicate "source added" audit either. The Node-side handler
+/// applies the same gate to `KchatChannelLinked`.
+#[napi]
+pub fn bridge_add_kchat_channel(
+    cache_dir: String,
+) -> napi::Result<sources::KchatChannelAddOutcomeInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let outcome = sources::add_kchat_channel(&mgr, &cache_dir)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let newly_created = outcome.newly_created;
+    // Audit AFTER the add commits — same phantom-row prevention
+    // discipline as `bridge_add_local_folder`. Skipped on re-sync so
+    // the audit log doesn't accumulate one "source added" event per
+    // re-sync of the same cache_dir.
+    drop(mgr);
+    if newly_created {
+        if let Ok(logger) = s.audit_logger.lock() {
+            let _ = logger.log_source_added(&cache_dir);
+        }
+    }
+    Ok(outcome)
 }
 
 #[napi]
@@ -534,11 +576,17 @@ pub fn bridge_delete_artifact(artifact_id: String) -> napi::Result<()> {
 
 // --- Export ---
 
+/// Exports an artifact to the given format.
+///
+/// `include_citations` defaults to `true` (existing behaviour) when
+/// the JS caller passes `null` or omits it. Callers that want a
+/// citation-free export must pass `false` explicitly.
 #[napi]
 pub fn bridge_export_artifact(
     artifact_id: String,
     format: String,
     content_override: Option<String>,
+    include_citations: Option<bool>,
 ) -> napi::Result<exporter::ExportResult> {
     let s = state()?;
     let art_mgr = s
@@ -555,6 +603,7 @@ pub fn bridge_export_artifact(
         &artifact_id,
         &format,
         content_override.as_deref(),
+        include_citations.unwrap_or(true),
     )
     .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     // Audit-after-action (sequential non-overlapping pattern B): a
@@ -571,12 +620,16 @@ pub fn bridge_export_artifact(
     Ok(result)
 }
 
+/// Binary-aware variant of [`bridge_export_artifact`]. Same
+/// `include_citations` default semantics — `None`/null/omitted means
+/// citations are included (back-compat).
 #[napi]
 pub fn bridge_export_artifact_to_file(
     artifact_id: String,
     format: String,
     path: String,
     content_override: Option<String>,
+    include_citations: Option<bool>,
 ) -> napi::Result<()> {
     let s = state()?;
     let art_mgr = s
@@ -594,6 +647,7 @@ pub fn bridge_export_artifact_to_file(
         &format,
         &path,
         content_override.as_deref(),
+        include_citations.unwrap_or(true),
     )
     .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     // Audit AFTER the export commits to disk so a failed write
@@ -1298,6 +1352,44 @@ pub fn bridge_export_evidence_pack(
     Ok(zip_path)
 }
 
+/// In-memory evidence-pack variant. Returns the ZIP bytes directly
+/// so callers (specifically the KChat share path) can stream them
+/// straight into an upload without staging on disk. The audit row
+/// is still emitted because the bytes are about to leave the
+/// Tessera process — keeping the on-disk and in-memory paths in
+/// audit-parity is what lets the audit trail be the canonical
+/// source of "what got exported where".
+#[napi]
+pub fn bridge_evidence_pack_bytes(artifact_id: String) -> napi::Result<Buffer> {
+    let s = state()?;
+    let art_mgr = s
+        .artifact_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let tracker = s
+        .citation_tracker
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+    let uuid =
+        uuid::Uuid::parse_str(&artifact_id).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let aid = tessera_core::ArtifactId(uuid);
+    let artifact = art_mgr
+        .get(&aid)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let citation_list = tracker.list_for_artifact(&aid).unwrap_or_default();
+
+    let bytes = tessera_export::evidence_pack::evidence_pack_bytes(&artifact, &citation_list)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+    drop(tracker);
+    drop(art_mgr);
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_artifact_exported(&artifact_id, "evidence_pack");
+    }
+    Ok(Buffer::from(bytes))
+}
+
 // --- Tasks ---
 
 #[napi]
@@ -1579,6 +1671,163 @@ pub fn bridge_log_connector_disconnected(provider: String, files_removed: u32) -
         let _ = logger.log_connector_disconnected(&provider, files_removed as usize);
     }
     Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_kchat_connected`].
+/// Called by `apps/desktop/electron/ipc/kchat.ts` after the KChat
+/// personal access token has been stored in the OS keychain and a
+/// `/users/me` probe returned the KChat user identity.
+#[napi]
+pub fn bridge_log_kchat_connected(server_url: String, kchat_user_id: String) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_connected(&server_url, &kchat_user_id);
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_kchat_disconnected`].
+/// Called by `apps/desktop/electron/ipc/kchat.ts` after the KChat
+/// token has been removed from the keychain and the WebSocket has
+/// been closed.
+#[napi]
+pub fn bridge_log_kchat_disconnected(kchat_user_id: String) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_disconnected(&kchat_user_id);
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_kchat_artifact_shared`].
+/// Called by `kchat:shareArtifact` after the export has been
+/// uploaded into the channel's file store.
+#[napi]
+pub fn bridge_log_kchat_artifact_shared(
+    artifact_id: String,
+    channel_id: String,
+    format: String,
+    include_citations: bool,
+    include_evidence_pack: bool,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_artifact_shared(
+            &artifact_id,
+            &channel_id,
+            &format,
+            include_citations,
+            include_evidence_pack,
+        );
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_kchat_channel_linked`].
+/// Called by `sources:addKchatChannel` after the cache directory
+/// has been registered as a `SourceType::Kchat` source.
+#[napi]
+pub fn bridge_log_kchat_channel_linked(
+    channel_id: String,
+    channel_name: String,
+    cache_dir: String,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_channel_linked(&channel_id, &channel_name, &cache_dir);
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_kchat_channel_unlinked`].
+/// Called when a KChat-channel source is removed from the Sources
+/// list (the `sources:remove` IPC handler dispatches to this for
+/// `kchat`-tagged sources).
+#[napi]
+pub fn bridge_log_kchat_channel_unlinked(
+    channel_id: String,
+    files_removed: u32,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_channel_unlinked(&channel_id, files_removed as usize);
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for [`AuditLogger::log_kchat_file_downloaded`].
+/// Called for every file the Node-side KChat client downloads from
+/// a channel's file store into the local cache directory.
+#[napi]
+pub fn bridge_log_kchat_file_downloaded(
+    channel_id: String,
+    file_name: String,
+    bytes: i64,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        // i64 → u64 conversion is safe: the JS side passes a file
+        // size that is never negative; saturating-cast pins the
+        // floor to 0 to keep the audit row well-formed even if a
+        // mis-coded caller passes a sentinel negative value.
+        let bytes_u64 = if bytes < 0 { 0_u64 } else { bytes as u64 };
+        let _ = logger.log_kchat_file_downloaded(&channel_id, &file_name, bytes_u64);
+    }
+    Ok(())
+}
+
+/// Renderer-facing audit row. The Rust `AuditEvent` carries a
+/// strongly-typed `AuditEventType` enum and a `DateTime<Utc>`;
+/// neither survives the napi boundary cleanly, so we serialise the
+/// event type as a `serde_json`-style string ("KchatConnected",
+/// "ArtifactShared", …) and the timestamp as RFC 3339 / ISO 8601.
+#[napi(object)]
+pub struct AuditEventView {
+    /// UUID string assigned at append time. The audit table uses
+    /// TEXT-typed UUIDs, not autoincrement integers, so two
+    /// processes appending concurrently can't collide.
+    pub id: String,
+    pub event_type: String,
+    pub timestamp: String,
+    pub details: String,
+}
+
+/// Return the `limit` most recent audit rows, newest first.
+/// `limit` is clamped to `[1, 500]` so a renderer bug requesting
+/// millions of rows can't OOM the main process. `offset` lets the
+/// renderer page backwards.
+#[napi]
+pub fn bridge_recent_audit_events(limit: u32, offset: u32) -> napi::Result<Vec<AuditEventView>> {
+    let clamped = limit.clamp(1, 500);
+    let s = state()?;
+    let logger = s
+        .audit_logger
+        .lock()
+        .map_err(|e| napi::Error::from_reason(format!("audit logger poisoned: {e}")))?;
+    let events = logger
+        .recent_events(clamped, offset)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(events
+        .into_iter()
+        .map(|ev| AuditEventView {
+            id: ev.id,
+            // `AuditEventType` exposes the canonical snake_case
+            // identifier via {@link AuditEventType::as_snake_case},
+            // which is the same value emitted by the serde
+            // `rename_all = "snake_case"` derive but without the
+            // JSON-string + quote-trim round-trip the bridge
+            // previously used (fourteenth-pass Devin Review
+            // ANALYSIS_0007). The serde form remains the
+            // authoritative on-disk representation in SQLite; this
+            // helper just keeps the napi → JS conversion direct.
+            // A unit test in `tessera_audit::event::tests`
+            // (`as_snake_case_matches_serde_form`) asserts the two
+            // representations stay in lockstep across enum changes.
+            event_type: ev.event_type.as_snake_case().to_string(),
+            timestamp: ev.timestamp.to_rfc3339(),
+            details: ev.details,
+        })
+        .collect())
 }
 
 // --- Vision + image-generation bridges -------------------------------------

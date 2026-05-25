@@ -58,6 +58,21 @@ pub struct SourceDetailInfo {
     pub files: Vec<IndexedFileInfo>,
 }
 
+/// JS-facing pass-through of [`tessera_sources::manager::KchatChannelAddOutcome`].
+///
+/// Returned by `bridge_add_kchat_channel`. The Node-side handler
+/// (`apps/desktop/electron/ipc/kchat.ts`) inspects `newly_created`
+/// to gate the `KchatChannelLinked` audit event: a first sync emits
+/// it once; every subsequent re-sync for the same `cache_dir` flips
+/// to `newly_created: false` and the handler skips the audit append
+/// so the audit log doesn't accumulate one "linked" event per sync.
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct KchatChannelAddOutcomeInfo {
+    pub source: SourceInfo,
+    pub newly_created: bool,
+}
+
 impl From<&Source> for SourceInfo {
     fn from(s: &Source) -> Self {
         Self {
@@ -94,6 +109,33 @@ pub fn add_local_folder(manager: &SourceManager, path: &str) -> BridgeResult<Sou
 pub fn add_local_file(manager: &SourceManager, path: &str) -> BridgeResult<SourceInfo> {
     let source = manager.add_local_file(path).map_err(BridgeError::Core)?;
     Ok(SourceInfo::from(&source))
+}
+
+/// Register-or-reindex a KChat-channel source backed by a local cache
+/// directory the Node-side KChat client populates with files downloaded
+/// from a channel's file store. The directory is indexed through the
+/// standard local-folder pipeline; the `SourceType::Kchat` tag lets the
+/// renderer render a KChat-specific icon / detail surface and lets the
+/// KChat scheduler poll the corresponding channel for new files on
+/// its own interval.
+///
+/// **Idempotent on `cache_dir`** — the Node side calls this once per
+/// add and again on every re-sync. A previous implementation always
+/// inserted a fresh source row, producing one duplicate per sync. The
+/// returned [`KchatChannelAddOutcomeInfo::newly_created`] flag lets
+/// the Node-side handler gate the `KchatChannelLinked` audit event
+/// to first-sync only.
+pub fn add_kchat_channel(
+    manager: &SourceManager,
+    cache_dir: &str,
+) -> BridgeResult<KchatChannelAddOutcomeInfo> {
+    let outcome = manager
+        .add_kchat_channel(cache_dir)
+        .map_err(BridgeError::Core)?;
+    Ok(KchatChannelAddOutcomeInfo {
+        source: SourceInfo::from(&outcome.source),
+        newly_created: outcome.newly_created,
+    })
 }
 
 pub fn list_sources(manager: &SourceManager) -> BridgeResult<Vec<SourceInfo>> {

@@ -202,6 +202,33 @@ export const RATE_LIMIT_PROFILES = {
     tokensPerInterval: 1,
     intervalMs: 5_000,
   },
+  // KChat REST calls: KChat (Mattermost) production rate-limits to
+  // 7000 req/s per host with a burst of 100. We sit well under that
+  // so a Tessera client never contributes to a server-side throttle.
+  // 5 req/s sustained with a burst of 20 covers normal browsing
+  // (channel list → file list → presence) plus a handful of
+  // concurrent file downloads.
+  "kchat:request": {
+    tokensPerInterval: 5,
+    intervalMs: 1_000,
+    burst: 20,
+  },
+  // KChat file uploads (artifact share): rate-limit to 1 per 2 s,
+  // burst 3. A user can share a few exports in a row but a runaway
+  // component cannot flood the channel.
+  "kchat:upload": {
+    tokensPerInterval: 1,
+    intervalMs: 2_000,
+    burst: 3,
+  },
+  // KChat channel sync polling: 1 per 15 s. A KChat-channel source
+  // re-fetches its file list on this cadence; faster polling adds
+  // no real-time value because new files trigger a WebSocket event
+  // anyway and that path bypasses the rate limiter.
+  "kchat:syncChannel": {
+    tokensPerInterval: 1,
+    intervalMs: 15_000,
+  },
 } satisfies Record<string, RateLimitConfig>;
 
 /** Shared default limiter instance used by the IPC layer. */

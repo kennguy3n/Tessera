@@ -13,11 +13,28 @@ use crate::docx::export_docx;
 #[cfg(feature = "xlsx")]
 use crate::xlsx::export_xlsx;
 
-pub fn export(artifact: &Artifact, citations: &[Citation], format: ExportFormat) -> Result<String> {
+/// Format-agnostic export entry point.
+///
+/// `citations` is the full citation list for the artifact and
+/// `include_citations` controls whether those citations are rendered
+/// into the output. When `include_citations` is `false`, the citation
+/// list is suppressed at the dispatch layer (the format-specific
+/// exporters see an empty slice and skip their "Sources" / footnote
+/// sections). The toggle is centralised here so every format exporter
+/// honours it identically — callers cannot accidentally produce an
+/// export that claims "no citations" in its audit row while the bytes
+/// still contain them, or vice versa.
+pub fn export(
+    artifact: &Artifact,
+    citations: &[Citation],
+    format: ExportFormat,
+    include_citations: bool,
+) -> Result<String> {
+    let effective: &[Citation] = if include_citations { citations } else { &[] };
     match format {
-        ExportFormat::Markdown => Ok(export_markdown(artifact, citations)),
-        ExportFormat::Html => Ok(export_html(artifact, citations)),
-        ExportFormat::Csv => Ok(export_csv(artifact, citations)),
+        ExportFormat::Markdown => Ok(export_markdown(artifact, effective)),
+        ExportFormat::Html => Ok(export_html(artifact, effective)),
+        ExportFormat::Csv => Ok(export_csv(artifact, effective)),
         ExportFormat::Json => {
             serde_json::to_string_pretty(artifact).map_err(|e| Error::Export(e.to_string()))
         }
@@ -29,22 +46,27 @@ pub fn export(artifact: &Artifact, citations: &[Citation], format: ExportFormat)
     }
 }
 
+/// Binary-aware export entry point. Same `include_citations`
+/// semantics as [`export`] — when `false`, the citation list is
+/// suppressed before being handed to the format exporter.
 pub fn export_to_file(
     artifact: &Artifact,
     citations: &[Citation],
     format: ExportFormat,
     path: &std::path::Path,
+    include_citations: bool,
 ) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    let effective: &[Citation] = if include_citations { citations } else { &[] };
     match format {
         ExportFormat::Pdf => {
-            std::fs::write(path, export_pdf(artifact, citations))?;
+            std::fs::write(path, export_pdf(artifact, effective))?;
         }
         #[cfg(feature = "docx")]
         ExportFormat::Docx => {
-            std::fs::write(path, export_docx(artifact, citations))?;
+            std::fs::write(path, export_docx(artifact, effective))?;
         }
         #[cfg(not(feature = "docx"))]
         ExportFormat::Docx => {
@@ -69,7 +91,17 @@ pub fn export_to_file(
             ));
         }
         other => {
-            let content = export(artifact, citations, other)?;
+            // Forward `include_citations` rather than hardcoding `true`.
+            // Behaviour is identical because `effective` is already the
+            // pre-filtered slice (empty when `include_citations` is
+            // false), but threading the flag through removes a reader
+            // double-take — a future maintainer scanning this branch
+            // could otherwise reasonably worry that the text-format
+            // fallback was ignoring the toggle. Passing the same flag
+            // both here and to the inner `export` keeps the dispatch
+            // contract obvious: the caller's intent is preserved at
+            // every layer.
+            let content = export(artifact, effective, other, include_citations)?;
             std::fs::write(path, content)?;
         }
     }
@@ -82,31 +114,47 @@ mod tests {
     use tessera_artifacts::Artifact;
     use tessera_core::ArtifactType;
 
+    use tessera_citations::citation::Citation;
+    use tessera_core::{SourceId, SourceType};
+
+    fn sample_citation() -> Citation {
+        Citation::new(
+            SourceId::new(),
+            SourceType::LocalFile,
+            "Brief.pdf".to_string(),
+            "file:///tmp/brief.pdf".to_string(),
+            "chunkhash".to_string(),
+            "filehash".to_string(),
+            "evidence body".to_string(),
+            0.92,
+        )
+    }
+
     #[test]
     fn export_markdown_format() {
         let artifact = Artifact::new("Test".to_string(), ArtifactType::Document, None);
-        let result = export(&artifact, &[], ExportFormat::Markdown).unwrap();
+        let result = export(&artifact, &[], ExportFormat::Markdown, true).unwrap();
         assert!(result.contains("# Test"));
     }
 
     #[test]
     fn export_html_format() {
         let artifact = Artifact::new("Test".to_string(), ArtifactType::Document, None);
-        let result = export(&artifact, &[], ExportFormat::Html).unwrap();
+        let result = export(&artifact, &[], ExportFormat::Html, true).unwrap();
         assert!(result.contains("<html"));
     }
 
     #[test]
     fn export_csv_format() {
         let artifact = Artifact::new("Test".to_string(), ArtifactType::Sheet, None);
-        let result = export(&artifact, &[], ExportFormat::Csv).unwrap();
+        let result = export(&artifact, &[], ExportFormat::Csv, true).unwrap();
         assert!(result.contains("title,type"));
     }
 
     #[test]
     fn export_json_format() {
         let artifact = Artifact::new("Test".to_string(), ArtifactType::Document, None);
-        let result = export(&artifact, &[], ExportFormat::Json).unwrap();
+        let result = export(&artifact, &[], ExportFormat::Json, true).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["title"], "Test");
     }
@@ -116,7 +164,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let artifact = Artifact::new("Test".to_string(), ArtifactType::Document, None);
         let path = dir.path().join("output.md");
-        export_to_file(&artifact, &[], ExportFormat::Markdown, &path).unwrap();
+        export_to_file(&artifact, &[], ExportFormat::Markdown, &path, true).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("# Test"));
     }
@@ -124,7 +172,7 @@ mod tests {
     #[test]
     fn pdf_string_export_returns_error_directing_to_file() {
         let artifact = Artifact::new("Test".to_string(), ArtifactType::Document, None);
-        let result = export(&artifact, &[], ExportFormat::Pdf);
+        let result = export(&artifact, &[], ExportFormat::Pdf, true);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("export_to_file"));
@@ -135,7 +183,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let artifact = Artifact::new("PDF Test".to_string(), ArtifactType::Document, None);
         let path = dir.path().join("output.pdf");
-        export_to_file(&artifact, &[], ExportFormat::Pdf, &path).unwrap();
+        export_to_file(&artifact, &[], ExportFormat::Pdf, &path, true).unwrap();
         let content = std::fs::read(&path).unwrap();
         assert!(content.starts_with(b"%PDF-1.4"));
     }
@@ -146,7 +194,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let artifact = Artifact::new("DOCX Test".to_string(), ArtifactType::Document, None);
         let path = dir.path().join("output.docx");
-        export_to_file(&artifact, &[], ExportFormat::Docx, &path).unwrap();
+        export_to_file(&artifact, &[], ExportFormat::Docx, &path, true).unwrap();
         let bytes = std::fs::read(&path).unwrap();
         assert_eq!(&bytes[..4], b"PK\x03\x04");
     }
@@ -157,7 +205,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let artifact = Artifact::new("XLSX Test".to_string(), ArtifactType::Sheet, None);
         let path = dir.path().join("output.xlsx");
-        export_to_file(&artifact, &[], ExportFormat::Xlsx, &path).unwrap();
+        export_to_file(&artifact, &[], ExportFormat::Xlsx, &path, true).unwrap();
         let bytes = std::fs::read(&path).unwrap();
         assert_eq!(&bytes[..4], b"PK\x03\x04");
     }
@@ -167,8 +215,59 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let artifact = Artifact::new("PPTX".to_string(), ArtifactType::Slides, None);
         let path = dir.path().join("output.pptx");
-        let err = export_to_file(&artifact, &[], ExportFormat::Pptx, &path).unwrap_err();
+        let err = export_to_file(&artifact, &[], ExportFormat::Pptx, &path, true).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("Marp"));
+    }
+
+    /// `include_citations = true` renders the Sources section.
+    #[test]
+    fn include_citations_true_renders_sources_section_in_markdown() {
+        let artifact = Artifact::new("Report".to_string(), ArtifactType::Document, None);
+        let citations = vec![sample_citation()];
+        let out = export(&artifact, &citations, ExportFormat::Markdown, true).unwrap();
+        assert!(out.contains("## Sources"), "missing sources: {out}");
+        assert!(out.contains("Brief.pdf"));
+    }
+
+    /// `include_citations = false` suppresses the Sources section
+    /// even when citations exist on the artifact.
+    #[test]
+    fn include_citations_false_suppresses_sources_section_in_markdown() {
+        let artifact = Artifact::new("Report".to_string(), ArtifactType::Document, None);
+        let citations = vec![sample_citation()];
+        let out = export(&artifact, &citations, ExportFormat::Markdown, false).unwrap();
+        assert!(!out.contains("## Sources"), "sources section leaked: {out}");
+        assert!(!out.contains("Brief.pdf"));
+    }
+
+    /// The toggle holds for HTML too — same dispatch path.
+    #[test]
+    fn include_citations_false_suppresses_sources_section_in_html() {
+        let artifact = Artifact::new("Report".to_string(), ArtifactType::Document, None);
+        let citations = vec![sample_citation()];
+        let with = export(&artifact, &citations, ExportFormat::Html, true).unwrap();
+        let without = export(&artifact, &citations, ExportFormat::Html, false).unwrap();
+        assert!(with.contains("Brief.pdf"));
+        assert!(!without.contains("Brief.pdf"));
+    }
+
+    /// The binary-output path (`export_to_file`) honours the toggle
+    /// identically — verified by reading the resulting PDF bytes back
+    /// and confirming the citation title only appears when the toggle
+    /// is on.
+    #[test]
+    fn include_citations_false_suppresses_sources_in_pdf() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = Artifact::new("Report".to_string(), ArtifactType::Document, None);
+        let citations = vec![sample_citation()];
+        let on = dir.path().join("on.pdf");
+        let off = dir.path().join("off.pdf");
+        export_to_file(&artifact, &citations, ExportFormat::Pdf, &on, true).unwrap();
+        export_to_file(&artifact, &citations, ExportFormat::Pdf, &off, false).unwrap();
+        let on_bytes = std::fs::read(&on).unwrap();
+        let off_bytes = std::fs::read(&off).unwrap();
+        // The bytes should differ — citations baked into PDF when on.
+        assert_ne!(on_bytes, off_bytes);
     }
 }

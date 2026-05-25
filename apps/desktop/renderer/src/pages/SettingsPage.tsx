@@ -6,6 +6,8 @@ import ModelRuntimeCard from "../components/ModelRuntimeCard";
 import ModelSlotPanel from "../components/ModelSlotPanel";
 import ExternalProviderCard from "../components/ExternalProviderCard";
 import HybridSearchCard from "../components/HybridSearchCard";
+import KchatSettingsCard from "../components/KchatSettingsCard";
+import AuditActivityCard from "../components/AuditActivityCard";
 import { useSettings, useUpdateSetting } from "../hooks/useSettings";
 import {
   EXPORT_FORMATS,
@@ -196,6 +198,10 @@ export default function SettingsPage() {
         <ExternalProviderCard />
 
         <HybridSearchCard />
+
+        <KchatSettingsCard />
+
+        <AuditActivityCard />
 
         <Card>
           <h3 style={{ marginBottom: "var(--spacing-md)" }}>Export</h3>

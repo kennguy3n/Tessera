@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -76,8 +77,28 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Stabilise the context value so consumers that include `toast` in
+  // a `useEffect` dependency array do not re-run their effect every
+  // time a toast is added or dismissed (which churns `toasts` state
+  // and would otherwise produce a fresh `{ addToast, dismissToast }`
+  // object literal on every render of this provider).
+  //
+  // `addToast` and `dismissToast` are both already `useCallback`-
+  // stable (their dependency arrays only contain other stable
+  // callbacks), so memoising the wrapper object on the same deps
+  // collapses the provider value to a single reference for the
+  // lifetime of the provider. Found by Devin Review (fifteenth-pass
+  // ANALYSIS_0005): the previous inline-object pattern caused
+  // `KchatSettingsCard`'s team-fetch effect to re-issue `listTeams`
+  // every time an unrelated component added a toast, even though the
+  // toast callbacks themselves had not actually changed.
+  const ctxValue = useMemo(
+    () => ({ addToast, dismissToast }),
+    [addToast, dismissToast],
+  );
+
   return (
-    <ToastContext.Provider value={{ addToast, dismissToast }}>
+    <ToastContext.Provider value={ctxValue}>
       {children}
       <div
         className="toast-container"

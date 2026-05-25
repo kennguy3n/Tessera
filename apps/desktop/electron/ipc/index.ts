@@ -10,10 +10,12 @@
  */
 import { registerAutomationsHandlers } from "./automations";
 import { registerArtifactsHandlers } from "./artifacts";
+import { registerAuditHandlers } from "./audit";
 import { registerCitationsHandlers } from "./citations";
 import { registerConnectorsLegacyHandlers } from "./connectorsLegacy";
 import { registerDialogHandlers } from "./dialog";
 import { registerImagegenHandlers } from "./imagegen";
+import { registerKchatHandlers } from "./kchat";
 import { registerModelHandlers } from "./model";
 import { registerRuntimeHandlers } from "./runtime";
 import { registerSettingsHandlers } from "./settings";
@@ -36,4 +38,6 @@ export function registerAllIpcHandlers(): void {
   registerTasksHandlers();
   registerAutomationsHandlers();
   registerDialogHandlers();
+  registerKchatHandlers();
+  registerAuditHandlers();
 }

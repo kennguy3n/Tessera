@@ -4,6 +4,9 @@ import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Card from "../components/Card";
 import StopGenerationButton from "../components/StopGenerationButton";
+import ShareToKchatModal, {
+  type KchatShareFormat,
+} from "../components/ShareToKchatModal";
 import {
   DocumentEditor,
   SlideEditor,
@@ -112,6 +115,11 @@ export default function ArtifactEditorPage() {
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  // KChat share state. `kchatConnected` is null until the first
+  // status probe completes so the button doesn't flash visible
+  // before we know whether to render it.
+  const [kchatConnected, setKchatConnected] = useState<boolean | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
 
   // Tracks the latest *uncommitted* editor content. Editors publish into
   // this ref via their `onDraftChange` prop synchronously on every edit
@@ -148,6 +156,38 @@ export default function ArtifactEditorPage() {
   useEffect(() => {
     loadArtifact();
   }, [loadArtifact]);
+
+  // Probe KChat connection state on mount so the toolbar can
+  // conditionally render the "Share to KChat" button. Polling on a
+  // short interval would be wasteful; instead we re-check whenever
+  // the modal closes so a fresh connect from Settings is picked up.
+  useEffect(() => {
+    const k = window.tessera?.kchat;
+    if (!k) {
+      setKchatConnected(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const available = await k.isAvailable();
+        if (cancelled) return;
+        if (!available) {
+          setKchatConnected(false);
+          return;
+        }
+        const status = await k.status();
+        if (!cancelled) {
+          setKchatConnected(status.state === "connected");
+        }
+      } catch {
+        if (!cancelled) setKchatConnected(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [shareOpen]);
 
   const handleSave = useCallback(
     async (content: string) => {
@@ -510,6 +550,16 @@ export default function ArtifactEditorPage() {
             >
               Export Evidence Pack
             </Button>
+            {kchatConnected && (
+              <Button
+                variant="secondary"
+                onClick={() => setShareOpen(true)}
+                disabled={exporting}
+                data-testid="share-to-kchat"
+              >
+                Share to KChat
+              </Button>
+            )}
             <Button variant="secondary" onClick={() => navigate("/")}>
               Back
             </Button>
@@ -537,8 +587,45 @@ export default function ArtifactEditorPage() {
           onDraftChange={handleDraftChange}
         />
       </div>
+      {shareOpen && (
+        <ShareToKchatModal
+          isOpen={shareOpen}
+          onClose={() => setShareOpen(false)}
+          artifactId={artifact.id}
+          artifactTitle={artifact.title}
+          availableFormats={
+            availableExportFormats(artifact.artifactType).filter(
+              (f): f is KchatShareFormat =>
+                f === "markdown" ||
+                f === "html" ||
+                f === "pdf" ||
+                f === "docx" ||
+                f === "json",
+            )
+          }
+          defaultFormat={pickDefaultShareFormat(artifact.artifactType)}
+        />
+      )}
     </div>
   );
+}
+
+/** Picks the most natural default share format per artifact type. */
+function pickDefaultShareFormat(artifactType: string): KchatShareFormat {
+  switch (artifactType) {
+    case "document":
+      return "pdf";
+    case "slides":
+    case "infographic":
+    case "landing_page":
+      return "pdf";
+    case "sheet":
+    case "base":
+      // KChat preview-renders JSON poorly; PDF prints the grid.
+      return "pdf";
+    default:
+      return "markdown";
+  }
 }
 
 function EditorSwitch({

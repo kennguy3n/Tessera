@@ -136,6 +136,24 @@ export interface SourceDetailInfo {
 }
 
 /**
+ * Result of `bridgeAddKchatChannel(cacheDir)`.
+ *
+ * The Rust-side `SourceManager::add_kchat_channel` is idempotent on
+ * `cacheDir`: a first call inserts a `SourceType::Kchat` row and
+ * returns `{ newlyCreated: true, source }`; every subsequent call
+ * for the same `cacheDir` reindexes that source in place and
+ * returns `{ newlyCreated: false, source }` carrying the *original*
+ * `SourceId`. The Node-side `sources:addKchatChannel` handler uses
+ * `newlyCreated` to gate the `KchatChannelLinked` audit event so a
+ * channel that is re-synced 100 times does not produce 100 audit
+ * rows.
+ */
+export interface KchatChannelAddOutcomeInfo {
+  source: SourceInfo;
+  newlyCreated: boolean;
+}
+
+/**
  * Renderer-facing search result. The IPC handler maps from the
  * Rust-side `SearchHitInfo` (which uses `content` / `relevance` /
  * `chunkIndex`) to this shape (`chunkContent` / `relevanceScore`,
@@ -1327,4 +1345,153 @@ export interface TesseraApi {
   automations: AutomationApi;
   dialog: DialogApi;
   updates: UpdatesApi;
+  kchat: KchatApi;
+  audit: AuditApi;
+}
+
+// --- KChat (Phase 11) -----------------------------------------------------
+//
+// The KChat REST + WebSocket integration. Everything here is renderer-safe:
+// the personal access token never crosses the IPC boundary.
+
+/** Sanitised view of a KChat user surfaced to the renderer. */
+export interface KchatUserView {
+  id: string;
+  username: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+}
+
+/** Sanitised KChat team. */
+export interface KchatTeamView {
+  id: string;
+  name: string;
+  display_name: string;
+  description?: string;
+  type: "O" | "I";
+}
+
+/** Sanitised KChat channel. */
+export interface KchatChannelView {
+  id: string;
+  team_id: string;
+  name: string;
+  display_name: string;
+  type: "O" | "P" | "D" | "G";
+  purpose?: string;
+  header?: string;
+}
+
+/** Sanitised KChat channel member. */
+export interface KchatChannelMemberView {
+  channel_id: string;
+  user_id: string;
+  roles: string;
+}
+
+/** Sanitised KChat file metadata. */
+export interface KchatFileView {
+  id: string;
+  name: string;
+  size: number;
+  mime_type: string;
+  extension: string;
+  create_at: number;
+}
+
+/**
+ * Sanitised view of the authenticated KChat user inside
+ * `KchatConnectionStateView`. Uses camelCase to match
+ * `KchatUserView` (returned by `kchat:connect`) so the renderer
+ * sees one canonical shape everywhere — earlier revisions exposed
+ * snake_case here, which forced every consumer to special-case
+ * the connection-state branch.
+ */
+export interface KchatConnectionUserView {
+  id: string;
+  username: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+}
+
+/** Connection state surfaced via `kchat:status`. */
+export interface KchatConnectionStateView {
+  state: "disconnected" | "connecting" | "connected" | "error";
+  user?: KchatConnectionUserView;
+  serverUrl?: string;
+  error?: string;
+  lastHealthyAt?: string;
+}
+
+/** Renderer-facing KChat API namespace. */
+export interface KchatApi {
+  isAvailable: () => Promise<boolean>;
+  status: () => Promise<KchatConnectionStateView>;
+  connect: (token: string, serverUrl: string) => Promise<KchatUserView>;
+  disconnect: () => Promise<{ disconnected: boolean }>;
+  listTeams: () => Promise<KchatTeamView[]>;
+  listChannels: (teamId: string) => Promise<KchatChannelView[]>;
+  listMembers: (channelId: string) => Promise<KchatChannelMemberView[]>;
+  listChannelFiles: (
+    channelId: string,
+    page?: number,
+    perPage?: number,
+  ) => Promise<KchatFileView[]>;
+  shareArtifact: (
+    artifactId: string,
+    channelId: string,
+    format: "markdown" | "html" | "pdf" | "docx" | "json",
+    includeCitations: boolean,
+    includeEvidencePack: boolean,
+  ) => Promise<{ fileId: string; fileName: string }>;
+  addChannelSource: (
+    channelId: string,
+    channelName: string,
+  ) => Promise<{ sourceId: string; cacheDir: string }>;
+}
+
+// --- Audit (Phase 11 Task 6) ----------------------------------------------
+//
+// Read-only renderer-facing view of the append-only `tessera_audit`
+// SQLite store. The renderer renders the recent-activity list on
+// Settings and the KChat audit filter; both go through
+// `audit:listRecent` which returns events newest-first.
+
+/**
+ * A single audit row, as seen by the renderer.
+ *
+ * `eventType` is the **snake_case** wire form of the
+ * `AuditEventType` enum — `"kchat_connected"`, `"artifact_shared"`,
+ * `"source_added"`, etc. The Rust enum is annotated with
+ * `#[serde(rename_all = "snake_case")]` (see `AuditEventType` in
+ * `crates/tessera_audit/src/event.rs`), which is the form that
+ * survives the napi bridge and lands in the renderer. The renderer
+ * groups events by snake_case prefix (`kchat_`, `source_`,
+ * `artifact_`, `connector_`, etc.) in `AuditActivityCard.tsx`.
+ *
+ * `timestamp` is an RFC 3339 / ISO 8601 string in UTC.
+ */
+export interface AuditEventView {
+  /**
+   * UUID assigned at append time. Audit rows use TEXT-typed UUIDs
+   * (`uuid::Uuid::new_v4`) rather than auto-increment integers so
+   * concurrent appenders cannot collide on a primary key — the
+   * renderer should treat the value as opaque.
+   */
+  id: string;
+  eventType: string;
+  timestamp: string;
+  details: string;
+}
+
+export interface AuditApi {
+  /**
+   * Return the `limit` most recent audit rows, newest first.
+   * `limit` defaults to 100 and is clamped to `[1, 500]` in the
+   * main process. `offset` defaults to 0 and lets the renderer
+   * page backwards through history.
+   */
+  listRecent: (limit?: number, offset?: number) => Promise<AuditEventView[]>;
 }

@@ -458,6 +458,23 @@ const mockApi = {
     }),
     cancel: vi.fn().mockResolvedValue({ scheduled: false }),
   },
+  kchat: {
+    isAvailable: vi.fn().mockResolvedValue(true),
+    status: vi.fn().mockResolvedValue({ state: "disconnected" }),
+    connect: vi.fn(),
+    disconnect: vi.fn().mockResolvedValue({ disconnected: true }),
+    listTeams: vi.fn().mockResolvedValue([]),
+    listChannels: vi.fn().mockResolvedValue([]),
+    listMembers: vi.fn().mockResolvedValue([]),
+    listChannelFiles: vi.fn().mockResolvedValue([]),
+    shareArtifact: vi.fn(),
+    addChannelSource: vi
+      .fn()
+      .mockResolvedValue({ sourceId: "src-kchat-1", cacheDir: "/tmp/kchat" }),
+  },
+  audit: {
+    listRecent: vi.fn().mockResolvedValue([]),
+  },
 };
 
 Object.defineProperty(window, "tessera", {

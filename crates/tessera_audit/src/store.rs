@@ -9,6 +9,50 @@ fn parse_datetime(s: &str) -> chrono::DateTime<chrono::Utc> {
         .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc))
 }
 
+/// Build an [`AuditEvent`] from the four `(id, event_type, timestamp,
+/// details)` columns of an `audit_events` row.
+///
+/// Returns `None` — i.e. the row is silently skipped from the result
+/// — when `event_type` does not deserialise into a known
+/// [`AuditEventType`] variant. The previous implementation used
+/// `serde_json::from_str(&type_s).unwrap_or(AuditEventType::SettingsChanged)`
+/// to swallow parse failures, but that has a real-world failure mode:
+/// a database written by a *newer* Tessera build (containing a future
+/// variant the running build does not know about, e.g. a future
+/// `MessageSent` event) and then opened by an *older* build would
+/// surface those rows as `SettingsChanged` in the audit UI. Mis-
+/// labelled audit rows are strictly worse than missing audit rows —
+/// the renderer groups events by type prefix (`AuditActivityCard`)
+/// and a row claiming to be `SettingsChanged` would show up in the
+/// wrong section, drowning the actual settings changes in noise and
+/// making downgrade behaviour silently misleading.
+///
+/// Skipping the unparseable row instead produces a visible *gap* in
+/// the audit list (the count differs from the actual SQLite row
+/// count, surfaced via [`AuditStore::count`]), which is the correct
+/// posture for forward compatibility: the operator can see that an
+/// older build cannot render some rows and either upgrade or query
+/// them out-of-band. Sixteenth-pass Devin Review.
+///
+/// `event_type` is stored as a JSON-quoted string (the result of
+/// `serde_json::to_string` on the enum) so the parse uses
+/// `serde_json::from_str` to round-trip back through the same
+/// `rename_all = "snake_case"` serde derive — we deliberately do not
+/// fall back to an alternate parser (`AuditEventType::as_snake_case`
+/// matches the *unquoted* form used by the napi bridge to the JS
+/// surface, not the on-disk wire format).
+fn parse_event_row(
+    (id, type_s, ts_s, details): (String, String, String, String),
+) -> Option<AuditEvent> {
+    let event_type = serde_json::from_str::<AuditEventType>(&type_s).ok()?;
+    Some(AuditEvent {
+        id,
+        event_type,
+        timestamp: parse_datetime(&ts_s),
+        details,
+    })
+}
+
 pub struct AuditStore {
     conn: SharedConnection,
 }
@@ -90,18 +134,16 @@ impl AuditStore {
 
         let events = stmt
             .query_map(params![type_str], |row| {
-                let type_s: String = row.get(1)?;
-                let ts_s: String = row.get(2)?;
-                Ok(AuditEvent {
-                    id: row.get(0)?,
-                    event_type: serde_json::from_str(&type_s)
-                        .unwrap_or(AuditEventType::SettingsChanged),
-                    timestamp: parse_datetime(&ts_s),
-                    details: row.get(3)?,
-                })
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
             })
             .map_err(|e| Error::Database(e.to_string()))?
             .filter_map(std::result::Result::ok)
+            .filter_map(parse_event_row)
             .collect();
 
         Ok(events)
@@ -121,18 +163,47 @@ impl AuditStore {
 
         let events = stmt
             .query_map(params![from.to_rfc3339(), to.to_rfc3339()], |row| {
-                let type_s: String = row.get(1)?;
-                let ts_s: String = row.get(2)?;
-                Ok(AuditEvent {
-                    id: row.get(0)?,
-                    event_type: serde_json::from_str(&type_s)
-                        .unwrap_or(AuditEventType::SettingsChanged),
-                    timestamp: parse_datetime(&ts_s),
-                    details: row.get(3)?,
-                })
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
             })
             .map_err(|e| Error::Database(e.to_string()))?
             .filter_map(std::result::Result::ok)
+            .filter_map(parse_event_row)
+            .collect();
+
+        Ok(events)
+    }
+
+    /// Return the `limit` most recent audit rows, newest first. The
+    /// audit UI in Settings reads from this method so the renderer
+    /// can render a "recent activity" list without having to query
+    /// every event type individually. `offset` lets the caller page
+    /// backwards through history when scrolling.
+    pub fn recent_events(&self, limit: u32, offset: u32) -> Result<Vec<AuditEvent>> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, event_type, timestamp, details FROM audit_events \
+                 ORDER BY timestamp DESC, id DESC LIMIT ?1 OFFSET ?2",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let events = stmt
+            .query_map(params![limit as i64, offset as i64], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .filter_map(parse_event_row)
             .collect();
 
         Ok(events)
@@ -204,6 +275,114 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(store.count().unwrap(), 5);
+    }
+
+    #[test]
+    fn recent_events_returns_newest_first_and_respects_limit_offset() {
+        let store = AuditStore::open_in_memory().unwrap();
+        // Insert ten rows with slightly-increasing timestamps so the
+        // DESC ordering yields the same sequence as the insertion
+        // order (newest = i=9 first, oldest = i=0 last).
+        for i in 0..10u32 {
+            let mut ev = AuditEvent::new(AuditEventType::SettingsChanged, format!("change {i}"));
+            // chrono::Utc::now() advances between calls but on
+            // particularly fast systems two appends can collide in
+            // the same nanosecond, which would make the ORDER BY
+            // timestamp non-deterministic. Force monotonic spacing
+            // by overriding the timestamp before append.
+            ev.timestamp = chrono::Utc::now() + chrono::Duration::milliseconds(i as i64);
+            store.append(&ev).unwrap();
+        }
+
+        // limit=3, offset=0 → newest 3 rows.
+        let top3 = store.recent_events(3, 0).unwrap();
+        assert_eq!(top3.len(), 3);
+        assert!(top3[0].details.contains("change 9"));
+        assert!(top3[1].details.contains("change 8"));
+        assert!(top3[2].details.contains("change 7"));
+
+        // limit=3, offset=3 → next page (rows 6,5,4 in the newest
+        // ordering).
+        let page2 = store.recent_events(3, 3).unwrap();
+        assert_eq!(page2.len(), 3);
+        assert!(page2[0].details.contains("change 6"));
+        assert!(page2[2].details.contains("change 4"));
+
+        // limit=100, offset=20 → past the end, expect an empty page.
+        let empty = store.recent_events(100, 20).unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn recent_events_on_empty_store_returns_empty() {
+        let store = AuditStore::open_in_memory().unwrap();
+        assert!(store.recent_events(100, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn recent_events_skips_unknown_event_type_rows() {
+        // Forward-compatibility pin (sixteenth-pass Devin Review).
+        // A row whose `event_type` column does not deserialise into
+        // a known `AuditEventType` variant — the scenario this guards
+        // against is a database written by a newer Tessera build,
+        // then opened by an older build that lacks the future
+        // variant — must be SKIPPED from query results, NOT silently
+        // mapped to a placeholder variant like `SettingsChanged`.
+        // Mis-labelling would route the future row into the wrong
+        // section of `AuditActivityCard`; skipping it surfaces a
+        // visible gap that the operator can detect.
+        let store = AuditStore::open_in_memory().unwrap();
+
+        // One legitimate row that should survive the round-trip…
+        store
+            .append(&AuditEvent::new(
+                AuditEventType::SourceAdded,
+                "real row".to_string(),
+            ))
+            .unwrap();
+
+        // …and one synthesized "future variant" row inserted via raw
+        // SQL so we can write an event_type that does not exist in
+        // the current `AuditEventType` enum. `append()` cannot do
+        // this because it serialises a typed `AuditEventType`.
+        store
+            .conn
+            .lock()
+            .expect("connection mutex poisoned")
+            .execute(
+                "INSERT INTO audit_events (id, event_type, timestamp, details) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    "\"future_unknown_variant\"",
+                    chrono::Utc::now().to_rfc3339(),
+                    "row from a future Tessera build",
+                ],
+            )
+            .unwrap();
+
+        // The raw-SQL row IS in the table (count includes it)…
+        assert_eq!(store.count().unwrap(), 2);
+
+        // …but recent_events filters it out rather than producing a
+        // mis-labelled SettingsChanged entry.
+        let events = store.recent_events(100, 0).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, AuditEventType::SourceAdded);
+
+        // query_by_date_range and query_by_type must follow the same
+        // skip-on-unknown contract so any future caller has uniform
+        // behaviour across read methods.
+        let by_range = store
+            .query_by_date_range(
+                &(chrono::Utc::now() - chrono::Duration::hours(1)),
+                &(chrono::Utc::now() + chrono::Duration::hours(1)),
+            )
+            .unwrap();
+        assert_eq!(by_range.len(), 1);
+        assert_eq!(by_range[0].event_type, AuditEventType::SourceAdded);
+
+        let by_type = store.query_by_type(&AuditEventType::SourceAdded).unwrap();
+        assert_eq!(by_type.len(), 1);
     }
 
     #[test]
