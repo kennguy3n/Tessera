@@ -12,9 +12,21 @@
  * same in both editors:
  *
  *   - reject when `assetUrl` is not a string that starts with
- *     `tessera-asset://` (so a hostile artifact JSON can't inject an
- *     `http://evil.example.com/...` URL that the CSP would block at
- *     load time but better-caught at parse time);
+ *     `tessera-asset://generated-images/` (the stricter prefix mirrors
+ *     the single permitted host the main-process protocol handler at
+ *     `apps/desktop/electron/assetProtocol.ts:174-189` will actually
+ *     serve — every other host returns 403). This rejects both the
+ *     outer `http://evil.example.com/...` CSP-bypass attempt AND the
+ *     in-scheme `tessera-asset://evil-host/...` injection that would
+ *     otherwise pass the sanitizer but get 403'd at render time. The
+ *     module-level docstring was tightened from the earlier "starts
+ *     with `tessera-asset://`" wording in the same pass that
+ *     tightened the code check (Devin Review PR #38
+ *     `BUG_pr-review-job-07d6d965…_0001`) — keeping both in sync is
+ *     load-bearing because a reader who skims the module header
+ *     should not underestimate the strictness of the validation.
+ *     See the function-level docstring on `sanitizeHeroImage` for
+ *     the full chain of layered defences;
  *   - reject when `prompt` / `seed` / `width` / `height` are missing
  *     or the wrong type (so the editor can never render a half-formed
  *     hero image);
