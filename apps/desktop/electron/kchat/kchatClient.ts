@@ -268,6 +268,11 @@ export class KchatClient {
     const next = url.replace(/\/+$/, "") || DEFAULT_KCHAT_SERVER;
     if (next !== this.serverUrl) {
       this.disconnectWebSocket();
+      // The health check was probing the old server; its next tick
+      // would race against the new server's setup. Stop it here so
+      // the caller's `startHealthCheck()` after the new connection
+      // is verified is the only timer running.
+      this.stopHealthCheck();
       // Any cached user identity belonged to the old server.
       this.user = null;
     }
@@ -285,20 +290,36 @@ export class KchatClient {
    * downstream requests.
    *
    * **Invariants enforced here**:
-   *   - `setToken(null)` tears down any active WebSocket. Otherwise
-   *     the reconnect loop would call `connectWebSocket()` with no
-   *     auth material and spin on `"KChat token is not configured"`.
+   *   - `setToken(null)` tears down any active WebSocket AND stops
+   *     the periodic health check. Without a token there is no
+   *     valid request the health check could make — leaving it
+   *     running would produce a stream of spurious `error` state
+   *     transitions ("KChat token is not configured") every tick.
+   *     This is the bug fix for the case where a re-connect after
+   *     an `error` state fails verification: the catch path calls
+   *     `setToken(null)`, which must take the health check timer
+   *     down with it.
    *   - `setToken(newToken)` where a different token was previously
-   *     installed ALSO tears down the WebSocket. The WS performs an
-   *     `authentication_challenge` send with the active token after
-   *     `onopen`; keeping a stale WS open after the token has been
-   *     swapped would push events tied to the wrong identity.
+   *     installed ALSO tears down the WebSocket AND restarts the
+   *     health check via stop-on-set/start-on-success at the
+   *     caller. The WS performs an `authentication_challenge` send
+   *     with the active token after `onopen`; keeping a stale WS
+   *     open after the token has been swapped would push events
+   *     tied to the wrong identity. The health check is stopped
+   *     here so a stale timer from the previous identity cannot
+   *     race the new caller's `startHealthCheck()`.
+   *   - Same-value calls (`setToken("x")` followed by
+   *     `setToken("x")`) remain no-ops on both the WS and the
+   *     health check, so idempotent callers (e.g.
+   *     `restoreFromVault`) do not incur a reconnect or a timer
+   *     reset.
    */
   setToken(token: string | null): void {
     const previous = this.token;
     this.token = token;
     if (token === null || (previous !== null && previous !== token)) {
       this.disconnectWebSocket();
+      this.stopHealthCheck();
     }
   }
 
@@ -385,6 +406,16 @@ export class KchatClient {
     }
     try {
       const user = await this.request<KchatUser>("GET", "/api/v4/users/me");
+      // Validate the server-supplied `user.id` BEFORE caching it.
+      // The id is interpolated into URL paths by `listTeams()` and
+      // `listChannels()`, so a compromised server returning an id
+      // with `../`, `?`, or `#` could otherwise rewrite the request
+      // path the next time the client makes a REST call. Matches
+      // the same trust boundary `downloadFile()` enforces on
+      // server-supplied `fileId` values — every server id that
+      // crosses a URL-interpolation site is validated at the
+      // deserialisation boundary, not just at the request site.
+      assertKchatServerObjectId(user.id, "users.me.id");
       this.user = user;
       this.transition({
         state: "connected",
@@ -435,46 +466,104 @@ export class KchatClient {
     }
   }
 
-  /** List the teams the authenticated user belongs to. */
+  /**
+   * List the teams the authenticated user belongs to.
+   *
+   * Every team id in the response is validated against the KChat
+   * object-id shape at the deserialisation boundary. A team id
+   * returned here can flow back into `listChannels(teamId)` (the
+   * renderer fetches the team list, picks one, and passes the id
+   * back through IPC). The IPC layer's `assertKchatId` also
+   * checks renderer-supplied ids, but doing it here too closes the
+   * loop end-to-end: every server-emitted id is shape-checked
+   * before any downstream URL interpolation, independent of how
+   * many hops it took to reach the next request site.
+   */
   async listTeams(): Promise<KchatTeam[]> {
     const me = this.user ?? (await this.verifyConnection());
-    return this.request<KchatTeam[]>("GET", `/api/v4/users/${me.id}/teams`);
+    const teams = await this.request<KchatTeam[]>(
+      "GET",
+      `/api/v4/users/${me.id}/teams`,
+    );
+    for (const t of teams) {
+      assertKchatServerObjectId(t.id, "team.id");
+    }
+    return teams;
   }
 
-  /** List the channels in `teamId` that the authenticated user belongs to. */
+  /**
+   * List the channels in `teamId` that the authenticated user
+   * belongs to.
+   *
+   * Validates server-supplied channel ids (and the embedded
+   * `team_id` field) at the deserialisation boundary for the
+   * same reason {@link listTeams} does — channel ids feed into
+   * `listChannelMembers`, `listChannelFiles`, and the upload
+   * endpoint, all of which interpolate the id into a URL path.
+   */
   async listChannels(teamId: string): Promise<KchatChannel[]> {
     const me = this.user ?? (await this.verifyConnection());
     // KChat exposes the "channels for me on this team" endpoint as
     // /users/{me}/teams/{team}/channels. The /teams/{id}/channels
     // endpoint requires team-admin scope.
-    return this.request<KchatChannel[]>(
+    const channels = await this.request<KchatChannel[]>(
       "GET",
       `/api/v4/users/${me.id}/teams/${teamId}/channels`,
     );
+    for (const c of channels) {
+      assertKchatServerObjectId(c.id, "channel.id");
+      assertKchatServerObjectId(c.team_id, "channel.team_id");
+    }
+    return channels;
   }
 
-  /** List members of `channelId`. */
+  /**
+   * List members of `channelId`.
+   *
+   * Validates server-supplied `channel_id` and `user_id` so a
+   * downstream caller that interpolates either into a URL path
+   * (e.g. the future `/users/{user_id}/...` endpoints in block B)
+   * cannot be tricked by a compromised server.
+   */
   async listChannelMembers(
     channelId: string,
     page = 0,
     perPage = 200,
   ): Promise<KchatChannelMember[]> {
-    return this.request<KchatChannelMember[]>(
+    const members = await this.request<KchatChannelMember[]>(
       "GET",
       `/api/v4/channels/${channelId}/members?page=${page}&per_page=${perPage}`,
     );
+    for (const m of members) {
+      assertKchatServerObjectId(m.channel_id, "channelMember.channel_id");
+      assertKchatServerObjectId(m.user_id, "channelMember.user_id");
+    }
+    return members;
   }
 
-  /** List files attached to `channelId`. */
+  /**
+   * List files attached to `channelId`.
+   *
+   * Validates each `file.id` at the deserialisation boundary.
+   * `downloadFile()` revalidates again before URL interpolation,
+   * so this is defence-in-depth: a future caller that builds a
+   * URL from `fi.id` without going through `downloadFile` (e.g. a
+   * tracing/debug helper that logs the file path) still cannot
+   * embed a malicious id.
+   */
   async listChannelFiles(
     channelId: string,
     page = 0,
     perPage = 60,
   ): Promise<KchatFileInfo[]> {
-    return this.request<KchatFileInfo[]>(
+    const files = await this.request<KchatFileInfo[]>(
       "GET",
       `/api/v4/channels/${channelId}/files?page=${page}&per_page=${perPage}`,
     );
+    for (const fi of files) {
+      assertKchatServerObjectId(fi.id, "fileInfo.id");
+    }
+    return files;
   }
 
   /**

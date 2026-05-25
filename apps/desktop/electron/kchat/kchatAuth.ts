@@ -154,6 +154,17 @@ export class KchatAuthService {
     // implementation relied on the caller invoking `disconnect()`
     // first; the WS-teardown invariants make that implicit
     // requirement explicit at the client layer.
+    //
+    // We also explicitly stop the health check up-front, before
+    // the URL/token mutations. This handles the corner case where
+    // a user re-connects with the SAME url+token after a previous
+    // connection degraded to `error` state: `setServerUrl(sameUrl)`
+    // is a no-op (and does not stop the timer); `setToken(sameToken)`
+    // is also a no-op for the same reason; and the previous health
+    // check timer would still be running. Stopping it here ensures
+    // exactly one timer ever exists — the one armed after the
+    // verification below succeeds.
+    this.client.stopHealthCheck();
     this.client.setServerUrl(url);
     this.client.setToken(trimmedToken);
 

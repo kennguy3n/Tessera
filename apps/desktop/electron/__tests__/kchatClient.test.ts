@@ -547,6 +547,276 @@ describe("KchatClient.scrubMessage", () => {
   });
 });
 
+describe("KchatClient server-id validation at deserialisation boundary", () => {
+  // The KChat server is trusted for authentication but its
+  // response bodies are NOT trusted for ids that will be
+  // interpolated into URL paths. Every list* method validates
+  // server-supplied ids at deserialisation so a compromised
+  // server cannot inject `../`, `?`, `#`, etc. into a downstream
+  // request — even if the next caller forgets to revalidate.
+  //
+  // Each test uses a private `RateLimiter` so the shared default
+  // bucket is not exhausted across the file.
+
+  function freshLimiter() {
+    return new RateLimiter();
+  }
+
+  it("verifyConnection rejects /users/me responses with malformed user.id", async () => {
+    const { fn: fetchFn } = makeFetch([
+      ok({
+        id: "../etc/passwd",
+        username: "ken",
+        email: "k@e.com",
+        first_name: "K",
+        last_name: "N",
+        roles: "system_user",
+      }),
+    ]);
+    const c = buildClient({ fetchFn, rateLimiter: freshLimiter() });
+    c.setToken("PAT");
+    await expect(c.verifyConnection()).rejects.toThrow(
+      /not a valid KChat object id/,
+    );
+    // And the state must transition to error so the renderer can
+    // surface the failure (otherwise a malformed response would
+    // look like a network error in the UI).
+    expect(c.getState().state).toBe("error");
+  });
+
+  it("listTeams rejects teams with malformed ids", async () => {
+    const userResp = ok({
+      id: "user1234567890abcdefgh",
+      username: "ken",
+      email: "k@e.com",
+      first_name: "K",
+      last_name: "N",
+      roles: "system_user",
+    });
+    const teamsResp = ok([
+      // First team is well-formed, second injects `..` in the id.
+      { id: "tid000000000000000000ab", name: "core", display_name: "Core" },
+      { id: "tid00..0000000000000000", name: "evil", display_name: "Evil" },
+    ]);
+    const { fn: fetchFn } = makeFetch([userResp, teamsResp]);
+    const c = buildClient({ fetchFn, rateLimiter: freshLimiter() });
+    c.setToken("PAT");
+    await expect(c.listTeams()).rejects.toThrow(/not a valid KChat object id/);
+  });
+
+  it("listChannels rejects channels with malformed id or team_id", async () => {
+    const userResp = ok({
+      id: "user1234567890abcdefgh",
+      username: "ken",
+      email: "k@e.com",
+      first_name: "K",
+      last_name: "N",
+      roles: "system_user",
+    });
+    const channelsResp = ok([
+      {
+        id: "chid?inject=1",
+        team_id: "tid000000000000000000ab",
+        name: "design",
+        display_name: "Design",
+        type: "O",
+        total_msg_count: 0,
+        create_at: 0,
+        update_at: 0,
+      },
+    ]);
+    const { fn: fetchFn } = makeFetch([userResp, channelsResp]);
+    const c = buildClient({ fetchFn, rateLimiter: freshLimiter() });
+    c.setToken("PAT");
+    await expect(
+      c.listChannels("tid000000000000000000ab"),
+    ).rejects.toThrow(/not a valid KChat object id/);
+  });
+
+  it("listChannelMembers rejects members with malformed user_id", async () => {
+    const membersResp = ok([
+      {
+        channel_id: "chid0000000000000000abcd",
+        user_id: "user../evil",
+        roles: "channel_user",
+        last_viewed_at: 0,
+        msg_count: 0,
+      },
+    ]);
+    const { fn: fetchFn } = makeFetch([membersResp]);
+    const c = buildClient({ fetchFn, rateLimiter: freshLimiter() });
+    c.setToken("PAT");
+    await expect(
+      c.listChannelMembers("chid0000000000000000abcd"),
+    ).rejects.toThrow(/not a valid KChat object id/);
+  });
+
+  it("listChannelFiles rejects files with malformed ids before they reach the indexer", async () => {
+    const filesResp = ok([
+      {
+        id: "fid?injection",
+        user_id: "u",
+        channel_id: "c",
+        name: "report.pdf",
+        size: 1,
+        mime_type: "application/pdf",
+        extension: "pdf",
+        create_at: 0,
+        update_at: 0,
+      },
+    ]);
+    const { fn: fetchFn } = makeFetch([filesResp]);
+    const c = buildClient({ fetchFn, rateLimiter: freshLimiter() });
+    c.setToken("PAT");
+    await expect(
+      c.listChannelFiles("chid0000000000000000abcd", 0, 60),
+    ).rejects.toThrow(/not a valid KChat object id/);
+  });
+});
+
+describe("KchatClient health check teardown invariants", () => {
+  // Helper that exposes the private timer via the public start/stop
+  // surface — we count timer activity via vi.useFakeTimers and the
+  // number of fetches the health-check loop triggers.
+
+  // Pre-condition for every assertion in this suite: a successful
+  // verifyConnection() followed by startHealthCheck() leaves a
+  // timer running. Subsequent state transitions on the token /
+  // server URL are expected to stop that timer.
+
+  it("setToken(null) stops the health-check timer (fixes the re-connect-after-error spurious-tick loop)", async () => {
+    const userResp = ok({
+      id: "user1234567890abcdefgh",
+      username: "ken",
+      email: "k@e.com",
+      first_name: "K",
+      last_name: "N",
+      roles: "system_user",
+    });
+    // Initial verify succeeds; subsequent health-check ticks would
+    // fail loudly if the timer kept running because the second
+    // response is a 503.
+    const { fn: fetchFn, calls } = makeFetch([
+      userResp,
+      { status: 503, statusText: "Server down", body: { error: "x" } },
+    ]);
+    vi.useFakeTimers();
+    try {
+      const c = buildClient({
+        fetchFn,
+        sleep: async () => {},
+        rateLimiter: new RateLimiter(),
+      });
+      c.setToken("PAT");
+      await c.verifyConnection();
+      c.startHealthCheck();
+      const callsBefore = calls.length;
+      // Tear down via setToken(null) — this is the failing-reconnect
+      // catch path.
+      c.setToken(null);
+      // Advance well past the health-check interval. If the timer
+      // is still running it would fire and try to re-verify.
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(calls.length).toBe(callsBefore);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("setToken rotation (A → B) stops the health-check timer so the new caller can re-arm it", async () => {
+    const userResp = ok({
+      id: "user1234567890abcdefgh",
+      username: "ken",
+      email: "k@e.com",
+      first_name: "K",
+      last_name: "N",
+      roles: "system_user",
+    });
+    const { fn: fetchFn, calls } = makeFetch([userResp, userResp]);
+    vi.useFakeTimers();
+    try {
+      const c = buildClient({
+        fetchFn,
+        sleep: async () => {},
+        rateLimiter: new RateLimiter(),
+      });
+      c.setToken("PAT-A");
+      await c.verifyConnection();
+      c.startHealthCheck();
+      const callsBefore = calls.length;
+      c.setToken("PAT-B");
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(calls.length).toBe(callsBefore);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("setToken same-value is a no-op on the health-check timer", async () => {
+    const userResp = ok({
+      id: "user1234567890abcdefgh",
+      username: "ken",
+      email: "k@e.com",
+      first_name: "K",
+      last_name: "N",
+      roles: "system_user",
+    });
+    // Three responses: initial verify, two health-check ticks.
+    const { fn: fetchFn, calls } = makeFetch([userResp, userResp, userResp]);
+    vi.useFakeTimers();
+    try {
+      const c = buildClient({
+        fetchFn,
+        sleep: async () => {},
+        rateLimiter: new RateLimiter(),
+      });
+      c.setToken("PAT-stable");
+      await c.verifyConnection();
+      c.startHealthCheck();
+      const callsBefore = calls.length;
+      c.setToken("PAT-stable");
+      // Same-value: the timer must still be running, so advancing
+      // the clock should trigger health-check ticks (verifyConnection
+      // re-fetches /users/me each tick).
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(calls.length).toBeGreaterThan(callsBefore);
+      c.stopHealthCheck();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("setServerUrl change stops the health-check timer (prevents racing the new server's setup)", async () => {
+    const userResp = ok({
+      id: "user1234567890abcdefgh",
+      username: "ken",
+      email: "k@e.com",
+      first_name: "K",
+      last_name: "N",
+      roles: "system_user",
+    });
+    const { fn: fetchFn, calls } = makeFetch([userResp]);
+    vi.useFakeTimers();
+    try {
+      const c = buildClient({
+        fetchFn,
+        sleep: async () => {},
+        rateLimiter: new RateLimiter(),
+      });
+      c.setServerUrl("https://old.kchat.example.com");
+      c.setToken("PAT");
+      await c.verifyConnection();
+      c.startHealthCheck();
+      const callsBefore = calls.length;
+      c.setServerUrl("https://new.kchat.example.com");
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(calls.length).toBe(callsBefore);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("KchatClient.connectWebSocket", () => {
   it("opens ws URL, sends the auth challenge with the token, and dispatches events", async () => {
     const { ctor, instances } = mockWebSocketCtor();

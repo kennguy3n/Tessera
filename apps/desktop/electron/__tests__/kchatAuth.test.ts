@@ -142,14 +142,18 @@ describe("KchatAuthService.connect", () => {
 
 describe("KchatAuthService.disconnect", () => {
   it("returns the persisted user id and clears the vault entry", async () => {
-    const fetchFn = vi.fn(async () => userResponse("uid-stored")) as unknown as
-      typeof globalThis.fetch;
+    // KChat object ids must match /^[a-z0-9]{20,32}$/, validated
+    // at deserialisation in `verifyConnection`. Use a well-formed
+    // id here so the connect path that gates this test succeeds.
+    const fetchFn = vi.fn(async () =>
+      userResponse("uidstored0000000000ab"),
+    ) as unknown as typeof globalThis.fetch;
     const client = new KchatClient({ fetchFn, sleep: async () => {} });
     const svc = new KchatAuthService(client);
     await svc.connect("PAT-good", "https://kchat.example.com");
     expect(vaultStore.has("kchat")).toBe(true);
     const id = svc.disconnect();
-    expect(id).toBe("uid-stored");
+    expect(id).toBe("uidstored0000000000ab");
     expect(vaultStore.has("kchat")).toBe(false);
   });
 
@@ -160,6 +164,117 @@ describe("KchatAuthService.disconnect", () => {
     });
     const svc = new KchatAuthService(client);
     expect(svc.disconnect()).toBeNull();
+  });
+
+  // Regression pin for the disconnect ordering invariant:
+  // `readStoredAuth()` MUST run BEFORE `deleteTokens()` so the
+  // userId is captured for the audit log. The existing
+  // "returns the persisted user id" test asserts the return value
+  // but a future refactor that fetched the id via a different
+  // path (e.g. a cached field on the service) could pass that
+  // assertion while still introducing a subtle bug. Pin the
+  // ordering explicitly by checking the vault store at the moment
+  // `deleteTokens` runs.
+  it("calls readStoredAuth before deleteTokens (ordering pin for the audit-log invariant)", async () => {
+    // Use a well-formed KChat object id (matches the regex enforced
+    // by `verifyConnection`).
+    const fetchFn = vi.fn(async () =>
+      userResponse("uidordering000000000a"),
+    ) as unknown as typeof globalThis.fetch;
+    const client = new KchatClient({ fetchFn, sleep: async () => {} });
+    const svc = new KchatAuthService(client);
+    await svc.connect("PAT", "https://kchat.example.com");
+
+    // Snapshot the vault state ordering as `disconnect()` runs.
+    // We monkey-patch `Map.prototype.delete` on the shared mock
+    // vault to capture whether the entry was still present at the
+    // moment delete was called. If `readStoredAuth()` ran first,
+    // the entry IS still there at delete time.
+    let entryStillPresentAtDelete: boolean | null = null;
+    const realDelete = vaultStore.delete.bind(vaultStore);
+    vaultStore.delete = (key: string) => {
+      entryStillPresentAtDelete = vaultStore.has(key);
+      return realDelete(key);
+    };
+    try {
+      const id = svc.disconnect();
+      expect(id).toBe("uidordering000000000a");
+      // The audit-log id was extracted BEFORE the vault entry was
+      // cleared. A refactor that reordered shutdown + deleteTokens
+      // ahead of readStoredAuth would fail this assertion.
+      expect(entryStillPresentAtDelete).toBe(true);
+    } finally {
+      vaultStore.delete = realDelete;
+    }
+  });
+});
+
+describe("KchatAuthService.connect health-check teardown invariant", () => {
+  // Regression test for the case where a successful connect()
+  // → server-down → state="error" → user clicks Connect with the
+  // same token+URL → connect() runs again → verify fails → catch
+  // path runs. Before the fix, the original health-check timer
+  // kept firing every 30s producing spurious "token is not
+  // configured" error transitions. The fix is two-fold: (1)
+  // `setToken(null)` in the catch path now stops the timer, and
+  // (2) `connect()` itself stops the timer up-front so the
+  // same-URL-same-token retry case (where setServerUrl/setToken
+  // are no-ops) is also covered.
+  it("stops any pre-existing health-check timer at the start of connect()", async () => {
+    // First connect succeeds (arms the health-check timer); then a
+    // failing re-connect with the SAME token+URL must NOT leave
+    // the original timer running.
+    let phase: "first" | "second" = "first";
+    const fetchFn = vi.fn(async () => {
+      if (phase === "first") return userResponse();
+      return {
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: async () => "invalid_token",
+        json: async () => ({}),
+        arrayBuffer: async () => new ArrayBuffer(0),
+      } as unknown as Response;
+    }) as unknown as typeof globalThis.fetch;
+    const client = new KchatClient({ fetchFn, sleep: async () => {} });
+    const svc = new KchatAuthService(client);
+
+    vi.useFakeTimers();
+    try {
+      // Arm the timer under fake-time control so we can observe
+      // future ticks.
+      await svc.connect("PAT-same", "https://kchat.example.com");
+      expect(client.getState().state).toBe("connected");
+      const callsAfterFirst = (
+        fetchFn as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls.length;
+
+      phase = "second";
+      // The re-connect rejects (401 is non-retryable so this fails
+      // fast without consuming many fetch calls).
+      await expect(
+        svc.connect("PAT-same", "https://kchat.example.com"),
+      ).rejects.toBeTruthy();
+      const callsAfterRetry = (
+        fetchFn as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls.length;
+      // Sanity: the second connect did make at least one fetch
+      // (its verifyConnection attempt) — otherwise the test is
+      // measuring nothing.
+      expect(callsAfterRetry).toBeGreaterThan(callsAfterFirst);
+
+      // Advance well past one health-check interval (30s). Before
+      // the fix, the original timer would fire and produce another
+      // verifyConnection call → fetch. With the fix it has been
+      // stopped, so no further fetches should occur.
+      await vi.advanceTimersByTimeAsync(120_000);
+      const callsAfterAdvance = (
+        fetchFn as unknown as ReturnType<typeof vi.fn>
+      ).mock.calls.length;
+      expect(callsAfterAdvance).toBe(callsAfterRetry);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
