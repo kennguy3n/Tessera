@@ -93,12 +93,37 @@ export interface HeroImage {
  * Devin Review PR #38 pass-N 🚩 finding
  * `BUG_pr-review-job-07d6d965…_0001`.
  */
+// Required prefix for a well-formed hero `assetUrl`. The trailing
+// slash is part of the host→path boundary — see the sanitizer
+// comment below for why we ALSO require at least one character
+// after this prefix.
+const HERO_ASSET_URL_PREFIX = "tessera-asset://generated-images/";
+
 export function sanitizeHeroImage(raw: unknown): HeroImage | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
+  // `r.assetUrl` must START with the prefix AND have at least one
+  // path character after it. The earlier-pass check accepted the
+  // bare directory-root URL `tessera-asset://generated-images/`
+  // (Devin Review PR #38 pass-N 📝 finding
+  // `ANALYSIS_pr-review-job-4d834ff9…_0003`) because
+  // `startsWith(prefix)` is true for the exact-prefix string. The
+  // main-process protocol handler at `assetProtocol.ts:241-244`
+  // returns 403 for that exact URL (no directory listing under
+  // `generated-images/`), and `pathToAssetUrl` at
+  // `assetProtocol.ts:296-300` refuses to MINT such a URL in the
+  // first place — so a hand-edited artifact JSON containing
+  // `"assetUrl": "tessera-asset://generated-images/"` was the only
+  // way to smuggle the bare-root form through. The strict-greater
+  // length check below closes that gap so the parse-time guarantee
+  // matches the render-time one byte-for-byte. The handler is the
+  // outer defence (still 403s the bare root even if the sanitizer
+  // missed it); this is the inner defence (the editor never
+  // persists a URL the handler would refuse to serve).
   if (
     typeof r.assetUrl !== "string" ||
-    !r.assetUrl.startsWith("tessera-asset://generated-images/") ||
+    !r.assetUrl.startsWith(HERO_ASSET_URL_PREFIX) ||
+    r.assetUrl.length <= HERO_ASSET_URL_PREFIX.length ||
     typeof r.prompt !== "string"
   ) {
     return undefined;

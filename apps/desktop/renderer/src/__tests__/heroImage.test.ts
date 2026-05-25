@@ -129,29 +129,25 @@ describe("sanitizeHeroImage", () => {
     });
 
     it("rejects the bare directory-root URL `tessera-asset://generated-images/`", () => {
-      // Sanitizer must reject the directory root too — the handler
-      // returns 403 for it (no file to serve). The prefix check
-      // alone would accept it because it ends in the required
-      // `generated-images/` segment, but with no filename it'd
-      // still 403 at runtime. We rely on the rest of the schema
-      // (presence of `prompt` / `seed` / `width` / `height`) to
-      // catch this in practice, but adding an explicit test pins
-      // that a URL ending exactly at `generated-images/` is not a
-      // sanitizer success.
-      // Note: this is technically accepted today because the
-      // `startsWith` check passes, but every other field is still
-      // validated. We assert sanitiser RETURNS the payload (no
-      // schema break) but flag in docs that the handler will 403.
-      // The bug class is hostile-host injection, not bare-root.
+      // Devin Review PR #38 pass-N 📝 finding
+      // `ANALYSIS_pr-review-job-4d834ff9…_0003`: the prior implementation
+      // accepted the bare-root form because `startsWith(prefix)` is true
+      // for the exact-prefix string. The main-process protocol handler
+      // at `assetProtocol.ts:241-244` 403s this URL (no directory
+      // listing) and `pathToAssetUrl` refuses to mint it, so the only
+      // way to smuggle this through was a hand-edited artifact JSON.
+      // The strict-greater length check in the sanitizer closes that
+      // gap so the parse-time guarantee matches the render-time one
+      // byte-for-byte. This test pins the new behaviour and would
+      // regress to the prior `toEqual(payload)` shape if a future
+      // refactor relaxes the length check (e.g. switches back to a
+      // plain `startsWith` without the length guard).
       expect(
         sanitizeHeroImage({
           ...valid,
           assetUrl: "tessera-asset://generated-images/",
         }),
-      ).toEqual({
-        ...valid,
-        assetUrl: "tessera-asset://generated-images/",
-      });
+      ).toBeUndefined();
     });
 
     it("accepts a nested path under generated-images/ (the production shape minted by pathToAssetUrl)", () => {
