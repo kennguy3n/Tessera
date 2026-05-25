@@ -179,8 +179,13 @@ describe("Sidebar shortcut hints", () => {
     // jsdom (Linux runners report "Linux x86_64").
     const home = screen.getByRole("link", { name: /Home/ });
     expect(home.getAttribute("aria-keyshortcuts")).toMatch(/(Ctrl|⌘)\+1/);
+    // Settings was at shortcut 7 before Block E inserted /vision at
+    // position 7. The test pins the new layout: Vision at 7,
+    // Settings at 8.
+    const vision = screen.getByRole("link", { name: /Vision/ });
+    expect(vision.getAttribute("aria-keyshortcuts")).toMatch(/(Ctrl|⌘)\+7/);
     const settings = screen.getByRole("link", { name: /Settings/ });
-    expect(settings.getAttribute("aria-keyshortcuts")).toMatch(/(Ctrl|⌘)\+7/);
+    expect(settings.getAttribute("aria-keyshortcuts")).toMatch(/(Ctrl|⌘)\+8/);
   });
 });
 

@@ -320,6 +320,11 @@ const mockApi = {
   },
   dialog: {
     showSaveDialog: vi.fn().mockResolvedValue({ canceled: true }),
+    // Default mock: file picker is cancelled. Tests that need
+    // a specific image path flip this with `vi.spyOn`.
+    pickImage: vi
+      .fn()
+      .mockResolvedValue({ canceled: true, filePath: null }),
   },
   tasks: {
     create: vi.fn().mockResolvedValue({

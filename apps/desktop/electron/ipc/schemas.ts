@@ -382,6 +382,30 @@ export const SaveDialogOptionsSchema = z
   .strict();
 export type SaveDialogOptionsInput = z.infer<typeof SaveDialogOptionsSchema>;
 
+// --- Open image dialog ---
+//
+// `dialog:pickImage` is the renderer-side entry point for the Vision
+// page — it opens an OS file picker locked to image extensions and
+// returns the absolute path of the chosen file (or null if the user
+// cancelled). The handler intentionally does NOT load the file or
+// pre-encode it — the renderer never needs the bytes, only the path,
+// which it forwards to `vision:describe` for OCR / describe / chart.
+//
+// Strict-mode schema for the same reasons as `SaveDialogOptionsSchema`:
+// the payload flows straight into Electron's native open-dialog APIs
+// (Cocoa / Win32 / GTK) and unknown fields could trigger provider-
+// specific side effects.
+//
+// `title` is the dialog window title shown to the user. We bound it
+// the same way as the save dialog (512 chars) because the OS layer
+// rejects very long titles inconsistently across platforms.
+export const OpenImageDialogSchema = z
+  .object({
+    title: z.string().max(512).optional(),
+  })
+  .strict();
+export type OpenImageDialogInput = z.infer<typeof OpenImageDialogSchema>;
+
 // --- Vision describe ---
 //
 // `vision:describe` accepts an absolute path to an image already on

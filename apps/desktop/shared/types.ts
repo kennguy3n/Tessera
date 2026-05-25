@@ -870,6 +870,34 @@ export interface SaveDialogResult {
   filePath?: string;
 }
 
+/**
+ * Options for `dialog:pickImage`. The filter list and the `properties`
+ * array are decided main-side so the renderer can't widen the picker
+ * beyond image files. `title` is the only knob exposed because it's
+ * the only UX element the renderer reasonably needs to vary (e.g.
+ * "Choose a chart to analyse" vs "Choose a whiteboard photo").
+ */
+export interface OpenImageDialogOptions {
+  title?: string;
+}
+
+/**
+ * Result shape for `dialog:pickImage`. `canceled` is always present
+ * so the renderer can branch on it without optional-chaining; when
+ * `canceled` is true, `filePath` is `null`. When `canceled` is
+ * false, `filePath` is a non-empty absolute path the renderer
+ * forwards to `vision:describe` (or other downstream IPCs).
+ *
+ * `filePath` is non-nullable rather than optional so the renderer
+ * gets a strict `string | null` discriminated-union semantics —
+ * the existing `SaveDialogResult.filePath?: string` shape predates
+ * this pattern and is left alone for backward compatibility.
+ */
+export interface OpenImageDialogResult {
+  canceled: boolean;
+  filePath: string | null;
+}
+
 // -----------------------------------------------------------------
 // Auto-updater
 // -----------------------------------------------------------------
@@ -1249,6 +1277,13 @@ export interface AutomationApi {
 
 export interface DialogApi {
   showSaveDialog: (options: SaveDialogOptions) => Promise<SaveDialogResult>;
+  /**
+   * Open a native image-file picker locked to the supported
+   * extensions (jpg/jpeg/png/webp/gif/bmp). Returns
+   * `{ canceled: true, filePath: null }` if the user dismissed the
+   * dialog, otherwise `{ canceled: false, filePath: <absolute path> }`.
+   */
+  pickImage: (options?: OpenImageDialogOptions) => Promise<OpenImageDialogResult>;
 }
 
 /**
