@@ -17,7 +17,7 @@
  * future iteration wants live updates the main process can flip
  * to push-based via an additional IPC channel.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getStoredDefaultTeamId } from "./KchatSettingsCard";
 import type {
   KchatChannelView,
@@ -148,6 +148,25 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
     };
   }, [kchat, state.state]);
 
+  // `channelsRef` holds the live channel list so `pollUnread` can
+  // read the latest set without taking `channels` as a useCallback
+  // dependency. Capturing `channels` directly would change
+  // `pollUnread`'s identity every time `setChannels(list)` is called
+  // — even when the resulting array is content-identical — because
+  // React compares array references, not contents. The poll-
+  // scheduling effect below depends on `pollUnread`, so each
+  // identity flip would tear down the recursive `setTimeout` chain
+  // and re-arm it, wasting work today and risking a foot-gun in
+  // future refactors that refetch channels more aggressively
+  // (thirteenth-pass Devin Review ANALYSIS_0002). The ref pattern
+  // keeps `pollUnread`'s identity stable for the lifetime of the
+  // connection while still letting each cycle observe the latest
+  // channel set.
+  const channelsRef = useRef(channels);
+  useEffect(() => {
+    channelsRef.current = channels;
+  }, [channels]);
+
   // `isCancelled` is an optional callback the caller can pass to
   // short-circuit the poll cycle. We check it (a) before issuing
   // each `listChannelFiles` request — so a teardown stops burning
@@ -165,7 +184,8 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // are real today.
   const pollUnread = useCallback(
     async (isCancelled?: () => boolean) => {
-      if (!kchat || state.state !== "connected" || channels.length === 0) {
+      const live = channelsRef.current;
+      if (!kchat || state.state !== "connected" || live.length === 0) {
         return;
       }
       const seen = getLastSeen();
@@ -176,7 +196,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
       // parallelism cannot actually speed the poll up — it would
       // just make each individual request slower while still
       // consuming the same number of tokens.
-      const polled = channels.slice(0, MAX_POLL_CHANNELS);
+      const polled = live.slice(0, MAX_POLL_CHANNELS);
       try {
         let total = 0;
         for (const ch of polled) {
@@ -192,7 +212,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
         /* swallow — keep last-known count */
       }
     },
-    [kchat, state.state, channels],
+    [kchat, state.state],
   );
 
   // Recursive `setTimeout` instead of `setInterval` (eleventh-pass
