@@ -208,3 +208,84 @@ describe("KchatSidebarSection", () => {
     );
   });
 });
+
+// Eleventh-pass Devin Review ANALYSIS_0004: the unread-count poll
+// must NOT overlap itself when `listChannelFiles` runs slow. With
+// the old `setInterval` form, two cycles would stack against the
+// global `kchat:request` rate-limit budget if a poll took longer
+// than `POLL_INTERVAL_MS`; we switched to recursive `setTimeout`
+// so cycle N+1 only schedules after cycle N's Promise has settled.
+//
+// The test pins `listChannelFiles` to a manually-resolved Promise
+// so cycle 1 is "stuck" indefinitely, then advances fake timers
+// past `POLL_INTERVAL_MS` and asserts no additional calls were
+// issued. After we settle cycle 1 the next tick fires and a
+// fresh batch arrives.
+describe("KchatSidebarSection — unread poll does not overlap when slow (eleventh-pass invariant)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("waits for the in-flight poll to settle before scheduling the next tick", async () => {
+    const channels = Array.from({ length: 5 }, (_, i) => ({
+      id: `chan-${i}`,
+      team_id: "team-1",
+      name: `c${i}`,
+      display_name: `C${i}`,
+      type: "O" as const,
+    }));
+    // Build a queue of resolvers so each `listChannelFiles` call
+    // returns a Promise we can resolve at-will from the test body.
+    const resolvers: Array<(v: unknown[]) => void> = [];
+    const listChannelFiles = vi.fn().mockImplementation(() => {
+      return new Promise<unknown[]>((resolve) => {
+        resolvers.push(resolve);
+      });
+    });
+    const api = makeApi({
+      listChannels: vi.fn().mockResolvedValue(channels),
+      listChannelFiles,
+    });
+    render(<KchatSidebarSection api={api} />);
+
+    // First poll fires immediately after the channel list settles;
+    // wait until exactly one channel's file fetch has been issued.
+    // We don't wait for all 5 because the loop is serial: only the
+    // first call is in-flight while we're "stuck" inside its await.
+    await waitFor(() => expect(listChannelFiles).toHaveBeenCalledTimes(1));
+    expect(listChannelFiles.mock.calls[0][0]).toBe("chan-0");
+
+    // Advance the clock past 3 × POLL_INTERVAL_MS while the first
+    // poll is still stuck. With the old `setInterval` form, the
+    // 2nd and 3rd interval ticks would fire and issue further
+    // calls (each into chan-0 again). With recursive `setTimeout`
+    // chaining, NO further calls happen until the in-flight
+    // Promise settles.
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(listChannelFiles).toHaveBeenCalledTimes(1);
+
+    // Drain the rest of the first poll cycle by resolving each
+    // channel's Promise in turn. Each resolve unblocks the serial
+    // loop and triggers the next call.
+    for (let i = 0; i < channels.length; i += 1) {
+      // Wait for the next resolver to land in the queue.
+      await waitFor(() => expect(resolvers.length).toBeGreaterThanOrEqual(i + 1));
+      resolvers[i]([]);
+    }
+    await waitFor(() =>
+      expect(listChannelFiles).toHaveBeenCalledTimes(channels.length),
+    );
+
+    // Now that the first poll has fully settled, the recursive
+    // setTimeout has scheduled the next tick. Advance past the
+    // interval and verify a second batch starts.
+    await vi.advanceTimersByTimeAsync(30_000);
+    await waitFor(() =>
+      expect(listChannelFiles).toHaveBeenCalledTimes(channels.length + 1),
+    );
+    expect(listChannelFiles.mock.calls[channels.length][0]).toBe("chan-0");
+  });
+});

@@ -175,11 +175,38 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
     }
   }, [kchat, state.state, channels]);
 
+  // Recursive `setTimeout` instead of `setInterval` (eleventh-pass
+  // Devin Review ANALYSIS_0004). `setInterval` would fire every
+  // `POLL_INTERVAL_MS` regardless of whether the previous
+  // `pollUnread` had finished — if `listChannelFiles` calls run
+  // slow (e.g. the network is degraded), two or more poll cycles
+  // could overlap and stack rate-limiter token consumption against
+  // the global `kchat:request` budget, starving user-initiated
+  // requests. By awaiting `pollUnread` before scheduling the next
+  // tick we guarantee a single in-flight poll per component
+  // instance, the inter-poll gap is always at least
+  // `POLL_INTERVAL_MS`, and any `pollUnread` Promise rejection
+  // (swallowed inside the function so a future change couldn't
+  // accidentally re-throw) cannot leave a dangling interval.
   useEffect(() => {
     if (state.state !== "connected" || channels.length === 0) return;
-    pollUnread();
-    const id = window.setInterval(pollUnread, POLL_INTERVAL_MS);
-    return () => window.clearInterval(id);
+    let cancelled = false;
+    let timeoutId: number | null = null;
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        await pollUnread();
+      } finally {
+        if (!cancelled) {
+          timeoutId = window.setTimeout(tick, POLL_INTERVAL_MS);
+        }
+      }
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    };
   }, [pollUnread, state.state, channels.length]);
 
   const handleMarkSeen = useCallback(() => {

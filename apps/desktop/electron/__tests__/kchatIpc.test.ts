@@ -444,6 +444,76 @@ describe("kchat:connect — DNS error fail-closed posture (ninth-pass invariant)
   });
 });
 
+// Eleventh-pass Devin Review ANALYSIS_0002: the SSRF guard's literal-
+// IP check must cover the non-dotted-decimal IPv4 forms that
+// `getaddrinfo` accepts (and resolves to `127.0.0.1` etc) but a
+// naive dotted-quad regex misses. Without coverage at the literal
+// layer, a request like `http://0x7f000001/` would skip the literal
+// check entirely and rely solely on the DNS layer; if the DNS
+// resolver canonicalises to dotted-decimal the DNS check still
+// catches it, but defense-in-depth requires the literal layer to
+// match too. We pin `dnsPromises.lookup` to a *public* IP per case
+// so the assertion is "the literal check fires" rather than "the
+// DNS check catches it" — that way a future regression in the
+// literal check is detected immediately rather than masked.
+describe("kchat:connect — SSRF guard catches non-dotted-decimal IPv4 forms (eleventh-pass invariant)", () => {
+  const nonDottedInternalUrls = [
+    "http://0x7f000001/", // hex single-integer (127.0.0.1)
+    "http://2130706433/", // decimal single-integer (127.0.0.1)
+    "http://0177.0.0.1/", // dotted-octal (127.0.0.1)
+    "http://127.1/", // 2-part dotted (127.0.0.1)
+    "http://0xa.0.0.5/", // mixed: hex first octet (10.0.0.5)
+    "http://0x0a000005/", // hex single-integer (10.0.0.5)
+    "http://3232235521/", // decimal single-integer (192.168.0.1)
+  ];
+  for (const u of nonDottedInternalUrls) {
+    it(`rejects ${u} at the literal-IP layer (before DNS)`, async () => {
+      // Pin DNS to a public IP — if the test fails despite this,
+      // it means the DNS layer was relied on to catch the address,
+      // which is exactly the defense-in-depth gap we want to close.
+      const spy = vi
+        .spyOn(dnsPromises, "lookup")
+        .mockResolvedValue([
+          { address: "93.184.216.34", family: 4 },
+        ] as never);
+      try {
+        await expect(
+          handler("kchat:connect")(EVENT, "PAT", u),
+        ).rejects.toThrow(/private|loopback|link-local/i);
+        expect(serviceMock.connect).not.toHaveBeenCalled();
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  }
+
+  it("still accepts decimal single-integer that maps to a PUBLIC IPv4", async () => {
+    // 1.1.1.1 = 16843009. Public DNS-resolvable address, must NOT
+    // be rejected by the literal check.
+    const spy = vi
+      .spyOn(dnsPromises, "lookup")
+      .mockResolvedValue([{ address: "1.1.1.1", family: 4 }] as never);
+    try {
+      serviceMock.connect.mockResolvedValue({
+        id: "user1234567890abcdefgh",
+        username: "pub",
+        email: "p@e.com",
+        first_name: "P",
+        last_name: "U",
+      });
+      const out = await handler("kchat:connect")(
+        EVENT,
+        "PAT",
+        "http://16843009/",
+      );
+      expect(out).toMatchObject({ id: "user1234567890abcdefgh" });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("kchat:disconnect", () => {
   it("audits with the previously-connected user id", async () => {
     serviceMock.disconnect.mockReturnValue("user1234567890abcdefgh");

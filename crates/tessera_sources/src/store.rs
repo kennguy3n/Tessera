@@ -398,8 +398,7 @@ impl SourceStore {
                 let id_s: String = row.get(0).map_err(|e| Error::Database(e.to_string()))?;
                 let source_type_str: String =
                     row.get(1).map_err(|e| Error::Database(e.to_string()))?;
-                let status_str: String =
-                    row.get(3).map_err(|e| Error::Database(e.to_string()))?;
+                let status_str: String = row.get(3).map_err(|e| Error::Database(e.to_string()))?;
                 let created_at_str: String =
                     row.get(4).map_err(|e| Error::Database(e.to_string()))?;
                 let last_indexed_str: Option<String> =
@@ -411,10 +410,8 @@ impl SourceStore {
                     .map_err(|e| Error::Database(format!("corrupt source.source_type: {e}")))?;
                 let parsed_status: SourceStatus = serde_json::from_str(&status_str)
                     .map_err(|e| Error::Database(format!("corrupt source.status: {e}")))?;
-                let row_path: String =
-                    row.get(2).map_err(|e| Error::Database(e.to_string()))?;
-                let file_count: i64 =
-                    row.get(6).map_err(|e| Error::Database(e.to_string()))?;
+                let row_path: String = row.get(2).map_err(|e| Error::Database(e.to_string()))?;
+                let file_count: i64 = row.get(6).map_err(|e| Error::Database(e.to_string()))?;
                 Ok(Some(Source {
                     id: SourceId(parsed_id),
                     source_type: parsed_type,

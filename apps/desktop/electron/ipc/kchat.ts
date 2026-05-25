@@ -167,6 +167,100 @@ const VALID_FORMATS = new Set([
 ]);
 
 /**
+ * Parse a numeric token in any of the forms `getaddrinfo` accepts
+ * for IPv4 octets / 32-bit dword arguments and return the parsed
+ * value, or `null` if the token does not match any accepted form.
+ *
+ * Accepted:
+ *   - `"0"` or any non-zero decimal that does NOT start with `0`
+ *   - `"0o…"` / leading-zero decimal interpreted as octal (`017` → 15)
+ *   - `"0x…"` / `"0X…"` hex
+ *
+ * Rejected: empty string, signed values, anything containing `_`
+ * or whitespace, scientific notation. We deliberately do not accept
+ * BigInt-style suffixes because Node's URL parser strips them.
+ *
+ * Used by `isPrivateOrLoopbackHost` to recognise the non-dotted-
+ * decimal IPv4 forms that `getaddrinfo` will happily resolve but
+ * the dotted-decimal regex misses (eleventh-pass Devin Review
+ * ANALYSIS_0002):
+ *   - hex single-integer: `http://0x7f000001/`
+ *   - octal dotted: `http://0177.0.0.1/`
+ *   - decimal single-integer: `http://2130706433/`
+ *   - 2-part / 3-part forms (`http://127.1/`, `http://10.0.65535/`)
+ *
+ * The DNS layer at `enforceKchatServerUrl` already covers most of
+ * these because `dns.lookup` calls `getaddrinfo` which canonicalises
+ * them to dotted-decimal — but the literal check is the first line
+ * of defence and should not lean on the DNS layer alone.
+ */
+function parseIpv4Token(tok: string): number | null {
+  if (tok.length === 0) return null;
+  if (/[^0-9a-fA-FxX]/.test(tok)) return null;
+  let n: number;
+  if (/^0[xX]/.test(tok)) {
+    if (!/^0[xX][0-9a-fA-F]+$/.test(tok)) return null;
+    n = Number.parseInt(tok.slice(2), 16);
+  } else if (tok.length > 1 && tok.startsWith("0")) {
+    if (!/^0[0-7]+$/.test(tok)) return null;
+    n = Number.parseInt(tok.slice(1), 8);
+  } else {
+    if (!/^[0-9]+$/.test(tok)) return null;
+    n = Number.parseInt(tok, 10);
+  }
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
+ * Canonicalise any of the IPv4 forms `getaddrinfo` accepts to
+ * `[a, b, c, d]` (each 0–255), or `null` if `s` is not a valid IPv4
+ * literal under those rules. Handles:
+ *   - 4-part dotted (`127.0.0.1`)        → [127, 0, 0, 1]
+ *   - 3-part (`127.0.1`)                 → [127, 0, 0, 1]   (last token is a 16-bit dword)
+ *   - 2-part (`127.1`)                   → [127, 0, 0, 1]   (last token is a 24-bit dword)
+ *   - 1-part single integer (`2130706433` or `0x7f000001`) → [127, 0, 0, 1]
+ *   - hex/octal tokens within any of the above
+ *
+ * Anything else returns `null` (caller falls through to the IPv6 /
+ * DNS-name path).
+ */
+function parseIpv4(s: string): [number, number, number, number] | null {
+  if (s.length === 0) return null;
+  const parts = s.split(".");
+  if (parts.length > 4) return null;
+  const nums: number[] = [];
+  for (const p of parts) {
+    const v = parseIpv4Token(p);
+    if (v === null) return null;
+    nums.push(v);
+  }
+  // Per-token width limits. For the dotted forms, all but the last
+  // token must fit in a byte; the last token holds the remaining
+  // bits (8 / 16 / 24 / 32 depending on `nums.length`).
+  for (let i = 0; i < nums.length - 1; i++) {
+    if (nums[i] > 0xff) return null;
+  }
+  const last = nums[nums.length - 1];
+  const lastMaxBits = (5 - nums.length) * 8; // 4-part:8, 3-part:16, 2-part:24, 1-part:32
+  if (last < 0 || last > 2 ** lastMaxBits - 1) return null;
+  const a = nums.length >= 2 ? nums[0] : (last >>> 24) & 0xff;
+  const b =
+    nums.length >= 3
+      ? nums[1]
+      : nums.length === 2
+        ? (last >>> 16) & 0xff
+        : (last >>> 16) & 0xff;
+  const c =
+    nums.length === 4
+      ? nums[2]
+      : nums.length === 3
+        ? (last >>> 8) & 0xff
+        : (last >>> 8) & 0xff;
+  const d = last & 0xff;
+  return [a, b, c, d];
+}
+
+/**
  * Return `true` when `hostname` is a literal IP in private,
  * loopback, link-local, or otherwise reserved RFC-1918-style space
  * — or one of the reserved hostnames (`localhost`,
@@ -183,6 +277,9 @@ const VALID_FORMATS = new Set([
  *   - RFC1918 private space (10/8, 172.16/12, 192.168/16)
  *   - RFC6598 CGNAT (100.64/10)
  *   - Link-local (169.254/16)
+ *   - All of the above in their non-dotted-decimal encodings (hex,
+ *     octal, single-integer, 2-/3-part dotted) — eleventh-pass
+ *     Devin Review ANALYSIS_0002.
  *   - IPv6 loopback (::1, ::) and unspecified
  *   - IPv6 unique-local (fc00::/7 → `fc*`, `fd*`)
  *   - IPv6 link-local (fe80::/10 → `fe80:`)
@@ -201,13 +298,13 @@ function isPrivateOrLoopbackHost(hostname: string): boolean {
   // them in `hostname` for bracketed v6, depending on Node version).
   const h = hostname.replace(/^\[|\]$/g, "").toLowerCase();
   if (h === "localhost" || h.endsWith(".localhost")) return true;
-  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  // IPv4 (any form: dotted-decimal, dotted-hex, dotted-octal, 1-/
+  // 2-/3-part dotted, single integer). `parseIpv4` returns the
+  // canonicalised [a, b, c, d] octets so the prefix tests below
+  // work uniformly regardless of how the address was typed.
+  const v4 = parseIpv4(h);
   if (v4) {
-    const a = Number(v4[1]);
-    const b = Number(v4[2]);
-    if ([a, b, Number(v4[3]), Number(v4[4])].some((n) => n > 255)) {
-      return false;
-    }
+    const [a, b] = v4;
     if (a === 0) return true; // 0.0.0.0/8 (current network / unspecified)
     if (a === 127) return true; // 127.0.0.0/8 loopback
     if (a === 10) return true; // 10.0.0.0/8 private
@@ -706,313 +803,320 @@ export function registerKchatHandlers(): void {
     id: string,
     name: string,
   ): Promise<{ sourceId: string; cacheDir: string }> {
-      const bridge = getBridge();
-      if (!bridge) throw new Error("Native bridge not available");
+    const bridge = getBridge();
+    if (!bridge) throw new Error("Native bridge not available");
 
-      const svc = getKchatAuthService();
-      const cacheDir = path.join(
-        os.homedir(),
-        ".tessera",
-        "kchat-channels",
-        id,
-      );
-      await fs.mkdir(cacheDir, { recursive: true });
+    const svc = getKchatAuthService();
+    const cacheDir = path.join(
+      os.homedir(),
+      ".tessera",
+      "kchat-channels",
+      id,
+    );
+    await fs.mkdir(cacheDir, { recursive: true });
 
-      // Download the channel's existing file roster into the cache so
-      // the initial index pass has content to work with. Subsequent
-      // poll cycles (block B) re-fetch deltas.
-      //
-      // Pagination: KChat caps `GET /channels/{id}/files` at 200
-      // results per page (default 60 in our client). A channel with
-      // more than `perPage` files would otherwise silently truncate
-      // at the first page — the renderer would see a "synced" badge
-      // while only the most-recent N files actually reached the
-      // indexer. We loop until the server returns a short page
-      // (`< perPage` results), which is the documented end-of-list
-      // signal. We bound the loop with `MAX_PAGES` so a misbehaving
-      // server that always returns a full page (infinite list)
-      // cannot wedge the initial sync forever; in practice no real
-      // KChat channel hits this cap.
-      //
-      // Security: the KChat server is treated as untrusted with
-      // respect to filename contents. Server-supplied `fi.name`
-      // values can include path-traversal sequences
-      // (`../../../.ssh/authorized_keys`, absolute paths on
-      // Windows, NUL bytes, etc.). We sanitise twice: first with
-      // `path.basename` to strip any directory component the server
-      // may have injected, then by resolving the final target path
-      // and asserting it is *inside* `cacheDir`. The defence-in-depth
-      // check catches edge cases (e.g. symlinks under the cache dir,
-      // case-folding differences on macOS/Windows) that pure name
-      // sanitisation would miss.
-      //
-      // `fi.id` is also server-supplied. `downloadFile()` revalidates
-      // it against the KChat object-id shape before interpolating it
-      // into the request URL (defence at the network boundary), but
-      // the fallback `safeName = `kchat-file-${fi.id}`` would
-      // otherwise embed unsanitised bytes from the id directly into
-      // the on-disk filename. We sanitise the id to an allow-list
-      // here so the safeName cannot escape `cacheDir` even via the
-      // fallback path. The downstream containment check still runs
-      // — this is belt-and-braces, not a replacement for it.
-      //
-      // Filename-collision handling: KChat channels have a flat file
-      // namespace, so two users can upload `report.pdf` to the same
-      // channel without any server-side rename. If we wrote both to
-      // disk under the same `safeName`, the second `fs.writeFile`
-      // would silently overwrite the first — the audit log would
-      // still record both downloads, but only one set of bytes would
-      // persist, and the indexer would see fewer files than the
-      // channel actually contains. We dedupe by tracking the names
-      // already written across the entire pagination loop (a single
-      // `Set<string>` spanning every page); on collision we insert
-      // the sanitised KChat file id between the stem and the
-      // extension (`report.pdf` → `report-fid…xyz.pdf`). The id is
-      // unique per file (KChat object-id invariant validated above),
-      // so a single suffixing step always produces a fresh name —
-      // but we still guard against the impossible double-collision
-      // by appending the running count if it ever recurs.
-      //
-      // Convergent sync (seventh-pass Devin Review ANALYSIS_0003):
-      // we persist a manifest mapping `fi.id → finalName` after
-      // every sync so subsequent re-syncs are convergent rather
-      // than additive. The previous implementation re-downloaded
-      // (and overwrote) every file on every retry but never
-      // cleaned up files that had been removed server-side between
-      // syncs — a deleted file would remain on disk and continue
-      // to be indexed indefinitely. With the manifest we:
-      //   1. Skip downloads for `fi.id`s whose recorded local file
-      //      still exists (KChat file content is immutable per
-      //      object-id, so the bytes on disk are still valid).
-      //   2. Unlink local files whose `fi.id` is no longer in the
-      //      server roster after we've finished walking ALL pages
-      //      (deleting mid-pagination would mis-delete files we
-      //      haven't yet listed).
-      //   3. Persist the new manifest in a `finally` block so a
-      //      partial-failure mid-sync still leaves a consistent
-      //      manifest reflecting whatever bytes did land on disk
-      //      — the next retry skips them and downloads only the
-      //      remainder.
-      const PER_PAGE = 60;
-      const MAX_PAGES = 1000;
-      const resolvedCacheDir = path.resolve(cacheDir);
-      const previousManifest = await readManifest(cacheDir, id);
-      // `seenNames` starts EMPTY (eighth-pass Devin Review
-      // ANALYSIS_0002). A previous implementation seeded it from
-      // `Object.values(previousManifest.files)` to prevent same-name
-      // collisions with pre-existing files, but that also reserved
-      // names of files that had been deleted server-side between
-      // syncs — if a new file arrived in this sync with the same
-      // base name as a since-deleted file, it would receive an
-      // unnecessary `-<fid>` dedupe suffix permanently (since the
-      // new manifest then carries the deduped name forward). We
-      // now only mark a name as "seen" when we actually decide to
-      // *keep* a file at that name (either via the fast-path skip
-      // when the previous file is still on disk and still in the
-      // server roster, or after writing a fresh download), so
-      // server-side deletions don't poison the dedupe set.
-      const seenNames = new Set<string>();
-      const currentFiles: Record<string, string> = {};
-      const seenServerIds = new Set<string>();
-      let paginationCompleted = false;
-      try {
-        for (let page = 0; page < MAX_PAGES; page += 1) {
-          const files = await svc
-            .getClient()
-            .listChannelFiles(id, page, PER_PAGE);
-          for (const fi of files) {
-            if (typeof fi.id !== "string" || fi.id.length === 0) continue;
-            seenServerIds.add(fi.id);
+    // Download the channel's existing file roster into the cache so
+    // the initial index pass has content to work with. Subsequent
+    // poll cycles (block B) re-fetch deltas.
+    //
+    // Pagination: KChat caps `GET /channels/{id}/files` at 200
+    // results per page (default 60 in our client). A channel with
+    // more than `perPage` files would otherwise silently truncate
+    // at the first page — the renderer would see a "synced" badge
+    // while only the most-recent N files actually reached the
+    // indexer. We loop until the server returns a short page
+    // (`< perPage` results), which is the documented end-of-list
+    // signal. We bound the loop with `MAX_PAGES` so a misbehaving
+    // server that always returns a full page (infinite list)
+    // cannot wedge the initial sync forever; in practice no real
+    // KChat channel hits this cap.
+    //
+    // Security: the KChat server is treated as untrusted with
+    // respect to filename contents. Server-supplied `fi.name`
+    // values can include path-traversal sequences
+    // (`../../../.ssh/authorized_keys`, absolute paths on
+    // Windows, NUL bytes, etc.). We sanitise twice: first with
+    // `path.basename` to strip any directory component the server
+    // may have injected, then by resolving the final target path
+    // and asserting it is *inside* `cacheDir`. The defence-in-depth
+    // check catches edge cases (e.g. symlinks under the cache dir,
+    // case-folding differences on macOS/Windows) that pure name
+    // sanitisation would miss.
+    //
+    // `fi.id` is also server-supplied. `downloadFile()` revalidates
+    // it against the KChat object-id shape before interpolating it
+    // into the request URL (defence at the network boundary), but
+    // the fallback `safeName = `kchat-file-${fi.id}`` would
+    // otherwise embed unsanitised bytes from the id directly into
+    // the on-disk filename. We sanitise the id to an allow-list
+    // here so the safeName cannot escape `cacheDir` even via the
+    // fallback path. The downstream containment check still runs
+    // — this is belt-and-braces, not a replacement for it.
+    //
+    // Filename-collision handling: KChat channels have a flat file
+    // namespace, so two users can upload `report.pdf` to the same
+    // channel without any server-side rename. If we wrote both to
+    // disk under the same `safeName`, the second `fs.writeFile`
+    // would silently overwrite the first — the audit log would
+    // still record both downloads, but only one set of bytes would
+    // persist, and the indexer would see fewer files than the
+    // channel actually contains. We dedupe by tracking the names
+    // already written across the entire pagination loop (a single
+    // `Set<string>` spanning every page); on collision we insert
+    // the sanitised KChat file id between the stem and the
+    // extension (`report.pdf` → `report-fid…xyz.pdf`). The id is
+    // unique per file (KChat object-id invariant validated above),
+    // so a single suffixing step always produces a fresh name —
+    // but we still guard against the impossible double-collision
+    // by appending the running count if it ever recurs.
+    //
+    // Convergent sync (seventh-pass Devin Review ANALYSIS_0003):
+    // we persist a manifest mapping `fi.id → finalName` after
+    // every sync so subsequent re-syncs are convergent rather
+    // than additive. The previous implementation re-downloaded
+    // (and overwrote) every file on every retry but never
+    // cleaned up files that had been removed server-side between
+    // syncs — a deleted file would remain on disk and continue
+    // to be indexed indefinitely. With the manifest we:
+    //   1. Skip downloads for `fi.id`s whose recorded local file
+    //      still exists (KChat file content is immutable per
+    //      object-id, so the bytes on disk are still valid).
+    //   2. Unlink local files whose `fi.id` is no longer in the
+    //      server roster after we've finished walking ALL pages
+    //      (deleting mid-pagination would mis-delete files we
+    //      haven't yet listed).
+    //   3. Persist the new manifest in a `finally` block so a
+    //      partial-failure mid-sync still leaves a consistent
+    //      manifest reflecting whatever bytes did land on disk
+    //      — the next retry skips them and downloads only the
+    //      remainder.
+    const PER_PAGE = 60;
+    const MAX_PAGES = 1000;
+    const resolvedCacheDir = path.resolve(cacheDir);
+    const previousManifest = await readManifest(cacheDir, id);
+    // `seenNames` starts EMPTY (eighth-pass Devin Review
+    // ANALYSIS_0002). A previous implementation seeded it from
+    // `Object.values(previousManifest.files)` to prevent same-name
+    // collisions with pre-existing files, but that also reserved
+    // names of files that had been deleted server-side between
+    // syncs — if a new file arrived in this sync with the same
+    // base name as a since-deleted file, it would receive an
+    // unnecessary `-<fid>` dedupe suffix permanently (since the
+    // new manifest then carries the deduped name forward). We
+    // now only mark a name as "seen" when we actually decide to
+    // *keep* a file at that name (either via the fast-path skip
+    // when the previous file is still on disk and still in the
+    // server roster, or after writing a fresh download), so
+    // server-side deletions don't poison the dedupe set.
+    const seenNames = new Set<string>();
+    const currentFiles: Record<string, string> = {};
+    const seenServerIds = new Set<string>();
+    let paginationCompleted = false;
+    try {
+      for (let page = 0; page < MAX_PAGES; page += 1) {
+        const files = await svc
+          .getClient()
+          .listChannelFiles(id, page, PER_PAGE);
+        // Index variable used so the per-file dedupe fallbacks below
+        // (`kchat-file-<page>-<idx>` and `<stem>-<page>-<idx>.<ext>`)
+        // are O(1) per file instead of O(n) via `files.indexOf(fi)` —
+        // eleventh-pass Devin Review ANALYSIS_0007. The cap is
+        // `PER_PAGE = 60` so the old form was bounded at 3 600 ops
+        // per page, but the explicit index also documents intent.
+        for (let idx = 0; idx < files.length; idx += 1) {
+          const fi = files[idx];
+          if (typeof fi.id !== "string" || fi.id.length === 0) continue;
+          seenServerIds.add(fi.id);
 
-            // Fast-path: this file was downloaded in a previous run
-            // and the bytes are (presumably) still on disk. KChat
-            // file content is immutable per `fi.id` so we can skip
-            // the download and just carry the manifest entry
-            // forward. We still verify on-disk presence (and
-            // containment) so a user who manually deleted the file
-            // out of `cacheDir` triggers a re-download.
-            const recorded = previousManifest.files[fi.id];
-            if (typeof recorded === "string" && recorded.length > 0) {
-              const recordedPath = path.resolve(cacheDir, recorded);
-              if (
-                recordedPath !== resolvedCacheDir &&
-                recordedPath.startsWith(resolvedCacheDir + path.sep)
-              ) {
-                try {
-                  await fs.access(recordedPath);
-                  currentFiles[fi.id] = recorded;
-                  // Mark the kept name as taken so a later file in
-                  // this same sync that happens to have the same
-                  // base name gets the dedupe suffix and doesn't
-                  // overwrite our kept bytes.
-                  seenNames.add(recorded);
-                  continue;
-                } catch {
-                  // File missing on disk — fall through and
-                  // re-download. (Previously we also called
-                  // `seenNames.delete(recorded)` here to undo the
-                  // stale seeding from `previousManifest`; with
-                  // `seenNames` starting empty that delete is
-                  // unnecessary — the name was never added.)
-                }
-              }
-            }
-
-            const baseName = path.basename(fi.name);
-            const sanitisedId = fi.id.replace(/[^a-zA-Z0-9_-]/g, "_");
-            const idFallback = sanitisedId
-              ? `kchat-file-${sanitisedId}`
-              : `kchat-file-${page}-${files.indexOf(fi)}`;
-            const safeName =
-              baseName && baseName !== "." && baseName !== ".."
-                ? baseName
-                : idFallback;
-            // Dedupe within this channel sync: if we already wrote a
-            // file with this name on an earlier page (or earlier in
-            // this page), suffix the sanitised id between stem and
-            // extension so both files survive on disk. The fallback
-            // suffix uses the running `seenNames.size` if the
-            // primary `<stem>-<id>.<ext>` is also taken (shouldn't
-            // happen given the object-id invariant, but the
-            // containment + dedupe contract should hold even if a
-            // future server change relaxes id uniqueness).
-            let finalName = safeName;
-            if (seenNames.has(finalName)) {
-              const ext = path.extname(safeName);
-              const stem = ext
-                ? safeName.slice(0, safeName.length - ext.length)
-                : safeName;
-              const suffix = sanitisedId || `${page}-${files.indexOf(fi)}`;
-              finalName = `${stem}-${suffix}${ext}`;
-              if (seenNames.has(finalName)) {
-                finalName = `${stem}-${suffix}-${seenNames.size}${ext}`;
-              }
-            }
-            const targetPath = path.resolve(cacheDir, finalName);
+          // Fast-path: this file was downloaded in a previous run
+          // and the bytes are (presumably) still on disk. KChat
+          // file content is immutable per `fi.id` so we can skip
+          // the download and just carry the manifest entry
+          // forward. We still verify on-disk presence (and
+          // containment) so a user who manually deleted the file
+          // out of `cacheDir` triggers a re-download.
+          const recorded = previousManifest.files[fi.id];
+          if (typeof recorded === "string" && recorded.length > 0) {
+            const recordedPath = path.resolve(cacheDir, recorded);
             if (
-              targetPath !== resolvedCacheDir &&
-              !targetPath.startsWith(resolvedCacheDir + path.sep)
+              recordedPath !== resolvedCacheDir &&
+              recordedPath.startsWith(resolvedCacheDir + path.sep)
             ) {
-              // The sanitised path still escaped — skip and audit-log
-              // the rejection so operators can see a misbehaving
-              // server. We continue to the next file rather than
-              // aborting the entire sync.
-              bridge.bridgeLogKchatFileDownloaded(id, finalName, 0);
-              continue;
+              try {
+                await fs.access(recordedPath);
+                currentFiles[fi.id] = recorded;
+                // Mark the kept name as taken so a later file in
+                // this same sync that happens to have the same
+                // base name gets the dedupe suffix and doesn't
+                // overwrite our kept bytes.
+                seenNames.add(recorded);
+                continue;
+              } catch {
+                // File missing on disk — fall through and
+                // re-download. (Previously we also called
+                // `seenNames.delete(recorded)` here to undo the
+                // stale seeding from `previousManifest`; with
+                // `seenNames` starting empty that delete is
+                // unnecessary — the name was never added.)
+              }
             }
-            const bytes = await svc.getClient().downloadFile(fi.id);
-            await fs.writeFile(targetPath, bytes);
-            // Mark the name as taken AFTER the write succeeds so the
-            // ordering matches reality: `seenNames` is the set of
-            // names that actually have bytes on disk in this sync.
-            // If `downloadFile` / `writeFile` throw, the outer catch
-            // re-throws and the whole sync aborts; on retry,
-            // `seenNames` starts empty so a previously-failed name
-            // is not reserved (tenth-pass Devin Review ANALYSIS_0007).
-            seenNames.add(finalName);
-            currentFiles[fi.id] = finalName;
-            bridge.bridgeLogKchatFileDownloaded(
-              id,
-              finalName,
-              bytes.byteLength,
-            );
           }
-          if (files.length < PER_PAGE) break;
-        }
-        paginationCompleted = true;
 
-        // Convergent cleanup: ONLY after we've walked every page
-        // and the server roster is complete. Anything in the
-        // previous manifest whose `fi.id` is not in the current
-        // server roster has been deleted server-side — unlink it
-        // locally so the indexer doesn't keep crawling phantom
-        // files. Skip cleanup if pagination didn't complete
-        // (`seenServerIds` would be a partial view of the roster
-        // and we'd mis-delete files we just hadn't fetched yet).
-        //
-        // Eighth-pass invariant (Devin Review ANALYSIS_0002): we
-        // ALSO skip unlinking when some file in *this* sync
-        // currently claims the same on-disk name. This protects
-        // against the "deletion + same-name re-upload" race —
-        // the old fi.id is gone server-side, but a new fi.id has
-        // arrived with the same base name and just overwrote the
-        // bytes at that path. Unlinking by the old name here
-        // would delete the new file's bytes.
-        const namesClaimedByCurrentSync = new Set<string>(
-          Object.values(currentFiles),
-        );
-        for (const [oldId, oldName] of Object.entries(
-          previousManifest.files,
-        )) {
-          if (seenServerIds.has(oldId)) continue;
-          if (currentFiles[oldId]) continue;
-          if (typeof oldName !== "string" || oldName.length === 0) continue;
-          if (namesClaimedByCurrentSync.has(oldName)) continue;
-          const stalePath = path.resolve(cacheDir, oldName);
+          const baseName = path.basename(fi.name);
+          const sanitisedId = fi.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+          const idFallback = sanitisedId
+            ? `kchat-file-${sanitisedId}`
+            : `kchat-file-${page}-${idx}`;
+          const safeName =
+            baseName && baseName !== "." && baseName !== ".."
+              ? baseName
+              : idFallback;
+          // Dedupe within this channel sync: if we already wrote a
+          // file with this name on an earlier page (or earlier in
+          // this page), suffix the sanitised id between stem and
+          // extension so both files survive on disk. The fallback
+          // suffix uses the running `seenNames.size` if the
+          // primary `<stem>-<id>.<ext>` is also taken (shouldn't
+          // happen given the object-id invariant, but the
+          // containment + dedupe contract should hold even if a
+          // future server change relaxes id uniqueness).
+          let finalName = safeName;
+          if (seenNames.has(finalName)) {
+            const ext = path.extname(safeName);
+            const stem = ext
+              ? safeName.slice(0, safeName.length - ext.length)
+              : safeName;
+            const suffix = sanitisedId || `${page}-${idx}`;
+            finalName = `${stem}-${suffix}${ext}`;
+            if (seenNames.has(finalName)) {
+              finalName = `${stem}-${suffix}-${seenNames.size}${ext}`;
+            }
+          }
+          const targetPath = path.resolve(cacheDir, finalName);
           if (
-            stalePath === resolvedCacheDir ||
-            !stalePath.startsWith(resolvedCacheDir + path.sep)
+            targetPath !== resolvedCacheDir &&
+            !targetPath.startsWith(resolvedCacheDir + path.sep)
           ) {
-            // Containment check failed — the manifest is corrupt
-            // or was tampered with. Skip without unlinking (we
-            // refuse to operate on paths outside `cacheDir`).
+            // The sanitised path still escaped — skip and audit-log
+            // the rejection so operators can see a misbehaving
+            // server. We continue to the next file rather than
+            // aborting the entire sync.
+            bridge.bridgeLogKchatFileDownloaded(id, finalName, 0);
             continue;
           }
-          try {
-            await fs.unlink(stalePath);
-          } catch {
-            // File may have been removed manually or the unlink
-            // raced with the indexer; either way it's safe to
-            // drop the manifest entry below — the next sync will
-            // see the missing file and converge.
-          }
+          const bytes = await svc.getClient().downloadFile(fi.id);
+          await fs.writeFile(targetPath, bytes);
+          // Mark the name as taken AFTER the write succeeds so the
+          // ordering matches reality: `seenNames` is the set of
+          // names that actually have bytes on disk in this sync.
+          // If `downloadFile` / `writeFile` throw, the outer catch
+          // re-throws and the whole sync aborts; on retry,
+          // `seenNames` starts empty so a previously-failed name
+          // is not reserved (tenth-pass Devin Review ANALYSIS_0007).
+          seenNames.add(finalName);
+          currentFiles[fi.id] = finalName;
+          bridge.bridgeLogKchatFileDownloaded(
+            id,
+            finalName,
+            bytes.byteLength,
+          );
         }
-      } catch (err) {
-        throw toIpcError(err);
-      } finally {
-        // Persist whatever progress was made so a subsequent retry
-        // sees a consistent view of disk. On partial-failure this
-        // is a strict subset of the server roster (only files we
-        // actually wrote in this run); on full success it IS the
-        // server roster after deletions. Either way the manifest
-        // is the source of truth for the next run.
-        try {
-          // Merge: on partial failure currentFiles only contains
-          // files we wrote / verified this run — anything from the
-          // previous manifest that we didn't touch should still be
-          // recorded (we haven't unlinked it because we didn't
-          // reach the cleanup phase). On full success the deletion
-          // loop already pruned previousManifest entries we wanted
-          // gone, and seenServerIds is the authoritative roster.
-          const merged: Record<string, string> = paginationCompleted
-            ? currentFiles
-            : { ...previousManifest.files, ...currentFiles };
-          await writeManifest(cacheDir, {
-            version: 1,
-            channelId: id,
-            files: merged,
-          });
-        } catch {
-          // Best-effort: a failed manifest write is non-fatal. The
-          // worst case is the next sync re-downloads files that
-          // are already on disk, which is wasteful but correct.
-        }
+        if (files.length < PER_PAGE) break;
       }
+      paginationCompleted = true;
 
-      // BUG_0001 (eighth-pass Devin Review): `bridgeAddKchatChannel`
-      // is now idempotent on `cacheDir`. The Rust side returns
-      // `newlyCreated: true` only on the call that inserted the
-      // source row; every subsequent re-sync flips it to `false`
-      // and we skip the `KchatChannelLinked` audit append so the
-      // audit log doesn't accumulate one "linked" event per sync.
-      // The returned `sourceId` is stable across re-syncs (we
-      // reuse the existing row), so citations and evidence-pack
-      // references survive.
-      const outcome = bridge.bridgeAddKchatChannel(cacheDir);
-      if (outcome.newlyCreated) {
-        bridge.bridgeLogKchatChannelLinked(id, name, cacheDir);
+      // Convergent cleanup: ONLY after we've walked every page
+      // and the server roster is complete. Anything in the
+      // previous manifest whose `fi.id` is not in the current
+      // server roster has been deleted server-side — unlink it
+      // locally so the indexer doesn't keep crawling phantom
+      // files. Skip cleanup if pagination didn't complete
+      // (`seenServerIds` would be a partial view of the roster
+      // and we'd mis-delete files we just hadn't fetched yet).
+      //
+      // Eighth-pass invariant (Devin Review ANALYSIS_0002): we
+      // ALSO skip unlinking when some file in *this* sync
+      // currently claims the same on-disk name. This protects
+      // against the "deletion + same-name re-upload" race —
+      // the old fi.id is gone server-side, but a new fi.id has
+      // arrived with the same base name and just overwrote the
+      // bytes at that path. Unlinking by the old name here
+      // would delete the new file's bytes.
+      const namesClaimedByCurrentSync = new Set<string>(
+        Object.values(currentFiles),
+      );
+      for (const [oldId, oldName] of Object.entries(
+        previousManifest.files,
+      )) {
+        if (seenServerIds.has(oldId)) continue;
+        if (currentFiles[oldId]) continue;
+        if (typeof oldName !== "string" || oldName.length === 0) continue;
+        if (namesClaimedByCurrentSync.has(oldName)) continue;
+        const stalePath = path.resolve(cacheDir, oldName);
+        if (
+          stalePath === resolvedCacheDir ||
+          !stalePath.startsWith(resolvedCacheDir + path.sep)
+        ) {
+          // Containment check failed — the manifest is corrupt
+          // or was tampered with. Skip without unlinking (we
+          // refuse to operate on paths outside `cacheDir`).
+          continue;
+        }
+        try {
+          await fs.unlink(stalePath);
+        } catch {
+          // File may have been removed manually or the unlink
+          // raced with the indexer; either way it's safe to
+          // drop the manifest entry below — the next sync will
+          // see the missing file and converge.
+        }
       }
-      return { sourceId: outcome.source.id, cacheDir };
+    } catch (err) {
+      throw toIpcError(err);
+    } finally {
+      // Persist whatever progress was made so a subsequent retry
+      // sees a consistent view of disk. On partial-failure this
+      // is a strict subset of the server roster (only files we
+      // actually wrote in this run); on full success it IS the
+      // server roster after deletions. Either way the manifest
+      // is the source of truth for the next run.
+      try {
+        // Merge: on partial failure currentFiles only contains
+        // files we wrote / verified this run — anything from the
+        // previous manifest that we didn't touch should still be
+        // recorded (we haven't unlinked it because we didn't
+        // reach the cleanup phase). On full success the deletion
+        // loop already pruned previousManifest entries we wanted
+        // gone, and seenServerIds is the authoritative roster.
+        const merged: Record<string, string> = paginationCompleted
+          ? currentFiles
+          : { ...previousManifest.files, ...currentFiles };
+        await writeManifest(cacheDir, {
+          version: 1,
+          channelId: id,
+          files: merged,
+        });
+      } catch {
+        // Best-effort: a failed manifest write is non-fatal. The
+        // worst case is the next sync re-downloads files that
+        // are already on disk, which is wasteful but correct.
+      }
+    }
+
+    // BUG_0001 (eighth-pass Devin Review): `bridgeAddKchatChannel`
+    // is now idempotent on `cacheDir`. The Rust side returns
+    // `newlyCreated: true` only on the call that inserted the
+    // source row; every subsequent re-sync flips it to `false`
+    // and we skip the `KchatChannelLinked` audit append so the
+    // audit log doesn't accumulate one "linked" event per sync.
+    // The returned `sourceId` is stable across re-syncs (we
+    // reuse the existing row), so citations and evidence-pack
+    // references survive.
+    const outcome = bridge.bridgeAddKchatChannel(cacheDir);
+    if (outcome.newlyCreated) {
+      bridge.bridgeLogKchatChannelLinked(id, name, cacheDir);
+    }
+    return { sourceId: outcome.source.id, cacheDir };
   }
 
   idempotentHandle(
