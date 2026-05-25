@@ -331,14 +331,19 @@ impl SourceManager {
         // is reachable via multiple paths (symlinks, network mounts);
         // the Node side is the single source of truth for cache
         // location.
+        //
+        // Tenth-pass Devin Review ANALYSIS_0004: a previous version
+        // of this method did `list_sources().into_iter().find(...)`
+        // which loaded every connector's sources off disk and
+        // scanned them in-process. With hundreds of mixed-connector
+        // sources the linear scan dominated the cost of every
+        // channel re-sync. We now delegate to a dedicated
+        // `find_source_by_type_and_path` query that is backed by the
+        // composite `idx_sources_type_path` index (O(log n)) and
+        // does not allocate on the not-found path.
         if let Some(existing) = self
             .store
-            .list_sources()?
-            .into_iter()
-            .find(|s| {
-                matches!(s.source_type, tessera_core::SourceType::Kchat)
-                    && s.path == cache_dir
-            })
+            .find_source_by_type_and_path(&tessera_core::SourceType::Kchat, cache_dir)?
         {
             // Reindex in place to pick up files the Node side has
             // just downloaded since the last sync. Reusing the

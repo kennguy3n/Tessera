@@ -1842,3 +1842,175 @@ describe("sources:addKchatChannel — seenNames eighth-pass invariant", () => {
     }
   });
 });
+
+describe("sources:addKchatChannel — per-channel-id in-flight dedupe (tenth-pass invariant)", () => {
+  // Tenth-pass Devin Review ANALYSIS_0006.
+  //
+  // Two concurrent `sources:addKchatChannel` invocations for the SAME
+  // channelId must collapse into a single piece of work. If the
+  // dedupe is missing, both calls would walk the file roster
+  // independently, race on `fs.writeFile`s, and produce duplicate
+  // `KchatChannelLinked` audit rows for what users perceive as one
+  // operation. Calls for DIFFERENT channelIds must NOT block each
+  // other.
+
+  it("collapses two concurrent calls for the same channelId into a single sync (one download per file, one bridgeAddKchatChannel, one audit row)", async () => {
+    // Both calls share the same channelId. We stall the first
+    // listChannelFiles long enough for the second invocation to land
+    // and discover the in-flight Promise.
+    let release: () => void = () => {};
+    const blocker = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    clientMock.listChannelFiles.mockImplementationOnce(
+      async (_id: string, _page: number, _per: number) => {
+        await blocker;
+        return [
+          {
+            id: "fidconcurrentaaaaaaaa",
+            name: "design.md",
+            size: 5,
+            mime_type: "text/markdown",
+            extension: "md",
+            create_at: 1,
+          },
+        ];
+      },
+    );
+    clientMock.downloadFile.mockResolvedValue(new Uint8Array([1, 2, 3, 4, 5]));
+
+    const first = handler("sources:addKchatChannel")(
+      EVENT,
+      "chidconcurrent000000aa",
+      "concurrent-channel",
+    ) as Promise<{ sourceId: string; cacheDir: string }>;
+    const second = handler("sources:addKchatChannel")(
+      EVENT,
+      "chidconcurrent000000aa",
+      "concurrent-channel",
+    ) as Promise<{ sourceId: string; cacheDir: string }>;
+
+    // Let the work proceed.
+    release();
+    const [a, b] = await Promise.all([first, second]);
+
+    // Identical outcome — both callers see the same sourceId and
+    // cacheDir because they share the same Promise.
+    expect(a).toEqual(b);
+    // Only one pagination loop ran.
+    expect(clientMock.listChannelFiles).toHaveBeenCalledTimes(1);
+    // Only one downloadFile call (the single file).
+    expect(clientMock.downloadFile).toHaveBeenCalledTimes(1);
+    // The native bridge sees a single `bridgeAddKchatChannel` call
+    // and a single `bridgeLogKchatChannelLinked` audit append.
+    expect(bridgeMock.bridgeAddKchatChannel).toHaveBeenCalledTimes(1);
+    expect(bridgeMock.bridgeLogKchatChannelLinked).toHaveBeenCalledTimes(1);
+
+    const fs = await import("fs/promises");
+    await fs.rm(a.cacheDir, { recursive: true, force: true });
+    await fs
+      .rm(`${a.cacheDir}.manifest.json`, { force: true })
+      .catch(() => {});
+  });
+
+  it("does NOT block calls for a different channelId — both syncs run independently and in parallel", async () => {
+    let releaseA: () => void = () => {};
+    const blockerA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    // First call (channel A) stalls; second call (channel B) must
+    // proceed without waiting on it.
+    clientMock.listChannelFiles
+      .mockImplementationOnce(
+        async (_id: string, _page: number, _per: number) => {
+          await blockerA;
+          return [];
+        },
+      )
+      .mockImplementationOnce(
+        async (_id: string, _page: number, _per: number) => [],
+      );
+
+    const a = handler("sources:addKchatChannel")(
+      EVENT,
+      "chidparallelaaaaaaaaaa",
+      "channel-a",
+    ) as Promise<{ sourceId: string; cacheDir: string }>;
+    const b = handler("sources:addKchatChannel")(
+      EVENT,
+      "chidparallelbbbbbbbbbb",
+      "channel-b",
+    ) as Promise<{ sourceId: string; cacheDir: string }>;
+
+    // Channel B must settle WITHOUT releasing the channel-A blocker.
+    // We yield twice to let microtasks drain (downloadFile → write →
+    // bridgeAddKchatChannel) and then assert B has resolved.
+    const bSettled = await Promise.race([
+      b.then(() => "b-settled" as const),
+      new Promise<"timeout">((resolve) =>
+        setTimeout(() => resolve("timeout"), 200),
+      ),
+    ]);
+    expect(bSettled).toBe("b-settled");
+
+    // Now finish A.
+    releaseA();
+    const aResult = await a;
+    const bResult = await b;
+    expect(aResult.cacheDir).not.toBe(bResult.cacheDir);
+    expect(clientMock.listChannelFiles).toHaveBeenCalledTimes(2);
+
+    const fs = await import("fs/promises");
+    await fs.rm(aResult.cacheDir, { recursive: true, force: true });
+    await fs.rm(bResult.cacheDir, { recursive: true, force: true });
+    await fs
+      .rm(`${aResult.cacheDir}.manifest.json`, { force: true })
+      .catch(() => {});
+    await fs
+      .rm(`${bResult.cacheDir}.manifest.json`, { force: true })
+      .catch(() => {});
+  });
+
+  it("releases the in-flight slot on rejection so a retry can run a fresh sync", async () => {
+    // First call fails; the slot must be released. The retry sees
+    // an empty roster (no in-flight Promise) and runs fresh —
+    // resulting in TWO listChannelFiles calls overall, not one.
+    clientMock.listChannelFiles
+      .mockRejectedValueOnce(new Error("transient network error"))
+      .mockResolvedValueOnce([]);
+
+    await expect(
+      handler("sources:addKchatChannel")(
+        EVENT,
+        "chidretrycccccccccccc",
+        "retry-channel",
+      ),
+    ).rejects.toThrow(/transient network error/);
+
+    // Retry succeeds.
+    const out = (await handler("sources:addKchatChannel")(
+      EVENT,
+      "chidretrycccccccccccc",
+      "retry-channel",
+    )) as { sourceId: string; cacheDir: string };
+    expect(out.sourceId).toBeDefined();
+    expect(clientMock.listChannelFiles).toHaveBeenCalledTimes(2);
+
+    const fs = await import("fs/promises");
+    await fs.rm(out.cacheDir, { recursive: true, force: true });
+    await fs
+      .rm(`${out.cacheDir}.manifest.json`, { force: true })
+      .catch(() => {});
+  });
+
+  it("validates renderer input BEFORE consulting the in-flight map (malformed channelId rejects immediately)", async () => {
+    // A malformed channelId must throw at the assert-step regardless
+    // of whether another in-flight sync exists for some other id.
+    // We assert this by firing a malformed call with no pending work
+    // in the map.
+    await expect(
+      handler("sources:addKchatChannel")(EVENT, "!!!notvalid!!!", "bad-id"),
+    ).rejects.toThrow(/channelId/);
+    expect(clientMock.listChannelFiles).not.toHaveBeenCalled();
+  });
+});

@@ -667,16 +667,45 @@ export function registerKchatHandlers(): void {
   );
 
   // --- Channel-backed sources ---
-  idempotentHandle(
-    "sources:addKchatChannel",
-    async (
-      _event,
-      channelId: unknown,
-      channelName: unknown,
-    ): Promise<{ sourceId: string; cacheDir: string }> => {
-      const id = assertKchatId(channelId, "channelId");
-      const name = assertString(channelName, "channelName", { maxLen: 256 });
+  //
+  // Per-channel-id in-flight deduplication (tenth-pass Devin Review
+  // ANALYSIS_0006). `sources:addKchatChannel` is a multi-step
+  // operation: it downloads files, writes a manifest, runs the
+  // indexer, and registers the source row. Electron's `ipcMain.handle`
+  // dispatches calls concurrently, so a double-click on "Add channel",
+  // a programmatic caller, or a fast click before the UI's `busy`
+  // state has propagated could fire two simultaneous syncs for the
+  // same `channelId`. Two concurrent syncs would race on:
+  //   * the same `cacheDir` (concurrent `fs.writeFile`s to the same
+  //     filename, manifest write-then-rename races),
+  //   * the same `bridgeAddKchatChannel(cacheDir)` call (which the
+  //     eighth-pass fix made idempotent on the *result*, but two
+  //     interleaved reindex passes still waste work),
+  //   * audit appends (two `bridgeLogKchatChannelLinked` rows for
+  //     what users perceive as one operation).
+  //
+  // We collapse N concurrent calls for the same `channelId` into 1
+  // shared `Promise`: the first call starts the work, every
+  // subsequent call (for the same `channelId`, while still in
+  // flight) returns the same `Promise` and therefore the same
+  // `{ sourceId, cacheDir }` outcome. Different channels run in
+  // parallel unimpeded; only same-channel-id calls dedupe.
+  //
+  // We use a Map<channelId, Promise> rather than a per-channel mutex
+  // because a mutex would *serialise* — the second click would wait
+  // for the first sync to finish, then run another full sync. That
+  // would burn bandwidth on a redundant pass through the channel
+  // roster. Deduplication is the correct semantic: "this channel is
+  // syncing right now; here's the same answer."
+  const inFlightAddKchatChannel = new Map<
+    string,
+    Promise<{ sourceId: string; cacheDir: string }>
+  >();
 
+  async function runAddKchatChannel(
+    id: string,
+    name: string,
+  ): Promise<{ sourceId: string; cacheDir: string }> {
       const bridge = getBridge();
       if (!bridge) throw new Error("Native bridge not available");
 
@@ -871,9 +900,16 @@ export function registerKchatHandlers(): void {
               bridge.bridgeLogKchatFileDownloaded(id, finalName, 0);
               continue;
             }
-            seenNames.add(finalName);
             const bytes = await svc.getClient().downloadFile(fi.id);
             await fs.writeFile(targetPath, bytes);
+            // Mark the name as taken AFTER the write succeeds so the
+            // ordering matches reality: `seenNames` is the set of
+            // names that actually have bytes on disk in this sync.
+            // If `downloadFile` / `writeFile` throw, the outer catch
+            // re-throws and the whole sync aborts; on retry,
+            // `seenNames` starts empty so a previously-failed name
+            // is not reserved (tenth-pass Devin Review ANALYSIS_0007).
+            seenNames.add(finalName);
             currentFiles[fi.id] = finalName;
             bridge.bridgeLogKchatFileDownloaded(
               id,
@@ -977,6 +1013,39 @@ export function registerKchatHandlers(): void {
         bridge.bridgeLogKchatChannelLinked(id, name, cacheDir);
       }
       return { sourceId: outcome.source.id, cacheDir };
+  }
+
+  idempotentHandle(
+    "sources:addKchatChannel",
+    async (
+      _event,
+      channelId: unknown,
+      channelName: unknown,
+    ): Promise<{ sourceId: string; cacheDir: string }> => {
+      const id = assertKchatId(channelId, "channelId");
+      const name = assertString(channelName, "channelName", { maxLen: 256 });
+
+      // Per-channel-id in-flight dedupe (tenth-pass Devin Review
+      // ANALYSIS_0006). If a sync for this channel is already in
+      // progress, return its Promise so both callers settle
+      // identically; cleanup runs in `.finally` so the slot is
+      // released regardless of success/failure. Validation runs
+      // *before* the dedupe lookup so a malformed `channelId` is
+      // rejected with the same error shape whether or not another
+      // sync is running.
+      const existing = inFlightAddKchatChannel.get(id);
+      if (existing) return existing;
+      const work = runAddKchatChannel(id, name).finally(() => {
+        // Only clear if we still own the slot. (We always do under
+        // single-threaded JS, but the explicit guard documents the
+        // invariant and protects against a hypothetical future
+        // refactor that releases the slot earlier.)
+        if (inFlightAddKchatChannel.get(id) === work) {
+          inFlightAddKchatChannel.delete(id);
+        }
+      });
+      inFlightAddKchatChannel.set(id, work);
+      return work;
     },
   );
 }

@@ -183,6 +183,24 @@ impl SourceStore {
         )
         .map_err(|e| Error::Database(e.to_string()))?;
 
+        // Composite index on (source_type, path) so the idempotent
+        // KChat-channel registration in `SourceManager::add_kchat_channel`
+        // can locate an existing row in O(log n) instead of scanning
+        // every row in the table (tenth-pass Devin Review
+        // ANALYSIS_0004). The hot path is `find_source_by_type_and_path`,
+        // called once per channel sync; with hundreds of mixed-connector
+        // sources the previous `list_sources()` linear scan was the
+        // dominant cost on each re-sync. `source_type` is the leading
+        // column so the same index also covers future "list all KChat
+        // sources" / "list all Gmail sources" queries without a
+        // separate index.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sources_type_path
+             ON sources(source_type, path)",
+            [],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+
         Ok(())
     }
 
@@ -335,6 +353,80 @@ impl SourceStore {
                 },
             )
             .map_err(|e| Error::Database(e.to_string()))
+    }
+
+    /// Find the source row (if any) whose `source_type` and `path`
+    /// both match the given values. Used by
+    /// `SourceManager::add_kchat_channel` to make channel
+    /// registration idempotent on the cache-directory path in O(log n)
+    /// rather than scanning the entire sources table on every re-sync
+    /// (tenth-pass Devin Review ANALYSIS_0004).
+    ///
+    /// `source_type` is stored as its JSON discriminant in the
+    /// `sources.source_type` column (e.g. `"\"Kchat\""`), so the SQL
+    /// comparison is on the JSON-encoded form — caller passes a
+    /// `SourceType` value and we serialise it the same way `add_source`
+    /// does. The composite index `idx_sources_type_path` covers this
+    /// query.
+    ///
+    /// Returns `Ok(None)` when no matching row exists; only genuine
+    /// SQL/parse errors propagate as `Err`. This shape lets callers
+    /// distinguish "first sync (insert + audit linked event)" from
+    /// "re-sync (reindex existing row, suppress audit event)" without
+    /// allocating on the not-found path.
+    pub fn find_source_by_type_and_path(
+        &self,
+        source_type: &SourceType,
+        path: &str,
+    ) -> Result<Option<Source>> {
+        let type_str =
+            serde_json::to_string(source_type).map_err(|e| Error::Database(e.to_string()))?;
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, source_type, path, status, created_at, last_indexed, file_count
+                 FROM sources
+                 WHERE source_type = ?1 AND path = ?2
+                 LIMIT 1",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let mut rows = stmt
+            .query(params![type_str, path])
+            .map_err(|e| Error::Database(e.to_string()))?;
+        match rows.next().map_err(|e| Error::Database(e.to_string()))? {
+            Some(row) => {
+                let id_s: String = row.get(0).map_err(|e| Error::Database(e.to_string()))?;
+                let source_type_str: String =
+                    row.get(1).map_err(|e| Error::Database(e.to_string()))?;
+                let status_str: String =
+                    row.get(3).map_err(|e| Error::Database(e.to_string()))?;
+                let created_at_str: String =
+                    row.get(4).map_err(|e| Error::Database(e.to_string()))?;
+                let last_indexed_str: Option<String> =
+                    row.get(5).map_err(|e| Error::Database(e.to_string()))?;
+
+                let parsed_id = uuid::Uuid::parse_str(&id_s)
+                    .map_err(|e| Error::Database(format!("corrupt source.id: {e}")))?;
+                let parsed_type: SourceType = serde_json::from_str(&source_type_str)
+                    .map_err(|e| Error::Database(format!("corrupt source.source_type: {e}")))?;
+                let parsed_status: SourceStatus = serde_json::from_str(&status_str)
+                    .map_err(|e| Error::Database(format!("corrupt source.status: {e}")))?;
+                let row_path: String =
+                    row.get(2).map_err(|e| Error::Database(e.to_string()))?;
+                let file_count: i64 =
+                    row.get(6).map_err(|e| Error::Database(e.to_string()))?;
+                Ok(Some(Source {
+                    id: SourceId(parsed_id),
+                    source_type: parsed_type,
+                    path: row_path,
+                    status: parsed_status,
+                    created_at: parse_datetime(&created_at_str),
+                    last_indexed: last_indexed_str.as_deref().and_then(parse_datetime_opt),
+                    file_count: file_count as u64,
+                }))
+            }
+            None => Ok(None),
+        }
     }
 
     pub fn update_source_status(
@@ -1019,6 +1111,60 @@ mod tests {
         let sources = store.list_sources().unwrap();
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].path, "/tmp/test");
+    }
+
+    // Tenth-pass Devin Review ANALYSIS_0004: indexed equality lookup
+    // by (source_type, path). Used by SourceManager::add_kchat_channel
+    // for idempotent channel registration.
+    #[test]
+    fn find_source_by_type_and_path_locates_existing_kchat_row() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let kchat = Source::new_kchat_channel("/tmp/kchat/channel-A".to_string());
+        store.add_source(&kchat).unwrap();
+        // Mix in some other-type and other-path rows to confirm the
+        // query doesn't match them.
+        let folder = Source::new_local_folder("/tmp/kchat/channel-A".to_string());
+        store.add_source(&folder).unwrap();
+        let kchat_other = Source::new_kchat_channel("/tmp/kchat/channel-B".to_string());
+        store.add_source(&kchat_other).unwrap();
+
+        let found = store
+            .find_source_by_type_and_path(&SourceType::Kchat, "/tmp/kchat/channel-A")
+            .unwrap()
+            .expect("query should match the KChat row");
+        assert_eq!(found.id, kchat.id);
+        assert!(matches!(found.source_type, SourceType::Kchat));
+        assert_eq!(found.path, "/tmp/kchat/channel-A");
+    }
+
+    #[test]
+    fn find_source_by_type_and_path_returns_none_when_path_differs() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let kchat = Source::new_kchat_channel("/tmp/kchat/channel-A".to_string());
+        store.add_source(&kchat).unwrap();
+
+        let found = store
+            .find_source_by_type_and_path(&SourceType::Kchat, "/tmp/kchat/channel-Z")
+            .unwrap();
+        assert!(found.is_none(), "no row should match a different path");
+    }
+
+    #[test]
+    fn find_source_by_type_and_path_returns_none_when_type_differs() {
+        // A LocalFolder row at the same path must NOT be returned
+        // when the caller asks for a Kchat source — the composite
+        // index isolates the two namespaces.
+        let store = SourceStore::open_in_memory().unwrap();
+        let folder = Source::new_local_folder("/tmp/shared/path".to_string());
+        store.add_source(&folder).unwrap();
+
+        let found = store
+            .find_source_by_type_and_path(&SourceType::Kchat, "/tmp/shared/path")
+            .unwrap();
+        assert!(
+            found.is_none(),
+            "LocalFolder rows must not be returned when caller asked for Kchat"
+        );
     }
 
     #[test]
