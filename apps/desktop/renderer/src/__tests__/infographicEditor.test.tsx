@@ -423,5 +423,62 @@ describe("InfographicEditor hero image", () => {
     expect(html).toContain(
       'src="tessera-asset://generated-images/artifact-006/h.png"',
     );
+    // Width/height must appear unchanged for the normal numeric
+    // case — `escapeHtml(String(1024))` is `"1024"`, so the new
+    // belt-and-braces escape wrap added in the PR #38 post-merge
+    // follow-up is a no-op for valid inputs and must not regress
+    // the dimension contract that sizes the `<img>` slot in the
+    // export HTML.
+    expect(html).toContain('width="1024"');
+    expect(html).toContain('height="1024"');
+  });
+
+  it("HTML-escapes width/height in the preview HTML — defends against future type-relaxation injection", () => {
+    // Devin Review PR #38 post-merge follow-up: the `width="..."`
+    // and `height="..."` slots inside `<img>` were the only
+    // user-derived interpolations in `buildPreviewHtml`'s
+    // `<figure>` template that did NOT pass through `escapeHtml`.
+    // `sanitizeHeroImage` validates them as finite positive
+    // integers today (so `Number(n).toString()` is digits-only),
+    // but the consistency with every other interpolation in the
+    // same template string is what defends against a future
+    // refactor that relaxes the type to accept a string-typed
+    // `"100%"`-style dimension. This regression test pins the
+    // invariant programmatically by passing a hostile string
+    // through the `as unknown as number` escape hatch — the
+    // sanitizer-validated runtime type is `number`, but the
+    // template builder MUST still escape the value before
+    // interpolation.
+    const hostileWidth = '1024" onload="alert(1)' as unknown as number;
+    const hostileHeight = '1024" onerror="alert(2)' as unknown as number;
+    const html = buildPreviewHtml({
+      title: "Hero",
+      layout: "vertical",
+      colorScheme: { primary: "#7C3AED" },
+      sections: [{ heading: "A", body: "B" }],
+      heroImage: {
+        assetUrl: "tessera-asset://generated-images/artifact-006/h.png",
+        prompt: "p",
+        seed: 1,
+        width: hostileWidth,
+        height: hostileHeight,
+      },
+    });
+    // The hostile quote+attribute injection must be HTML-escaped:
+    // the raw `onload="alert(1)` / `onerror="alert(2)` sequence must
+    // NOT appear in the output, and the escaped form must be
+    // confined INSIDE the `width="..."` / `height="..."` attribute
+    // slot (i.e. the closing `"` after the hostile payload is the
+    // attribute terminator, not an attacker-controlled one). Assert
+    // the full escaped substring under the exact attribute key so
+    // this test specifically pins the width/height escape
+    // behaviour — a weaker `toContain("&quot;")` would pass even
+    // without the wrap because `escapeHtml(assetUrl)` and
+    // `escapeHtml(title)` already produce `&quot;` elsewhere in
+    // the template. Devin Review PR #41 follow-up tightening.
+    expect(html).not.toContain('onload="alert(1)');
+    expect(html).not.toContain('onerror="alert(2)');
+    expect(html).toContain('width="1024&quot; onload=&quot;alert(1)"');
+    expect(html).toContain('height="1024&quot; onerror=&quot;alert(2)"');
   });
 });

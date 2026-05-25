@@ -28,6 +28,7 @@ import { embedIcons } from "../services/iconResolver";
 import { sanitizeCssColor } from "../utils/cssColor";
 import { sanitizeIconSpec } from "../utils/iconSpec";
 import { sanitizeHeroImage, type HeroImage } from "../utils/heroImage";
+import { escapeHtml } from "../utils/htmlEscape";
 import { Plus, Trash2, ArrowUp, ArrowDown, X } from "lucide-react";
 
 export type InfographicLayout = "vertical" | "horizontal" | "grid";
@@ -563,10 +564,19 @@ export function buildPreviewHtml(data: InfographicContent): string {
   // verbatim) so we HTML-escape it
   // before interpolating into the `src` attribute as belt-and-
   // braces. Width/height are written to the DOM so the layout
-  // doesn't reflow when the image finishes decoding.
+  // doesn't reflow when the image finishes decoding. Width/height
+  // are also HTML-escaped — `sanitizeHeroImage` validates them as
+  // finite positive `Number.isSafeInteger` values today (so
+  // `Number(n).toString()` produces only digits, never HTML-special
+  // characters), but the consistency with every other interpolation
+  // in this template string defends against a future refactor that
+  // might relax the type to accept e.g. a string-typed `"100%"`
+  // dimension and would otherwise silently open an injection vector
+  // through the now-unescaped `width="${...}"` slot. Devin Review PR
+  // #38 post-merge follow-up.
   const heroHtml = data.heroImage
     ? `<figure class="infographic-hero">
-  <img src="${escapeHtml(data.heroImage.assetUrl)}" alt="${escapeHtml(data.title)}" width="${data.heroImage.width}" height="${data.heroImage.height}" />
+  <img src="${escapeHtml(data.heroImage.assetUrl)}" alt="${escapeHtml(data.title)}" width="${escapeHtml(String(data.heroImage.width))}" height="${escapeHtml(String(data.heroImage.height))}" />
 </figure>`
     : "";
 
@@ -581,15 +591,6 @@ export function buildPreviewHtml(data: InfographicContent): string {
   </div>
 </div>`;
   return embedIcons(html);
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 /**
