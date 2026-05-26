@@ -114,6 +114,97 @@ export interface KchatPostedEvent {
   team_id: string;
 }
 
+/**
+ * Narrowed `post_edited` event payload. KChat surfaces the
+ * stringified updated post; the substrate uses the post id +
+ * channel id + new body to re-chunk under the existing
+ * `indexed_files` row. The wire shape mirrors `posted` closely;
+ * we declare it as a distinct interface so the forwarder can
+ * route the two events to different bridge entry points
+ * (`bridge_ingest_kchat_post` vs `bridge_edit_kchat_post`)
+ * without ambiguity at the call site.
+ *
+ * Block C Task 1 (Phase 7).
+ */
+export interface KchatPostEditedEvent {
+  channel_display_name: string;
+  channel_name: string;
+  channel_type: string;
+  post: string;
+  sender_name: string;
+  team_id: string;
+}
+
+/**
+ * Narrowed `post_deleted` event payload. KChat does not
+ * resurface the body on delete, so this carries only the
+ * stringified post envelope (the substrate uses `post.id` +
+ * `post.channel_id` to find the row).
+ *
+ * Block C Task 1 (Phase 7).
+ */
+export interface KchatPostDeletedEvent {
+  channel_display_name?: string;
+  channel_name?: string;
+  channel_type?: string;
+  post: string;
+  team_id?: string;
+}
+
+/**
+ * Sanitised view of a single KChat post body. Returned by
+ * [`KchatClient.getPost`] and as the array element of
+ * [`KchatPostListPage`]. Mirrors the small subset of fields the
+ * substrate ingestion path actually consumes — full KChat
+ * `Post` envelopes carry ~20 metadata fields most of which we
+ * never store.
+ *
+ * Block C Task 1 (Phase 8).
+ */
+export interface KchatPostInfo {
+  id: string;
+  channelId: string;
+  /** Root id for thread replies; `null` for top-level posts. */
+  rootId: string | null;
+  /** Author user id. */
+  userId: string;
+  /** Post body as KChat stores it (no markdown-stripping). */
+  message: string;
+  /** Server-side create timestamp (ms since epoch). */
+  createAt: number;
+  /**
+   * Server-side last-edit timestamp (ms since epoch); `0` for
+   * posts that have never been edited. The substrate uses this
+   * to disambiguate stale `post_edited` deliveries from real
+   * edits via the message-hash check, but the column is still
+   * surfaced here so renderer-side audit views can render the
+   * "(edited)" marker without a substrate round-trip.
+   */
+  editAt: number;
+}
+
+/**
+ * Pagination result from [`KchatClient.getPostsForChannel`]. The
+ * `hasMore` flag is `true` whenever the request returned a full
+ * page; the caller advances by passing `beforeId` set to the
+ * oldest post id in the current page (chronological-descending
+ * cursor). Mirrors the contract KChat's `GET
+ * /channels/{id}/posts` returns under the `prev_post_id` cursor
+ * model, but flattened to the field names the renderer + audit
+ * surfaces consume.
+ *
+ * Block C Task 1 (Phase 8).
+ */
+export interface KchatPostListPage {
+  posts: KchatPostInfo[];
+  /** Cursor for the next-older page; `null` when no more posts. */
+  prevPostId: string | null;
+  /** Cursor for the next-newer page; `null` at the channel head. */
+  nextPostId: string | null;
+  /** `true` when the server signalled there are older posts to fetch. */
+  hasMore: boolean;
+}
+
 /** Narrowed `channel_member_updated` event payload. */
 export interface KchatChannelMemberUpdatedEvent {
   channelMember: KchatChannelMember;

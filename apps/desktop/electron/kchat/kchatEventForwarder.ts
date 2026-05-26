@@ -113,6 +113,7 @@ import type {
 import type {
   KchatAclRefreshOutcomeInfo,
   KchatConnectionStateView,
+  KchatPostIngestInputInfo,
   KchatRevokeOutcomeInfo,
   KchatWebSocketEventPayload,
 } from "../../shared/types";
@@ -232,6 +233,11 @@ interface KchatRevokeOutcomeView {
   outcome: "revoked" | "already_revoked" | "unlinked";
   chunksDropped: number;
   filesDropped: number;
+  // Block C Task 2 (Phase 12): chat-post + DEK observability
+  // surface threaded through bridge → forwarder → audit logger
+  // alongside the existing chunks/files counts.
+  postsDropped: number;
+  dekDropped: boolean;
   // Fifth-pass Devin Review fix
   // (ANALYSIS_pr-review-job-ef3c7d6c..._0001): VACUUM observability
   // surface threaded through bridge → forwarder → audit logger.
@@ -249,6 +255,9 @@ interface KchatAclRefreshOutcomeView {
   principalPresent: boolean;
   chunksDropped: number;
   filesDropped: number;
+  // Block C Task 2 (Phase 12): see `KchatRevokeOutcomeView` above.
+  postsDropped: number;
+  dekDropped: boolean;
   // Fifth-pass Devin Review fix
   // (ANALYSIS_pr-review-job-ef3c7d6c..._0001): see
   // `KchatRevokeOutcomeView` above.
@@ -370,6 +379,83 @@ export function toRendererEventView(
     seq: raw.seq,
     data: raw.data,
   };
+}
+
+/**
+ * Narrowed shape extracted from a KChat WS `posted` /
+ * `post_edited` / `post_deleted` event's stringified `post`
+ * payload. KChat embeds the full post envelope as a JSON
+ * string on `data.post`; we parse it just-in-time inside the
+ * forwarder so the validation lives next to the consumer that
+ * cares.
+ *
+ * Block C Task 1 (Phase 12).
+ */
+interface ParsedPostPayload {
+  id: string;
+  channelId: string;
+  rootId: string | null;
+  userId: string;
+  message: string;
+  createAt: number;
+  editAt: number;
+}
+
+/**
+ * Parse a WS post envelope out of `view.data`. Returns `null`
+ * on malformed input — the forwarder routes that case to a
+ * `no_post` audit row so the failure is observable without
+ * wedging the event loop.
+ *
+ * Tolerates the two known wire shapes:
+ *   - `data.post` as a JSON string (the canonical shape KChat
+ *     sends today).
+ *   - `data.post` as an already-parsed object (defensive — keeps
+ *     the forwarder forwards-compatible if KChat ever pre-parses
+ *     server-side, and matches what our test fixtures emit).
+ *
+ * Block C Task 1 (Phase 12).
+ */
+export function parsePostPayload(
+  data: Record<string, unknown>,
+): ParsedPostPayload | null {
+  const raw = data.post;
+  let obj: Record<string, unknown> | null = null;
+  if (typeof raw === "string" && raw.length > 0) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed !== null && typeof parsed === "object") {
+        obj = parsed as Record<string, unknown>;
+      }
+    } catch {
+      return null;
+    }
+  } else if (raw !== null && typeof raw === "object") {
+    obj = raw as Record<string, unknown>;
+  }
+  if (obj === null) return null;
+
+  const id = typeof obj.id === "string" ? obj.id : null;
+  const channelId =
+    typeof obj.channel_id === "string" ? obj.channel_id : null;
+  const userId = typeof obj.user_id === "string" ? obj.user_id : null;
+  const message = typeof obj.message === "string" ? obj.message : null;
+  const createAt = typeof obj.create_at === "number" ? obj.create_at : null;
+  const editAt = typeof obj.edit_at === "number" ? obj.edit_at : 0;
+  const rootIdRaw = obj.root_id;
+  const rootId =
+    typeof rootIdRaw === "string" && rootIdRaw.length > 0 ? rootIdRaw : null;
+
+  if (
+    id === null ||
+    channelId === null ||
+    userId === null ||
+    message === null ||
+    createAt === null
+  ) {
+    return null;
+  }
+  return { id, channelId, rootId, userId, message, createAt, editAt };
 }
 
 /**
@@ -686,6 +772,38 @@ export class KchatEventForwarder {
       this.handleChannelGoneEvent(view).catch((err) => {
         console.error(
           "[KchatEventForwarder] channel-gone side-effect failed:",
+          err,
+        );
+      });
+    } else if (view.event === "posted") {
+      // Block C Task 1 (Phase 12): a new chat post; ingest the
+      // body so retrieval can surface it alongside the channel's
+      // file evidence. Body parsing + AEAD sealing happens
+      // under `withChannelSyncLock` inside `handlePostedEvent`.
+      this.handlePostedEvent(view).catch((err) => {
+        console.error(
+          "[KchatEventForwarder] posted side-effect failed:",
+          err,
+        );
+      });
+    } else if (view.event === "post_edited") {
+      // Block C Task 1 (Phase 12): a chat post body was edited;
+      // re-chunk under the same indexed_file row so retrieval
+      // surfaces the latest text without leaving an orphan
+      // ciphertext copy.
+      this.handlePostEditedEvent(view).catch((err) => {
+        console.error(
+          "[KchatEventForwarder] post_edited side-effect failed:",
+          err,
+        );
+      });
+    } else if (view.event === "post_deleted") {
+      // Block C Task 1 (Phase 12): a chat post was deleted;
+      // drop the bookkeeping row + sealed chunks so retrieval
+      // can no longer surface the body.
+      this.handlePostDeletedEvent(view).catch((err) => {
+        console.error(
+          "[KchatEventForwarder] post_deleted side-effect failed:",
           err,
         );
       });
@@ -1182,6 +1300,12 @@ export class KchatEventForwarder {
     // gate emission on `outcome === "revoked"` below.
     let chunksDropped = 0;
     let filesDropped = 0;
+    // Block C Task 2 (Phase 12): chat-post + DEK counters captured
+    // from the bridge's `KchatAclRefreshOutcomeInfo`. Default 0 /
+    // false so non-revoke + unlinked paths still emit a
+    // well-formed (zero-count) shred row when applicable.
+    let postsDropped = 0;
+    let dekDropped = false;
     // Block B Task 4 (Phase 11) third-pass Devin Review fix:
     // filesystem-scrub outcome captured from
     // `secureDeleteChannelArtifacts` so the audit row records
@@ -1215,6 +1339,8 @@ export class KchatEventForwarder {
             principalPresent: false,
             chunksDropped: 0,
             filesDropped: 0,
+            postsDropped: 0,
+            dekDropped: false,
             fsScrubSucceeded: true,
             fsScrubError: undefined as string | undefined,
             vacuumSucceeded: true,
@@ -1293,6 +1419,8 @@ export class KchatEventForwarder {
           principalPresent: r.principalPresent,
           chunksDropped: r.chunksDropped,
           filesDropped: r.filesDropped,
+          postsDropped: r.postsDropped,
+          dekDropped: r.dekDropped,
           fsScrubSucceeded: scrubSucceeded,
           fsScrubError: scrubError,
           vacuumSucceeded: r.vacuumSucceeded,
@@ -1304,6 +1432,8 @@ export class KchatEventForwarder {
       principalPresent = result.principalPresent;
       chunksDropped = result.chunksDropped;
       filesDropped = result.filesDropped;
+      postsDropped = result.postsDropped;
+      dekDropped = result.dekDropped;
       fsScrubSucceeded = result.fsScrubSucceeded;
       fsScrubError = result.fsScrubError;
       vacuumSucceeded = result.vacuumSucceeded;
@@ -1342,6 +1472,8 @@ export class KchatEventForwarder {
         "principal_missing_from_roster",
         chunksDropped,
         filesDropped,
+        postsDropped,
+        dekDropped,
         fsScrubSucceeded,
         fsScrubError,
         vacuumSucceeded,
@@ -1446,6 +1578,8 @@ export class KchatEventForwarder {
       outcome: "unlinked",
       chunksDropped: 0,
       filesDropped: 0,
+      postsDropped: 0,
+      dekDropped: false,
       fsScrubSucceeded: true,
       fsScrubError: undefined,
       vacuumSucceeded: true,
@@ -1481,6 +1615,8 @@ export class KchatEventForwarder {
     const outcome = result.outcome;
     const chunksDropped = result.chunksDropped;
     const filesDropped = result.filesDropped;
+    const postsDropped = result.postsDropped;
+    const dekDropped = result.dekDropped;
     const fsScrubSucceeded = result.fsScrubSucceeded;
     const fsScrubError = result.fsScrubError;
     // Fifth-pass Devin Review fix
@@ -1512,10 +1648,263 @@ export class KchatEventForwarder {
         reason,
         chunksDropped,
         filesDropped,
+        postsDropped,
+        dekDropped,
         fsScrubSucceeded,
         fsScrubError,
         vacuumSucceeded,
         vacuumError,
+      );
+    }
+  }
+
+  /**
+   * Block C Task 1 (Phase 12): side-effect path for `posted` WS
+   * events. Sequence:
+   *   1. Drop if missing channel id / client / bridge.
+   *   2. Skip the linked-channel fast path: no source row, no
+   *      ingestion.
+   *   3. Parse the stringified post body out of `view.data.post`.
+   *   4. Under `withChannelSyncLock(channelId)`, call
+   *      `bridgeIngestKchatPost`. The substrate handles dedupe,
+   *      chunking, AEAD sealing under the per-source DEK, and
+   *      bookkeeping atomically.
+   *   5. Emit `KchatPostIngested` audit row with the substrate's
+   *      outcome short-code + chunk count.
+   *
+   * `cacheDir` is the per-channel cache directory the file-ingest
+   * path also uses; the substrate keys per-source DEKs by source
+   * row id, not by path, so the two paths share the same DEK as
+   * long as they share the same source row.
+   */
+  private async handlePostedEvent(
+    view: KchatWebSocketEventView,
+  ): Promise<void> {
+    await this.handlePostIngestEvent(view, /* isEdit */ false);
+  }
+
+  /**
+   * Block C Task 1 (Phase 12): side-effect path for `post_edited`
+   * WS events. Routes to `bridgeEditKchatPost` (which under the
+   * hood is the same substrate code path as ingest — KChat
+   * doesn't pre-track which post id was edited, only the new
+   * body — but routes to a distinct audit event so the trail
+   * can distinguish "first delivery" from "edit").
+   */
+  private async handlePostEditedEvent(
+    view: KchatWebSocketEventView,
+  ): Promise<void> {
+    await this.handlePostIngestEvent(view, /* isEdit */ true);
+  }
+
+  /**
+   * Shared ingest + edit body. Pulls the post out of the WS
+   * payload, validates ids, acquires the per-channel lock, hands
+   * to the bridge, then audits.
+   */
+  private async handlePostIngestEvent(
+    view: KchatWebSocketEventView,
+    isEdit: boolean,
+  ): Promise<void> {
+    const bridge = this.getBridgeFn();
+    if (!bridge) return;
+
+    const channelId = view.channelId;
+    if (channelId === null) return;
+
+    const parsed = parsePostPayload(view.data);
+    if (parsed === null) {
+      // Malformed event — log a "no_post" audit so operators
+      // can grep for it without leaving a silent drop.
+      const evt = isEdit ? "post_edited" : "posted";
+      this.safeAuditPostIngested(bridge, channelId, "", "no_post", 0, isEdit);
+      void evt;
+      return;
+    }
+
+    const cacheDir = kchatChannelCacheDir(channelId);
+
+    // Linked-channel fast path: skip the bridge call entirely
+    // when no source row exists for `cacheDir`. Saves a JSON
+    // round-trip across the napi boundary on the (common)
+    // unlinked-channel case.
+    let isLinked = false;
+    try {
+      isLinked = bridge.bridgeIsKchatChannelLinked(cacheDir);
+    } catch (err) {
+      console.error(
+        "[KchatEventForwarder] bridgeIsKchatChannelLinked failed:",
+        err,
+      );
+    }
+    if (!isLinked) {
+      this.safeAuditPostIngested(
+        bridge,
+        channelId,
+        parsed.id,
+        "unlinked",
+        0,
+        isEdit,
+      );
+      return;
+    }
+
+    let outcomeShortCode = "unlinked";
+    let chunkCount = 0;
+    try {
+      const r = await withChannelSyncLock(channelId, async () => {
+        if (!bridge.bridgeIsKchatChannelLinked(cacheDir)) {
+          return { outcome: "unlinked" as const, chunkCount: 0 };
+        }
+        const input: KchatPostIngestInputInfo = {
+          cacheDir,
+          postId: parsed.id,
+          channelId,
+          rootId: parsed.rootId ?? undefined,
+          senderUserId: parsed.userId,
+          body: parsed.message,
+          createdAtMs: parsed.createAt,
+          editedAtMs: parsed.editAt,
+        };
+        const out = isEdit
+          ? bridge.bridgeEditKchatPost(input)
+          : bridge.bridgeIngestKchatPost(input);
+        return { outcome: out.outcome, chunkCount: out.chunkCount };
+      });
+      outcomeShortCode = r.outcome;
+      chunkCount = r.chunkCount;
+    } catch (err) {
+      console.error(
+        "[KchatEventForwarder] post ingest failed:",
+        err,
+      );
+    }
+
+    this.safeAuditPostIngested(
+      bridge,
+      channelId,
+      parsed.id,
+      outcomeShortCode,
+      chunkCount,
+      isEdit,
+    );
+  }
+
+  /**
+   * Block C Task 1 (Phase 12): side-effect path for `post_deleted`
+   * WS events. Pulls the post id out of the WS payload, takes
+   * the per-channel lock, drops the substrate evidence.
+   */
+  private async handlePostDeletedEvent(
+    view: KchatWebSocketEventView,
+  ): Promise<void> {
+    const bridge = this.getBridgeFn();
+    if (!bridge) return;
+
+    const channelId = view.channelId;
+    if (channelId === null) return;
+
+    const parsed = parsePostPayload(view.data);
+    if (parsed === null) {
+      this.safeAuditPostDeleted(bridge, channelId, "", "no_post", 0);
+      return;
+    }
+
+    const cacheDir = kchatChannelCacheDir(channelId);
+    let isLinked = false;
+    try {
+      isLinked = bridge.bridgeIsKchatChannelLinked(cacheDir);
+    } catch (err) {
+      console.error(
+        "[KchatEventForwarder] bridgeIsKchatChannelLinked failed:",
+        err,
+      );
+    }
+    if (!isLinked) {
+      this.safeAuditPostDeleted(bridge, channelId, parsed.id, "unlinked", 0);
+      return;
+    }
+
+    let outcomeShortCode = "unlinked";
+    let chunksDropped = 0;
+    try {
+      const r = await withChannelSyncLock(channelId, async () => {
+        if (!bridge.bridgeIsKchatChannelLinked(cacheDir)) {
+          return { outcome: "unlinked" as const, chunksDropped: 0 };
+        }
+        const out = bridge.bridgeDeleteKchatPost(cacheDir, parsed.id);
+        return { outcome: out.outcome, chunksDropped: out.chunksDropped };
+      });
+      outcomeShortCode = r.outcome;
+      chunksDropped = r.chunksDropped;
+    } catch (err) {
+      console.error(
+        "[KchatEventForwarder] post delete failed:",
+        err,
+      );
+    }
+
+    this.safeAuditPostDeleted(
+      bridge,
+      channelId,
+      parsed.id,
+      outcomeShortCode,
+      chunksDropped,
+    );
+  }
+
+  /**
+   * No-throw audit append for the post-body ingest / edit path.
+   * `isEdit` routes to `bridgeLogKchatPostEdited` vs
+   * `bridgeLogKchatPostIngested` so the audit trail can
+   * distinguish first-delivery from edit-redelivery.
+   */
+  private safeAuditPostIngested(
+    bridge: NativeBridge,
+    channelId: string,
+    postId: string,
+    outcome: string,
+    chunkCount: number,
+    isEdit: boolean,
+  ): void {
+    try {
+      if (isEdit) {
+        bridge.bridgeLogKchatPostEdited(channelId, postId, outcome, chunkCount);
+      } else {
+        bridge.bridgeLogKchatPostIngested(
+          channelId,
+          postId,
+          outcome,
+          chunkCount,
+        );
+      }
+    } catch (err) {
+      console.error(
+        "[KchatEventForwarder] post-ingest audit log failed:",
+        err,
+      );
+    }
+  }
+
+  /** No-throw audit append for the post-delete path. */
+  private safeAuditPostDeleted(
+    bridge: NativeBridge,
+    channelId: string,
+    postId: string,
+    outcome: string,
+    chunksDropped: number,
+  ): void {
+    try {
+      bridge.bridgeLogKchatPostDeleted(
+        channelId,
+        postId,
+        outcome,
+        chunksDropped,
+      );
+    } catch (err) {
+      console.error(
+        "[KchatEventForwarder] post-delete audit log failed:",
+        err,
       );
     }
   }
@@ -1593,6 +1982,8 @@ export class KchatEventForwarder {
     reason: string,
     chunksDropped: number,
     filesDropped: number,
+    postsDropped: number,
+    dekDropped: boolean,
     fsScrubSucceeded: boolean,
     fsScrubError: string | undefined,
     vacuumSucceeded: boolean,
@@ -1604,6 +1995,8 @@ export class KchatEventForwarder {
         reason,
         chunksDropped,
         filesDropped,
+        postsDropped,
+        dekDropped,
         fsScrubSucceeded,
         fsScrubError,
         vacuumSucceeded,

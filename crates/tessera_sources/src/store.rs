@@ -172,6 +172,75 @@ impl SourceStore {
             -- scanning the full ACL table.
             CREATE INDEX IF NOT EXISTS idx_kchat_source_acl_member
                 ON kchat_source_acl(member_user_id);
+
+            -- Block C Task 2 (Phase 12): per-source data-encryption-key
+            -- (DEK) lifecycle table. One row per KChat-channel source
+            -- that has ever ingested a chat-post body chunk. The
+            -- wrapped DEK is generated lazily on the first
+            -- `ingest_kchat_post` call for the source; subsequent
+            -- ingests reuse the existing row. The row is dropped
+            -- (and the in-memory DEK is zeroized) by
+            -- `cryptoshred_kchat_source_evidence` so a leaked SQLCipher
+            -- master key cannot decrypt any surviving AEAD ciphertext
+            -- bytes for that source.
+            --
+            -- `wrap_nonce` (12 bytes) + `wrapped_dek` (48 bytes = 32-byte
+            -- DEK + 16-byte GCM tag) are stored as BLOBs because they
+            -- are uniform random bytes; storing them as base64 TEXT
+            -- would double the on-disk footprint with no observability
+            -- benefit (the keychain integrity check already happens at
+            -- unwrap time via the GCM tag). `ON DELETE CASCADE` makes
+            -- a future `remove_source` automatically drop the wrapped
+            -- DEK row too, so an operator cannot silently leave a
+            -- DEK lying around when removing a source the normal way.
+            CREATE TABLE IF NOT EXISTS kchat_source_deks (
+                source_id TEXT PRIMARY KEY,
+                wrap_nonce BLOB NOT NULL,
+                wrapped_dek BLOB NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
+            );
+
+            -- Block C Task 1 (Phase 12): per-post bookkeeping. Maps
+            -- the KChat-server-issued post_id to the local
+            -- `indexed_files` row that holds its chunks, so a
+            -- `post_edited` or `post_deleted` event can locate the
+            -- existing rows in O(log n) and re-chunk / delete them
+            -- without scanning every chunk in the channel.
+            --
+            -- `message_hash` (BLAKE3 of the trimmed post body) is the
+            -- dedupe key for idempotent re-ingestion of an unchanged
+            -- post: a `posted` event that arrives twice (e.g. server
+            -- replay during reconnect) finds the existing row with
+            -- the same hash and skips the chunk insert. An edit
+            -- bumps the hash; the manager re-chunks under a
+            -- transaction (delete-old-chunks + insert-new).
+            --
+            -- `root_id` is the KChat thread root for replies; NULL
+            -- for top-level posts. `sender_user_id` is the post
+            -- author; both are stored so retrieval surfaces can
+            -- carry citation metadata into the renderer without
+            -- another round-trip through KChat REST.
+            CREATE TABLE IF NOT EXISTS kchat_posts (
+                source_id TEXT NOT NULL,
+                post_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                root_id TEXT,
+                sender_user_id TEXT NOT NULL,
+                indexed_file_id INTEGER NOT NULL,
+                message_hash TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                edited_at_ms INTEGER NOT NULL,
+                ingested_at TEXT NOT NULL,
+                PRIMARY KEY (source_id, post_id),
+                FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE,
+                FOREIGN KEY (indexed_file_id) REFERENCES indexed_files(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_kchat_posts_channel
+                ON kchat_posts(channel_id, post_id);
+            CREATE INDEX IF NOT EXISTS idx_kchat_posts_indexed_file
+                ON kchat_posts(indexed_file_id);
             ",
             )
             .map_err(|e| Error::Database(e.to_string()))?;
@@ -203,6 +272,45 @@ impl SourceStore {
                 continue;
             }
             let sql = format!("ALTER TABLE chunks ADD COLUMN {column} TEXT");
+            conn.execute(&sql, [])
+                .map_err(|e| Error::Database(format!("failed to add chunks.{column}: {e}")))?;
+        }
+
+        // Block C Task 2 (Phase 12) chunks AEAD migration. Three new
+        // columns, all NULLable, all backwards-compatible with the
+        // existing file-sourced rows:
+        //
+        // - `kind` discriminates a `file_chunk` (extracted from a
+        //   filesystem artifact) from a `chat_post` (a KChat post
+        //   body). Legacy rows are written before this column
+        //   existed, so they read as NULL and are interpreted as
+        //   `file_chunk` for retrieval. New rows always carry a
+        //   non-NULL value.
+        // - `content_aead` is the AES-256-GCM ciphertext of the
+        //   chunk content under the per-source DEK. Populated only
+        //   on `chat_post` rows; NULL on file_chunk rows (where the
+        //   plaintext in `content` is the only canonical copy).
+        // - `content_aead_nonce` is the 12-byte AES-GCM nonce that
+        //   produced `content_aead`. NULL when `content_aead` is.
+        //
+        // The plaintext copy in `content` is retained for chat_post
+        // rows too — FTS5 needs it to tokenize for retrieval — but
+        // both copies are dropped in lockstep by
+        // `cryptoshred_kchat_source_evidence` (single DELETE +
+        // secure_delete + VACUUM), so retaining the plaintext does
+        // not weaken the long-term cryptographic forgetting
+        // guarantee. The DEK destruction at the same time is what
+        // makes the surviving AEAD bytes (if a backup leaked
+        // between DELETE and the freelist sweep) unrecoverable.
+        for (column, ty) in [
+            ("kind", "TEXT"),
+            ("content_aead", "BLOB"),
+            ("content_aead_nonce", "BLOB"),
+        ] {
+            if existing_columns.contains(column) {
+                continue;
+            }
+            let sql = format!("ALTER TABLE chunks ADD COLUMN {column} {ty}");
             conn.execute(&sql, [])
                 .map_err(|e| Error::Database(format!("failed to add chunks.{column}: {e}")))?;
         }
@@ -745,6 +853,30 @@ impl SourceStore {
             )
             .map_err(|e| Error::Database(e.to_string()))?;
 
+        // Block C Task 2 (Phase 12): count the per-post bookkeeping
+        // rows and the wrapped-DEK row that the scrub will also drop.
+        // Surfacing both counts on the audit row gives operators a
+        // straight observability signal that the DEK destruction
+        // step succeeded (a `KchatChannelAccessRevoked` row WITHOUT a
+        // matching `KchatSourceCryptoshredded` carrying
+        // `dek_dropped=true` would mean the post-evidence layer was
+        // not cryptographically retired).
+        let posts_to_drop: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kchat_posts WHERE source_id = ?1",
+                params![id_str],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let dek_to_drop: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kchat_source_deks WHERE source_id = ?1",
+                params![id_str],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
         // Phase 2 — enable secure_delete BEFORE the DELETEs so the
         // freed pages are zero-filled at delete time. This is what
         // makes the scrub resilient to a later VACUUM failure: even
@@ -803,8 +935,38 @@ impl SourceStore {
             )
             .map_err(|e| Error::Database(e.to_string()))?;
 
+            // Drop the kchat_posts bookkeeping rows BEFORE
+            // `indexed_files` because the post row has a FK to
+            // `indexed_files.id` that does NOT cascade — the FK is
+            // a referential integrity guard for the manager's
+            // edit/delete paths, not a delete trigger. Letting the
+            // indexed_files DELETE fire first would FK-fail the
+            // shred.
+            txn.execute(
+                "DELETE FROM kchat_posts WHERE source_id = ?1",
+                params![id_str],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
             txn.execute(
                 "DELETE FROM indexed_files WHERE source_id = ?1",
+                params![id_str],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+            // Block C Task 2 (Phase 12): drop the wrapped-DEK row
+            // INSIDE the same transaction so a crash between the
+            // chunk-scrub and the DEK-row deletion cannot leave a
+            // wrapped DEK pointing at chunk rows that no longer
+            // exist. The caller (manager.rs) ALSO calls
+            // `KchatCrypto::forget_dek` on the in-memory cache after
+            // this function returns, so the in-process bytes are
+            // zeroized too. Together these make the
+            // cryptoshred-after-revoke invariant complete: chunks +
+            // AEAD bytes + persisted DEK + in-memory DEK are all
+            // gone before the source's revoke event finishes.
+            txn.execute(
+                "DELETE FROM kchat_source_deks WHERE source_id = ?1",
                 params![id_str],
             )
             .map_err(|e| Error::Database(e.to_string()))?;
@@ -922,6 +1084,8 @@ impl SourceStore {
         Ok(KchatSourceCryptoshredOutcome {
             chunks_dropped: u32::try_from(chunks_to_drop).unwrap_or(u32::MAX),
             files_dropped: u32::try_from(files_to_drop).unwrap_or(u32::MAX),
+            posts_dropped: u32::try_from(posts_to_drop).unwrap_or(u32::MAX),
+            dek_dropped: dek_to_drop > 0,
             vacuum_succeeded,
             vacuum_error,
         })
@@ -1021,6 +1185,342 @@ impl SourceStore {
         .map_err(|e| Error::Database(e.to_string()))?;
 
         Ok(ids)
+    }
+
+    // ---- Block C Tasks 1 + 2 (Phase 12) — KChat post storage ----
+    //
+    // The following methods implement the per-post bookkeeping +
+    // chunk storage that lets the WS forwarder dispatch
+    // `posted` / `post_edited` / `post_deleted` events into the
+    // indexed corpus. They sit in `store.rs` rather than in
+    // `manager.rs` because the storage shape is a property of the
+    // SQLite schema, and the manager-level orchestration on top
+    // (chunking + AEAD seal + audit) lives in
+    // `manager::ingest_kchat_post` / `edit_kchat_post` /
+    // `delete_kchat_post`.
+
+    /// Look up the wrapped DEK for `source_id`, if one has been
+    /// generated.
+    ///
+    /// Returns `Ok(None)` when the row does not exist — used by
+    /// `KchatCrypto::ensure_dek_for_source` (manager layer) to
+    /// decide whether to call `generate_and_wrap_dek` (no row) vs
+    /// `unwrap_dek` (row present). Surfacing this as `Option`
+    /// avoids forcing the manager to swallow a `not found` error.
+    pub fn load_wrapped_dek_for_source(
+        &self,
+        source_id: &SourceId,
+    ) -> Result<Option<crate::kchat_crypto::WrappedDek>> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let row: Option<(Vec<u8>, Vec<u8>)> = conn
+            .query_row(
+                "SELECT wrap_nonce, wrapped_dek FROM kchat_source_deks WHERE source_id = ?1",
+                params![id_str],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        row.map(|(nonce, wrapped)| crate::kchat_crypto::WrappedDek::from_blobs(&nonce, &wrapped))
+            .transpose()
+    }
+
+    /// Persist a fresh wrapped DEK for `source_id`. Idempotent: a
+    /// concurrent call (or a retry after a partial failure) that
+    /// finds an existing row replaces it — this is the right
+    /// behaviour for the rare double-ingest race because the
+    /// previous DEK has not yet sealed any rows (the manager
+    /// always calls `seal_chunk` AFTER `upsert_wrapped_dek` so a
+    /// rolled-back seal does not leak DEK material).
+    pub fn upsert_wrapped_dek(
+        &self,
+        source_id: &SourceId,
+        wrapped: &crate::kchat_crypto::WrappedDek,
+    ) -> Result<()> {
+        let id_str = source_id.to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        conn.execute(
+            "INSERT INTO kchat_source_deks (source_id, wrap_nonce, wrapped_dek, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(source_id) DO UPDATE SET
+                wrap_nonce = excluded.wrap_nonce,
+                wrapped_dek = excluded.wrapped_dek,
+                created_at = excluded.created_at",
+            params![id_str, &wrapped.wrap_nonce[..], &wrapped.wrapped[..], now],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Locate an existing `kchat_posts` row by (source_id, post_id).
+    /// Returns `(indexed_file_id, message_hash)` so the manager can
+    /// decide between "no-op (same hash)", "edit (re-chunk)", or
+    /// "delete (tombstone)".
+    pub fn find_kchat_post(
+        &self,
+        source_id: &SourceId,
+        post_id: &str,
+    ) -> Result<Option<(i64, String)>> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let row: Option<(i64, String)> = conn
+            .query_row(
+                "SELECT indexed_file_id, message_hash
+                 FROM kchat_posts
+                 WHERE source_id = ?1 AND post_id = ?2",
+                params![id_str, post_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        Ok(row)
+    }
+
+    /// Insert a new `kchat_posts` row and the matching
+    /// `indexed_files` row, returning the indexed_files row id so
+    /// the caller can insert chunks against it.
+    ///
+    /// Called by `manager::ingest_kchat_post` on the
+    /// new-post path. Edit / delete paths go through the
+    /// dedicated functions below to keep the SQL specialised to
+    /// the action being taken.
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_kchat_post_bookkeeping(
+        &self,
+        source_id: &SourceId,
+        post_id: &str,
+        channel_id: &str,
+        root_id: Option<&str>,
+        sender_user_id: &str,
+        message_hash: &str,
+        created_at_ms: i64,
+        edited_at_ms: i64,
+    ) -> Result<i64> {
+        let id_str = source_id.to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        // The indexed_files `path` is `kchat:post:<post_id>` — a
+        // synthetic URI distinct from any real filesystem path, so
+        // the existing UNIQUE(path) constraint doesn't conflict
+        // with file-sourced rows. The substring `kchat:post:` is
+        // also what retrieval surfaces use to discriminate
+        // post-sourced chunks from file-sourced ones without
+        // joining `kchat_posts`.
+        let synthetic_path = format!("kchat:post:{post_id}");
+
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+
+        // Insert (or upsert) the indexed_files row first so the FK
+        // from kchat_posts.indexed_file_id is satisfied.
+        // last_modified := ingest timestamp (rfc3339) so the
+        // renderer's "Sources" surface can order channels by
+        // most-recent activity without joining kchat_posts.
+        conn.execute(
+            "INSERT INTO indexed_files (source_id, path, hash, last_modified, chunk_count)
+             VALUES (?1, ?2, ?3, ?4, 0)
+             ON CONFLICT(path) DO UPDATE SET
+                hash = excluded.hash,
+                last_modified = excluded.last_modified,
+                chunk_count = 0",
+            params![id_str, synthetic_path, message_hash, now],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+
+        let indexed_file_id: i64 = conn
+            .query_row(
+                "SELECT id FROM indexed_files WHERE path = ?1",
+                params![synthetic_path],
+                |r| r.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        conn.execute(
+            "INSERT INTO kchat_posts (
+                source_id, post_id, channel_id, root_id, sender_user_id,
+                indexed_file_id, message_hash, created_at_ms, edited_at_ms, ingested_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(source_id, post_id) DO UPDATE SET
+                root_id = excluded.root_id,
+                sender_user_id = excluded.sender_user_id,
+                indexed_file_id = excluded.indexed_file_id,
+                message_hash = excluded.message_hash,
+                created_at_ms = excluded.created_at_ms,
+                edited_at_ms = excluded.edited_at_ms,
+                ingested_at = excluded.ingested_at",
+            params![
+                id_str,
+                post_id,
+                channel_id,
+                root_id,
+                sender_user_id,
+                indexed_file_id,
+                message_hash,
+                created_at_ms,
+                edited_at_ms,
+                now,
+            ],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+
+        Ok(indexed_file_id)
+    }
+
+    /// Insert chunks for a KChat post, writing BOTH plaintext
+    /// (`content` — needed by FTS5 for tokenisation, dropped in
+    /// lockstep with the AEAD copy on cryptoshred) AND
+    /// AEAD-ciphertext (`content_aead` + `content_aead_nonce` —
+    /// the cryptographic-forgetting belt-and-braces).
+    ///
+    /// `sealed` must be the same length and ordering as `chunks`;
+    /// the manager layer (`manager::ingest_kchat_post`) computes
+    /// both in a single pass to keep this invariant. A length
+    /// mismatch is a programmer error and returns a hard
+    /// `Error::Database`.
+    ///
+    /// On a successful insert, the matching `indexed_files`
+    /// row's `chunk_count` is updated. The transaction boundary
+    /// is the caller's — this function does the row-level
+    /// inserts; the manager wraps the bookkeeping + chunk
+    /// inserts in `BEGIN IMMEDIATE` so a partial insert cannot
+    /// leak a half-indexed post.
+    pub fn insert_kchat_post_chunks(
+        &self,
+        indexed_file_id: i64,
+        chunks: &[Chunk],
+        sealed: &[crate::kchat_crypto::SealedChunk],
+    ) -> Result<Vec<i64>> {
+        if chunks.len() != sealed.len() {
+            return Err(Error::Database(format!(
+                "insert_kchat_post_chunks: chunks/sealed length mismatch ({} vs {})",
+                chunks.len(),
+                sealed.len()
+            )));
+        }
+
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut ids = Vec::with_capacity(chunks.len());
+        {
+            let mut stmt = conn
+                .prepare(
+                    "INSERT INTO chunks (
+                        indexed_file_id, chunk_index, byte_offset, content, hash,
+                        extraction_method, extraction_model_id,
+                        kind, content_aead, content_aead_nonce
+                     )
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                )
+                .map_err(|e| Error::Database(e.to_string()))?;
+            for (chunk, seal) in chunks.iter().zip(sealed.iter()) {
+                stmt.execute(params![
+                    indexed_file_id,
+                    chunk.chunk_index as i64,
+                    chunk.byte_offset as i64,
+                    chunk.content,
+                    chunk.hash,
+                    chunk
+                        .extraction_method
+                        .map(crate::chunker::ExtractionMethod::as_str),
+                    chunk.extraction_model_id.as_deref(),
+                    "chat_post",
+                    &seal.ciphertext[..],
+                    &seal.nonce[..],
+                ])
+                .map_err(|e| Error::Database(e.to_string()))?;
+                ids.push(conn.last_insert_rowid());
+            }
+        }
+
+        conn.execute(
+            "UPDATE indexed_files SET chunk_count = ?1 WHERE id = ?2",
+            params![chunks.len() as i64, indexed_file_id],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+
+        Ok(ids)
+    }
+
+    /// Delete all chunks for the given `indexed_file_id`. Used by
+    /// `manager::edit_kchat_post` (delete-old-then-insert-new) and
+    /// by `delete_kchat_post` (tombstone-then-drop-row). Resets
+    /// the `chunk_count` aggregate.
+    pub fn delete_chunks_for_indexed_file(&self, indexed_file_id: i64) -> Result<u32> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let deleted = conn
+            .execute(
+                "DELETE FROM chunks WHERE indexed_file_id = ?1",
+                params![indexed_file_id],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        conn.execute(
+            "UPDATE indexed_files SET chunk_count = 0 WHERE id = ?1",
+            params![indexed_file_id],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(u32::try_from(deleted).unwrap_or(u32::MAX))
+    }
+
+    /// Drop the `kchat_posts` row AND the `indexed_files` row for
+    /// the post. Caller must have already deleted the chunks for
+    /// `indexed_file_id` (or be willing to leave them orphaned —
+    /// the FK from `chunks.indexed_file_id` to `indexed_files.id`
+    /// does NOT cascade and the integrity check is enforced).
+    pub fn delete_kchat_post_bookkeeping(
+        &self,
+        source_id: &SourceId,
+        post_id: &str,
+        indexed_file_id: i64,
+    ) -> Result<()> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        conn.execute(
+            "DELETE FROM kchat_posts WHERE source_id = ?1 AND post_id = ?2",
+            params![id_str, post_id],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+        conn.execute(
+            "DELETE FROM indexed_files WHERE id = ?1",
+            params![indexed_file_id],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Count the number of chunks currently indexed for a
+    /// `kchat_posts` row, by `indexed_file_id`. Used by tests +
+    /// the audit row.
+    pub fn count_chunks_for_indexed_file(&self, indexed_file_id: i64) -> Result<u32> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks WHERE indexed_file_id = ?1",
+                params![indexed_file_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+
+    /// Read back the AEAD-encrypted columns of a chunk row, for
+    /// tests + the (future) verified-retrieval path that wants to
+    /// confirm the AEAD copy decrypts to the same plaintext FTS
+    /// indexed. Returns `Ok(None)` when the chunk row is a
+    /// file_chunk (no AEAD columns populated).
+    pub fn load_chunk_aead(
+        &self,
+        chunk_id: i64,
+    ) -> Result<Option<crate::kchat_crypto::SealedChunk>> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let row: Option<(Option<Vec<u8>>, Option<Vec<u8>>)> = conn
+            .query_row(
+                "SELECT content_aead, content_aead_nonce FROM chunks WHERE id = ?1",
+                params![chunk_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        match row {
+            Some((Some(ciphertext), Some(nonce))) => {
+                Ok(Some(crate::kchat_crypto::SealedChunk { nonce, ciphertext }))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Return every chunk (including provenance columns) attached
@@ -1689,6 +2189,21 @@ pub struct KchatSourceCryptoshredOutcome {
     pub chunks_dropped: u32,
     /// Number of rows deleted from the `indexed_files` table.
     pub files_dropped: u32,
+    /// Block C Task 2 (Phase 12): number of rows deleted from
+    /// `kchat_posts` (the per-post bookkeeping table that maps
+    /// post_id → indexed_file_id). An audit operator who sees
+    /// `chunks_dropped > 0` AND `posts_dropped == 0` knows the
+    /// source held only file-attachment chunks (no chat-body
+    /// chunks); the reverse means a misconfigured source somehow
+    /// had post bookkeeping without chunks (would indicate bug).
+    pub posts_dropped: u32,
+    /// Block C Task 2 (Phase 12): `true` when the wrapped-DEK row
+    /// existed and was deleted (i.e. the per-source AEAD key was
+    /// destroyed). `false` when the source never ingested a chat
+    /// post and therefore had no DEK to drop. The Node-side audit
+    /// row surfaces this so operators can verify the DEK lifecycle
+    /// closed cleanly on every revoke.
+    pub dek_dropped: bool,
     /// `true` when Phase 5 (`VACUUM`) ran cleanly OR was skipped
     /// because there was nothing to reclaim (idempotent
     /// `already_revoked` path drops zero rows). `false` only when
@@ -2074,6 +2589,11 @@ mod tests {
             KchatSourceCryptoshredOutcome {
                 chunks_dropped: 2,
                 files_dropped: 2,
+                // Block C Task 2 (Phase 12): no chat-post evidence
+                // existed for this source, so no posts/DEK rows
+                // were dropped.
+                posts_dropped: 0,
+                dek_dropped: false,
                 vacuum_succeeded: true,
                 vacuum_error: None,
             },
