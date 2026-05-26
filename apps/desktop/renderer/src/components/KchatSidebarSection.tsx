@@ -342,6 +342,23 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // dedupe-by-file_id store keyed by `lastSeen`, neither of
   // which is worth the complexity for a UI badge that converges
   // within 30 s anyway.
+  //
+  // SECONDARY CAVEAT (Devin Review on PR #43, seventh-pass
+  // `ANALYSIS_pr-review-job-...0007`): the `?? 0` fallback for
+  // `event.data.create_at` combined with the `getLastSeen() || 0`
+  // default produces an "ignore on missing timestamp" branch — a
+  // `file_added` event whose `data.create_at` is missing or
+  // non-numeric never increments the badge (`0 <= 0` is true).
+  // This is the lower-cost failure mode: false negatives converge
+  // within 30 s via the REST poll (which gets valid timestamps
+  // from the server's REST path independent of the WS path),
+  // whereas false positives would visibly tick the badge for a
+  // file the user has already viewed and would not recover until
+  // the next interaction. The alternative — treat missing
+  // timestamps as `Infinity` so they always count as new — would
+  // make the very first malformed event after a fresh user opens
+  // KChat tick the badge from 0 to 1 with no provenance, which is
+  // the most visible failure mode for new users.
   useEffect(() => {
     if (!kchat || state.state !== "connected") return;
     const unsubscribe = kchat.onEvent((event: KchatWebSocketEventPayload) => {
