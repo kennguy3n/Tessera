@@ -88,6 +88,35 @@ const WS_RECONNECT_BASE_MS = 500;
 const WS_RECONNECT_CAP_MS = 30_000;
 
 /**
+ * Hard cap on the number of `(eventName, reason)` entries the
+ * trust-boundary drop-warn cooldown map will hold AT ONCE.
+ *
+ * The keys are `${eventName}::${reason}`, and `eventName` is the
+ * untrusted `parsed.event` value off the wire. A malicious or buggy
+ * peer that floods malformed frames with thousands of unique made-
+ * up event names can grow the map indefinitely without this cap.
+ * Ninth-pass Devin Review on PR #43
+ * (`ANALYSIS_pr-review-job-...0001`) flagged that the prior
+ * "~8 MB for 100k entries is acceptable" argument missed the
+ * across-reconnect dimension: every reconnect re-opens the WS but
+ * the map persists, so over a long-lived process under attack the
+ * map is truly unbounded.
+ *
+ * 256 entries is well above the legitimate ceiling (the KChat /
+ * Mattermost event vocabulary is ~30 named events × 3 drop reasons
+ * = 90 tuples; doubling that for headroom against future protocol
+ * additions still leaves slack) and small enough that the worst-
+ * case memory footprint of the map is bounded at ~20 KB regardless
+ * of how long the process runs or how many reconnects occur. When
+ * the cap is hit we clear the map entirely (rather than evicting
+ * an LRU entry) so the next legitimate event-name observation gets
+ * a warning fresh — the cooldown semantics already tolerate the
+ * occasional re-warn within a window, and the simpler clear-on-cap
+ * has predictable behavior under flood.
+ */
+const WS_DROP_WARN_COOLDOWN_MAX_ENTRIES = 256;
+
+/**
  * Minimum interval between trust-boundary drop warnings for the
  * SAME `(eventName, reason)` tuple.
  *
@@ -917,6 +946,19 @@ export class KchatClient {
       }
       this.ws = null;
     }
+    // Reset the trust-boundary drop-warn cooldown so the next
+    // connection (potentially against a different server URL after
+    // a `setServerUrl()` cutover) starts from a clean slate. Without
+    // this, an adversarial peer that cycles unique made-up event
+    // names across forced reconnects could accumulate entries
+    // across the lifetime of the process, defeating the per-
+    // connection bound enforced by `WS_DROP_WARN_COOLDOWN_MAX_ENTRIES`.
+    // The cooldown's intent is "don't double-warn the operator
+    // about the same drop pattern" — once the WS is gone, the
+    // drop-pattern provenance is gone too, and the next session
+    // deserves its own warnings. Ninth-pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0001`).
+    this.wsDropWarnCooldown.clear();
   }
 
   /**
@@ -1035,6 +1077,20 @@ export class KchatClient {
     ) {
       return;
     }
+    // Bounded-growth guard: if the map has hit its hard cap, drop
+    // every existing entry and start fresh. The keys include the
+    // untrusted `eventName` so an adversarial peer that cycles
+    // unique event names across reconnects can otherwise grow the
+    // map without bound (the cooldown alone doesn't shrink it).
+    // Clearing (rather than LRU-evicting one entry) is the simpler
+    // shape and predictable under flood: the next 256 distinct
+    // tuples all get a fresh warning, then the next 256 fold into
+    // their cooldown again. The cooldown semantics already tolerate
+    // an occasional re-warn within a window. Ninth-pass Devin
+    // Review on PR #43 (`ANALYSIS_pr-review-job-...0001`).
+    if (this.wsDropWarnCooldown.size >= WS_DROP_WARN_COOLDOWN_MAX_ENTRIES) {
+      this.wsDropWarnCooldown.clear();
+    }
     this.wsDropWarnCooldown.set(key, now);
     this.logWarn(
       "[KchatClient] dropped malformed WS frame at trust boundary",
@@ -1051,13 +1107,42 @@ export class KchatClient {
 
   private handleWsMessage(raw: unknown): void {
     if (typeof raw !== "string") return;
-    let parsed: KchatWebSocketEvent;
+    let parsed: unknown;
     try {
-      parsed = JSON.parse(raw) as KchatWebSocketEvent;
+      parsed = JSON.parse(raw);
     } catch {
       return;
     }
-    if (typeof parsed.event !== "string") {
+    // `JSON.parse` returns the parsed JSON value, which can be a
+    // primitive (number / boolean / string / null) or an array, not
+    // just an object. The literal frame `"null"` parses to the
+    // JavaScript value `null`; `"42"` parses to `42`; `"[]"` parses
+    // to an empty array. The subsequent `parsed.event` access
+    // crashes on `null` with `TypeError: Cannot read properties of
+    // null (reading 'event')`, and the error would propagate
+    // unhandled out of `ws.onmessage`, taking the WS reader loop
+    // down on a malicious or buggy peer that sends those literals.
+    // Ninth-pass Devin Review on PR #43
+    // (`BUG_pr-review-job-...0001`) flagged this as a real crash
+    // vector at the trust boundary. The earlier `broadcast` and
+    // `data` guards are STRUCTURAL guards (the frame parsed to a
+    // non-null object but some inner field was malformed); this is
+    // a PARSE-TYPE guard (the whole JSON value isn't an object at
+    // all). It must run first because the structural guards each
+    // reach through `parsed.*`.
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      this.warnDroppedFrame(undefined, "missing-event");
+      return;
+    }
+    // After the parse-type guard above we know `parsed` is a
+    // non-null, non-array object — narrow it to the protocol's
+    // declared shape for the rest of the function.
+    const evt = parsed as KchatWebSocketEvent;
+    if (typeof evt.event !== "string") {
       this.warnDroppedFrame(undefined, "missing-event");
       return;
     }
@@ -1095,24 +1180,24 @@ export class KchatClient {
     // gaps and buggy peers don't go silently undetected in
     // production.
     if (
-      typeof parsed.broadcast !== "object" ||
-      parsed.broadcast === null ||
-      Array.isArray(parsed.broadcast)
+      typeof evt.broadcast !== "object" ||
+      evt.broadcast === null ||
+      Array.isArray(evt.broadcast)
     ) {
-      this.warnDroppedFrame(parsed.event, "malformed-broadcast");
+      this.warnDroppedFrame(evt.event, "malformed-broadcast");
       return;
     }
     if (
-      typeof parsed.data !== "object" ||
-      parsed.data === null ||
-      Array.isArray(parsed.data)
+      typeof evt.data !== "object" ||
+      evt.data === null ||
+      Array.isArray(evt.data)
     ) {
-      this.warnDroppedFrame(parsed.event, "malformed-data");
+      this.warnDroppedFrame(evt.event, "malformed-data");
       return;
     }
     for (const l of this.wsListeners) {
       try {
-        l(parsed);
+        l(evt);
       } catch {
         // Listener errors must not break the WS read loop.
       }

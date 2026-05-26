@@ -64,7 +64,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // We mock `electron` so importing the forwarder works under
-// vitest, then mock `../appState` so `getBridge()` is observable.
+// vitest. The native bridge (formerly imported as a free
+// `getBridge` from `../appState`) is now injected through the
+// forwarder's constructor `getBridge` option — ninth-pass Devin
+// Review on PR #43 (`ANALYSIS_pr-review-job-...0003`) flagged the
+// circular `appState` ↔ `kchatEventForwarder` import as fragile,
+// and the fix replaces the module-level import with a DI accessor.
+// Tests now build the bridge mock locally and pass
+// `getBridge: () => bridgeMock` to every `new
+// KchatEventForwarder({ ... })` call site.
 vi.mock("electron", () => {
   return {
     BrowserWindow: class {
@@ -80,9 +88,6 @@ interface BridgeMockShape {
 }
 
 let bridgeMock: BridgeMockShape | null = null;
-vi.mock("../appState", () => ({
-  getBridge: () => bridgeMock,
-}));
 
 import {
   KchatEventForwarder,
@@ -255,6 +260,7 @@ describe("KchatEventForwarder", () => {
     const w2 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1, w2] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -283,6 +289,7 @@ describe("KchatEventForwarder", () => {
     w2.destroyed = true;
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1, w2] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -298,6 +305,7 @@ describe("KchatEventForwarder", () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -323,6 +331,7 @@ describe("KchatEventForwarder", () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -367,6 +376,7 @@ describe("KchatEventForwarder", () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -396,6 +406,7 @@ describe("KchatEventForwarder", () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -447,6 +458,7 @@ describe("KchatEventForwarder", () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -475,6 +487,7 @@ describe("KchatEventForwarder", () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -491,6 +504,7 @@ describe("KchatEventForwarder", () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -508,6 +522,7 @@ describe("KchatEventForwarder", () => {
     const w2 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1, w2] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -541,6 +556,7 @@ describe("KchatEventForwarder", () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -563,6 +579,7 @@ describe("KchatEventForwarder", () => {
   it("start() is idempotent", () => {
     const fwd = new KchatEventForwarder({
       listWindows: () => [] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -584,6 +601,7 @@ describe("KchatEventForwarder", () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -608,6 +626,7 @@ describe("KchatEventForwarder", () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);

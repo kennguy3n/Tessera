@@ -89,7 +89,7 @@
  */
 
 import { BrowserWindow } from "electron";
-import { getBridge } from "../appState";
+import type { NativeBridge } from "../appState";
 import type { KchatClient } from "./kchatClient";
 import type {
   KchatConnectionState,
@@ -300,12 +300,56 @@ export class KchatEventForwarder {
    * supported.
    */
   private listWindows: () => BrowserWindow[];
+  /**
+   * Pluggable accessor for the native bridge.
+   *
+   * Production wires this to `appState.getBridge` so the forwarder
+   * can call `bridge.bridgeLogKchatFileEventReceived(...)` for
+   * `file_added` audit rows. The accessor is a function (not a
+   * bridge handle) because the bridge can transition between
+   * `null` and a real handle across the app lifecycle
+   * (initialization, hot-reload, test reset), and the forwarder
+   * must always observe the current value at call time — not a
+   * snapshot from construction.
+   *
+   * Storing it as an injected accessor (rather than
+   * `import { getBridge } from "../appState"`) eliminates the
+   * `appState` ↔ `kchatEventForwarder` circular module
+   * dependency that ninth-pass Devin Review on PR #43
+   * (`ANALYSIS_pr-review-job-...0003`) flagged as fragile. The
+   * cycle was safe today because neither side touched the other's
+   * exports during module initialization, but any future
+   * top-level access (e.g. a module-level constant derived from
+   * `getBridge()`) would have triggered a partially-initialized-
+   * module bug that's notoriously hard to debug. Inverting the
+   * dependency via DI makes the relationship one-way: `appState`
+   * imports the forwarder class, the forwarder imports only the
+   * `NativeBridge` type, and the function reference flows
+   * downward at construction time.
+   *
+   * Tests inject their own accessor (a closure over a mock
+   * bridge or a `() => null` for the no-bridge code path) so the
+   * forwarder can be exercised without standing up the full
+   * native loader.
+   */
+  private readonly getBridgeFn: () => NativeBridge | null;
 
   constructor(
-    options: { listWindows?: () => BrowserWindow[] } = {},
+    options: {
+      listWindows?: () => BrowserWindow[];
+      getBridge?: () => NativeBridge | null;
+    } = {},
   ) {
     this.listWindows =
       options.listWindows ?? (() => BrowserWindow.getAllWindows());
+    // The DI default is `() => null` so a forwarder constructed
+    // without explicit wiring (e.g. in a unit test that doesn't
+    // care about audit logging) is silent on the audit path
+    // instead of crashing on a missing import. Production code in
+    // `appState.getKchatAuthService()` wires the real
+    // `getBridge` accessor through, so file_added audit rows are
+    // logged via the native bridge as before.
+    this.getBridgeFn = options.getBridge ?? (() => null);
   }
 
   /**
@@ -606,7 +650,7 @@ export class KchatEventForwarder {
   private async handleFileAdded(
     view: KchatWebSocketEventView,
   ): Promise<void> {
-    const bridge = getBridge();
+    const bridge = this.getBridgeFn();
     if (!bridge) {
       // Tests sometimes run the forwarder without a bridge.
       // No bridge = no source store and no audit log to write.

@@ -646,7 +646,7 @@ export function getKchatAuthService(): KchatAuthService {
     // also means a renderer that opens before any KChat
     // connect still has the IPC channel listener installed
     // when the user finally connects.
-    kchatEventForwarder = new KchatEventForwarder();
+    kchatEventForwarder = new KchatEventForwarder({ getBridge });
     kchatEventForwarder.start(kchatAuthService.getClient());
   }
   return kchatAuthService;
@@ -693,7 +693,7 @@ export function resetKchatAuthService(
   }
   kchatAuthService = next;
   if (next) {
-    kchatEventForwarder = new KchatEventForwarder();
+    kchatEventForwarder = new KchatEventForwarder({ getBridge });
     kchatEventForwarder.start(next.getClient());
   }
 }
