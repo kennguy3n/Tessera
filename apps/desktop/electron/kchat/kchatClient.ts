@@ -88,6 +88,41 @@ const WS_RECONNECT_BASE_MS = 500;
 const WS_RECONNECT_CAP_MS = 30_000;
 
 /**
+ * Minimum interval between trust-boundary drop warnings for the
+ * SAME `(eventName, reason)` tuple.
+ *
+ * `handleWsMessage` is the sole point where untrusted JSON becomes
+ * typed `KchatWebSocketEvent` (see the block-comment in that
+ * function for why every malformed-frame guard must short-circuit
+ * here rather than being deferred to downstream consumers).
+ *
+ * The first iteration of the trust boundary silently `return`-ed
+ * on every dropped frame, which left operators blind to two
+ * legitimate operational concerns flagged by Devin Review on PR
+ * #43 (`ANALYSIS_pr-review-job-...0005`):
+ *
+ *   1. **Protocol evolution**: a future KChat protocol version
+ *      that introduces a legitimate event with no `data` field
+ *      would be silently dropped with no diagnostic in the logs
+ *      — the only signal would be "users report missing events".
+ *   2. **Buggy / misconfigured peer**: a self-hosted KChat server
+ *      that ships malformed frames (bug, version mismatch, MITM
+ *      proxy mangling, etc.) would look identical to "no events"
+ *      in production — there'd be no way to distinguish a quiet
+ *      WS from a wedged-by-trust-boundary WS.
+ *
+ * We log a `console.warn` at each drop site so operators can
+ * correlate, BUT we rate-limit per `(eventName, reason)` tuple
+ * to bound the worst case: a malicious or buggy peer flooding
+ * malformed frames at 1000/s must not flood the main-process
+ * stderr / dev-tools console with 1000/s warnings. 60 s is the
+ * standard cooldown — long enough to compress a flood, short
+ * enough that a real protocol-evolution gap is still visible
+ * promptly during a debugging session.
+ */
+const WS_DROP_WARN_COOLDOWN_MS = 60_000;
+
+/**
  * Sleep helper that can be mocked from tests by passing a custom
  * `sleep` implementation through {@link KchatClientOptions}.
  */
@@ -128,6 +163,19 @@ export interface KchatClientOptions {
   sleep?: SleepFn;
   /** Now-source for backoff jitter; defaults to `Math.random`. */
   random?: () => number;
+  /**
+   * Wall-clock source for the trust-boundary drop-warn cooldown
+   * map. Defaults to `Date.now`. Tests pin this to a controlled
+   * clock so the cooldown logic is deterministic.
+   */
+  now?: () => number;
+  /**
+   * Log sink for trust-boundary drop warnings. Defaults to
+   * `console.warn`. Tests inject a spy so they can assert on the
+   * structured drop-warning payload without polluting suite
+   * output with real stderr writes.
+   */
+  logWarn?: (message: string, context: Record<string, unknown>) => void;
 }
 
 /** Listener for the parsed WebSocket events. */
@@ -285,6 +333,31 @@ export class KchatClient {
   private readonly rateLimiter: RateLimiter;
   private readonly sleep: SleepFn;
   private readonly random: () => number;
+  private readonly now: () => number;
+  private readonly logWarn: (
+    message: string,
+    context: Record<string, unknown>,
+  ) => void;
+
+  /**
+   * Last-warned timestamp per `(eventName, reason)` tuple, used
+   * to rate-limit trust-boundary drop warnings. Keyed by
+   * `"${eventName}::${reason}"` so a flood that targets one event
+   * type doesn't suppress warnings for a genuinely-different
+   * malformed frame on another event type.
+   *
+   * The map grows by at most `|reasons| × |eventNames|` entries
+   * — bounded in practice because `reason` is from a small fixed
+   * enum and `eventName` is the (untrusted) `parsed.event` value.
+   * A malicious peer that tries to grow the map by sending
+   * frames with thousands of unique made-up event names would
+   * still be bounded by Node's V8 heap behavior on Map<string,
+   * number>, and each entry is ~80 bytes; 100k unique event
+   * names is ~8 MB, which is well under reasonable main-process
+   * memory limits. If a future audit reveals this is exploitable
+   * we'd swap to an LRU; not worth the complexity today.
+   */
+  private readonly wsDropWarnCooldown = new Map<string, number>();
 
   constructor(options: KchatClientOptions = {}) {
     this.fetchFn = options.fetchFn ?? globalThis.fetch.bind(globalThis);
@@ -303,6 +376,12 @@ export class KchatClient {
           setTimeout(resolve, ms);
         }));
     this.random = options.random ?? Math.random;
+    this.now = options.now ?? Date.now;
+    this.logWarn =
+      options.logWarn ??
+      ((message, context) => {
+        console.warn(message, context);
+      });
   }
 
   /**
@@ -922,6 +1001,54 @@ export class KchatClient {
     });
   }
 
+  /**
+   * Emit a trust-boundary drop warning, rate-limited per
+   * `(eventName, reason)` tuple. Called only from
+   * `handleWsMessage` — the only function that drops untrusted
+   * frames at the trust boundary.
+   *
+   * The cooldown is per-tuple (not global) so a flood that
+   * targets one event type doesn't mask warnings for a genuinely
+   * different malformed-frame shape on another event type. A
+   * future protocol-evolution gap (e.g. a new event introduced
+   * with no `data` field) would consistently emit one warning
+   * per minute until an operator notices, rather than being
+   * compressed to a single warning per process lifetime.
+   */
+  private warnDroppedFrame(
+    eventName: string | undefined,
+    reason: "missing-event" | "malformed-broadcast" | "malformed-data",
+  ): void {
+    const name = eventName ?? "<no-event>";
+    const key = `${name}::${reason}`;
+    const now = this.now();
+    // Use `Map.has()` to distinguish "first occurrence of this
+    // tuple" from "subsequent occurrence within cooldown". The
+    // earlier shape `(this.wsDropWarnCooldown.get(key) ?? 0)`
+    // collapsed both cases to `lastWarned === 0`, which made the
+    // very first warning at `now === 0` (and any test that pinned
+    // the clock to 0) suppressed by the cooldown comparison.
+    const lastWarned = this.wsDropWarnCooldown.get(key);
+    if (
+      lastWarned !== undefined &&
+      now - lastWarned < WS_DROP_WARN_COOLDOWN_MS
+    ) {
+      return;
+    }
+    this.wsDropWarnCooldown.set(key, now);
+    this.logWarn(
+      "[KchatClient] dropped malformed WS frame at trust boundary",
+      {
+        event: name,
+        reason,
+        // The cooldown means an operator who notices ONE warning
+        // should treat it as "the actual rate is at least 1 per
+        // 60 s for this tuple", not as a single-occurrence event.
+        cooldownMs: WS_DROP_WARN_COOLDOWN_MS,
+      },
+    );
+  }
+
   private handleWsMessage(raw: unknown): void {
     if (typeof raw !== "string") return;
     let parsed: KchatWebSocketEvent;
@@ -930,7 +1057,10 @@ export class KchatClient {
     } catch {
       return;
     }
-    if (typeof parsed.event !== "string") return;
+    if (typeof parsed.event !== "string") {
+      this.warnDroppedFrame(undefined, "missing-event");
+      return;
+    }
     // The KChat / Mattermost protocol always frames events with a
     // `broadcast` object (`channel_id`, `team_id`, `user_id`,
     // `omit_users`) AND a `data` object (event-specific payload —
@@ -959,12 +1089,17 @@ export class KchatClient {
     // Fifth-pass Devin Review on PR #43 added the `broadcast`
     // guard (`ANALYSIS_pr-review-job-..._0001`); sixth-pass added
     // the symmetric `data` guard (`BUG_pr-review-job-...0001`)
-    // for the same renderer-TypeError reason on a different field.
+    // for the same renderer-TypeError reason on a different field;
+    // eighth-pass added the rate-limited drop-warn logging
+    // (`ANALYSIS_pr-review-job-...0005`) so protocol-evolution
+    // gaps and buggy peers don't go silently undetected in
+    // production.
     if (
       typeof parsed.broadcast !== "object" ||
       parsed.broadcast === null ||
       Array.isArray(parsed.broadcast)
     ) {
+      this.warnDroppedFrame(parsed.event, "malformed-broadcast");
       return;
     }
     if (
@@ -972,6 +1107,7 @@ export class KchatClient {
       parsed.data === null ||
       Array.isArray(parsed.data)
     ) {
+      this.warnDroppedFrame(parsed.event, "malformed-data");
       return;
     }
     for (const l of this.wsListeners) {

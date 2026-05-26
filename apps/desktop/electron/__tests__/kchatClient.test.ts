@@ -127,6 +127,8 @@ function buildClient(overrides: Partial<{
   rateLimiter: RateLimiter;
   sleep: (ms: number) => Promise<void>;
   random: () => number;
+  now: () => number;
+  logWarn: (message: string, context: Record<string, unknown>) => void;
 }> = {}) {
   const client = new KchatClient({
     fetchFn: overrides.fetchFn,
@@ -134,6 +136,8 @@ function buildClient(overrides: Partial<{
     rateLimiter: overrides.rateLimiter,
     sleep: overrides.sleep ?? (async () => {}),
     random: overrides.random ?? (() => 0.5),
+    now: overrides.now,
+    logWarn: overrides.logWarn,
   });
   return client;
 }
@@ -1125,9 +1129,32 @@ describe("KchatClient.connectWebSocket", () => {
     //
     // The trust boundary is `handleWsMessage`. We feed it six
     // malformed frames plus one well-formed control, and assert
-    // only the control reaches the listener.
+    // only the control reaches the listener. We also assert the
+    // eighth-pass drop-warn observability path
+    // (`ANALYSIS_pr-review-job-...0005`) — every drop must emit
+    // one structured warning per `(eventName, reason)` tuple
+    // within the cooldown window, so operators can correlate
+    // missing-event reports with trust-boundary drops in
+    // production (the original silent-`return` left this
+    // invisible).
     const { ctor, instances } = mockWebSocketCtor();
-    const c = buildClient({ webSocketCtor: ctor });
+    const logWarn = vi.fn();
+    // Pin the clock so the cooldown logic is deterministic. Each
+    // call to `now()` returns the next pinned timestamp; the test
+    // bumps `clock` by 1 ms per drop so every (eventName, reason)
+    // tuple is well inside the 60 s cooldown window — successive
+    // drops for the SAME tuple are suppressed, drops for distinct
+    // tuples each emit one warning.
+    let clock = 1_700_000_000_000;
+    const c = buildClient({
+      webSocketCtor: ctor,
+      logWarn,
+      now: () => {
+        const t = clock;
+        clock += 1;
+        return t;
+      },
+    });
     c.setServerUrl("https://kchat.example.com");
     c.setToken("PAT-secret");
     const events: unknown[] = [];
@@ -1199,6 +1226,135 @@ describe("KchatClient.connectWebSocket", () => {
 
     expect(events).toHaveLength(1);
     expect((events[0] as { seq: number }).seq).toBe(7);
+
+    // Six malformed frames, all under "posted" event name, split
+    // across two reasons:
+    //   - `malformed-broadcast`: frames 1, 2, 3
+    //   - `malformed-data`: frames 4, 5, 6
+    // Two distinct (eventName, reason) tuples → exactly two
+    // warnings (the cooldown suppresses the 2nd and 3rd drop in
+    // each tuple). The first call to each tuple emits the warning
+    // because the cooldown map is empty at process start.
+    expect(logWarn).toHaveBeenCalledTimes(2);
+    const calls = logWarn.mock.calls;
+    const reasons = calls.map((c) => (c[1] as { reason: string }).reason);
+    expect(reasons).toContain("malformed-broadcast");
+    expect(reasons).toContain("malformed-data");
+    for (const [msg, ctx] of calls) {
+      expect(msg).toBe(
+        "[KchatClient] dropped malformed WS frame at trust boundary",
+      );
+      const c = ctx as { event: string; reason: string; cooldownMs: number };
+      expect(c.event).toBe("posted");
+      expect(c.cooldownMs).toBe(60_000);
+    }
+  });
+
+  it("rate-limits drop warnings per (eventName, reason) tuple", async () => {
+    // Eighth-pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0005`) flagged that the silent
+    // drop with no logging would hide protocol-evolution gaps
+    // from operators. The fix adds drop-warn logging, but a
+    // naive `console.warn` on every drop would let a malicious
+    // or buggy peer flood the main-process console with 1000
+    // warnings/s. The cooldown logic is the architectural
+    // backpressure for that.
+    //
+    // This test pins the clock and:
+    //   - Feeds 5 malformed frames at the SAME (eventName,
+    //     reason) tuple, within the 60 s cooldown window →
+    //     exactly ONE warning fires.
+    //   - Advances the clock past the cooldown → the NEXT
+    //     malformed frame for the same tuple fires a SECOND
+    //     warning (the cooldown is per-tuple, not global, and
+    //     re-arms after `WS_DROP_WARN_COOLDOWN_MS`).
+    //   - Feeds a DIFFERENT (eventName, reason) tuple inside
+    //     the first cooldown window → that distinct tuple is
+    //     not suppressed; it fires its own warning.
+    // Net: 3 warnings total across 7 dropped frames.
+    const { ctor, instances } = mockWebSocketCtor();
+    const logWarn = vi.fn();
+    let clock = 0;
+    const c = buildClient({
+      webSocketCtor: ctor,
+      logWarn,
+      now: () => clock,
+    });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-secret");
+    c.onWebSocketEvent(() => {
+      /* test only inspects logWarn */
+    });
+    await c.connectWebSocket();
+    instances[0].inst.onopen?.({});
+
+    // Five identical malformed frames within the cooldown window
+    // → one warning.
+    for (let i = 0; i < 5; i++) {
+      clock = 1_000 + i; // all within the 60 s cooldown
+      instances[0].inst.onmessage?.({
+        data: JSON.stringify({ event: "posted", data: {}, seq: i }),
+      });
+    }
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    expect(logWarn.mock.calls[0]?.[1]).toMatchObject({
+      event: "posted",
+      reason: "malformed-broadcast",
+    });
+
+    // A different (eventName, reason) tuple inside the same
+    // cooldown window → distinct tuple, distinct warning.
+    clock = 1_500;
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "typing",
+        broadcast: { channel_id: "c1" },
+        data: null,
+        seq: 10,
+      }),
+    });
+    expect(logWarn).toHaveBeenCalledTimes(2);
+    expect(logWarn.mock.calls[1]?.[1]).toMatchObject({
+      event: "typing",
+      reason: "malformed-data",
+    });
+
+    // Advance the clock past the cooldown for the first tuple,
+    // then repeat the original malformed shape → cooldown has
+    // re-armed, so a second warning fires.
+    clock = 60_000 + 1_001; // > cooldown after the first warning
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({ event: "posted", data: {}, seq: 100 }),
+    });
+    expect(logWarn).toHaveBeenCalledTimes(3);
+    expect(logWarn.mock.calls[2]?.[1]).toMatchObject({
+      event: "posted",
+      reason: "malformed-broadcast",
+    });
+  });
+
+  it("warns at the trust boundary when the WS frame omits the event field", async () => {
+    // Frames with no string `event` field hit the earliest guard
+    // in `handleWsMessage`. The eighth-pass drop-warn extension
+    // (`ANALYSIS_pr-review-job-...0005`) also covers this drop
+    // site — operators need to see "the peer is sending frames
+    // with no event name" diagnostics, not just the `broadcast` /
+    // `data` malformations covered above.
+    const { ctor, instances } = mockWebSocketCtor();
+    const logWarn = vi.fn();
+    const c = buildClient({ webSocketCtor: ctor, logWarn });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-secret");
+    await c.connectWebSocket();
+    instances[0].inst.onopen?.({});
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({ seq: 1, data: {}, broadcast: {} }),
+    });
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    expect(logWarn.mock.calls[0]?.[1]).toMatchObject({
+      event: "<no-event>",
+      reason: "missing-event",
+    });
   });
 
   it("user-initiated disconnect does NOT schedule a reconnect", async () => {
