@@ -136,7 +136,14 @@ export interface NativeBridge {
    *
    * Status projection rules:
    *   - principal in roster + source previously `AccessRevoked` →
-   *     transitions back to `Indexed` (outcome `"regranted"`).
+   *     transitions back to `Connected` (outcome `"regranted"`).
+   *     `Connected` (not `Indexed`) because the revoke path
+   *     cryptoshredded all evidence rows in Block B Task 4; the
+   *     Node-side forwarder reads `"regranted"` as a signal to
+   *     schedule a full channel re-sync via the
+   *     `setKchatChannelResyncImpl` slot wired in
+   *     `apps/desktop/electron/ipc/kchat.ts`, after which the
+   *     indexer promotes the status to `Indexing` → `Indexed`.
    *   - principal in roster + any other state → status untouched
    *     (outcome `"granted"`).
    *   - principal NOT in roster → transitions to `AccessRevoked`
@@ -380,6 +387,53 @@ export interface NativeBridge {
     channelId: string,
     reason: string,
   ): void;
+  /**
+   * No-throw audit append called by `KchatEventForwarder` /
+   * `kchat:disconnect` immediately after a revoke transition
+   * triggers the substrate's inline cryptoshred (Block B Task 4,
+   * Phase 11). Emitted on every revoke outcome — fresh revoke +
+   * already-revoked re-shred path + refresh-driven revoke — so
+   * the audit trail correlates the `KchatChannelAccessRevoked`
+   * status-transition row with the actual evidence-scrub counts.
+   *
+   * `reason` matches the sibling
+   * `bridgeLogKchatChannelAccessRevoked` short code;
+   * `chunksDropped` / `filesDropped` are the substrate counts
+   * surfaced via `KchatRevokeOutcomeInfo` /
+   * `KchatAclRefreshOutcomeInfo`.
+   *
+   * `fsScrubSucceeded` / `fsScrubError` are the Node-side
+   * filesystem-scrub outcomes from `secureDeleteChannelArtifacts`
+   * (third-pass Devin Review observability fix on PR #46). The
+   * substrate counts only describe the database scrub; the
+   * filesystem holds downloaded plaintext until the cache dir +
+   * manifest sidecar are removed. Operators grep
+   * `fs_scrub_succeeded=false` in the audit log to find revokes
+   * whose on-disk plaintext survived the scrub.
+   *
+   * `vacuumSucceeded` / `vacuumError` are the substrate's Phase 5
+   * `VACUUM` outcomes, forwarded through the bridge revoke /
+   * refresh outcome structs (fifth-pass Devin Review fix,
+   * ANALYSIS_pr-review-job-ef3c7d6c..._0001). A `false` value is
+   * NOT a scrub failure — the row-level DELETE + UPDATE already
+   * committed under `secure_delete = ON` so the cryptographic
+   * guarantee holds — but operators want the audit row to record
+   * the degraded state so they can re-run `VACUUM` manually once
+   * the underlying issue resolves. Previously a VACUUM failure
+   * propagated `?` up to the forwarder's catch block and defaulted
+   * the audit row to `outcome=unlinked`, hiding the successful
+   * scrub from the trail.
+   */
+  bridgeLogKchatSourceCryptoshredded(
+    channelId: string,
+    reason: string,
+    chunksDropped: number,
+    filesDropped: number,
+    fsScrubSucceeded: boolean,
+    fsScrubError: string | undefined,
+    vacuumSucceeded: boolean,
+    vacuumError: string | undefined,
+  ): void;
   // --- Audit query ---
   //
   // Renderer-facing read API over the audit store. The renderer
@@ -487,6 +541,34 @@ let kchatAuthService: KchatAuthService | null = null;
 // design). Reset alongside the auth service in tests via
 // `resetKchatAuthService`.
 let kchatEventForwarder: KchatEventForwarder | null = null;
+// Block B Task 4 (Phase 11) second-pass Devin Review ANALYSIS_0002:
+// the IPC handler populates this slot with the full-channel-sync
+// closure that `runAddKchatChannel` powers, so the forwarder can
+// schedule a re-sync when a `KchatAclRefreshOutcome::Regranted`
+// outcome lands. Declared at module scope (not in
+// `getKchatAuthService`) so the forwarder constructor below can
+// pass a stable callback that reads the *current* impl at call
+// time — supporting hot-reload + test reset patterns.
+//
+// The two-step wiring (forwarder constructed with `() =>
+// kchatChannelResyncImpl?.(id)`, IPC registration calls
+// `setKchatChannelResyncImpl(...)`) avoids the circular import
+// that would result from `appState.ts` importing the IPC module
+// directly (the IPC module already imports `getKchatAuthService`
+// and `getBridge` from this file).
+let kchatChannelResyncImpl:
+  | ((channelId: string) => Promise<void>)
+  | null = null;
+export function setKchatChannelResyncImpl(
+  next: ((channelId: string) => Promise<void>) | null,
+): void {
+  kchatChannelResyncImpl = next;
+}
+export function getKchatChannelResyncImpl():
+  | ((channelId: string) => Promise<void>)
+  | null {
+  return kchatChannelResyncImpl;
+}
 // Vision sidecar runs the same `llama-server` binary as the text
 // sidecar but on a separate port (8385) and with `--mmproj`
 // appended so the multimodal projector is loaded alongside the
@@ -753,7 +835,22 @@ export function getKchatAuthService(): KchatAuthService {
     // also means a renderer that opens before any KChat
     // connect still has the IPC channel listener installed
     // when the user finally connects.
-    kchatEventForwarder = new KchatEventForwarder({ getBridge });
+    kchatEventForwarder = new KchatEventForwarder({
+      getBridge,
+      // Block B Task 4 (Phase 11) second-pass Devin Review
+      // ANALYSIS_0002: thread the regrant auto-resync hook
+      // through the forwarder. The actual impl is populated by
+      // `registerKchatIpcHandlers` in `ipc/kchat.ts`; we wrap it
+      // in a closure that re-reads the slot at call time so a
+      // forwarder constructed BEFORE IPC handlers register (e.g.
+      // in cold-start sequence) still picks up the real impl
+      // when the user later triggers a regrant.
+      scheduleChannelResync: async (channelId) => {
+        const fn = getKchatChannelResyncImpl();
+        if (!fn) return;
+        await fn(channelId);
+      },
+    });
     kchatEventForwarder.start(kchatAuthService.getClient());
   }
   return kchatAuthService;
@@ -798,9 +895,31 @@ export function resetKchatAuthService(
     kchatEventForwarder.dispose();
     kchatEventForwarder = null;
   }
+  // Block B Task 4 (Phase 11) third-pass Devin Review ANALYSIS_0006:
+  // clear the regrant-resync slot alongside the forwarder so the
+  // module-level lifecycle invariants stay coherent. The previous
+  // impl captures `runAddKchatChannel` which itself closes over
+  // `getKchatAuthService()`; if a test calls
+  // `resetKchatAuthService(null)` and a stale slot survived, a
+  // subsequent direct call into the slot would deref a null auth
+  // service. The forwarder disposal above prevents the live event
+  // path from triggering this, but the slot is also reachable via
+  // `getKchatChannelResyncImpl()` for tests that drive it manually,
+  // so we close the gap defensively here. The production IPC
+  // handler's `registerKchatHandlers` re-populates the slot at the
+  // next startup; tests that need a fresh impl can repopulate via
+  // `setKchatChannelResyncImpl` after the reset.
+  setKchatChannelResyncImpl(null);
   kchatAuthService = next;
   if (next) {
-    kchatEventForwarder = new KchatEventForwarder({ getBridge });
+    kchatEventForwarder = new KchatEventForwarder({
+      getBridge,
+      scheduleChannelResync: async (channelId) => {
+        const fn = getKchatChannelResyncImpl();
+        if (!fn) return;
+        await fn(channelId);
+      },
+    });
     kchatEventForwarder.start(next.getClient());
   }
 }

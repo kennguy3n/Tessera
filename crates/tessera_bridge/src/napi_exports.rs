@@ -1989,6 +1989,69 @@ pub fn bridge_log_kchat_channel_access_revoked(
     Ok(())
 }
 
+/// Append a `KchatSourceCryptoshredded` audit row (Block B Task 4,
+/// Phase 11). Called by the Node-side `KchatEventForwarder` /
+/// `kchat:disconnect` IPC handler whenever a revoke transition
+/// triggers the substrate's inline cryptoshred. The `reason`
+/// matches the sibling `KchatChannelAccessRevoked` row so the two
+/// can be correlated by an operator's grep; `chunks_dropped` /
+/// `files_dropped` are the counts returned by the bridge's
+/// `bridge_revoke_kchat_source` / `bridge_refresh_kchat_acl`
+/// outcome structs.
+///
+/// The row is emitted on EVERY revoke outcome (including
+/// `already_revoked` and the refresh-driven `revoked` path) so
+/// the audit trail shows both "we scrubbed N rows just now" and
+/// "the source was already empty when we re-scrubbed it" — the
+/// latter being the operator-visible signal that the Task-4
+/// backfill ran on a previously soft-revoked source.
+///
+/// `fs_scrub_succeeded` / `fs_scrub_error` come from the Node-side
+/// `secureDeleteChannelArtifacts` helper — they record whether the
+/// filesystem scrub (cache dir + manifest sidecar removal) ran
+/// cleanly. `fs_scrub_error` is `None` when the scrub succeeded and
+/// `Some(reason)` when at least one `fs.rm` call failed (e.g. file
+/// locked by another process on Windows). Operators grep the audit
+/// log for `fs_scrub_succeeded=false` to find revokes whose on-disk
+/// plaintext survived the scrub.
+///
+/// `vacuum_succeeded` / `vacuum_error` come from the substrate's
+/// Phase 5 `VACUUM` (forwarded through
+/// `KchatRevokeOutcomeInfo` / `KchatAclRefreshOutcomeInfo`). Fifth-pass
+/// Devin Review fix (ANALYSIS_pr-review-job-ef3c7d6c..._0001): a
+/// `VACUUM` failure after the DELETE + UPDATE transaction commits
+/// is non-fatal — the row-level scrub already ran under
+/// `secure_delete = ON` so the cryptographic guarantee holds — but
+/// the audit row records `vacuum_succeeded=false` so operators can
+/// re-run `VACUUM` manually once the underlying issue resolves.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn bridge_log_kchat_source_cryptoshredded(
+    channel_id: String,
+    reason: String,
+    chunks_dropped: u32,
+    files_dropped: u32,
+    fs_scrub_succeeded: bool,
+    fs_scrub_error: Option<String>,
+    vacuum_succeeded: bool,
+    vacuum_error: Option<String>,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_source_cryptoshredded(
+            &channel_id,
+            &reason,
+            chunks_dropped,
+            files_dropped,
+            fs_scrub_succeeded,
+            fs_scrub_error.as_deref(),
+            vacuum_succeeded,
+            vacuum_error.as_deref(),
+        );
+    }
+    Ok(())
+}
+
 /// Renderer-facing audit row. The Rust `AuditEvent` carries a
 /// strongly-typed `AuditEventType` enum and a `DateTime<Utc>`;
 /// neither survives the napi boundary cleanly, so we serialise the

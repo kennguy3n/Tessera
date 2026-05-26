@@ -208,7 +208,15 @@ export interface KchatAclMemberInfo {
  *   - `"granted"` — principal in roster, source was already in
  *     a non-revoked state (status untouched).
  *   - `"regranted"` — principal in roster, source was previously
- *     `AccessRevoked`; status transitioned back to `Indexed`.
+ *     `AccessRevoked`; status transitioned back to `Connected`
+ *     (NOT `Indexed`, because the revoke path cryptoshredded all
+ *     evidence rows). The Node-side forwarder reads this
+ *     outcome as a signal to schedule a full channel re-sync
+ *     via the `setKchatChannelResyncImpl` slot (see
+ *     `apps/desktop/electron/ipc/kchat.ts`), which re-walks the
+ *     file roster, downloads + chunks each file, and lets the
+ *     indexer promote the status to `Indexing` → `Indexed` on
+ *     its own.
  *   - `"revoked"` — principal NOT in roster; status transitioned
  *     to `AccessRevoked` and retrieval will start filtering the
  *     source's chunks out on the next call.
@@ -226,6 +234,11 @@ export interface KchatAclMemberInfo {
  * `principalPresent` mirrors the outcome — `true` for
  * `granted` / `regranted`, `false` otherwise — and is the
  * boolean flag the audit row records for operator dashboards.
+ *
+ * Block B Task 4 (Phase 11): when `outcome === "revoked"`, the
+ * inline cryptoshred ran and `chunksDropped` / `filesDropped`
+ * report how many evidence rows the substrate scrubbed. For
+ * every other outcome the counts are zero (no shred happened).
  */
 export interface KchatAclRefreshOutcomeInfo {
   outcome:
@@ -236,6 +249,27 @@ export interface KchatAclRefreshOutcomeInfo {
     | "no_principal";
   memberCount: number;
   principalPresent: boolean;
+  /** Block B Task 4: count of chunk rows scrubbed by the inline
+   *  cryptoshred on the revoke path; 0 on every non-revoke outcome. */
+  chunksDropped: number;
+  /** Block B Task 4: count of indexed_files rows scrubbed by the
+   *  inline cryptoshred on the revoke path; 0 on every non-revoke
+   *  outcome. */
+  filesDropped: number;
+  /** Fifth-pass Devin Review fix
+   *  (ANALYSIS_pr-review-job-ef3c7d6c..._0001): `true` when the
+   *  substrate's belt-and-braces `VACUUM` ran cleanly (or was
+   *  skipped because there was nothing to reclaim). `false` only
+   *  when `VACUUM` ran and failed; the row-level scrub still
+   *  committed under `secure_delete = ON` in that case so the
+   *  cryptographic guarantee holds. Forwarded onto the
+   *  `KchatSourceCryptoshredded` audit row so operators can grep
+   *  for `vacuum_succeeded=false`. */
+  vacuumSucceeded: boolean;
+  /** Fifth-pass Devin Review fix: first-error message text on a
+   *  `VACUUM` failure. `undefined` (mapped from Rust `None`) when
+   *  `vacuumSucceeded` is true. */
+  vacuumError?: string;
 }
 
 /**
@@ -254,6 +288,22 @@ export interface KchatAclRefreshOutcomeInfo {
  */
 export interface KchatRevokeOutcomeInfo {
   outcome: "revoked" | "already_revoked" | "unlinked";
+  /** Block B Task 4 (Phase 11): count of chunk rows scrubbed by
+   *  the inline cryptoshred. Both `revoked` and `already_revoked`
+   *  outcomes run the (idempotent) shred so a re-revoke can serve
+   *  as a one-time backfill for sources soft-revoked under the
+   *  Task 3 build. `unlinked` is always zero. */
+  chunksDropped: number;
+  /** Block B Task 4 (Phase 11): count of indexed_files rows
+   *  scrubbed by the inline cryptoshred. Same semantics as
+   *  `chunksDropped`. */
+  filesDropped: number;
+  /** Fifth-pass Devin Review fix: see
+   *  {@link KchatAclRefreshOutcomeInfo.vacuumSucceeded}. */
+  vacuumSucceeded: boolean;
+  /** Fifth-pass Devin Review fix: see
+   *  {@link KchatAclRefreshOutcomeInfo.vacuumError}. */
+  vacuumError?: string;
 }
 
 /**

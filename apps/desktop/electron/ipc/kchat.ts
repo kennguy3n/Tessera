@@ -25,7 +25,11 @@ import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
 import { promises as dnsPromises } from "dns";
-import { getBridge, getKchatAuthService } from "../appState";
+import {
+  getBridge,
+  getKchatAuthService,
+  setKchatChannelResyncImpl,
+} from "../appState";
 import { idempotentHandle } from "./register";
 import {
   assertBoolean,
@@ -1148,6 +1152,54 @@ export function registerKchatHandlers(): void {
       return work;
     },
   );
+
+  // Block B Task 4 (Phase 11) second-pass Devin Review ANALYSIS_0002:
+  // populate the auto-resync slot the `KchatEventForwarder` reads
+  // when it observes a `KchatAclRefreshOutcome::Regranted` outcome.
+  // The forwarder calls this closure OUTSIDE its own per-channel
+  // `withChannelSyncLock` (the lock has already released by then),
+  // so we can safely re-acquire the same lock here for the full
+  // sync without deadlocking. We reuse the two-layer dedupe of the
+  // user-driven path (in-flight Map + per-channel lock) so a
+  // regrant event that races a user clicking "re-add channel"
+  // collapses into a single sync.
+  //
+  // `name` semantics: `runAddKchatChannel` only consumes the name
+  // argument inside the `outcome.newlyCreated` branch's
+  // `bridgeLogKchatChannelLinked` audit emission. On a regrant the
+  // source row already exists (Block B Task 3 retains the row +
+  // flips its status to `AccessRevoked`, then back to `Connected`
+  // on regrant), so `newlyCreated` is always `false` here and the
+  // name is never consumed. We pass the stable channel id as the
+  // audit-name fallback so the value is well-formed for the
+  // exotic-race case where the source row was somehow dropped
+  // between the regrant audit and this resync (the bridge would
+  // re-create it; in that case we'd at least emit an audit row
+  // with the channel id rather than an empty string). The real
+  // display name comes back through the substrate's source row,
+  // which is unaffected by this fallback.
+  setKchatChannelResyncImpl(async (channelId: string) => {
+    // Validation: defensive re-check on the forwarder-supplied
+    // channel id. The forwarder validates its inputs at the
+    // ingest boundary, but we re-validate here so a future caller
+    // (e.g. a test that wires the impl directly) gets the same
+    // protection.
+    const id = assertKchatId(channelId, "channelId");
+    const existing = inFlightAddKchatChannel.get(id);
+    if (existing) {
+      await existing;
+      return;
+    }
+    const work = withChannelSyncLock(id, () =>
+      runAddKchatChannel(id, id),
+    ).finally(() => {
+      if (inFlightAddKchatChannel.get(id) === work) {
+        inFlightAddKchatChannel.delete(id);
+      }
+    });
+    inFlightAddKchatChannel.set(id, work);
+    await work;
+  });
 }
 
 interface ProducedExport {

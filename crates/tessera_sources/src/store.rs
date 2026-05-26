@@ -658,6 +658,275 @@ impl SourceStore {
         Ok(rows)
     }
 
+    /// Cryptoshreds (inline destroys) every chunk + indexed_file row
+    /// belonging to a single source, then defensively scrubs the
+    /// SQLite freelist pages those rows occupied. Used by Block B
+    /// Task 4 (Phase 11) on the KChat `AccessRevoked` transition.
+    ///
+    /// Phase ordering (load-bearing for the defence-in-depth
+    /// guarantee):
+    ///
+    /// 1. **Count** the chunks + indexed_files about to be dropped.
+    ///    Returned to the caller so the audit row records what was
+    ///    scrubbed even after the rows are gone.
+    /// 2. **`PRAGMA secure_delete = ON`** — must run *before* any
+    ///    `DELETE` so SQLite zero-fills the freed pages at delete
+    ///    time. If we set it after the deletes (as an earlier draft
+    ///    did), a subsequent `VACUUM` failure (e.g. insufficient
+    ///    disk space for the temp file) leaves the freed pages
+    ///    holding the original plaintext.
+    /// 3. **`BEGIN IMMEDIATE`** — wrap the row-level mutations in an
+    ///    explicit transaction so a crash mid-shred either rolls
+    ///    back to the pre-shred state or commits the full scrub.
+    ///    `VACUUM` (Phase 5) cannot run inside a transaction, so it
+    ///    is intentionally outside.
+    /// 4. **`DELETE FROM chunks` / `DELETE FROM indexed_files`** —
+    ///    `chunks_ad` and `chunks_ad_embeddings` triggers cascade
+    ///    the chunk delete to `chunks_fts` and `chunk_embeddings`
+    ///    so the single DELETE scrubs all three retrieval surfaces
+    ///    atomically. **Plus** reset `sources.last_indexed = NULL`
+    ///    and `file_count = 0` so the source-detail UI mirrors the
+    ///    scrub. All four statements live in the same transaction.
+    /// 5. **`VACUUM`** — only when chunks or files were actually
+    ///    dropped. `VACUUM` rebuilds the entire database file; on
+    ///    the idempotent `already_revoked` path (drops nothing), we
+    ///    skip it because rebuilding the whole file to free zero
+    ///    pages would block every concurrent reader for seconds on
+    ///    large databases. The `secure_delete = ON` page zero-fill
+    ///    in Phase 4 still ran on the actual delete path, so the
+    ///    cryptographic guarantee holds; VACUUM is the
+    ///    belt-and-braces freelist sweep, not the primary scrub.
+    ///    Fifth-pass Devin Review fix
+    ///    (ANALYSIS_pr-review-job-ef3c7d6c..._0001): a VACUUM
+    ///    failure here is NON-FATAL — the row-level scrub already
+    ///    committed under `secure_delete = ON`, so the cryptographic
+    ///    property holds even when VACUUM cannot rewrite the file.
+    ///    The function returns `Ok(outcome)` with
+    ///    `vacuum_succeeded = false` and the error text in
+    ///    `vacuum_error`, which the bridge + audit logger surface as
+    ///    a `vacuum_succeeded=false` row so an operator grep finds
+    ///    revokes that need a manual `VACUUM` re-run. Previously a
+    ///    `?`-propagated VACUUM error reached the forwarder's catch
+    ///    block and defaulted the audit row to `"unlinked"`, hiding
+    ///    the successful scrub from the trail.
+    /// 6. **`PRAGMA secure_delete = OFF`** — restore the connection
+    ///    to the default low-overhead delete path. The pragma is
+    ///    connection-scoped and the connection is shared, so this
+    ///    reset is required to avoid measurable write-amplification
+    ///    on the steady-state indexing path.
+    pub fn cryptoshred_kchat_source_evidence(
+        &self,
+        source_id: &SourceId,
+    ) -> Result<KchatSourceCryptoshredOutcome> {
+        let id_str = source_id.to_string();
+        let mut conn = self.conn.lock().expect("connection mutex poisoned");
+
+        // Phase 1 — count what we're about to drop so the audit row
+        // can record observability data even after the rows are gone.
+        // The counts MUST be read on the same locked Connection as
+        // the deletes so a concurrent writer can't expand the row-set
+        // between count and delete.
+        let chunks_to_drop: i64 = conn
+            .query_row(
+                "SELECT COUNT(*)
+                 FROM chunks c
+                 JOIN indexed_files f ON f.id = c.indexed_file_id
+                 WHERE f.source_id = ?1",
+                params![id_str],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let files_to_drop: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM indexed_files WHERE source_id = ?1",
+                params![id_str],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        // Phase 2 — enable secure_delete BEFORE the DELETEs so the
+        // freed pages are zero-filled at delete time. This is what
+        // makes the scrub resilient to a later VACUUM failure: even
+        // if disk pressure or process kill aborts Phase 5, the rows
+        // we just deleted are already overwritten with zeros on the
+        // freelist pages.
+        //
+        // CRITICAL: `secure_delete` is a connection-scoped pragma,
+        // and the `SharedConnection` is reused by every store in
+        // the process. If we set ON here and any subsequent
+        // statement returns early via `?`, the pragma stays ON for
+        // the remaining lifetime of the process — every chunk
+        // insert / FTS5 trigger fire / audit append then pays the
+        // page-zero-fill cost. We MUST reset to OFF on every exit
+        // path, including errors.
+        //
+        // We can't use a `Drop`-based RAII guard here because it
+        // would have to borrow `conn`, conflicting with the
+        // `&mut conn` borrow required by `transaction_with_behavior`.
+        // Instead we run the fallible phases inside an immediately-
+        // invoked closure so `?`-propagation early-returns from the
+        // *closure* (not the function), and the OFF reset always
+        // runs after the closure returns. This is the standard Rust
+        // pattern for "always run cleanup on every fallible exit"
+        // when a Drop-based guard would conflict with downstream
+        // borrows.
+        conn.execute_batch("PRAGMA secure_delete = ON;")
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let scrub_result: Result<()> = (|| {
+            // Phases 3+4 — wrap the row-level mutations in an
+            // explicit transaction so crash-recovery returns either
+            // the full pre-shred state or the full post-shred
+            // state, never a partial scrub (chunks gone,
+            // indexed_files still present). `BEGIN IMMEDIATE`
+            // acquires a RESERVED lock right away so a concurrent
+            // reader can't acquire SHARED between our COUNTs and
+            // our DELETEs.
+            let txn = conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(|e| Error::Database(e.to_string()))?;
+
+            // DELETE FROM chunks fires the `chunks_ad` trigger
+            // (removes the row from `chunks_fts`) and the
+            // `chunks_ad_embeddings` trigger (removes the matching
+            // `chunk_embeddings` rows), so this single DELETE
+            // scrubs all three retrieval surfaces atomically. The
+            // cascade depends on `PRAGMA foreign_keys = ON`, which
+            // `apply_default_pragmas` installs on every connection
+            // in `tessera_core::db`.
+            txn.execute(
+                "DELETE FROM chunks
+                 WHERE indexed_file_id IN
+                     (SELECT id FROM indexed_files WHERE source_id = ?1)",
+                params![id_str],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+            txn.execute(
+                "DELETE FROM indexed_files WHERE source_id = ?1",
+                params![id_str],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+            // Reset the source-row aggregates so the renderer's
+            // source-detail surface reflects the scrub. Status is
+            // NOT changed here — the manager has already set it to
+            // `AccessRevoked` (or will, in the same overall
+            // operation).
+            txn.execute(
+                "UPDATE sources
+                 SET last_indexed = NULL, file_count = 0
+                 WHERE id = ?1",
+                params![id_str],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+            txn.commit().map_err(|e| Error::Database(e.to_string()))?;
+
+            Ok(())
+        })();
+
+        // Phase 5 — VACUUM (cannot run inside a transaction). Moved
+        // OUT of the scrub_result closure (fifth-pass Devin Review
+        // fix, ANALYSIS_pr-review-job-ef3c7d6c..._0001): a VACUUM
+        // failure after the DELETE + UPDATE transaction commits is
+        // NOT a scrub failure. The row-level deletes already ran
+        // under `PRAGMA secure_delete = ON` so the freed pages are
+        // zero-filled; the cryptographic property holds. VACUUM is
+        // the belt-and-braces freelist sweep — a failure here means
+        // the on-disk freelist still holds zero-filled pages but in
+        // the original file layout. Operators want to learn about
+        // that so they can re-run `VACUUM` once disk space recovers,
+        // but propagating the error as a hard failure would default
+        // the forwarder's audit row to `"unlinked"` ("we never saw
+        // the revoke") when in fact the substrate scrub succeeded.
+        //
+        // Only pay the full-file-rewrite cost when we actually
+        // deleted rows; the idempotent `already_revoked` path is a
+        // no-op so there is nothing for VACUUM to reclaim.
+        //
+        // Skip VACUUM entirely if the scrub_result already errored —
+        // there's no point rebuilding the file when the rows weren't
+        // deleted in the first place, and running VACUUM against a
+        // poisoned connection would mask the original error.
+        let (vacuum_succeeded, vacuum_error) =
+            if scrub_result.is_ok() && (chunks_to_drop > 0 || files_to_drop > 0) {
+                match conn.execute_batch("VACUUM;") {
+                    Ok(()) => (true, None),
+                    Err(e) => {
+                        let msg = e.to_string();
+                        eprintln!(
+                            "[cryptoshred] VACUUM failed for source {id_str} after a \
+                         successful row-level scrub; secure_delete zero-filled the \
+                         freed pages so the cryptographic guarantee holds, but the \
+                         freelist sweep did not rebuild the file layout. Re-run \
+                         VACUUM manually once the underlying issue resolves: {msg}"
+                        );
+                        (false, Some(msg))
+                    }
+                }
+            } else {
+                // No VACUUM run — either the scrub failed (we will
+                // propagate the scrub error below) or there was nothing
+                // to reclaim. Both are non-failures for the VACUUM
+                // observability surface.
+                (true, None)
+            };
+
+        // Phase 6 — ALWAYS restore the connection's default delete
+        // mode, even if the scrub above failed. If we propagated
+        // the error without resetting, the shared connection would
+        // be stuck in `secure_delete = ON` for the rest of the
+        // process lifetime, silently degrading every steady-state
+        // chunk insert.
+        //
+        // Diagnostic-ordering invariant (Block B Task 4 third-pass
+        // Devin Review ANALYSIS_0001): the reset diagnostic MUST be
+        // emitted before the scrub error is propagated, otherwise
+        // the rare scrub-failed + reset-failed double-failure case
+        // would silently lose the reset diagnostic — the operator
+        // would see the scrub error and assume the connection is
+        // healthy, when in fact `secure_delete` is still ON and
+        // every steady-state write is paying the page-zero-fill
+        // cost for the remaining process lifetime. The eprintln!
+        // here is the *only* operator-visible signal that the
+        // connection is in the degraded state, so it always runs
+        // first.
+        //
+        // The original `scrub_result` error still takes precedence
+        // as the function's return value — it's what the caller
+        // primarily needs to know about (e.g. a `BEGIN IMMEDIATE`
+        // failing under lock contention, or a DELETE hitting a
+        // poisoned page). VACUUM errors no longer flow through
+        // here (Phase 5 is post-closure and reports via
+        // `outcome.vacuum_succeeded` / `outcome.vacuum_error`
+        // instead). The reset failure rides along in stderr so an
+        // operator grep-ing the logs can correlate both failures
+        // with the same audit row.
+        let reset_result = conn
+            .execute_batch("PRAGMA secure_delete = OFF;")
+            .map_err(|e| Error::Database(e.to_string()));
+
+        if let Err(e) = reset_result.as_ref() {
+            eprintln!(
+                "[cryptoshred] failed to reset secure_delete=OFF on shared \
+                 connection; steady-state writes will pay zero-fill overhead \
+                 until process restart: {e}"
+            );
+        }
+
+        scrub_result?;
+        reset_result?;
+
+        Ok(KchatSourceCryptoshredOutcome {
+            chunks_dropped: u32::try_from(chunks_to_drop).unwrap_or(u32::MAX),
+            files_dropped: u32::try_from(files_to_drop).unwrap_or(u32::MAX),
+            vacuum_succeeded,
+            vacuum_error,
+        })
+    }
+
     pub fn upsert_indexed_file(
         &self,
         source_id: &SourceId,
@@ -1387,6 +1656,52 @@ pub struct KchatAclRow {
     pub refreshed_at: String,
 }
 
+/// Counters returned by
+/// [`SourceStore::cryptoshred_kchat_source_evidence`] (Block B Task 4).
+///
+/// Surfaced through the bridge so the Node-side audit row
+/// (`KchatSourceCryptoshredded`) records how much evidence was
+/// scrubbed. `u32` is wide enough — a single KChat-backed source
+/// will not realistically index billions of chunks.
+///
+/// `vacuum_succeeded` records whether Phase 5 (`VACUUM`) completed
+/// cleanly. Phase 5 is the belt-and-braces freelist sweep that runs
+/// AFTER the DELETE + UPDATE transaction has already committed under
+/// `PRAGMA secure_delete = ON` (Phase 2-4): the cryptographic scrub
+/// is already done at that point — SQLite zero-filled the freed
+/// pages on the row-level DELETEs. A `VACUUM` failure (e.g. disk
+/// pressure preventing the temp-file rewrite) is therefore NOT a
+/// scrub failure; it just means the freelist pages were not
+/// additionally rewritten to a fresh file layout. The data is gone
+/// either way — but operators rely on the audit trail to learn that
+/// the belt-and-braces sweep didn't complete so they can re-run
+/// `VACUUM` manually when disk space recovers. Fifth-pass Devin
+/// Review fix (ANALYSIS_pr-review-job-ef3c7d6c..._0001): previously
+/// a `VACUUM` failure propagated `?` up to the forwarder's catch
+/// block, defaulting the outcome to `"unlinked"` — operator-visible
+/// audit said "we never saw the revoke" when in fact the row-level
+/// scrub committed successfully.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KchatSourceCryptoshredOutcome {
+    /// Number of rows deleted from the `chunks` table (which also
+    /// cascades to `chunks_fts` and `chunk_embeddings` via the
+    /// `chunks_ad` / `chunks_ad_embeddings` triggers).
+    pub chunks_dropped: u32,
+    /// Number of rows deleted from the `indexed_files` table.
+    pub files_dropped: u32,
+    /// `true` when Phase 5 (`VACUUM`) ran cleanly OR was skipped
+    /// because there was nothing to reclaim (idempotent
+    /// `already_revoked` path drops zero rows). `false` only when
+    /// `VACUUM` actually ran and rusqlite returned an error.
+    pub vacuum_succeeded: bool,
+    /// First-error message text on a `VACUUM` failure. `None`
+    /// otherwise. Surfaced to the audit row via
+    /// `bridge_log_kchat_source_cryptoshredded` so operators have
+    /// the underlying SQLite error code (e.g. `database or disk
+    /// is full`) without needing to chase the eprintln in stderr.
+    pub vacuum_error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1675,6 +1990,191 @@ mod tests {
             "load_embeddings_for_model must drop AccessRevoked rows \
              but got {} row(s)",
             rows_after.len(),
+        );
+    }
+
+    /// Block B Task 4 (Phase 11): low-level regression for
+    /// `cryptoshred_kchat_source_evidence`. The store-level test
+    /// proves the DELETE-then-VACUUM path scrubs all three
+    /// retrieval surfaces (chunks, chunks_fts, chunk_embeddings)
+    /// in a single transaction. The manager-level tests pin the
+    /// end-to-end behaviour through `refresh_kchat_acl` /
+    /// `revoke_kchat_source`; this test isolates the store layer
+    /// so a future change to the cascade triggers is caught here.
+    #[test]
+    fn cryptoshred_kchat_source_evidence_scrubs_chunks_fts_and_embeddings() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_kchat_channel("/tmp/kchat-shred".to_string());
+        store.add_source(&source).unwrap();
+
+        let file_id_a = store
+            .upsert_indexed_file(&source.id, "/tmp/kchat-shred/a.txt", "h-a", "2026-01-01")
+            .unwrap();
+        let file_id_b = store
+            .upsert_indexed_file(&source.id, "/tmp/kchat-shred/b.txt", "h-b", "2026-01-01")
+            .unwrap();
+        store
+            .insert_chunks(
+                file_id_a,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/kchat-shred/a.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "operator alpha rotation plan".to_string(),
+                    hash: "h-a-0".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+        store
+            .insert_chunks(
+                file_id_b,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/kchat-shred/b.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "operator bravo rotation plan".to_string(),
+                    hash: "h-b-0".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+
+        // Grab one chunk id so we can attach an embedding to it.
+        // We attach before the shred so the test verifies the
+        // `chunks_ad_embeddings` cascade fires.
+        let pre = store.search_fts("operator", 10).unwrap();
+        assert_eq!(
+            pre.len(),
+            2,
+            "control: both chunks must be searchable pre-shred"
+        );
+        let any_chunk_id = pre[0].chunk_id;
+        let dim: usize = 4;
+        let vec_bytes: Vec<u8> = vec![0.1_f32, 0.2, 0.3, 0.4]
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect();
+        store
+            .upsert_chunk_embedding(any_chunk_id, "test-model", dim, &vec_bytes)
+            .unwrap();
+        let pre_embeddings = store.load_embeddings_for_model("test-model").unwrap();
+        assert_eq!(
+            pre_embeddings.len(),
+            1,
+            "control: embedding row must exist pre-shred",
+        );
+
+        // Run the shred.
+        let outcome = store.cryptoshred_kchat_source_evidence(&source.id).unwrap();
+        assert_eq!(
+            outcome,
+            KchatSourceCryptoshredOutcome {
+                chunks_dropped: 2,
+                files_dropped: 2,
+                vacuum_succeeded: true,
+                vacuum_error: None,
+            },
+        );
+
+        // All three retrieval surfaces are scrubbed.
+        assert!(store.search_fts("operator", 10).unwrap().is_empty());
+        assert!(store.list_indexed_files(&source.id).unwrap().is_empty());
+        assert!(
+            store
+                .load_embeddings_for_model("test-model")
+                .unwrap()
+                .is_empty(),
+            "chunk_embeddings cascade must fire on the shred path",
+        );
+
+        // The source row itself is preserved (file_count reset,
+        // last_indexed cleared) so operator-side forensics still
+        // shows the channel existed and was revoked.
+        let refreshed = store.get_source(&source.id).unwrap();
+        assert_eq!(refreshed.file_count, 0);
+        assert_eq!(refreshed.last_indexed, None);
+    }
+
+    /// Block B Task 4 second-pass Devin Review BUG_0001 regression:
+    /// `secure_delete` is connection-scoped, and the
+    /// `SharedConnection` is reused by every store in the process.
+    /// If `cryptoshred_kchat_source_evidence` leaves `secure_delete`
+    /// set to `ON` after returning, every subsequent chunk insert,
+    /// FTS5 trigger fire, and audit-append pays the page-zero-fill
+    /// cost for the lifetime of the process. This test pins the
+    /// invariant by inspecting `PRAGMA secure_delete` after a normal
+    /// (Ok) shred path and after an idempotent (zero-row) shred
+    /// path. The error path is asserted by the structure of the
+    /// closure-based cleanup pattern in `store.rs` itself (the OFF
+    /// reset runs unconditionally after the closure returns).
+    #[test]
+    fn cryptoshred_kchat_source_evidence_restores_secure_delete_off() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_kchat_channel("/tmp/kchat-shred-pragma".to_string());
+        store.add_source(&source).unwrap();
+
+        // Helper: read the connection-scoped `secure_delete` pragma
+        // through the same shared connection the store uses, so the
+        // assertion sees exactly what subsequent indexer writes
+        // would see.
+        let read_secure_delete = || -> i64 {
+            let conn = store.conn.lock().expect("conn poisoned");
+            conn.query_row("PRAGMA secure_delete", [], |row| row.get::<_, i64>(0))
+                .expect("PRAGMA secure_delete should always return a row")
+        };
+
+        // Baseline: secure_delete defaults to OFF (0).
+        assert_eq!(
+            read_secure_delete(),
+            0,
+            "control: secure_delete should default to OFF on a fresh connection",
+        );
+
+        // Path 1: idempotent shred (no rows to drop) — must still
+        // restore OFF.
+        let _ = store.cryptoshred_kchat_source_evidence(&source.id).unwrap();
+        assert_eq!(
+            read_secure_delete(),
+            0,
+            "secure_delete must be restored to OFF after an idempotent shred",
+        );
+
+        // Seed one chunk + one indexed_file so the next shred takes
+        // the non-idempotent path (transaction + VACUUM).
+        let file_id = store
+            .upsert_indexed_file(
+                &source.id,
+                "/tmp/kchat-shred-pragma/a.txt",
+                "h-pragma",
+                "2026-01-01",
+            )
+            .unwrap();
+        store
+            .insert_chunks(
+                file_id,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/kchat-shred-pragma/a.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "operator pragma rotation plan".to_string(),
+                    hash: "h-pragma-0".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+
+        // Path 2: successful shred with VACUUM — must restore OFF.
+        let outcome = store.cryptoshred_kchat_source_evidence(&source.id).unwrap();
+        assert_eq!(outcome.chunks_dropped, 1);
+        assert_eq!(outcome.files_dropped, 1);
+        assert_eq!(
+            read_secure_delete(),
+            0,
+            "secure_delete must be restored to OFF after a successful shred + VACUUM",
         );
     }
 

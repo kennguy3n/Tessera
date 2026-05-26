@@ -102,6 +102,17 @@ pub enum AuditEventType {
     /// lose access to this channel, and why" without consulting
     /// the KChat server log.
     KchatChannelAccessRevoked,
+    /// A KChat-channel source's indexed evidence (chunks +
+    /// indexed_files + their FTS5 / embedding rows) was scrubbed
+    /// inline as part of a revoke transition (Block B Task 4,
+    /// Phase 11). Details carry the channel id, the reason
+    /// (`channel_archived` / `channel_deleted` /
+    /// `principal_missing_from_roster` / explicit operator
+    /// revoke), and the counts of chunks + files scrubbed. This
+    /// row is the operator-visible signal that the cryptoshred
+    /// step succeeded — the prior `KchatChannelAccessRevoked` row
+    /// only records the status transition.
+    KchatSourceCryptoshredded,
 }
 
 impl AuditEventType {
@@ -140,6 +151,7 @@ impl AuditEventType {
             Self::KchatFileEventReceived => "kchat_file_event_received",
             Self::KchatAclRefreshed => "kchat_acl_refreshed",
             Self::KchatChannelAccessRevoked => "kchat_channel_access_revoked",
+            Self::KchatSourceCryptoshredded => "kchat_source_cryptoshredded",
         }
     }
 }
@@ -195,6 +207,7 @@ mod tests {
             AuditEventType::KchatFileEventReceived,
             AuditEventType::KchatAclRefreshed,
             AuditEventType::KchatChannelAccessRevoked,
+            AuditEventType::KchatSourceCryptoshredded,
         ];
         for ev in all.iter() {
             let serde_form = serde_json::to_string(ev).unwrap();

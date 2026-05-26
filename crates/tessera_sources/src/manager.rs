@@ -65,15 +65,55 @@ pub enum KchatAclRefreshOutcome {
     Granted,
     /// The principal is in the refreshed roster AND the source
     /// row was previously `AccessRevoked` (e.g. the user was
-    /// removed and then re-added). Status transitioned from
-    /// `AccessRevoked` back to `Indexed`. The roster was replaced
+    /// removed and then re-added). The roster was replaced
     /// atomically. `principal_present == true`.
+    ///
+    /// Block B Task 4 (Phase 11): status transitions to
+    /// `Connected` (NOT `Indexed`). The earlier revoke cryptoshred
+    /// scrubbed every chunk + indexed_file row, so the source is
+    /// empty until a full re-sync runs. The Node-side forwarder
+    /// treats this outcome as a signal to schedule a re-sync via
+    /// `bridge_sync_source`; the indexer then promotes the status
+    /// to `Indexing` and `Indexed` on its own — the same flow used
+    /// for a freshly-linked channel.
     Regranted,
     /// The principal is NOT in the refreshed roster. Status
     /// transitioned to `AccessRevoked`. The roster was still
     /// replaced atomically (so a future re-grant via re-add
-    /// transitions back to `Indexed`). `principal_present == false`.
-    Revoked,
+    /// transitions to `Connected` and triggers a re-sync; see
+    /// the `Regranted` doc). `principal_present == false`.
+    ///
+    /// Block B Task 4 (Phase 11): the transition also triggers an
+    /// inline cryptoshred — the source's chunks and indexed_files
+    /// rows are deleted and the database is VACUUMed under
+    /// `PRAGMA secure_delete = ON`, so leftover plaintext chunks
+    /// from the now-revoked channel cannot leak via a future
+    /// retrieval-filter bug, a direct SQL inspection, or a forensic
+    /// disk-image of the SQLCipher-encrypted file (in the master-key
+    /// compromise case). The roster row-set is intentionally KEPT —
+    /// "who else had access at the moment of revocation" is a real
+    /// question operators ask.
+    Revoked {
+        /// Count of chunk rows scrubbed by the inline cryptoshred.
+        chunks_dropped: u32,
+        /// Count of indexed_file rows scrubbed by the inline cryptoshred.
+        files_dropped: u32,
+        /// Fifth-pass Devin Review fix
+        /// (ANALYSIS_pr-review-job-ef3c7d6c..._0001): `true` when the
+        /// belt-and-braces `VACUUM` ran cleanly (or was skipped
+        /// because there was nothing to reclaim). `false` only when
+        /// `VACUUM` ran and failed; the row-level scrub still
+        /// committed under `secure_delete = ON` in that case so the
+        /// cryptographic guarantee holds.
+        vacuum_succeeded: bool,
+        /// First-error message text on a `VACUUM` failure. `None`
+        /// when `vacuum_succeeded` is `true`. The Node-side forwarder
+        /// surfaces this on the `KchatSourceCryptoshredded` audit row
+        /// so operators can grep for `vacuum_succeeded=false` and
+        /// learn the underlying SQLite error without chasing
+        /// stderr.
+        vacuum_error: Option<String>,
+    },
     /// No `SourceType::Kchat` row exists for the cache_dir the
     /// caller passed. The roster was NOT persisted (there's no
     /// source row to attach it to). Returned when the forwarder
@@ -94,14 +134,50 @@ pub enum KchatAclRefreshOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KchatRevokeOutcome {
     /// The source row transitioned from a non-revoked state to
-    /// `AccessRevoked`.
-    Revoked,
+    /// `AccessRevoked`. Block B Task 4 (Phase 11): the transition
+    /// also triggers an inline cryptoshred (see
+    /// `KchatAclRefreshOutcome::Revoked` for the details).
+    Revoked {
+        /// Count of chunk rows scrubbed by the inline cryptoshred.
+        chunks_dropped: u32,
+        /// Count of indexed_file rows scrubbed by the inline cryptoshred.
+        files_dropped: u32,
+        /// Fifth-pass Devin Review fix: see
+        /// [`KchatAclRefreshOutcome::Revoked::vacuum_succeeded`].
+        vacuum_succeeded: bool,
+        /// Fifth-pass Devin Review fix: see
+        /// [`KchatAclRefreshOutcome::Revoked::vacuum_error`].
+        vacuum_error: Option<String>,
+    },
     /// The source row was already `AccessRevoked` — no status
     /// change applied. The audit row is still emitted by the
     /// caller so operators see the revoke event in the trail
     /// (otherwise a repeat `channel_archived` would silently drop
     /// the operator's clue that the channel was archived twice).
-    AlreadyRevoked,
+    ///
+    /// Block B Task 4 (Phase 11): a second revoke still runs
+    /// cryptoshred so the operation is idempotent at the evidence
+    /// layer — this also serves as a one-time backfill path for
+    /// sources that were soft-revoked under the Task 3 build before
+    /// the cryptoshred step landed. `chunks_dropped` /
+    /// `files_dropped` will be zero for an already-scrubbed source.
+    AlreadyRevoked {
+        /// Count of chunk rows scrubbed by the inline cryptoshred.
+        chunks_dropped: u32,
+        /// Count of indexed_file rows scrubbed by the inline cryptoshred.
+        files_dropped: u32,
+        /// Fifth-pass Devin Review fix: see
+        /// [`KchatAclRefreshOutcome::Revoked::vacuum_succeeded`].
+        /// Typically `true` on this path because the idempotent
+        /// re-shred drops zero rows so `VACUUM` is skipped — but a
+        /// backfill of a Task-3-era soft-revoked source that still
+        /// has chunks/indexed_files rows WILL run `VACUUM` and could
+        /// fail.
+        vacuum_succeeded: bool,
+        /// Fifth-pass Devin Review fix: see
+        /// [`KchatAclRefreshOutcome::Revoked::vacuum_error`].
+        vacuum_error: Option<String>,
+    },
     /// No `SourceType::Kchat` row exists for the cache_dir the
     /// caller passed. Returned when the forwarder races a
     /// `channel_archived` / `channel_deleted` event against a
@@ -609,7 +685,16 @@ impl SourceManager {
     ///
     /// - If the locally-authenticated principal is in `members`
     ///   AND the source was `AccessRevoked`, transition to
-    ///   `Indexed` (re-grant).
+    ///   `Connected` (re-grant) and return
+    ///   `KchatAclRefreshOutcome::Regranted`. Block B Task 4
+    ///   landed `cryptoshred_kchat_source_evidence` on the revoke
+    ///   path, so a previously-revoked source has zero indexed
+    ///   content; the Node-side forwarder reads `Regranted` as a
+    ///   signal to schedule a full channel re-sync via
+    ///   `setKchatChannelResyncImpl` (wired in
+    ///   `apps/desktop/electron/ipc/kchat.ts`), after which the
+    ///   indexer promotes the status to `Indexing` → `Indexed` on
+    ///   its own.
     /// - If the principal is in `members` AND the source is in
     ///   any other state, leave the status alone (the indexer
     ///   may be mid-run, the source may legitimately be in
@@ -663,17 +748,49 @@ impl SourceManager {
                 self.store
                     .update_source_status(&source.id, SourceStatus::AccessRevoked, None)?;
             }
-            return Ok(KchatAclRefreshOutcome::Revoked);
+            // Block B Task 4 (Phase 11): inline cryptoshred of
+            // chunks / indexed_files + VACUUM under PRAGMA
+            // secure_delete=ON. Runs unconditionally on the revoke
+            // path (idempotent — drops zero rows if the source was
+            // already scrubbed) so this also backfills sources that
+            // were soft-revoked under Task 3 before this step
+            // landed.
+            let shred = self.store.cryptoshred_kchat_source_evidence(&source.id)?;
+            return Ok(KchatAclRefreshOutcome::Revoked {
+                chunks_dropped: shred.chunks_dropped,
+                files_dropped: shred.files_dropped,
+                vacuum_succeeded: shred.vacuum_succeeded,
+                vacuum_error: shred.vacuum_error,
+            });
         }
 
         if source.status == SourceStatus::AccessRevoked {
-            // Principal was re-added after a previous revoke;
-            // restore retrievability. Transition back to `Indexed`
-            // rather than `Connected` — the source was previously
-            // indexed and the corpus chunks are still on disk, so
-            // resuming retrieval is the correct end state.
+            // Principal was re-added after a previous revoke.
+            // Block B Task 4 (Phase 11): because the revoke path
+            // now cryptoshreds every chunk + indexed_file row
+            // (`cryptoshred_kchat_source_evidence`), the source
+            // has zero indexed content even though it was
+            // previously `Indexed`. Transitioning straight back
+            // to `Indexed` would leave the source-detail UI
+            // claiming the channel is searchable while every
+            // query returns nothing — a confusing dead-end for
+            // the operator.
+            //
+            // Instead, transition to `Connected` (the natural
+            // "ACL is OK, no content indexed yet" status). The
+            // Node-side forwarder treats
+            // `KchatAclRefreshOutcome::Regranted` as a signal to
+            // schedule a full channel re-sync via the
+            // `setKchatChannelResyncImpl` slot populated by
+            // `registerKchatHandlers` in
+            // `apps/desktop/electron/ipc/kchat.ts`, after which
+            // the indexer promotes the status to `Indexing` and
+            // then `Indexed` on its own — the same flow used for
+            // a freshly-linked channel. Retrieval continues to
+            // exclude `Connected` sources (only `Indexed` rows
+            // surface) so there is no stale-data window.
             self.store
-                .update_source_status(&source.id, SourceStatus::Indexed, None)?;
+                .update_source_status(&source.id, SourceStatus::Connected, None)?;
             return Ok(KchatAclRefreshOutcome::Regranted);
         }
 
@@ -699,13 +816,42 @@ impl SourceManager {
             return Ok(KchatRevokeOutcome::Unlinked);
         };
 
-        if source.status == SourceStatus::AccessRevoked {
-            return Ok(KchatRevokeOutcome::AlreadyRevoked);
+        let was_already_revoked = source.status == SourceStatus::AccessRevoked;
+
+        if !was_already_revoked {
+            self.store
+                .update_source_status(&source.id, SourceStatus::AccessRevoked, None)?;
         }
 
-        self.store
-            .update_source_status(&source.id, SourceStatus::AccessRevoked, None)?;
-        Ok(KchatRevokeOutcome::Revoked)
+        // Block B Task 4 (Phase 11): cryptoshred runs on BOTH paths
+        // — the first revoke transitions status and scrubs evidence;
+        // a re-revoke (AlreadyRevoked) still calls shred so the
+        // operation is idempotent at the evidence layer AND serves
+        // as a one-time backfill for sources soft-revoked under the
+        // Task 3 build. The shred call is O(rows-deleted) and runs
+        // a VACUUM after, which is cheap when there is nothing to
+        // free; we pay it intentionally to keep the contract simple.
+        let shred = self.store.cryptoshred_kchat_source_evidence(&source.id)?;
+        let chunks_dropped = shred.chunks_dropped;
+        let files_dropped = shred.files_dropped;
+        let vacuum_succeeded = shred.vacuum_succeeded;
+        let vacuum_error = shred.vacuum_error;
+
+        Ok(if was_already_revoked {
+            KchatRevokeOutcome::AlreadyRevoked {
+                chunks_dropped,
+                files_dropped,
+                vacuum_succeeded,
+                vacuum_error,
+            }
+        } else {
+            KchatRevokeOutcome::Revoked {
+                chunks_dropped,
+                files_dropped,
+                vacuum_succeeded,
+                vacuum_error,
+            }
+        })
     }
 
     /// Read the cached ACL roster for a KChat-channel source. Used
@@ -1320,7 +1466,23 @@ mod tests {
                 ],
             )
             .unwrap();
-        assert_eq!(outcome, KchatAclRefreshOutcome::Revoked);
+        // Block B Task 4 (Phase 11): the revoke outcome carries the
+        // cryptoshred counters. `add_kchat_channel` above indexed
+        // the single `f.txt` file (one indexed_files row + one
+        // chunk), so the revoke scrubs both. The dedicated end-to-end
+        // shred regression test lives in
+        // `refresh_kchat_acl_revoke_cryptoshreds_indexed_evidence`
+        // — this assertion pins the contract that the count fields
+        // are populated, not zero-by-default.
+        assert_eq!(
+            outcome,
+            KchatAclRefreshOutcome::Revoked {
+                chunks_dropped: 1,
+                files_dropped: 1,
+                vacuum_succeeded: true,
+                vacuum_error: None,
+            },
+        );
         let refreshed = manager.get_source(&added.source.id).unwrap();
         assert_eq!(refreshed.status, SourceStatus::AccessRevoked);
 
@@ -1363,9 +1525,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(outcome, KchatAclRefreshOutcome::Regranted);
+        // Block B Task 4 (Phase 11): regrant transitions to
+        // `Connected`, NOT `Indexed`. The earlier revoke
+        // cryptoshredded every chunk + indexed_file row, so the
+        // source is empty until the Node-side forwarder runs a
+        // full re-sync — and only then will the indexer promote
+        // status to `Indexing` and `Indexed`. Asserting `Indexed`
+        // here (as an earlier draft did) would mean the UI
+        // claims the channel is searchable while every query
+        // returns zero rows.
         assert_eq!(
             manager.get_source(&added.source.id).unwrap().status,
-            SourceStatus::Indexed,
+            SourceStatus::Connected,
         );
     }
 
@@ -1381,17 +1552,40 @@ mod tests {
         let outcome = manager
             .revoke_kchat_source(dir.path().to_str().unwrap())
             .unwrap();
-        assert_eq!(outcome, KchatRevokeOutcome::Revoked);
+        // `add_kchat_channel` above indexed the single `f.txt`
+        // file (one indexed_files row + one chunk), so the revoke
+        // scrubs both. See
+        // `revoke_kchat_source_cryptoshreds_evidence_idempotently`
+        // for the dedicated multi-file regression test.
+        assert_eq!(
+            outcome,
+            KchatRevokeOutcome::Revoked {
+                chunks_dropped: 1,
+                files_dropped: 1,
+                vacuum_succeeded: true,
+                vacuum_error: None,
+            },
+        );
         assert_eq!(
             manager.get_source(&added.source.id).unwrap().status,
             SourceStatus::AccessRevoked,
         );
 
-        // Idempotent: a second revoke reports `AlreadyRevoked`.
+        // Idempotent: a second revoke reports `AlreadyRevoked`
+        // with zero shred counts (the first revoke already
+        // scrubbed every chunk + indexed_file row).
         let again = manager
             .revoke_kchat_source(dir.path().to_str().unwrap())
             .unwrap();
-        assert_eq!(again, KchatRevokeOutcome::AlreadyRevoked);
+        assert_eq!(
+            again,
+            KchatRevokeOutcome::AlreadyRevoked {
+                chunks_dropped: 0,
+                files_dropped: 0,
+                vacuum_succeeded: true,
+                vacuum_error: None,
+            },
+        );
     }
 
     #[test]
@@ -1399,6 +1593,147 @@ mod tests {
         let manager = SourceManager::new_in_memory(&[]).unwrap();
         let outcome = manager.revoke_kchat_source("/no/such/dir").unwrap();
         assert_eq!(outcome, KchatRevokeOutcome::Unlinked);
+    }
+
+    /// Block B Task 4 (Phase 11): end-to-end regression for
+    /// cryptoshred-on-explicit-revoke. We index a multi-file channel,
+    /// confirm `list_indexed_files` reports the expected rows, revoke
+    /// the source, and assert that the indexed_files + chunk rows
+    /// for that source are gone. The source row itself stays (with
+    /// `file_count = 0` and `last_indexed = None`) so an operator
+    /// can still see "this channel was revoked".
+    #[test]
+    fn revoke_kchat_source_cryptoshreds_evidence_idempotently() {
+        let dir = tempfile::tempdir().unwrap();
+        // Three files with three different contents so the chunker
+        // emits at least three chunk rows.
+        std::fs::write(dir.path().join("a.txt"), "alpha file content").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "bravo file content").unwrap();
+        std::fs::write(dir.path().join("c.txt"), "charlie file content").unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager
+            .add_kchat_channel(dir.path().to_str().unwrap())
+            .unwrap();
+
+        let pre_files = manager.list_indexed_files(&added.source.id).unwrap();
+        assert_eq!(
+            pre_files.len(),
+            3,
+            "control: add_kchat_channel must index all 3 files",
+        );
+
+        let outcome = manager
+            .revoke_kchat_source(dir.path().to_str().unwrap())
+            .unwrap();
+        let (chunks_dropped, files_dropped) = match outcome {
+            KchatRevokeOutcome::Revoked {
+                chunks_dropped,
+                files_dropped,
+                vacuum_succeeded,
+                vacuum_error,
+            } => {
+                // Fifth-pass Devin Review fix
+                // (ANALYSIS_pr-review-job-ef3c7d6c..._0001): the
+                // happy-path multi-file revoke must always report a
+                // clean VACUUM. The dedicated
+                // `cryptoshred_kchat_source_evidence_records_vacuum_failure`
+                // test in `store.rs` exercises the failure path via a
+                // poisoned connection.
+                assert!(vacuum_succeeded, "happy-path VACUUM must succeed");
+                assert!(vacuum_error.is_none());
+                (chunks_dropped, files_dropped)
+            }
+            other => panic!("expected Revoked variant, got {other:?}"),
+        };
+        assert_eq!(
+            files_dropped, 3,
+            "all 3 indexed_files rows must be scrubbed by the cryptoshred"
+        );
+        assert!(
+            chunks_dropped >= 3,
+            "all per-file chunks must be scrubbed; got {chunks_dropped} \
+             chunks_dropped for 3 indexed files"
+        );
+
+        // Post-shred: source row stays, evidence gone.
+        let refreshed = manager.get_source(&added.source.id).unwrap();
+        assert_eq!(refreshed.status, SourceStatus::AccessRevoked);
+        assert_eq!(refreshed.file_count, 0);
+        assert_eq!(refreshed.last_indexed, None);
+        let post_files = manager.list_indexed_files(&added.source.id).unwrap();
+        assert!(
+            post_files.is_empty(),
+            "post-cryptoshred indexed_files must be empty; got {post_files:?}"
+        );
+
+        // Idempotency: a second revoke reports `AlreadyRevoked`
+        // with zero counts (every row already scrubbed).
+        let again = manager
+            .revoke_kchat_source(dir.path().to_str().unwrap())
+            .unwrap();
+        assert_eq!(
+            again,
+            KchatRevokeOutcome::AlreadyRevoked {
+                chunks_dropped: 0,
+                files_dropped: 0,
+                vacuum_succeeded: true,
+                vacuum_error: None,
+            },
+        );
+    }
+
+    /// Block B Task 4 (Phase 11): regression for the
+    /// `refresh_kchat_acl(Revoked)` auto-shred path. The
+    /// retrieval-side filter from Task 3 is the first line of
+    /// defence; the inline cryptoshred makes the chunks actually
+    /// disappear so a future filter regression cannot leak them.
+    #[test]
+    fn refresh_kchat_acl_revoke_cryptoshreds_indexed_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "alpha file content").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "bravo file content").unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager
+            .add_kchat_channel(dir.path().to_str().unwrap())
+            .unwrap();
+        manager.set_kchat_principal("principal").unwrap();
+
+        let pre_files = manager.list_indexed_files(&added.source.id).unwrap();
+        assert_eq!(pre_files.len(), 2, "control: two files must be indexed");
+
+        // Refresh with a roster the principal is NOT in → Revoked.
+        let outcome = manager
+            .refresh_kchat_acl(
+                dir.path().to_str().unwrap(),
+                &[make_acl_member("alice", "channel_user")],
+            )
+            .unwrap();
+        let (chunks_dropped, files_dropped) = match outcome {
+            KchatAclRefreshOutcome::Revoked {
+                chunks_dropped,
+                files_dropped,
+                vacuum_succeeded,
+                vacuum_error,
+            } => {
+                assert!(vacuum_succeeded, "happy-path VACUUM must succeed");
+                assert!(vacuum_error.is_none());
+                (chunks_dropped, files_dropped)
+            }
+            other => panic!("expected Revoked variant, got {other:?}"),
+        };
+        assert_eq!(files_dropped, 2);
+        assert!(
+            chunks_dropped >= 2,
+            "cryptoshred must scrub chunks for every indexed file; got \
+             chunks_dropped={chunks_dropped}"
+        );
+
+        let post_files = manager.list_indexed_files(&added.source.id).unwrap();
+        assert!(post_files.is_empty());
+        assert_eq!(
+            manager.get_source(&added.source.id).unwrap().status,
+            SourceStatus::AccessRevoked,
+        );
     }
 
     #[test]
