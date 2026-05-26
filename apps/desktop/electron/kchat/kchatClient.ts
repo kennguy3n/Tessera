@@ -933,27 +933,44 @@ export class KchatClient {
     if (typeof parsed.event !== "string") return;
     // The KChat / Mattermost protocol always frames events with a
     // `broadcast` object (`channel_id`, `team_id`, `user_id`,
-    // `omit_users`). A server we do not control could in principle
-    // ship a malformed frame — `{"event":"hello","seq":0}` with no
-    // `broadcast` field at all, or `{"broadcast":null}` — and the
-    // downstream projection (`toRendererEventView` and any other
-    // listener that destructures `parsed.broadcast.*`) would
-    // TypeError on the property access. The error would surface
-    // only as a swallowed exception in the per-listener try/catch
-    // below; the listener would silently drop the event and the
-    // forwarder's ring buffer would lose it without an audit
-    // trail.
+    // `omit_users`) AND a `data` object (event-specific payload —
+    // `create_at`, `file_id`, `channel_name`, etc.). A server we
+    // do not control could in principle ship a malformed frame —
+    // `{"event":"hello","seq":0}` with no `broadcast` field at
+    // all, `{"broadcast":null}`, `{"data":[]}`, or
+    // `{"event":"posted","broadcast":{...}}` with no `data` — and
+    // the downstream projection (`toRendererEventView` and any
+    // listener that destructures `parsed.broadcast.*` /
+    // `parsed.data.*`) would TypeError on the property access. The
+    // error would surface only as a swallowed exception in the
+    // per-listener try/catch below; the listener would silently
+    // drop the event and the forwarder's ring buffer would lose
+    // it without an audit trail. Renderer consumers (notably
+    // `KchatSidebarSection` which destructures `event.data.create_at`)
+    // would receive a typed `KchatWebSocketEventView` that lies
+    // about `data` being defined and TypeError in the renderer
+    // event loop with no try/catch above it.
     //
     // The trust boundary for the WS frame is THIS function — once
     // we leave it, every consumer assumes `KchatWebSocketEvent`
     // matches its TypeScript shape. Reject malformed frames here
     // (rather than scattering optional-chain guards at every
     // projection site) so the post-parse contract holds.
-    // Fifth-pass Devin Review on PR #43 (`ANALYSIS_pr-review-job-...0001`).
+    // Fifth-pass Devin Review on PR #43 added the `broadcast`
+    // guard (`ANALYSIS_pr-review-job-..._0001`); sixth-pass added
+    // the symmetric `data` guard (`BUG_pr-review-job-...0001`)
+    // for the same renderer-TypeError reason on a different field.
     if (
       typeof parsed.broadcast !== "object" ||
       parsed.broadcast === null ||
       Array.isArray(parsed.broadcast)
+    ) {
+      return;
+    }
+    if (
+      typeof parsed.data !== "object" ||
+      parsed.data === null ||
+      Array.isArray(parsed.data)
     ) {
       return;
     }

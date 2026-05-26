@@ -1107,17 +1107,23 @@ describe("KchatClient.connectWebSocket", () => {
     expect((events[0] as { event: string }).event).toBe("posted");
   });
 
-  it("drops malformed WS frames that lack a broadcast object", async () => {
-    // Regression for fifth-pass Devin Review on PR #43
-    // (ANALYSIS_pr-review-job-...0001). KChat's protocol always
-    // includes a `broadcast` object on every event, but the WS
-    // peer is treated as fully untrusted — a malformed payload
-    // (no `broadcast`, `broadcast: null`, `broadcast` as an array)
-    // must not reach the listener set, because every downstream
-    // consumer (including `toRendererEventView`) destructures
-    // `parsed.broadcast.*` directly and would otherwise throw.
+  it("drops malformed WS frames that lack a broadcast or data object", async () => {
+    // Regression for fifth-pass Devin Review on PR #43 (the
+    // `broadcast` guard — `ANALYSIS_pr-review-job-...0001`) plus
+    // the sixth-pass extension to the symmetric `data` guard
+    // (`BUG_pr-review-job-...0001`). KChat's protocol always
+    // includes both a `broadcast` object AND a `data` object on
+    // every event, but the WS peer is treated as fully untrusted
+    // — a malformed payload missing either (or with either as
+    // `null` or an array) must not reach the listener set,
+    // because every downstream consumer destructures
+    // `parsed.broadcast.*` / `parsed.data.*` directly and would
+    // otherwise throw. The renderer's `event.data.create_at` access
+    // in `KchatSidebarSection` is the critical case — it would
+    // TypeError in the renderer event loop with no try/catch above
+    // it, surfacing as an unhandled exception in the UI.
     //
-    // The trust boundary is `handleWsMessage`. We feed it three
+    // The trust boundary is `handleWsMessage`. We feed it six
     // malformed frames plus one well-formed control, and assert
     // only the control reaches the listener.
     const { ctor, instances } = mockWebSocketCtor();
@@ -1153,18 +1159,46 @@ describe("KchatClient.connectWebSocket", () => {
         seq: 3,
       }),
     });
-    // 4. Well-formed control.
+    // 4. Missing `data` entirely. The renderer's
+    //    `event.data.create_at` access in `KchatSidebarSection`
+    //    would TypeError without this guard.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        broadcast: { channel_id: "chid" },
+        seq: 4,
+      }),
+    });
+    // 5. `data: null`.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        broadcast: { channel_id: "chid" },
+        data: null,
+        seq: 5,
+      }),
+    });
+    // 6. `data` is an array.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        broadcast: { channel_id: "chid" },
+        data: [],
+        seq: 6,
+      }),
+    });
+    // 7. Well-formed control.
     instances[0].inst.onmessage?.({
       data: JSON.stringify({
         event: "posted",
         data: { channel_name: "design" },
         broadcast: { channel_id: "chid" },
-        seq: 4,
+        seq: 7,
       }),
     });
 
     expect(events).toHaveLength(1);
-    expect((events[0] as { seq: number }).seq).toBe(4);
+    expect((events[0] as { seq: number }).seq).toBe(7);
   });
 
   it("user-initiated disconnect does NOT schedule a reconnect", async () => {
