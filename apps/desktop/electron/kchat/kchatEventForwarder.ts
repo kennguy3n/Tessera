@@ -1172,6 +1172,17 @@ export class KchatEventForwarder {
     // gate emission on `outcome === "revoked"` below.
     let chunksDropped = 0;
     let filesDropped = 0;
+    // Block B Task 4 (Phase 11) third-pass Devin Review fix:
+    // filesystem-scrub outcome captured from
+    // `secureDeleteChannelArtifacts` so the audit row records
+    // both substrate-side (chunks/files dropped) AND filesystem-side
+    // (cache dir + manifest removed) observability. Default
+    // `fsScrubSucceeded=true` for non-revoke outcomes — the
+    // helper isn't called on those paths, so trivially "succeeded"
+    // is the correct semantic (nothing to scrub means scrub
+    // didn't fail).
+    let fsScrubSucceeded = true;
+    let fsScrubError: string | undefined;
 
     try {
       const result = await withChannelSyncLock(channelId, async () => {
@@ -1185,6 +1196,8 @@ export class KchatEventForwarder {
             principalPresent: false,
             chunksDropped: 0,
             filesDropped: 0,
+            fsScrubSucceeded: true,
+            fsScrubError: undefined as string | undefined,
           };
         }
 
@@ -1246,8 +1259,12 @@ export class KchatEventForwarder {
         // distinguishes the two because the backfill case (no
         // source row → `unlinked`) must NOT scrub the cache dir
         // (we never created it).
+        let scrubSucceeded = true;
+        let scrubError: string | undefined;
         if (r.outcome === "revoked") {
-          await secureDeleteChannelArtifacts(cacheDir);
+          const scrub = await secureDeleteChannelArtifacts(cacheDir);
+          scrubSucceeded = scrub.cacheDirRemoved && scrub.manifestRemoved;
+          scrubError = scrub.error;
         }
         return {
           outcome: r.outcome,
@@ -1255,6 +1272,8 @@ export class KchatEventForwarder {
           principalPresent: r.principalPresent,
           chunksDropped: r.chunksDropped,
           filesDropped: r.filesDropped,
+          fsScrubSucceeded: scrubSucceeded,
+          fsScrubError: scrubError,
         };
       });
       outcome = result.outcome;
@@ -1262,6 +1281,8 @@ export class KchatEventForwarder {
       principalPresent = result.principalPresent;
       chunksDropped = result.chunksDropped;
       filesDropped = result.filesDropped;
+      fsScrubSucceeded = result.fsScrubSucceeded;
+      fsScrubError = result.fsScrubError;
     } catch (err) {
       console.error(
         "[KchatEventForwarder] ACL refresh failed:",
@@ -1296,6 +1317,8 @@ export class KchatEventForwarder {
         "principal_missing_from_roster",
         chunksDropped,
         filesDropped,
+        fsScrubSucceeded,
+        fsScrubError,
       );
     } else if (outcome === "regranted") {
       // Block B Task 4 (Phase 11) second-pass Devin Review
@@ -1383,10 +1406,21 @@ export class KchatEventForwarder {
     // The default is the `unlinked` outcome with zero counts so
     // a thrown error inside the lock falls through to the same
     // no-shred-row audit shape as a real `unlinked` outcome.
-    let result: KchatRevokeOutcomeInfo = {
+    // Block B Task 4 (Phase 11) third-pass Devin Review fix:
+    // capture the filesystem-scrub result alongside the substrate
+    // counts so the audit row records BOTH halves of the
+    // observability surface. `unlinked` outcomes trivially
+    // succeed (the helper isn't called when there's nothing to
+    // scrub).
+    let result: KchatRevokeOutcomeInfo & {
+      fsScrubSucceeded: boolean;
+      fsScrubError: string | undefined;
+    } = {
       outcome: "unlinked",
       chunksDropped: 0,
       filesDropped: 0,
+      fsScrubSucceeded: true,
+      fsScrubError: undefined,
     };
     try {
       result = await withChannelSyncLock(channelId, async () => {
@@ -1396,10 +1430,18 @@ export class KchatEventForwarder {
         // outcome that isn't `unlinked` — `unlinked` means no
         // source row ever existed, so there's no shred contract
         // to honour and nothing on disk we created.
+        let scrubSucceeded = true;
+        let scrubError: string | undefined;
         if (r.outcome !== "unlinked") {
-          await secureDeleteChannelArtifacts(cacheDir);
+          const scrub = await secureDeleteChannelArtifacts(cacheDir);
+          scrubSucceeded = scrub.cacheDirRemoved && scrub.manifestRemoved;
+          scrubError = scrub.error;
         }
-        return r;
+        return {
+          ...r,
+          fsScrubSucceeded: scrubSucceeded,
+          fsScrubError: scrubError,
+        };
       });
     } catch (err) {
       console.error(
@@ -1410,6 +1452,8 @@ export class KchatEventForwarder {
     const outcome = result.outcome;
     const chunksDropped = result.chunksDropped;
     const filesDropped = result.filesDropped;
+    const fsScrubSucceeded = result.fsScrubSucceeded;
+    const fsScrubError = result.fsScrubError;
 
     // Always emit the access-revoked audit row even when the
     // bridge returned `unlinked` / `already_revoked` — the
@@ -1431,6 +1475,8 @@ export class KchatEventForwarder {
         reason,
         chunksDropped,
         filesDropped,
+        fsScrubSucceeded,
+        fsScrubError,
       );
     }
   }
@@ -1508,6 +1554,8 @@ export class KchatEventForwarder {
     reason: string,
     chunksDropped: number,
     filesDropped: number,
+    fsScrubSucceeded: boolean,
+    fsScrubError: string | undefined,
   ): void {
     try {
       bridge.bridgeLogKchatSourceCryptoshredded(
@@ -1515,6 +1563,8 @@ export class KchatEventForwarder {
         reason,
         chunksDropped,
         filesDropped,
+        fsScrubSucceeded,
+        fsScrubError,
       );
     } catch (err) {
       console.error(

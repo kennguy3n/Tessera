@@ -2005,12 +2005,23 @@ pub fn bridge_log_kchat_channel_access_revoked(
 /// "the source was already empty when we re-scrubbed it" — the
 /// latter being the operator-visible signal that the Task-4
 /// backfill ran on a previously soft-revoked source.
+///
+/// `fs_scrub_succeeded` / `fs_scrub_error` come from the Node-side
+/// `secureDeleteChannelArtifacts` helper — they record whether the
+/// filesystem scrub (cache dir + manifest sidecar removal) ran
+/// cleanly. `fs_scrub_error` is `None` when the scrub succeeded and
+/// `Some(reason)` when at least one `fs.rm` call failed (e.g. file
+/// locked by another process on Windows). Operators grep the audit
+/// log for `fs_scrub_succeeded=false` to find revokes whose on-disk
+/// plaintext survived the scrub.
 #[napi]
 pub fn bridge_log_kchat_source_cryptoshredded(
     channel_id: String,
     reason: String,
     chunks_dropped: u32,
     files_dropped: u32,
+    fs_scrub_succeeded: bool,
+    fs_scrub_error: Option<String>,
 ) -> napi::Result<()> {
     let s = state()?;
     if let Ok(logger) = s.audit_logger.lock() {
@@ -2019,6 +2030,8 @@ pub fn bridge_log_kchat_source_cryptoshredded(
             &reason,
             chunks_dropped,
             files_dropped,
+            fs_scrub_succeeded,
+            fs_scrub_error.as_deref(),
         );
     }
     Ok(())

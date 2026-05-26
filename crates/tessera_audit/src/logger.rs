@@ -327,18 +327,36 @@ impl AuditLogger {
     /// `KchatSourceCryptoshredded` row would be the signal that
     /// the shred step failed — useful for incident-response
     /// queries.
+    ///
+    /// `fs_scrub_succeeded` records whether the Node-side
+    /// filesystem scrub (`secureDeleteChannelArtifacts` removing the
+    /// per-channel cache dir + manifest sidecar) ran cleanly. The
+    /// substrate counts only describe the database scrub; the
+    /// filesystem holds the downloaded plaintext until this scrub
+    /// completes. An operator grep-ing for `fs_scrub_succeeded=false`
+    /// finds revokes where on-disk plaintext survived the scrub
+    /// (e.g. `fs.rm` blocked by another process on Windows) and
+    /// must be re-run by hand. `fs_scrub_error` carries the first
+    /// `fs.rm` error message in that case.
     pub fn log_kchat_source_cryptoshredded(
         &self,
         channel_id: &str,
         reason: &str,
         chunks_dropped: u32,
         files_dropped: u32,
+        fs_scrub_succeeded: bool,
+        fs_scrub_error: Option<&str>,
     ) -> Result<()> {
+        let fs_error_segment = match fs_scrub_error {
+            Some(e) if !e.is_empty() => format!(" fs_scrub_error={e}"),
+            _ => String::new(),
+        };
         self.log(
             AuditEventType::KchatSourceCryptoshredded,
             format!(
                 "KChat source cryptoshredded: channel={channel_id} reason={reason} \
-                 chunks_dropped={chunks_dropped} files_dropped={files_dropped}"
+                 chunks_dropped={chunks_dropped} files_dropped={files_dropped} \
+                 fs_scrub_succeeded={fs_scrub_succeeded}{fs_error_segment}"
             ),
         )
     }
@@ -640,16 +658,38 @@ mod tests {
                 "principal_missing_from_roster",
                 42,
                 7,
+                true,
+                None,
             )
             .unwrap();
         logger
-            .log_kchat_source_cryptoshredded("channel-shred-002", "channel_archived", 0, 0)
+            .log_kchat_source_cryptoshredded(
+                "channel-shred-002",
+                "channel_archived",
+                0,
+                0,
+                true,
+                None,
+            )
+            .unwrap();
+        // Third row: real shred where the filesystem scrub failed
+        // (e.g. `fs.rm` blocked by another process on Windows). Pins
+        // the operator-grep contract for `fs_scrub_succeeded=false`.
+        logger
+            .log_kchat_source_cryptoshredded(
+                "channel-shred-003",
+                "channel_archived",
+                17,
+                3,
+                false,
+                Some("cacheDir(/tmp/k/c-003): EBUSY: resource busy"),
+            )
             .unwrap();
 
         let rows = logger
             .query_by_type(&AuditEventType::KchatSourceCryptoshredded)
             .unwrap();
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
 
         let real = rows
             .iter()
@@ -660,6 +700,8 @@ mod tests {
             .contains("reason=principal_missing_from_roster"));
         assert!(real.details.contains("chunks_dropped=42"));
         assert!(real.details.contains("files_dropped=7"));
+        assert!(real.details.contains("fs_scrub_succeeded=true"));
+        assert!(!real.details.contains("fs_scrub_error="));
 
         let idempotent = rows
             .iter()
@@ -668,5 +710,18 @@ mod tests {
         assert!(idempotent.details.contains("reason=channel_archived"));
         assert!(idempotent.details.contains("chunks_dropped=0"));
         assert!(idempotent.details.contains("files_dropped=0"));
+        assert!(idempotent.details.contains("fs_scrub_succeeded=true"));
+
+        let fs_failed = rows
+            .iter()
+            .find(|row| row.details.contains("channel=channel-shred-003"))
+            .expect("fs-failed-shred row should be present");
+        assert!(fs_failed.details.contains("chunks_dropped=17"));
+        assert!(fs_failed.details.contains("files_dropped=3"));
+        assert!(fs_failed.details.contains("fs_scrub_succeeded=false"));
+        assert!(fs_failed
+            .details
+            .contains("fs_scrub_error=cacheDir(/tmp/k/c-003)"));
+        assert!(fs_failed.details.contains("EBUSY"));
     }
 }

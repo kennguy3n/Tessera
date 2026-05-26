@@ -65,6 +65,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as nodeOs from "os";
 import * as nodePath from "path";
 import * as nodeFs from "fs";
+import * as nodeFsPromises from "fs/promises";
 
 // Redirect `os.homedir()` to a per-suite tmpdir so the Block B
 // Task 2 single-file sync (which writes downloaded bytes to
@@ -1229,6 +1230,8 @@ describe("KchatEventForwarder", () => {
       "principal_missing_from_roster",
       5,
       2,
+      true,
+      undefined,
     );
     fwd.dispose();
   });
@@ -1431,7 +1434,14 @@ describe("KchatEventForwarder", () => {
       // (default fixture returns chunks_dropped=1, files_dropped=1).
       expect(
         bridgeMock!.bridgeLogKchatSourceCryptoshredded,
-      ).toHaveBeenCalledWith("chan-gone", reason, 1, 1);
+      ).toHaveBeenCalledWith(
+        "chan-gone",
+        reason,
+        1,
+        1,
+        true,
+        undefined,
+      );
       fwd.dispose();
     });
   }
@@ -1518,7 +1528,14 @@ describe("KchatEventForwarder", () => {
     // scrubbed and the re-revoke found nothing to do.
     expect(
       bridgeMock!.bridgeLogKchatSourceCryptoshredded,
-    ).toHaveBeenCalledWith("chan-re-archive", "channel_archived", 0, 0);
+    ).toHaveBeenCalledWith(
+      "chan-re-archive",
+      "channel_archived",
+      0,
+      0,
+      true,
+      undefined,
+    );
     fwd.dispose();
   });
 
@@ -1632,6 +1649,102 @@ describe("KchatEventForwarder", () => {
     await expect(nodeFs.promises.access(cacheDir)).rejects.toThrow();
     await expect(nodeFs.promises.access(manifestPath)).rejects.toThrow();
     fwd.dispose();
+  });
+
+  /**
+   * Block B Task 4 (Phase 11) third-pass Devin Review fix
+   * (filesystem-scrub observability): when `fs.rm` fails (e.g.
+   * file locked by another process on Windows), the substrate
+   * scrub still succeeded but the on-disk plaintext survives.
+   * The audit row must carry `fs_scrub_succeeded=false` plus the
+   * `fs_scrub_error` diagnostic so an operator grep finds the
+   * channel that needs manual cleanup. Previously the helper
+   * returned `void` and the audit row had no way to record this
+   * — operators relying on the audit trail could miss retained
+   * artifacts.
+   */
+  it("records fs_scrub_succeeded=false on audit row when filesystem scrub fails", async () => {
+    const channelId = "chan-fs-failure";
+    const cacheDir = kchatChannelCacheDir(channelId);
+    await nodeFsPromises.mkdir(cacheDir, { recursive: true });
+    await nodeFsPromises.writeFile(
+      nodePath.join(cacheDir, "evidence.txt"),
+      "secret",
+    );
+
+    // Make `fs.rm` on the cache dir fail by chmod-ing the parent
+    // directory to read+execute (0o500) — Linux rejects unlink
+    // on a child when the containing directory lacks write
+    // permission (EACCES). This exercises the production failure
+    // path (`fs.rm` rejects) without resorting to fragile module
+    // mocks: the helper catches the rejection, sets
+    // `cacheDirRemoved=false` + `error="cacheDir(...): ..."`, and
+    // the forwarder emits the audit row with the failure flag.
+    //
+    // (Skipping the corresponding chmod-based path on Windows is
+    // intentional: Windows permission semantics differ. The
+    // production-path concern flagged by Devin Review's
+    // observability finding is fs.rm fault tolerance on Windows
+    // file-lock scenarios, but the helper's branching logic is
+    // OS-agnostic, so this Linux-based test pins the contract.)
+    const parentDir = nodePath.dirname(cacheDir);
+    const originalParentMode = (await nodeFsPromises.stat(parentDir)).mode;
+    if (process.platform === "win32") {
+      // On Windows, chmod doesn't restrict rm; pin the audit
+      // contract on Linux/macOS only. The audit-store unit test
+      // (`kchat_source_cryptoshredded_helper_routes_to_correct_event_type`)
+      // pins the row shape independently of the JS path.
+      return;
+    }
+    await nodeFsPromises.chmod(parentDir, 0o500);
+
+    try {
+      const w1 = new FakeWindow();
+      const fwd = new KchatEventForwarder({
+        listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+        getBridge: () => bridgeMock,
+      });
+      const client = new FakeClient();
+      fwd.start(client as unknown as KchatClient);
+
+      client.triggerWsEvent(
+        makeRawEvent({
+          event: "channel_deleted",
+          data: {},
+          broadcast: {
+            omit_users: {},
+            channel_id: channelId,
+            team_id: "team-1",
+            user_id: "principal",
+          },
+          seq: 201,
+        }),
+      );
+      await waitForCondition(
+        () =>
+          bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length > 0,
+      );
+
+      const call =
+        bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls[0];
+      // Args: (channelId, reason, chunksDropped, filesDropped, fsScrubSucceeded, fsScrubError)
+      expect(call[0]).toBe(channelId);
+      expect(call[1]).toBe("channel_deleted");
+      expect(call[4]).toBe(false);
+      expect(call[5]).toContain("cacheDir");
+      // The error message mentions an EACCES / permission-denied
+      // shape (Linux maps an unwritable parent to EACCES on
+      // unlink). We don't pin the exact code string because
+      // libc differs across distros; we only pin the substring
+      // "cacheDir" which is the helper-side prefix.
+
+      fwd.dispose();
+    } finally {
+      // Restore parent perms BEFORE the rm cleanup so the
+      // suite-wide afterEach can drop the per-test tmpdir.
+      await nodeFsPromises.chmod(parentDir, originalParentMode);
+      await nodeFsPromises.rm(cacheDir, { recursive: true, force: true });
+    }
   });
 
 });

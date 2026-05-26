@@ -117,13 +117,20 @@ describe("secureDeleteChannelArtifacts", () => {
     // re-invokes the helper, which must not fail.
     await expect(
       secureDeleteChannelArtifacts(cacheDir),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({
+      cacheDirRemoved: true,
+      manifestRemoved: true,
+    });
 
     // Second call (after a first scrub on a path that was
-    // already missing) still resolves.
+    // already missing) still resolves with the success shape
+    // (idempotent on missing paths via `force: true`).
     await expect(
       secureDeleteChannelArtifacts(cacheDir),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({
+      cacheDirRemoved: true,
+      manifestRemoved: true,
+    });
   });
 
   it("removes nested files and subdirectories recursively", async () => {
@@ -145,7 +152,10 @@ describe("secureDeleteChannelArtifacts", () => {
 
     await expect(
       secureDeleteChannelArtifacts(cacheDir),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({
+      cacheDirRemoved: true,
+      manifestRemoved: true,
+    });
     await expect(fs.access(cacheDir)).rejects.toThrow();
   });
 
@@ -163,7 +173,55 @@ describe("secureDeleteChannelArtifacts", () => {
 
     await expect(
       secureDeleteChannelArtifacts(cacheDir),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({
+      cacheDirRemoved: true,
+      manifestRemoved: true,
+    });
     await expect(fs.access(sidecar)).rejects.toThrow();
+  });
+
+  /**
+   * Block B Task 4 (Phase 11) third-pass Devin Review fix
+   * (filesystem-scrub observability): when `fs.rm` fails on the
+   * cache dir (e.g. parent directory is read-only on POSIX or a
+   * file is locked on Windows), the helper records the failure
+   * in the result so the caller can surface it on the audit
+   * row. The manifest scrub still runs — the two `fs.rm` calls
+   * are independent. The helper itself never throws.
+   */
+  it("records cacheDirRemoved=false + error on fs.rm failure (parent read-only)", async () => {
+    if (process.platform === "win32") {
+      // Windows permission semantics differ; the Linux/macOS
+      // chmod-based test pins the contract for POSIX. The
+      // Rust-side audit logger test pins the row shape.
+      return;
+    }
+    const cacheDir = path.join(tmpRoot, "chan-rm-failure");
+    await fs.mkdir(cacheDir, { recursive: true });
+    await fs.writeFile(path.join(cacheDir, "evidence.txt"), "locked");
+
+    // Make the parent read+execute only — Linux rejects unlink
+    // on a child of a non-writable parent (EACCES).
+    const originalMode = (await fs.stat(tmpRoot)).mode;
+    await fs.chmod(tmpRoot, 0o500);
+    try {
+      const result = await secureDeleteChannelArtifacts(cacheDir);
+      expect(result.cacheDirRemoved).toBe(false);
+      // Manifest doesn't exist (we didn't create one), but the
+      // helper's `force: true` makes the missing-path case
+      // succeed. However, because the manifest lives under
+      // `tmpRoot` (which is now read-only) the unlink of the
+      // *non-existent* manifest still succeeds via `force: true`
+      // — `force` short-circuits ENOENT but doesn't help against
+      // EACCES on a writable-by-creation child. Pin only the
+      // cache-dir failure, since the manifest path's behavior
+      // is platform-dependent here.
+      expect(result.error).toBeDefined();
+      expect(result.error).toContain("cacheDir");
+    } finally {
+      await fs.chmod(tmpRoot, originalMode);
+      // Final cleanup: rm the cache dir we created for the test.
+      await fs.rm(cacheDir, { recursive: true, force: true });
+    }
   });
 });

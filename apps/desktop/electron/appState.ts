@@ -401,12 +401,23 @@ export interface NativeBridge {
    * `chunksDropped` / `filesDropped` are the substrate counts
    * surfaced via `KchatRevokeOutcomeInfo` /
    * `KchatAclRefreshOutcomeInfo`.
+   *
+   * `fsScrubSucceeded` / `fsScrubError` are the Node-side
+   * filesystem-scrub outcomes from `secureDeleteChannelArtifacts`
+   * (third-pass Devin Review observability fix on PR #46). The
+   * substrate counts only describe the database scrub; the
+   * filesystem holds downloaded plaintext until the cache dir +
+   * manifest sidecar are removed. Operators grep
+   * `fs_scrub_succeeded=false` in the audit log to find revokes
+   * whose on-disk plaintext survived the scrub.
    */
   bridgeLogKchatSourceCryptoshredded(
     channelId: string,
     reason: string,
     chunksDropped: number,
     filesDropped: number,
+    fsScrubSucceeded: boolean,
+    fsScrubError: string | undefined,
   ): void;
   // --- Audit query ---
   //
