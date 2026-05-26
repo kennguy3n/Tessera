@@ -230,6 +230,16 @@ interface WindowState {
  * standing up a full forwarder, and so the audit / reindex
  * paths can rely on the same flattened fields.
  *
+ * The trust boundary is `KchatClient.handleWsMessage` — it validates
+ * the parsed envelope (event/broadcast shape) before invoking any
+ * listener, so by the time this function runs `raw.broadcast` is
+ * guaranteed to be a non-null object. We still use optional chaining
+ * on `raw.broadcast?.*` as a belt-and-braces guard so the projection
+ * remains a total function even if a future caller bypasses the
+ * client's validation (for example by passing a hand-rolled fixture
+ * straight into the forwarder in a test). Fifth-pass Devin Review on
+ * PR #43 (`ANALYSIS_pr-review-job-...0001`).
+ *
  * Pure: no I/O, no side effects.
  */
 export function toRendererEventView(
@@ -237,9 +247,9 @@ export function toRendererEventView(
 ): KchatWebSocketEventView {
   return {
     event: raw.event,
-    channelId: raw.broadcast.channel_id ?? null,
-    teamId: raw.broadcast.team_id ?? null,
-    userId: raw.broadcast.user_id ?? null,
+    channelId: raw.broadcast?.channel_id ?? null,
+    teamId: raw.broadcast?.team_id ?? null,
+    userId: raw.broadcast?.user_id ?? null,
     seq: raw.seq,
     data: raw.data,
   };
@@ -560,6 +570,39 @@ export class KchatEventForwarder {
     }
   }
 
+  /**
+   * Side-effect path for `file_added` events: append one audit row.
+   *
+   * Currently has no `await` expressions — the bridge call below is
+   * a synchronous napi function returning `napi::Result<()>`, not a
+   * Promise — so the returned Promise resolves synchronously and the
+   * `.catch()` at the call site never fires under normal operation.
+   * The `async` keyword and the call-site `.catch()` are kept
+   * deliberately, not as redundant cosmetics:
+   *
+   *   1. The forward-looking design for Block B (see top-of-file
+   *      doc, step `d`) extracts `runAddKchatChannel` from
+   *      `ipc/kchat.ts` into a shared service that the forwarder
+   *      calls on `file_added` to download the new file's bytes
+   *      into the cache and invoke `bridgeReindexSource`. That
+   *      service is genuinely async (HTTP fetch + filesystem
+   *      writes), so this method WILL grow `await` expressions once
+   *      that work lands. Removing `async` now means re-adding it
+   *      then, plus re-adding the call-site `.catch()` — a churn
+   *      footprint that risks the call site silently shipping an
+   *      unhandled rejection if a future contributor forgets one
+   *      of the two halves.
+   *
+   *   2. The inner try/catch already swallows synchronous bridge
+   *      errors, but does NOT catch errors thrown from a future
+   *      `await` (those would reject the returned Promise instead).
+   *      Keeping `.catch()` at the call site preserves the
+   *      "best-effort audit, never wedge the forwarder" guarantee
+   *      across both shapes (synchronous today, awaiting tomorrow).
+   *
+   * Fifth-pass Devin Review on PR #43 (`ANALYSIS_pr-review-job-...0004`).
+   */
+  // eslint-disable-next-line @typescript-eslint/require-await
   private async handleFileAdded(
     view: KchatWebSocketEventView,
   ): Promise<void> {

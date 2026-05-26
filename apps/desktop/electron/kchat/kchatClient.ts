@@ -931,6 +931,32 @@ export class KchatClient {
       return;
     }
     if (typeof parsed.event !== "string") return;
+    // The KChat / Mattermost protocol always frames events with a
+    // `broadcast` object (`channel_id`, `team_id`, `user_id`,
+    // `omit_users`). A server we do not control could in principle
+    // ship a malformed frame — `{"event":"hello","seq":0}` with no
+    // `broadcast` field at all, or `{"broadcast":null}` — and the
+    // downstream projection (`toRendererEventView` and any other
+    // listener that destructures `parsed.broadcast.*`) would
+    // TypeError on the property access. The error would surface
+    // only as a swallowed exception in the per-listener try/catch
+    // below; the listener would silently drop the event and the
+    // forwarder's ring buffer would lose it without an audit
+    // trail.
+    //
+    // The trust boundary for the WS frame is THIS function — once
+    // we leave it, every consumer assumes `KchatWebSocketEvent`
+    // matches its TypeScript shape. Reject malformed frames here
+    // (rather than scattering optional-chain guards at every
+    // projection site) so the post-parse contract holds.
+    // Fifth-pass Devin Review on PR #43 (`ANALYSIS_pr-review-job-...0001`).
+    if (
+      typeof parsed.broadcast !== "object" ||
+      parsed.broadcast === null ||
+      Array.isArray(parsed.broadcast)
+    ) {
+      return;
+    }
     for (const l of this.wsListeners) {
       try {
         l(parsed);

@@ -1107,6 +1107,66 @@ describe("KchatClient.connectWebSocket", () => {
     expect((events[0] as { event: string }).event).toBe("posted");
   });
 
+  it("drops malformed WS frames that lack a broadcast object", async () => {
+    // Regression for fifth-pass Devin Review on PR #43
+    // (ANALYSIS_pr-review-job-...0001). KChat's protocol always
+    // includes a `broadcast` object on every event, but the WS
+    // peer is treated as fully untrusted — a malformed payload
+    // (no `broadcast`, `broadcast: null`, `broadcast` as an array)
+    // must not reach the listener set, because every downstream
+    // consumer (including `toRendererEventView`) destructures
+    // `parsed.broadcast.*` directly and would otherwise throw.
+    //
+    // The trust boundary is `handleWsMessage`. We feed it three
+    // malformed frames plus one well-formed control, and assert
+    // only the control reaches the listener.
+    const { ctor, instances } = mockWebSocketCtor();
+    const c = buildClient({ webSocketCtor: ctor });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-secret");
+    const events: unknown[] = [];
+    c.onWebSocketEvent((e) => events.push(e));
+    await c.connectWebSocket();
+    instances[0].inst.onopen?.({});
+
+    // 1. Missing `broadcast` entirely.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({ event: "posted", data: {}, seq: 1 }),
+    });
+    // 2. `broadcast: null`.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        data: {},
+        broadcast: null,
+        seq: 2,
+      }),
+    });
+    // 3. `broadcast` is an array (typeof === "object" but
+    //    structurally wrong — the early Array.isArray guard must
+    //    reject this).
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        data: {},
+        broadcast: [],
+        seq: 3,
+      }),
+    });
+    // 4. Well-formed control.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        data: { channel_name: "design" },
+        broadcast: { channel_id: "chid" },
+        seq: 4,
+      }),
+    });
+
+    expect(events).toHaveLength(1);
+    expect((events[0] as { seq: number }).seq).toBe(4);
+  });
+
   it("user-initiated disconnect does NOT schedule a reconnect", async () => {
     const { ctor, instances } = mockWebSocketCtor();
     const c = buildClient({ webSocketCtor: ctor });

@@ -425,9 +425,24 @@ describe("KchatEventForwarder", () => {
     fwd.dispose();
   });
 
-  // A `file_added` event for a channel that may or may not be
-  // linked as a source: the audit row still fires (the forwarder
-  // doesn't consult the source registry at this layer).
+  // A `file_added` event whose `broadcast` envelope omits the
+  // `channel_id` field: the audit row still fires (the forwarder
+  // doesn't refuse to audit on a missing channel id), but the
+  // recorded channel argument is `null` — the projection in
+  // `toRendererEventView` falls back to `null` via `?? null`.
+  // This pins the contract the audit-log consumer relies on:
+  // "channel_id present in the audit row iff the WS frame carried
+  // one", so an operator grepping for orphan audit rows can
+  // distinguish a server-emitted-without-channel event from a
+  // server-emitted-with-channel-X event without having to consult
+  // the WS log.
+  //
+  // The original draft of this test passed `makeRawEvent({ event:
+  // "file_added", data: { file_id: "file-ABC" } })`, which kept the
+  // default `broadcast.channel_id = "chan-A"` from the factory.
+  // The assertion still passed because `chan-A` is what flowed
+  // through, but the test title was a lie. Fifth-pass Devin Review
+  // on PR #43 (`BUG_pr-review-job-...0001`).
   it("audits file_added even when no channel-id is present in broadcast", async () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
@@ -440,13 +455,19 @@ describe("KchatEventForwarder", () => {
       makeRawEvent({
         event: "file_added",
         data: { file_id: "file-ABC" },
+        // Override the entire broadcast envelope to one that has
+        // NO `channel_id`. `omit_users` is the only required field
+        // on the KChat protocol broadcast shape; the rest are
+        // optional. The forwarder must accept this and pass
+        // `null` as the channel argument to the audit bridge.
+        broadcast: { omit_users: {} },
       }),
     );
     await Promise.resolve();
     await Promise.resolve();
     expect(
       bridgeMock!.bridgeLogKchatFileEventReceived,
-    ).toHaveBeenCalledWith("file_added", "chan-A", "file-ABC", false);
+    ).toHaveBeenCalledWith("file_added", null, "file-ABC", false);
     fwd.dispose();
   });
 
