@@ -1357,6 +1357,65 @@ describe("KchatClient.connectWebSocket", () => {
     });
   });
 
+  it("silently drops Mattermost control responses (seq_reply) without warning", async () => {
+    // Tenth-pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0001`) flagged that the
+    // Mattermost / KChat WebSocket protocol carries client-request
+    // RESPONSES on the same wire as server-pushed EVENTS. Responses
+    // are framed with `seq_reply` + `status` (NO `event` field) and
+    // are sent in reply to the `authentication_challenge` we issue
+    // on every `onopen`. The eighth-pass drop-warn path classified
+    // these as `missing-event` and emitted a warning per reconnect,
+    // which is operationally misleading noise on a healthy
+    // connection.
+    //
+    // This test feeds the canonical OK + FAIL auth-challenge
+    // response shapes (and a synthetic `seq_reply: 99` to prove the
+    // discriminator works on any sequence number) and asserts:
+    //   1. No warning fires.
+    //   2. The forwarder remains alive and continues delivering
+    //      legitimate server-pushed events afterward.
+    const { ctor, instances } = mockWebSocketCtor();
+    const logWarn = vi.fn();
+    const c = buildClient({ webSocketCtor: ctor, logWarn });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-secret");
+    const events: unknown[] = [];
+    c.onWebSocketEvent((e) => events.push(e));
+    await c.connectWebSocket();
+    instances[0].inst.onopen?.({});
+
+    // Mattermost OK response to authentication_challenge.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({ status: "OK", seq_reply: 0 }),
+    });
+    // Mattermost FAIL response shape.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        status: "FAIL",
+        seq_reply: 1,
+        error: { id: "api.invalid_token", message: "Invalid token" },
+      }),
+    });
+    // Synthetic response on a different seq.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({ seq_reply: 99, status: "OK" }),
+    });
+    expect(logWarn).not.toHaveBeenCalled();
+
+    // Well-formed event reaches the listener — proving the WS
+    // reader loop is still alive after the control-frame sequence.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        data: { channel_name: "design" },
+        broadcast: { channel_id: "chid" },
+        seq: 1,
+      }),
+    });
+    expect(events).toHaveLength(1);
+  });
+
   it("does not crash on JSON literals that parse to non-object values", async () => {
     // Ninth-pass Devin Review on PR #43
     // (`BUG_pr-review-job-...0001`) flagged that `JSON.parse("null")`

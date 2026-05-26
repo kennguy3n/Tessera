@@ -375,16 +375,21 @@ export class KchatClient {
    * type doesn't suppress warnings for a genuinely-different
    * malformed frame on another event type.
    *
-   * The map grows by at most `|reasons| × |eventNames|` entries
-   * — bounded in practice because `reason` is from a small fixed
-   * enum and `eventName` is the (untrusted) `parsed.event` value.
-   * A malicious peer that tries to grow the map by sending
-   * frames with thousands of unique made-up event names would
-   * still be bounded by Node's V8 heap behavior on Map<string,
-   * number>, and each entry is ~80 bytes; 100k unique event
-   * names is ~8 MB, which is well under reasonable main-process
-   * memory limits. If a future audit reveals this is exploitable
-   * we'd swap to an LRU; not worth the complexity today.
+   * The map is hard-capped at `WS_DROP_WARN_COOLDOWN_MAX_ENTRIES`
+   * entries (see the module-level constant for the rationale) and
+   * cleared entirely when the cap is reached, so the size cannot
+   * exceed that bound regardless of how many unique untrusted
+   * `eventName` values arrive. The map is ALSO cleared on every
+   * `disconnectWebSocket()` so each new WS session starts from a
+   * clean slate — defeating an adversarial peer that tries to
+   * accumulate entries across forced reconnects. Both invariants
+   * are exercised by regression tests in `kchatClient.test.ts`:
+   * `caps the drop-warn cooldown map under adversarial event-name
+   * flood` and `clears the trust-boundary drop-warn cooldown on
+   * disconnect`. Tenth-pass Devin Review on PR #43
+   * (`ANALYSIS_pr-review-job-...0005`) flagged that an earlier
+   * iteration of this comment claimed the map was unbounded —
+   * stale once the cap landed in ninth-pass.
    */
   private readonly wsDropWarnCooldown = new Map<string, number>();
 
@@ -1139,9 +1144,45 @@ export class KchatClient {
       return;
     }
     // After the parse-type guard above we know `parsed` is a
-    // non-null, non-array object — narrow it to the protocol's
-    // declared shape for the rest of the function.
-    const evt = parsed as KchatWebSocketEvent;
+    // non-null, non-array object — narrow it to a generic record
+    // so we can inspect Mattermost control fields before the
+    // protocol-event narrowing below.
+    const obj = parsed as Record<string, unknown>;
+    // Mattermost / KChat WebSocket protocol carries two distinct
+    // frame families on the same wire:
+    //
+    //   1. Server-pushed EVENTS: framed with a top-level `event`
+    //      string (e.g. `"posted"`, `"file_added"`) and the
+    //      `broadcast` + `data` envelopes the rest of this method
+    //      validates. These are what our subscribers consume.
+    //
+    //   2. Client-request RESPONSES: framed with `seq_reply` (the
+    //      sequence number the client put on its request) and a
+    //      `status` field (`"OK"` / `"FAIL"`). NO `event` field is
+    //      present. We send exactly one such request per
+    //      connection: the `authentication_challenge` issued on
+    //      `onopen` (see lines 906–916). Mattermost responds with
+    //      `{"status":"OK","seq_reply":N}`; on a token reject we
+    //      get `{"status":"FAIL","seq_reply":N,"error":{...}}`.
+    //
+    // The eighth-pass drop-warn path treated EVERY non-event frame
+    // as "malformed" and emitted a `missing-event` warning. That's
+    // accurate for genuinely-malformed frames but emits a warning
+    // on every legitimate auth response, which fires once per
+    // reconnect — a steady cadence of "malformed frame" warnings
+    // on a healthy connection is operationally misleading. Tenth-
+    // pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0001`) flagged this. The fix is
+    // to treat `seq_reply` as the discriminator: any frame with a
+    // numeric `seq_reply` is a control response we deliberately
+    // do not surface to subscribers, and is not a malformed-frame
+    // warning candidate. We drop it silently. Frames with neither
+    // `event` NOR `seq_reply` are genuinely malformed and continue
+    // to fire the rate-limited drop warning.
+    if (typeof obj.seq_reply === "number") {
+      return;
+    }
+    const evt = obj as unknown as KchatWebSocketEvent;
     if (typeof evt.event !== "string") {
       this.warnDroppedFrame(undefined, "missing-event");
       return;
