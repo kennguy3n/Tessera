@@ -234,12 +234,22 @@ impl AuditLogger {
     /// the event name, the originating `channel_id` when present,
     /// and an optional `file_id` for `file_added` events so an
     /// operator can correlate the audit row with the KChat server's
-    /// file metadata. A `triggered_reindex` flag records whether the
-    /// event resulted in a `bridgeReindexSource` call (true only for
-    /// `file_added` events whose channel is linked as a
-    /// `SourceType::Kchat` source), giving operators a one-line
-    /// trace of automatic re-indexing without inspecting the
-    /// indexer logs.
+    /// file metadata.
+    ///
+    /// The `triggered_reindex` flag is a reserved slot for the
+    /// future iteration that wires the WS forwarder into
+    /// `runAddKchatChannel` so a `file_added` event triggers a
+    /// download+reindex of the referenced file. The current Node-
+    /// side forwarder always passes `false` — see the second-pass
+    /// Devin Review on PR #43 (`BUG_pr-review-job-...0001`) and the
+    /// top-of-file doc block in
+    /// `apps/desktop/electron/kchat/kchatEventForwarder.ts` for the
+    /// rationale (file isn't on disk at `file_added` time, so the
+    /// previous-draft `bridgeReindexSource` call was a blocking
+    /// no-op under the source-manager mutex). The field is retained
+    /// on the audit row text so the auto-sync iteration can
+    /// repopulate it without a back-compat break in row-text
+    /// parsing.
     pub fn log_kchat_file_event_received(
         &self,
         event_name: &str,
@@ -465,12 +475,21 @@ mod tests {
     /// flag in the details payload. Block B Task 1 introduces this
     /// helper so the Node-side `KchatEventForwarder` can audit
     /// every WS event it surfaces without leaking message bodies.
+    ///
+    /// The test exercises both boolean states of `triggered_reindex`
+    /// to pin the audit-row text format. As of the second-pass Devin
+    /// Review on PR #43, the Node side always passes `false` (the
+    /// reserved-slot semantic — see the helper's doc comment). The
+    /// `true` case below is preserved so the audit row format stays
+    /// covered for the future auto-sync iteration.
     #[test]
     fn kchat_file_event_received_helper_routes_to_correct_event_type() {
         let logger = AuditLogger::new_in_memory().unwrap();
 
-        // A `file_added` event that DID trigger an automatic reindex
-        // (channel is linked as a Tessera source).
+        // A `file_added` event with the reserved flag set to `true`.
+        // Today no caller passes `true` here; the Rust API still
+        // accepts it for the future auto-sync iteration and we pin
+        // the row text format in both states.
         logger
             .log_kchat_file_event_received(
                 "file_added",
@@ -480,9 +499,10 @@ mod tests {
             )
             .unwrap();
 
-        // A `posted` event with no file id and no reindex trigger
-        // (channel may or may not be linked; this is the common
-        // case for chat messages).
+        // A `posted` event with no file id; the Node-side forwarder
+        // never reaches this path (only `file_added` is audited),
+        // but the helper accepts any event name so we pin the
+        // format for non-file events too.
         logger
             .log_kchat_file_event_received("posted", Some("channel-def456"), None, false)
             .unwrap();

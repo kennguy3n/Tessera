@@ -1521,11 +1521,18 @@ export interface KchatApi {
   ) => () => void;
   /**
    * Subscribe to KChat WebSocket events surfaced by the main
-   * process forwarder. The callback fires on every event the
-   * forwarder accepts under its allowlist (`posted`,
-   * `file_added`, `channel_member_updated`,
-   * `channel_created`, `channel_deleted`, `user_added`,
-   * `user_removed`, `status_change`).
+   * process forwarder. The forwarder is a pass-through: every
+   * event it observes from `KchatClient.onWebSocketEvent` is
+   * projected to a renderer-safe view and broadcast to all
+   * subscribed renderers. There is NO event-type allowlist at
+   * the forwarder layer — `posted`, `file_added`,
+   * `channel_member_updated`, `channel_created`,
+   * `channel_deleted`, `user_added`, `user_removed`,
+   * `status_change`, and any other event the KChat server
+   * pushes will all surface here. Consumers must filter by
+   * `event.event` if they want a narrower set; the
+   * `KchatSidebarSection` is one such consumer (it only acts
+   * on `posted` and `file_added`).
    *
    * Returns an unsubscribe function the caller must invoke in
    * the React cleanup phase. The main-process forwarder uses a

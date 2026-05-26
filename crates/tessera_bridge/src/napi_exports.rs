@@ -1805,11 +1805,22 @@ pub fn bridge_log_kchat_file_downloaded(
 /// JS-facing pass-through for
 /// [`AuditLogger::log_kchat_file_event_received`]. Called by the
 /// Node-side `KchatEventForwarder` when a WebSocket event is
-/// received in the main process and surfaced to renderers (and,
-/// for `file_added` events on a linked KChat-channel source, to
-/// the source-refresh hook). Payload bodies are NOT passed in —
-/// only the event name, originating channel id, optional file id,
-/// and whether the event triggered an automatic source reindex.
+/// received in the main process and surfaced to renderers.
+/// Payload bodies are NOT passed in — only the event name,
+/// originating channel id, optional file id, and a
+/// `triggered_reindex` flag.
+///
+/// `triggered_reindex` is currently always `false` from the Node
+/// side: the previous draft of `KchatEventForwarder.handleFileAdded`
+/// called `bridge_reindex_source` for linked channels, but a
+/// `file_added` event arrives BEFORE the file has been downloaded
+/// into the channel's local cache directory, so the reindex was
+/// a guaranteed no-op (walking an empty diff under the source-
+/// manager mutex). The flag is preserved on the napi boundary and
+/// audit row so the auto-sync iteration that wires
+/// `runAddKchatChannel` into the WS forwarder can repopulate it
+/// without breaking the audit row text format. See the second-
+/// pass Devin Review on PR #43 (`BUG_pr-review-job-...0001`).
 ///
 /// The optional fields use `Option<String>` rather than empty
 /// strings so the napi bridge faithfully carries the "not present"

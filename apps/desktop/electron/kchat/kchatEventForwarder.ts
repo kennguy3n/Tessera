@@ -1,5 +1,5 @@
 /**
- * KChat WebSocket → renderer + indexer + audit forwarder.
+ * KChat WebSocket → renderer + audit forwarder.
  *
  * Block B Task 1 (Phase 11). The Block A sidebar polled
  * `kchat:listChannelFiles` every 30 s to discover newly uploaded
@@ -20,33 +20,53 @@
  *         a nested object.
  *
  *      b. Push the view into a per-renderer-window ring buffer
- *         (drop-oldest, 100-event cap) and synchronously drain
- *         to `webContents.send("kchat:event", view)`. The ring
- *         buffer is the architectural backpressure guard: even
- *         though Electron's `webContents.send` is async-fire-
- *         and-forget today, the buffer enforces deterministic
- *         drop semantics — under burst load the OLDEST event is
- *         dropped, not whichever event happens to lose the race
- *         to a saturated underlying Chromium IPC channel. That
- *         shape matches the renderer's reconciliation contract
- *         (the 30 s sidebar poll closes any gap on the next tick).
+ *         (drop-oldest, 100-event cap) and drain on the next
+ *         microtask to `webContents.send("kchat:event", view)`.
+ *         The ring buffer is the architectural backpressure
+ *         guard: even though Electron's `webContents.send` is
+ *         async-fire-and-forget today, the buffer enforces
+ *         deterministic drop semantics — under burst load the
+ *         OLDEST event is dropped, not whichever event happens
+ *         to lose the race to a saturated underlying Chromium
+ *         IPC channel. That shape matches the renderer's
+ *         reconciliation contract (the 30 s sidebar poll closes
+ *         any gap on the next tick).
  *
- *      c. For `file_added` events whose originating channel is
- *         linked as a `SourceType::Kchat` source, trigger
- *         `bridgeReindexSource(sourceId)` so the indexer picks
- *         up the newly-uploaded file immediately rather than
- *         waiting for the user's next manual refresh. The
- *         lookup is index-backed (O(log n)) so it stays cheap
- *         even under a `file_added` burst.
+ *      c. Audit every `file_added` event via
+ *         `bridgeLogKchatFileEventReceived`. The audit row
+ *         records the event name, originating channel id,
+ *         server-supplied file id, and a `channel_linked` flag
+ *         (whether the channel matched a registered
+ *         `SourceType::Kchat` source) so an operator can
+ *         correlate WS traffic with the source registry. Other
+ *         event types (chat `posted`, membership changes,
+ *         presence) are NOT audited at the per-event
+ *         granularity — that would flood the audit log with
+ *         content most operators don't want to grep.
  *
- *      d. Audit every `file_added` event via
- *         `bridgeLogKchatFileEventReceived` with the
- *         `triggered_reindex` flag so an operator can correlate
- *         WS-driven indexer activity with the originating
- *         channel event. Other event types (chat `posted`,
- *         membership changes, presence) are NOT audited at the
- *         per-event granularity — that would flood the audit
- *         log with content most operators don't want to grep.
+ *      d. The WS forwarder does NOT trigger a file download or
+ *         a source reindex on `file_added`. A `file_added` event
+ *         arrives the moment the KChat server accepts an upload
+ *         from another client — the file bytes are NOT on disk
+ *         in our local cache directory at that point. Calling
+ *         `bridgeReindexSource` here would just walk an empty
+ *         cache dir under the source manager mutex (blocking the
+ *         napi worker pool's single thread for the duration), find
+ *         no new bytes, and exit; a guaranteed no-op that also
+ *         introduces UI jank under `file_added` bursts.
+ *
+ *         File ingestion is the responsibility of the channel-
+ *         sync pipeline reachable via `sources:addKchatChannel`
+ *         (`runAddKchatChannel` in `ipc/kchat.ts`). The sidebar's
+ *         30 s reconciliation poll already invokes that pipeline
+ *         on every tick, so a `file_added` event ultimately gets
+ *         indexed within one poll cycle of arrival. A future
+ *         iteration may move the auto-download trigger onto the
+ *         WS forwarder by extracting `runAddKchatChannel` into a
+ *         shared service that's callable from both the IPC
+ *         handler and the forwarder; this PR explicitly does not
+ *         take on that scope (it would require hoisting ~300 lines
+ *         and reworking the in-flight dedupe Map ownership).
  *
  *   2. Window lifecycle cleanup: when a renderer window closes,
  *      its ring buffer is released so the forwarder doesn't
@@ -64,7 +84,6 @@
 import { BrowserWindow } from "electron";
 import { getBridge } from "../appState";
 import type { KchatClient } from "./kchatClient";
-import { kchatChannelCacheDir } from "./kchatPaths";
 import type {
   KchatConnectionState,
   KchatWebSocketEvent,
@@ -274,21 +293,30 @@ export class KchatEventForwarder {
       this.deliverToWindow(win, view);
     }
 
-    // Step 2: side effects beyond broadcast — auto-reindex on
-    // `file_added` and audit. We enqueue the broadcast first via
-    // {@link deliverToWindow}, which pushes into the per-window
-    // buffer and defers the actual `webContents.send` to the next
-    // microtask. The synchronous bridge calls in `handleFileAdded`
-    // therefore complete BEFORE the drain delivers events to the
-    // renderer — the deferred-drain pattern serialises the burst
-    // through the ring buffer, not a per-event scheduling fence
-    // against bridge work. Bridge calls are kept off the WS
-    // reader's hot path only by being short (an indexed SQLite
-    // lookup + a fire-and-forget reindex spawn + an audit insert);
-    // if a future bridge call blocks for tens of ms we'd need to
-    // move this onto a setImmediate to preserve renderer latency.
-    // Today it is fast enough that the ordering is just "FIFO
-    // through the buffer".
+    // Step 2: side-effect path — audit on `file_added`.
+    //
+    // The broadcast above is enqueued into the per-window ring
+    // buffer and drained on the next microtask via
+    // `queueMicrotask` (see `scheduleDrain`). The bridge calls in
+    // `handleFileAdded` therefore complete BEFORE the drain
+    // delivers events to the renderer. Bridge calls here are:
+    //   - one indexed SQLite SELECT (the cache-dir source lookup,
+    //     used only to populate the audit row's `channel_linked`
+    //     flag), and
+    //   - one append-only audit-log INSERT.
+    //
+    // Both are short and synchronous; they share the napi worker
+    // pool's lock but never the renderer's event loop. The
+    // earlier draft also called `bridgeReindexSource` here, but
+    // that was removed in the second-pass Devin Review sweep
+    // (BUG_pr-review-job-...0001 + ANALYSIS_pr-review-job-...0001
+    // on PR #43): the new file hasn't been downloaded into the
+    // cache directory at the moment a `file_added` event arrives,
+    // so the reindex would walk an empty diff under a mutex,
+    // doing nothing while blocking the worker thread. File
+    // ingestion still happens reliably via the
+    // `sources:addKchatChannel` 30 s reconciliation poll — see
+    // the top-of-file doc block.
     if (view.event === "file_added") {
       this.handleFileAdded(view).catch((err) => {
         // The reindex / audit path is best-effort. A failure
@@ -416,8 +444,8 @@ export class KchatEventForwarder {
     const bridge = getBridge();
     if (!bridge) {
       // Tests sometimes run the forwarder without a bridge.
-      // No bridge = no source store = nothing to reindex and
-      // no audit log to write. Drop silently.
+      // No bridge = no source store and no audit log to write.
+      // Drop silently.
       return;
     }
 
@@ -425,62 +453,36 @@ export class KchatEventForwarder {
     const fileId =
       typeof view.data.file_id === "string" ? view.data.file_id : null;
 
-    // Without a channel id we cannot look up the source. We
-    // still audit the event so an operator sees that a
-    // malformed `file_added` arrived (channel id is a required
-    // field per the KChat protocol; its absence is a server-
-    // side bug worth surfacing).
-    let triggeredReindex = false;
-    if (channelId) {
-      const cacheDir = kchatChannelCacheDir(channelId);
-      // The source-lookup call itself can throw — a Rust
-      // mutex-poisoned condition or a transient SQLite
-      // `database is locked` error both surface as napi
-      // exceptions. If we let those propagate, the rejected
-      // Promise lands in the outer `.catch()` at
-      // {@link KchatEventForwarder.handleEvent} and the audit
-      // row at the bottom of this method NEVER fires — silently
-      // swallowing the event from the operator's perspective.
-      // Wrap the lookup explicitly so a lookup failure still
-      // produces an audit row with `triggered_reindex=false`
-      // and operators see that a `file_added` arrived even if
-      // we couldn't resolve it to a source.
-      let source: { id: string } | null = null;
-      try {
-        source = bridge.bridgeFindKchatSourceByCacheDir(cacheDir);
-      } catch (err) {
-        console.error(
-          "[KchatEventForwarder] source lookup failed for channel",
-          channelId,
-          err,
-        );
-      }
-      if (source) {
-        try {
-          bridge.bridgeReindexSource(source.id);
-          triggeredReindex = true;
-        } catch (err) {
-          // A reindex failure is operator-actionable but the
-          // forwarder must not throw on it. Log and continue
-          // — the audit row will record `triggered_reindex=false`
-          // and the operator can re-run the reindex manually
-          // via the Sources surface.
-          console.error(
-            "[KchatEventForwarder] reindex failed for source",
-            source.id,
-            err,
-          );
-          triggeredReindex = false;
-        }
-      }
-    }
+    // No source-lookup call: the previous draft of this method
+    // looked up the linked source for `channelId` so it could
+    // (a) trigger a reindex and (b) record whether the channel
+    // was linked as `triggered_reindex` on the audit row. Both
+    // motivations went away in the second-pass Devin Review
+    // sweep on PR #43:
+    //   - (a) was removed (see top-of-file doc block: the file
+    //     isn't on disk at `file_added` time, so reindex is a
+    //     blocking no-op).
+    //   - (b) was downgraded: passing the lookup result through
+    //     a field literally named `triggered_reindex` would be
+    //     a misleading semantic for ops grep. We pass `false`
+    //     unconditionally and rely on operators querying the
+    //     source registry directly when they need to know which
+    //     channels are linked.
+    // The field is preserved (rather than removed from the audit
+    // signature) so it stays available for the future iteration
+    // that wires `runAddKchatChannel` into the WS forwarder.
 
     try {
       bridge.bridgeLogKchatFileEventReceived(
         view.event,
         channelId,
         fileId,
-        triggeredReindex,
+        // Always false in the current implementation — see the
+        // block above. The field is the historical
+        // `triggered_reindex` slot, kept on the audit row text
+        // so a future auto-sync iteration can repopulate it
+        // without a schema break.
+        false,
       );
     } catch (err) {
       // Audit-log failures should never wedge the forwarder.
