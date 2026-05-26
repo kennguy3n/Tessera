@@ -212,8 +212,20 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   }, [kchat, available]);
 
   // Fetch the channel list whenever we transition into `connected`.
+  //
+  // Gated on `available === true` (not just `state.state ===
+  // "connected"`) so the channel-fetch IPC and rate-limit token
+  // consumption only fire AFTER the renderer has confirmed the
+  // KChat feature is available. The status push subscription
+  // installed on mount can deliver a `"connected"` transition
+  // during the `kchat.isAvailable()` round-trip while `available
+  // === null`; without the explicit `available === true` gate,
+  // this effect would fire before the gate resolves, burning
+  // rate-limit tokens on a feature that may turn out to be
+  // disabled. Twelfth-pass Devin Review on PR #43
+  // (`ANALYSIS_pr-review-job-...0002`).
   useEffect(() => {
-    if (!kchat || state.state !== "connected") {
+    if (!kchat || available !== true || state.state !== "connected") {
       setChannels([]);
       setUnread(0);
       return;
@@ -239,7 +251,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
     return () => {
       cancelled = true;
     };
-  }, [kchat, state.state]);
+  }, [kchat, available, state.state]);
 
   // `channelsRef` holds the live channel list so `pollUnread` can
   // read the latest set without taking `channels` as a useCallback
@@ -359,8 +371,14 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // make the very first malformed event after a fresh user opens
   // KChat tick the badge from 0 to 1 with no provenance, which is
   // the most visible failure mode for new users.
+  //
+  // Gated on `available === true` for the same reason the channel-
+  // fetch effect above is — a `"connected"` push that arrives
+  // during the initial `isAvailable()` round-trip must not install
+  // the IPC listener for a feature that may turn out to be gated
+  // off (twelfth-pass Devin Review ANALYSIS_0002).
   useEffect(() => {
-    if (!kchat || state.state !== "connected") return;
+    if (!kchat || available !== true || state.state !== "connected") return;
     const unsubscribe = kchat.onEvent((event: KchatWebSocketEventPayload) => {
       if (event.event !== "file_added") return;
       const live = channelsRef.current;
@@ -380,7 +398,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
     return () => {
       unsubscribe();
     };
-  }, [kchat, state.state]);
+  }, [kchat, available, state.state]);
 
   // Recursive `setTimeout` instead of `setInterval` (eleventh-pass
   // Devin Review ANALYSIS_0004). `setInterval` would fire every
@@ -402,8 +420,19 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // ANALYSIS_0006) — both to save rate-limit tokens on a cycle whose
   // `setUnread` would be discarded, and to avoid the post-unmount
   // state update entirely.
+  //
+  // Gated on `available === true` so the recursive poll does not
+  // arm while `available === null` (the initial-mount race window
+  // described on the channel-fetch effect above); twelfth-pass
+  // Devin Review ANALYSIS_0002.
   useEffect(() => {
-    if (state.state !== "connected" || channels.length === 0) return;
+    if (
+      available !== true ||
+      state.state !== "connected" ||
+      channels.length === 0
+    ) {
+      return;
+    }
     let cancelled = false;
     let timeoutId: number | null = null;
     const tick = async () => {
@@ -421,7 +450,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
       cancelled = true;
       if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [pollUnread, state.state, channels.length]);
+  }, [pollUnread, available, state.state, channels.length]);
 
   const handleMarkSeen = useCallback(() => {
     setLastSeen(Date.now());

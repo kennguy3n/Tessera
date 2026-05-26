@@ -125,10 +125,22 @@ import type {
  * exported, never called, and have no runtime cost — the
  * declarations live solely as a tripwire. Third-pass Devin
  * Review on PR #43 (`ANALYSIS_pr-review-job-...0006`).
+ *
+ * DO NOT REMOVE these declarations as "dead code" — they have
+ * no runtime cost (the const declarations are erased by tsc;
+ * the `void` expressions emit no bytecode), and removing them
+ * silently disables the compile-time drift check. Twelfth-pass
+ * Devin Review on PR #43 (`ANALYSIS_pr-review-job-...0006`)
+ * flagged that a future ESLint rule change marking these as
+ * unused could lead a contributor to delete them. The
+ * `eslint-disable-next-line` markers below pin the suppression
+ * to this specific use rather than relying on a global rule.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
 const _assertViewIsPayload = (
   v: KchatWebSocketEventView,
 ): KchatWebSocketEventPayload => v;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
 const _assertPayloadIsView = (
   p: KchatWebSocketEventPayload,
 ): KchatWebSocketEventView => p;
@@ -149,10 +161,16 @@ void _assertPayloadIsView;
  * latent shape drift to the renderer at runtime. The pattern
  * matches the WS event check above. Fourth-pass Devin Review on
  * PR #43 (`ANALYSIS_pr-review-job-...0001`).
+ *
+ * DO NOT REMOVE — see the rationale on the WS event tripwire
+ * above. Twelfth-pass Devin Review hardened the lint suppression
+ * to be local rather than relying on a global rule.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
 const _assertConnectionStateIsView = (
   s: KchatConnectionState,
 ): KchatConnectionStateView => s;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
 const _assertConnectionStateViewIsState = (
   v: KchatConnectionStateView,
 ): KchatConnectionState => v;

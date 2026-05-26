@@ -160,6 +160,105 @@ describe("KchatSidebarSection", () => {
     ).toBe(isAvailableCallsAfterProbe);
   });
 
+  it("does not fire downstream effects when a status push lands while isAvailable() is in flight and resolves false", async () => {
+    // Twelfth-pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0002`) flagged a narrow race:
+    // the `onStatusChange` subscription is installed
+    // synchronously on mount BEFORE `isAvailable()` resolves
+    // (deliberate so a transition during the round-trip is not
+    // lost). If a `"connected"` push arrives during that window
+    // and `isAvailable()` then resolves false, the previous
+    // implementation would have fired the channel-fetch effect,
+    // installed the `onEvent` listener, and armed the unread
+    // poll for a feature that's gated off — burning rate-limit
+    // tokens and holding an IPC listener until the next state
+    // change.
+    //
+    // Fix gated all three downstream effects on `available ===
+    // true` (not just `state.state === "connected"`), mirroring
+    // the render-time gate at the bottom of the component. This
+    // test pins the race shape and asserts none of the three
+    // downstream IPCs fire.
+    let resolveIsAvailable: ((v: boolean) => void) | null = null;
+    const isAvailable = vi.fn().mockImplementation(
+      () =>
+        new Promise<boolean>((r) => {
+          resolveIsAvailable = r;
+        }),
+    );
+    let pushStatus: ((s: unknown) => void) | null = null;
+    const onStatusChange = vi.fn().mockImplementation(
+      (cb: (s: unknown) => void) => {
+        pushStatus = cb;
+        return () => {};
+      },
+    );
+    const listTeams = vi.fn().mockResolvedValue([]);
+    const listChannels = vi.fn().mockResolvedValue([]);
+    const listChannelFiles = vi.fn().mockResolvedValue([]);
+    const onEvent = vi.fn().mockReturnValue(() => {});
+    const api = makeApi({
+      isAvailable,
+      onStatusChange,
+      listTeams,
+      listChannels,
+      listChannelFiles,
+      onEvent,
+      // The initial `status()` call also resolves with a
+      // `"connected"` value — without the gate this would also
+      // trigger the downstream effects via the initial probe path
+      // even before the push lands.
+      status: vi.fn().mockResolvedValue({
+        state: "connected",
+        user: {
+          id: "u1",
+          username: "alice",
+          email: "a@x",
+          firstName: "A",
+          lastName: "A",
+        },
+      }),
+    });
+    render(<KchatSidebarSection api={api} />);
+    // Race-window: isAvailable is in flight, push fires.
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalled());
+    expect(pushStatus).not.toBeNull();
+    // Simulate a `connected` push arriving DURING the
+    // `isAvailable()` round-trip while `available === null`.
+    pushStatus!({
+      state: "connected",
+      user: {
+        id: "u1",
+        username: "alice",
+        email: "a@x",
+        firstName: "A",
+        lastName: "A",
+      },
+    });
+    // Resolve isAvailable to false AFTER the push. Without the
+    // gate fix, the downstream effects would already have fired
+    // by the time React commits the `available=false` re-render.
+    expect(resolveIsAvailable).not.toBeNull();
+    resolveIsAvailable!(false);
+    // Give React a chance to flush all effect re-runs.
+    await waitFor(() => expect(isAvailable).toHaveBeenCalledTimes(1));
+    // Advance past one full reconciliation tick so any latent
+    // poll arming would have fired by now.
+    await vi.advanceTimersByTimeAsync(35_000);
+    // The component should render nothing (feature gated off).
+    expect(
+      screen.queryByTestId("kchat-sidebar"),
+    ).not.toBeInTheDocument();
+    // None of the three downstream IPCs should have fired. The
+    // pre-fix shape would have called `listTeams` (via the
+    // channel-fetch effect) and `onEvent` (via the WS listener
+    // install), and armed the recursive poll.
+    expect(listTeams).not.toHaveBeenCalled();
+    expect(listChannels).not.toHaveBeenCalled();
+    expect(listChannelFiles).not.toHaveBeenCalled();
+    expect(onEvent).not.toHaveBeenCalled();
+  });
+
   it("caps per-poll listChannelFiles fan-out to MAX_POLL_CHANNELS", async () => {
     // 25 channels in the default team — the sidebar must only fetch
     // file lists for the first MAX_POLL_CHANNELS (= 10) to avoid
