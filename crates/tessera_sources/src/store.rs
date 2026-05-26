@@ -837,25 +837,39 @@ impl SourceStore {
         // process lifetime, silently degrading every steady-state
         // chunk insert.
         //
-        // If the reset itself fails, we surface that as a separate
-        // error so the audit row can record the degraded state.
-        // The original `scrub_result` error takes precedence over a
-        // reset failure because the scrub error is what the caller
+        // Diagnostic-ordering invariant (Block B Task 4 third-pass
+        // Devin Review ANALYSIS_0001): the reset diagnostic MUST be
+        // emitted before the scrub error is propagated, otherwise
+        // the rare scrub-failed + reset-failed double-failure case
+        // would silently lose the reset diagnostic — the operator
+        // would see the scrub error and assume the connection is
+        // healthy, when in fact `secure_delete` is still ON and
+        // every steady-state write is paying the page-zero-fill
+        // cost for the remaining process lifetime. The eprintln!
+        // here is the *only* operator-visible signal that the
+        // connection is in the degraded state, so it always runs
+        // first.
+        //
+        // The original `scrub_result` error still takes precedence
+        // as the function's return value — it's what the caller
         // primarily needs to know about (e.g. a VACUUM disk-full
-        // bubbling up).
+        // bubbling up). The reset failure rides along in stderr
+        // so an operator grep-ing the logs can correlate both
+        // failures with the same audit row.
         let reset_result = conn
             .execute_batch("PRAGMA secure_delete = OFF;")
             .map_err(|e| Error::Database(e.to_string()));
 
-        scrub_result?;
-        if let Err(e) = reset_result {
+        if let Err(e) = reset_result.as_ref() {
             eprintln!(
                 "[cryptoshred] failed to reset secure_delete=OFF on shared \
                  connection; steady-state writes will pay zero-fill overhead \
                  until process restart: {e}"
             );
-            return Err(e);
         }
+
+        scrub_result?;
+        reset_result?;
 
         Ok(KchatSourceCryptoshredOutcome {
             chunks_dropped: u32::try_from(chunks_to_drop).unwrap_or(u32::MAX),

@@ -869,6 +869,21 @@ export function resetKchatAuthService(
     kchatEventForwarder.dispose();
     kchatEventForwarder = null;
   }
+  // Block B Task 4 (Phase 11) third-pass Devin Review ANALYSIS_0006:
+  // clear the regrant-resync slot alongside the forwarder so the
+  // module-level lifecycle invariants stay coherent. The previous
+  // impl captures `runAddKchatChannel` which itself closes over
+  // `getKchatAuthService()`; if a test calls
+  // `resetKchatAuthService(null)` and a stale slot survived, a
+  // subsequent direct call into the slot would deref a null auth
+  // service. The forwarder disposal above prevents the live event
+  // path from triggering this, but the slot is also reachable via
+  // `getKchatChannelResyncImpl()` for tests that drive it manually,
+  // so we close the gap defensively here. The production IPC
+  // handler's `registerKchatHandlers` re-populates the slot at the
+  // next startup; tests that need a fresh impl can repopulate via
+  // `setKchatChannelResyncImpl` after the reset.
+  setKchatChannelResyncImpl(null);
   kchatAuthService = next;
   if (next) {
     kchatEventForwarder = new KchatEventForwarder({
