@@ -256,6 +256,19 @@ export interface KchatAclRefreshOutcomeInfo {
    *  inline cryptoshred on the revoke path; 0 on every non-revoke
    *  outcome. */
   filesDropped: number;
+  /** Block C Task 2 (Phase 12): count of `kchat_posts` rows
+   *  scrubbed by the inline cryptoshred on the revoke path; 0 on
+   *  every non-revoke outcome AND on file-only sources where no
+   *  chat-post evidence ever existed. */
+  postsDropped: number;
+  /** Block C Task 2 (Phase 12): `true` when the per-source DEK
+   *  row was dropped on the revoke path. `false` on every
+   *  non-revoke outcome AND on revokes where the source never
+   *  ingested any chat-post evidence (no DEK was ever derived).
+   *  This is the cryptographic guarantee surface — once the DEK
+   *  is gone, the chat-body chunks are unrecoverable even if the
+   *  full SQLCipher master key later leaks. */
+  dekDropped: boolean;
   /** Fifth-pass Devin Review fix
    *  (ANALYSIS_pr-review-job-ef3c7d6c..._0001): `true` when the
    *  substrate's belt-and-braces `VACUUM` ran cleanly (or was
@@ -298,12 +311,94 @@ export interface KchatRevokeOutcomeInfo {
    *  scrubbed by the inline cryptoshred. Same semantics as
    *  `chunksDropped`. */
   filesDropped: number;
+  /** Block C Task 2 (Phase 12): count of `kchat_posts` rows
+   *  scrubbed by the inline cryptoshred. Same semantics as
+   *  `chunksDropped`. `unlinked` outcomes are always zero. */
+  postsDropped: number;
+  /** Block C Task 2 (Phase 12): `true` when the per-source DEK
+   *  row was dropped on this revoke. `false` when no DEK ever
+   *  existed for this source (file-only ingest) OR on `unlinked`
+   *  outcomes. See {@link KchatAclRefreshOutcomeInfo.dekDropped}
+   *  for the cryptographic guarantee this surfaces. */
+  dekDropped: boolean;
   /** Fifth-pass Devin Review fix: see
    *  {@link KchatAclRefreshOutcomeInfo.vacuumSucceeded}. */
   vacuumSucceeded: boolean;
   /** Fifth-pass Devin Review fix: see
    *  {@link KchatAclRefreshOutcomeInfo.vacuumError}. */
   vacuumError?: string;
+}
+
+/**
+ * Per-post ingest input passed to `bridge_ingest_kchat_post` /
+ * `bridge_edit_kchat_post`. Mirrors the substrate's
+ * `KchatPostIngestInput`. The Node-side forwarder builds an
+ * instance of this from a `posted` / `post_edited` WS event
+ * after `withChannelSyncLock` serialises the work, then hands
+ * it across the bridge.
+ *
+ * Block C Task 1 (Phase 12).
+ */
+export interface KchatPostIngestInputInfo {
+  cacheDir: string;
+  postId: string;
+  channelId: string;
+  rootId?: string;
+  senderUserId: string;
+  body: string;
+  createdAtMs: number;
+  editedAtMs: number;
+}
+
+/**
+ * Outcome of [`KchatPostIngestInputInfo`]-driven calls. The
+ * substrate produces one of four outcome short-codes:
+ *
+ *   - `"ingested"`  — post stored, chunks AEAD-sealed under
+ *     the per-source DEK, `chunkIds` / `chunkCount` populated.
+ *   - `"unchanged"` — re-delivery of the same post body
+ *     (BLAKE3 hash matches the existing row); no-op. `chunkCount`
+ *     reflects the existing row's chunk count.
+ *   - `"unlinked"`  — no `SourceType::Kchat` source exists for
+ *     `cacheDir`; defensive no-op (the channel was unlinked
+ *     between the WS event and the bridge call).
+ *   - `"access_revoked"` — source row exists but is in
+ *     `AccessRevoked`; ingestion refuses to write evidence the
+ *     retrieval filter would have to drop anyway.
+ *
+ * `sourceId` is populated for `ingested` / `unchanged` so the
+ * Node-side audit pair can correlate without an extra lookup.
+ *
+ * Block C Task 1 (Phase 12).
+ */
+export interface KchatPostIngestOutcomeInfo {
+  outcome: "ingested" | "unchanged" | "unlinked" | "access_revoked";
+  sourceId?: string;
+  indexedFileId?: number;
+  chunkCount: number;
+  /** Populated only when `outcome === "ingested"`; one entry per
+   *  newly-inserted chunk row so the audit row can record the
+   *  substrate ids without exposing the body. */
+  chunkIds: number[];
+}
+
+/**
+ * Outcome of `bridge_delete_kchat_post`. Mirrors the substrate's
+ * `KchatPostDeleteOutcome`.
+ *
+ *   - `"deleted"`        — post bookkeeping + chunks dropped.
+ *   - `"not_found"`      — no row matched (post never ingested
+ *     or already deleted by a prior tombstone).
+ *   - `"unlinked"`       — no source for cacheDir.
+ *   - `"access_revoked"` — source row exists but is in
+ *     `AccessRevoked`; defensive no-op.
+ *
+ * Block C Task 1 (Phase 12).
+ */
+export interface KchatPostDeleteOutcomeInfo {
+  outcome: "deleted" | "not_found" | "unlinked" | "access_revoked";
+  sourceId?: string;
+  chunksDropped: number;
 }
 
 /**

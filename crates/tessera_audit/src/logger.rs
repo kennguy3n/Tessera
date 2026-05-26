@@ -361,6 +361,8 @@ impl AuditLogger {
         reason: &str,
         chunks_dropped: u32,
         files_dropped: u32,
+        posts_dropped: u32,
+        dek_dropped: bool,
         fs_scrub_succeeded: bool,
         fs_scrub_error: Option<&str>,
         vacuum_succeeded: bool,
@@ -379,8 +381,80 @@ impl AuditLogger {
             format!(
                 "KChat source cryptoshredded: channel={channel_id} reason={reason} \
                  chunks_dropped={chunks_dropped} files_dropped={files_dropped} \
+                 posts_dropped={posts_dropped} dek_dropped={dek_dropped} \
                  fs_scrub_succeeded={fs_scrub_succeeded}{fs_error_segment} \
                  vacuum_succeeded={vacuum_succeeded}{vacuum_error_segment}"
+            ),
+        )
+    }
+
+    /// Block C Task 1 (Phase 12): record a KChat post-body ingest
+    /// outcome. Used by the Node-side `KchatEventForwarder` after
+    /// the bridge returns the outcome of an `ingest_kchat_post` or
+    /// `edit_kchat_post` call. `outcome` is one of
+    /// `ingested`/`unchanged`/`unlinked`/`access_revoked`;
+    /// `chunk_count` carries the number of AEAD-sealed chunks the
+    /// substrate inserted (zero for `unchanged` / `unlinked` /
+    /// `access_revoked` outcomes).
+    ///
+    /// Post bodies are NEVER logged. The audit row's purpose is
+    /// observability of the ingest pipeline, not retention of the
+    /// content itself.
+    pub fn log_kchat_post_ingested(
+        &self,
+        channel_id: &str,
+        post_id: &str,
+        outcome: &str,
+        chunk_count: u32,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::KchatPostIngested,
+            format!(
+                "KChat post ingested: channel={channel_id} post={post_id} \
+                 outcome={outcome} chunk_count={chunk_count}"
+            ),
+        )
+    }
+
+    /// Block C Task 1 (Phase 12): record a KChat post-body edit
+    /// outcome (re-ingest under the same post_id). Same field
+    /// catalogue as [`Self::log_kchat_post_ingested`] but routed
+    /// to the `KchatPostEdited` variant so operators can grep
+    /// edits separately from new posts.
+    pub fn log_kchat_post_edited(
+        &self,
+        channel_id: &str,
+        post_id: &str,
+        outcome: &str,
+        chunk_count: u32,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::KchatPostEdited,
+            format!(
+                "KChat post edited: channel={channel_id} post={post_id} \
+                 outcome={outcome} chunk_count={chunk_count}"
+            ),
+        )
+    }
+
+    /// Block C Task 1 (Phase 12): record a KChat post-body delete
+    /// outcome. `outcome` is one of
+    /// `deleted`/`not_found`/`unlinked`/`access_revoked`;
+    /// `chunks_dropped` carries the number of AEAD-sealed chunk
+    /// rows the substrate dropped (zero for non-`deleted`
+    /// outcomes).
+    pub fn log_kchat_post_deleted(
+        &self,
+        channel_id: &str,
+        post_id: &str,
+        outcome: &str,
+        chunks_dropped: u32,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::KchatPostDeleted,
+            format!(
+                "KChat post deleted: channel={channel_id} post={post_id} \
+                 outcome={outcome} chunks_dropped={chunks_dropped}"
             ),
         )
     }
@@ -682,6 +756,8 @@ mod tests {
                 "principal_missing_from_roster",
                 42,
                 7,
+                15,   // posts_dropped
+                true, // dek_dropped
                 true,
                 None,
                 true,
@@ -694,6 +770,8 @@ mod tests {
                 "channel_archived",
                 0,
                 0,
+                0,     // posts_dropped
+                false, // dek_dropped (idempotent re-shred)
                 true,
                 None,
                 true,
@@ -709,6 +787,8 @@ mod tests {
                 "channel_archived",
                 17,
                 3,
+                5,    // posts_dropped
+                true, // dek_dropped
                 false,
                 Some("cacheDir(/tmp/k/c-003): EBUSY: resource busy"),
                 true,
@@ -728,6 +808,8 @@ mod tests {
                 "channel_deleted",
                 23,
                 4,
+                8,    // posts_dropped
+                true, // dek_dropped
                 true,
                 None,
                 false,
@@ -749,6 +831,8 @@ mod tests {
             .contains("reason=principal_missing_from_roster"));
         assert!(real.details.contains("chunks_dropped=42"));
         assert!(real.details.contains("files_dropped=7"));
+        assert!(real.details.contains("posts_dropped=15"));
+        assert!(real.details.contains("dek_dropped=true"));
         assert!(real.details.contains("fs_scrub_succeeded=true"));
         assert!(!real.details.contains("fs_scrub_error="));
         assert!(real.details.contains("vacuum_succeeded=true"));
@@ -761,6 +845,8 @@ mod tests {
         assert!(idempotent.details.contains("reason=channel_archived"));
         assert!(idempotent.details.contains("chunks_dropped=0"));
         assert!(idempotent.details.contains("files_dropped=0"));
+        assert!(idempotent.details.contains("posts_dropped=0"));
+        assert!(idempotent.details.contains("dek_dropped=false"));
         assert!(idempotent.details.contains("fs_scrub_succeeded=true"));
         assert!(idempotent.details.contains("vacuum_succeeded=true"));
         assert!(!idempotent.details.contains("vacuum_error="));
@@ -771,6 +857,8 @@ mod tests {
             .expect("fs-failed-shred row should be present");
         assert!(fs_failed.details.contains("chunks_dropped=17"));
         assert!(fs_failed.details.contains("files_dropped=3"));
+        assert!(fs_failed.details.contains("posts_dropped=5"));
+        assert!(fs_failed.details.contains("dek_dropped=true"));
         assert!(fs_failed.details.contains("fs_scrub_succeeded=false"));
         assert!(fs_failed
             .details
@@ -787,6 +875,8 @@ mod tests {
         assert!(vacuum_failed.details.contains("reason=channel_deleted"));
         assert!(vacuum_failed.details.contains("chunks_dropped=23"));
         assert!(vacuum_failed.details.contains("files_dropped=4"));
+        assert!(vacuum_failed.details.contains("posts_dropped=8"));
+        assert!(vacuum_failed.details.contains("dek_dropped=true"));
         // The row-level scrub committed (`fs_scrub` is independent
         // and trivially true on this row's input).
         assert!(vacuum_failed.details.contains("fs_scrub_succeeded=true"));

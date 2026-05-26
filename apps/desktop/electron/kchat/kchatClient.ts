@@ -25,6 +25,8 @@ import {
   KchatConnectionState,
   KchatFileInfo,
   KchatFileUploadResponse,
+  KchatPostInfo,
+  KchatPostListPage,
   KchatTeam,
   KchatUser,
   KchatWebSocketEvent,
@@ -333,6 +335,48 @@ function assertCallerObjectId(value: string, name: string): string {
  */
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Normalise a KChat post envelope (snake_case as returned by the
+ * REST endpoint) into the renderer-safe camelCase shape the
+ * forwarder, audit surfaces, and the substrate ingest path
+ * consume. Throws on missing-required-field so a malformed server
+ * response surfaces immediately rather than producing a half-
+ * populated row downstream.
+ *
+ * Used by both {@link KchatClient.getPost} and
+ * {@link KchatClient.getPostsForChannel} so the validation rules
+ * stay consistent across the two endpoints.
+ *
+ * Block C Task 1 (Phase 12).
+ */
+function normalisePost(raw: Record<string, unknown>): KchatPostInfo {
+  const id = typeof raw.id === "string" ? raw.id : null;
+  const channelId =
+    typeof raw.channel_id === "string" ? raw.channel_id : null;
+  const userId = typeof raw.user_id === "string" ? raw.user_id : null;
+  const message = typeof raw.message === "string" ? raw.message : null;
+  const createAt = typeof raw.create_at === "number" ? raw.create_at : null;
+  const editAt = typeof raw.edit_at === "number" ? raw.edit_at : 0;
+  const rootIdRaw = raw.root_id;
+  const rootId =
+    typeof rootIdRaw === "string" && rootIdRaw.length > 0 ? rootIdRaw : null;
+
+  if (id === null) throw new Error("post.id missing");
+  if (channelId === null) throw new Error("post.channel_id missing");
+  if (userId === null) throw new Error("post.user_id missing");
+  if (message === null) throw new Error("post.message missing");
+  if (createAt === null) throw new Error("post.create_at missing");
+
+  assertKchatServerObjectId(id, "post.id");
+  assertKchatServerObjectId(channelId, "post.channel_id");
+  assertKchatServerObjectId(userId, "post.user_id");
+  if (rootId !== null) {
+    assertKchatServerObjectId(rootId, "post.root_id");
+  }
+
+  return { id, channelId, rootId, userId, message, createAt, editAt };
 }
 
 /**
@@ -772,6 +816,130 @@ export class KchatClient {
     );
     assertKchatServerObjectId(fi.id, "fileInfo.id");
     return fi;
+  }
+
+  /**
+   * Fetch a single post by id. Used by the Block C Task 1 WS
+   * forwarder's `post_edited` recovery path — if the WS payload's
+   * stringified `post` is malformed (e.g. truncated by an
+   * intermediate proxy), the forwarder falls back to this REST
+   * fetch by id. Returns the normalised {@link KchatPostInfo}
+   * shape the renderer + audit surfaces consume.
+   *
+   * Trust boundary: `postId` arrives via WS, so we re-validate at
+   * the URL-interpolation site. The returned envelope's `id` /
+   * `channel_id` / `user_id` are also re-validated.
+   */
+  async getPost(postId: string): Promise<KchatPostInfo> {
+    assertKchatServerObjectId(postId, "postId");
+    const raw = await this.request<{
+      id?: unknown;
+      channel_id?: unknown;
+      root_id?: unknown;
+      user_id?: unknown;
+      message?: unknown;
+      create_at?: unknown;
+      edit_at?: unknown;
+    }>("GET", `/api/v4/posts/${postId}`);
+    return normalisePost(raw);
+  }
+
+  /**
+   * Paginated post fetch for `channelId`. The cursor model
+   * mirrors KChat's `GET /channels/{id}/posts` endpoint:
+   *
+   *   - `before` / `after`: post-id cursors. Pass the oldest
+   *     post id of the current page to step further back in
+   *     history.
+   *   - `since`: epoch-ms watermark. The server returns posts
+   *     edited or created since this time. Used by the Block C
+   *     Task 4 (future) backfill watermark loop.
+   *   - `perPage`: page size. Server caps this at 60 on most
+   *     KChat builds; we cap at 200 client-side and let the
+   *     server clamp downward.
+   *
+   * Per-channel safety cap: a misconfigured server or a
+   * malicious payload could return an unbounded sequence of
+   * pages, so callers are expected to walk pages with a
+   * cumulative-row safety cap (50_000 posts, mirroring the
+   * member-pagination cap in the forwarder). This single-page
+   * method does not enforce the cap itself; the caller decides
+   * when to stop.
+   *
+   * Trust boundary: every returned post id / channel id / user
+   * id is re-validated at the deserialisation boundary so a
+   * downstream caller that interpolates any of them into a URL
+   * path cannot be tricked by a compromised server.
+   */
+  async getPostsForChannel(
+    channelId: string,
+    opts: {
+      before?: string;
+      after?: string;
+      sinceMs?: number;
+      perPage?: number;
+    } = {},
+  ): Promise<KchatPostListPage> {
+    assertCallerObjectId(channelId, "channelId");
+    const perPage = Math.min(opts.perPage ?? 60, 200);
+    const params = new URLSearchParams();
+    params.set("per_page", String(perPage));
+    if (typeof opts.before === "string" && opts.before.length > 0) {
+      assertCallerObjectId(opts.before, "before");
+      params.set("before", opts.before);
+    }
+    if (typeof opts.after === "string" && opts.after.length > 0) {
+      assertCallerObjectId(opts.after, "after");
+      params.set("after", opts.after);
+    }
+    if (
+      typeof opts.sinceMs === "number" &&
+      Number.isFinite(opts.sinceMs) &&
+      opts.sinceMs >= 0
+    ) {
+      params.set("since", String(Math.trunc(opts.sinceMs)));
+    }
+
+    const raw = await this.request<{
+      order?: unknown;
+      posts?: unknown;
+      prev_post_id?: unknown;
+      next_post_id?: unknown;
+    }>(
+      "GET",
+      `/api/v4/channels/${channelId}/posts?${params.toString()}`,
+    );
+
+    // KChat returns `posts` as a dictionary keyed by post id +
+    // an `order` array giving the canonical (newest-first)
+    // sequence. We project this into a flat array in `order`
+    // sequence so callers don't have to redo the join.
+    const postsMap =
+      raw.posts !== null && typeof raw.posts === "object"
+        ? (raw.posts as Record<string, unknown>)
+        : {};
+    const order = Array.isArray(raw.order) ? raw.order : [];
+    const posts: KchatPostInfo[] = [];
+    for (const id of order) {
+      if (typeof id !== "string") continue;
+      const envelope = postsMap[id];
+      if (envelope === null || typeof envelope !== "object") continue;
+      posts.push(normalisePost(envelope as Record<string, unknown>));
+    }
+
+    const prevPostId =
+      typeof raw.prev_post_id === "string" && raw.prev_post_id.length > 0
+        ? raw.prev_post_id
+        : null;
+    const nextPostId =
+      typeof raw.next_post_id === "string" && raw.next_post_id.length > 0
+        ? raw.next_post_id
+        : null;
+    // `hasMore` is server-signalled via a non-empty `prev_post_id`
+    // (older page exists) when paginating backwards. The caller
+    // also stops when a page comes back shorter than `perPage`.
+    const hasMore = prevPostId !== null;
+    return { posts, prevPostId, nextPostId, hasMore };
   }
 
   /**

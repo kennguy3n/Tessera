@@ -121,8 +121,24 @@ pub fn init_bridge(
     let conn = open_shared_with_key(&db_path, key_ref)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
-    let source_manager = SourceManager::with_shared_conn(conn.clone(), &[])
+    let mut source_manager = SourceManager::with_shared_conn(conn.clone(), &[])
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+    // Block C Task 2 (Phase 12): bind the per-source DEK / AEAD
+    // facade in the manager to the same master key that protects
+    // the SQLCipher file. Without this rebind, ingestion would use
+    // the ephemeral per-process random key the constructor falls
+    // back to — which is fine for tests but would lose every
+    // ingested post body across a process restart. When the
+    // renderer hasn't supplied a key (the `Some("") | None` plain
+    // SQLite path), we leave the ephemeral key in place; the
+    // SQLCipher protection is the strong layer, so a plain-DB
+    // configuration has nothing to bind to.
+    if let Some(k) = key_ref {
+        source_manager
+            .set_kchat_master_key(k)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    }
     let artifact_manager = ArtifactManager::with_shared_conn(conn.clone())
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     let audit_logger = AuditLogger::with_shared_conn(conn.clone())
@@ -2031,6 +2047,8 @@ pub fn bridge_log_kchat_source_cryptoshredded(
     reason: String,
     chunks_dropped: u32,
     files_dropped: u32,
+    posts_dropped: u32,
+    dek_dropped: bool,
     fs_scrub_succeeded: bool,
     fs_scrub_error: Option<String>,
     vacuum_succeeded: bool,
@@ -2043,11 +2061,267 @@ pub fn bridge_log_kchat_source_cryptoshredded(
             &reason,
             chunks_dropped,
             files_dropped,
+            posts_dropped,
+            dek_dropped,
             fs_scrub_succeeded,
             fs_scrub_error.as_deref(),
             vacuum_succeeded,
             vacuum_error.as_deref(),
         );
+    }
+    Ok(())
+}
+
+/// JS-facing outcome of [`bridge_ingest_kchat_post`] /
+/// [`bridge_edit_kchat_post`]. `outcome` is one of
+/// `ingested`/`unchanged`/`unlinked`/`access_revoked`. When the
+/// outcome is `ingested` or `unchanged`, the substrate also
+/// returns the resolved `source_id` so the Node side can correlate
+/// audit rows with the in-memory channel-to-source mapping
+/// without an extra lookup. `indexed_file_id` + `chunk_count`
+/// surface the chunk-count the audit logger records (zero on
+/// every non-success outcome).
+///
+/// Block C Task 1 (Phase 12).
+#[derive(Debug)]
+#[napi(object)]
+pub struct KchatPostIngestOutcomeInfo {
+    pub outcome: String,
+    pub source_id: Option<String>,
+    pub indexed_file_id: Option<i64>,
+    pub chunk_count: u32,
+    /// `chunk_ids` populated only for `outcome == "ingested"`. The
+    /// Node side records this on the audit row so a search hit
+    /// the renderer surfaces can be traced back to the substrate
+    /// chunk row (without exposing the post body itself).
+    pub chunk_ids: Vec<i64>,
+}
+
+/// JS-facing outcome of [`bridge_delete_kchat_post`]. `outcome`
+/// is one of `deleted`/`not_found`/`unlinked`/`access_revoked`.
+/// `chunks_dropped` carries the count surfaced on the audit row.
+///
+/// Block C Task 1 (Phase 12).
+#[derive(Debug)]
+#[napi(object)]
+pub struct KchatPostDeleteOutcomeInfo {
+    pub outcome: String,
+    pub source_id: Option<String>,
+    pub chunks_dropped: u32,
+}
+
+/// JS-facing input wire-shape for [`bridge_ingest_kchat_post`] /
+/// [`bridge_edit_kchat_post`]. Mirrors
+/// `tessera_sources::manager::KchatPostIngestInput`. Built by the
+/// Node-side `KchatEventForwarder` from a `posted` /
+/// `post_edited` WS event after `withChannelSyncLock` serialises
+/// it.
+///
+/// Block C Task 1 (Phase 12).
+#[derive(Debug)]
+#[napi(object)]
+pub struct KchatPostIngestInputInfo {
+    pub cache_dir: String,
+    pub post_id: String,
+    pub channel_id: String,
+    pub root_id: Option<String>,
+    pub sender_user_id: String,
+    pub body: String,
+    pub created_at_ms: i64,
+    pub edited_at_ms: i64,
+}
+
+fn ingest_post_outcome_to_info(
+    outcome: tessera_sources::manager::KchatPostIngestOutcome,
+) -> KchatPostIngestOutcomeInfo {
+    use tessera_sources::manager::KchatPostIngestOutcome;
+    match outcome {
+        KchatPostIngestOutcome::Ingested {
+            source_id,
+            indexed_file_id,
+            chunk_ids,
+            sealed_count,
+        } => KchatPostIngestOutcomeInfo {
+            outcome: "ingested".to_string(),
+            source_id: Some(source_id.to_string()),
+            indexed_file_id: Some(indexed_file_id),
+            chunk_count: sealed_count,
+            chunk_ids,
+        },
+        KchatPostIngestOutcome::Unchanged {
+            source_id,
+            indexed_file_id,
+            chunk_count,
+        } => KchatPostIngestOutcomeInfo {
+            outcome: "unchanged".to_string(),
+            source_id: Some(source_id.to_string()),
+            indexed_file_id: Some(indexed_file_id),
+            chunk_count,
+            chunk_ids: Vec::new(),
+        },
+        KchatPostIngestOutcome::Unlinked => KchatPostIngestOutcomeInfo {
+            outcome: "unlinked".to_string(),
+            source_id: None,
+            indexed_file_id: None,
+            chunk_count: 0,
+            chunk_ids: Vec::new(),
+        },
+        KchatPostIngestOutcome::AccessRevoked => KchatPostIngestOutcomeInfo {
+            outcome: "access_revoked".to_string(),
+            source_id: None,
+            indexed_file_id: None,
+            chunk_count: 0,
+            chunk_ids: Vec::new(),
+        },
+    }
+}
+
+fn build_post_ingest_input(
+    info: &KchatPostIngestInputInfo,
+) -> tessera_sources::manager::KchatPostIngestInput {
+    tessera_sources::manager::KchatPostIngestInput {
+        cache_dir: info.cache_dir.clone(),
+        post_id: info.post_id.clone(),
+        channel_id: info.channel_id.clone(),
+        root_id: info.root_id.clone(),
+        sender_user_id: info.sender_user_id.clone(),
+        body: info.body.clone(),
+        created_at_ms: info.created_at_ms,
+        edited_at_ms: info.edited_at_ms,
+    }
+}
+
+/// Block C Task 1 (Phase 12): ingest a KChat post body via the
+/// substrate's `ingest_kchat_post`. Called by the Node-side
+/// `KchatEventForwarder` on a `posted` WS event. Returns the
+/// outcome shape the audit logger forwards to
+/// `bridge_log_kchat_post_ingested`.
+#[napi]
+pub fn bridge_ingest_kchat_post(
+    input: KchatPostIngestInputInfo,
+) -> napi::Result<KchatPostIngestOutcomeInfo> {
+    let s = state()?;
+    let manager = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(format!("source manager poisoned: {e}")))?;
+    let internal = build_post_ingest_input(&input);
+    let outcome = manager
+        .ingest_kchat_post(&internal)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(ingest_post_outcome_to_info(outcome))
+}
+
+/// Block C Task 1 (Phase 12): re-ingest a KChat post body after a
+/// `post_edited` WS event. Delegates to
+/// `SourceManager::edit_kchat_post` which currently shares the
+/// same code path as ingest but is surfaced as a distinct bridge
+/// export so the forwarder can write to the correct audit
+/// variant (`KchatPostEdited`).
+#[napi]
+pub fn bridge_edit_kchat_post(
+    input: KchatPostIngestInputInfo,
+) -> napi::Result<KchatPostIngestOutcomeInfo> {
+    let s = state()?;
+    let manager = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(format!("source manager poisoned: {e}")))?;
+    let internal = build_post_ingest_input(&input);
+    let outcome = manager
+        .edit_kchat_post(&internal)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(ingest_post_outcome_to_info(outcome))
+}
+
+/// Block C Task 1 (Phase 12): drop the substrate evidence for a
+/// KChat post after a `post_deleted` WS event.
+#[napi]
+pub fn bridge_delete_kchat_post(
+    cache_dir: String,
+    post_id: String,
+) -> napi::Result<KchatPostDeleteOutcomeInfo> {
+    use tessera_sources::manager::KchatPostDeleteOutcome;
+    let s = state()?;
+    let manager = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(format!("source manager poisoned: {e}")))?;
+    let outcome = manager
+        .delete_kchat_post(&cache_dir, &post_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(match outcome {
+        KchatPostDeleteOutcome::Deleted {
+            source_id,
+            chunks_dropped,
+        } => KchatPostDeleteOutcomeInfo {
+            outcome: "deleted".to_string(),
+            source_id: Some(source_id.to_string()),
+            chunks_dropped,
+        },
+        KchatPostDeleteOutcome::NotFound { source_id } => KchatPostDeleteOutcomeInfo {
+            outcome: "not_found".to_string(),
+            source_id: Some(source_id.to_string()),
+            chunks_dropped: 0,
+        },
+        KchatPostDeleteOutcome::Unlinked => KchatPostDeleteOutcomeInfo {
+            outcome: "unlinked".to_string(),
+            source_id: None,
+            chunks_dropped: 0,
+        },
+        KchatPostDeleteOutcome::AccessRevoked => KchatPostDeleteOutcomeInfo {
+            outcome: "access_revoked".to_string(),
+            source_id: None,
+            chunks_dropped: 0,
+        },
+    })
+}
+
+/// Block C Task 1 (Phase 12): record a KChat post-body ingest
+/// outcome on the audit log. The Node-side forwarder calls this
+/// after `bridge_ingest_kchat_post` returns.
+#[napi]
+pub fn bridge_log_kchat_post_ingested(
+    channel_id: String,
+    post_id: String,
+    outcome: String,
+    chunk_count: u32,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_post_ingested(&channel_id, &post_id, &outcome, chunk_count);
+    }
+    Ok(())
+}
+
+/// Block C Task 1 (Phase 12): record a KChat post-body edit
+/// outcome on the audit log.
+#[napi]
+pub fn bridge_log_kchat_post_edited(
+    channel_id: String,
+    post_id: String,
+    outcome: String,
+    chunk_count: u32,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_post_edited(&channel_id, &post_id, &outcome, chunk_count);
+    }
+    Ok(())
+}
+
+/// Block C Task 1 (Phase 12): record a KChat post-body delete
+/// outcome on the audit log.
+#[napi]
+pub fn bridge_log_kchat_post_deleted(
+    channel_id: String,
+    post_id: String,
+    outcome: String,
+    chunks_dropped: u32,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_post_deleted(&channel_id, &post_id, &outcome, chunks_dropped);
     }
     Ok(())
 }

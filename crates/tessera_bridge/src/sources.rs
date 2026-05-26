@@ -254,6 +254,16 @@ pub struct KchatAclRefreshOutcomeInfo {
     /// cryptoshred on the revoke path. Zero on all non-revoke
     /// outcomes.
     pub files_dropped: u32,
+    /// Block C Task 2 (Phase 12): count of `kchat_posts` rows
+    /// scrubbed alongside the file/chunk rows. Zero on all
+    /// non-revoke outcomes.
+    pub posts_dropped: u32,
+    /// Block C Task 2 (Phase 12): `true` when the per-source
+    /// wrapped-DEK row existed and was deleted as part of the
+    /// shred. Paired with the in-memory `forget_dek` call the
+    /// manager issues on revoke. Always `false` on non-revoke
+    /// outcomes.
+    pub dek_dropped: bool,
     /// Fifth-pass Devin Review fix: `true` when the belt-and-braces
     /// `VACUUM` ran cleanly (or was skipped). `false` only when
     /// `VACUUM` ran and failed; the row-level scrub still committed
@@ -288,6 +298,12 @@ pub struct KchatRevokeOutcomeInfo {
     pub chunks_dropped: u32,
     /// Count of indexed_files rows scrubbed by the inline cryptoshred.
     pub files_dropped: u32,
+    /// Block C Task 2 (Phase 12): see
+    /// [`KchatAclRefreshOutcomeInfo::posts_dropped`].
+    pub posts_dropped: u32,
+    /// Block C Task 2 (Phase 12): see
+    /// [`KchatAclRefreshOutcomeInfo::dek_dropped`].
+    pub dek_dropped: bool,
     /// Fifth-pass Devin Review fix: see
     /// [`KchatAclRefreshOutcomeInfo::vacuum_succeeded`].
     pub vacuum_succeeded: bool,
@@ -321,14 +337,22 @@ pub fn refresh_kchat_acl(
         principal_present,
         chunks_dropped,
         files_dropped,
+        posts_dropped,
+        dek_dropped,
         vacuum_succeeded,
         vacuum_error,
     ) = match outcome {
-        KchatAclRefreshOutcome::Granted => ("granted", true, 0_u32, 0_u32, true, None),
-        KchatAclRefreshOutcome::Regranted => ("regranted", true, 0_u32, 0_u32, true, None),
+        KchatAclRefreshOutcome::Granted => {
+            ("granted", true, 0_u32, 0_u32, 0_u32, false, true, None)
+        }
+        KchatAclRefreshOutcome::Regranted => {
+            ("regranted", true, 0_u32, 0_u32, 0_u32, false, true, None)
+        }
         KchatAclRefreshOutcome::Revoked {
             chunks_dropped,
             files_dropped,
+            posts_dropped,
+            dek_dropped,
             vacuum_succeeded,
             vacuum_error,
         } => (
@@ -336,11 +360,24 @@ pub fn refresh_kchat_acl(
             false,
             chunks_dropped,
             files_dropped,
+            posts_dropped,
+            dek_dropped,
             vacuum_succeeded,
             vacuum_error,
         ),
-        KchatAclRefreshOutcome::Unlinked => ("unlinked", false, 0_u32, 0_u32, true, None),
-        KchatAclRefreshOutcome::NoPrincipal => ("no_principal", false, 0_u32, 0_u32, true, None),
+        KchatAclRefreshOutcome::Unlinked => {
+            ("unlinked", false, 0_u32, 0_u32, 0_u32, false, true, None)
+        }
+        KchatAclRefreshOutcome::NoPrincipal => (
+            "no_principal",
+            false,
+            0_u32,
+            0_u32,
+            0_u32,
+            false,
+            true,
+            None,
+        ),
     };
     Ok(KchatAclRefreshOutcomeInfo {
         outcome: outcome_str.to_string(),
@@ -348,6 +385,8 @@ pub fn refresh_kchat_acl(
         principal_present,
         chunks_dropped,
         files_dropped,
+        posts_dropped,
+        dek_dropped,
         vacuum_succeeded,
         vacuum_error,
     })
@@ -364,38 +403,55 @@ pub fn revoke_kchat_source(
     let outcome = manager
         .revoke_kchat_source(cache_dir)
         .map_err(BridgeError::Core)?;
-    let (outcome_str, chunks_dropped, files_dropped, vacuum_succeeded, vacuum_error) = match outcome
-    {
+    let (
+        outcome_str,
+        chunks_dropped,
+        files_dropped,
+        posts_dropped,
+        dek_dropped,
+        vacuum_succeeded,
+        vacuum_error,
+    ) = match outcome {
         KchatRevokeOutcome::Revoked {
             chunks_dropped,
             files_dropped,
+            posts_dropped,
+            dek_dropped,
             vacuum_succeeded,
             vacuum_error,
         } => (
             "revoked",
             chunks_dropped,
             files_dropped,
+            posts_dropped,
+            dek_dropped,
             vacuum_succeeded,
             vacuum_error,
         ),
         KchatRevokeOutcome::AlreadyRevoked {
             chunks_dropped,
             files_dropped,
+            posts_dropped,
+            dek_dropped,
             vacuum_succeeded,
             vacuum_error,
         } => (
             "already_revoked",
             chunks_dropped,
             files_dropped,
+            posts_dropped,
+            dek_dropped,
             vacuum_succeeded,
             vacuum_error,
         ),
-        KchatRevokeOutcome::Unlinked => ("unlinked", 0, 0, true, None),
+        KchatRevokeOutcome::Unlinked => ("unlinked", 0, 0, 0, false, true, None),
     };
     Ok(KchatRevokeOutcomeInfo {
         outcome: outcome_str.to_string(),
         chunks_dropped,
         files_dropped,
+        posts_dropped,
+        dek_dropped,
         vacuum_succeeded,
         vacuum_error,
     })

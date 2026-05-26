@@ -116,6 +116,14 @@ interface BridgeMockShape {
   bridgeLogKchatChannelAccessRevoked: ReturnType<typeof vi.fn>;
   // Block B Task 4 (Phase 11) — cryptoshred audit surface.
   bridgeLogKchatSourceCryptoshredded: ReturnType<typeof vi.fn>;
+  // Block C Task 1 (Phase 12) — chat-post ingest / edit /
+  // delete bridge surface + matching audit logger surface.
+  bridgeIngestKchatPost: ReturnType<typeof vi.fn>;
+  bridgeEditKchatPost: ReturnType<typeof vi.fn>;
+  bridgeDeleteKchatPost: ReturnType<typeof vi.fn>;
+  bridgeLogKchatPostIngested: ReturnType<typeof vi.fn>;
+  bridgeLogKchatPostEdited: ReturnType<typeof vi.fn>;
+  bridgeLogKchatPostDeleted: ReturnType<typeof vi.fn>;
 }
 
 let bridgeMock: BridgeMockShape | null = null;
@@ -331,6 +339,10 @@ beforeEach(() => {
       // cryptoshred counts; non-revoke paths always emit zero.
       chunksDropped: 0,
       filesDropped: 0,
+      // Block C Task 2 (Phase 12): post + DEK counts. Mirror
+      // the chunks/files zero-on-non-revoke contract.
+      postsDropped: 0,
+      dekDropped: false,
       // Fifth-pass Devin Review fix
       // (ANALYSIS_pr-review-job-ef3c7d6c..._0001): substrate's
       // Phase 5 `VACUUM` outcome surfaced through the bridge
@@ -350,6 +362,11 @@ beforeEach(() => {
       outcome: "revoked",
       chunksDropped: 1,
       filesDropped: 1,
+      // Block C Task 2 (Phase 12): post + DEK counts default to
+      // zero/false for the file-only happy-path; the dedicated
+      // chat-post coverage overrides these.
+      postsDropped: 0,
+      dekDropped: false,
       // Fifth-pass Devin Review fix
       // (ANALYSIS_pr-review-job-ef3c7d6c..._0001): default-true
       // matches the happy-path multi-row scrub; the dedicated
@@ -361,6 +378,26 @@ beforeEach(() => {
     bridgeLogKchatAclRefreshed: vi.fn(),
     bridgeLogKchatChannelAccessRevoked: vi.fn(),
     bridgeLogKchatSourceCryptoshredded: vi.fn(),
+    // Block C Task 1 (Phase 12): the chat-post ingest path
+    // returns a substrate outcome short-code + chunk count.
+    // Default to `ingested`/`unchanged` so the happy-path
+    // dispatch test sees the audit row land with a non-no_post
+    // outcome.
+    bridgeIngestKchatPost: vi.fn(() => ({
+      outcome: "ingested",
+      chunkCount: 1,
+    })),
+    bridgeEditKchatPost: vi.fn(() => ({
+      outcome: "edited",
+      chunkCount: 1,
+    })),
+    bridgeDeleteKchatPost: vi.fn(() => ({
+      outcome: "deleted",
+      chunksDropped: 1,
+    })),
+    bridgeLogKchatPostIngested: vi.fn(),
+    bridgeLogKchatPostEdited: vi.fn(),
+    bridgeLogKchatPostDeleted: vi.fn(),
   };
 });
 
@@ -1194,6 +1231,8 @@ describe("KchatEventForwarder", () => {
       principalPresent: false,
       chunksDropped: 5,
       filesDropped: 2,
+      postsDropped: 0,
+      dekDropped: false,
       vacuumSucceeded: true,
       vacuumError: undefined,
     });
@@ -1246,6 +1285,8 @@ describe("KchatEventForwarder", () => {
       "principal_missing_from_roster",
       5,
       2,
+      0,
+      false,
       true,
       undefined,
       true,
@@ -1271,6 +1312,8 @@ describe("KchatEventForwarder", () => {
       principalPresent: true,
       chunksDropped: 0,
       filesDropped: 0,
+      postsDropped: 0,
+      dekDropped: false,
       vacuumSucceeded: true,
       vacuumError: undefined,
     });
@@ -1459,6 +1502,8 @@ describe("KchatEventForwarder", () => {
         reason,
         1,
         1,
+        0,
+        false,
         true,
         undefined,
         true,
@@ -1513,6 +1558,8 @@ describe("KchatEventForwarder", () => {
       outcome: "already_revoked",
       chunksDropped: 0,
       filesDropped: 0,
+      postsDropped: 0,
+      dekDropped: false,
       vacuumSucceeded: true,
       vacuumError: undefined,
     });
@@ -1557,6 +1604,8 @@ describe("KchatEventForwarder", () => {
       "channel_archived",
       0,
       0,
+      0,
+      false,
       true,
       undefined,
       true,
@@ -1579,6 +1628,8 @@ describe("KchatEventForwarder", () => {
       outcome: "unlinked",
       chunksDropped: 0,
       filesDropped: 0,
+      postsDropped: 0,
+      dekDropped: false,
       vacuumSucceeded: true,
       vacuumError: undefined,
     });
@@ -1756,12 +1807,18 @@ describe("KchatEventForwarder", () => {
       const call =
         bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls[0];
       // Args: (channelId, reason, chunksDropped, filesDropped,
+      //        postsDropped, dekDropped,
       //        fsScrubSucceeded, fsScrubError,
       //        vacuumSucceeded, vacuumError)
       expect(call[0]).toBe(channelId);
       expect(call[1]).toBe("channel_deleted");
-      expect(call[4]).toBe(false);
-      expect(call[5]).toContain("cacheDir");
+      // Block C Task 2 (Phase 12): post + DEK counts default to
+      // zero/false on a file-only revoke (no chat-post evidence).
+      expect(call[4]).toBe(0);
+      expect(call[5]).toBe(false);
+      // Filesystem scrub failure surfaces at positions [6]+[7].
+      expect(call[6]).toBe(false);
+      expect(call[7]).toContain("cacheDir");
       // The error message mentions an EACCES / permission-denied
       // shape (Linux maps an unwritable parent to EACCES on
       // unlink). We don't pin the exact code string because
@@ -1772,8 +1829,8 @@ describe("KchatEventForwarder", () => {
       // surface is independent of the filesystem scrub, so the
       // default-true fixture from the top-of-file mock flows
       // through unchanged.
-      expect(call[6]).toBe(true);
-      expect(call[7]).toBe(undefined);
+      expect(call[8]).toBe(true);
+      expect(call[9]).toBe(undefined);
 
       fwd.dispose();
     } finally {
@@ -1807,6 +1864,8 @@ describe("KchatEventForwarder", () => {
       outcome: "revoked",
       chunksDropped: 9,
       filesDropped: 3,
+      postsDropped: 0,
+      dekDropped: false,
       vacuumSucceeded: false,
       vacuumError: "database or disk is full",
     });
@@ -1853,6 +1912,10 @@ describe("KchatEventForwarder", () => {
       "channel_deleted",
       9,
       3,
+      // Block C Task 2 (Phase 12): file-only happy path → zero
+      // posts + DEK never dropped.
+      0,
+      false,
       // Filesystem scrub still ran cleanly — it's independent
       // of VACUUM.
       true,
@@ -1860,6 +1923,244 @@ describe("KchatEventForwarder", () => {
       // Fifth-pass fix surface:
       false,
       "database or disk is full",
+    );
+    fwd.dispose();
+  });
+
+  /**
+   * Block C Task 1 (Phase 12): dispatch coverage for the chat-
+   * post WS events. Pins:
+   *   - `posted` → bridge_ingest under withChannelSyncLock,
+   *     followed by `bridgeLogKchatPostIngested` audit row.
+   *   - `post_edited` → bridge_edit under withChannelSyncLock,
+   *     followed by `bridgeLogKchatPostEdited` audit row.
+   *   - `post_deleted` → bridge_delete under withChannelSyncLock,
+   *     followed by `bridgeLogKchatPostDeleted` audit row.
+   *   - Unlinked-channel fast path on each event → no bridge
+   *     dispatch, audit row records `outcome=unlinked` with
+   *     zero chunks.
+   *   - Malformed payload (no `post` field) → `no_post` audit row
+   *     without a bridge dispatch.
+   */
+  function makePostedRaw(
+    eventName: "posted" | "post_edited" | "post_deleted",
+    channelId: string,
+    postEnvelope: object,
+    seq: number,
+  ): KchatWebSocketEvent {
+    return makeRawEvent({
+      event: eventName,
+      data: { post: JSON.stringify(postEnvelope) },
+      broadcast: {
+        omit_users: {},
+        channel_id: channelId,
+        team_id: "team-1",
+        user_id: "principal",
+      },
+      seq,
+    });
+  }
+
+  it("dispatches posted into bridgeIngestKchatPost and audits the outcome", async () => {
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makePostedRaw(
+        "posted",
+        "chan-post-1",
+        {
+          id: "pid-1",
+          channel_id: "chan-post-1",
+          root_id: "",
+          user_id: "user-7",
+          message: "hello world",
+          create_at: 1_700_000_000_000,
+          edit_at: 0,
+        },
+        500,
+      ),
+    );
+    await waitForCondition(
+      () => bridgeMock!.bridgeLogKchatPostIngested.mock.calls.length > 0,
+    );
+    expect(bridgeMock!.bridgeIngestKchatPost).toHaveBeenCalledTimes(1);
+    const input = bridgeMock!.bridgeIngestKchatPost.mock.calls[0][0];
+    expect(input.postId).toBe("pid-1");
+    expect(input.channelId).toBe("chan-post-1");
+    expect(input.body).toBe("hello world");
+    expect(input.senderUserId).toBe("user-7");
+    expect(input.createdAtMs).toBe(1_700_000_000_000);
+    expect(bridgeMock!.bridgeLogKchatPostIngested).toHaveBeenCalledWith(
+      "chan-post-1",
+      "pid-1",
+      "ingested",
+      1,
+    );
+    fwd.dispose();
+  });
+
+  it("dispatches post_edited into bridgeEditKchatPost and audits the edit outcome", async () => {
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    bridgeMock!.bridgeEditKchatPost.mockReturnValue({
+      outcome: "edited",
+      chunkCount: 2,
+    });
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makePostedRaw(
+        "post_edited",
+        "chan-post-2",
+        {
+          id: "pid-2",
+          channel_id: "chan-post-2",
+          root_id: "",
+          user_id: "user-7",
+          message: "edited body",
+          create_at: 1_700_000_000_000,
+          edit_at: 1_700_000_100_000,
+        },
+        501,
+      ),
+    );
+    await waitForCondition(
+      () => bridgeMock!.bridgeLogKchatPostEdited.mock.calls.length > 0,
+    );
+    expect(bridgeMock!.bridgeEditKchatPost).toHaveBeenCalledTimes(1);
+    expect(bridgeMock!.bridgeIngestKchatPost).not.toHaveBeenCalled();
+    expect(bridgeMock!.bridgeLogKchatPostEdited).toHaveBeenCalledWith(
+      "chan-post-2",
+      "pid-2",
+      "edited",
+      2,
+    );
+    fwd.dispose();
+  });
+
+  it("dispatches post_deleted into bridgeDeleteKchatPost and audits the delete outcome", async () => {
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    bridgeMock!.bridgeDeleteKchatPost.mockReturnValue({
+      outcome: "deleted",
+      chunksDropped: 3,
+    });
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makePostedRaw(
+        "post_deleted",
+        "chan-post-3",
+        {
+          id: "pid-3",
+          channel_id: "chan-post-3",
+          root_id: "",
+          user_id: "user-7",
+          message: "",
+          create_at: 1_700_000_000_000,
+          edit_at: 0,
+        },
+        502,
+      ),
+    );
+    await waitForCondition(
+      () => bridgeMock!.bridgeLogKchatPostDeleted.mock.calls.length > 0,
+    );
+    expect(bridgeMock!.bridgeDeleteKchatPost).toHaveBeenCalledTimes(1);
+    const args = bridgeMock!.bridgeDeleteKchatPost.mock.calls[0];
+    expect(args[1]).toBe("pid-3");
+    expect(bridgeMock!.bridgeLogKchatPostDeleted).toHaveBeenCalledWith(
+      "chan-post-3",
+      "pid-3",
+      "deleted",
+      3,
+    );
+    fwd.dispose();
+  });
+
+  it("short-circuits unlinked channels on posted without invoking the bridge", async () => {
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(false);
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makePostedRaw(
+        "posted",
+        "chan-unlinked",
+        {
+          id: "pid-x",
+          channel_id: "chan-unlinked",
+          root_id: "",
+          user_id: "user-7",
+          message: "hi",
+          create_at: 1,
+          edit_at: 0,
+        },
+        503,
+      ),
+    );
+    await waitForCondition(
+      () => bridgeMock!.bridgeLogKchatPostIngested.mock.calls.length > 0,
+    );
+    expect(bridgeMock!.bridgeIngestKchatPost).not.toHaveBeenCalled();
+    expect(bridgeMock!.bridgeLogKchatPostIngested).toHaveBeenCalledWith(
+      "chan-unlinked",
+      "pid-x",
+      "unlinked",
+      0,
+    );
+    fwd.dispose();
+  });
+
+  it("audits no_post when posted carries a malformed payload", async () => {
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "posted",
+        data: { post: "not-json" },
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-malformed",
+          team_id: "team-1",
+          user_id: "principal",
+        },
+        seq: 504,
+      }),
+    );
+    await waitForCondition(
+      () => bridgeMock!.bridgeLogKchatPostIngested.mock.calls.length > 0,
+    );
+    expect(bridgeMock!.bridgeIngestKchatPost).not.toHaveBeenCalled();
+    expect(bridgeMock!.bridgeLogKchatPostIngested).toHaveBeenCalledWith(
+      "chan-malformed",
+      "",
+      "no_post",
+      0,
     );
     fwd.dispose();
   });

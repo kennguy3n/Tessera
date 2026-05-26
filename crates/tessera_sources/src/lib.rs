@@ -5,6 +5,7 @@ pub mod hybrid;
 pub mod ignore;
 pub mod image_metadata;
 pub mod indexer;
+pub mod kchat_crypto;
 pub mod manager;
 pub mod pdf_extractor;
 pub mod progress;

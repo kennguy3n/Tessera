@@ -23,6 +23,9 @@ import type {
   KchatAclRefreshOutcomeInfo,
   KchatChannelAddOutcomeInfo,
   KchatFileIndexOutcomeInfo,
+  KchatPostDeleteOutcomeInfo,
+  KchatPostIngestInputInfo,
+  KchatPostIngestOutcomeInfo,
   KchatRevokeOutcomeInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
@@ -54,6 +57,9 @@ export type {
   KchatAclRefreshOutcomeInfo,
   KchatChannelAddOutcomeInfo,
   KchatFileIndexOutcomeInfo,
+  KchatPostDeleteOutcomeInfo,
+  KchatPostIngestInputInfo,
+  KchatPostIngestOutcomeInfo,
   KchatRevokeOutcomeInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
@@ -429,10 +435,73 @@ export interface NativeBridge {
     reason: string,
     chunksDropped: number,
     filesDropped: number,
+    /** Block C Task 2 (Phase 12): `kchat_posts` row count
+     *  scrubbed by the cryptoshred. Logged on the audit row so
+     *  operators can grep `posts_dropped=N`. */
+    postsDropped: number,
+    /** Block C Task 2 (Phase 12): `true` when the per-source DEK
+     *  row was actually dropped. `false` indicates no DEK ever
+     *  existed for this source (file-only ingest) — NOT a
+     *  failure mode. Logged so operators can confirm the
+     *  cryptographic guarantee fired when expected. */
+    dekDropped: boolean,
     fsScrubSucceeded: boolean,
     fsScrubError: string | undefined,
     vacuumSucceeded: boolean,
     vacuumError: string | undefined,
+  ): void;
+
+  /**
+   * Block C Task 1 (Phase 12): ingest a single KChat post body.
+   * Called by `KchatEventForwarder` on a `posted` WS event after
+   * `withChannelSyncLock` serialises the work.
+   */
+  bridgeIngestKchatPost(
+    input: KchatPostIngestInputInfo,
+  ): KchatPostIngestOutcomeInfo;
+  /**
+   * Block C Task 1 (Phase 12): re-ingest a KChat post body after
+   * a `post_edited` WS event. Distinct from
+   * `bridgeIngestKchatPost` only so the audit pair routes to
+   * `KchatPostEdited` rather than `KchatPostIngested`.
+   */
+  bridgeEditKchatPost(
+    input: KchatPostIngestInputInfo,
+  ): KchatPostIngestOutcomeInfo;
+  /**
+   * Block C Task 1 (Phase 12): drop the substrate evidence for
+   * a KChat post after a `post_deleted` WS event. Returns the
+   * outcome so the audit row can record `outcome=not_found`
+   * vs `outcome=deleted`.
+   */
+  bridgeDeleteKchatPost(
+    cacheDir: string,
+    postId: string,
+  ): KchatPostDeleteOutcomeInfo;
+  /**
+   * Block C Task 1 (Phase 12): no-throw audit append for the
+   * post-body ingest pipeline. Called by the forwarder after
+   * `bridgeIngestKchatPost` returns.
+   */
+  bridgeLogKchatPostIngested(
+    channelId: string,
+    postId: string,
+    outcome: string,
+    chunkCount: number,
+  ): void;
+  /** Block C Task 1 (Phase 12): see {@link bridgeLogKchatPostIngested}. */
+  bridgeLogKchatPostEdited(
+    channelId: string,
+    postId: string,
+    outcome: string,
+    chunkCount: number,
+  ): void;
+  /** Block C Task 1 (Phase 12): see {@link bridgeLogKchatPostIngested}. */
+  bridgeLogKchatPostDeleted(
+    channelId: string,
+    postId: string,
+    outcome: string,
+    chunksDropped: number,
   ): void;
   // --- Audit query ---
   //

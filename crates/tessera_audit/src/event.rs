@@ -113,6 +113,28 @@ pub enum AuditEventType {
     /// step succeeded — the prior `KchatChannelAccessRevoked` row
     /// only records the status transition.
     KchatSourceCryptoshredded,
+    /// Block C Task 1 (Phase 12): a KChat post body was ingested
+    /// into the substrate. Details carry the channel id, the
+    /// post id, the number of chunks AEAD-sealed under the
+    /// per-source DEK, and the bookkeeping outcome
+    /// (`ingested` / `unchanged` / `unlinked` / `access_revoked`).
+    /// Post bodies are NEVER logged — only the structural
+    /// observability fields the operator needs to confirm the
+    /// ingest pipeline is running.
+    KchatPostIngested,
+    /// Block C Task 1 (Phase 12): an existing KChat post was
+    /// re-indexed after a `post_edited` event. Details mirror
+    /// `KchatPostIngested` (same outcome catalogue: the re-index
+    /// drops the previous chunks and indexes the new body).
+    KchatPostEdited,
+    /// Block C Task 1 (Phase 12): a KChat post was removed from
+    /// the substrate after a `post_deleted` event. Details carry
+    /// the channel id, the post id, the chunk count that was
+    /// dropped, and the outcome (`deleted` / `not_found` /
+    /// `unlinked` / `access_revoked`). The DEK row is NOT
+    /// deleted on per-post delete — it is only retired on the
+    /// source-level revoke / cryptoshred path.
+    KchatPostDeleted,
 }
 
 impl AuditEventType {
@@ -152,6 +174,9 @@ impl AuditEventType {
             Self::KchatAclRefreshed => "kchat_acl_refreshed",
             Self::KchatChannelAccessRevoked => "kchat_channel_access_revoked",
             Self::KchatSourceCryptoshredded => "kchat_source_cryptoshredded",
+            Self::KchatPostIngested => "kchat_post_ingested",
+            Self::KchatPostEdited => "kchat_post_edited",
+            Self::KchatPostDeleted => "kchat_post_deleted",
         }
     }
 }
@@ -208,6 +233,9 @@ mod tests {
             AuditEventType::KchatAclRefreshed,
             AuditEventType::KchatChannelAccessRevoked,
             AuditEventType::KchatSourceCryptoshredded,
+            AuditEventType::KchatPostIngested,
+            AuditEventType::KchatPostEdited,
+            AuditEventType::KchatPostDeleted,
         ];
         for ev in all.iter() {
             let serde_form = serde_json::to_string(ev).unwrap();

@@ -1938,3 +1938,226 @@ describe("KchatClient.connectWebSocket — URL derivation", () => {
     );
   });
 });
+
+/**
+ * Block C Task 1 (Phase 12): REST surface for chat-post
+ * ingestion. `getPost` fetches a single envelope (used by the
+ * `post_edited` recovery path), `getPostsForChannel` paginates
+ * (used by the future Block C Task 4 backfill watermark loop).
+ * Both must (a) drive their requests through `kchat:request`
+ * (covered by the existing rate-limiter contract tests for the
+ * shared `request()` helper), (b) re-validate every server-
+ * supplied id at the deserialisation boundary, and (c) project
+ * the snake_case wire shape to the renderer-safe camelCase
+ * {@link KchatPostInfo} shape consistently.
+ */
+describe("KchatClient.getPost", () => {
+  function fresh() {
+    return new RateLimiter();
+  }
+  it("flattens the snake_case envelope and validates each id", async () => {
+    const { fn: fetchFn, calls } = makeFetch([
+      ok({
+        id: "pid000000000000000000abcd",
+        channel_id: "chid0000000000000000abcd",
+        root_id: "",
+        user_id: "uid000000000000000000abcd",
+        message: "hi there",
+        create_at: 1_700_000_000_000,
+        edit_at: 0,
+      }),
+    ]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    const p = await c.getPost("pid000000000000000000abcd");
+    expect(p).toEqual({
+      id: "pid000000000000000000abcd",
+      channelId: "chid0000000000000000abcd",
+      rootId: null,
+      userId: "uid000000000000000000abcd",
+      message: "hi there",
+      createAt: 1_700_000_000_000,
+      editAt: 0,
+    });
+    expect(calls[0].url).toContain("/api/v4/posts/pid000000000000000000abcd");
+  });
+
+  it("rejects a server-supplied post id that does not match the KChat id shape", async () => {
+    const { fn: fetchFn } = makeFetch([
+      ok({
+        id: "../etc/passwd",
+        channel_id: "chid0000000000000000abcd",
+        root_id: null,
+        user_id: "uid000000000000000000abcd",
+        message: "hi",
+        create_at: 1,
+        edit_at: 0,
+      }),
+    ]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    await expect(
+      c.getPost("pid000000000000000000abcd"),
+    ).rejects.toThrow(/not a valid KChat object id/);
+  });
+
+  it("throws when required fields are missing (e.g. message=undefined)", async () => {
+    const { fn: fetchFn } = makeFetch([
+      ok({
+        id: "pid000000000000000000abcd",
+        channel_id: "chid0000000000000000abcd",
+        user_id: "uid000000000000000000abcd",
+        // message intentionally absent
+        create_at: 1_700_000_000_000,
+      }),
+    ]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    await expect(
+      c.getPost("pid000000000000000000abcd"),
+    ).rejects.toThrow(/post\.message missing/);
+  });
+
+  it("rejects the caller-supplied postId before contacting the server", async () => {
+    const { fn: fetchFn, calls } = makeFetch([]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    await expect(c.getPost("../etc/passwd")).rejects.toThrow(
+      /not a valid KChat object id/,
+    );
+    expect(calls.length).toBe(0);
+  });
+});
+
+describe("KchatClient.getPostsForChannel", () => {
+  function fresh() {
+    return new RateLimiter();
+  }
+  it("projects the (order, posts-map) wire shape into a flat array", async () => {
+    const { fn: fetchFn, calls } = makeFetch([
+      ok({
+        order: ["pid000000000000000000a002", "pid000000000000000000a001"],
+        posts: {
+          pid000000000000000000a001: {
+            id: "pid000000000000000000a001",
+            channel_id: "chid0000000000000000abcd",
+            root_id: "",
+            user_id: "uid000000000000000000abcd",
+            message: "first",
+            create_at: 1,
+            edit_at: 0,
+          },
+          pid000000000000000000a002: {
+            id: "pid000000000000000000a002",
+            channel_id: "chid0000000000000000abcd",
+            root_id: "",
+            user_id: "uid000000000000000000abcd",
+            message: "second",
+            create_at: 2,
+            edit_at: 0,
+          },
+        },
+        prev_post_id: "pid000000000000000000a000",
+        next_post_id: "",
+      }),
+    ]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    const page = await c.getPostsForChannel("chid0000000000000000abcd");
+    expect(page.posts.map((p) => p.message)).toEqual(["second", "first"]);
+    expect(page.posts[0].id).toBe("pid000000000000000000a002");
+    expect(page.prevPostId).toBe("pid000000000000000000a000");
+    expect(page.nextPostId).toBeNull();
+    expect(page.hasMore).toBe(true);
+    expect(calls[0].url).toContain(
+      "/api/v4/channels/chid0000000000000000abcd/posts?per_page=60",
+    );
+  });
+
+  it("interpolates before / after / since when provided", async () => {
+    const { fn: fetchFn, calls } = makeFetch([
+      ok({ order: [], posts: {}, prev_post_id: "", next_post_id: "" }),
+    ]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    await c.getPostsForChannel("chid0000000000000000abcd", {
+      before: "pid000000000000000000a001",
+      sinceMs: 1_700_000_000_000,
+      perPage: 30,
+    });
+    const url = calls[0].url;
+    expect(url).toContain("per_page=30");
+    expect(url).toContain("before=pid000000000000000000a001");
+    expect(url).toContain("since=1700000000000");
+  });
+
+  it("clamps perPage at 200 client-side", async () => {
+    const { fn: fetchFn, calls } = makeFetch([
+      ok({ order: [], posts: {}, prev_post_id: "", next_post_id: "" }),
+    ]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    await c.getPostsForChannel("chid0000000000000000abcd", { perPage: 10_000 });
+    expect(calls[0].url).toContain("per_page=200");
+  });
+
+  it("hasMore=false when prev_post_id is empty", async () => {
+    const { fn: fetchFn } = makeFetch([
+      ok({
+        order: ["pid000000000000000000a001"],
+        posts: {
+          pid000000000000000000a001: {
+            id: "pid000000000000000000a001",
+            channel_id: "chid0000000000000000abcd",
+            root_id: "",
+            user_id: "uid000000000000000000abcd",
+            message: "only post",
+            create_at: 1,
+            edit_at: 0,
+          },
+        },
+        prev_post_id: "",
+        next_post_id: "",
+      }),
+    ]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    const page = await c.getPostsForChannel("chid0000000000000000abcd");
+    expect(page.hasMore).toBe(false);
+    expect(page.prevPostId).toBeNull();
+  });
+
+  it("rejects a server-supplied malformed id in the posts map", async () => {
+    const { fn: fetchFn } = makeFetch([
+      ok({
+        order: ["pid000000000000000000a001"],
+        posts: {
+          pid000000000000000000a001: {
+            id: "../etc/passwd",
+            channel_id: "chid0000000000000000abcd",
+            root_id: "",
+            user_id: "uid000000000000000000abcd",
+            message: "x",
+            create_at: 1,
+            edit_at: 0,
+          },
+        },
+      }),
+    ]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    await expect(
+      c.getPostsForChannel("chid0000000000000000abcd"),
+    ).rejects.toThrow(/not a valid KChat object id/);
+  });
+
+  it("rejects the caller-supplied channelId before contacting the server", async () => {
+    const { fn: fetchFn, calls } = makeFetch([]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    await expect(c.getPostsForChannel("../etc/passwd")).rejects.toThrow(
+      /not a valid KChat object id/,
+    );
+    expect(calls.length).toBe(0);
+  });
+});

@@ -3,9 +3,11 @@ use std::sync::{Arc, Mutex};
 use tessera_core::error::{Error, Result};
 use tessera_core::{SharedConnection, SourceId, SourceStatus};
 
+use crate::chunker::Chunk;
 use crate::embedding::{EmbeddingProvider, HashTrickEmbedding};
 use crate::hybrid::{HybridSearchConfig, HybridSearchConfigInput};
 use crate::indexer::{BackfillOutcome, Indexer};
+use crate::kchat_crypto::{KchatCrypto, MasterKey};
 use crate::progress::{
     finish_embedding, mark_embedding_failed, EmbeddingProgressSnapshot, EmbeddingProgressTracker,
     ProgressSnapshot, ProgressTracker,
@@ -98,6 +100,17 @@ pub enum KchatAclRefreshOutcome {
         chunks_dropped: u32,
         /// Count of indexed_file rows scrubbed by the inline cryptoshred.
         files_dropped: u32,
+        /// Block C Task 2 (Phase 12): count of `kchat_posts` rows
+        /// scrubbed alongside the file/chunk rows.
+        posts_dropped: u32,
+        /// Block C Task 2 (Phase 12): `true` when the per-source
+        /// wrapped DEK row existed and was deleted as part of the
+        /// shred. `false` when the source never ingested a chat
+        /// post and therefore had no DEK to drop. Together with
+        /// the in-memory `forget_dek` call the manager issues
+        /// after this outcome returns, this is the observable
+        /// signal that the post-evidence DEK has been retired.
+        dek_dropped: bool,
         /// Fifth-pass Devin Review fix
         /// (ANALYSIS_pr-review-job-ef3c7d6c..._0001): `true` when the
         /// belt-and-braces `VACUUM` ran cleanly (or was skipped
@@ -142,6 +155,12 @@ pub enum KchatRevokeOutcome {
         chunks_dropped: u32,
         /// Count of indexed_file rows scrubbed by the inline cryptoshred.
         files_dropped: u32,
+        /// Block C Task 2 (Phase 12): see
+        /// [`KchatAclRefreshOutcome::Revoked::posts_dropped`].
+        posts_dropped: u32,
+        /// Block C Task 2 (Phase 12): see
+        /// [`KchatAclRefreshOutcome::Revoked::dek_dropped`].
+        dek_dropped: bool,
         /// Fifth-pass Devin Review fix: see
         /// [`KchatAclRefreshOutcome::Revoked::vacuum_succeeded`].
         vacuum_succeeded: bool,
@@ -166,6 +185,16 @@ pub enum KchatRevokeOutcome {
         chunks_dropped: u32,
         /// Count of indexed_file rows scrubbed by the inline cryptoshred.
         files_dropped: u32,
+        /// Block C Task 2 (Phase 12): see
+        /// [`KchatAclRefreshOutcome::Revoked::posts_dropped`].
+        /// Typically zero on this path because the previous shred
+        /// already dropped the kchat_posts rows.
+        posts_dropped: u32,
+        /// Block C Task 2 (Phase 12): see
+        /// [`KchatAclRefreshOutcome::Revoked::dek_dropped`].
+        /// Typically `false` on this path because the previous
+        /// shred already deleted the wrapped-DEK row.
+        dek_dropped: bool,
         /// Fifth-pass Devin Review fix: see
         /// [`KchatAclRefreshOutcome::Revoked::vacuum_succeeded`].
         /// Typically `true` on this path because the idempotent
@@ -185,6 +214,83 @@ pub enum KchatRevokeOutcome {
     Unlinked,
 }
 
+/// Input wire-shape for [`SourceManager::ingest_kchat_post`] /
+/// [`SourceManager::edit_kchat_post`].
+///
+/// Block C Task 1 (Phase 12). Built by the napi bridge from the
+/// `posted` / `post_edited` WS event payloads (which the
+/// `KchatEventForwarder` has already parsed + serialised against a
+/// per-channel lock).
+///
+/// `cache_dir` is the channel id (mirrors the on-disk cache path
+/// that `add_kchat_channel` registered as the `source.path`).
+#[derive(Debug, Clone)]
+pub struct KchatPostIngestInput {
+    pub cache_dir: String,
+    pub post_id: String,
+    pub channel_id: String,
+    pub root_id: Option<String>,
+    pub sender_user_id: String,
+    pub body: String,
+    /// KChat-server `create_at` millis since the unix epoch.
+    pub created_at_ms: i64,
+    /// KChat-server `edit_at` millis (0 for never-edited posts).
+    pub edited_at_ms: i64,
+}
+
+/// Outcome of an [`SourceManager::ingest_kchat_post`] /
+/// [`SourceManager::edit_kchat_post`] call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KchatPostIngestOutcome {
+    /// A row was inserted (new post) or rewritten (edited post).
+    /// `chunk_ids` carries the row ids of the AEAD-sealed chunks
+    /// in the same order they were chunked. `sealed_count == 0`
+    /// is valid (an empty-body post records bookkeeping only).
+    Ingested {
+        source_id: SourceId,
+        indexed_file_id: i64,
+        chunk_ids: Vec<i64>,
+        sealed_count: u32,
+    },
+    /// The (source_id, post_id) row already exists with the same
+    /// body hash — duplicate delivery, no-op. The substrate
+    /// still surfaces the row's chunk count so the audit row can
+    /// faithfully record "no chunks added".
+    Unchanged {
+        source_id: SourceId,
+        indexed_file_id: i64,
+        chunk_count: u32,
+    },
+    /// No `SourceType::Kchat` row exists for the cache_dir.
+    Unlinked,
+    /// The source exists but is in `AccessRevoked` status —
+    /// cryptographic refusal to ingest. The forwarder treats
+    /// this as a no-op (the channel was revoked between the WS
+    /// event arrival and the bridge call).
+    AccessRevoked,
+}
+
+/// Outcome of an [`SourceManager::delete_kchat_post`] call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KchatPostDeleteOutcome {
+    /// The chunks and the bookkeeping row were deleted.
+    Deleted {
+        source_id: SourceId,
+        chunks_dropped: u32,
+    },
+    /// The bookkeeping row did not exist — either the post was
+    /// never indexed (filtered out at the WS layer) or it was
+    /// already deleted. No-op.
+    NotFound { source_id: SourceId },
+    /// No `SourceType::Kchat` row exists for the cache_dir.
+    Unlinked,
+    /// The source is in `AccessRevoked` status — defence in
+    /// depth. The cryptoshred already removed all of this
+    /// source's chunks; this branch is the "double delete"
+    /// observability case.
+    AccessRevoked,
+}
+
 pub struct SourceManager {
     store: SourceStore,
     indexer: Indexer,
@@ -199,6 +305,16 @@ pub struct SourceManager {
     /// never block in-flight searches and an in-flight search never
     /// holds the lock across a SQLite call.
     hybrid_config: Mutex<HybridSearchConfig>,
+    /// Block C Task 2 (Phase 12): per-source DEK + AEAD facade used
+    /// by the KChat post-ingest path. Initialised with the same
+    /// SQLCipher master key the bridge already validates in
+    /// `tessera_core::db::open_shared_with_key`, so the KEK
+    /// derivation is bound to the same root secret that protects
+    /// the database file itself. For in-memory test runs the
+    /// constructor falls back to a deterministic test key — the
+    /// crypto is fully exercised in tests without requiring a
+    /// keychain round-trip.
+    kchat_crypto: Arc<KchatCrypto>,
 }
 
 impl SourceManager {
@@ -212,6 +328,7 @@ impl SourceManager {
             embedding_progress: Arc::new(EmbeddingProgressTracker::new()),
             embedder,
             hybrid_config: Mutex::new(hybrid_config),
+            kchat_crypto: Self::default_kchat_crypto(),
         })
     }
 
@@ -225,6 +342,7 @@ impl SourceManager {
             embedding_progress: Arc::new(EmbeddingProgressTracker::new()),
             embedder,
             hybrid_config: Mutex::new(hybrid_config),
+            kchat_crypto: Self::default_kchat_crypto(),
         })
     }
 
@@ -240,7 +358,56 @@ impl SourceManager {
             embedding_progress: Arc::new(EmbeddingProgressTracker::new()),
             embedder,
             hybrid_config: Mutex::new(hybrid_config),
+            kchat_crypto: Self::default_kchat_crypto(),
         })
+    }
+
+    /// Block C Task 2 (Phase 12): wire the per-source KChat-post DEK
+    /// layer to a real master key.
+    ///
+    /// The bridge calls this immediately after `with_shared_conn`,
+    /// passing the same 64-hex-character key it gave to
+    /// `open_shared_with_key`. After this call the KEK derivation
+    /// shares fate with the SQLCipher master key — losing one
+    /// loses both. Until this is called, ingestion uses the
+    /// process-ephemeral test key generated by
+    /// [`Self::default_kchat_crypto`], which is appropriate ONLY
+    /// for substrate tests; production must always rebind.
+    pub fn set_kchat_master_key(&mut self, master_key_hex: &str) -> Result<()> {
+        let mk = MasterKey::from_hex(master_key_hex)?;
+        self.kchat_crypto = Arc::new(KchatCrypto::new(mk));
+        Ok(())
+    }
+
+    /// Produce an ephemeral [`KchatCrypto`] facade backed by a
+    /// random 32-byte key drawn at construction time. Used by the
+    /// bare constructors so substrate tests + bridge tests have a
+    /// working crypto layer without needing to thread a master key
+    /// through; production calls [`Self::set_kchat_master_key`]
+    /// immediately after `with_shared_conn` to rebind to the
+    /// SQLCipher root.
+    ///
+    /// Implementation note: we draw 32 bytes from `OsRng`, then
+    /// hex-encode + pass through `MasterKey::from_hex` so the
+    /// public construction surface is identical between the
+    /// production and test paths. A fixed-string default would
+    /// leak the test key into any release build that forgot to
+    /// call `set_kchat_master_key` — using random bytes makes
+    /// that mistake silently safe (the data is unreadable
+    /// post-restart, but the cryptographic protection is real).
+    fn default_kchat_crypto() -> Arc<KchatCrypto> {
+        use rand::RngCore;
+        use std::fmt::Write;
+        let mut buf = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut buf);
+        let mut hex = String::with_capacity(buf.len() * 2);
+        for b in &buf {
+            // SAFETY: writing to a `String` via `fmt::Write::write_fmt`
+            // is infallible (the underlying buffer is heap-backed).
+            write!(&mut hex, "{b:02x}").expect("write to String is infallible");
+        }
+        let mk = MasterKey::from_hex(&hex).expect("freshly-built hex string must validate");
+        Arc::new(KchatCrypto::new(mk))
     }
 
     /// Install / replace / remove the vision extractor on the
@@ -756,9 +923,19 @@ impl SourceManager {
             // were soft-revoked under Task 3 before this step
             // landed.
             let shred = self.store.cryptoshred_kchat_source_evidence(&source.id)?;
+            // Block C Task 2 (Phase 12) — pair the on-disk DEK
+            // deletion that `cryptoshred_kchat_source_evidence`
+            // already issued with an in-memory cache eviction so the
+            // process can no longer decrypt previously-sealed
+            // AEAD bytes even from RAM. `forget_dek` is idempotent
+            // (no-op if the source never ingested a chat post and
+            // therefore was never cached).
+            self.kchat_crypto.forget_dek(&source.id);
             return Ok(KchatAclRefreshOutcome::Revoked {
                 chunks_dropped: shred.chunks_dropped,
                 files_dropped: shred.files_dropped,
+                posts_dropped: shred.posts_dropped,
+                dek_dropped: shred.dek_dropped,
                 vacuum_succeeded: shred.vacuum_succeeded,
                 vacuum_error: shred.vacuum_error,
             });
@@ -832,8 +1009,15 @@ impl SourceManager {
         // a VACUUM after, which is cheap when there is nothing to
         // free; we pay it intentionally to keep the contract simple.
         let shred = self.store.cryptoshred_kchat_source_evidence(&source.id)?;
+        // Block C Task 2 (Phase 12) — pair the on-disk DEK
+        // deletion with an in-memory cache eviction. See the
+        // matching block in `refresh_kchat_acl` for rationale.
+        self.kchat_crypto.forget_dek(&source.id);
+
         let chunks_dropped = shred.chunks_dropped;
         let files_dropped = shred.files_dropped;
+        let posts_dropped = shred.posts_dropped;
+        let dek_dropped = shred.dek_dropped;
         let vacuum_succeeded = shred.vacuum_succeeded;
         let vacuum_error = shred.vacuum_error;
 
@@ -841,6 +1025,8 @@ impl SourceManager {
             KchatRevokeOutcome::AlreadyRevoked {
                 chunks_dropped,
                 files_dropped,
+                posts_dropped,
+                dek_dropped,
                 vacuum_succeeded,
                 vacuum_error,
             }
@@ -848,10 +1034,266 @@ impl SourceManager {
             KchatRevokeOutcome::Revoked {
                 chunks_dropped,
                 files_dropped,
+                posts_dropped,
+                dek_dropped,
                 vacuum_succeeded,
                 vacuum_error,
             }
         })
+    }
+
+    /// Block C Task 1 (Phase 12): ingest a KChat post body into the
+    /// substrate.
+    ///
+    /// Called by the Node-side `KchatEventForwarder` on a `posted`
+    /// WS event after the forwarder has serialised the event with
+    /// `withChannelSyncLock` and confirmed the source is not
+    /// `AccessRevoked`. The substrate:
+    ///
+    /// 1. Looks up the source by `cache_dir` (the channel id); if
+    ///    none, returns [`KchatPostIngestOutcome::Unlinked`] so the
+    ///    forwarder can no-op.
+    /// 2. Refuses to ingest into an `AccessRevoked` source (defence
+    ///    in depth — the forwarder already filters but a race could
+    ///    deliver an event after revocation).
+    /// 3. Chunks the post body with the same [`chunk_text`] used for
+    ///    file ingestion so retrieval-quality is consistent.
+    /// 4. Ensures a per-source DEK exists (generating + wrapping +
+    ///    persisting one on the first post for the source).
+    /// 5. AEAD-seals each chunk with the per-source DEK + a 12-byte
+    ///    random nonce + source_id-bound AAD.
+    /// 6. Inserts both the plaintext (for FTS5) AND the
+    ///    AEAD-ciphertext blobs into the chunks table.
+    /// 7. Records the post_id → indexed_file_id mapping for fast
+    ///    edit / delete in the future.
+    ///
+    /// Idempotency: a repeated `posted` event for an unchanged post
+    /// returns [`KchatPostIngestOutcome::Unchanged`] without
+    /// touching the chunks. A re-delivery whose body hash changed
+    /// is treated as an edit (the chunks are re-extracted) — this
+    /// mirrors the KChat server's actual behaviour: an "edit" can
+    /// arrive as either a `post_edited` event OR a `posted` event
+    /// with a fresh body and the same id, depending on the
+    /// reconnect path.
+    ///
+    /// [`chunk_text`]: crate::chunker::chunk_text
+    pub fn ingest_kchat_post(
+        &self,
+        input: &KchatPostIngestInput,
+    ) -> Result<KchatPostIngestOutcome> {
+        // 1. Look up the source row.
+        let Some(source) = self
+            .store
+            .find_source_by_type_and_path(&tessera_core::SourceType::Kchat, &input.cache_dir)?
+        else {
+            return Ok(KchatPostIngestOutcome::Unlinked);
+        };
+
+        // 2. Refuse on revoked sources. The forwarder also gates this
+        //    but a race between an event-arrival and a revocation
+        //    could still slip through; this is the cryptographic
+        //    backstop.
+        if source.status == SourceStatus::AccessRevoked {
+            return Ok(KchatPostIngestOutcome::AccessRevoked);
+        }
+
+        // 3. Compute the message hash (for dedupe) + chunk the body.
+        let body_trimmed = input.body.trim();
+        if body_trimmed.is_empty() {
+            // A post with no body (e.g. an attachment-only message)
+            // has nothing to chunk into FTS. We still record the
+            // bookkeeping row so a later edit that adds text takes
+            // the edit path; but we do NOT generate a DEK for an
+            // empty body, which keeps the test-roster cleaner.
+            return self.ingest_kchat_post_empty_body(&source, input);
+        }
+
+        let new_hash = blake3::hash(body_trimmed.as_bytes()).to_hex().to_string();
+
+        // 4. If we already have a row for (source, post_id) with the
+        //    same hash, this is a duplicate delivery — no-op.
+        if let Some((existing_indexed_file_id, existing_hash)) =
+            self.store.find_kchat_post(&source.id, &input.post_id)?
+        {
+            if existing_hash == new_hash {
+                let chunks_in_index = self
+                    .store
+                    .count_chunks_for_indexed_file(existing_indexed_file_id)?;
+                return Ok(KchatPostIngestOutcome::Unchanged {
+                    source_id: source.id,
+                    indexed_file_id: existing_indexed_file_id,
+                    chunk_count: chunks_in_index,
+                });
+            }
+            // 4b. Hash changed → treat as edit. Delete the existing
+            //     chunks; the bookkeeping row is overwritten by
+            //     `insert_kchat_post_bookkeeping`.
+            self.store
+                .delete_chunks_for_indexed_file(existing_indexed_file_id)?;
+        }
+
+        // 5. Ensure a per-source DEK is loaded into the crypto cache.
+        self.ensure_dek_loaded(&source.id)?;
+
+        // 6. Chunk + seal.
+        let synthetic_path = format!("kchat:post:{}", input.post_id);
+        let chunks = crate::chunker::chunk_text(
+            &synthetic_path,
+            body_trimmed,
+            &crate::chunker::ChunkerConfig::default(),
+        );
+        let sealed = self.seal_chunks(&source.id, &chunks)?;
+
+        // 7. Insert bookkeeping + chunk rows.
+        let indexed_file_id = self.store.insert_kchat_post_bookkeeping(
+            &source.id,
+            &input.post_id,
+            &input.channel_id,
+            input.root_id.as_deref(),
+            &input.sender_user_id,
+            &new_hash,
+            input.created_at_ms,
+            input.edited_at_ms,
+        )?;
+        let ids = self
+            .store
+            .insert_kchat_post_chunks(indexed_file_id, &chunks, &sealed)?;
+
+        Ok(KchatPostIngestOutcome::Ingested {
+            source_id: source.id,
+            indexed_file_id,
+            chunk_ids: ids,
+            sealed_count: u32::try_from(chunks.len()).unwrap_or(u32::MAX),
+        })
+    }
+
+    fn ingest_kchat_post_empty_body(
+        &self,
+        source: &Source,
+        input: &KchatPostIngestInput,
+    ) -> Result<KchatPostIngestOutcome> {
+        // The empty-body path still records the post bookkeeping so
+        // a future edit that adds content can be discovered by
+        // `find_kchat_post`. Hash is the BLAKE3 of the empty string
+        // — distinct from any non-empty body so a follow-on edit
+        // is correctly detected as "changed".
+        let empty_hash = blake3::hash(b"").to_hex().to_string();
+        if let Some((existing_indexed_file_id, existing_hash)) =
+            self.store.find_kchat_post(&source.id, &input.post_id)?
+        {
+            if existing_hash == empty_hash {
+                return Ok(KchatPostIngestOutcome::Unchanged {
+                    source_id: source.id,
+                    indexed_file_id: existing_indexed_file_id,
+                    chunk_count: 0,
+                });
+            }
+            self.store
+                .delete_chunks_for_indexed_file(existing_indexed_file_id)?;
+        }
+        let indexed_file_id = self.store.insert_kchat_post_bookkeeping(
+            &source.id,
+            &input.post_id,
+            &input.channel_id,
+            input.root_id.as_deref(),
+            &input.sender_user_id,
+            &empty_hash,
+            input.created_at_ms,
+            input.edited_at_ms,
+        )?;
+        Ok(KchatPostIngestOutcome::Ingested {
+            source_id: source.id,
+            indexed_file_id,
+            chunk_ids: Vec::new(),
+            sealed_count: 0,
+        })
+    }
+
+    /// Block C Task 1 (Phase 12): handle a `post_edited` WS event.
+    ///
+    /// Delegates to [`Self::ingest_kchat_post`] — the ingest path's
+    /// hash-comparison branch already covers the "same id, new
+    /// body" case correctly. Kept as a separate public function so
+    /// the bridge / forwarder can emit a distinct audit row even
+    /// when the substrate ends up taking the same code path.
+    pub fn edit_kchat_post(&self, input: &KchatPostIngestInput) -> Result<KchatPostIngestOutcome> {
+        self.ingest_kchat_post(input)
+    }
+
+    /// Block C Task 1 (Phase 12): handle a `post_deleted` WS event.
+    ///
+    /// Deletes the chunks and the bookkeeping row for the post.
+    /// The DEK stays in place — other posts on the source may still
+    /// need it; the per-source DEK is only retired on revoke
+    /// (`cryptoshred_kchat_source_evidence`).
+    pub fn delete_kchat_post(
+        &self,
+        cache_dir: &str,
+        post_id: &str,
+    ) -> Result<KchatPostDeleteOutcome> {
+        let Some(source) = self
+            .store
+            .find_source_by_type_and_path(&tessera_core::SourceType::Kchat, cache_dir)?
+        else {
+            return Ok(KchatPostDeleteOutcome::Unlinked);
+        };
+        if source.status == SourceStatus::AccessRevoked {
+            return Ok(KchatPostDeleteOutcome::AccessRevoked);
+        }
+        let Some((indexed_file_id, _hash)) = self.store.find_kchat_post(&source.id, post_id)?
+        else {
+            return Ok(KchatPostDeleteOutcome::NotFound {
+                source_id: source.id,
+            });
+        };
+        let chunks_dropped = self.store.delete_chunks_for_indexed_file(indexed_file_id)?;
+        self.store
+            .delete_kchat_post_bookkeeping(&source.id, post_id, indexed_file_id)?;
+        Ok(KchatPostDeleteOutcome::Deleted {
+            source_id: source.id,
+            chunks_dropped,
+        })
+    }
+
+    /// Load the persisted DEK for `source_id` into the crypto
+    /// cache, generating + persisting one if missing. Returns
+    /// `Ok(())` when the cache contains an unwrapped DEK for the
+    /// source after the call.
+    fn ensure_dek_loaded(&self, source_id: &SourceId) -> Result<()> {
+        if let Some(wrapped) = self.store.load_wrapped_dek_for_source(source_id)? {
+            self.kchat_crypto.unwrap_dek(source_id, &wrapped)?;
+            return Ok(());
+        }
+        let wrapped = self.kchat_crypto.generate_and_wrap_dek(source_id)?;
+        self.store.upsert_wrapped_dek(source_id, &wrapped)?;
+        Ok(())
+    }
+
+    /// AEAD-seal each chunk under the per-source DEK already
+    /// loaded into the crypto cache. Panics (programmer error) if
+    /// the DEK is not loaded — call sites must invoke
+    /// `ensure_dek_loaded` first.
+    fn seal_chunks(
+        &self,
+        source_id: &SourceId,
+        chunks: &[Chunk],
+    ) -> Result<Vec<crate::kchat_crypto::SealedChunk>> {
+        let mut sealed = Vec::with_capacity(chunks.len());
+        for chunk in chunks {
+            sealed.push(
+                self.kchat_crypto
+                    .seal_chunk(source_id, chunk.content.as_bytes())?,
+            );
+        }
+        Ok(sealed)
+    }
+
+    /// Test-only: return a reference to the crypto facade so unit
+    /// tests can verify cache invariants (e.g. `forget_dek` was
+    /// invoked on revoke).
+    #[cfg(test)]
+    pub(crate) fn kchat_crypto(&self) -> &KchatCrypto {
+        &self.kchat_crypto
     }
 
     /// Read the cached ACL roster for a KChat-channel source. Used
@@ -1479,6 +1921,12 @@ mod tests {
             KchatAclRefreshOutcome::Revoked {
                 chunks_dropped: 1,
                 files_dropped: 1,
+                // Block C Task 2 (Phase 12): file-only ingest never
+                // generated a per-source DEK or kchat_posts row, so
+                // both new counters report zero on the file-only
+                // shred path.
+                posts_dropped: 0,
+                dek_dropped: false,
                 vacuum_succeeded: true,
                 vacuum_error: None,
             },
@@ -1562,6 +2010,10 @@ mod tests {
             KchatRevokeOutcome::Revoked {
                 chunks_dropped: 1,
                 files_dropped: 1,
+                // Block C Task 2 (Phase 12): file-only ingest —
+                // no post / DEK rows were ever created.
+                posts_dropped: 0,
+                dek_dropped: false,
                 vacuum_succeeded: true,
                 vacuum_error: None,
             },
@@ -1582,6 +2034,8 @@ mod tests {
             KchatRevokeOutcome::AlreadyRevoked {
                 chunks_dropped: 0,
                 files_dropped: 0,
+                posts_dropped: 0,
+                dek_dropped: false,
                 vacuum_succeeded: true,
                 vacuum_error: None,
             },
@@ -1629,6 +2083,8 @@ mod tests {
             KchatRevokeOutcome::Revoked {
                 chunks_dropped,
                 files_dropped,
+                posts_dropped: _,
+                dek_dropped: _,
                 vacuum_succeeded,
                 vacuum_error,
             } => {
@@ -1676,6 +2132,8 @@ mod tests {
             KchatRevokeOutcome::AlreadyRevoked {
                 chunks_dropped: 0,
                 files_dropped: 0,
+                posts_dropped: 0,
+                dek_dropped: false,
                 vacuum_succeeded: true,
                 vacuum_error: None,
             },
@@ -1712,6 +2170,8 @@ mod tests {
             KchatAclRefreshOutcome::Revoked {
                 chunks_dropped,
                 files_dropped,
+                posts_dropped: _,
+                dek_dropped: _,
                 vacuum_succeeded,
                 vacuum_error,
             } => {
@@ -1895,6 +2355,7 @@ mod tests {
             embedding_progress: Arc::new(EmbeddingProgressTracker::new()),
             embedder: None,
             hybrid_config: Mutex::new(HybridSearchConfig::default()),
+            kchat_crypto: SourceManager::default_kchat_crypto(),
         };
 
         manager
@@ -2075,6 +2536,7 @@ mod tests {
             embedding_progress: Arc::new(EmbeddingProgressTracker::new()),
             embedder: None,
             hybrid_config: Mutex::new(HybridSearchConfig::default()),
+            kchat_crypto: SourceManager::default_kchat_crypto(),
         };
 
         let total = manager.backfill_embeddings_tracked(64).unwrap();
@@ -2140,6 +2602,7 @@ mod tests {
             embedding_progress: Arc::new(EmbeddingProgressTracker::new()),
             embedder: None,
             hybrid_config: Mutex::new(HybridSearchConfig::default()),
+            kchat_crypto: SourceManager::default_kchat_crypto(),
         };
         manager
             .add_local_folder(dir.path().to_str().unwrap())
@@ -2261,6 +2724,7 @@ mod tests {
             embedding_progress: Arc::new(EmbeddingProgressTracker::new()),
             embedder: None,
             hybrid_config: Mutex::new(HybridSearchConfig::default()),
+            kchat_crypto: SourceManager::default_kchat_crypto(),
         };
         manager
             .add_local_folder(dir.path().to_str().unwrap())
@@ -2292,5 +2756,266 @@ mod tests {
             "Done with per-chunk failures should not populate last_error \
              (that's reserved for whole-pass / stall failures)"
         );
+    }
+
+    // ----------------------------------------------------------------
+    // Block C Task 1 + Task 2 (Phase 12): KChat post body ingestion
+    // ----------------------------------------------------------------
+
+    fn make_post_input(
+        cache_dir: &str,
+        post_id: &str,
+        channel_id: &str,
+        sender: &str,
+        body: &str,
+    ) -> KchatPostIngestInput {
+        KchatPostIngestInput {
+            cache_dir: cache_dir.to_string(),
+            post_id: post_id.to_string(),
+            channel_id: channel_id.to_string(),
+            root_id: None,
+            sender_user_id: sender.to_string(),
+            body: body.to_string(),
+            created_at_ms: 1_700_000_000_000,
+            edited_at_ms: 0,
+        }
+    }
+
+    /// Block C Task 1 end-to-end: ingest a fresh post, confirm it
+    /// creates a per-source DEK row, inserts AEAD-sealed chunks,
+    /// records bookkeeping, and survives an idempotent re-delivery.
+    #[test]
+    fn ingest_kchat_post_seals_chunks_and_persists_dek() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+
+        let body = "alpha bravo charlie delta echo \
+                    foxtrot golf hotel india juliet";
+        let input = make_post_input(cache_dir, "post-1", "channel-1", "user-1", body);
+
+        let outcome = manager.ingest_kchat_post(&input).unwrap();
+        let (indexed_file_id, chunk_count, chunk_ids) = match outcome {
+            KchatPostIngestOutcome::Ingested {
+                source_id,
+                indexed_file_id,
+                chunk_ids,
+                sealed_count,
+            } => {
+                assert_eq!(source_id, added.source.id);
+                assert!(sealed_count >= 1);
+                assert_eq!(chunk_ids.len(), sealed_count as usize);
+                (indexed_file_id, sealed_count, chunk_ids)
+            }
+            other => panic!("expected Ingested, got {other:?}"),
+        };
+
+        // Wrapped DEK row exists for the source.
+        let wrapped = manager
+            .store
+            .load_wrapped_dek_for_source(&added.source.id)
+            .unwrap();
+        assert!(wrapped.is_some(), "wrapped DEK must be persisted");
+
+        // Chunks are AEAD-sealed and the sealed copy round-trips
+        // under the same DEK back to the original plaintext.
+        for chunk_id in &chunk_ids {
+            let sealed = manager
+                .store
+                .load_chunk_aead(*chunk_id)
+                .unwrap()
+                .expect("AEAD blob must be persisted alongside plaintext");
+            let plaintext = manager
+                .kchat_crypto()
+                .open_chunk(&added.source.id, &sealed)
+                .expect("AEAD seal must decrypt under the same DEK");
+            assert!(!plaintext.is_empty());
+        }
+
+        // Bookkeeping row points back at the indexed_file_id.
+        let found = manager
+            .store
+            .find_kchat_post(&added.source.id, "post-1")
+            .unwrap();
+        assert_eq!(found.map(|(id, _)| id), Some(indexed_file_id));
+
+        // Idempotent re-delivery.
+        let again = manager.ingest_kchat_post(&input).unwrap();
+        match again {
+            KchatPostIngestOutcome::Unchanged {
+                source_id,
+                indexed_file_id: ifid,
+                chunk_count: cc,
+            } => {
+                assert_eq!(source_id, added.source.id);
+                assert_eq!(ifid, indexed_file_id);
+                assert_eq!(cc, chunk_count);
+            }
+            other => panic!("expected Unchanged on re-delivery, got {other:?}"),
+        }
+    }
+
+    /// Block C Task 1: editing a post replaces the chunks under the
+    /// same indexed_file_id and the new chunks decrypt under the
+    /// same DEK (the source DEK is stable across edits).
+    #[test]
+    fn edit_kchat_post_reindexes_chunks_under_same_indexed_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let _added = manager.add_kchat_channel(cache_dir).unwrap();
+        let initial = make_post_input(
+            cache_dir,
+            "post-7",
+            "channel-X",
+            "user-7",
+            "original message body alpha bravo charlie",
+        );
+        let first = manager.ingest_kchat_post(&initial).unwrap();
+        let initial_file_id = match &first {
+            KchatPostIngestOutcome::Ingested {
+                indexed_file_id, ..
+            } => *indexed_file_id,
+            other => panic!("expected Ingested, got {other:?}"),
+        };
+
+        // Now an edit — same post_id, different body.
+        let mut edited = initial.clone();
+        edited.body = "edited message body delta echo foxtrot".into();
+        edited.edited_at_ms = 1_700_000_100_000;
+        let second = manager.edit_kchat_post(&edited).unwrap();
+        match second {
+            KchatPostIngestOutcome::Ingested {
+                indexed_file_id, ..
+            } => {
+                assert_eq!(
+                    indexed_file_id, initial_file_id,
+                    "edits must reuse the same indexed_file_id so external \
+                     references stay valid",
+                );
+            }
+            other => panic!("expected Ingested on edit, got {other:?}"),
+        }
+    }
+
+    /// Block C Task 1: delete drops the chunks + bookkeeping row;
+    /// re-delete on an already-gone post is `NotFound`, not an
+    /// error.
+    #[test]
+    fn delete_kchat_post_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let input = make_post_input(cache_dir, "post-9", "ch", "u", "body to delete");
+        let outcome = manager.ingest_kchat_post(&input).unwrap();
+        match outcome {
+            KchatPostIngestOutcome::Ingested { .. } => {}
+            other => panic!("expected Ingested, got {other:?}"),
+        }
+
+        let deleted = manager.delete_kchat_post(cache_dir, "post-9").unwrap();
+        match deleted {
+            KchatPostDeleteOutcome::Deleted {
+                source_id,
+                chunks_dropped,
+            } => {
+                assert_eq!(source_id, added.source.id);
+                assert!(chunks_dropped >= 1);
+            }
+            other => panic!("expected Deleted, got {other:?}"),
+        }
+
+        // Bookkeeping is gone.
+        let after = manager
+            .store
+            .find_kchat_post(&added.source.id, "post-9")
+            .unwrap();
+        assert!(after.is_none());
+
+        // Idempotent re-delete.
+        let again = manager.delete_kchat_post(cache_dir, "post-9").unwrap();
+        match again {
+            KchatPostDeleteOutcome::NotFound { source_id } => {
+                assert_eq!(source_id, added.source.id);
+            }
+            other => panic!("expected NotFound on re-delete, got {other:?}"),
+        }
+    }
+
+    /// Block C Task 2: a revoke after a post ingest must drop the
+    /// per-source DEK row AND evict the in-memory cache entry so
+    /// the SQLCipher master key alone cannot decrypt the previously
+    /// sealed chunks.
+    #[test]
+    fn revoke_after_post_ingest_drops_dek_and_forgets_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let input = make_post_input(cache_dir, "post-r", "ch", "u", "body alpha bravo");
+        let _ = manager.ingest_kchat_post(&input).unwrap();
+        assert!(manager
+            .store
+            .load_wrapped_dek_for_source(&added.source.id)
+            .unwrap()
+            .is_some());
+        assert!(manager.kchat_crypto().has_dek(&added.source.id));
+
+        // Explicit revoke (channel_archived path).
+        let outcome = manager.revoke_kchat_source(cache_dir).unwrap();
+        match outcome {
+            KchatRevokeOutcome::Revoked {
+                posts_dropped,
+                dek_dropped,
+                ..
+            } => {
+                assert_eq!(posts_dropped, 1);
+                assert!(dek_dropped, "DEK row must be dropped on revoke");
+            }
+            other => panic!("expected Revoked, got {other:?}"),
+        }
+
+        assert!(manager
+            .store
+            .load_wrapped_dek_for_source(&added.source.id)
+            .unwrap()
+            .is_none());
+        assert!(!manager.kchat_crypto().has_dek(&added.source.id));
+    }
+
+    /// Block C Task 1: ingestion against a missing source returns
+    /// `Unlinked` without panic and without DEK creation.
+    #[test]
+    fn ingest_kchat_post_unlinked_when_no_source_row() {
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let outcome = manager
+            .ingest_kchat_post(&make_post_input(
+                "/no/such/dir",
+                "post-x",
+                "ch",
+                "u",
+                "body",
+            ))
+            .unwrap();
+        assert_eq!(outcome, KchatPostIngestOutcome::Unlinked);
+    }
+
+    /// Block C Task 1: ingestion against a revoked source returns
+    /// `AccessRevoked` (defence in depth — the forwarder filters
+    /// first but a race could still slip through).
+    #[test]
+    fn ingest_kchat_post_refuses_revoked_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let _added = manager.add_kchat_channel(cache_dir).unwrap();
+        let _ = manager.revoke_kchat_source(cache_dir).unwrap();
+
+        let outcome = manager
+            .ingest_kchat_post(&make_post_input(cache_dir, "p", "ch", "u", "body"))
+            .unwrap();
+        assert_eq!(outcome, KchatPostIngestOutcome::AccessRevoked);
     }
 }
