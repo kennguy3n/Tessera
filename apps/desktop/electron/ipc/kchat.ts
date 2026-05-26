@@ -28,8 +28,13 @@ import { promises as dnsPromises } from "dns";
 import {
   getBridge,
   getKchatAuthService,
+  setKchatBackfillImpl,
   setKchatChannelResyncImpl,
 } from "../appState";
+import type {
+  KchatBackfillRunOutcome,
+  KchatPostIngestInputInfo,
+} from "../../shared/types";
 import { idempotentHandle } from "./register";
 import {
   assertBoolean,
@@ -1200,6 +1205,315 @@ export function registerKchatHandlers(): void {
     inFlightAddKchatChannel.set(id, work);
     await work;
   });
+
+  // ─── Block C Task 4 (Phase 13) — KChat historical backfill ───────
+  //
+  // The backfill orchestrator drives the substrate's per-page
+  // ingest primitive against the KChat REST `getPostsForChannel`
+  // history endpoint. The loop walks backwards from the persisted
+  // cursor (or from the newest post on a fresh walk) until either
+  //
+  //   - the REST server reports end-of-history
+  //     (`prevPostId === null`) — emits `Completed` audit row,
+  //   - the substrate flips to AccessRevoked between pages
+  //     (membership lost mid-walk) — emits `Aborted` row with
+  //     reason=access_revoked,
+  //   - the cumulative posts-walked counter hits the per-channel
+  //     safety cap (50_000) — emits `Aborted` row with
+  //     reason=safety_cap,
+  //   - a REST or substrate error fires — emits `Aborted` row
+  //     with reason=error.
+  //
+  // The orchestrator is dedup'd through the per-channel sync lock
+  // (`withChannelSyncLock`) so a backfill cannot interleave with
+  // a regrant re-sync, a single-file sync, or a duplicate user
+  // click that fires while a walk is still in flight. We use the
+  // SAME lock as `runAddKchatChannel` so concurrent file-roster
+  // sync + post-history backfill serialise — both paths write to
+  // the same SQLite database; running them concurrently would
+  // contend for the SQLCipher connection and stretch latency
+  // without saving wall-clock time.
+  //
+  // Per-walk state is local to this closure (counters, page
+  // number, cursor); the substrate carries the cross-walk
+  // resumption cursor via the persisted `kchat_backfill_*` columns
+  // on the `sources` row, so a process restart mid-walk can
+  // resume from the last successfully-acked page rather than
+  // re-walking from the top.
+  const inFlightBackfillKchatChannel = new Map<
+    string,
+    Promise<KchatBackfillRunOutcome>
+  >();
+  /**
+   * Per-channel cumulative cap. KChat REST caps `per_page` at 200,
+   * so 50_000 posts ≈ 250 round-trips — large enough that real
+   * channels never hit the cap, small enough that a misbehaving
+   * server returning an infinite stream can't pin memory. Matches
+   * the file-roster cap used by `runAddKchatChannel` for the same
+   * reason.
+   */
+  const KCHAT_BACKFILL_SAFETY_CAP = 50_000;
+  /**
+   * REST page size. KChat's documented per-page maximum is 200;
+   * 200 is also the practical ceiling for the `posts` payload
+   * shape (above that the server may truncate). Keeping the
+   * orchestrator's page size at the protocol max minimises the
+   * number of round-trips, which dominates wall-clock time on a
+   * full-channel backfill against a remote KChat server.
+   */
+  const KCHAT_BACKFILL_PER_PAGE = 200;
+
+  async function runBackfillKchatChannel(
+    channelId: string,
+  ): Promise<KchatBackfillRunOutcome> {
+    const bridge = getBridge();
+    if (!bridge) throw new Error("Native bridge not available");
+    const id = assertKchatId(channelId, "channelId");
+    const cacheDir = kchatChannelCacheDir(id);
+
+    // Read the persisted state OUTSIDE the lock first so a no-op
+    // short-circuit (already-completed or unlinked/revoked) does
+    // not contend for the per-channel sync mutex. The check
+    // is repeated inside the lock to close the race with a
+    // mid-flight cryptoshred / unlink.
+    const initial = bridge.bridgeGetKchatBackfillState(cacheDir);
+    if (initial.outcome === "unlinked") {
+      return {
+        outcome: "skipped",
+        reason: "unlinked",
+        pagesWalked: 0,
+        totalPostsIngested: 0,
+        totalPostsUnchanged: 0,
+        totalPostsSkippedRevoked: 0,
+      };
+    }
+    if (initial.outcome === "access_revoked") {
+      return {
+        outcome: "skipped",
+        reason: "access_revoked",
+        pagesWalked: 0,
+        totalPostsIngested: 0,
+        totalPostsUnchanged: 0,
+        totalPostsSkippedRevoked: 0,
+      };
+    }
+    if (initial.completedAt) {
+      return {
+        outcome: "skipped",
+        reason: "already_completed",
+        pagesWalked: 0,
+        totalPostsIngested: 0,
+        totalPostsUnchanged: 0,
+        totalPostsSkippedRevoked: 0,
+        completedAt: initial.completedAt,
+      };
+    }
+
+    const sourceId = initial.sourceId ?? "";
+    // Resume cursor: substrate-persisted `oldestPostId` (the OLDEST
+    // post we've already indexed). The REST contract says
+    // `before=<post_id>` returns posts strictly older than that
+    // id, so passing the persisted cursor reliably moves the walk
+    // backwards without re-fetching the post itself. A null cursor
+    // means "no walk has run yet" — the first REST call omits
+    // `before=` and starts at the newest post.
+    let cursor: string | undefined = initial.oldestPostId ?? undefined;
+    bridge.bridgeLogKchatBackfillStarted(id, sourceId, cursor);
+
+    const svc = getKchatAuthService();
+    const client = svc.getClient();
+
+    let pagesWalked = 0;
+    let totalPostsIngested = 0;
+    let totalPostsUnchanged = 0;
+    let totalPostsSkippedRevoked = 0;
+    let totalPostsTouched = 0;
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      let page;
+      try {
+        page = await client.getPostsForChannel(id, {
+          before: cursor,
+          perPage: KCHAT_BACKFILL_PER_PAGE,
+        });
+      } catch (err) {
+        bridge.bridgeLogKchatBackfillAborted(
+          id,
+          sourceId,
+          "error",
+          pagesWalked,
+          totalPostsIngested,
+        );
+        throw toIpcError(err);
+      }
+
+      // Each entry is in REST-returned (newest-first) order. We
+      // pass the entire page through to the substrate as a single
+      // batched call; the substrate iterates internally and
+      // advances the cursor to the OLDEST post id in the page.
+      const inputs: KchatPostIngestInputInfo[] = page.posts.map((p) => ({
+        cacheDir,
+        postId: p.id,
+        channelId: p.channelId,
+        rootId: p.rootId ?? undefined,
+        senderUserId: p.userId,
+        body: p.message,
+        createdAtMs: p.createAt,
+        editedAtMs: p.editAt,
+      }));
+
+      const result = bridge.bridgeIngestKchatBackfillPage(cacheDir, inputs);
+      if (result.outcome === "unlinked") {
+        bridge.bridgeLogKchatBackfillAborted(
+          id,
+          sourceId,
+          "unlinked",
+          pagesWalked,
+          totalPostsIngested,
+        );
+        return {
+          outcome: "aborted",
+          reason: "unlinked",
+          pagesWalked,
+          totalPostsIngested,
+          totalPostsUnchanged,
+          totalPostsSkippedRevoked,
+        };
+      }
+      if (result.outcome === "access_revoked") {
+        bridge.bridgeLogKchatBackfillAborted(
+          id,
+          sourceId,
+          "access_revoked",
+          pagesWalked,
+          totalPostsIngested,
+        );
+        return {
+          outcome: "aborted",
+          reason: "access_revoked",
+          pagesWalked,
+          totalPostsIngested,
+          totalPostsUnchanged,
+          totalPostsSkippedRevoked,
+        };
+      }
+
+      pagesWalked += 1;
+      totalPostsIngested += result.postsIngested;
+      totalPostsUnchanged += result.postsUnchanged;
+      totalPostsSkippedRevoked += result.postsSkippedRevoked;
+      totalPostsTouched += inputs.length;
+      bridge.bridgeLogKchatBackfillPageIngested(
+        id,
+        sourceId,
+        pagesWalked,
+        result.postsIngested,
+        result.postsUnchanged,
+        result.postsSkippedRevoked,
+        result.oldestPostIdInPage,
+      );
+
+      // Two end-of-walk signals from the REST server:
+      //   - `prevPostId === null` means the server says "no posts
+      //     exist older than what you just fetched" — definitive
+      //     end-of-history. Emit Completed and set the substrate
+      //     sentinel.
+      //   - `posts.length === 0` on a non-first page would also
+      //     indicate end-of-history (the server returned an empty
+      //     window before signalling via prevPostId); treat it
+      //     the same as null cursor.
+      if (page.prevPostId === null || page.posts.length === 0) {
+        bridge.bridgeMarkKchatBackfillComplete(cacheDir);
+        bridge.bridgeLogKchatBackfillCompleted(
+          id,
+          sourceId,
+          pagesWalked,
+          totalPostsIngested,
+          totalPostsUnchanged,
+        );
+        return {
+          outcome: "completed",
+          pagesWalked,
+          totalPostsIngested,
+          totalPostsUnchanged,
+          totalPostsSkippedRevoked,
+        };
+      }
+
+      // Safety cap: cumulative posts touched (not just ingested —
+      // the cap exists to bound the number of REST round-trips,
+      // which a malicious server could otherwise pin via an
+      // infinite `prev_post_id` chain). The cap is checked BEFORE
+      // advancing the cursor so a single page that hits the cap
+      // stops at that page rather than pulling one more page
+      // unnecessarily.
+      if (totalPostsTouched >= KCHAT_BACKFILL_SAFETY_CAP) {
+        bridge.bridgeLogKchatBackfillAborted(
+          id,
+          sourceId,
+          "safety_cap",
+          pagesWalked,
+          totalPostsIngested,
+        );
+        return {
+          outcome: "aborted",
+          reason: "safety_cap",
+          pagesWalked,
+          totalPostsIngested,
+          totalPostsUnchanged,
+          totalPostsSkippedRevoked,
+        };
+      }
+
+      // Advance to the next page. We use the server-supplied
+      // `prevPostId` (the post id immediately older than the
+      // current page) rather than `result.oldestPostIdInPage`
+      // because they can diverge if the substrate skipped some
+      // posts due to a mid-walk revocation — in that case the
+      // substrate's `oldestPostIdInPage` is the cursor it
+      // actually persisted (last successfully-ingested id) but
+      // the REST server's `prevPostId` is the correct
+      // continuation token for the NEXT page.
+      cursor = page.prevPostId;
+    }
+  }
+
+  setKchatBackfillImpl(async (channelId: string) => {
+    const id = assertKchatId(channelId, "channelId");
+    const existing = inFlightBackfillKchatChannel.get(id);
+    if (existing) return existing;
+    const work = withChannelSyncLock(id, () =>
+      runBackfillKchatChannel(id),
+    ).finally(() => {
+      if (inFlightBackfillKchatChannel.get(id) === work) {
+        inFlightBackfillKchatChannel.delete(id);
+      }
+    });
+    inFlightBackfillKchatChannel.set(id, work);
+    return work;
+  });
+
+  idempotentHandle(
+    "sources:backfillKchatChannel",
+    async (
+      _event,
+      channelId: unknown,
+    ): Promise<KchatBackfillRunOutcome> => {
+      const id = assertKchatId(channelId, "channelId");
+      const existing = inFlightBackfillKchatChannel.get(id);
+      if (existing) return existing;
+      const work = withChannelSyncLock(id, () =>
+        runBackfillKchatChannel(id),
+      ).finally(() => {
+        if (inFlightBackfillKchatChannel.get(id) === work) {
+          inFlightBackfillKchatChannel.delete(id);
+        }
+      });
+      inFlightBackfillKchatChannel.set(id, work);
+      return work;
+    },
+  );
 }
 
 interface ProducedExport {

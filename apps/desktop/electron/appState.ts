@@ -23,6 +23,10 @@ import type {
   KchatAclRefreshOutcomeInfo,
   KchatChannelAddOutcomeInfo,
   KchatFileIndexOutcomeInfo,
+  KchatBackfillCompletionOutcomeInfo,
+  KchatBackfillIngestOutcomeInfo,
+  KchatBackfillRunOutcome,
+  KchatBackfillStateInfo,
   KchatPostDeleteOutcomeInfo,
   KchatPostIngestInputInfo,
   KchatPostIngestOutcomeInfo,
@@ -57,6 +61,10 @@ export type {
   KchatAclRefreshOutcomeInfo,
   KchatChannelAddOutcomeInfo,
   KchatFileIndexOutcomeInfo,
+  KchatBackfillCompletionOutcomeInfo,
+  KchatBackfillIngestOutcomeInfo,
+  KchatBackfillRunOutcome,
+  KchatBackfillStateInfo,
   KchatPostDeleteOutcomeInfo,
   KchatPostIngestInputInfo,
   KchatPostIngestOutcomeInfo,
@@ -503,6 +511,77 @@ export interface NativeBridge {
     outcome: string,
     chunksDropped: number,
   ): void;
+
+  // --- Block C Task 4 (Phase 13): KChat historical backfill ---
+  //
+  // Three substrate-facing calls + four audit log calls compose
+  // the orchestrator. The orchestrator (`runBackfillKchatChannel`
+  // in `appState.ts`) lives outside the bridge and drives the
+  // REST pagination loop via the channel-scoped lock; these
+  // methods are the unit-of-work primitives the loop calls
+  // page-by-page.
+
+  /**
+   * Read the persisted backfill state for a KChat channel. The
+   * orchestrator uses this on entry to decide between "start a
+   * fresh walk", "resume from cursor", "skip already-completed",
+   * and "refuse to walk revoked/unlinked".
+   */
+  bridgeGetKchatBackfillState(cacheDir: string): KchatBackfillStateInfo;
+  /**
+   * Ingest one page of historical posts. `page` must be the
+   * REST-returned newest-first list; the substrate advances the
+   * persisted cursor to the OLDEST post id in the page.
+   * Per-post substrate dedupe (BLAKE3 body-hash) makes
+   * re-deliveries cheap (no double-chunking).
+   */
+  bridgeIngestKchatBackfillPage(
+    cacheDir: string,
+    page: KchatPostIngestInputInfo[],
+  ): KchatBackfillIngestOutcomeInfo;
+  /**
+   * Mark the walk complete. Called by the orchestrator when the
+   * REST page returns `prevPostId === null`. Future
+   * `runBackfillKchatChannel` calls short-circuit at the state
+   * read after this commits.
+   */
+  bridgeMarkKchatBackfillComplete(
+    cacheDir: string,
+  ): KchatBackfillCompletionOutcomeInfo;
+  /** Audit row at the start of a walk. `resumeFromPostId === undefined`
+   *  means the walk is fresh; the audit row prints `(fresh)`. */
+  bridgeLogKchatBackfillStarted(
+    channelId: string,
+    sourceId: string,
+    resumeFromPostId: string | undefined,
+  ): void;
+  /** Audit row after each successfully-ingested page. */
+  bridgeLogKchatBackfillPageIngested(
+    channelId: string,
+    sourceId: string,
+    pageNumber: number,
+    postsIngested: number,
+    postsUnchanged: number,
+    postsSkippedRevoked: number,
+    oldestPostIdInPage: string | undefined,
+  ): void;
+  /** Audit row when the walk reaches the end-of-history boundary. */
+  bridgeLogKchatBackfillCompleted(
+    channelId: string,
+    sourceId: string,
+    pagesWalked: number,
+    totalPostsIngested: number,
+    totalPostsUnchanged: number,
+  ): void;
+  /** Audit row when the walk stops early. `reason` is one of
+   *  `access_revoked` / `safety_cap` / `unlinked` / `error`. */
+  bridgeLogKchatBackfillAborted(
+    channelId: string,
+    sourceId: string,
+    reason: string,
+    pagesWalked: number,
+    totalPostsIngested: number,
+  ): void;
   // --- Audit query ---
   //
   // Renderer-facing read API over the audit store. The renderer
@@ -637,6 +716,34 @@ export function getKchatChannelResyncImpl():
   | ((channelId: string) => Promise<void>)
   | null {
   return kchatChannelResyncImpl;
+}
+
+// Block C Task 4 (Phase 13): backfill orchestrator slot. The IPC
+// handler populates this with the per-channel orchestrator
+// (`runBackfillKchatChannel(id)`) that drives REST pagination
+// via the channel-scoped lock. Lives in module-scope (not inside
+// `getKchatAuthService`) so the renderer-facing IPC handler
+// `sources:backfillKchatChannel` and any future automation hook
+// (e.g. a scheduled background-sync sweep) can share the single
+// dedup'd implementation without circular imports.
+//
+// Like the resync impl above, the slot is cleared by
+// `resetKchatAuthService(null)` so a test that swaps out the
+// auth service can't observe a stale impl.
+let kchatBackfillImpl:
+  | ((channelId: string) => Promise<KchatBackfillRunOutcome>)
+  | null = null;
+export function setKchatBackfillImpl(
+  next:
+    | ((channelId: string) => Promise<KchatBackfillRunOutcome>)
+    | null,
+): void {
+  kchatBackfillImpl = next;
+}
+export function getKchatBackfillImpl():
+  | ((channelId: string) => Promise<KchatBackfillRunOutcome>)
+  | null {
+  return kchatBackfillImpl;
 }
 // Vision sidecar runs the same `llama-server` binary as the text
 // sidecar but on a separate port (8385) and with `--mmproj`
@@ -979,6 +1086,12 @@ export function resetKchatAuthService(
   // next startup; tests that need a fresh impl can repopulate via
   // `setKchatChannelResyncImpl` after the reset.
   setKchatChannelResyncImpl(null);
+  // Block C Task 4 (Phase 13): clear the backfill orchestrator
+  // slot alongside the resync slot for the same reason — the
+  // closure captures `getBridge()` / `getKchatAuthService()`,
+  // and a test that calls `resetKchatAuthService(null)` should
+  // never observe an impl that closes over a torn-down service.
+  setKchatBackfillImpl(null);
   kchatAuthService = next;
   if (next) {
     kchatEventForwarder = new KchatEventForwarder({

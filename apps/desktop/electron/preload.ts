@@ -454,6 +454,17 @@ const api: TesseraApi = {
       ),
     addChannelSource: (channelId: string, channelName: string) =>
       ipcRenderer.invoke("sources:addKchatChannel", channelId, channelName),
+    /**
+     * Block C Task 4 (Phase 13): trigger the historical-backfill
+     * walk for an already-linked KChat channel. Returns a single
+     * aggregate outcome rather than streaming progress; the
+     * substrate emits per-page audit rows for operators that need
+     * intermediate visibility. Idempotent — a re-trigger after
+     * completion short-circuits at the substrate state read with
+     * `outcome: "skipped" / reason: "already_completed"`.
+     */
+    backfillChannel: (channelId: string) =>
+      ipcRenderer.invoke("sources:backfillKchatChannel", channelId),
     // Block B Task 1: push-based delivery of KChat connection
     // state + WebSocket events. The status channel mirrors
     // `updates.onStatus` so the connection card / sidebar no

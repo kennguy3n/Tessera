@@ -135,6 +135,38 @@ pub enum AuditEventType {
     /// deleted on per-post delete — it is only retired on the
     /// source-level revoke / cryptoshred path.
     KchatPostDeleted,
+    /// Block C Task 4 (Phase 13): an orchestrator-driven
+    /// historical-backfill walk started (or resumed) for a KChat
+    /// channel. Details include `resume_from=<post_id>` or
+    /// `(fresh)` when the walk begins at the newest post. Pairs
+    /// 1:1 with [`KchatBackfillCompleted`] or
+    /// [`KchatBackfillAborted`] on the same `(channel,source)`.
+    KchatBackfillStarted,
+    /// Block C Task 4 (Phase 13): one page of the historical
+    /// backfill walk was processed. Details carry the 1-based
+    /// page number, per-page substrate counters
+    /// (`posts_ingested`, `posts_unchanged`,
+    /// `posts_skipped_revoked`), and the cursor the substrate
+    /// advanced to (`cursor=<post_id>` or `(none)` on an empty
+    /// page). Operators can grep these rows to reconstruct the
+    /// progression of a long-running walk.
+    KchatBackfillPageIngested,
+    /// Block C Task 4 (Phase 13): the backfill walk finished
+    /// successfully — the KChat REST server returned
+    /// `prev_post_id == null`, signalling no posts older than
+    /// the cursor exist. Details carry the cumulative
+    /// `pages_walked`, `total_posts_ingested`, and
+    /// `total_posts_unchanged` (the dedupe count).
+    KchatBackfillCompleted,
+    /// Block C Task 4 (Phase 13): the backfill walk stopped
+    /// early. Details carry a machine-readable `reason` tag:
+    /// `access_revoked` (source flipped to revoked mid-walk),
+    /// `safety_cap` (per-channel cumulative cap hit),
+    /// `unlinked` (source row disappeared between pages),
+    /// `error` (REST or substrate error). The cursor remains
+    /// at the last successfully-acknowledged post id so a
+    /// later retrigger resumes from there.
+    KchatBackfillAborted,
 }
 
 impl AuditEventType {
@@ -177,6 +209,10 @@ impl AuditEventType {
             Self::KchatPostIngested => "kchat_post_ingested",
             Self::KchatPostEdited => "kchat_post_edited",
             Self::KchatPostDeleted => "kchat_post_deleted",
+            Self::KchatBackfillStarted => "kchat_backfill_started",
+            Self::KchatBackfillPageIngested => "kchat_backfill_page_ingested",
+            Self::KchatBackfillCompleted => "kchat_backfill_completed",
+            Self::KchatBackfillAborted => "kchat_backfill_aborted",
         }
     }
 }
@@ -236,6 +272,10 @@ mod tests {
             AuditEventType::KchatPostIngested,
             AuditEventType::KchatPostEdited,
             AuditEventType::KchatPostDeleted,
+            AuditEventType::KchatBackfillStarted,
+            AuditEventType::KchatBackfillPageIngested,
+            AuditEventType::KchatBackfillCompleted,
+            AuditEventType::KchatBackfillAborted,
         ];
         for ev in all.iter() {
             let serde_form = serde_json::to_string(ev).unwrap();

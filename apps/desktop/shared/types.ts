@@ -402,6 +402,123 @@ export interface KchatPostDeleteOutcomeInfo {
 }
 
 /**
+ * Block C Task 4 (Phase 13): persisted backfill state for a
+ * KChat channel. The orchestrator's
+ * `runBackfillKchatChannel` uses this to decide whether to start
+ * a fresh walk, resume from a cursor, skip an already-completed
+ * walk, or refuse to walk a revoked / unlinked source.
+ *
+ *   - `"idle"`           — eligible for backfill. `oldestPostId`
+ *     is the persisted `before=` cursor; null means "no walk
+ *     started yet, fetch from the newest post". `completedAt`
+ *     is the RFC3339 timestamp at which the walk reached the
+ *     end of channel history (null while still in progress).
+ *   - `"unlinked"`       — no source for `cacheDir`; defensive
+ *     no-op (the channel was removed between the IPC kickoff
+ *     and the substrate call).
+ *   - `"access_revoked"` — source exists but is revoked; the
+ *     orchestrator must NOT walk it (would re-create the chunks
+ *     the cryptoshred destroyed).
+ *
+ * `sourceId` is populated whenever the source row exists.
+ */
+export interface KchatBackfillStateInfo {
+  outcome: "idle" | "unlinked" | "access_revoked";
+  sourceId?: string;
+  /** RFC3339 timestamp when the walk completed; null while
+   *  still in progress or never started. */
+  oldestPostId?: string;
+  completedAt?: string;
+}
+
+/**
+ * Block C Task 4 (Phase 13): outcome of a single backfill page
+ * ingest. The orchestrator calls
+ * `bridgeIngestKchatBackfillPage(...)` once per
+ * `getPostsForChannel(...)` response.
+ *
+ *   - `"ingested"`       — page was processed. The counters
+ *     split it by per-post substrate outcome.
+ *     `oldestPostIdInPage` is the cursor the substrate
+ *     advanced to (null on an empty page).
+ *   - `"unlinked"`       — no source for `cacheDir`.
+ *   - `"access_revoked"` — source flipped to revoked mid-walk;
+ *     the orchestrator stops the loop and emits an
+ *     `aborted` audit row.
+ */
+export interface KchatBackfillIngestOutcomeInfo {
+  outcome: "ingested" | "unlinked" | "access_revoked";
+  sourceId?: string;
+  postsIngested: number;
+  postsUnchanged: number;
+  postsSkippedRevoked: number;
+  oldestPostIdInPage?: string;
+}
+
+/**
+ * Block C Task 4 (Phase 13): outcome of
+ * `bridgeMarkKchatBackfillComplete`. Set when the orchestrator
+ * observes `prevPostId === null` on the REST response.
+ *
+ *   - `"completed"`       — the completion sentinel was set.
+ *     Future `runBackfillKchatChannel` calls short-circuit at
+ *     the state read.
+ *   - `"unlinked"`        — no source row.
+ *   - `"access_revoked"`  — source is revoked; sentinel NOT
+ *     set (the cryptoshred path already cleared the cursor).
+ */
+export interface KchatBackfillCompletionOutcomeInfo {
+  outcome: "completed" | "unlinked" | "access_revoked";
+  sourceId?: string;
+}
+
+/**
+ * Block C Task 4 (Phase 13): aggregate result of one
+ * orchestrator-driven backfill walk
+ * (`runBackfillKchatChannel(channelId)`). Surfaced to the
+ * renderer via the `sources:backfillKchatChannel` IPC handler so
+ * the UI can show per-channel progress / final counts and so the
+ * audit emission can correlate with the user-visible row.
+ *
+ *   - `"completed"`        — REST server returned
+ *     `prevPostId === null`. The substrate sentinel is set; future
+ *     walks short-circuit.
+ *   - `"aborted"`          — walk stopped early. `reason` is one of
+ *     `access_revoked` (source flipped mid-walk),
+ *     `safety_cap` (cumulative cap hit), `unlinked` (source
+ *     disappeared between pages), or `error` (REST / substrate
+ *     error). The cursor is preserved at the last successfully-
+ *     persisted post id so a later retrigger resumes from there.
+ *   - `"skipped"`          — short-circuit at the state read
+ *     because the walk has already completed (`completedAt`
+ *     populated) or the source is in a state that disallows a
+ *     walk. `reason` carries the precise short-circuit cause:
+ *     `already_completed`, `unlinked`, or `access_revoked`.
+ *
+ * The per-walk counters are cumulative over every page processed
+ * during this single `runBackfillKchatChannel` invocation. They do
+ * NOT include posts ingested on a prior walk that resumed from a
+ * cursor — the substrate dedupe takes care of preserving the
+ * total without double-counting.
+ */
+export interface KchatBackfillRunOutcome {
+  outcome: "completed" | "aborted" | "skipped";
+  reason?:
+    | "access_revoked"
+    | "safety_cap"
+    | "unlinked"
+    | "error"
+    | "already_completed";
+  pagesWalked: number;
+  totalPostsIngested: number;
+  totalPostsUnchanged: number;
+  totalPostsSkippedRevoked: number;
+  /** RFC3339 string when `outcome === "skipped"` and the walk
+   *  was already completed; absent otherwise. */
+  completedAt?: string;
+}
+
+/**
  * Renderer-facing search result. The IPC handler maps from the
  * Rust-side `SearchHitInfo` (which uses `content` / `relevance` /
  * `chunkIndex`) to this shape (`chunkContent` / `relevanceScore`,
@@ -1752,6 +1869,26 @@ export interface KchatApi {
     channelId: string,
     channelName: string,
   ) => Promise<{ sourceId: string; cacheDir: string }>;
+  /**
+   * Block C Task 4 (Phase 13): trigger the historical-backfill
+   * walk for an already-linked KChat channel. The walk paginates
+   * the REST history endpoint backwards from the persisted
+   * cursor (or from the newest post on a fresh run) until either
+   * the server reports end-of-history (`prevPostId === null`),
+   * the substrate reports access revocation, the per-channel
+   * 50_000-post safety cap is hit, or a REST/substrate error
+   * fires. The substrate persists a completion sentinel so a
+   * subsequent retrigger short-circuits with
+   * `outcome: "skipped" / reason: "already_completed"`.
+   *
+   * The returned counters are cumulative over THIS walk only
+   * (pages processed, posts ingested via dedupe-aware ingest,
+   * posts unchanged via BLAKE3 dedupe, posts skipped because of
+   * mid-walk revocation). Per-page progress is also recorded as
+   * audit rows by the substrate so operators can reconstruct
+   * progression mid-flight.
+   */
+  backfillChannel: (channelId: string) => Promise<KchatBackfillRunOutcome>;
   /**
    * Subscribe to KChat connection-state changes surfaced by the
    * main process. The callback fires once on every successful

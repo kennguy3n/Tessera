@@ -315,6 +315,58 @@ impl SourceStore {
                 .map_err(|e| Error::Database(format!("failed to add chunks.{column}: {e}")))?;
         }
 
+        // Block C Task 4 (Phase 13) backfill cursor migration. Two
+        // columns on `sources`:
+        //
+        // - `kchat_backfill_oldest_post_id` — the oldest KChat post
+        //   id the substrate has ingested for this source so far.
+        //   The renderer's backfill loop uses this as the `before=`
+        //   cursor for the next page fetch, so a restart picks up
+        //   exactly where the previous run left off (no double-
+        //   indexing of the most-recent ingested page, no skipping
+        //   of older pages). NULL means "no backfill has run yet";
+        //   the first page fetch happens without a `before` param,
+        //   which the KChat REST contract treats as "newest first".
+        //
+        // - `kchat_backfill_completed_at` — RFC3339 timestamp set
+        //   when the walk reached the end (server returned a page
+        //   with `prev_post_id=null`). NULL means "incomplete /
+        //   needs more pages". A non-NULL value short-circuits any
+        //   future `runBackfillKchatChannel` call so a user clicking
+        //   "Backfill history" on an already-walked channel doesn't
+        //   re-walk the full history (idempotent re-runs are cheap
+        //   since the per-post dedupe in `ingest_kchat_post` would
+        //   no-op every row anyway, but we want the audit row to
+        //   reflect "no work to do" rather than "walked the whole
+        //   history and re-no-op'd it").
+        //
+        // Both are NULL on every legacy row; the runtime treats
+        // NULL as the "never walked" state. The
+        // `cryptoshred_kchat_source_evidence` scrub clears both
+        // columns inside the same transaction as the chunks /
+        // indexed_files / kchat_posts / kchat_source_deks deletes
+        // so a re-grant on the same source starts the backfill walk
+        // from scratch (the old cursor would point at a post id
+        // whose evidence was just shredded).
+        for (column, ty) in [
+            ("kchat_backfill_oldest_post_id", "TEXT"),
+            ("kchat_backfill_completed_at", "TEXT"),
+        ] {
+            let existing: bool = conn
+                .query_row(
+                    "SELECT 1 FROM pragma_table_info('sources') WHERE name = ?1",
+                    params![column],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if existing {
+                continue;
+            }
+            let sql = format!("ALTER TABLE sources ADD COLUMN {column} {ty}");
+            conn.execute(&sql, [])
+                .map_err(|e| Error::Database(format!("failed to add sources.{column}: {e}")))?;
+        }
+
         // Partial index on the new column. Created AFTER the ALTERs
         // above so legacy databases (where the column didn't exist
         // when the batch ran) still get the index. `WHERE … IS NOT
@@ -976,9 +1028,23 @@ impl SourceStore {
             // NOT changed here — the manager has already set it to
             // `AccessRevoked` (or will, in the same overall
             // operation).
+            //
+            // Block C Task 4 (Phase 13): also clear the backfill
+            // cursor + completion sentinel. If the user later
+            // re-grants access to this channel, the backfill walk
+            // MUST start from the newest post again — the previous
+            // cursor pointed at a post id whose AEAD ciphertext was
+            // just shredded, and the previous "completed" flag is
+            // stale because the chunks it accounted for no longer
+            // exist. Doing this in the same transaction as the
+            // chunk/file/post/DEK deletes keeps the invariant
+            // crash-recovery atomic.
             txn.execute(
                 "UPDATE sources
-                 SET last_indexed = NULL, file_count = 0
+                 SET last_indexed = NULL,
+                     file_count = 0,
+                     kchat_backfill_oldest_post_id = NULL,
+                     kchat_backfill_completed_at = NULL
                  WHERE id = ?1",
                 params![id_str],
             )
@@ -1496,6 +1562,101 @@ impl SourceStore {
             )
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+
+    /// Block C Task 4 (Phase 13): read the persisted backfill state
+    /// for a source.
+    ///
+    /// Returns `Ok(None)` when the source row does not exist.
+    /// Returns `Ok(Some((None, None)))` for a source that has never
+    /// run a backfill (the legacy / fresh case). The first field
+    /// is the persisted "oldest ingested post id" cursor (used as
+    /// the `before=` parameter on the next REST page fetch); the
+    /// second is the RFC3339 timestamp at which the walk reached
+    /// the end of the channel history (non-NULL ⇒ no further
+    /// pagination needed).
+    pub fn kchat_backfill_state(
+        &self,
+        source_id: &SourceId,
+    ) -> Result<Option<(Option<String>, Option<String>)>> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let row = conn
+            .query_row(
+                "SELECT kchat_backfill_oldest_post_id, kchat_backfill_completed_at
+                 FROM sources
+                 WHERE id = ?1",
+                params![id_str],
+                |r| {
+                    Ok((
+                        r.get::<_, Option<String>>(0)?,
+                        r.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .ok();
+        Ok(row)
+    }
+
+    /// Update the backfill cursor to the oldest post id observed
+    /// so far. Idempotent against the same value; safe to call
+    /// inside a `withChannelSyncLock` because all access goes
+    /// through the shared connection mutex.
+    ///
+    /// Does NOT clear `kchat_backfill_completed_at` — if the walk
+    /// is already marked complete, advancing the cursor to a yet-
+    /// older post is impossible by construction (the manager
+    /// short-circuits the call before reaching this function), and
+    /// a test that drives this path on a completed source is
+    /// expected to observe the cursor moving without flipping the
+    /// completion flag back to NULL.
+    pub fn set_kchat_backfill_cursor(
+        &self,
+        source_id: &SourceId,
+        oldest_post_id: &str,
+    ) -> Result<()> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let updated = conn
+            .execute(
+                "UPDATE sources
+                 SET kchat_backfill_oldest_post_id = ?2
+                 WHERE id = ?1",
+                params![id_str, oldest_post_id],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        if updated == 0 {
+            return Err(Error::Database(format!(
+                "set_kchat_backfill_cursor: no source row for id={id_str}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Mark the backfill walk as complete (the server returned a
+    /// page with `prev_post_id == null`, i.e. there are no posts
+    /// older than the current cursor). The renderer treats a
+    /// non-NULL completion timestamp as a short-circuit signal so
+    /// a re-trigger of `runBackfillKchatChannel` becomes a cheap
+    /// "already done" no-op rather than a full re-walk.
+    pub fn mark_kchat_backfill_complete(&self, source_id: &SourceId) -> Result<()> {
+        let id_str = source_id.to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let updated = conn
+            .execute(
+                "UPDATE sources
+                 SET kchat_backfill_completed_at = ?2
+                 WHERE id = ?1",
+                params![id_str, now],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        if updated == 0 {
+            return Err(Error::Database(format!(
+                "mark_kchat_backfill_complete: no source row for id={id_str}"
+            )));
+        }
+        Ok(())
     }
 
     /// Read back the AEAD-encrypted columns of a chunk row, for

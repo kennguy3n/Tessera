@@ -2326,6 +2326,306 @@ pub fn bridge_log_kchat_post_deleted(
     Ok(())
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Block C Task 4 (Phase 13) — KChat historical backfill bridge surface
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// JS-facing view of [`SourceManager::kchat_backfill_state`].
+///
+/// `outcome` is one of `idle` / `unlinked` / `access_revoked` and
+/// determines which other fields are meaningful:
+///
+/// - `idle`: `source_id` is populated. `oldest_post_id` is the
+///   persisted cursor (NULL on first call) and `completed_at` is
+///   the RFC3339 completion sentinel (NULL when the walk needs
+///   more pages). The orchestrator uses `completed_at != null`
+///   to short-circuit an already-completed walk.
+/// - `unlinked`: the cache_dir does not correspond to a registered
+///   KChat source. The orchestrator treats this as a no-op.
+/// - `access_revoked`: the source exists but is revoked. The
+///   orchestrator must NOT walk it — doing so would re-create the
+///   chunks the cryptoshred destroyed.
+#[derive(Debug)]
+#[napi(object)]
+pub struct KchatBackfillStateInfo {
+    pub outcome: String,
+    pub source_id: Option<String>,
+    pub oldest_post_id: Option<String>,
+    pub completed_at: Option<String>,
+}
+
+/// JS-facing view of [`SourceManager::ingest_kchat_backfill_page`].
+///
+/// `outcome` is one of `ingested` / `unlinked` / `access_revoked`.
+/// On `ingested`, the per-page counters break down what the page
+/// did at the substrate (newly-indexed vs. already-known vs.
+/// skipped due to mid-walk revocation). `oldest_post_id_in_page`
+/// is the cursor the substrate advanced to (None on empty pages).
+#[derive(Debug)]
+#[napi(object)]
+pub struct KchatBackfillIngestOutcomeInfo {
+    pub outcome: String,
+    pub source_id: Option<String>,
+    pub posts_ingested: u32,
+    pub posts_unchanged: u32,
+    pub posts_skipped_revoked: u32,
+    pub oldest_post_id_in_page: Option<String>,
+}
+
+/// JS-facing view of
+/// [`SourceManager::mark_kchat_backfill_complete`].
+#[derive(Debug)]
+#[napi(object)]
+pub struct KchatBackfillCompletionOutcomeInfo {
+    pub outcome: String,
+    pub source_id: Option<String>,
+}
+
+/// Block C Task 4 (Phase 13): read the persisted backfill state
+/// for a KChat channel. The renderer / orchestrator uses this to
+/// decide whether to start, resume, or skip the walk.
+#[napi]
+pub fn bridge_get_kchat_backfill_state(cache_dir: String) -> napi::Result<KchatBackfillStateInfo> {
+    use tessera_sources::manager::KchatBackfillState;
+    let s = state()?;
+    let manager = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(format!("source manager poisoned: {e}")))?;
+    let state = manager
+        .kchat_backfill_state(&cache_dir)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(match state {
+        KchatBackfillState::Idle {
+            source_id,
+            oldest_post_id,
+            completed_at,
+        } => KchatBackfillStateInfo {
+            outcome: "idle".to_string(),
+            source_id: Some(source_id.to_string()),
+            oldest_post_id,
+            completed_at,
+        },
+        KchatBackfillState::Unlinked => KchatBackfillStateInfo {
+            outcome: "unlinked".to_string(),
+            source_id: None,
+            oldest_post_id: None,
+            completed_at: None,
+        },
+        KchatBackfillState::AccessRevoked { source_id } => KchatBackfillStateInfo {
+            outcome: "access_revoked".to_string(),
+            source_id: Some(source_id.to_string()),
+            oldest_post_id: None,
+            completed_at: None,
+        },
+    })
+}
+
+/// Block C Task 4 (Phase 13): ingest one page of historical KChat
+/// posts. Each input in `page` must be in REST-returned order
+/// (newest-first); the substrate advances the persisted cursor to
+/// the OLDEST post id in the page.
+///
+/// The orchestrator calls this once per `getPostsForChannel(...)`
+/// response. The page must already be size-bounded by the
+/// orchestrator (KChat's `per_page` cap of 200) — this bridge does
+/// NOT impose its own per-page cap so a test that drives the
+/// substrate directly with a synthetic 1k-row page still works.
+/// The cumulative-row safety cap (50_000 posts/walk) lives in the
+/// orchestrator where the REST loop runs.
+#[napi]
+pub fn bridge_ingest_kchat_backfill_page(
+    cache_dir: String,
+    page: Vec<KchatPostIngestInputInfo>,
+) -> napi::Result<KchatBackfillIngestOutcomeInfo> {
+    use tessera_sources::manager::KchatBackfillIngestOutcome;
+    let s = state()?;
+    let manager = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(format!("source manager poisoned: {e}")))?;
+    let inputs: Vec<_> = page.iter().map(build_post_ingest_input).collect();
+    let outcome = manager
+        .ingest_kchat_backfill_page(&cache_dir, &inputs)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(match outcome {
+        KchatBackfillIngestOutcome::Ingested {
+            source_id,
+            posts_ingested,
+            posts_unchanged,
+            posts_skipped_revoked,
+            oldest_post_id_in_page,
+        } => KchatBackfillIngestOutcomeInfo {
+            outcome: "ingested".to_string(),
+            source_id: Some(source_id.to_string()),
+            posts_ingested,
+            posts_unchanged,
+            posts_skipped_revoked,
+            oldest_post_id_in_page,
+        },
+        KchatBackfillIngestOutcome::Unlinked => KchatBackfillIngestOutcomeInfo {
+            outcome: "unlinked".to_string(),
+            source_id: None,
+            posts_ingested: 0,
+            posts_unchanged: 0,
+            posts_skipped_revoked: 0,
+            oldest_post_id_in_page: None,
+        },
+        KchatBackfillIngestOutcome::AccessRevoked { source_id } => KchatBackfillIngestOutcomeInfo {
+            outcome: "access_revoked".to_string(),
+            source_id: Some(source_id.to_string()),
+            posts_ingested: 0,
+            posts_unchanged: 0,
+            posts_skipped_revoked: 0,
+            oldest_post_id_in_page: None,
+        },
+    })
+}
+
+/// Block C Task 4 (Phase 13): mark the backfill walk complete.
+/// Called by the orchestrator when the REST page returns
+/// `prev_post_id == null` (the server says "there are no posts
+/// older than the current cursor").
+#[napi]
+pub fn bridge_mark_kchat_backfill_complete(
+    cache_dir: String,
+) -> napi::Result<KchatBackfillCompletionOutcomeInfo> {
+    use tessera_sources::manager::KchatBackfillCompletionOutcome;
+    let s = state()?;
+    let manager = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(format!("source manager poisoned: {e}")))?;
+    let outcome = manager
+        .mark_kchat_backfill_complete(&cache_dir)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(match outcome {
+        KchatBackfillCompletionOutcome::Completed { source_id } => {
+            KchatBackfillCompletionOutcomeInfo {
+                outcome: "completed".to_string(),
+                source_id: Some(source_id.to_string()),
+            }
+        }
+        KchatBackfillCompletionOutcome::Unlinked => KchatBackfillCompletionOutcomeInfo {
+            outcome: "unlinked".to_string(),
+            source_id: None,
+        },
+        KchatBackfillCompletionOutcome::AccessRevoked { source_id } => {
+            KchatBackfillCompletionOutcomeInfo {
+                outcome: "access_revoked".to_string(),
+                source_id: Some(source_id.to_string()),
+            }
+        }
+    })
+}
+
+/// Block C Task 4 (Phase 13): record a `KchatBackfillStarted`
+/// audit row when the orchestrator kicks off (or resumes) a walk.
+/// `resume_from_post_id` is the persisted cursor at start time
+/// (NULL on a fresh walk) so the audit timeline shows whether the
+/// run was a resume.
+#[napi]
+pub fn bridge_log_kchat_backfill_started(
+    channel_id: String,
+    source_id: String,
+    resume_from_post_id: Option<String>,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_backfill_started(
+            &channel_id,
+            &source_id,
+            resume_from_post_id.as_deref(),
+        );
+    }
+    Ok(())
+}
+
+/// Block C Task 4 (Phase 13): record a `KchatBackfillPageIngested`
+/// audit row after each page the orchestrator processes. The page
+/// number is 1-based so the audit timeline reads "page 1, page 2…"
+/// rather than "page 0, page 1…".
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn bridge_log_kchat_backfill_page_ingested(
+    channel_id: String,
+    source_id: String,
+    page_number: u32,
+    posts_ingested: u32,
+    posts_unchanged: u32,
+    posts_skipped_revoked: u32,
+    oldest_post_id_in_page: Option<String>,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_backfill_page_ingested(
+            &channel_id,
+            &source_id,
+            page_number,
+            posts_ingested,
+            posts_unchanged,
+            posts_skipped_revoked,
+            oldest_post_id_in_page.as_deref(),
+        );
+    }
+    Ok(())
+}
+
+/// Block C Task 4 (Phase 13): record a `KchatBackfillCompleted`
+/// audit row when the orchestrator observes the end-of-history
+/// signal (REST page returns `prev_post_id == null`).
+#[napi]
+pub fn bridge_log_kchat_backfill_completed(
+    channel_id: String,
+    source_id: String,
+    pages_walked: u32,
+    total_posts_ingested: u32,
+    total_posts_unchanged: u32,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_backfill_completed(
+            &channel_id,
+            &source_id,
+            pages_walked,
+            total_posts_ingested,
+            total_posts_unchanged,
+        );
+    }
+    Ok(())
+}
+
+/// Block C Task 4 (Phase 13): record a `KchatBackfillAborted`
+/// audit row when the orchestrator stops the walk early (mid-walk
+/// revocation, safety-cap hit, network error, or unlinked
+/// source). `reason` is a short machine-readable tag:
+///
+/// - `"access_revoked"`: source flipped to revoked between pages
+/// - `"safety_cap"`: cumulative posts-walked hit the orchestrator's
+///   per-channel cap (50_000)
+/// - `"unlinked"`: source row disappeared between pages
+/// - `"error"`: REST or substrate error
+#[napi]
+pub fn bridge_log_kchat_backfill_aborted(
+    channel_id: String,
+    source_id: String,
+    reason: String,
+    pages_walked: u32,
+    total_posts_ingested: u32,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_backfill_aborted(
+            &channel_id,
+            &source_id,
+            &reason,
+            pages_walked,
+            total_posts_ingested,
+        );
+    }
+    Ok(())
+}
+
 /// Renderer-facing audit row. The Rust `AuditEvent` carries a
 /// strongly-typed `AuditEventType` enum and a `DateTime<Utc>`;
 /// neither survives the napi boundary cleanly, so we serialise the
