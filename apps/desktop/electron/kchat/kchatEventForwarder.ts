@@ -93,6 +93,7 @@
  */
 
 import * as fs from "fs/promises";
+import * as path from "path";
 import { BrowserWindow } from "electron";
 import type { NativeBridge } from "../appState";
 import type { KchatClient } from "./kchatClient";
@@ -795,15 +796,44 @@ export class KchatEventForwarder {
           // index call (the substrate's content-hash dedupe
           // will short-circuit if the file hasn't changed,
           // since KChat content is immutable per object-id).
-          try {
-            await fs.access(`${cacheDir}/${recorded}`);
-            finalName = recorded;
-          } catch {
-            // Bytes missing on disk — fall through and
-            // re-download. `seenNames` already contains
-            // `recorded`; remove it so the dedupe logic
-            // doesn't suffix the re-download into a
-            // different name.
+          //
+          // Defence-in-depth containment: the manifest is a
+          // human-readable sidecar JSON file. While we write it
+          // with already-sanitised names, an attacker with
+          // filesystem access could tamper with it to inject
+          // an escaping path (`..`, absolute prefix, etc.). We
+          // re-validate the recorded name against `cacheDir`
+          // BEFORE calling `fs.access` so we don't even probe
+          // the existence of a path outside the cache directory
+          // (probing alone is an information leak). This mirrors
+          // the IPC handler's containment check on the same
+          // manifest-supplied value.
+          const resolvedCacheDir = path.resolve(cacheDir);
+          const recordedPath = path.resolve(cacheDir, recorded);
+          if (
+            recordedPath !== resolvedCacheDir &&
+            recordedPath.startsWith(resolvedCacheDir + path.sep)
+          ) {
+            try {
+              await fs.access(recordedPath);
+              finalName = recorded;
+            } catch {
+              // Bytes missing on disk — fall through and
+              // re-download. `seenNames` already contains
+              // `recorded`; remove it so the dedupe logic
+              // doesn't suffix the re-download into a
+              // different name.
+              seenNames.delete(recorded);
+            }
+          } else {
+            // Manifest entry escapes `cacheDir`. Refuse the
+            // fast-path entirely — fall through to the download
+            // path so `downloadKchatFileToCache` re-runs the
+            // full sanitise+dedupe+containment pipeline and
+            // (almost certainly) lands on a different,
+            // contained name. Drop the tampered name from
+            // `seenNames` so the dedupe logic doesn't suffix
+            // the legitimate download.
             seenNames.delete(recorded);
           }
         }
@@ -818,8 +848,12 @@ export class KchatEventForwarder {
           if (!result.wrote || result.finalName === null) {
             // Containment-check rejection (the server-supplied
             // name escaped `cacheDir` even after sanitisation
-            // and dedupe). Audit-log the rejection so operators
-            // see a misbehaving server, then short-circuit.
+            // and dedupe). Audit-log the OFFENDING sanitised
+            // name (preserved in `result.finalName` even on
+            // rejection) so operators see exactly which name
+            // escaped, then short-circuit. The `?? ""`
+            // fallback covers the unreachable case where the
+            // syncer couldn't even construct a basename.
             try {
               bridge.bridgeLogKchatFileDownloaded(
                 channelId,

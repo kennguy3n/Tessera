@@ -935,8 +935,10 @@ export function registerKchatHandlers(): void {
             { page, idx },
           );
           if (!result.wrote || result.finalName === null) {
-            // Containment-check rejection — audit-log so operators
-            // can see a misbehaving server, then continue to the
+            // Containment-check rejection — audit-log the OFFENDING
+            // sanitised name (preserved in `finalName` even on
+            // rejection) so operators can see exactly which
+            // server-supplied name escaped, then continue to the
             // next file rather than aborting the whole sync.
             bridge.bridgeLogKchatFileDownloaded(
               id,

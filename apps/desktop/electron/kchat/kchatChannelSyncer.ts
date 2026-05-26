@@ -231,29 +231,33 @@ export function _test_channelMutexCount(): number {
 export interface DownloadKchatFileResult {
   /**
    * `true` when the bytes were written to disk in this call.
-   * `false` when the file was already on disk (manifest fast-path,
-   * containment check, etc.) or a containment violation forced a
-   * skip.
+   * `false` when a containment-check rejection forced a skip.
    */
   wrote: boolean;
   /**
-   * The on-disk basename the bytes landed under. Reflects the
-   * sanitised + deduped form (e.g. `report-fid123.pdf` when a
-   * basename collision with another file in `seenNames` was
-   * resolved). Set even when `wrote === false`: in the fast-path
-   * skip we still report the recorded name so the caller can
-   * update its manifest / `seenNames` / `currentFiles` maps.
+   * The sanitised + deduped basename we attempted (e.g.
+   * `report-fid123.pdf` after a basename collision was resolved).
    *
-   * `null` indicates a containment-check rejection — the
-   * server-supplied name escaped the cache dir and the caller
-   * MUST NOT treat it as written.
+   * `null` ONLY in the (currently unreachable) edge case where a
+   * basename cannot be constructed at all. On the happy path AND
+   * on containment rejection this is the actual basename so the
+   * caller can record it in audit logs — in particular on
+   * rejection the offending name is preserved as forensic
+   * evidence of a misbehaving server.
    */
   finalName: string | null;
   /**
-   * Byte length of the bytes written (or `0` for fast-path / skip).
+   * Byte length of the bytes written (or `0` for skip).
    * The caller forwards this to the audit row.
    */
   bytesWritten: number;
+  /**
+   * `true` iff `wrote === false` because the sanitised path
+   * resolved outside `cacheDir`. The caller should audit-log
+   * `finalName` (the offending basename) as a forensic record of
+   * the rejection rather than discarding the diagnostic.
+   */
+  containmentRejected: boolean;
 }
 
 /**
@@ -334,9 +338,16 @@ export async function downloadKchatFileToCache(
     targetPath === resolvedCacheDir ||
     !targetPath.startsWith(resolvedCacheDir + path.sep)
   ) {
-    // Sanitised name still escaped — refuse to write. The caller
-    // surfaces this via its own audit / logging path.
-    return { wrote: false, finalName: null, bytesWritten: 0 };
+    // Sanitised name still escaped — refuse to write. Return the
+    // offending basename (NOT `null`) so the caller can record it
+    // in the audit log: an empty string would lose the only
+    // forensic clue about which server-supplied name escaped.
+    return {
+      wrote: false,
+      finalName,
+      bytesWritten: 0,
+      containmentRejected: true,
+    };
   }
 
   const bytes = await deps.downloadFile(fi.id);
@@ -347,5 +358,10 @@ export async function downloadKchatFileToCache(
   // the throw and surfaces it; we don't add to `seenNames` until
   // the bytes are durably on disk.
   seenNames.add(finalName);
-  return { wrote: true, finalName, bytesWritten: bytes.byteLength };
+  return {
+    wrote: true,
+    finalName,
+    bytesWritten: bytes.byteLength,
+    containmentRejected: false,
+  };
 }

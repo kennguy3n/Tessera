@@ -119,6 +119,11 @@ import {
   KCHAT_EVENT_CHANNEL,
   KCHAT_STATUS_CHANNEL,
 } from "../kchat/kchatEventForwarder";
+import {
+  manifestPathFor,
+  writeManifest,
+} from "../kchat/kchatChannelSyncer";
+import { kchatChannelCacheDir } from "../kchat/kchatPaths";
 import type {
   KchatClient,
   KchatStatusListener,
@@ -953,4 +958,82 @@ describe("KchatEventForwarder", () => {
     expect(bridgeMock!.bridgeIndexKchatFile).toHaveBeenCalledTimes(2);
     fwd.dispose();
   });
+
+  it("rejects manifest fast-path when the recorded name escapes cacheDir (defence-in-depth containment)", async () => {
+    // Block B Task 2 defence-in-depth: the manifest is a
+    // human-readable sidecar JSON. If an attacker with
+    // filesystem access tampers with it to inject an escaping
+    // path (e.g. `../../etc/passwd`), the forwarder's
+    // fast-path must NOT call `fs.access` on that path (probing
+    // a path outside the cache directory is an information
+    // leak) and MUST NOT pass the tampered name to the bridge.
+    // Falling through to the download path is the safe
+    // behaviour — `downloadKchatFileToCache` re-derives a
+    // sanitised, contained basename from the legitimate
+    // server-supplied `fi.name`.
+    const channelId = "chan-tampered-manifest";
+    const cacheDir = kchatChannelCacheDir(channelId);
+    await nodeFs.promises.mkdir(cacheDir, { recursive: true });
+    // Pre-seed the manifest with an escaping path. The
+    // manifest writer (under our control) would NEVER produce
+    // this, but a malicious filesystem actor could.
+    await writeManifest(cacheDir, {
+      version: 1,
+      channelId,
+      files: { "file-TAMPER-001": "../../../etc/passwd" },
+    });
+
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    bridgeMock!.bridgeIndexKchatFile.mockReturnValue({
+      wasLinked: true,
+      indexed: true,
+      sourceId: "src-uuid",
+    });
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "file_added",
+        data: { file_id: "file-TAMPER-001" },
+        broadcast: {
+          omit_users: {},
+          channel_id: channelId,
+          team_id: "t",
+          user_id: "u",
+        },
+      }),
+    );
+    await waitForCondition(
+      () => bridgeMock!.bridgeIndexKchatFile.mock.calls.length > 0,
+    );
+
+    // The fast-path was rejected, so the syncer re-derived a
+    // sanitised basename and called `downloadFile`.
+    expect(client.downloadFile).toHaveBeenCalledWith("file-TAMPER-001");
+    // The bridge was called with the legitimate sanitised
+    // basename — NEVER the tampered escaping path.
+    expect(bridgeMock!.bridgeIndexKchatFile).toHaveBeenCalledTimes(1);
+    const [, basename] =
+      bridgeMock!.bridgeIndexKchatFile.mock.calls[0];
+    expect(basename).toBe("file-TAMPER-001.txt");
+    expect(basename).not.toContain("..");
+    expect(basename).not.toContain("/");
+    expect(basename).not.toContain("\\");
+    // The manifest now records the legitimate sanitised name
+    // (the tampered entry was replaced).
+    const finalManifest = JSON.parse(
+      await nodeFs.promises.readFile(manifestPathFor(cacheDir), "utf-8"),
+    ) as { files: Record<string, string> };
+    expect(finalManifest.files["file-TAMPER-001"]).toBe(
+      "file-TAMPER-001.txt",
+    );
+    fwd.dispose();
+  });
+
 });
