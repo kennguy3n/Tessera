@@ -113,6 +113,23 @@ const bridgeMock = {
     indexed: false,
     sourceId: "",
   })),
+  // Block B Task 3 (Phase 11): the connect/disconnect IPC
+  // handlers call these on the substrate so the ACL projection
+  // knows which user id to compare against on the next
+  // membership refresh. The full ACL surface
+  // (`bridgeRefreshKchatAcl`, `bridgeRevokeKchatSource`, audit
+  // helpers) is exercised by the forwarder tests; here we only
+  // care that connect/disconnect set/clear the principal.
+  bridgeSetKchatPrincipal: vi.fn(),
+  bridgeClearKchatPrincipal: vi.fn(),
+  bridgeRefreshKchatAcl: vi.fn(() => ({
+    outcome: "granted",
+    memberCount: 0,
+    principalPresent: true,
+  })),
+  bridgeRevokeKchatSource: vi.fn(() => ({ outcome: "revoked" })),
+  bridgeLogKchatAclRefreshed: vi.fn(),
+  bridgeLogKchatChannelAccessRevoked: vi.fn(),
 };
 
 // `KchatAuthService` stub. `getClient()` returns an object with the
@@ -263,6 +280,11 @@ describe("kchat:connect", () => {
     );
     expect(bridgeMock.bridgeLogKchatConnected).toHaveBeenCalledWith(
       "https://kchat.example.com",
+      "user1234567890abcdefgh",
+    );
+    // Block B Task 3 (Phase 11): the substrate must learn whose
+    // membership matters for ACL projection on the next refresh.
+    expect(bridgeMock.bridgeSetKchatPrincipal).toHaveBeenCalledWith(
       "user1234567890abcdefgh",
     );
     expect(JSON.stringify(out)).not.toContain("PAT-secret");
@@ -614,12 +636,22 @@ describe("kchat:disconnect", () => {
     expect(bridgeMock.bridgeLogKchatDisconnected).toHaveBeenCalledWith(
       "user1234567890abcdefgh",
     );
+    // Block B Task 3 (Phase 11): clearing the principal prevents
+    // a stale id from being compared against future membership
+    // refreshes after the user has disconnected.
+    expect(bridgeMock.bridgeClearKchatPrincipal).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT audit when nothing was connected", async () => {
     serviceMock.disconnect.mockReturnValue(null);
     await handler("kchat:disconnect")(EVENT);
     expect(bridgeMock.bridgeLogKchatDisconnected).not.toHaveBeenCalled();
+    // Block B Task 3 (Phase 11): when there was no connection
+    // to drop, the principal was never set in this session, so
+    // the handler skips the bridge-clear too. This mirrors the
+    // audit-row gate on the same branch — both side-effects are
+    // gated on `userId` being non-null.
+    expect(bridgeMock.bridgeClearKchatPrincipal).not.toHaveBeenCalled();
   });
 });
 

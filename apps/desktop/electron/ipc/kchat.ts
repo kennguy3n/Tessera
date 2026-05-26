@@ -524,7 +524,26 @@ export function registerKchatHandlers(): void {
       try {
         const user = await svc.connect(tok, url);
         const bridge = getBridge();
-        if (bridge) bridge.bridgeLogKchatConnected(url, user.id);
+        if (bridge) {
+          bridge.bridgeLogKchatConnected(url, user.id);
+          // Block B Task 3 (Phase 11): tell the substrate which
+          // KChat user id is locally authenticated so subsequent
+          // membership refreshes can project status correctly.
+          // We swallow errors here — failure to set the principal
+          // shouldn't abort the connect flow (the user is still
+          // connected, just the ACL projection treats the next
+          // refresh as `no_principal`). The audit row above has
+          // already landed so an operator can see the connect
+          // succeeded even if the principal record didn't.
+          try {
+            bridge.bridgeSetKchatPrincipal(user.id);
+          } catch (err) {
+            console.error(
+              "[kchat] bridgeSetKchatPrincipal failed:",
+              err,
+            );
+          }
+        }
         // Sanitised user view (no roles bitfield, no last_picture_update —
         // the renderer only needs the identity fields to render the
         // "Connected as …" badge).
@@ -546,7 +565,25 @@ export function registerKchatHandlers(): void {
     const userId = svc.disconnect();
     if (userId) {
       const bridge = getBridge();
-      if (bridge) bridge.bridgeLogKchatDisconnected(userId);
+      if (bridge) {
+        bridge.bridgeLogKchatDisconnected(userId);
+        // Block B Task 3 (Phase 11): clear the substrate's
+        // singleton principal row so subsequent
+        // `bridgeRefreshKchatAcl` calls (e.g. a still-in-flight
+        // WS event arriving after disconnect) return
+        // `no_principal` instead of evaluating membership
+        // against a stale id. Swallowing the error matches the
+        // connect path — the audit row above is the
+        // operator-visible signal of the disconnect.
+        try {
+          bridge.bridgeClearKchatPrincipal();
+        } catch (err) {
+          console.error(
+            "[kchat] bridgeClearKchatPrincipal failed:",
+            err,
+          );
+        }
+      }
     }
     return { disconnected: true };
   });

@@ -206,6 +206,111 @@ pub fn index_kchat_file(
     }
 }
 
+/// JS-facing pass-through of one entry in the KChat channel member
+/// roster the Node-side forwarder hands to
+/// [`refresh_kchat_acl`]. Mirrors the wire shape of
+/// `KchatChannelMember` so the napi bridge can hand the list
+/// through without an extra adapter struct on the Node side.
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct KchatAclMemberInfo {
+    pub user_id: String,
+    pub role: String,
+}
+
+/// JS-facing outcome of a `bridge_refresh_kchat_acl` call.
+///
+/// `outcome` is the snake_case form of the manager's
+/// `KchatAclRefreshOutcome` variant: `granted` / `regranted` /
+/// `revoked` / `unlinked` / `no_principal`. The Node side records
+/// this verbatim in the `KchatAclRefreshed` audit row so an
+/// operator can see exactly which projection rule fired.
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct KchatAclRefreshOutcomeInfo {
+    pub outcome: String,
+    pub member_count: i64,
+    pub principal_present: bool,
+}
+
+/// JS-facing outcome of a `bridge_revoke_kchat_source` call.
+/// `outcome` is the snake_case form of the manager's
+/// `KchatRevokeOutcome`: `revoked` / `already_revoked` / `unlinked`.
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct KchatRevokeOutcomeInfo {
+    pub outcome: String,
+}
+
+/// Refresh a KChat channel's ACL roster + project status (Block B
+/// Task 3, Phase 11). See `SourceManager::refresh_kchat_acl` for
+/// the full semantics. The Node-side `KchatEventForwarder` calls
+/// this after every membership-change event.
+pub fn refresh_kchat_acl(
+    manager: &SourceManager,
+    cache_dir: &str,
+    members: &[KchatAclMemberInfo],
+) -> BridgeResult<KchatAclRefreshOutcomeInfo> {
+    use tessera_sources::manager::{KchatAclMember, KchatAclRefreshOutcome};
+    let internal: Vec<KchatAclMember> = members
+        .iter()
+        .map(|m| KchatAclMember {
+            user_id: m.user_id.clone(),
+            role: m.role.clone(),
+        })
+        .collect();
+    let outcome = manager
+        .refresh_kchat_acl(cache_dir, &internal)
+        .map_err(BridgeError::Core)?;
+    let (outcome_str, principal_present) = match outcome {
+        KchatAclRefreshOutcome::Granted => ("granted", true),
+        KchatAclRefreshOutcome::Regranted => ("regranted", true),
+        KchatAclRefreshOutcome::Revoked => ("revoked", false),
+        KchatAclRefreshOutcome::Unlinked => ("unlinked", false),
+        KchatAclRefreshOutcome::NoPrincipal => ("no_principal", false),
+    };
+    Ok(KchatAclRefreshOutcomeInfo {
+        outcome: outcome_str.to_string(),
+        member_count: internal.len() as i64,
+        principal_present,
+    })
+}
+
+/// Explicitly revoke a KChat-channel source (Block B Task 3,
+/// Phase 11). Used for `channel_archived` / `channel_deleted` /
+/// self-`user_removed` events where there is no roster to fetch.
+pub fn revoke_kchat_source(
+    manager: &SourceManager,
+    cache_dir: &str,
+) -> BridgeResult<KchatRevokeOutcomeInfo> {
+    use tessera_sources::manager::KchatRevokeOutcome;
+    let outcome = manager
+        .revoke_kchat_source(cache_dir)
+        .map_err(BridgeError::Core)?;
+    let outcome_str = match outcome {
+        KchatRevokeOutcome::Revoked => "revoked",
+        KchatRevokeOutcome::AlreadyRevoked => "already_revoked",
+        KchatRevokeOutcome::Unlinked => "unlinked",
+    };
+    Ok(KchatRevokeOutcomeInfo {
+        outcome: outcome_str.to_string(),
+    })
+}
+
+/// Set the locally-authenticated KChat principal user id on the
+/// substrate (Block B Task 3, Phase 11). Called by the Node-side
+/// `kchat:connect` IPC handler after `/users/me` returns.
+pub fn set_kchat_principal(manager: &SourceManager, user_id: &str) -> BridgeResult<()> {
+    manager
+        .set_kchat_principal(user_id)
+        .map_err(BridgeError::Core)
+}
+
+/// Clear the persisted KChat principal on `kchat:disconnect`.
+pub fn clear_kchat_principal(manager: &SourceManager) -> BridgeResult<()> {
+    manager.clear_kchat_principal().map_err(BridgeError::Core)
+}
+
 pub fn list_sources(manager: &SourceManager) -> BridgeResult<Vec<SourceInfo>> {
     let sources = manager.list_sources().map_err(BridgeError::Core)?;
     Ok(sources.iter().map(SourceInfo::from).collect())

@@ -202,6 +202,20 @@ pub enum SourceStatus {
     Indexed,
     Error,
     Disconnected,
+    /// The local user has lost authorisation to read this source.
+    /// Block B Task 3 (Phase 11) introduces this state for
+    /// `SourceType::Kchat` rows where the most recent ACL
+    /// projection (`SourceManager::refresh_kchat_acl`) did not
+    /// include the locally-authenticated KChat principal, or where
+    /// the channel was archived / deleted server-side. The source
+    /// row is retained for forensics (audit trail, citation
+    /// resolution against historical artifacts) but every
+    /// retrieval path filters revoked sources out so a user who
+    /// loses access to a KChat channel cannot search content that
+    /// was indexed while they still had access. Re-adding the
+    /// principal back to the channel transitions the source back
+    /// to `Indexed` via the same `refresh_kchat_acl` codepath.
+    AccessRevoked,
 }
 
 impl std::fmt::Display for SourceType {
@@ -228,6 +242,31 @@ impl std::fmt::Display for SourceStatus {
             Self::Indexed => write!(f, "indexed"),
             Self::Error => write!(f, "error"),
             Self::Disconnected => write!(f, "disconnected"),
+            Self::AccessRevoked => write!(f, "access_revoked"),
+        }
+    }
+}
+
+impl SourceStatus {
+    /// SQL literal form of the JSON-serialised status string.
+    ///
+    /// `SourceStore` persists `status` as `serde_json::to_string`
+    /// output (snake_case with surrounding double quotes), e.g.
+    /// `"indexed"` (9 chars including quotes). Retrieval-side
+    /// filters (FTS5 join, vector cosine load) need the exact
+    /// stored form to express `status != ?` predicates without
+    /// reaching for `serde_json::to_string` at every call site.
+    /// This accessor centralises the mapping so a new variant
+    /// cannot drift between the persisted form and the filter
+    /// predicate.
+    pub fn as_stored_json(&self) -> &'static str {
+        match self {
+            Self::Connected => "\"connected\"",
+            Self::Indexing => "\"indexing\"",
+            Self::Indexed => "\"indexed\"",
+            Self::Error => "\"error\"",
+            Self::Disconnected => "\"disconnected\"",
+            Self::AccessRevoked => "\"access_revoked\"",
         }
     }
 }

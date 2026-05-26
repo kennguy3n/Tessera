@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tessera_core::error::{Error, Result};
-use tessera_core::{SharedConnection, SourceId};
+use tessera_core::{SharedConnection, SourceId, SourceStatus};
 
 use crate::embedding::{EmbeddingProvider, HashTrickEmbedding};
 use crate::hybrid::{HybridSearchConfig, HybridSearchConfigInput};
@@ -33,6 +33,80 @@ pub struct KchatChannelAddOutcome {
     /// an existing `SourceType::Kchat` row with the same `path` was
     /// reindexed in place.
     pub newly_created: bool,
+}
+
+/// One entry of the authoritative KChat-channel member roster the
+/// Node-side forwarder passes to
+/// [`SourceManager::refresh_kchat_acl`]. Mirrors the wire shape of
+/// `KchatChannelMember` so the napi bridge can hand the list over
+/// without an extra adapter struct.
+#[derive(Debug, Clone)]
+pub struct KchatAclMember {
+    /// KChat user id (the opaque `id` from `GET /users/me`).
+    pub user_id: String,
+    /// Comma-separated KChat role list, e.g. `"channel_user channel_admin"`.
+    /// The substrate does not interpret it but persists it for
+    /// forensics + future per-role retrieval filters.
+    pub role: String,
+}
+
+/// Outcome of a [`SourceManager::refresh_kchat_acl`] call.
+///
+/// Block B Task 3 (Phase 11) splits the result into four cases so
+/// callers (the napi bridge + audit logger) can record exactly
+/// what happened without re-querying the store. The cases are
+/// mutually exclusive and exhaustive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KchatAclRefreshOutcome {
+    /// The principal is in the refreshed roster AND the source
+    /// row was in any non-revoked state. Status left unchanged
+    /// (still `Indexed` / `Indexing` / etc.), the ACL row-set was
+    /// replaced atomically. `principal_present == true`.
+    Granted,
+    /// The principal is in the refreshed roster AND the source
+    /// row was previously `AccessRevoked` (e.g. the user was
+    /// removed and then re-added). Status transitioned from
+    /// `AccessRevoked` back to `Indexed`. The roster was replaced
+    /// atomically. `principal_present == true`.
+    Regranted,
+    /// The principal is NOT in the refreshed roster. Status
+    /// transitioned to `AccessRevoked`. The roster was still
+    /// replaced atomically (so a future re-grant via re-add
+    /// transitions back to `Indexed`). `principal_present == false`.
+    Revoked,
+    /// No `SourceType::Kchat` row exists for the cache_dir the
+    /// caller passed. The roster was NOT persisted (there's no
+    /// source row to attach it to). Returned when the forwarder
+    /// races a membership event against an unlinked channel.
+    Unlinked,
+    /// No `kchat_principal` is set on the substrate side. The
+    /// roster was NOT persisted and the source status was NOT
+    /// touched — flipping every linked source to `AccessRevoked`
+    /// during the brief window between substrate startup and
+    /// `kchat:connect` would flap statuses unnecessarily. The
+    /// forwarder is expected to be a no-op when disconnected
+    /// (which it is), so this case is the defence-in-depth
+    /// fallback for tests + race windows.
+    NoPrincipal,
+}
+
+/// Outcome of a [`SourceManager::revoke_kchat_source`] call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KchatRevokeOutcome {
+    /// The source row transitioned from a non-revoked state to
+    /// `AccessRevoked`.
+    Revoked,
+    /// The source row was already `AccessRevoked` — no status
+    /// change applied. The audit row is still emitted by the
+    /// caller so operators see the revoke event in the trail
+    /// (otherwise a repeat `channel_archived` would silently drop
+    /// the operator's clue that the channel was archived twice).
+    AlreadyRevoked,
+    /// No `SourceType::Kchat` row exists for the cache_dir the
+    /// caller passed. Returned when the forwarder races a
+    /// `channel_archived` / `channel_deleted` event against a
+    /// channel the user never linked as a source.
+    Unlinked,
 }
 
 pub struct SourceManager {
@@ -494,6 +568,150 @@ impl SourceManager {
             .indexer
             .index_single_file(&source.id, &target, &self.store)?;
         Ok(Some((source.id, outcome)))
+    }
+
+    /// Set the locally-authenticated KChat principal user id.
+    ///
+    /// Called by the Node-side `kchat:connect` IPC handler after
+    /// the `/users/me` probe succeeds. The substrate persists the
+    /// id in a singleton `kchat_principal` row so subsequent
+    /// `refresh_kchat_acl` calls can check membership without
+    /// re-threading the id through every event.
+    ///
+    /// Block B Task 3 (Phase 11).
+    pub fn set_kchat_principal(&self, user_id: &str) -> Result<()> {
+        self.store.set_kchat_principal(user_id)
+    }
+
+    /// Return the persisted KChat principal user id, if any.
+    pub fn get_kchat_principal(&self) -> Result<Option<String>> {
+        self.store.get_kchat_principal()
+    }
+
+    /// Clear the principal singleton on `kchat:disconnect`.
+    pub fn clear_kchat_principal(&self) -> Result<()> {
+        self.store.clear_kchat_principal()
+    }
+
+    /// Refresh the cached ACL roster for a KChat-channel source and
+    /// project the result onto the source's status.
+    ///
+    /// The Node-side `KchatEventForwarder` calls this after every
+    /// membership-change WebSocket event (`user_added`,
+    /// `user_removed`, `channel_updated`). `members` is the
+    /// authoritative roster fetched from `GET /channels/{id}/members`
+    /// — the substrate does NOT validate it against the KChat
+    /// server, it trusts the Node-side validator (which already
+    /// runs `assertKchatServerObjectId` on each member). The
+    /// roster replaces any previously-cached rows atomically.
+    ///
+    /// Status projection rules (Block B Task 3):
+    ///
+    /// - If the locally-authenticated principal is in `members`
+    ///   AND the source was `AccessRevoked`, transition to
+    ///   `Indexed` (re-grant).
+    /// - If the principal is in `members` AND the source is in
+    ///   any other state, leave the status alone (the indexer
+    ///   may be mid-run, the source may legitimately be in
+    ///   `Error`, etc.). The roster is still replaced.
+    /// - If the principal is NOT in `members`, transition to
+    ///   `AccessRevoked`. Retrieval queries (`search_fts`,
+    ///   `load_embeddings_for_model`, `fetch_chunks_by_ids`)
+    ///   will start filtering the source's chunks out
+    ///   immediately on the next call.
+    /// - If no `kchat_principal` is set, return `NoPrincipal`
+    ///   without touching the source row. Membership refresh
+    ///   races against connect/disconnect would otherwise flap
+    ///   statuses during the brief window where the substrate
+    ///   has not yet been told who the principal is.
+    /// - If no `SourceType::Kchat` source exists for `cache_dir`,
+    ///   return `Unlinked` — the channel was never linked as a
+    ///   corpus source (or has since been unlinked).
+    pub fn refresh_kchat_acl(
+        &self,
+        cache_dir: &str,
+        members: &[KchatAclMember],
+    ) -> Result<KchatAclRefreshOutcome> {
+        let Some(principal) = self.store.get_kchat_principal()? else {
+            return Ok(KchatAclRefreshOutcome::NoPrincipal);
+        };
+
+        let Some(source) = self
+            .store
+            .find_source_by_type_and_path(&tessera_core::SourceType::Kchat, cache_dir)?
+        else {
+            return Ok(KchatAclRefreshOutcome::Unlinked);
+        };
+
+        // Replace the ACL roster first so a concurrent retrieval
+        // query that reaches the membership check sees the
+        // refreshed roster regardless of which side of the status
+        // transition it ran on. Roster replacement is a single
+        // SQLite transaction (DELETE + INSERTs), so concurrent
+        // readers see either the pre- or post-refresh state, never
+        // an empty intermediate.
+        let acl_rows: Vec<(String, String)> = members
+            .iter()
+            .map(|m| (m.user_id.clone(), m.role.clone()))
+            .collect();
+        self.store.replace_kchat_acl(&source.id, &acl_rows)?;
+
+        let principal_present = members.iter().any(|m| m.user_id == principal);
+
+        if !principal_present {
+            if source.status != SourceStatus::AccessRevoked {
+                self.store
+                    .update_source_status(&source.id, SourceStatus::AccessRevoked, None)?;
+            }
+            return Ok(KchatAclRefreshOutcome::Revoked);
+        }
+
+        if source.status == SourceStatus::AccessRevoked {
+            // Principal was re-added after a previous revoke;
+            // restore retrievability. Transition back to `Indexed`
+            // rather than `Connected` — the source was previously
+            // indexed and the corpus chunks are still on disk, so
+            // resuming retrieval is the correct end state.
+            self.store
+                .update_source_status(&source.id, SourceStatus::Indexed, None)?;
+            return Ok(KchatAclRefreshOutcome::Regranted);
+        }
+
+        Ok(KchatAclRefreshOutcome::Granted)
+    }
+
+    /// Explicitly revoke a KChat-channel source.
+    ///
+    /// Called by the Node-side forwarder on `channel_archived` /
+    /// `channel_deleted` / self-`user_removed` events — cases
+    /// where there is no member-list to fetch (the channel is
+    /// gone) but the source must still be soft-deleted from
+    /// retrieval. The ACL roster is left intact for forensics —
+    /// "who else had access at the moment of revocation" is a
+    /// real question operators ask.
+    ///
+    /// Block B Task 3 (Phase 11).
+    pub fn revoke_kchat_source(&self, cache_dir: &str) -> Result<KchatRevokeOutcome> {
+        let Some(source) = self
+            .store
+            .find_source_by_type_and_path(&tessera_core::SourceType::Kchat, cache_dir)?
+        else {
+            return Ok(KchatRevokeOutcome::Unlinked);
+        };
+
+        if source.status == SourceStatus::AccessRevoked {
+            return Ok(KchatRevokeOutcome::AlreadyRevoked);
+        }
+
+        self.store
+            .update_source_status(&source.id, SourceStatus::AccessRevoked, None)?;
+        Ok(KchatRevokeOutcome::Revoked)
+    }
+
+    /// Read the cached ACL roster for a KChat-channel source. Used
+    /// by the renderer's source-detail surface + cargo tests.
+    pub fn list_kchat_acl(&self, source_id: &SourceId) -> Result<Vec<crate::store::KchatAclRow>> {
+        self.store.list_kchat_acl(source_id)
     }
 
     pub fn remove_source(&self, source_id: &SourceId) -> Result<()> {
@@ -993,6 +1211,251 @@ mod tests {
                 "index_kchat_file must reject malicious basename {malicious:?}"
             );
         }
+    }
+
+    // ----------------------------------------------------------------
+    // Block B Task 3 (Phase 11): KChat channel ACL projection
+    // ----------------------------------------------------------------
+
+    fn make_acl_member(user_id: &str, role: &str) -> KchatAclMember {
+        KchatAclMember {
+            user_id: user_id.to_string(),
+            role: role.to_string(),
+        }
+    }
+
+    #[test]
+    fn refresh_kchat_acl_no_principal_returns_no_principal_without_touching_source() {
+        // Pre-condition: substrate has no `kchat_principal` set
+        // (no `kchat:connect` happened yet). refresh_kchat_acl
+        // must NOT auto-revoke every linked source; it returns
+        // NoPrincipal and leaves status untouched so the
+        // forwarder remains effectively a no-op.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("f.txt"), "x").unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager
+            .add_kchat_channel(dir.path().to_str().unwrap())
+            .unwrap();
+
+        let outcome = manager
+            .refresh_kchat_acl(
+                dir.path().to_str().unwrap(),
+                &[make_acl_member("user-A", "channel_user")],
+            )
+            .unwrap();
+        assert_eq!(outcome, KchatAclRefreshOutcome::NoPrincipal);
+        // Status untouched — should still be whatever
+        // add_kchat_channel left it (Indexed for a successful run).
+        let refreshed = manager.get_source(&added.source.id).unwrap();
+        assert_eq!(refreshed.status, added.source.status);
+    }
+
+    #[test]
+    fn refresh_kchat_acl_unlinked_when_no_source_row() {
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.set_kchat_principal("principal").unwrap();
+        let outcome = manager
+            .refresh_kchat_acl(
+                "/no/such/cache/dir",
+                &[make_acl_member("principal", "channel_user")],
+            )
+            .unwrap();
+        assert_eq!(outcome, KchatAclRefreshOutcome::Unlinked);
+    }
+
+    #[test]
+    fn refresh_kchat_acl_principal_present_returns_granted_and_persists_roster() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("f.txt"), "x").unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager
+            .add_kchat_channel(dir.path().to_str().unwrap())
+            .unwrap();
+        manager.set_kchat_principal("principal").unwrap();
+
+        let outcome = manager
+            .refresh_kchat_acl(
+                dir.path().to_str().unwrap(),
+                &[
+                    make_acl_member("principal", "channel_user channel_admin"),
+                    make_acl_member("alice", "channel_user"),
+                ],
+            )
+            .unwrap();
+        assert_eq!(outcome, KchatAclRefreshOutcome::Granted);
+
+        // Status unchanged (still whatever add_kchat_channel left it).
+        let refreshed = manager.get_source(&added.source.id).unwrap();
+        assert_eq!(refreshed.status, added.source.status);
+
+        // Roster persisted exactly as passed.
+        let rows = manager.list_kchat_acl(&added.source.id).unwrap();
+        assert_eq!(rows.len(), 2);
+        let principal_row = rows.iter().find(|r| r.member_user_id == "principal");
+        assert!(principal_row.is_some(), "principal row must be persisted");
+        assert_eq!(
+            principal_row.unwrap().role,
+            "channel_user channel_admin",
+            "role string must be persisted verbatim"
+        );
+    }
+
+    #[test]
+    fn refresh_kchat_acl_principal_missing_transitions_to_access_revoked() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("f.txt"), "x").unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager
+            .add_kchat_channel(dir.path().to_str().unwrap())
+            .unwrap();
+        manager.set_kchat_principal("principal").unwrap();
+
+        let outcome = manager
+            .refresh_kchat_acl(
+                dir.path().to_str().unwrap(),
+                &[
+                    make_acl_member("alice", "channel_user"),
+                    make_acl_member("bob", "channel_user"),
+                ],
+            )
+            .unwrap();
+        assert_eq!(outcome, KchatAclRefreshOutcome::Revoked);
+        let refreshed = manager.get_source(&added.source.id).unwrap();
+        assert_eq!(refreshed.status, SourceStatus::AccessRevoked);
+
+        // Roster still persisted — operator-visible forensics for
+        // "who had access at the moment of revocation".
+        let rows = manager.list_kchat_acl(&added.source.id).unwrap();
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn refresh_kchat_acl_regrant_on_principal_readded() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("f.txt"), "x").unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager
+            .add_kchat_channel(dir.path().to_str().unwrap())
+            .unwrap();
+        manager.set_kchat_principal("principal").unwrap();
+
+        // Revoke first.
+        manager
+            .refresh_kchat_acl(
+                dir.path().to_str().unwrap(),
+                &[make_acl_member("alice", "channel_user")],
+            )
+            .unwrap();
+        assert_eq!(
+            manager.get_source(&added.source.id).unwrap().status,
+            SourceStatus::AccessRevoked,
+        );
+
+        // Now re-add the principal.
+        let outcome = manager
+            .refresh_kchat_acl(
+                dir.path().to_str().unwrap(),
+                &[
+                    make_acl_member("alice", "channel_user"),
+                    make_acl_member("principal", "channel_user"),
+                ],
+            )
+            .unwrap();
+        assert_eq!(outcome, KchatAclRefreshOutcome::Regranted);
+        assert_eq!(
+            manager.get_source(&added.source.id).unwrap().status,
+            SourceStatus::Indexed,
+        );
+    }
+
+    #[test]
+    fn revoke_kchat_source_transitions_to_access_revoked() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("f.txt"), "x").unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager
+            .add_kchat_channel(dir.path().to_str().unwrap())
+            .unwrap();
+
+        let outcome = manager
+            .revoke_kchat_source(dir.path().to_str().unwrap())
+            .unwrap();
+        assert_eq!(outcome, KchatRevokeOutcome::Revoked);
+        assert_eq!(
+            manager.get_source(&added.source.id).unwrap().status,
+            SourceStatus::AccessRevoked,
+        );
+
+        // Idempotent: a second revoke reports `AlreadyRevoked`.
+        let again = manager
+            .revoke_kchat_source(dir.path().to_str().unwrap())
+            .unwrap();
+        assert_eq!(again, KchatRevokeOutcome::AlreadyRevoked);
+    }
+
+    #[test]
+    fn revoke_kchat_source_unlinked_when_no_source_row() {
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let outcome = manager.revoke_kchat_source("/no/such/dir").unwrap();
+        assert_eq!(outcome, KchatRevokeOutcome::Unlinked);
+    }
+
+    #[test]
+    fn refresh_kchat_acl_atomic_roster_replace_drops_old_rows() {
+        // The roster is a full replacement, not a delta — a member
+        // who was present in the previous refresh but absent in
+        // the new one must disappear from the ACL table. A
+        // regression that did an INSERT-only would let stale
+        // members stay in the audit forensics indefinitely.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("f.txt"), "x").unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager
+            .add_kchat_channel(dir.path().to_str().unwrap())
+            .unwrap();
+        manager.set_kchat_principal("principal").unwrap();
+
+        manager
+            .refresh_kchat_acl(
+                dir.path().to_str().unwrap(),
+                &[
+                    make_acl_member("principal", "channel_user"),
+                    make_acl_member("alice", "channel_user"),
+                    make_acl_member("bob", "channel_user"),
+                ],
+            )
+            .unwrap();
+        assert_eq!(manager.list_kchat_acl(&added.source.id).unwrap().len(), 3);
+
+        manager
+            .refresh_kchat_acl(
+                dir.path().to_str().unwrap(),
+                &[make_acl_member("principal", "channel_user")],
+            )
+            .unwrap();
+        let rows = manager.list_kchat_acl(&added.source.id).unwrap();
+        assert_eq!(rows.len(), 1, "stale rows must be dropped on refresh");
+        assert_eq!(rows[0].member_user_id, "principal");
+    }
+
+    #[test]
+    fn kchat_principal_round_trip_set_get_clear() {
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        assert_eq!(manager.get_kchat_principal().unwrap(), None);
+        manager.set_kchat_principal("user-X").unwrap();
+        assert_eq!(
+            manager.get_kchat_principal().unwrap().as_deref(),
+            Some("user-X")
+        );
+        // Overwrite — singleton row, latest value wins.
+        manager.set_kchat_principal("user-Y").unwrap();
+        assert_eq!(
+            manager.get_kchat_principal().unwrap().as_deref(),
+            Some("user-Y")
+        );
+        manager.clear_kchat_principal().unwrap();
+        assert_eq!(manager.get_kchat_principal().unwrap(), None);
     }
 
     // ----------------------------------------------------------------

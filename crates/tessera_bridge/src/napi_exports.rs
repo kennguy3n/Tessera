@@ -289,6 +289,75 @@ pub fn bridge_index_kchat_file(
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+/// Refresh a KChat channel's ACL roster + project status onto the
+/// source row (Block B Task 3, Phase 11).
+///
+/// Called by the Node-side `KchatEventForwarder` after every
+/// membership-change event (`user_added`, `user_removed`,
+/// `channel_updated`) with the authoritative roster fetched from
+/// `GET /channels/{id}/members`. See
+/// `SourceManager::refresh_kchat_acl` for the full status
+/// projection rules; the napi layer is a thin pass-through that
+/// converts the typed outcome enum into the JS-facing string +
+/// summary fields.
+#[napi]
+pub fn bridge_refresh_kchat_acl(
+    cache_dir: String,
+    members: Vec<sources::KchatAclMemberInfo>,
+) -> napi::Result<sources::KchatAclRefreshOutcomeInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::refresh_kchat_acl(&mgr, &cache_dir, &members)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Explicitly revoke a KChat-channel source (Block B Task 3, Phase
+/// 11). Used for `channel_archived` / `channel_deleted` / self-
+/// `user_removed` events.
+#[napi]
+pub fn bridge_revoke_kchat_source(
+    cache_dir: String,
+) -> napi::Result<sources::KchatRevokeOutcomeInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::revoke_kchat_source(&mgr, &cache_dir)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Set the locally-authenticated KChat principal user id on the
+/// substrate. Called by the Node-side `kchat:connect` IPC handler
+/// after the `/users/me` probe succeeds. The substrate persists
+/// the id in a singleton row so subsequent `refresh_kchat_acl`
+/// calls can check membership without re-threading the id
+/// through every event.
+#[napi]
+pub fn bridge_set_kchat_principal(user_id: String) -> napi::Result<()> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::set_kchat_principal(&mgr, &user_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Clear the persisted KChat principal on `kchat:disconnect`.
+#[napi]
+pub fn bridge_clear_kchat_principal() -> napi::Result<()> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::clear_kchat_principal(&mgr).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 #[napi]
 pub fn bridge_list_sources() -> napi::Result<Vec<sources::SourceInfo>> {
     let s = state()?;
@@ -1865,6 +1934,57 @@ pub fn bridge_log_kchat_file_event_received(
             file_id.as_deref(),
             triggered_reindex,
         );
+    }
+    Ok(())
+}
+
+/// Append a `KchatAclRefreshed` audit row (Block B Task 3, Phase
+/// 11). Called by the Node-side `KchatEventForwarder` after every
+/// `bridge_refresh_kchat_acl` call so an operator can see the
+/// projection outcome (`granted` / `regranted` / `revoked` /
+/// `unlinked` / `no_principal`) in the audit trail without
+/// re-querying the substrate.
+///
+/// Member ids + roles are NOT logged — only the roster size and
+/// the projection outcome. This keeps the audit row cheap and
+/// avoids duplicating data already in `kchat_source_acl`.
+#[napi]
+pub fn bridge_log_kchat_acl_refreshed(
+    channel_id: String,
+    member_count: u32,
+    principal_present: bool,
+    outcome: String,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_acl_refreshed(
+            &channel_id,
+            member_count as usize,
+            principal_present,
+            &outcome,
+        );
+    }
+    Ok(())
+}
+
+/// Append a `KchatChannelAccessRevoked` audit row (Block B Task
+/// 3, Phase 11). Called by the Node-side `KchatEventForwarder`
+/// whenever a KChat-channel source transitions to
+/// `SourceStatus::AccessRevoked` — either via an ACL refresh
+/// where the principal was missing from the roster, or via an
+/// explicit `bridge_revoke_kchat_source` call from a
+/// `channel_archived` / `channel_deleted` / self-`user_removed`
+/// event. The `reason` short-code documented on
+/// `AuditLogger::log_kchat_channel_access_revoked` is the
+/// operator-visible explanation for the revocation.
+#[napi]
+pub fn bridge_log_kchat_channel_access_revoked(
+    channel_id: String,
+    reason: String,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_channel_access_revoked(&channel_id, &reason);
     }
     Ok(())
 }

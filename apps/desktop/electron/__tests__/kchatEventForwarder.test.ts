@@ -108,6 +108,11 @@ interface BridgeMockShape {
   bridgeIsKchatChannelLinked: ReturnType<typeof vi.fn>;
   bridgeIndexKchatFile: ReturnType<typeof vi.fn>;
   bridgeLogKchatFileDownloaded: ReturnType<typeof vi.fn>;
+  // Block B Task 3 (Phase 11) — ACL projection bridge surface.
+  bridgeRefreshKchatAcl: ReturnType<typeof vi.fn>;
+  bridgeRevokeKchatSource: ReturnType<typeof vi.fn>;
+  bridgeLogKchatAclRefreshed: ReturnType<typeof vi.fn>;
+  bridgeLogKchatChannelAccessRevoked: ReturnType<typeof vi.fn>;
 }
 
 let bridgeMock: BridgeMockShape | null = null;
@@ -183,6 +188,28 @@ class FakeClient {
 
   downloadFile = vi.fn(async (_fileId: string) =>
     new Uint8Array([0x6f, 0x6b, 0x21, 0x0a]),
+  );
+
+  // Block B Task 3 (Phase 11): the forwarder's
+  // `handleMembershipEvent` walks `listChannelMembers` to build
+  // the authoritative roster fed to `bridgeRefreshKchatAcl`.
+  // Default fixture: a single membership row that contains the
+  // "principal" so the projection lands as `granted`. Tests that
+  // exercise the `revoked` / `regranted` paths override via
+  // `.mockImplementation(...)`.
+  listChannelMembers = vi.fn(
+    async (channelId: string, _page = 0, _perPage = 200) => [
+      {
+        channel_id: channelId,
+        user_id: "principal",
+        roles: "channel_user",
+        last_viewed_at: 0,
+        msg_count: 0,
+        mention_count: 0,
+        notify_props: {},
+        last_update_at: 0,
+      },
+    ],
   );
 }
 
@@ -293,6 +320,14 @@ beforeEach(() => {
       sourceId: "src-uuid",
     })),
     bridgeLogKchatFileDownloaded: vi.fn(),
+    bridgeRefreshKchatAcl: vi.fn(() => ({
+      outcome: "granted",
+      memberCount: 0,
+      principalPresent: true,
+    })),
+    bridgeRevokeKchatSource: vi.fn(() => ({ outcome: "revoked" })),
+    bridgeLogKchatAclRefreshed: vi.fn(),
+    bridgeLogKchatChannelAccessRevoked: vi.fn(),
   };
 });
 
@@ -1033,6 +1068,242 @@ describe("KchatEventForwarder", () => {
     expect(finalManifest.files["file-TAMPER-001"]).toBe(
       "file-TAMPER-001.txt",
     );
+    fwd.dispose();
+  });
+
+  // ----------------------------------------------------------------
+  // Block B Task 3 (Phase 11): KChat channel ACL projection
+  // dispatch.
+  //
+  // The forwarder dispatches five new event types into the
+  // ACL projection path:
+  //   - `user_added`, `user_removed`, `channel_member_updated`,
+  //     `channel_updated` → walk `listChannelMembers` →
+  //     `bridgeRefreshKchatAcl` → audit `bridgeLogKchatAclRefreshed`.
+  //   - `channel_archived`, `channel_deleted` →
+  //     `bridgeRevokeKchatSource` → audit
+  //     `bridgeLogKchatChannelAccessRevoked`.
+  //
+  // Tests pin both the dispatch surface (correct bridge call for
+  // each event name) and the audit shape (outcome short-codes,
+  // member count, principal-present flag).
+  // ----------------------------------------------------------------
+
+  for (const eventName of [
+    "user_added",
+    "user_removed",
+    "channel_member_updated",
+    "channel_updated",
+  ] as const) {
+    it(`dispatches ${eventName} into bridgeRefreshKchatAcl and audits the outcome`, async () => {
+      bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+      const w1 = new FakeWindow();
+      const fwd = new KchatEventForwarder({
+        listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+        getBridge: () => bridgeMock,
+      });
+      const client = new FakeClient();
+      fwd.start(client as unknown as KchatClient);
+
+      client.triggerWsEvent(
+        makeRawEvent({
+          event: eventName,
+          data: { user_id: "principal" },
+          broadcast: {
+            omit_users: {},
+            channel_id: "chan-acl-1",
+            team_id: "team-1",
+            user_id: "principal",
+          },
+          seq: 7,
+        }),
+      );
+      await waitForCondition(
+        () => bridgeMock!.bridgeRefreshKchatAcl.mock.calls.length > 0,
+      );
+
+      // Bridge called with the cache dir + the roster the
+      // FakeClient returned.
+      expect(client.listChannelMembers).toHaveBeenCalled();
+      expect(bridgeMock!.bridgeRefreshKchatAcl).toHaveBeenCalledTimes(1);
+      const [cacheDir, members] =
+        bridgeMock!.bridgeRefreshKchatAcl.mock.calls[0];
+      expect(cacheDir).toContain("chan-acl-1");
+      expect(members).toEqual([
+        { userId: "principal", role: "channel_user" },
+      ]);
+
+      // Audit row fires with the projection outcome (event name
+      // is folded into the outcome short-code).
+      expect(bridgeMock!.bridgeLogKchatAclRefreshed).toHaveBeenCalledWith(
+        "chan-acl-1",
+        0,
+        true,
+        `granted:${eventName}`,
+      );
+      // No revoke audit on a granted projection.
+      expect(
+        bridgeMock!.bridgeLogKchatChannelAccessRevoked,
+      ).not.toHaveBeenCalled();
+      fwd.dispose();
+    });
+  }
+
+  it("dispatches a revoked outcome and emits the principal-missing access-revoked audit row", async () => {
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    bridgeMock!.bridgeRefreshKchatAcl.mockReturnValue({
+      outcome: "revoked",
+      memberCount: 3,
+      principalPresent: false,
+    });
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "user_removed",
+        data: { user_id: "principal" },
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-acl-revoke",
+          team_id: "team-1",
+          user_id: "principal",
+        },
+        seq: 8,
+      }),
+    );
+    await waitForCondition(
+      () =>
+        bridgeMock!.bridgeLogKchatChannelAccessRevoked.mock.calls.length > 0,
+    );
+
+    expect(bridgeMock!.bridgeLogKchatAclRefreshed).toHaveBeenCalledWith(
+      "chan-acl-revoke",
+      3,
+      false,
+      "revoked:user_removed",
+    );
+    expect(
+      bridgeMock!.bridgeLogKchatChannelAccessRevoked,
+    ).toHaveBeenCalledWith(
+      "chan-acl-revoke",
+      "principal_missing_from_roster",
+    );
+    fwd.dispose();
+  });
+
+  it("audits an unlinked membership event without calling the REST client", async () => {
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(false);
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "channel_member_updated",
+        data: {},
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-unlinked",
+          team_id: "team-1",
+          user_id: "principal",
+        },
+        seq: 9,
+      }),
+    );
+    // Yield several microtasks so the side-effect promise
+    // resolves.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    expect(client.listChannelMembers).not.toHaveBeenCalled();
+    expect(bridgeMock!.bridgeRefreshKchatAcl).not.toHaveBeenCalled();
+    // Audit row still fires with outcome=unlinked so operators
+    // see the no-op in the trail.
+    expect(bridgeMock!.bridgeLogKchatAclRefreshed).toHaveBeenCalledWith(
+      "chan-unlinked",
+      0,
+      false,
+      "unlinked:channel_member_updated",
+    );
+    fwd.dispose();
+  });
+
+  for (const [eventName, reason] of [
+    ["channel_archived", "channel_archived"],
+    ["channel_deleted", "channel_deleted"],
+  ] as const) {
+    it(`dispatches ${eventName} into bridgeRevokeKchatSource and audits with reason=${reason}`, async () => {
+      const w1 = new FakeWindow();
+      const fwd = new KchatEventForwarder({
+        listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+        getBridge: () => bridgeMock,
+      });
+      const client = new FakeClient();
+      fwd.start(client as unknown as KchatClient);
+
+      client.triggerWsEvent(
+        makeRawEvent({
+          event: eventName,
+          data: {},
+          broadcast: {
+            omit_users: {},
+            channel_id: "chan-gone",
+            team_id: "team-1",
+            user_id: "principal",
+          },
+          seq: 10,
+        }),
+      );
+      await waitForCondition(
+        () => bridgeMock!.bridgeRevokeKchatSource.mock.calls.length > 0,
+      );
+
+      expect(bridgeMock!.bridgeRevokeKchatSource).toHaveBeenCalledTimes(1);
+      const [cacheDir] =
+        bridgeMock!.bridgeRevokeKchatSource.mock.calls[0];
+      expect(cacheDir).toContain("chan-gone");
+      expect(
+        bridgeMock!.bridgeLogKchatChannelAccessRevoked,
+      ).toHaveBeenCalledWith("chan-gone", reason);
+      // No `bridgeRefreshKchatAcl` for these — the channel is
+      // gone, no roster to fetch.
+      expect(bridgeMock!.bridgeRefreshKchatAcl).not.toHaveBeenCalled();
+      // No `bridgeLogKchatAclRefreshed` on these paths — the
+      // audit shape is the revoke-row only.
+      expect(bridgeMock!.bridgeLogKchatAclRefreshed).not.toHaveBeenCalled();
+      fwd.dispose();
+    });
+  }
+
+  it("does not dispatch ACL refresh for non-membership events", async () => {
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(makeRawEvent({ event: "posted", seq: 11 }));
+    client.triggerWsEvent(makeRawEvent({ event: "hello", seq: 12 }));
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    expect(client.listChannelMembers).not.toHaveBeenCalled();
+    expect(bridgeMock!.bridgeRefreshKchatAcl).not.toHaveBeenCalled();
+    expect(bridgeMock!.bridgeRevokeKchatSource).not.toHaveBeenCalled();
+    expect(bridgeMock!.bridgeLogKchatAclRefreshed).not.toHaveBeenCalled();
+    expect(
+      bridgeMock!.bridgeLogKchatChannelAccessRevoked,
+    ).not.toHaveBeenCalled();
     fwd.dispose();
   });
 
