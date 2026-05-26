@@ -144,7 +144,45 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
       return;
     }
     let cancelled = false;
-    let unsubscribeStatus: (() => void) | null = null;
+    // Install the status push subscription synchronously, in the
+    // effect body itself, BEFORE any `await` in `probe()`. The
+    // listener's lifetime is now deterministically paired with
+    // the cleanup closure below: both `unsubscribeStatus` (the
+    // sync return value of `onStatusChange`) and the
+    // `cancelled = true` write happen on the same React-effect
+    // tick, so React's tear-down ordering cannot interleave them.
+    //
+    // The previous shape created the subscription inside the
+    // async `probe()` body, after `await kchat.isAvailable()`
+    // resolved. That worked correctly under React 18/19 because
+    // `setAvailable(true)` was batched into the microtask queue,
+    // so `probe()` continued synchronously to the subscription
+    // line BEFORE the re-render (and cleanup) ran. But the
+    // correctness was an emergent property of React's batching
+    // semantics — a future refactor that moved cleanup ahead of
+    // pending async continuations (e.g. concurrent rendering
+    // changes, or a hypothetical `useEffectEvent`-style rewrite)
+    // would orphan the listener. Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0001`) flagged the coupling;
+    // moving the subscribe out of the async body decouples
+    // correctness from React's internal scheduling.
+    //
+    // Subscribe BEFORE `probe()` runs so a transition that races
+    // the initial `kchat.status()` fetch is captured by the
+    // listener (the listener overwrites the fetched initial
+    // state with whatever arrived). The reverse order would have
+    // a window where an event between fetch and subscribe is
+    // lost.
+    //
+    // The subscription is cheap (the preload bridge just adds to
+    // an in-process Set on the renderer side; the main process
+    // already has the WS connection open regardless of subscribers)
+    // and safe regardless of `available` — the listener captures
+    // `cancelled` and short-circuits the `setState(s)` write if
+    // the effect has been torn down between push and dispatch.
+    const unsubscribeStatus = kchat.onStatusChange((s) => {
+      if (!cancelled) setState(s);
+    });
     const probe = async () => {
       try {
         if (available === null) {
@@ -152,17 +190,6 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
           if (cancelled) return;
           setAvailable(ok);
           if (!ok) return;
-        }
-        // Subscribe BEFORE the initial fetch so a transition
-        // that races the fetch is captured by the listener,
-        // and the listener simply overwrites the fetched
-        // initial state with whatever arrived. The reverse
-        // order would have a window where an event between
-        // fetch and subscribe is lost.
-        if (!unsubscribeStatus) {
-          unsubscribeStatus = kchat.onStatusChange((s) => {
-            if (!cancelled) setState(s);
-          });
         }
         const s = await kchat.status();
         if (!cancelled) setState(s);
@@ -180,7 +207,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
     return () => {
       cancelled = true;
       window.clearInterval(id);
-      if (unsubscribeStatus) unsubscribeStatus();
+      unsubscribeStatus();
     };
   }, [kchat, available]);
 
