@@ -212,9 +212,17 @@ pub enum SourceStatus {
     /// resolution against historical artifacts) but every
     /// retrieval path filters revoked sources out so a user who
     /// loses access to a KChat channel cannot search content that
-    /// was indexed while they still had access. Re-adding the
-    /// principal back to the channel transitions the source back
-    /// to `Indexed` via the same `refresh_kchat_acl` codepath.
+    /// was indexed while they still had access.
+    ///
+    /// Block B Task 4 (Phase 11) additionally cryptoshreds every
+    /// chunk + indexed_file row on the revoke transition (see
+    /// `SourceStore::cryptoshred_kchat_source_evidence`), so a
+    /// re-added principal cannot resurrect stale indexed content
+    /// silently. The regrant codepath transitions the source to
+    /// `Connected` (not `Indexed`): the ACL is fine, but the
+    /// corpus is empty until a full re-sync runs via
+    /// `bridge_sync_source`, after which the indexer promotes
+    /// status to `Indexing` and then back to `Indexed` on its own.
     AccessRevoked,
 }
 

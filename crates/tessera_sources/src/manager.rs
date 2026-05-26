@@ -65,14 +65,23 @@ pub enum KchatAclRefreshOutcome {
     Granted,
     /// The principal is in the refreshed roster AND the source
     /// row was previously `AccessRevoked` (e.g. the user was
-    /// removed and then re-added). Status transitioned from
-    /// `AccessRevoked` back to `Indexed`. The roster was replaced
+    /// removed and then re-added). The roster was replaced
     /// atomically. `principal_present == true`.
+    ///
+    /// Block B Task 4 (Phase 11): status transitions to
+    /// `Connected` (NOT `Indexed`). The earlier revoke cryptoshred
+    /// scrubbed every chunk + indexed_file row, so the source is
+    /// empty until a full re-sync runs. The Node-side forwarder
+    /// treats this outcome as a signal to schedule a re-sync via
+    /// `bridge_sync_source`; the indexer then promotes the status
+    /// to `Indexing` and `Indexed` on its own — the same flow used
+    /// for a freshly-linked channel.
     Regranted,
     /// The principal is NOT in the refreshed roster. Status
     /// transitioned to `AccessRevoked`. The roster was still
     /// replaced atomically (so a future re-grant via re-add
-    /// transitions back to `Indexed`). `principal_present == false`.
+    /// transitions to `Connected` and triggers a re-sync; see
+    /// the `Regranted` doc). `principal_present == false`.
     ///
     /// Block B Task 4 (Phase 11): the transition also triggers an
     /// inline cryptoshred — the source's chunks and indexed_files
@@ -713,13 +722,29 @@ impl SourceManager {
         }
 
         if source.status == SourceStatus::AccessRevoked {
-            // Principal was re-added after a previous revoke;
-            // restore retrievability. Transition back to `Indexed`
-            // rather than `Connected` — the source was previously
-            // indexed and the corpus chunks are still on disk, so
-            // resuming retrieval is the correct end state.
+            // Principal was re-added after a previous revoke.
+            // Block B Task 4 (Phase 11): because the revoke path
+            // now cryptoshreds every chunk + indexed_file row
+            // (`cryptoshred_kchat_source_evidence`), the source
+            // has zero indexed content even though it was
+            // previously `Indexed`. Transitioning straight back
+            // to `Indexed` would leave the source-detail UI
+            // claiming the channel is searchable while every
+            // query returns nothing — a confusing dead-end for
+            // the operator.
+            //
+            // Instead, transition to `Connected` (the natural
+            // "ACL is OK, no content indexed yet" status). The
+            // Node-side forwarder treats `KchatAclRefreshOutcome::Regranted`
+            // as a signal to schedule a full re-sync via
+            // `bridge_sync_source`, after which the indexer
+            // promotes the status to `Indexing` and then
+            // `Indexed` on its own — the same flow used for a
+            // freshly-linked channel. Retrieval continues to
+            // exclude `Connected` sources (only `Indexed` rows
+            // surface) so there is no stale-data window.
             self.store
-                .update_source_status(&source.id, SourceStatus::Indexed, None)?;
+                .update_source_status(&source.id, SourceStatus::Connected, None)?;
             return Ok(KchatAclRefreshOutcome::Regranted);
         }
 
@@ -1446,9 +1471,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(outcome, KchatAclRefreshOutcome::Regranted);
+        // Block B Task 4 (Phase 11): regrant transitions to
+        // `Connected`, NOT `Indexed`. The earlier revoke
+        // cryptoshredded every chunk + indexed_file row, so the
+        // source is empty until the Node-side forwarder runs a
+        // full re-sync — and only then will the indexer promote
+        // status to `Indexing` and `Indexed`. Asserting `Indexed`
+        // here (as an earlier draft did) would mean the UI
+        // claims the channel is searchable while every query
+        // returns zero rows.
         assert_eq!(
             manager.get_source(&added.source.id).unwrap().status,
-            SourceStatus::Indexed,
+            SourceStatus::Connected,
         );
     }
 

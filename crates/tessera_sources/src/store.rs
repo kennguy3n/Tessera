@@ -658,24 +658,61 @@ impl SourceStore {
         Ok(rows)
     }
 
-    /// Outcome counters for [`SourceStore::cryptoshred_kchat_source_evidence`].
+    /// Cryptoshreds (inline destroys) every chunk + indexed_file row
+    /// belonging to a single source, then defensively scrubs the
+    /// SQLite freelist pages those rows occupied. Used by Block B
+    /// Task 4 (Phase 11) on the KChat `AccessRevoked` transition.
     ///
-    /// Used by Block B Task 4 audit rows so operators can see, at the
-    /// `KchatSourceCryptoshredded` row, how much evidence was scrubbed
-    /// for a revoked channel — useful for incident response when a
-    /// principal is forensically removed mid-investigation.
+    /// Phase ordering (load-bearing for the defence-in-depth
+    /// guarantee):
+    ///
+    /// 1. **Count** the chunks + indexed_files about to be dropped.
+    ///    Returned to the caller so the audit row records what was
+    ///    scrubbed even after the rows are gone.
+    /// 2. **`PRAGMA secure_delete = ON`** — must run *before* any
+    ///    `DELETE` so SQLite zero-fills the freed pages at delete
+    ///    time. If we set it after the deletes (as an earlier draft
+    ///    did), a subsequent `VACUUM` failure (e.g. insufficient
+    ///    disk space for the temp file) leaves the freed pages
+    ///    holding the original plaintext.
+    /// 3. **`BEGIN IMMEDIATE`** — wrap the row-level mutations in an
+    ///    explicit transaction so a crash mid-shred either rolls
+    ///    back to the pre-shred state or commits the full scrub.
+    ///    `VACUUM` (Phase 5) cannot run inside a transaction, so it
+    ///    is intentionally outside.
+    /// 4. **`DELETE FROM chunks` / `DELETE FROM indexed_files`** —
+    ///    `chunks_ad` and `chunks_ad_embeddings` triggers cascade
+    ///    the chunk delete to `chunks_fts` and `chunk_embeddings`
+    ///    so the single DELETE scrubs all three retrieval surfaces
+    ///    atomically. **Plus** reset `sources.last_indexed = NULL`
+    ///    and `file_count = 0` so the source-detail UI mirrors the
+    ///    scrub. All four statements live in the same transaction.
+    /// 5. **`VACUUM`** — only when chunks or files were actually
+    ///    dropped. `VACUUM` rebuilds the entire database file; on
+    ///    the idempotent `already_revoked` path (drops nothing), we
+    ///    skip it because rebuilding the whole file to free zero
+    ///    pages would block every concurrent reader for seconds on
+    ///    large databases. The `secure_delete = ON` page zero-fill
+    ///    in Phase 4 still ran on the actual delete path, so the
+    ///    cryptographic guarantee holds; VACUUM is the
+    ///    belt-and-braces freelist sweep, not the primary scrub.
+    /// 6. **`PRAGMA secure_delete = OFF`** — restore the connection
+    ///    to the default low-overhead delete path. The pragma is
+    ///    connection-scoped and the connection is shared, so this
+    ///    reset is required to avoid measurable write-amplification
+    ///    on the steady-state indexing path.
     pub fn cryptoshred_kchat_source_evidence(
         &self,
         source_id: &SourceId,
     ) -> Result<KchatSourceCryptoshredOutcome> {
         let id_str = source_id.to_string();
-        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut conn = self.conn.lock().expect("connection mutex poisoned");
 
-        // Phase A — count what we're about to drop so the audit row
+        // Phase 1 — count what we're about to drop so the audit row
         // can record observability data even after the rows are gone.
-        // The counts MUST be read inside the same transaction-equivalent
-        // (here: the same locked Connection) so a concurrent writer
-        // can't expand the row-set between count and delete.
+        // The counts MUST be read on the same locked Connection as
+        // the deletes so a concurrent writer can't expand the row-set
+        // between count and delete.
         let chunks_to_drop: i64 = conn
             .query_row(
                 "SELECT COUNT(*)
@@ -695,14 +732,34 @@ impl SourceStore {
             )
             .map_err(|e| Error::Database(e.to_string()))?;
 
-        // Phase B — drop the evidence. DELETE FROM chunks fires the
-        // `chunks_ad` trigger (removes the row from `chunks_fts`) and
-        // the `chunks_ad_embeddings` trigger (removes the matching
-        // `chunk_embeddings` rows), so this single DELETE scrubs all
-        // three retrieval surfaces atomically. The cascade depends on
-        // `PRAGMA foreign_keys = ON`, which `apply_default_pragmas`
-        // installs on every connection in `tessera_core::db`.
-        conn.execute(
+        // Phase 2 — enable secure_delete BEFORE the DELETEs so the
+        // freed pages are zero-filled at delete time. This is what
+        // makes the scrub resilient to a later VACUUM failure: even
+        // if disk pressure or process kill aborts Phase 5, the rows
+        // we just deleted are already overwritten with zeros on the
+        // freelist pages.
+        conn.execute_batch("PRAGMA secure_delete = ON;")
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        // Phases 3+4 — wrap the row-level mutations in an explicit
+        // transaction so crash-recovery returns either the full
+        // pre-shred state or the full post-shred state, never a
+        // partial scrub (chunks gone, indexed_files still present).
+        // `BEGIN IMMEDIATE` acquires a RESERVED lock right away so a
+        // concurrent reader can't acquire SHARED between our COUNTs
+        // and our DELETEs.
+        let txn = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        // DELETE FROM chunks fires the `chunks_ad` trigger (removes
+        // the row from `chunks_fts`) and the `chunks_ad_embeddings`
+        // trigger (removes the matching `chunk_embeddings` rows), so
+        // this single DELETE scrubs all three retrieval surfaces
+        // atomically. The cascade depends on `PRAGMA foreign_keys = ON`,
+        // which `apply_default_pragmas` installs on every connection
+        // in `tessera_core::db`.
+        txn.execute(
             "DELETE FROM chunks
              WHERE indexed_file_id IN
                  (SELECT id FROM indexed_files WHERE source_id = ?1)",
@@ -710,17 +767,17 @@ impl SourceStore {
         )
         .map_err(|e| Error::Database(e.to_string()))?;
 
-        conn.execute(
+        txn.execute(
             "DELETE FROM indexed_files WHERE source_id = ?1",
             params![id_str],
         )
         .map_err(|e| Error::Database(e.to_string()))?;
 
-        // Phase C — reset the source-row aggregates so the renderer's
+        // Reset the source-row aggregates so the renderer's
         // source-detail surface reflects the scrub. Status is NOT
         // changed here — the manager has already set it to
         // `AccessRevoked` (or will, in the same overall operation).
-        conn.execute(
+        txn.execute(
             "UPDATE sources
              SET last_indexed = NULL, file_count = 0
              WHERE id = ?1",
@@ -728,22 +785,29 @@ impl SourceStore {
         )
         .map_err(|e| Error::Database(e.to_string()))?;
 
-        // Phase D — defence-in-depth scrub of SQLite freelist pages.
-        // `secure_delete = ON` zero-fills pages on DELETE so freed
-        // pages don't leak the prior chunk content even if the
-        // database file is later read out-of-band. SQLCipher already
+        txn.commit().map_err(|e| Error::Database(e.to_string()))?;
+
+        // Phase 5 — VACUUM (cannot run inside a transaction). Only
+        // pay the full-file-rewrite cost when we actually deleted
+        // rows; the idempotent `already_revoked` path is a no-op so
+        // there is nothing for VACUUM to reclaim. SQLCipher still
         // encrypts every page under the master key, but the
-        // belt-and-braces overwrite means a compromised master key
-        // still cannot recover the cryptoshredded chunks.
-        //
-        // Note: `secure_delete` is a connection-level pragma; we set
-        // it here and rely on the subsequent VACUUM to walk every
-        // page. We do NOT leave `secure_delete` ON permanently
-        // because it has a measurable write-amplification cost on
-        // the steady-state indexing path. The scope of this pragma
-        // ends with the connection — and since the connection is
-        // shared, we reset it after the VACUUM.
-        conn.execute_batch("PRAGMA secure_delete = ON; VACUUM; PRAGMA secure_delete = OFF;")
+        // belt-and-braces VACUUM means a compromised master key
+        // cannot recover the cryptoshredded chunks even via the
+        // freelist; we already zero-filled the pages in Phase 2+3,
+        // VACUUM additionally rebuilds the file so the freed pages
+        // are removed from the on-disk layout entirely.
+        if chunks_to_drop > 0 || files_to_drop > 0 {
+            conn.execute_batch("VACUUM;")
+                .map_err(|e| Error::Database(e.to_string()))?;
+        }
+
+        // Phase 6 — restore the connection's default delete mode so
+        // the steady-state indexing path does not pay the
+        // write-amplification cost of secure_delete on every chunk
+        // upsert. Connection-scoped pragma; the connection is shared
+        // so the reset matters.
+        conn.execute_batch("PRAGMA secure_delete = OFF;")
             .map_err(|e| Error::Database(e.to_string()))?;
 
         Ok(KchatSourceCryptoshredOutcome {

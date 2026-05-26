@@ -111,6 +111,7 @@ import type {
   KchatWebSocketEventView,
 } from "./kchatTypes";
 import type {
+  KchatAclRefreshOutcomeInfo,
   KchatConnectionStateView,
   KchatRevokeOutcomeInfo,
   KchatWebSocketEventPayload,
@@ -191,6 +192,79 @@ const _assertConnectionStateViewIsState = (
 ): KchatConnectionState => v;
 void _assertConnectionStateIsView;
 void _assertConnectionStateViewIsState;
+
+/**
+ * Block B Task 4 (Phase 11): drift tripwires for the bridge
+ * cryptoshred outcome shapes. The `@napi(object)` structs in
+ * `crates/tessera_bridge/src/sources.rs`
+ * (`KchatRevokeOutcomeInfo`, `KchatAclRefreshOutcomeInfo`) are
+ * the source of truth — napi-rs auto-converts their snake_case
+ * fields to camelCase when emitting the JS-side typings. The
+ * matching TS interfaces in `apps/desktop/shared/types.ts` are a
+ * MANUAL mirror: a future field rename / new field on the Rust
+ * side compiles cleanly on both sides today and only surfaces at
+ * runtime when the forwarder reads `result.chunksDropped` and
+ * gets `undefined`.
+ *
+ * This forwarder is the only consumer of those outcomes (the IPC
+ * handler in `ipc/kchat.ts` does not destructure the count
+ * fields), so we declare a forwarder-local "View" interface for
+ * each outcome — derived only from the fields the forwarder
+ * actually reads — and assert bidirectional assignability with
+ * the shared-types declaration. Adding a field on the bridge
+ * side without also updating shared/types now breaks the
+ * forwarder build: the local View misses the field, so the
+ * `_assertInfoIsView` direction fails. Conversely, removing a
+ * field on the bridge side without updating the forwarder breaks
+ * the runtime expectation — caught by the regression test
+ * "dispatches a revoked outcome with the shred audit row".
+ *
+ * Catches: forwarder-local mirror ↔ shared/types drift. Does NOT
+ * catch silent Rust-side renames where shared/types is updated
+ * but the napi struct field name is not — that drift class needs
+ * a runtime test against the real bridge, which `kchatIpc.test.ts`
+ * provides via the explicit mock-return-shape literals on
+ * `bridgeRevokeKchatSource` / `bridgeRefreshKchatAcl`.
+ *
+ * DO NOT REMOVE — same rationale as the WS event tripwire above.
+ */
+interface KchatRevokeOutcomeView {
+  outcome: "revoked" | "already_revoked" | "unlinked";
+  chunksDropped: number;
+  filesDropped: number;
+}
+interface KchatAclRefreshOutcomeView {
+  outcome:
+    | "granted"
+    | "regranted"
+    | "revoked"
+    | "unlinked"
+    | "no_principal";
+  memberCount: number;
+  principalPresent: boolean;
+  chunksDropped: number;
+  filesDropped: number;
+}
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
+const _assertRevokeInfoIsView = (
+  i: KchatRevokeOutcomeInfo,
+): KchatRevokeOutcomeView => i;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
+const _assertRevokeViewIsInfo = (
+  v: KchatRevokeOutcomeView,
+): KchatRevokeOutcomeInfo => v;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
+const _assertAclRefreshInfoIsView = (
+  i: KchatAclRefreshOutcomeInfo,
+): KchatAclRefreshOutcomeView => i;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
+const _assertAclRefreshViewIsInfo = (
+  v: KchatAclRefreshOutcomeView,
+): KchatAclRefreshOutcomeInfo => v;
+void _assertRevokeInfoIsView;
+void _assertRevokeViewIsInfo;
+void _assertAclRefreshInfoIsView;
+void _assertAclRefreshViewIsInfo;
 
 /**
  * Per-renderer-window cap on the ring buffer. 100 events is
