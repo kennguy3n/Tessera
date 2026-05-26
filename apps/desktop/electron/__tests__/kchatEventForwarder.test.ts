@@ -1233,6 +1233,116 @@ describe("KchatEventForwarder", () => {
     fwd.dispose();
   });
 
+  it("dispatches a regranted outcome and schedules a full channel re-sync via scheduleChannelResync", async () => {
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    // Block B Task 4 (Phase 11) second-pass Devin Review
+    // ANALYSIS_0002: when the substrate transitions a previously-
+    // revoked source back to `Connected`, it reports
+    // `outcome=regranted` so the forwarder schedules a full
+    // channel re-sync (the revoke path scrubbed every chunk +
+    // indexed_file row, so the source has zero indexed content
+    // until the re-sync re-walks the file roster). The
+    // `scheduleChannelResync` callback is fire-and-forget; we
+    // assert it lands by polling its mock's call count.
+    bridgeMock!.bridgeRefreshKchatAcl.mockReturnValue({
+      outcome: "regranted",
+      memberCount: 4,
+      principalPresent: true,
+      chunksDropped: 0,
+      filesDropped: 0,
+    });
+    const w1 = new FakeWindow();
+    const scheduleResync = vi.fn(async (_channelId: string) => {
+      // Production wires this to the IPC handler's
+      // `runAddKchatChannel`; the test stub just records calls.
+    });
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+      scheduleChannelResync: scheduleResync,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "user_added",
+        data: { user_id: "principal" },
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-acl-regrant",
+          team_id: "team-1",
+          user_id: "principal",
+        },
+        seq: 11,
+      }),
+    );
+    await waitForCondition(
+      () => scheduleResync.mock.calls.length > 0,
+    );
+
+    expect(scheduleResync).toHaveBeenCalledTimes(1);
+    expect(scheduleResync).toHaveBeenCalledWith("chan-acl-regrant");
+    // The ACL refresh audit row still lands with the regranted
+    // outcome so the operator-side trail records the transition.
+    expect(bridgeMock!.bridgeLogKchatAclRefreshed).toHaveBeenCalledWith(
+      "chan-acl-regrant",
+      4,
+      true,
+      "regranted:user_added",
+    );
+    // The regrant path does NOT emit access-revoked or
+    // cryptoshred rows — those are revoke-side concerns.
+    expect(
+      bridgeMock!.bridgeLogKchatChannelAccessRevoked,
+    ).not.toHaveBeenCalled();
+    expect(
+      bridgeMock!.bridgeLogKchatSourceCryptoshredded,
+    ).not.toHaveBeenCalled();
+    fwd.dispose();
+  });
+
+  it("does not schedule a re-sync when the membership refresh lands as granted", async () => {
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    // Default `bridgeRefreshKchatAcl` mock returns
+    // `outcome: "granted"` (set in the per-test bridgeMock
+    // factory above). A `granted` outcome means the principal
+    // was already in the roster on the previous refresh — there
+    // is no `AccessRevoked` → `Connected` transition and
+    // therefore no scrubbed content to re-sync. Scheduling a
+    // re-sync here would re-fetch the entire channel on every
+    // membership event, defeating the targeted-sync design.
+    const w1 = new FakeWindow();
+    const scheduleResync = vi.fn(async (_channelId: string) => {});
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+      scheduleChannelResync: scheduleResync,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "channel_member_updated",
+        data: {},
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-acl-granted",
+          team_id: "team-1",
+          user_id: "principal",
+        },
+        seq: 12,
+      }),
+    );
+    await waitForCondition(
+      () => bridgeMock!.bridgeLogKchatAclRefreshed.mock.calls.length > 0,
+    );
+
+    expect(scheduleResync).not.toHaveBeenCalled();
+    fwd.dispose();
+  });
+
   it("audits an unlinked membership event without calling the REST client", async () => {
     bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(false);
     const w1 = new FakeWindow();

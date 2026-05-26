@@ -451,11 +451,36 @@ export class KchatEventForwarder {
    * native loader.
    */
   private readonly getBridgeFn: () => NativeBridge | null;
+  /**
+   * Block B Task 4 (Phase 11) second-pass Devin Review
+   * ANALYSIS_0002: optional fire-and-forget hook the forwarder
+   * invokes when `handleMembershipEvent` resolves the ACL
+   * refresh to `outcome === "regranted"`. Production wires this
+   * to the IPC handler's full-channel-sync flow (see
+   * `ipc/kchat.ts` → `setKchatChannelResyncImpl`) so a principal
+   * who is re-added to a channel after a previous cryptoshred
+   * automatically gets the channel re-indexed — the original
+   * draft of this PR documented the auto-resync but never
+   * actually wired it, leaving the source stuck in `Connected`
+   * status with zero searchable content. The callback runs
+   * OUTSIDE `withChannelSyncLock` because the resync path takes
+   * the same lock; calling it inside would deadlock. We
+   * fire-and-forget so the event handler can return promptly
+   * (the resync may walk hundreds of files and is unrelated to
+   * the audit-row emission we're about to do).
+   *
+   * The DI default is a no-op so unit tests don't need to wire
+   * the callback unless they're exercising the regrant path.
+   */
+  private readonly scheduleChannelResync: (
+    channelId: string,
+  ) => Promise<void>;
 
   constructor(
     options: {
       listWindows?: () => BrowserWindow[];
       getBridge?: () => NativeBridge | null;
+      scheduleChannelResync?: (channelId: string) => Promise<void>;
     } = {},
   ) {
     this.listWindows =
@@ -468,6 +493,8 @@ export class KchatEventForwarder {
     // `getBridge` accessor through, so file_added audit rows are
     // logged via the native bridge as before.
     this.getBridgeFn = options.getBridge ?? (() => null);
+    this.scheduleChannelResync =
+      options.scheduleChannelResync ?? (() => Promise.resolve());
   }
 
   /**
@@ -1251,6 +1278,36 @@ export class KchatEventForwarder {
         chunksDropped,
         filesDropped,
       );
+    } else if (outcome === "regranted") {
+      // Block B Task 4 (Phase 11) second-pass Devin Review
+      // ANALYSIS_0002: a regrant transitions the source from
+      // `AccessRevoked` to `Connected` because the earlier revoke
+      // cryptoshredded every chunk + indexed_file row. Without
+      // an automatic re-sync, the source stays in `Connected`
+      // indefinitely with zero indexed content — appearing
+      // broken in the UI. We schedule a full channel re-sync
+      // here so the indexer walks the channel's file roster
+      // again, downloads + chunks every file, and promotes the
+      // status through `Indexing` → `Indexed` on its own (the
+      // same flow used for a freshly-linked channel).
+      //
+      // Fire-and-forget: the resync may walk hundreds of files
+      // and we don't want to block the event-handler's audit-
+      // row emission. We run it OUTSIDE `withChannelSyncLock`
+      // (the lock has already released here) because the resync
+      // path takes the same per-channel lock internally; nesting
+      // would deadlock. Errors are logged but not propagated —
+      // a transient REST failure leaves the source in
+      // `Connected` until the next regrant event or manual
+      // re-add, which is the same recovery shape as a failed
+      // initial sync.
+      void this.scheduleChannelResync(channelId).catch((err) => {
+        console.error(
+          "[KchatEventForwarder] regrant re-sync failed for channel",
+          channelId,
+          err,
+        );
+      });
     }
   }
 

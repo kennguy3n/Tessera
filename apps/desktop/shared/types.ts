@@ -208,7 +208,15 @@ export interface KchatAclMemberInfo {
  *   - `"granted"` — principal in roster, source was already in
  *     a non-revoked state (status untouched).
  *   - `"regranted"` — principal in roster, source was previously
- *     `AccessRevoked`; status transitioned back to `Indexed`.
+ *     `AccessRevoked`; status transitioned back to `Connected`
+ *     (NOT `Indexed`, because the revoke path cryptoshredded all
+ *     evidence rows). The Node-side forwarder reads this
+ *     outcome as a signal to schedule a full channel re-sync
+ *     via the `setKchatChannelResyncImpl` slot (see
+ *     `apps/desktop/electron/ipc/kchat.ts`), which re-walks the
+ *     file roster, downloads + chunks each file, and lets the
+ *     indexer promote the status to `Indexing` → `Indexed` on
+ *     its own.
  *   - `"revoked"` — principal NOT in roster; status transitioned
  *     to `AccessRevoked` and retrieval will start filtering the
  *     source's chunks out on the next call.

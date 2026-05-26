@@ -183,6 +183,14 @@ const serviceMock = {
 vi.mock("../appState", () => ({
   getBridge: () => bridgeMock,
   getKchatAuthService: () => serviceMock,
+  // Block B Task 4 (Phase 11) second-pass Devin Review
+  // ANALYSIS_0002: `registerKchatHandlers` populates this slot
+  // with the auto-resync closure that powers the forwarder's
+  // `outcome=regranted` re-sync hook. The IPC test suite
+  // doesn't exercise the forwarder side of the contract, so we
+  // accept the registration into a no-op stub — the test still
+  // verifies the IPC handlers themselves register correctly.
+  setKchatChannelResyncImpl: vi.fn(),
 }));
 
 import { registerKchatHandlers } from "../ipc/kchat";

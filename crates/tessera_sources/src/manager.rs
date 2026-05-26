@@ -653,7 +653,16 @@ impl SourceManager {
     ///
     /// - If the locally-authenticated principal is in `members`
     ///   AND the source was `AccessRevoked`, transition to
-    ///   `Indexed` (re-grant).
+    ///   `Connected` (re-grant) and return
+    ///   `KchatAclRefreshOutcome::Regranted`. Block B Task 4
+    ///   landed `cryptoshred_kchat_source_evidence` on the revoke
+    ///   path, so a previously-revoked source has zero indexed
+    ///   content; the Node-side forwarder reads `Regranted` as a
+    ///   signal to schedule a full channel re-sync via
+    ///   `setKchatChannelResyncImpl` (wired in
+    ///   `apps/desktop/electron/ipc/kchat.ts`), after which the
+    ///   indexer promotes the status to `Indexing` → `Indexed` on
+    ///   its own.
     /// - If the principal is in `members` AND the source is in
     ///   any other state, leave the status alone (the indexer
     ///   may be mid-run, the source may legitimately be in
@@ -735,12 +744,15 @@ impl SourceManager {
             //
             // Instead, transition to `Connected` (the natural
             // "ACL is OK, no content indexed yet" status). The
-            // Node-side forwarder treats `KchatAclRefreshOutcome::Regranted`
-            // as a signal to schedule a full re-sync via
-            // `bridge_sync_source`, after which the indexer
-            // promotes the status to `Indexing` and then
-            // `Indexed` on its own — the same flow used for a
-            // freshly-linked channel. Retrieval continues to
+            // Node-side forwarder treats
+            // `KchatAclRefreshOutcome::Regranted` as a signal to
+            // schedule a full channel re-sync via the
+            // `setKchatChannelResyncImpl` slot populated by
+            // `registerKchatHandlers` in
+            // `apps/desktop/electron/ipc/kchat.ts`, after which
+            // the indexer promotes the status to `Indexing` and
+            // then `Indexed` on its own — the same flow used for
+            // a freshly-linked channel. Retrieval continues to
             // exclude `Connected` sources (only `Indexed` rows
             // surface) so there is no stale-data window.
             self.store

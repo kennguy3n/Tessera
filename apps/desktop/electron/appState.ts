@@ -136,7 +136,14 @@ export interface NativeBridge {
    *
    * Status projection rules:
    *   - principal in roster + source previously `AccessRevoked` →
-   *     transitions back to `Indexed` (outcome `"regranted"`).
+   *     transitions back to `Connected` (outcome `"regranted"`).
+   *     `Connected` (not `Indexed`) because the revoke path
+   *     cryptoshredded all evidence rows in Block B Task 4; the
+   *     Node-side forwarder reads `"regranted"` as a signal to
+   *     schedule a full channel re-sync via the
+   *     `setKchatChannelResyncImpl` slot wired in
+   *     `apps/desktop/electron/ipc/kchat.ts`, after which the
+   *     indexer promotes the status to `Indexing` → `Indexed`.
    *   - principal in roster + any other state → status untouched
    *     (outcome `"granted"`).
    *   - principal NOT in roster → transitions to `AccessRevoked`
@@ -508,6 +515,34 @@ let kchatAuthService: KchatAuthService | null = null;
 // design). Reset alongside the auth service in tests via
 // `resetKchatAuthService`.
 let kchatEventForwarder: KchatEventForwarder | null = null;
+// Block B Task 4 (Phase 11) second-pass Devin Review ANALYSIS_0002:
+// the IPC handler populates this slot with the full-channel-sync
+// closure that `runAddKchatChannel` powers, so the forwarder can
+// schedule a re-sync when a `KchatAclRefreshOutcome::Regranted`
+// outcome lands. Declared at module scope (not in
+// `getKchatAuthService`) so the forwarder constructor below can
+// pass a stable callback that reads the *current* impl at call
+// time — supporting hot-reload + test reset patterns.
+//
+// The two-step wiring (forwarder constructed with `() =>
+// kchatChannelResyncImpl?.(id)`, IPC registration calls
+// `setKchatChannelResyncImpl(...)`) avoids the circular import
+// that would result from `appState.ts` importing the IPC module
+// directly (the IPC module already imports `getKchatAuthService`
+// and `getBridge` from this file).
+let kchatChannelResyncImpl:
+  | ((channelId: string) => Promise<void>)
+  | null = null;
+export function setKchatChannelResyncImpl(
+  next: ((channelId: string) => Promise<void>) | null,
+): void {
+  kchatChannelResyncImpl = next;
+}
+export function getKchatChannelResyncImpl():
+  | ((channelId: string) => Promise<void>)
+  | null {
+  return kchatChannelResyncImpl;
+}
 // Vision sidecar runs the same `llama-server` binary as the text
 // sidecar but on a separate port (8385) and with `--mmproj`
 // appended so the multimodal projector is loaded alongside the
@@ -774,7 +809,22 @@ export function getKchatAuthService(): KchatAuthService {
     // also means a renderer that opens before any KChat
     // connect still has the IPC channel listener installed
     // when the user finally connects.
-    kchatEventForwarder = new KchatEventForwarder({ getBridge });
+    kchatEventForwarder = new KchatEventForwarder({
+      getBridge,
+      // Block B Task 4 (Phase 11) second-pass Devin Review
+      // ANALYSIS_0002: thread the regrant auto-resync hook
+      // through the forwarder. The actual impl is populated by
+      // `registerKchatIpcHandlers` in `ipc/kchat.ts`; we wrap it
+      // in a closure that re-reads the slot at call time so a
+      // forwarder constructed BEFORE IPC handlers register (e.g.
+      // in cold-start sequence) still picks up the real impl
+      // when the user later triggers a regrant.
+      scheduleChannelResync: async (channelId) => {
+        const fn = getKchatChannelResyncImpl();
+        if (!fn) return;
+        await fn(channelId);
+      },
+    });
     kchatEventForwarder.start(kchatAuthService.getClient());
   }
   return kchatAuthService;
@@ -821,7 +871,14 @@ export function resetKchatAuthService(
   }
   kchatAuthService = next;
   if (next) {
-    kchatEventForwarder = new KchatEventForwarder({ getBridge });
+    kchatEventForwarder = new KchatEventForwarder({
+      getBridge,
+      scheduleChannelResync: async (channelId) => {
+        const fn = getKchatChannelResyncImpl();
+        if (!fn) return;
+        await fn(channelId);
+      },
+    });
     kchatEventForwarder.start(next.getClient());
   }
 }
