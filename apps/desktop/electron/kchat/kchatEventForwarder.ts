@@ -36,44 +36,48 @@
  *         `bridgeLogKchatFileEventReceived`. The audit row
  *         records the event name, originating channel id,
  *         server-supplied file id, and a `triggered_reindex`
- *         boolean. The flag is currently always `false` from
- *         the Node side — the previous draft consulted the
- *         source registry here to set it true on a hit, but
- *         the second/third-pass Devin Review on PR #43 removed
- *         both the reindex call (the file isn't on disk yet)
- *         and the lookup helper (no remaining callers). The
- *         field is preserved on the audit row + napi boundary
- *         as a reserved slot for the future auto-sync iteration
- *         described in step `d` below, so the audit row text
- *         format does not have to change when that work lands.
- *         Other event types (chat `posted`, membership changes,
- *         presence) are NOT audited at the per-event
- *         granularity — that would flood the audit log with
- *         content most operators don't want to grep.
+ *         boolean. Block B Task 2 (this commit) now flips that
+ *         flag from "always false" to actually reflect whether
+ *         the targeted single-file sync (step `d`) accepted the
+ *         event — `true` iff the channel is linked as a
+ *         `SourceType::Kchat` source AND the indexer ingested
+ *         the freshly downloaded file. Other event types
+ *         (chat `posted`, membership changes, presence) are
+ *         NOT audited at the per-event granularity — that
+ *         would flood the audit log with content most operators
+ *         don't want to grep.
  *
- *      d. The WS forwarder does NOT trigger a file download or
- *         a source reindex on `file_added`. A `file_added` event
- *         arrives the moment the KChat server accepts an upload
- *         from another client — the file bytes are NOT on disk
- *         in our local cache directory at that point. Calling
- *         `bridgeReindexSource` here would just walk an empty
- *         cache dir under the source manager mutex (blocking the
- *         napi worker pool's single thread for the duration), find
- *         no new bytes, and exit; a guaranteed no-op that also
- *         introduces UI jank under `file_added` bursts.
+ *      d. **Targeted single-file sync** (Block B Task 2). On
+ *         `file_added`, after the audit step above, the
+ *         forwarder fetches the file metadata from the KChat
+ *         REST endpoint, downloads the bytes into the channel's
+ *         local cache dir under a sanitised + deduped basename
+ *         (`kchatChannelSyncer.downloadKchatFileToCache`), then
+ *         calls `bridgeIndexKchatFile(cacheDir, basename)` to
+ *         have the substrate index ONLY that file (an O(1)
+ *         reindex of the newly arrived document, vs. the
+ *         O(files-in-channel) full walk the 30 s sidebar
+ *         reconciliation poll performs).
  *
- *         File ingestion is the responsibility of the channel-
- *         sync pipeline reachable via `sources:addKchatChannel`
- *         (`runAddKchatChannel` in `ipc/kchat.ts`). The sidebar's
- *         30 s reconciliation poll already invokes that pipeline
- *         on every tick, so a `file_added` event ultimately gets
- *         indexed within one poll cycle of arrival. A future
- *         iteration may move the auto-download trigger onto the
- *         WS forwarder by extracting `runAddKchatChannel` into a
- *         shared service that's callable from both the IPC
- *         handler and the forwarder; this PR explicitly does not
- *         take on that scope (it would require hoisting ~300 lines
- *         and reworking the in-flight dedupe Map ownership).
+ *         All single-file work runs under
+ *         `withChannelSyncLock(channelId)` so it cannot race
+ *         with a concurrent full sync (`runAddKchatChannel`
+ *         in `ipc/kchat.ts`) — both paths share the manifest
+ *         and `seenNames` dedupe set via the syncer module,
+ *         and the lock serialises their writes. A full sync
+ *         already in progress when the WS event arrives will
+ *         complete first; if it happens to include the new
+ *         file (very likely, since the full sync re-walks the
+ *         server roster), `bridgeIndexKchatFile` short-circuits
+ *         on the content-hash dedupe path in the substrate and
+ *         no duplicate work happens.
+ *
+ *         An unlinked channel (no `SourceType::Kchat` source
+ *         row for the cache dir) early-exits before any
+ *         download — the bridge call is an O(log n) lookup on
+ *         the composite `idx_sources_type_path` index — and
+ *         the audit row records `triggered_reindex=false` for
+ *         the event.
  *
  *   2. Window lifecycle cleanup: when a renderer window closes,
  *      its ring buffer is released so the forwarder doesn't
@@ -88,9 +92,18 @@
  * plain `Array` capped at {@link RING_BUFFER_CAP} entries.
  */
 
+import * as fs from "fs/promises";
+import * as path from "path";
 import { BrowserWindow } from "electron";
 import type { NativeBridge } from "../appState";
 import type { KchatClient } from "./kchatClient";
+import {
+  downloadKchatFileToCache,
+  readManifest,
+  withChannelSyncLock,
+  writeManifest,
+} from "./kchatChannelSyncer";
+import { kchatChannelCacheDir } from "./kchatPaths";
 import type {
   KchatConnectionState,
   KchatWebSocketEvent,
@@ -283,6 +296,17 @@ export class KchatEventForwarder {
   private unsubscribeWs: (() => void) | null = null;
   private unsubscribeStatus: (() => void) | null = null;
   /**
+   * Reference to the client passed to `start()`. The forwarder
+   * retains it so the Block B Task 2 single-file sync
+   * (`handleFileAdded`) can call `client.getFileInfo` /
+   * `client.downloadFile` without re-resolving via the auth
+   * service (which would create a circular `appState` ↔
+   * `kchatEventForwarder` import — exactly the cycle the ninth-
+   * pass Devin Review on PR #43 told us to avoid). Cleared on
+   * `dispose()`.
+   */
+  private client: KchatClient | null = null;
+  /**
    * Set to `true` by `dispose()`, reset to `false` by `start()`.
    *
    * The forwarder defers per-window drains to a microtask via
@@ -390,6 +414,7 @@ export class KchatEventForwarder {
     // would stay sticky after the first dispose and silently
     // drop every subsequent event.
     this.disposed = false;
+    this.client = client;
     this.unsubscribeWs = client.onWebSocketEvent((event) => {
       try {
         this.handleEvent(event);
@@ -443,6 +468,7 @@ export class KchatEventForwarder {
     }
     this.windowDestroyHandlers = [];
     this.windowStates.clear();
+    this.client = null;
   }
 
   /**
@@ -633,38 +659,66 @@ export class KchatEventForwarder {
   }
 
   /**
-   * Side-effect path for `file_added` events: append one audit row.
+   * Side-effect path for `file_added` events: targeted single-
+   * file sync + audit row.
    *
-   * Currently has no `await` expressions — the bridge call below is
-   * a synchronous napi function returning `napi::Result<()>`, not a
-   * Promise — so the returned Promise resolves synchronously and the
-   * `.catch()` at the call site never fires under normal operation.
-   * The `async` keyword and the call-site `.catch()` are kept
-   * deliberately, not as redundant cosmetics:
+   * Block B Task 2 (Phase 11) — Block A and Task 1 audited the
+   * event but did nothing else; the file would land in the
+   * index only when the next 30 s sidebar reconciliation poll
+   * happened to call `runAddKchatChannel` (which re-walks the
+   * channel roster and indexes anything new). Task 2 closes
+   * that latency gap with a targeted O(1) sync: download the
+   * one new file, write it under a sanitised name into the
+   * channel's cache dir, and tell the substrate to index that
+   * one file.
    *
-   *   1. The forward-looking design for Block B (see top-of-file
-   *      doc, step `d`) extracts `runAddKchatChannel` from
-   *      `ipc/kchat.ts` into a shared service that the forwarder
-   *      calls on `file_added` to download the new file's bytes
-   *      into the cache and invoke `bridgeReindexSource`. That
-   *      service is genuinely async (HTTP fetch + filesystem
-   *      writes), so this method WILL grow `await` expressions once
-   *      that work lands. Removing `async` now means re-adding it
-   *      then, plus re-adding the call-site `.catch()` — a churn
-   *      footprint that risks the call site silently shipping an
-   *      unhandled rejection if a future contributor forgets one
-   *      of the two halves.
+   * Implementation outline (all inside the per-channel sync
+   * lock so the full sync and any concurrent single-file syncs
+   * for the same channel cannot interleave):
    *
-   *   2. The inner try/catch already swallows synchronous bridge
-   *      errors, but does NOT catch errors thrown from a future
-   *      `await` (those would reject the returned Promise instead).
-   *      Keeping `.catch()` at the call site preserves the
-   *      "best-effort audit, never wedge the forwarder" guarantee
-   *      across both shapes (synchronous today, awaiting tomorrow).
+   *   1. Resolve `channelId` and `fileId` from the event view.
+   *      Drop the event if either is missing — a malformed WS
+   *      payload should never be allowed to throw out of the
+   *      forwarder.
+   *   2. Compute `cacheDir = kchatChannelCacheDir(channelId)`
+   *      and ask the substrate via
+   *      `bridgeIsKchatChannelLinked(cacheDir)` whether a
+   *      `SourceType::Kchat` source row exists for this
+   *      channel. Unlinked channels short-circuit: audit
+   *      `triggered_reindex=false` and return — there is no
+   *      indexer state to update.
+   *   3. Under `withChannelSyncLock(channelId)`:
+   *      a. Re-check linked status (paranoia in case
+   *         `bridgeRemoveSource` raced between steps 2 and 3).
+   *      b. `client.getFileInfo(fileId)` to resolve the
+   *         server-supplied `name` / `extension` / `size`.
+   *      c. Read the channel's manifest. If `fi.id` is already
+   *         recorded AND the on-disk file still exists, skip
+   *         the download (KChat file content is immutable per
+   *         object-id) and proceed to step (e) with the
+   *         recorded name.
+   *      d. Otherwise call `downloadKchatFileToCache` with a
+   *         `seenNames` set seeded from the manifest's values
+   *         so the new file cannot collide with an
+   *         already-stored basename.
+   *      e. Write the updated manifest before the index call
+   *         so a partial-failure mid-sync still records the
+   *         bytes that landed on disk; the indexer's next
+   *         full-sync pass would otherwise re-download the
+   *         file.
+   *      f. Call `bridgeIndexKchatFile(cacheDir, basename)`
+   *         and observe the outcome.
+   *   4. Audit `bridgeLogKchatFileEventReceived` with
+   *      `triggered_reindex = outcome.wasLinked && outcome.indexed`
+   *      — i.e. the indexer actually accepted the event,
+   *      not just that we audited it.
    *
-   * Fifth-pass Devin Review on PR #43 (`ANALYSIS_pr-review-job-...0004`).
+   * Errors at every step are caught and audit `triggered_reindex=false`
+   * so a transient REST failure / disk error / containment
+   * rejection still surfaces in the audit log with the correct
+   * semantics. Errors never propagate back into the forwarder's
+   * fire-and-forget event loop.
    */
-  // eslint-disable-next-line @typescript-eslint/require-await
   private async handleFileAdded(
     view: KchatWebSocketEventView,
   ): Promise<void> {
@@ -679,40 +733,210 @@ export class KchatEventForwarder {
     const channelId = view.channelId;
     const fileId =
       typeof view.data.file_id === "string" ? view.data.file_id : null;
+    const client = this.client;
 
-    // No source-lookup call: the previous draft of this method
-    // looked up the linked source for `channelId` so it could
-    // (a) trigger a reindex and (b) record whether the channel
-    // was linked as `triggered_reindex` on the audit row. Both
-    // motivations went away in the second-pass Devin Review
-    // sweep on PR #43:
-    //   - (a) was removed (see top-of-file doc block: the file
-    //     isn't on disk at `file_added` time, so reindex is a
-    //     blocking no-op).
-    //   - (b) was downgraded: passing the lookup result through
-    //     a field literally named `triggered_reindex` would be
-    //     a misleading semantic for ops grep. We pass `false`
-    //     unconditionally and rely on operators querying the
-    //     source registry directly when they need to know which
-    //     channels are linked.
-    // The field is preserved (rather than removed from the audit
-    // signature) so it stays available for the future iteration
-    // that wires `runAddKchatChannel` into the WS forwarder.
+    // Trust-boundary validation: an event with a missing channel
+    // id or file id can't drive a targeted sync — drop it
+    // silently (the audit log still records the event below).
+    if (channelId === null || fileId === null || client === null) {
+      this.safeAuditFileAdded(bridge, view.event, channelId, fileId, false);
+      return;
+    }
 
+    // Linked-channel fast path: skip the WS-driven sync entirely
+    // when no source row exists for `cacheDir`. The bridge call
+    // is an O(log n) lookup on `idx_sources_type_path`, so the
+    // unlinked-channel case (the majority of `file_added`
+    // events: a user uploads to a channel they haven't linked
+    // as a corpus source) costs ~one SQLite SELECT and no I/O.
+    const cacheDir = kchatChannelCacheDir(channelId);
+    let isLinked = false;
+    try {
+      isLinked = bridge.bridgeIsKchatChannelLinked(cacheDir);
+    } catch (err) {
+      console.error(
+        "[KchatEventForwarder] bridgeIsKchatChannelLinked failed:",
+        err,
+      );
+    }
+    if (!isLinked) {
+      this.safeAuditFileAdded(bridge, view.event, channelId, fileId, false);
+      return;
+    }
+
+    let triggeredReindex = false;
+    try {
+      triggeredReindex = await withChannelSyncLock(channelId, async () => {
+        // Re-check linked status under the lock — a concurrent
+        // `bridgeRemoveSource` may have unlinked the channel
+        // between the pre-lock check and the lock acquisition.
+        if (!bridge.bridgeIsKchatChannelLinked(cacheDir)) return false;
+
+        // Make sure `cacheDir` exists. The full-sync path
+        // creates it; in production the forwarder will only
+        // reach here for an already-linked source (cacheDir
+        // exists). Belt-and-braces for tests that exercise
+        // the forwarder without running the full sync first.
+        await fs.mkdir(cacheDir, { recursive: true });
+
+        const fi = await client.getFileInfo(fileId);
+
+        const manifest = await readManifest(cacheDir, channelId);
+        // Seed `seenNames` from the manifest's recorded names so
+        // a single-file sync cannot overwrite the bytes of a
+        // file the previous full sync wrote.
+        const seenNames = new Set<string>(Object.values(manifest.files));
+
+        let finalName: string | null = null;
+        const recorded = manifest.files[fi.id];
+        if (typeof recorded === "string" && recorded.length > 0) {
+          // Fast-path: the previous full sync already wrote this
+          // file. Verify the bytes are still on disk; if they
+          // are, skip the download and proceed straight to the
+          // index call (the substrate's content-hash dedupe
+          // will short-circuit if the file hasn't changed,
+          // since KChat content is immutable per object-id).
+          //
+          // Defence-in-depth containment: the manifest is a
+          // human-readable sidecar JSON file. While we write it
+          // with already-sanitised names, an attacker with
+          // filesystem access could tamper with it to inject
+          // an escaping path (`..`, absolute prefix, etc.). We
+          // re-validate the recorded name against `cacheDir`
+          // BEFORE calling `fs.access` so we don't even probe
+          // the existence of a path outside the cache directory
+          // (probing alone is an information leak). This mirrors
+          // the IPC handler's containment check on the same
+          // manifest-supplied value.
+          const resolvedCacheDir = path.resolve(cacheDir);
+          const recordedPath = path.resolve(cacheDir, recorded);
+          if (
+            recordedPath !== resolvedCacheDir &&
+            recordedPath.startsWith(resolvedCacheDir + path.sep)
+          ) {
+            try {
+              await fs.access(recordedPath);
+              finalName = recorded;
+            } catch {
+              // Bytes missing on disk — fall through and
+              // re-download. `seenNames` already contains
+              // `recorded`; remove it so the dedupe logic
+              // doesn't suffix the re-download into a
+              // different name.
+              seenNames.delete(recorded);
+            }
+          } else {
+            // Manifest entry escapes `cacheDir`. Refuse the
+            // fast-path entirely — fall through to the download
+            // path so `downloadKchatFileToCache` re-runs the
+            // full sanitise+dedupe+containment pipeline and
+            // (almost certainly) lands on a different,
+            // contained name. Drop the tampered name from
+            // `seenNames` so the dedupe logic doesn't suffix
+            // the legitimate download.
+            seenNames.delete(recorded);
+          }
+        }
+
+        if (finalName === null) {
+          const result = await downloadKchatFileToCache(
+            client,
+            cacheDir,
+            fi,
+            seenNames,
+          );
+          if (!result.wrote || result.finalName === null) {
+            // Containment-check rejection (the server-supplied
+            // name escaped `cacheDir` even after sanitisation
+            // and dedupe). Audit-log the OFFENDING sanitised
+            // name (preserved in `result.finalName` even on
+            // rejection) so operators see exactly which name
+            // escaped, then short-circuit. The `?? ""`
+            // fallback covers the unreachable case where the
+            // syncer couldn't even construct a basename.
+            try {
+              bridge.bridgeLogKchatFileDownloaded(
+                channelId,
+                result.finalName ?? "",
+                0,
+              );
+            } catch {
+              /* audit failure is non-fatal */
+            }
+            return false;
+          }
+          finalName = result.finalName;
+          try {
+            bridge.bridgeLogKchatFileDownloaded(
+              channelId,
+              finalName,
+              result.bytesWritten,
+            );
+          } catch {
+            /* audit failure is non-fatal */
+          }
+          // Persist the manifest before the index call so a
+          // partial-failure mid-sync still records the bytes
+          // that landed on disk. The next full sync would
+          // otherwise re-download.
+          await writeManifest(cacheDir, {
+            ...manifest,
+            files: { ...manifest.files, [fi.id]: finalName },
+          });
+        }
+
+        // Substrate index of one file only. Returns
+        // `{ wasLinked, indexed, sourceId }` — `wasLinked` is
+        // always `true` here (we re-checked above) but is
+        // surfaced for completeness; `indexed` is `false` if
+        // the substrate's hash dedupe found the same content
+        // already indexed.
+        const outcome = bridge.bridgeIndexKchatFile(cacheDir, finalName);
+        return outcome.wasLinked && outcome.indexed;
+      });
+    } catch (err) {
+      // Any error inside the lock — REST failure, disk error,
+      // bridge throw — degrades to `triggered_reindex=false`.
+      // The audit row still lands so operators can correlate
+      // the failure with the WS event.
+      console.error(
+        "[KchatEventForwarder] single-file sync failed:",
+        err,
+      );
+      triggeredReindex = false;
+    }
+
+    this.safeAuditFileAdded(
+      bridge,
+      view.event,
+      channelId,
+      fileId,
+      triggeredReindex,
+    );
+  }
+
+  /**
+   * Audit-log `bridgeLogKchatFileEventReceived` while swallowing
+   * any throw — the audit path is best-effort and must never
+   * wedge the forwarder. Used at every exit point of
+   * `handleFileAdded` (early returns, lock-protected work, error
+   * paths) so the field semantics stay consistent.
+   */
+  private safeAuditFileAdded(
+    bridge: NativeBridge,
+    event: string,
+    channelId: string | null,
+    fileId: string | null,
+    triggeredReindex: boolean,
+  ): void {
     try {
       bridge.bridgeLogKchatFileEventReceived(
-        view.event,
+        event,
         channelId,
         fileId,
-        // Always false in the current implementation — see the
-        // block above. The field is the historical
-        // `triggered_reindex` slot, kept on the audit row text
-        // so a future auto-sync iteration can repopulate it
-        // without a schema break.
-        false,
+        triggeredReindex,
       );
     } catch (err) {
-      // Audit-log failures should never wedge the forwarder.
       console.error(
         "[KchatEventForwarder] audit log failed:",
         err,

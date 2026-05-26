@@ -36,6 +36,12 @@ import {
 import { KchatRequestError } from "../kchat/kchatClient";
 import { kchatChannelCacheDir } from "../kchat/kchatPaths";
 import {
+  downloadKchatFileToCache,
+  readManifest,
+  withChannelSyncLock,
+  writeManifest,
+} from "../kchat/kchatChannelSyncer";
+import {
   KchatChannel,
   KchatChannelMember,
   KchatConnectionState,
@@ -67,97 +73,14 @@ type RendererFileInfo = Pick<
   "id" | "name" | "size" | "mime_type" | "extension" | "create_at"
 >;
 
-/**
- * On-disk record of which KChat files have already been downloaded
- * to a channel's local cache, and under which on-disk name.
- *
- * The manifest is the source of truth for convergent sync: on every
- * `sources:addKchatChannel` (re-)sync we (a) skip re-downloading
- * files whose `fi.id` already appears in the manifest AND whose
- * recorded on-disk file still exists, and (b) unlink any files
- * whose `fi.id` is no longer present on the server roster (server-
- * side deletion between syncs). Without the manifest the previous
- * behaviour was "download what's there, never clean up" — stale
- * files that had been removed from the channel remained on disk
- * and continued to be indexed (seventh-pass Devin Review
- * ANALYSIS_0003).
- *
- * The manifest deliberately lives OUTSIDE `cacheDir` (it sits as a
- * sibling next to the per-channel cache directory) so the indexer
- * — which scans every file inside `cacheDir` — never picks it up
- * as a corpus document.
- */
-interface KchatChannelManifest {
-  /** Schema version; bumped when the on-disk shape changes. */
-  version: 1;
-  /** Channel id the manifest belongs to (sanity-check on load). */
-  channelId: string;
-  /**
-   * Map from KChat file id (`fi.id`) to the on-disk basename inside
-   * `cacheDir` we wrote the bytes under. Recorded names are the
-   * already-sanitised, already-deduped form (i.e. the same string
-   * we passed to `fs.writeFile` last time around), so consumers do
-   * not need to re-run the dedupe step.
-   */
-  files: Record<string, string>;
-}
-
-/** Path of the sidecar manifest file for a given channel cacheDir. */
-function manifestPathFor(cacheDir: string): string {
-  // `<parent>/<id>/` → `<parent>/<id>.manifest.json` so the manifest
-  // is a sibling of `cacheDir`, never inside it. This guarantees
-  // `bridgeAddKchatChannel(cacheDir)` — which scans `cacheDir` —
-  // cannot accidentally index the manifest as a corpus document.
-  return `${cacheDir.replace(/[/\\]$/, "")}.manifest.json`;
-}
-
-async function readManifest(
-  cacheDir: string,
-  channelId: string,
-): Promise<KchatChannelManifest> {
-  try {
-    const raw = await fs.readFile(manifestPathFor(cacheDir), "utf-8");
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      (parsed as { version?: unknown }).version === 1 &&
-      (parsed as { channelId?: unknown }).channelId === channelId &&
-      typeof (parsed as { files?: unknown }).files === "object" &&
-      (parsed as { files: unknown }).files !== null
-    ) {
-      // Re-validate each entry so a tampered manifest cannot inject
-      // arbitrary disk names.
-      const files: Record<string, string> = {};
-      for (const [k, v] of Object.entries(
-        (parsed as { files: Record<string, unknown> }).files,
-      )) {
-        if (typeof k === "string" && typeof v === "string") files[k] = v;
-      }
-      return { version: 1, channelId, files };
-    }
-  } catch {
-    // No manifest yet (first sync) or the file is unreadable / not
-    // JSON / wrong shape. Treat as empty — the worst case is one
-    // extra re-download of existing files on the next run.
-  }
-  return { version: 1, channelId, files: {} };
-}
-
-async function writeManifest(
-  cacheDir: string,
-  manifest: KchatChannelManifest,
-): Promise<void> {
-  // Write to a temp file then rename to make the manifest update
-  // atomic from a crash-recovery perspective: a torn JSON file
-  // would be rejected by `readManifest` and the next sync would
-  // fall back to "download everything", which is wasteful but not
-  // unsafe. The atomic-rename keeps the steady-state case clean.
-  const target = manifestPathFor(cacheDir);
-  const tmp = `${target}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(manifest));
-  await fs.rename(tmp, target);
-}
+// `KchatChannelManifest` + `manifestPathFor` + `readManifest` +
+// `writeManifest` live in `../kchat/kchatChannelSyncer` so the
+// full-channel sync (here) and the Block B Task 2 single-file
+// sync (the WS forwarder) share the exact same on-disk shape,
+// containment check, and convergent-sync logic. Re-importing the
+// helpers keeps both code paths in lockstep — a regression in
+// either layer would have otherwise let server-side deletions
+// and WS-driven writes desynchronise the manifest.
 
 const VALID_FORMATS = new Set([
   "markdown",
@@ -804,35 +727,32 @@ export function registerKchatHandlers(): void {
 
   // --- Channel-backed sources ---
   //
-  // Per-channel-id in-flight deduplication (tenth-pass Devin Review
-  // ANALYSIS_0006). `sources:addKchatChannel` is a multi-step
-  // operation: it downloads files, writes a manifest, runs the
-  // indexer, and registers the source row. Electron's `ipcMain.handle`
-  // dispatches calls concurrently, so a double-click on "Add channel",
-  // a programmatic caller, or a fast click before the UI's `busy`
-  // state has propagated could fire two simultaneous syncs for the
-  // same `channelId`. Two concurrent syncs would race on:
-  //   * the same `cacheDir` (concurrent `fs.writeFile`s to the same
-  //     filename, manifest write-then-rename races),
-  //   * the same `bridgeAddKchatChannel(cacheDir)` call (which the
-  //     eighth-pass fix made idempotent on the *result*, but two
-  //     interleaved reindex passes still waste work),
-  //   * audit appends (two `bridgeLogKchatChannelLinked` rows for
-  //     what users perceive as one operation).
+  // Two layers of concurrency control wrap every full channel sync:
   //
-  // We collapse N concurrent calls for the same `channelId` into 1
-  // shared `Promise`: the first call starts the work, every
-  // subsequent call (for the same `channelId`, while still in
-  // flight) returns the same `Promise` and therefore the same
-  // `{ sourceId, cacheDir }` outcome. Different channels run in
-  // parallel unimpeded; only same-channel-id calls dedupe.
+  //   1. **Per-channel-id in-flight DEDUPLICATION** (tenth-pass
+  //      Devin Review ANALYSIS_0006). `sources:addKchatChannel` is
+  //      a multi-step operation: it downloads files, writes a
+  //      manifest, runs the indexer, and registers the source row.
+  //      Electron's `ipcMain.handle` dispatches calls concurrently,
+  //      so a double-click on "Add channel", a programmatic caller,
+  //      or a fast click before the UI's `busy` state has
+  //      propagated could fire two simultaneous syncs for the same
+  //      `channelId`. We collapse N concurrent calls into 1 shared
+  //      `Promise`: the first starts the work, every subsequent
+  //      (for the same channel id, while still in flight) returns
+  //      the same `Promise` and therefore the same outcome. Without
+  //      this layer a second IPC call would land back-to-back full
+  //      syncs (after layer 2 serialised them) — wasted bandwidth.
   //
-  // We use a Map<channelId, Promise> rather than a per-channel mutex
-  // because a mutex would *serialise* — the second click would wait
-  // for the first sync to finish, then run another full sync. That
-  // would burn bandwidth on a redundant pass through the channel
-  // roster. Deduplication is the correct semantic: "this channel is
-  // syncing right now; here's the same answer."
+  //   2. **Per-channel-id `withChannelSyncLock`** (Block B Task 2).
+  //      Even with layer 1, a WS-driven single-file sync that
+  //      arrives mid-full-sync would race with the full sync's
+  //      manifest write (forwarder writes M ∪ {newFile}, then the
+  //      full sync's end-of-walk write replaces with stale M and
+  //      the new file is lost from the manifest). The lock
+  //      serialises full syncs and single-file syncs against each
+  //      other so manifest reads and writes are always sequential
+  //      per channel. Different channels remain parallel.
   const inFlightAddKchatChannel = new Map<
     string,
     Promise<{ sourceId: string; cacheDir: string }>
@@ -1001,63 +921,37 @@ export function registerKchatHandlers(): void {
             }
           }
 
-          const baseName = path.basename(fi.name);
-          const sanitisedId = fi.id.replace(/[^a-zA-Z0-9_-]/g, "_");
-          const idFallback = sanitisedId
-            ? `kchat-file-${sanitisedId}`
-            : `kchat-file-${page}-${idx}`;
-          const safeName =
-            baseName && baseName !== "." && baseName !== ".."
-              ? baseName
-              : idFallback;
-          // Dedupe within this channel sync: if we already wrote a
-          // file with this name on an earlier page (or earlier in
-          // this page), suffix the sanitised id between stem and
-          // extension so both files survive on disk. The fallback
-          // suffix uses the running `seenNames.size` if the
-          // primary `<stem>-<id>.<ext>` is also taken (shouldn't
-          // happen given the object-id invariant, but the
-          // containment + dedupe contract should hold even if a
-          // future server change relaxes id uniqueness).
-          let finalName = safeName;
-          if (seenNames.has(finalName)) {
-            const ext = path.extname(safeName);
-            const stem = ext
-              ? safeName.slice(0, safeName.length - ext.length)
-              : safeName;
-            const suffix = sanitisedId || `${page}-${idx}`;
-            finalName = `${stem}-${suffix}${ext}`;
-            if (seenNames.has(finalName)) {
-              finalName = `${stem}-${suffix}-${seenNames.size}${ext}`;
-            }
-          }
-          const targetPath = path.resolve(cacheDir, finalName);
-          if (
-            targetPath !== resolvedCacheDir &&
-            !targetPath.startsWith(resolvedCacheDir + path.sep)
-          ) {
-            // The sanitised path still escaped — skip and audit-log
-            // the rejection so operators can see a misbehaving
-            // server. We continue to the next file rather than
-            // aborting the entire sync.
-            bridge.bridgeLogKchatFileDownloaded(id, finalName, 0);
+          // Sanitised single-file download lives in
+          // `kchat/kchatChannelSyncer.ts` so the WS forwarder's
+          // single-file path uses the IDENTICAL basename
+          // sanitisation, dedupe, and containment logic. A
+          // regression in either layer would otherwise let a
+          // server-supplied filename escape the cache root.
+          const result = await downloadKchatFileToCache(
+            svc.getClient(),
+            cacheDir,
+            fi,
+            seenNames,
+            { page, idx },
+          );
+          if (!result.wrote || result.finalName === null) {
+            // Containment-check rejection — audit-log the OFFENDING
+            // sanitised name (preserved in `finalName` even on
+            // rejection) so operators can see exactly which
+            // server-supplied name escaped, then continue to the
+            // next file rather than aborting the whole sync.
+            bridge.bridgeLogKchatFileDownloaded(
+              id,
+              result.finalName ?? "",
+              0,
+            );
             continue;
           }
-          const bytes = await svc.getClient().downloadFile(fi.id);
-          await fs.writeFile(targetPath, bytes);
-          // Mark the name as taken AFTER the write succeeds so the
-          // ordering matches reality: `seenNames` is the set of
-          // names that actually have bytes on disk in this sync.
-          // If `downloadFile` / `writeFile` throw, the outer catch
-          // re-throws and the whole sync aborts; on retry,
-          // `seenNames` starts empty so a previously-failed name
-          // is not reserved (tenth-pass Devin Review ANALYSIS_0007).
-          seenNames.add(finalName);
-          currentFiles[fi.id] = finalName;
+          currentFiles[fi.id] = result.finalName;
           bridge.bridgeLogKchatFileDownloaded(
             id,
-            finalName,
-            bytes.byteLength,
+            result.finalName,
+            result.bytesWritten,
           );
         }
         if (files.length < PER_PAGE) break;
@@ -1195,7 +1089,16 @@ export function registerKchatHandlers(): void {
       // sync is running.
       const existing = inFlightAddKchatChannel.get(id);
       if (existing) return existing;
-      const work = runAddKchatChannel(id, name).finally(() => {
+      // Wrap the full-sync work in the per-channel sync lock so a
+      // WS-driven single-file sync (`KchatEventForwarder.handle-
+      // FileAdded`) and the full sync cannot interleave their
+      // manifest writes. Layer 1 (the dedupe map) collapses N
+      // concurrent IPC calls into 1; layer 2 (the lock) serialises
+      // the resulting work against any in-flight single-file sync
+      // for the same channel.
+      const work = withChannelSyncLock(id, () =>
+        runAddKchatChannel(id, name),
+      ).finally(() => {
         // Only clear if we still own the slot. (We always do under
         // single-threaded JS, but the explicit guard documents the
         // invariant and protects against a hypothetical future

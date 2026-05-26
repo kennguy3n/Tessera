@@ -371,6 +371,131 @@ impl SourceManager {
         })
     }
 
+    /// Returns whether a `SourceType::Kchat` source exists with the
+    /// given `cache_dir` registered as its `path`.
+    ///
+    /// The Block B Task 2 WS forwarder calls this on every
+    /// `file_added` event to decide whether to bother downloading
+    /// the new file's bytes: a channel that has never been linked
+    /// as a source (or has since been unlinked) should not trigger
+    /// disk I/O on the next push. The lookup is backed by the same
+    /// composite `idx_sources_type_path` index that
+    /// [`SourceManager::add_kchat_channel`] uses (O(log n) on the
+    /// row count, no allocation on the not-found path).
+    pub fn is_kchat_channel_linked(&self, cache_dir: &str) -> Result<bool> {
+        Ok(self
+            .store
+            .find_source_by_type_and_path(&tessera_core::SourceType::Kchat, cache_dir)?
+            .is_some())
+    }
+
+    /// Targeted single-file index for a KChat-channel source.
+    ///
+    /// The Block B Task 2 WebSocket forwarder calls this after
+    /// downloading the new file's bytes into the channel cache
+    /// directory so the indexer picks it up *immediately* instead
+    /// of waiting for the next 30 s reconciliation poll to invoke
+    /// the full `add_kchat_channel` walk. Re-walking the entire
+    /// directory on every `file_added` push would cost
+    /// O(files-in-channel) hash reads per event — fine for a
+    /// channel with 10 files, but a busy 5,000-file channel under
+    /// a burst of 10 simultaneous uploads would issue 50,000 hash
+    /// reads. The single-file path is O(1).
+    ///
+    /// Returns:
+    ///   - `Ok(None)` — no `SourceType::Kchat` row exists for
+    ///     `cache_dir`. The caller should skip indexing entirely
+    ///     and record `triggered_reindex = false`.
+    ///   - `Ok(Some((source_id, outcome)))` — the source exists.
+    ///     `outcome.indexed` is `true` when the file was newly
+    ///     indexed (or re-indexed because its content hash
+    ///     changed), `false` when the existing hash matched (a
+    ///     no-op skip — the WS event arrived for a file we'd
+    ///     already indexed via a prior full sync).
+    ///
+    /// Containment: `file_basename` is treated as untrusted and
+    /// MUST resolve to a path that lives strictly inside
+    /// `cache_dir`. `Path::join` accepts absolute paths
+    /// (overwriting the parent) and would otherwise let a
+    /// malicious server-supplied name like `/etc/passwd` escape
+    /// the cache root. The check rejects empty / `.` / `..` /
+    /// path-separator-containing basenames up-front, and after
+    /// joining re-validates with a prefix check on the
+    /// canonicalised parent so a symlink under the cache dir
+    /// cannot escape either. The Node-side syncer applies the
+    /// same belt-and-braces check before writing, so this is
+    /// defence-in-depth for the substrate boundary.
+    pub fn index_kchat_file(
+        &self,
+        cache_dir: &str,
+        file_basename: &str,
+    ) -> Result<Option<(SourceId, crate::indexer::IndexFileOutcome)>> {
+        // Reject names that don't behave like a single basename.
+        // `path::Path::file_name()` returns `None` for `.` / `..`
+        // / paths ending in a separator, but we also need to
+        // refuse names containing any path separator (so a
+        // server-supplied `subdir/file.txt` cannot drill into a
+        // subdirectory of the cache that the indexer would walk
+        // separately). The Node side ALSO sanitises with
+        // `path.basename(...)`, but accepting a richer name here
+        // would silently widen the surface a future refactor of
+        // the Node sanitiser could break.
+        if file_basename.is_empty()
+            || file_basename == "."
+            || file_basename == ".."
+            || file_basename.contains('/')
+            || file_basename.contains('\\')
+            || file_basename.contains('\0')
+        {
+            return Err(Error::InvalidPath(Path::new(file_basename).to_path_buf()));
+        }
+
+        let Some(source) = self
+            .store
+            .find_source_by_type_and_path(&tessera_core::SourceType::Kchat, cache_dir)?
+        else {
+            return Ok(None);
+        };
+
+        let cache_path = Path::new(cache_dir);
+        let target = cache_path.join(file_basename);
+
+        // Defence-in-depth containment: the joined path's parent
+        // (after stripping the basename) must equal cache_dir.
+        // We compare the canonical parent rather than the raw
+        // `cache_path` so a symlink under cache_dir that resolves
+        // out doesn't pass the check. Falling back to a
+        // string-prefix check when canonicalisation fails (e.g.
+        // because the cache_dir was removed between the lookup
+        // and this call) keeps the reject-by-default behaviour.
+        let canonical_parent = std::fs::canonicalize(cache_path).ok();
+        let canonical_target = std::fs::canonicalize(&target).ok();
+        if let (Some(parent), Some(t)) = (&canonical_parent, &canonical_target) {
+            let parent_with_sep = {
+                let mut s = parent.as_os_str().to_owned();
+                s.push(std::path::MAIN_SEPARATOR.to_string());
+                s
+            };
+            if !t
+                .as_os_str()
+                .to_string_lossy()
+                .starts_with(&*parent_with_sep.to_string_lossy())
+            {
+                return Err(Error::InvalidPath(target));
+            }
+        }
+        // If either side failed to canonicalise, fall through —
+        // the file may not exist yet (the caller wrote and
+        // immediately reindexed under a tight race) or the
+        // cache_dir vanished; the indexer will surface a richer
+        // error below.
+
+        let outcome = self
+            .indexer
+            .index_single_file(&source.id, &target, &self.store)?;
+        Ok(Some((source.id, outcome)))
+    }
+
     pub fn remove_source(&self, source_id: &SourceId) -> Result<()> {
         self.store.remove_source(source_id)
     }
@@ -754,6 +879,120 @@ mod tests {
             "distinct cache dirs must get distinct SourceIds"
         );
         assert_eq!(manager.list_sources().unwrap().len(), 2);
+    }
+
+    // ----------------------------------------------------------------
+    // Block B Task 2: targeted single-file index for KChat WS push
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn is_kchat_channel_linked_returns_false_when_no_source_exists() {
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        assert!(!manager
+            .is_kchat_channel_linked("/tmp/never-linked")
+            .unwrap());
+    }
+
+    #[test]
+    fn is_kchat_channel_linked_returns_true_after_add_kchat_channel() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.add_kchat_channel(cache_dir).unwrap();
+        assert!(manager.is_kchat_channel_linked(cache_dir).unwrap());
+    }
+
+    #[test]
+    fn index_kchat_file_returns_none_when_channel_is_not_linked() {
+        // The WS forwarder calls this on every `file_added` event;
+        // for channels the user has not linked as a source, the
+        // call must short-circuit so the audit row carries
+        // `triggered_reindex = false` and no indexer work is done.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("doc.txt"), "kchat content").unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        // Note: no add_kchat_channel call — the cache dir exists
+        // on disk but is not registered as a source.
+        let outcome = manager
+            .index_kchat_file(dir.path().to_str().unwrap(), "doc.txt")
+            .unwrap();
+        assert!(outcome.is_none());
+    }
+
+    #[test]
+    fn index_kchat_file_indexes_newly_arrived_file_on_linked_channel() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.add_kchat_channel(cache_dir).unwrap();
+        // Simulate the forwarder writing a new file to disk after
+        // the WS push arrived but before the next full reconciliation.
+        std::fs::write(dir.path().join("pushed.txt"), "ws-driven file").unwrap();
+
+        let outcome = manager
+            .index_kchat_file(cache_dir, "pushed.txt")
+            .unwrap()
+            .expect("linked channel should return Some");
+        let (_source_id, file_outcome) = outcome;
+        assert!(
+            file_outcome.indexed,
+            "first index_kchat_file call for a fresh file must index it"
+        );
+    }
+
+    #[test]
+    fn index_kchat_file_is_idempotent_on_same_content_hash() {
+        // Second call for the same file returns indexed=false
+        // (the hash matched, no re-extraction needed). This
+        // matters because the WS forwarder may re-fire `file_added`
+        // for a file that a concurrent full sync has already
+        // indexed; the single-file path must not double-chunk it.
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.add_kchat_channel(cache_dir).unwrap();
+        std::fs::write(dir.path().join("pushed.txt"), "ws-driven file").unwrap();
+
+        manager
+            .index_kchat_file(cache_dir, "pushed.txt")
+            .unwrap()
+            .unwrap();
+        let (_source_id, second_outcome) = manager
+            .index_kchat_file(cache_dir, "pushed.txt")
+            .unwrap()
+            .unwrap();
+        assert!(
+            !second_outcome.indexed,
+            "second call with unchanged content must skip on hash match"
+        );
+    }
+
+    #[test]
+    fn index_kchat_file_rejects_path_traversal_basenames() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.add_kchat_channel(cache_dir).unwrap();
+
+        // The Node-side syncer applies `path.basename(...)` before
+        // ever calling here, so these cases shouldn't reach the
+        // substrate in practice. The substrate-boundary check is
+        // defence-in-depth.
+        for malicious in [
+            "..",
+            ".",
+            "",
+            "../etc/passwd",
+            "subdir/file.txt",
+            "windows\\path.txt",
+            "with\0nul.txt",
+        ] {
+            let err = manager.index_kchat_file(cache_dir, malicious);
+            assert!(
+                err.is_err(),
+                "index_kchat_file must reject malicious basename {malicious:?}"
+            );
+        }
     }
 
     // ----------------------------------------------------------------

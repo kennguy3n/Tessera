@@ -154,6 +154,38 @@ export interface KchatChannelAddOutcomeInfo {
 }
 
 /**
+ * Result of [`NativeBridge.bridgeIndexKchatFile`]. Returned by the
+ * substrate's `SourceManager::index_kchat_file`, the targeted
+ * single-file index path the Block B Task 2 WS forwarder calls on
+ * every `file_added` event after writing the new bytes to the
+ * channel cache directory.
+ *
+ * Field semantics drive the `triggered_reindex` flag the forwarder
+ * records on the `KchatFileEventReceived` audit row:
+ *   - `wasLinked = false` → channel is not registered as a source;
+ *     forwarder records `triggered_reindex = false` and skipped any
+ *     network / disk work.
+ *   - `wasLinked = true && indexed = true` → file was newly indexed
+ *     (or re-indexed because its content hash changed); forwarder
+ *     records `triggered_reindex = true`.
+ *   - `wasLinked = true && indexed = false` → file's content hash
+ *     matched an existing index entry (a concurrent full sync got
+ *     there first); forwarder records `triggered_reindex = false`
+ *     so the audit log accurately reflects whether THIS event
+ *     drove indexer work.
+ *
+ * `sourceId` is populated only when `wasLinked = true`; it is an
+ * empty string otherwise so the napi serialization layer doesn't
+ * need an `Option<String>` (consumers never read `sourceId` when
+ * `wasLinked` is false).
+ */
+export interface KchatFileIndexOutcomeInfo {
+  wasLinked: boolean;
+  indexed: boolean;
+  sourceId: string;
+}
+
+/**
  * Renderer-facing search result. The IPC handler maps from the
  * Rust-side `SearchHitInfo` (which uses `content` / `relevance` /
  * `chunkIndex`) to this shape (`chunkContent` / `relevanceScore`,

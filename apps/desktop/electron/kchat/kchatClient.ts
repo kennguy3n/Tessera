@@ -747,6 +747,34 @@ export class KchatClient {
   }
 
   /**
+   * Fetch the metadata for a single file by id.
+   *
+   * Used by the Block B Task 2 WS forwarder: a `file_added` event
+   * carries only the `file_id`, so the forwarder calls
+   * `getFileInfo(fileId)` to resolve the server-side `name` /
+   * `extension` / `size` before downloading the bytes. The full
+   * `listChannelFiles` paginated walk would otherwise need to
+   * sweep up to `n / perPage` pages just to find the metadata for
+   * one file.
+   *
+   * Trust boundary: `fileId` arrives via a WS broadcast payload
+   * whose source is the KChat server. We re-validate at the URL-
+   * interpolation site so a malformed id cannot pivot into a
+   * different REST endpoint. The returned `KchatFileInfo` is
+   * re-validated against the same server-object-id shape used in
+   * `listChannelFiles`.
+   */
+  async getFileInfo(fileId: string): Promise<KchatFileInfo> {
+    assertKchatServerObjectId(fileId, "fileId");
+    const fi = await this.request<KchatFileInfo>(
+      "GET",
+      `/api/v4/files/${fileId}/info`,
+    );
+    assertKchatServerObjectId(fi.id, "fileInfo.id");
+    return fi;
+  }
+
+  /**
    * Upload `bytes` as `filename` into `channelId`.
    *
    * Uses the KChat `/files` endpoint with a multipart body. The

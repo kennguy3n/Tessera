@@ -96,6 +96,23 @@ const bridgeMock = {
   // bridge type-check against it. Tests for the forwarder live in
   // `__tests__/kchatEventForwarder.test.ts`.
   bridgeLogKchatFileEventReceived: vi.fn(),
+  // Block B Task 2: napi pass-throughs called by the WS forwarder
+  // on every `file_added` event. They are not exercised by any
+  // `kchat:*` IPC handler, but the mock surface must mirror the
+  // production `NativeBridge` shape so callers (and the type
+  // checker) see a consistent type. Default returns:
+  //   - `bridgeIsKchatChannelLinked` → `false` (unlinked, the
+  //     forwarder's no-op branch — safe default for IPC tests).
+  //   - `bridgeIndexKchatFile` → `{ wasLinked: false, indexed:
+  //     false, sourceId: "" }`. Tests that exercise the
+  //     linked-channel path live in `kchatEventForwarder.test.ts`
+  //     and override these.
+  bridgeIsKchatChannelLinked: vi.fn(() => false),
+  bridgeIndexKchatFile: vi.fn(() => ({
+    wasLinked: false,
+    indexed: false,
+    sourceId: "",
+  })),
 };
 
 // `KchatAuthService` stub. `getClient()` returns an object with the

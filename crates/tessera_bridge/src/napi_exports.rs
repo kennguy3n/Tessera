@@ -241,6 +241,54 @@ pub fn bridge_add_kchat_channel(
     Ok(outcome)
 }
 
+/// Returns whether a KChat source row exists for the given
+/// `cache_dir`. Called by the Block B Task 2 WS forwarder on every
+/// `file_added` event so a push for an unlinked channel never
+/// triggers a download. Lookup is O(log n) on the
+/// `idx_sources_type_path` composite index — cheap enough to call
+/// once per push.
+#[napi]
+pub fn bridge_is_kchat_channel_linked(cache_dir: String) -> napi::Result<bool> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::is_kchat_channel_linked(&mgr, &cache_dir)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Targeted single-file index for a KChat-channel source.
+///
+/// Called by the Block B Task 2 WS forwarder after it has
+/// downloaded the bytes referenced by a `file_added` event into
+/// the channel cache directory. The substrate side re-applies
+/// path-traversal containment on `file_basename` as
+/// defence-in-depth — the Node side also sanitises with
+/// `path.basename(...)`, but a regression in either layer would
+/// otherwise let a malicious server-supplied name escape the
+/// cache root.
+///
+/// The returned outcome's `was_linked && indexed` AND condition
+/// is what the forwarder records as the `triggered_reindex` flag
+/// on the `KchatFileEventReceived` audit row, so the audit log
+/// accurately reflects whether THIS event drove indexer work
+/// (vs. arriving for a channel that's not linked, or for a file
+/// a concurrent full sync had already indexed).
+#[napi]
+pub fn bridge_index_kchat_file(
+    cache_dir: String,
+    file_basename: String,
+) -> napi::Result<sources::KchatFileIndexOutcomeInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::index_kchat_file(&mgr, &cache_dir, &file_basename)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 #[napi]
 pub fn bridge_list_sources() -> napi::Result<Vec<sources::SourceInfo>> {
     let s = state()?;
