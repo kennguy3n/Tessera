@@ -1989,6 +1989,41 @@ pub fn bridge_log_kchat_channel_access_revoked(
     Ok(())
 }
 
+/// Append a `KchatSourceCryptoshredded` audit row (Block B Task 4,
+/// Phase 11). Called by the Node-side `KchatEventForwarder` /
+/// `kchat:disconnect` IPC handler whenever a revoke transition
+/// triggers the substrate's inline cryptoshred. The `reason`
+/// matches the sibling `KchatChannelAccessRevoked` row so the two
+/// can be correlated by an operator's grep; `chunks_dropped` /
+/// `files_dropped` are the counts returned by the bridge's
+/// `bridge_revoke_kchat_source` / `bridge_refresh_kchat_acl`
+/// outcome structs.
+///
+/// The row is emitted on EVERY revoke outcome (including
+/// `already_revoked` and the refresh-driven `revoked` path) so
+/// the audit trail shows both "we scrubbed N rows just now" and
+/// "the source was already empty when we re-scrubbed it" — the
+/// latter being the operator-visible signal that the Task-4
+/// backfill ran on a previously soft-revoked source.
+#[napi]
+pub fn bridge_log_kchat_source_cryptoshredded(
+    channel_id: String,
+    reason: String,
+    chunks_dropped: u32,
+    files_dropped: u32,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_source_cryptoshredded(
+            &channel_id,
+            &reason,
+            chunks_dropped,
+            files_dropped,
+        );
+    }
+    Ok(())
+}
+
 /// Renderer-facing audit row. The Rust `AuditEvent` carries a
 /// strongly-typed `AuditEventType` enum and a `DateTime<Utc>`;
 /// neither survives the napi boundary cleanly, so we serialise the

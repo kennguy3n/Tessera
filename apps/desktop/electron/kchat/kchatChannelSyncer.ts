@@ -122,6 +122,67 @@ export async function writeManifest(
   await fs.rename(tmp, target);
 }
 
+/**
+ * Block B Task 4 (Phase 11): filesystem-side scrub of a revoked
+ * KChat channel's on-disk artifacts.
+ *
+ * The substrate-side cryptoshred (`bridgeRevokeKchatSource` /
+ * `bridgeRefreshKchatAcl` revoke path) deletes the chunks +
+ * indexed_files rows from the SQLCipher-encrypted database, but
+ * the channel's downloaded files still sit on disk at
+ * `cacheDir` + its sidecar manifest at `manifestPathFor(cacheDir)`.
+ * If we leave those alone, the original file bodies are
+ * recoverable from the user's home directory by anyone with
+ * read access — defeating the point of the cryptoshred.
+ *
+ * This helper:
+ *   1. `fs.rm(cacheDir, { recursive: true, force: true })`
+ *      removes the entire per-channel directory (and every
+ *      downloaded file inside) in one call. `force: true` makes
+ *      the call a no-op when the directory is already missing
+ *      (idempotent on a repeated revoke).
+ *   2. `fs.rm(manifestPathFor(cacheDir), { force: true })`
+ *      removes the sidecar manifest. The manifest lives OUTSIDE
+ *      `cacheDir` (as `<parent>/<id>.manifest.json`) so step 1
+ *      does not catch it — a deliberate file-layout choice
+ *      from Task 2 to keep the corpus indexer's scan of
+ *      `cacheDir` from picking up the manifest as a document.
+ *
+ * The helper is best-effort: a transient I/O failure (e.g. the
+ * directory is open in another process) is logged but does not
+ * throw, because the substrate-side scrub has already succeeded
+ * and an operator pursuing a hardened workflow can always re-run
+ * the revoke (which re-invokes this helper). Errors are surfaced
+ * only by the audit row (`KchatSourceCryptoshredded` rows always
+ * carry the substrate counts; a follow-up
+ * `KchatChannelArtifactsRetained` row is NOT emitted here — the
+ * existing logging via `console.error` is sufficient for incident
+ * response).
+ */
+export async function secureDeleteChannelArtifacts(
+  cacheDir: string,
+): Promise<void> {
+  // Remove the cache directory itself (recursive, force-idempotent).
+  try {
+    await fs.rm(cacheDir, { recursive: true, force: true });
+  } catch (err) {
+    console.error(
+      `[secureDeleteChannelArtifacts] failed to remove ${cacheDir}:`,
+      err,
+    );
+  }
+  // Remove the sidecar manifest (force-idempotent).
+  const manifestPath = manifestPathFor(cacheDir);
+  try {
+    await fs.rm(manifestPath, { force: true });
+  } catch (err) {
+    console.error(
+      `[secureDeleteChannelArtifacts] failed to remove ${manifestPath}:`,
+      err,
+    );
+  }
+}
+
 // ----------------------------------------------------------------
 // Per-channel sync mutex (FIFO promise chain)
 // ----------------------------------------------------------------

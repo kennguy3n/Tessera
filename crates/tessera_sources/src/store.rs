@@ -658,6 +658,100 @@ impl SourceStore {
         Ok(rows)
     }
 
+    /// Outcome counters for [`SourceStore::cryptoshred_kchat_source_evidence`].
+    ///
+    /// Used by Block B Task 4 audit rows so operators can see, at the
+    /// `KchatSourceCryptoshredded` row, how much evidence was scrubbed
+    /// for a revoked channel — useful for incident response when a
+    /// principal is forensically removed mid-investigation.
+    pub fn cryptoshred_kchat_source_evidence(
+        &self,
+        source_id: &SourceId,
+    ) -> Result<KchatSourceCryptoshredOutcome> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+
+        // Phase A — count what we're about to drop so the audit row
+        // can record observability data even after the rows are gone.
+        // The counts MUST be read inside the same transaction-equivalent
+        // (here: the same locked Connection) so a concurrent writer
+        // can't expand the row-set between count and delete.
+        let chunks_to_drop: i64 = conn
+            .query_row(
+                "SELECT COUNT(*)
+                 FROM chunks c
+                 JOIN indexed_files f ON f.id = c.indexed_file_id
+                 WHERE f.source_id = ?1",
+                params![id_str],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let files_to_drop: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM indexed_files WHERE source_id = ?1",
+                params![id_str],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        // Phase B — drop the evidence. DELETE FROM chunks fires the
+        // `chunks_ad` trigger (removes the row from `chunks_fts`) and
+        // the `chunks_ad_embeddings` trigger (removes the matching
+        // `chunk_embeddings` rows), so this single DELETE scrubs all
+        // three retrieval surfaces atomically. The cascade depends on
+        // `PRAGMA foreign_keys = ON`, which `apply_default_pragmas`
+        // installs on every connection in `tessera_core::db`.
+        conn.execute(
+            "DELETE FROM chunks
+             WHERE indexed_file_id IN
+                 (SELECT id FROM indexed_files WHERE source_id = ?1)",
+            params![id_str],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+
+        conn.execute(
+            "DELETE FROM indexed_files WHERE source_id = ?1",
+            params![id_str],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+
+        // Phase C — reset the source-row aggregates so the renderer's
+        // source-detail surface reflects the scrub. Status is NOT
+        // changed here — the manager has already set it to
+        // `AccessRevoked` (or will, in the same overall operation).
+        conn.execute(
+            "UPDATE sources
+             SET last_indexed = NULL, file_count = 0
+             WHERE id = ?1",
+            params![id_str],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+
+        // Phase D — defence-in-depth scrub of SQLite freelist pages.
+        // `secure_delete = ON` zero-fills pages on DELETE so freed
+        // pages don't leak the prior chunk content even if the
+        // database file is later read out-of-band. SQLCipher already
+        // encrypts every page under the master key, but the
+        // belt-and-braces overwrite means a compromised master key
+        // still cannot recover the cryptoshredded chunks.
+        //
+        // Note: `secure_delete` is a connection-level pragma; we set
+        // it here and rely on the subsequent VACUUM to walk every
+        // page. We do NOT leave `secure_delete` ON permanently
+        // because it has a measurable write-amplification cost on
+        // the steady-state indexing path. The scope of this pragma
+        // ends with the connection — and since the connection is
+        // shared, we reset it after the VACUUM.
+        conn.execute_batch("PRAGMA secure_delete = ON; VACUUM; PRAGMA secure_delete = OFF;")
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        Ok(KchatSourceCryptoshredOutcome {
+            chunks_dropped: u32::try_from(chunks_to_drop).unwrap_or(u32::MAX),
+            files_dropped: u32::try_from(files_to_drop).unwrap_or(u32::MAX),
+        })
+    }
+
     pub fn upsert_indexed_file(
         &self,
         source_id: &SourceId,
@@ -1387,6 +1481,23 @@ pub struct KchatAclRow {
     pub refreshed_at: String,
 }
 
+/// Counters returned by
+/// [`SourceStore::cryptoshred_kchat_source_evidence`] (Block B Task 4).
+///
+/// Surfaced through the bridge so the Node-side audit row
+/// (`KchatSourceCryptoshredded`) records how much evidence was
+/// scrubbed. `u32` is wide enough — a single KChat-backed source
+/// will not realistically index billions of chunks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KchatSourceCryptoshredOutcome {
+    /// Number of rows deleted from the `chunks` table (which also
+    /// cascades to `chunks_fts` and `chunk_embeddings` via the
+    /// `chunks_ad` / `chunks_ad_embeddings` triggers).
+    pub chunks_dropped: u32,
+    /// Number of rows deleted from the `indexed_files` table.
+    pub files_dropped: u32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1676,6 +1787,109 @@ mod tests {
              but got {} row(s)",
             rows_after.len(),
         );
+    }
+
+    /// Block B Task 4 (Phase 11): low-level regression for
+    /// `cryptoshred_kchat_source_evidence`. The store-level test
+    /// proves the DELETE-then-VACUUM path scrubs all three
+    /// retrieval surfaces (chunks, chunks_fts, chunk_embeddings)
+    /// in a single transaction. The manager-level tests pin the
+    /// end-to-end behaviour through `refresh_kchat_acl` /
+    /// `revoke_kchat_source`; this test isolates the store layer
+    /// so a future change to the cascade triggers is caught here.
+    #[test]
+    fn cryptoshred_kchat_source_evidence_scrubs_chunks_fts_and_embeddings() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_kchat_channel("/tmp/kchat-shred".to_string());
+        store.add_source(&source).unwrap();
+
+        let file_id_a = store
+            .upsert_indexed_file(&source.id, "/tmp/kchat-shred/a.txt", "h-a", "2026-01-01")
+            .unwrap();
+        let file_id_b = store
+            .upsert_indexed_file(&source.id, "/tmp/kchat-shred/b.txt", "h-b", "2026-01-01")
+            .unwrap();
+        store
+            .insert_chunks(
+                file_id_a,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/kchat-shred/a.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "operator alpha rotation plan".to_string(),
+                    hash: "h-a-0".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+        store
+            .insert_chunks(
+                file_id_b,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/kchat-shred/b.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "operator bravo rotation plan".to_string(),
+                    hash: "h-b-0".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+
+        // Grab one chunk id so we can attach an embedding to it.
+        // We attach before the shred so the test verifies the
+        // `chunks_ad_embeddings` cascade fires.
+        let pre = store.search_fts("operator", 10).unwrap();
+        assert_eq!(
+            pre.len(),
+            2,
+            "control: both chunks must be searchable pre-shred"
+        );
+        let any_chunk_id = pre[0].chunk_id;
+        let dim: usize = 4;
+        let vec_bytes: Vec<u8> = vec![0.1_f32, 0.2, 0.3, 0.4]
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect();
+        store
+            .upsert_chunk_embedding(any_chunk_id, "test-model", dim, &vec_bytes)
+            .unwrap();
+        let pre_embeddings = store.load_embeddings_for_model("test-model").unwrap();
+        assert_eq!(
+            pre_embeddings.len(),
+            1,
+            "control: embedding row must exist pre-shred",
+        );
+
+        // Run the shred.
+        let outcome = store.cryptoshred_kchat_source_evidence(&source.id).unwrap();
+        assert_eq!(
+            outcome,
+            KchatSourceCryptoshredOutcome {
+                chunks_dropped: 2,
+                files_dropped: 2,
+            },
+        );
+
+        // All three retrieval surfaces are scrubbed.
+        assert!(store.search_fts("operator", 10).unwrap().is_empty());
+        assert!(store.list_indexed_files(&source.id).unwrap().is_empty());
+        assert!(
+            store
+                .load_embeddings_for_model("test-model")
+                .unwrap()
+                .is_empty(),
+            "chunk_embeddings cascade must fire on the shred path",
+        );
+
+        // The source row itself is preserved (file_count reset,
+        // last_indexed cleared) so operator-side forensics still
+        // shows the channel existed and was revoked.
+        let refreshed = store.get_source(&source.id).unwrap();
+        assert_eq!(refreshed.file_count, 0);
+        assert_eq!(refreshed.last_indexed, None);
     }
 
     #[test]

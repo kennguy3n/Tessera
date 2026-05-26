@@ -313,6 +313,36 @@ impl AuditLogger {
         )
     }
 
+    /// Record that a KChat-channel source's indexed evidence was
+    /// scrubbed inline as part of a revoke transition (Block B
+    /// Task 4, Phase 11). Emitted by the Node-side forwarder /
+    /// IPC handler immediately after the bridge revoke call
+    /// returns a `Revoked` outcome, so operators see both the
+    /// `KchatChannelAccessRevoked` row (status transition) and
+    /// this row (chunks + files scrubbed) in the trail.
+    ///
+    /// `chunks_dropped` / `files_dropped` are the substrate-side
+    /// counts returned by `cryptoshred_kchat_source_evidence`. A
+    /// future `KchatChannelAccessRevoked` without a corresponding
+    /// `KchatSourceCryptoshredded` row would be the signal that
+    /// the shred step failed — useful for incident-response
+    /// queries.
+    pub fn log_kchat_source_cryptoshredded(
+        &self,
+        channel_id: &str,
+        reason: &str,
+        chunks_dropped: u32,
+        files_dropped: u32,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::KchatSourceCryptoshredded,
+            format!(
+                "KChat source cryptoshredded: channel={channel_id} reason={reason} \
+                 chunks_dropped={chunks_dropped} files_dropped={files_dropped}"
+            ),
+        )
+    }
+
     pub fn log_citation_added(
         &self,
         artifact_id: &str,
@@ -591,5 +621,52 @@ mod tests {
         // Both Option arms collapse to empty strings.
         assert!(channel_created.details.contains("channel="));
         assert!(channel_created.details.contains("file="));
+    }
+
+    /// Block B Task 4 (Phase 11): pin the
+    /// `log_kchat_source_cryptoshredded` helper's row shape so
+    /// operator grep queries (`grep "chunks_dropped="`) and the
+    /// renderer's audit-activity filter stay aligned. Two rows:
+    /// one with non-zero counts (a real shred), one with
+    /// zero counts (an idempotent re-shred or already-empty
+    /// channel) so both number formats are covered.
+    #[test]
+    fn kchat_source_cryptoshredded_helper_routes_to_correct_event_type() {
+        let logger = AuditLogger::new_in_memory().unwrap();
+
+        logger
+            .log_kchat_source_cryptoshredded(
+                "channel-shred-001",
+                "principal_missing_from_roster",
+                42,
+                7,
+            )
+            .unwrap();
+        logger
+            .log_kchat_source_cryptoshredded("channel-shred-002", "channel_archived", 0, 0)
+            .unwrap();
+
+        let rows = logger
+            .query_by_type(&AuditEventType::KchatSourceCryptoshredded)
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+
+        let real = rows
+            .iter()
+            .find(|row| row.details.contains("channel=channel-shred-001"))
+            .expect("real-shred row should be present");
+        assert!(real
+            .details
+            .contains("reason=principal_missing_from_roster"));
+        assert!(real.details.contains("chunks_dropped=42"));
+        assert!(real.details.contains("files_dropped=7"));
+
+        let idempotent = rows
+            .iter()
+            .find(|row| row.details.contains("channel=channel-shred-002"))
+            .expect("idempotent-shred row should be present");
+        assert!(idempotent.details.contains("reason=channel_archived"));
+        assert!(idempotent.details.contains("chunks_dropped=0"));
+        assert!(idempotent.details.contains("files_dropped=0"));
     }
 }

@@ -225,21 +225,44 @@ pub struct KchatAclMemberInfo {
 /// `revoked` / `unlinked` / `no_principal`. The Node side records
 /// this verbatim in the `KchatAclRefreshed` audit row so an
 /// operator can see exactly which projection rule fired.
+///
+/// Block B Task 4 (Phase 11): when `outcome == "revoked"`, the
+/// inline cryptoshred ran and `chunks_dropped` / `files_dropped`
+/// report how many rows the substrate scrubbed. For every other
+/// outcome the counts are zero (no shred happened).
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatAclRefreshOutcomeInfo {
     pub outcome: String,
     pub member_count: i64,
     pub principal_present: bool,
+    /// Count of chunk rows scrubbed by the inline cryptoshred on
+    /// the revoke path. Zero on all non-revoke outcomes.
+    pub chunks_dropped: u32,
+    /// Count of indexed_files rows scrubbed by the inline
+    /// cryptoshred on the revoke path. Zero on all non-revoke
+    /// outcomes.
+    pub files_dropped: u32,
 }
 
 /// JS-facing outcome of a `bridge_revoke_kchat_source` call.
 /// `outcome` is the snake_case form of the manager's
 /// `KchatRevokeOutcome`: `revoked` / `already_revoked` / `unlinked`.
+///
+/// Block B Task 4 (Phase 11): both `revoked` and `already_revoked`
+/// outcomes report the cryptoshred counts — a fresh revoke scrubs
+/// the live evidence, and a re-revoke runs the (idempotent) shred
+/// again so a previously soft-revoked source still gets its
+/// chunks + indexed_files scrubbed during the Task-4 backfill.
+/// `unlinked` is always zero.
 #[derive(Debug, Serialize, Deserialize)]
 #[napi(object)]
 pub struct KchatRevokeOutcomeInfo {
     pub outcome: String,
+    /// Count of chunk rows scrubbed by the inline cryptoshred.
+    pub chunks_dropped: u32,
+    /// Count of indexed_files rows scrubbed by the inline cryptoshred.
+    pub files_dropped: u32,
 }
 
 /// Refresh a KChat channel's ACL roster + project status (Block B
@@ -262,17 +285,22 @@ pub fn refresh_kchat_acl(
     let outcome = manager
         .refresh_kchat_acl(cache_dir, &internal)
         .map_err(BridgeError::Core)?;
-    let (outcome_str, principal_present) = match outcome {
-        KchatAclRefreshOutcome::Granted => ("granted", true),
-        KchatAclRefreshOutcome::Regranted => ("regranted", true),
-        KchatAclRefreshOutcome::Revoked => ("revoked", false),
-        KchatAclRefreshOutcome::Unlinked => ("unlinked", false),
-        KchatAclRefreshOutcome::NoPrincipal => ("no_principal", false),
+    let (outcome_str, principal_present, chunks_dropped, files_dropped) = match outcome {
+        KchatAclRefreshOutcome::Granted => ("granted", true, 0_u32, 0_u32),
+        KchatAclRefreshOutcome::Regranted => ("regranted", true, 0_u32, 0_u32),
+        KchatAclRefreshOutcome::Revoked {
+            chunks_dropped,
+            files_dropped,
+        } => ("revoked", false, chunks_dropped, files_dropped),
+        KchatAclRefreshOutcome::Unlinked => ("unlinked", false, 0_u32, 0_u32),
+        KchatAclRefreshOutcome::NoPrincipal => ("no_principal", false, 0_u32, 0_u32),
     };
     Ok(KchatAclRefreshOutcomeInfo {
         outcome: outcome_str.to_string(),
         member_count: internal.len() as i64,
         principal_present,
+        chunks_dropped,
+        files_dropped,
     })
 }
 
@@ -287,13 +315,21 @@ pub fn revoke_kchat_source(
     let outcome = manager
         .revoke_kchat_source(cache_dir)
         .map_err(BridgeError::Core)?;
-    let outcome_str = match outcome {
-        KchatRevokeOutcome::Revoked => "revoked",
-        KchatRevokeOutcome::AlreadyRevoked => "already_revoked",
-        KchatRevokeOutcome::Unlinked => "unlinked",
+    let (outcome_str, chunks_dropped, files_dropped) = match outcome {
+        KchatRevokeOutcome::Revoked {
+            chunks_dropped,
+            files_dropped,
+        } => ("revoked", chunks_dropped, files_dropped),
+        KchatRevokeOutcome::AlreadyRevoked {
+            chunks_dropped,
+            files_dropped,
+        } => ("already_revoked", chunks_dropped, files_dropped),
+        KchatRevokeOutcome::Unlinked => ("unlinked", 0, 0),
     };
     Ok(KchatRevokeOutcomeInfo {
         outcome: outcome_str.to_string(),
+        chunks_dropped,
+        files_dropped,
     })
 }
 

@@ -380,6 +380,27 @@ export interface NativeBridge {
     channelId: string,
     reason: string,
   ): void;
+  /**
+   * No-throw audit append called by `KchatEventForwarder` /
+   * `kchat:disconnect` immediately after a revoke transition
+   * triggers the substrate's inline cryptoshred (Block B Task 4,
+   * Phase 11). Emitted on every revoke outcome — fresh revoke +
+   * already-revoked re-shred path + refresh-driven revoke — so
+   * the audit trail correlates the `KchatChannelAccessRevoked`
+   * status-transition row with the actual evidence-scrub counts.
+   *
+   * `reason` matches the sibling
+   * `bridgeLogKchatChannelAccessRevoked` short code;
+   * `chunksDropped` / `filesDropped` are the substrate counts
+   * surfaced via `KchatRevokeOutcomeInfo` /
+   * `KchatAclRefreshOutcomeInfo`.
+   */
+  bridgeLogKchatSourceCryptoshredded(
+    channelId: string,
+    reason: string,
+    chunksDropped: number,
+    filesDropped: number,
+  ): void;
   // --- Audit query ---
   //
   // Renderer-facing read API over the audit store. The renderer

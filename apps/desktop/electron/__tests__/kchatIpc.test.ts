@@ -126,10 +126,27 @@ const bridgeMock = {
     outcome: "granted",
     memberCount: 0,
     principalPresent: true,
+    // Block B Task 4 (Phase 11): the refresh outcome carries
+    // the substrate's cryptoshred counters on the revoke path;
+    // non-revoke outcomes always emit zero.
+    chunksDropped: 0,
+    filesDropped: 0,
   })),
-  bridgeRevokeKchatSource: vi.fn(() => ({ outcome: "revoked" })),
+  // Block B Task 4 (Phase 11): the revoke outcome carries the
+  // substrate's cryptoshred counters. The IPC suite does not
+  // exercise the revoke path itself (that's a forwarder
+  // concern), so the default zero counts here are sufficient.
+  bridgeRevokeKchatSource: vi.fn(() => ({
+    outcome: "revoked",
+    chunksDropped: 0,
+    filesDropped: 0,
+  })),
   bridgeLogKchatAclRefreshed: vi.fn(),
   bridgeLogKchatChannelAccessRevoked: vi.fn(),
+  // Block B Task 4 (Phase 11): cryptoshred audit logger;
+  // the IPC layer does not invoke it directly (the forwarder
+  // does), but the bridge interface requires it to be present.
+  bridgeLogKchatSourceCryptoshredded: vi.fn(),
 };
 
 // `KchatAuthService` stub. `getClient()` returns an object with the

@@ -100,6 +100,7 @@ import type { KchatClient } from "./kchatClient";
 import {
   downloadKchatFileToCache,
   readManifest,
+  secureDeleteChannelArtifacts,
   withChannelSyncLock,
   writeManifest,
 } from "./kchatChannelSyncer";
@@ -111,6 +112,7 @@ import type {
 } from "./kchatTypes";
 import type {
   KchatConnectionStateView,
+  KchatRevokeOutcomeInfo,
   KchatWebSocketEventPayload,
 } from "../../shared/types";
 
@@ -1060,6 +1062,15 @@ export class KchatEventForwarder {
       "unlinked";
     let memberCount = 0;
     let principalPresent = false;
+    // Block B Task 4 (Phase 11): cryptoshred counters captured
+    // from the bridge's `KchatAclRefreshOutcomeInfo` so the
+    // post-lock audit pair (`KchatChannelAccessRevoked` +
+    // `KchatSourceCryptoshredded`) can use them. Default 0 so
+    // the unlinked / no_principal / error paths still emit a
+    // well-formed (zero-count) shred row when applicable; we
+    // gate emission on `outcome === "revoked"` below.
+    let chunksDropped = 0;
+    let filesDropped = 0;
 
     try {
       const result = await withChannelSyncLock(channelId, async () => {
@@ -1071,6 +1082,8 @@ export class KchatEventForwarder {
             outcome: "unlinked" as const,
             memberCount: 0,
             principalPresent: false,
+            chunksDropped: 0,
+            filesDropped: 0,
           };
         }
 
@@ -1103,15 +1116,32 @@ export class KchatEventForwarder {
         }
 
         const r = bridge.bridgeRefreshKchatAcl(cacheDir, members);
+        // Block B Task 4 (Phase 11): on the revoke path the
+        // substrate runs its inline cryptoshred under the SAME
+        // per-channel lock we're already holding here, so the
+        // filesystem scrub below cannot race a concurrent full
+        // sync or single-file syncer write. We delete the cache
+        // directory + manifest sidecar AFTER the substrate scrub
+        // returns so a crash between the two phases leaves the
+        // (now-orphaned) on-disk files behind — reviewable by
+        // an operator — rather than scrubbing files referenced
+        // by still-live substrate rows.
+        if (r.outcome === "revoked") {
+          await secureDeleteChannelArtifacts(cacheDir);
+        }
         return {
           outcome: r.outcome,
           memberCount: r.memberCount,
           principalPresent: r.principalPresent,
+          chunksDropped: r.chunksDropped,
+          filesDropped: r.filesDropped,
         };
       });
       outcome = result.outcome;
       memberCount = result.memberCount;
       principalPresent = result.principalPresent;
+      chunksDropped = result.chunksDropped;
+      filesDropped = result.filesDropped;
     } catch (err) {
       console.error(
         "[KchatEventForwarder] ACL refresh failed:",
@@ -1134,6 +1164,18 @@ export class KchatEventForwarder {
         bridge,
         channelId,
         "principal_missing_from_roster",
+      );
+      // Block B Task 4 (Phase 11): pair every revoke transition
+      // with the cryptoshred row so an operator can correlate
+      // "status changed" with "evidence scrubbed" in the audit
+      // trail. The chunks/files counts come from the bridge's
+      // KchatAclRefreshOutcomeInfo — substrate-authoritative.
+      this.safeAuditSourceCryptoshredded(
+        bridge,
+        channelId,
+        "principal_missing_from_roster",
+        chunksDropped,
+        filesDropped,
       );
     }
   }
@@ -1179,9 +1221,35 @@ export class KchatEventForwarder {
         ? "channel_archived"
         : "channel_deleted";
 
+    // Block B Task 4 (Phase 11): the bridge's
+    // `KchatRevokeOutcomeInfo` carries cryptoshred counts on
+    // BOTH `revoked` and `already_revoked` outcomes (the
+    // substrate runs the (idempotent) shred on every revoke
+    // path, including the re-revoke backfill path for Task 3-era
+    // soft-revoked sources). We capture the counts here, emit
+    // the filesystem scrub under the lock, then audit both the
+    // status-transition row AND the shred row outside the lock.
+    //
+    // The default is the `unlinked` outcome with zero counts so
+    // a thrown error inside the lock falls through to the same
+    // no-shred-row audit shape as a real `unlinked` outcome.
+    let result: KchatRevokeOutcomeInfo = {
+      outcome: "unlinked",
+      chunksDropped: 0,
+      filesDropped: 0,
+    };
     try {
-      await withChannelSyncLock(channelId, async () => {
-        bridge.bridgeRevokeKchatSource(cacheDir);
+      result = await withChannelSyncLock(channelId, async () => {
+        const r = bridge.bridgeRevokeKchatSource(cacheDir);
+        // Filesystem scrub mirrors the substrate's evidence scrub.
+        // We delete the cache dir + manifest sidecar on every
+        // outcome that isn't `unlinked` — `unlinked` means no
+        // source row ever existed, so there's no shred contract
+        // to honour and nothing on disk we created.
+        if (r.outcome !== "unlinked") {
+          await secureDeleteChannelArtifacts(cacheDir);
+        }
+        return r;
       });
     } catch (err) {
       console.error(
@@ -1189,11 +1257,32 @@ export class KchatEventForwarder {
         err,
       );
     }
+    const outcome = result.outcome;
+    const chunksDropped = result.chunksDropped;
+    const filesDropped = result.filesDropped;
 
-    // Always emit the audit row even when the revoke returned
-    // `unlinked` / `already_revoked` — the operator-visible
-    // semantics are "we saw the event", not "we changed state".
+    // Always emit the access-revoked audit row even when the
+    // bridge returned `unlinked` / `already_revoked` — the
+    // operator-visible semantics are "we saw the event", not
+    // "we changed state".
     this.safeAuditAccessRevoked(bridge, channelId, reason);
+
+    // Block B Task 4 (Phase 11): pair the access-revoked row
+    // with the cryptoshred row whenever a substrate-side scrub
+    // ran. We skip `unlinked` because no source existed; for
+    // `revoked` and `already_revoked` the shred always ran (the
+    // already_revoked counts will be zero on a previously
+    // scrubbed source, which is the operator-visible signal that
+    // the backfill found nothing to do).
+    if (outcome === "revoked" || outcome === "already_revoked") {
+      this.safeAuditSourceCryptoshredded(
+        bridge,
+        channelId,
+        reason,
+        chunksDropped,
+        filesDropped,
+      );
+    }
   }
 
   /**
@@ -1246,6 +1335,40 @@ export class KchatEventForwarder {
     } catch (err) {
       console.error(
         "[KchatEventForwarder] access-revoked audit log failed:",
+        err,
+      );
+    }
+  }
+
+  /**
+   * Block B Task 4 (Phase 11): no-throw audit append for
+   * `bridgeLogKchatSourceCryptoshredded`. Mirrors the
+   * {@link safeAuditAccessRevoked} pattern — audit is best-effort
+   * and must never wedge the forwarder. Emitted only after the
+   * substrate's `bridgeRevokeKchatSource` /
+   * `bridgeRefreshKchatAcl` revoke path returned its
+   * cryptoshred counts so the audit row is always
+   * substrate-authoritative; a zero count on `already_revoked`
+   * is the operator-visible signal that the source was already
+   * scrubbed (e.g. on a repeat `channel_archived` event).
+   */
+  private safeAuditSourceCryptoshredded(
+    bridge: NativeBridge,
+    channelId: string,
+    reason: string,
+    chunksDropped: number,
+    filesDropped: number,
+  ): void {
+    try {
+      bridge.bridgeLogKchatSourceCryptoshredded(
+        channelId,
+        reason,
+        chunksDropped,
+        filesDropped,
+      );
+    } catch (err) {
+      console.error(
+        "[KchatEventForwarder] cryptoshredded audit log failed:",
         err,
       );
     }

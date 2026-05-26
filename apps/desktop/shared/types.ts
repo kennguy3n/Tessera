@@ -226,6 +226,11 @@ export interface KchatAclMemberInfo {
  * `principalPresent` mirrors the outcome — `true` for
  * `granted` / `regranted`, `false` otherwise — and is the
  * boolean flag the audit row records for operator dashboards.
+ *
+ * Block B Task 4 (Phase 11): when `outcome === "revoked"`, the
+ * inline cryptoshred ran and `chunksDropped` / `filesDropped`
+ * report how many evidence rows the substrate scrubbed. For
+ * every other outcome the counts are zero (no shred happened).
  */
 export interface KchatAclRefreshOutcomeInfo {
   outcome:
@@ -236,6 +241,13 @@ export interface KchatAclRefreshOutcomeInfo {
     | "no_principal";
   memberCount: number;
   principalPresent: boolean;
+  /** Block B Task 4: count of chunk rows scrubbed by the inline
+   *  cryptoshred on the revoke path; 0 on every non-revoke outcome. */
+  chunksDropped: number;
+  /** Block B Task 4: count of indexed_files rows scrubbed by the
+   *  inline cryptoshred on the revoke path; 0 on every non-revoke
+   *  outcome. */
+  filesDropped: number;
 }
 
 /**
@@ -254,6 +266,16 @@ export interface KchatAclRefreshOutcomeInfo {
  */
 export interface KchatRevokeOutcomeInfo {
   outcome: "revoked" | "already_revoked" | "unlinked";
+  /** Block B Task 4 (Phase 11): count of chunk rows scrubbed by
+   *  the inline cryptoshred. Both `revoked` and `already_revoked`
+   *  outcomes run the (idempotent) shred so a re-revoke can serve
+   *  as a one-time backfill for sources soft-revoked under the
+   *  Task 3 build. `unlinked` is always zero. */
+  chunksDropped: number;
+  /** Block B Task 4 (Phase 11): count of indexed_files rows
+   *  scrubbed by the inline cryptoshred. Same semantics as
+   *  `chunksDropped`. */
+  filesDropped: number;
 }
 
 /**

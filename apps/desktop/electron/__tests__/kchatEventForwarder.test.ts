@@ -113,6 +113,8 @@ interface BridgeMockShape {
   bridgeRevokeKchatSource: ReturnType<typeof vi.fn>;
   bridgeLogKchatAclRefreshed: ReturnType<typeof vi.fn>;
   bridgeLogKchatChannelAccessRevoked: ReturnType<typeof vi.fn>;
+  // Block B Task 4 (Phase 11) — cryptoshred audit surface.
+  bridgeLogKchatSourceCryptoshredded: ReturnType<typeof vi.fn>;
 }
 
 let bridgeMock: BridgeMockShape | null = null;
@@ -324,10 +326,26 @@ beforeEach(() => {
       outcome: "granted",
       memberCount: 0,
       principalPresent: true,
+      // Block B Task 4 (Phase 11): refresh outcomes carry
+      // cryptoshred counts; non-revoke paths always emit zero.
+      chunksDropped: 0,
+      filesDropped: 0,
     })),
-    bridgeRevokeKchatSource: vi.fn(() => ({ outcome: "revoked" })),
+    // Block B Task 4 (Phase 11): the bridge's revoke outcome
+    // now carries the substrate's cryptoshred counts on both
+    // `revoked` and `already_revoked` paths. The default fixture
+    // returns the live-evidence shape (1 file, 1 chunk) so the
+    // shred audit row always lands in tests that exercise
+    // `handleChannelGoneEvent`; tests that exercise the
+    // idempotent re-revoke path override with zero counts.
+    bridgeRevokeKchatSource: vi.fn(() => ({
+      outcome: "revoked",
+      chunksDropped: 1,
+      filesDropped: 1,
+    })),
     bridgeLogKchatAclRefreshed: vi.fn(),
     bridgeLogKchatChannelAccessRevoked: vi.fn(),
+    bridgeLogKchatSourceCryptoshredded: vi.fn(),
   };
 });
 
@@ -1151,10 +1169,16 @@ describe("KchatEventForwarder", () => {
 
   it("dispatches a revoked outcome and emits the principal-missing access-revoked audit row", async () => {
     bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    // Block B Task 4 (Phase 11): refresh-driven revoke surfaces
+    // the substrate's cryptoshred counts so the forwarder can
+    // emit both `KchatChannelAccessRevoked` AND
+    // `KchatSourceCryptoshredded` audit rows.
     bridgeMock!.bridgeRefreshKchatAcl.mockReturnValue({
       outcome: "revoked",
       memberCount: 3,
       principalPresent: false,
+      chunksDropped: 5,
+      filesDropped: 2,
     });
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
@@ -1193,6 +1217,18 @@ describe("KchatEventForwarder", () => {
     ).toHaveBeenCalledWith(
       "chan-acl-revoke",
       "principal_missing_from_roster",
+    );
+    // Block B Task 4 (Phase 11): cryptoshred audit row lands
+    // with substrate-authoritative counts (chunks_dropped=5,
+    // files_dropped=2). The reason matches the sibling
+    // access-revoked row so an operator's grep can correlate.
+    expect(
+      bridgeMock!.bridgeLogKchatSourceCryptoshredded,
+    ).toHaveBeenCalledWith(
+      "chan-acl-revoke",
+      "principal_missing_from_roster",
+      5,
+      2,
     );
     fwd.dispose();
   });
@@ -1278,8 +1314,14 @@ describe("KchatEventForwarder", () => {
       // gone, no roster to fetch.
       expect(bridgeMock!.bridgeRefreshKchatAcl).not.toHaveBeenCalled();
       // No `bridgeLogKchatAclRefreshed` on these paths — the
-      // audit shape is the revoke-row only.
+      // audit shape is the revoke-row + shred-row pair only.
       expect(bridgeMock!.bridgeLogKchatAclRefreshed).not.toHaveBeenCalled();
+      // Block B Task 4 (Phase 11): the shred audit row pairs
+      // with the access-revoked row on every revoke outcome
+      // (default fixture returns chunks_dropped=1, files_dropped=1).
+      expect(
+        bridgeMock!.bridgeLogKchatSourceCryptoshredded,
+      ).toHaveBeenCalledWith("chan-gone", reason, 1, 1);
       fwd.dispose();
     });
   }
@@ -1304,6 +1346,181 @@ describe("KchatEventForwarder", () => {
     expect(
       bridgeMock!.bridgeLogKchatChannelAccessRevoked,
     ).not.toHaveBeenCalled();
+    // Block B Task 4 (Phase 11): no shred audit row on
+    // non-membership events — the contract is "shred follows
+    // every substrate revoke", not "shred on every WS event".
+    expect(
+      bridgeMock!.bridgeLogKchatSourceCryptoshredded,
+    ).not.toHaveBeenCalled();
+    fwd.dispose();
+  });
+
+  /**
+   * Block B Task 4 (Phase 11): pin the idempotent re-revoke
+   * path. On a repeat `channel_archived` event for a previously
+   * revoked source, the substrate returns `already_revoked` with
+   * zero cryptoshred counts (the first revoke already scrubbed
+   * the evidence). The forwarder still emits BOTH audit rows so
+   * an operator sees the repeat event and the zero-count shred
+   * signal. This is the Task-4 backfill regression path: a
+   * legitimate already-revoked source under the Task-3 build
+   * goes through the (idempotent) shred on every revoke.
+   */
+  it("emits a zero-count shred audit row on an already_revoked outcome", async () => {
+    bridgeMock!.bridgeRevokeKchatSource.mockReturnValue({
+      outcome: "already_revoked",
+      chunksDropped: 0,
+      filesDropped: 0,
+    });
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "channel_archived",
+        data: {},
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-re-archive",
+          team_id: "team-1",
+          user_id: "principal",
+        },
+        seq: 100,
+      }),
+    );
+    await waitForCondition(
+      () =>
+        bridgeMock!.bridgeLogKchatChannelAccessRevoked.mock.calls.length > 0,
+    );
+
+    // Access-revoked audit row still fires — operators want to
+    // see the repeat event.
+    expect(
+      bridgeMock!.bridgeLogKchatChannelAccessRevoked,
+    ).toHaveBeenCalledWith("chan-re-archive", "channel_archived");
+    // Shred audit row also fires, but with zero counts — the
+    // operator-visible signal that the source was previously
+    // scrubbed and the re-revoke found nothing to do.
+    expect(
+      bridgeMock!.bridgeLogKchatSourceCryptoshredded,
+    ).toHaveBeenCalledWith("chan-re-archive", "channel_archived", 0, 0);
+    fwd.dispose();
+  });
+
+  /**
+   * Block B Task 4 (Phase 11): pin the `unlinked` outcome —
+   * the substrate has no source row for this cache_dir, so no
+   * shred ran. The forwarder still emits the access-revoked row
+   * (so operators see the event arrived) but suppresses the
+   * shred row (there is no evidence to scrub, and emitting a
+   * zero-count row for `unlinked` would be misleading: the
+   * substrate never ran a shred, so we shouldn't claim it did).
+   */
+  it("suppresses the shred audit row on an unlinked outcome", async () => {
+    bridgeMock!.bridgeRevokeKchatSource.mockReturnValue({
+      outcome: "unlinked",
+      chunksDropped: 0,
+      filesDropped: 0,
+    });
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "channel_deleted",
+        data: {},
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-never-linked",
+          team_id: "team-1",
+          user_id: "principal",
+        },
+        seq: 101,
+      }),
+    );
+    await waitForCondition(
+      () =>
+        bridgeMock!.bridgeLogKchatChannelAccessRevoked.mock.calls.length > 0,
+    );
+
+    expect(
+      bridgeMock!.bridgeLogKchatChannelAccessRevoked,
+    ).toHaveBeenCalledWith("chan-never-linked", "channel_deleted");
+    expect(
+      bridgeMock!.bridgeLogKchatSourceCryptoshredded,
+    ).not.toHaveBeenCalled();
+    fwd.dispose();
+  });
+
+  /**
+   * Block B Task 4 (Phase 11): pin the filesystem secure-delete
+   * helper's wiring through `handleChannelGoneEvent`. When the
+   * substrate returns a `revoked` (or `already_revoked`) outcome,
+   * the cache directory and its manifest sidecar must be
+   * removed; an `unlinked` outcome must NOT touch the filesystem
+   * (the helper is best-effort idempotent on missing paths, but
+   * we still want to assert the contract).
+   */
+  it("removes the cache directory and manifest sidecar on a revoke", async () => {
+    const channelId = "chan-fs-shred";
+    const cacheDir = kchatChannelCacheDir(channelId);
+    const manifestPath = manifestPathFor(cacheDir);
+    await nodeFs.promises.mkdir(cacheDir, { recursive: true });
+    await nodeFs.promises.writeFile(
+      nodePath.join(cacheDir, "evidence.txt"),
+      "secret",
+    );
+    await writeManifest(cacheDir, {
+      version: 1,
+      channelId,
+      files: { "file-1": "evidence.txt" },
+    });
+
+    // Sanity: artifacts exist before the revoke.
+    await expect(nodeFs.promises.access(cacheDir)).resolves.toBeUndefined();
+    await expect(
+      nodeFs.promises.access(manifestPath),
+    ).resolves.toBeUndefined();
+
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "channel_archived",
+        data: {},
+        broadcast: {
+          omit_users: {},
+          channel_id: channelId,
+          team_id: "team-1",
+          user_id: "principal",
+        },
+        seq: 102,
+      }),
+    );
+    await waitForCondition(
+      () =>
+        bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length > 0,
+    );
+
+    // Cache directory and manifest sidecar are both gone.
+    await expect(nodeFs.promises.access(cacheDir)).rejects.toThrow();
+    await expect(nodeFs.promises.access(manifestPath)).rejects.toThrow();
     fwd.dispose();
   });
 
