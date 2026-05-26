@@ -153,6 +153,34 @@ const bridgeMock = {
   // the IPC layer does not invoke it directly (the forwarder
   // does), but the bridge interface requires it to be present.
   bridgeLogKchatSourceCryptoshredded: vi.fn(),
+  // Block C Task 4 (Phase 13): historical-backfill bridge
+  // surface. The IPC suite exercises the orchestrator via
+  // `sources:backfillKchatChannel`; defaults below produce a
+  // clean fresh-walk-with-end-of-history result (no resume
+  // cursor, REST loop terminates on first page). Individual
+  // tests override these to drive specific paths.
+  bridgeGetKchatBackfillState: vi.fn(() => ({
+    outcome: "idle",
+    sourceId: "src-uuid",
+    oldestPostId: undefined,
+    completedAt: undefined,
+  })),
+  bridgeIngestKchatBackfillPage: vi.fn(() => ({
+    outcome: "ingested",
+    sourceId: "src-uuid",
+    postsIngested: 0,
+    postsUnchanged: 0,
+    postsSkippedRevoked: 0,
+    oldestPostIdInPage: undefined,
+  })),
+  bridgeMarkKchatBackfillComplete: vi.fn(() => ({
+    outcome: "completed",
+    sourceId: "src-uuid",
+  })),
+  bridgeLogKchatBackfillStarted: vi.fn(),
+  bridgeLogKchatBackfillPageIngested: vi.fn(),
+  bridgeLogKchatBackfillCompleted: vi.fn(),
+  bridgeLogKchatBackfillAborted: vi.fn(),
 };
 
 // `KchatAuthService` stub. `getClient()` returns an object with the
@@ -166,6 +194,9 @@ interface StubClient {
   listChannelFiles: ReturnType<typeof vi.fn>;
   uploadFile: ReturnType<typeof vi.fn>;
   downloadFile: ReturnType<typeof vi.fn>;
+  // Block C Task 4 (Phase 13): the historical-backfill
+  // orchestrator drives this REST method page-by-page.
+  getPostsForChannel: ReturnType<typeof vi.fn>;
   scrubMessage: ReturnType<typeof vi.fn>;
 }
 const clientMock: StubClient = {
@@ -175,6 +206,7 @@ const clientMock: StubClient = {
   listChannelFiles: vi.fn(),
   uploadFile: vi.fn(),
   downloadFile: vi.fn(),
+  getPostsForChannel: vi.fn(),
   // Default: pass-through. Tests that need to assert scrub
   // behaviour replace this implementation in their own `beforeEach`.
   scrubMessage: vi.fn((msg: string) => msg),
@@ -197,9 +229,16 @@ vi.mock("../appState", () => ({
   // accept the registration into a no-op stub — the test still
   // verifies the IPC handlers themselves register correctly.
   setKchatChannelResyncImpl: vi.fn(),
+  // Block C Task 4 (Phase 13): the backfill orchestrator slot
+  // installed by `registerKchatHandlers`. Same pattern as the
+  // resync slot above — the IPC handler is exercised directly
+  // by the tests (via `sources:backfillKchatChannel`), so we
+  // only need a no-op sink for the slot installation.
+  setKchatBackfillImpl: vi.fn(),
 }));
 
 import { registerKchatHandlers } from "../ipc/kchat";
+import type { KchatBackfillRunOutcome } from "../../shared/types";
 
 function handler(channel: string) {
   const c = handleMock.mock.calls.find((x) => x[0] === channel);
@@ -268,6 +307,7 @@ describe("kchat IPC registration", () => {
       "kchat:listChannelFiles",
       "kchat:shareArtifact",
       "sources:addKchatChannel",
+      "sources:backfillKchatChannel",
     ]) {
       expect(channels).toContain(want);
     }
@@ -2237,5 +2277,428 @@ describe("sources:addKchatChannel — per-channel-id in-flight dedupe (tenth-pas
       handler("sources:addKchatChannel")(EVENT, "!!!notvalid!!!", "bad-id"),
     ).rejects.toThrow(/channelId/);
     expect(clientMock.listChannelFiles).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Block C Task 4 (Phase 13) — `sources:backfillKchatChannel` ──────
+//
+// The orchestrator walks `getPostsForChannel` page-by-page from
+// the persisted cursor (or from the newest post on a fresh walk)
+// and feeds each page to `bridgeIngestKchatBackfillPage`. The
+// tests below pin every branch of the loop: end-of-history,
+// resume, short-circuit at state read (already_completed /
+// unlinked / access_revoked), mid-walk access revocation, REST
+// error, and the per-channel safety cap. Audit-row emission is
+// asserted directly against the bridge mock.
+
+const CHANNEL_ID = "chidbackfilloraaaaaaaaaaaa"; // 26 chars
+const SOURCE_ID = "src-backfill-test";
+
+interface PostFixture {
+  id: string;
+  channelId: string;
+  rootId: string | null;
+  userId: string;
+  message: string;
+  createAt: number;
+  editAt: number;
+}
+
+function makePost(id: string, body: string, createAt: number): PostFixture {
+  return {
+    id,
+    channelId: CHANNEL_ID,
+    rootId: null,
+    userId: "userdriverbackfilltttt", // 22 chars
+    message: body,
+    createAt,
+    editAt: 0,
+  };
+}
+
+function makePage(
+  posts: PostFixture[],
+  prevPostId: string | null,
+): {
+  posts: PostFixture[];
+  prevPostId: string | null;
+  nextPostId: string | null;
+  hasMore: boolean;
+} {
+  return {
+    posts,
+    prevPostId,
+    nextPostId: null,
+    hasMore: prevPostId !== null,
+  };
+}
+
+describe("sources:backfillKchatChannel — orchestrator", () => {
+  beforeEach(() => {
+    // Reset bridgeMock backfill state to clean defaults
+    // (`mockClear` from the outer beforeEach keeps the
+    // implementation; we restate it here so per-test overrides
+    // applied earlier don't leak between cases).
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValue({
+      outcome: "idle",
+      sourceId: SOURCE_ID,
+      oldestPostId: undefined,
+      completedAt: undefined,
+    });
+    bridgeMock.bridgeMarkKchatBackfillComplete.mockReturnValue({
+      outcome: "completed",
+      sourceId: SOURCE_ID,
+    });
+  });
+
+  it("walks pages to end-of-history and emits Started/PageIngested/Completed audit rows", async () => {
+    // Page 1: 2 posts, server says older posts exist (prevPostId
+    // populated). Page 2: 1 post, server says no more older posts
+    // (prevPostId === null). The orchestrator must call
+    // mark-complete and emit the Completed audit row.
+    clientMock.getPostsForChannel
+      .mockResolvedValueOnce(
+        makePage(
+          [
+            makePost("postnewa00000000000000000a", "newer", 2000),
+            makePost("postnewa00000000000000000b", "older", 1500),
+          ],
+          "postnewa00000000000000000b",
+        ),
+      )
+      .mockResolvedValueOnce(
+        makePage([makePost("postnewa00000000000000000c", "oldest", 1000)], null),
+      );
+
+    bridgeMock.bridgeIngestKchatBackfillPage
+      .mockReturnValueOnce({
+        outcome: "ingested",
+        sourceId: SOURCE_ID,
+        postsIngested: 2,
+        postsUnchanged: 0,
+        postsSkippedRevoked: 0,
+        oldestPostIdInPage: "postnewa00000000000000000b",
+      })
+      .mockReturnValueOnce({
+        outcome: "ingested",
+        sourceId: SOURCE_ID,
+        postsIngested: 1,
+        postsUnchanged: 0,
+        postsSkippedRevoked: 0,
+        oldestPostIdInPage: "postnewa00000000000000000c",
+      });
+
+    const out = (await handler("sources:backfillKchatChannel")(
+      EVENT,
+      CHANNEL_ID,
+    )) as KchatBackfillRunOutcome;
+
+    expect(out).toEqual({
+      outcome: "completed",
+      pagesWalked: 2,
+      totalPostsIngested: 3,
+      totalPostsUnchanged: 0,
+      totalPostsSkippedRevoked: 0,
+    });
+
+    // First call: no `before=` (fresh walk).
+    expect(clientMock.getPostsForChannel).toHaveBeenNthCalledWith(
+      1,
+      CHANNEL_ID,
+      expect.objectContaining({ before: undefined, perPage: 200 }),
+    );
+    // Second call: uses the REST server's `prevPostId` from page 1
+    // as the `before=` cursor for page 2.
+    expect(clientMock.getPostsForChannel).toHaveBeenNthCalledWith(
+      2,
+      CHANNEL_ID,
+      expect.objectContaining({
+        before: "postnewa00000000000000000b",
+        perPage: 200,
+      }),
+    );
+
+    // Audit row sequence: Started (fresh, cursor undefined), two
+    // PageIngested rows (1, 2), Completed; no Aborted.
+    expect(bridgeMock.bridgeLogKchatBackfillStarted).toHaveBeenCalledWith(
+      CHANNEL_ID,
+      SOURCE_ID,
+      undefined,
+    );
+    expect(bridgeMock.bridgeLogKchatBackfillPageIngested).toHaveBeenCalledTimes(
+      2,
+    );
+    expect(bridgeMock.bridgeLogKchatBackfillCompleted).toHaveBeenCalledWith(
+      CHANNEL_ID,
+      SOURCE_ID,
+      2,
+      3,
+      0,
+    );
+    expect(bridgeMock.bridgeLogKchatBackfillAborted).not.toHaveBeenCalled();
+    expect(bridgeMock.bridgeMarkKchatBackfillComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("resumes from the substrate-persisted cursor (uses oldestPostId as initial before=)", async () => {
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValueOnce({
+      outcome: "idle",
+      sourceId: SOURCE_ID,
+      oldestPostId: "postresuuumeeecursorrrr111",
+      completedAt: undefined,
+    });
+    clientMock.getPostsForChannel.mockResolvedValueOnce(
+      makePage([makePost("postresuuumeeecursorrrr112", "first", 100)], null),
+    );
+    bridgeMock.bridgeIngestKchatBackfillPage.mockReturnValueOnce({
+      outcome: "ingested",
+      sourceId: SOURCE_ID,
+      postsIngested: 1,
+      postsUnchanged: 0,
+      postsSkippedRevoked: 0,
+      oldestPostIdInPage: "postresuuumeeecursorrrr112",
+    });
+
+    await handler("sources:backfillKchatChannel")(EVENT, CHANNEL_ID);
+
+    // The first REST call must pass the resume cursor as
+    // `before=`, and the Started audit row must reflect a
+    // non-fresh resume.
+    expect(clientMock.getPostsForChannel).toHaveBeenNthCalledWith(
+      1,
+      CHANNEL_ID,
+      expect.objectContaining({ before: "postresuuumeeecursorrrr111" }),
+    );
+    expect(bridgeMock.bridgeLogKchatBackfillStarted).toHaveBeenCalledWith(
+      CHANNEL_ID,
+      SOURCE_ID,
+      "postresuuumeeecursorrrr111",
+    );
+  });
+
+  it("short-circuits at state read when completedAt is already set", async () => {
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValueOnce({
+      outcome: "idle",
+      sourceId: SOURCE_ID,
+      oldestPostId: "postwasaaaalwwwallkedalrdy",
+      completedAt: "2024-06-01T12:00:00Z",
+    });
+
+    const out = (await handler("sources:backfillKchatChannel")(
+      EVENT,
+      CHANNEL_ID,
+    )) as KchatBackfillRunOutcome;
+
+    expect(out).toEqual({
+      outcome: "skipped",
+      reason: "already_completed",
+      pagesWalked: 0,
+      totalPostsIngested: 0,
+      totalPostsUnchanged: 0,
+      totalPostsSkippedRevoked: 0,
+      completedAt: "2024-06-01T12:00:00Z",
+    });
+    // No REST traffic, no audit rows, no substrate writes.
+    expect(clientMock.getPostsForChannel).not.toHaveBeenCalled();
+    expect(bridgeMock.bridgeLogKchatBackfillStarted).not.toHaveBeenCalled();
+    expect(bridgeMock.bridgeIngestKchatBackfillPage).not.toHaveBeenCalled();
+    expect(bridgeMock.bridgeMarkKchatBackfillComplete).not.toHaveBeenCalled();
+  });
+
+  it("short-circuits at state read when source is access_revoked", async () => {
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValueOnce({
+      outcome: "access_revoked",
+      sourceId: SOURCE_ID,
+      oldestPostId: undefined,
+      completedAt: undefined,
+    });
+
+    const out = (await handler("sources:backfillKchatChannel")(
+      EVENT,
+      CHANNEL_ID,
+    )) as KchatBackfillRunOutcome;
+
+    expect(out.outcome).toBe("skipped");
+    expect(out.reason).toBe("access_revoked");
+    expect(clientMock.getPostsForChannel).not.toHaveBeenCalled();
+    expect(bridgeMock.bridgeLogKchatBackfillStarted).not.toHaveBeenCalled();
+  });
+
+  it("short-circuits at state read when source is unlinked", async () => {
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValueOnce({
+      outcome: "unlinked",
+      sourceId: undefined,
+      oldestPostId: undefined,
+      completedAt: undefined,
+    });
+
+    const out = (await handler("sources:backfillKchatChannel")(
+      EVENT,
+      CHANNEL_ID,
+    )) as KchatBackfillRunOutcome;
+
+    expect(out.outcome).toBe("skipped");
+    expect(out.reason).toBe("unlinked");
+    expect(clientMock.getPostsForChannel).not.toHaveBeenCalled();
+  });
+
+  it("aborts walk and emits Aborted audit when substrate reports access_revoked mid-walk", async () => {
+    clientMock.getPostsForChannel
+      .mockResolvedValueOnce(
+        makePage(
+          [makePost("postmidwwwwalkrevokeppppa1", "ok", 2000)],
+          "postmidwwwwalkrevokeppppa1",
+        ),
+      )
+      .mockResolvedValueOnce(
+        makePage(
+          [makePost("postmidwwwwalkrevokeppppa2", "later", 1500)],
+          "postmidwwwwalkrevokeppppa2",
+        ),
+      );
+
+    bridgeMock.bridgeIngestKchatBackfillPage
+      .mockReturnValueOnce({
+        outcome: "ingested",
+        sourceId: SOURCE_ID,
+        postsIngested: 1,
+        postsUnchanged: 0,
+        postsSkippedRevoked: 0,
+        oldestPostIdInPage: "postmidwwwwalkrevokeppppa1",
+      })
+      .mockReturnValueOnce({
+        outcome: "access_revoked",
+        sourceId: SOURCE_ID,
+        postsIngested: 0,
+        postsUnchanged: 0,
+        postsSkippedRevoked: 0,
+        oldestPostIdInPage: undefined,
+      });
+
+    const out = (await handler("sources:backfillKchatChannel")(
+      EVENT,
+      CHANNEL_ID,
+    )) as KchatBackfillRunOutcome;
+
+    expect(out.outcome).toBe("aborted");
+    expect(out.reason).toBe("access_revoked");
+    expect(out.pagesWalked).toBe(1); // only the first (Ingested) page counts
+    expect(out.totalPostsIngested).toBe(1);
+    expect(bridgeMock.bridgeLogKchatBackfillAborted).toHaveBeenCalledWith(
+      CHANNEL_ID,
+      SOURCE_ID,
+      "access_revoked",
+      1,
+      1,
+    );
+    expect(bridgeMock.bridgeMarkKchatBackfillComplete).not.toHaveBeenCalled();
+  });
+
+  it("aborts walk on REST error and emits Aborted audit", async () => {
+    clientMock.getPostsForChannel.mockRejectedValueOnce(
+      new Error("transient backfill network error"),
+    );
+
+    await expect(
+      handler("sources:backfillKchatChannel")(EVENT, CHANNEL_ID),
+    ).rejects.toThrow(/transient backfill network error/);
+
+    expect(bridgeMock.bridgeLogKchatBackfillAborted).toHaveBeenCalledWith(
+      CHANNEL_ID,
+      SOURCE_ID,
+      "error",
+      0,
+      0,
+    );
+    expect(bridgeMock.bridgeMarkKchatBackfillComplete).not.toHaveBeenCalled();
+  });
+
+  it("hits safety cap when cumulative posts exceed 50_000 and emits Aborted/safety_cap", async () => {
+    // Synthesise a page large enough to trip the cap on the
+    // first iteration. The substrate mock will report all 50_001
+    // posts as ingested; the orchestrator's `totalPostsTouched`
+    // counter (page.posts.length aggregate) is what's compared
+    // against the cap. The mock client bypasses the production
+    // 200/perPage clamp.
+    const bigPostList: PostFixture[] = [];
+    for (let i = 0; i < 50_001; i += 1) {
+      // Pad to 26 chars (KChat object id shape) with a stable
+      // base + zero-padded index. Padding via slice keeps the
+      // synthesised ids in the valid `[a-z0-9]{20,32}` range
+      // the assertKchatId / assertCallerObjectId would accept.
+      const idx = i.toString(36).padStart(5, "0");
+      bigPostList.push(
+        makePost(`postsafetycaaaa${idx}aaaaaa`.slice(0, 26), `body ${i}`, i),
+      );
+    }
+    clientMock.getPostsForChannel.mockResolvedValueOnce(
+      // prevPostId populated so the loop would otherwise keep
+      // going; the cap is what stops us.
+      makePage(bigPostList, "postnext0000next0000next00"),
+    );
+    bridgeMock.bridgeIngestKchatBackfillPage.mockReturnValueOnce({
+      outcome: "ingested",
+      sourceId: SOURCE_ID,
+      postsIngested: bigPostList.length,
+      postsUnchanged: 0,
+      postsSkippedRevoked: 0,
+      oldestPostIdInPage: bigPostList[bigPostList.length - 1].id,
+    });
+
+    const out = (await handler("sources:backfillKchatChannel")(
+      EVENT,
+      CHANNEL_ID,
+    )) as KchatBackfillRunOutcome;
+
+    expect(out.outcome).toBe("aborted");
+    expect(out.reason).toBe("safety_cap");
+    expect(bridgeMock.bridgeLogKchatBackfillAborted).toHaveBeenCalledWith(
+      CHANNEL_ID,
+      SOURCE_ID,
+      "safety_cap",
+      1,
+      bigPostList.length,
+    );
+    expect(clientMock.getPostsForChannel).toHaveBeenCalledTimes(1);
+    expect(bridgeMock.bridgeMarkKchatBackfillComplete).not.toHaveBeenCalled();
+  });
+
+  it("dedupes concurrent IPC calls for the same channel via the in-flight map", async () => {
+    // Block the first REST call on a controllable Promise so
+    // both IPC requests overlap in time. If the orchestrator
+    // were not dedup'd, both calls would issue their own REST
+    // round-trip and produce two Started audit rows.
+    let resolvePage!: (v: ReturnType<typeof makePage>) => void;
+    clientMock.getPostsForChannel.mockReturnValueOnce(
+      new Promise((res) => {
+        resolvePage = res;
+      }) as ReturnType<typeof clientMock.getPostsForChannel>,
+    );
+    bridgeMock.bridgeIngestKchatBackfillPage.mockReturnValueOnce({
+      outcome: "ingested",
+      sourceId: SOURCE_ID,
+      postsIngested: 0,
+      postsUnchanged: 0,
+      postsSkippedRevoked: 0,
+      oldestPostIdInPage: undefined,
+    });
+
+    const p1 = handler("sources:backfillKchatChannel")(EVENT, CHANNEL_ID);
+    const p2 = handler("sources:backfillKchatChannel")(EVENT, CHANNEL_ID);
+    resolvePage(makePage([], null));
+
+    const [o1, o2] = (await Promise.all([p1, p2])) as KchatBackfillRunOutcome[];
+
+    expect(o1.outcome).toBe("completed");
+    expect(o2).toBe(o1); // same Promise resolution surface
+    expect(clientMock.getPostsForChannel).toHaveBeenCalledTimes(1);
+    expect(bridgeMock.bridgeLogKchatBackfillStarted).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects malformed channelId without touching REST or bridge", async () => {
+    await expect(
+      handler("sources:backfillKchatChannel")(EVENT, "!!!notvalid!!!"),
+    ).rejects.toThrow(/channelId/);
+    expect(clientMock.getPostsForChannel).not.toHaveBeenCalled();
+    expect(bridgeMock.bridgeGetKchatBackfillState).not.toHaveBeenCalled();
   });
 });

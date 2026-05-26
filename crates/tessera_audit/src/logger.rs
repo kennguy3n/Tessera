@@ -459,6 +459,97 @@ impl AuditLogger {
         )
     }
 
+    /// Block C Task 4 (Phase 13): record the start (or resume) of
+    /// a KChat channel historical-backfill walk. `resume_from` is
+    /// the persisted `before=` cursor that the walk will use on
+    /// its first REST page; `None` means the walk is starting at
+    /// the newest post.
+    pub fn log_kchat_backfill_started(
+        &self,
+        channel_id: &str,
+        source_id: &str,
+        resume_from: Option<&str>,
+    ) -> Result<()> {
+        let resume = resume_from.unwrap_or("(fresh)");
+        self.log(
+            AuditEventType::KchatBackfillStarted,
+            format!(
+                "KChat backfill started: channel={channel_id} source={source_id} \
+                 resume_from={resume}"
+            ),
+        )
+    }
+
+    /// Block C Task 4 (Phase 13): record one page of the backfill
+    /// walk. Page numbers are 1-based. `oldest_post_id` is the
+    /// cursor the substrate persisted after the page (None when
+    /// the page was empty or all-revoked).
+    #[allow(clippy::too_many_arguments)]
+    pub fn log_kchat_backfill_page_ingested(
+        &self,
+        channel_id: &str,
+        source_id: &str,
+        page_number: u32,
+        posts_ingested: u32,
+        posts_unchanged: u32,
+        posts_skipped_revoked: u32,
+        oldest_post_id: Option<&str>,
+    ) -> Result<()> {
+        let cursor = oldest_post_id.unwrap_or("(none)");
+        self.log(
+            AuditEventType::KchatBackfillPageIngested,
+            format!(
+                "KChat backfill page ingested: channel={channel_id} source={source_id} \
+                 page={page_number} posts_ingested={posts_ingested} \
+                 posts_unchanged={posts_unchanged} \
+                 posts_skipped_revoked={posts_skipped_revoked} \
+                 cursor={cursor}"
+            ),
+        )
+    }
+
+    /// Block C Task 4 (Phase 13): record successful completion of
+    /// a backfill walk (server returned `prev_post_id == null`).
+    pub fn log_kchat_backfill_completed(
+        &self,
+        channel_id: &str,
+        source_id: &str,
+        pages_walked: u32,
+        total_posts_ingested: u32,
+        total_posts_unchanged: u32,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::KchatBackfillCompleted,
+            format!(
+                "KChat backfill completed: channel={channel_id} source={source_id} \
+                 pages_walked={pages_walked} \
+                 total_posts_ingested={total_posts_ingested} \
+                 total_posts_unchanged={total_posts_unchanged}"
+            ),
+        )
+    }
+
+    /// Block C Task 4 (Phase 13): record an aborted backfill walk.
+    /// `reason` is one of `access_revoked` / `safety_cap` /
+    /// `unlinked` / `error` (machine-readable, grep-friendly).
+    pub fn log_kchat_backfill_aborted(
+        &self,
+        channel_id: &str,
+        source_id: &str,
+        reason: &str,
+        pages_walked: u32,
+        total_posts_ingested: u32,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::KchatBackfillAborted,
+            format!(
+                "KChat backfill aborted: channel={channel_id} source={source_id} \
+                 reason={reason} pages_walked={pages_walked} \
+                 total_posts_ingested={total_posts_ingested}"
+            ),
+        )
+    }
+
     pub fn log_citation_added(
         &self,
         artifact_id: &str,

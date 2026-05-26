@@ -471,6 +471,20 @@ const mockApi = {
     addChannelSource: vi
       .fn()
       .mockResolvedValue({ sourceId: "src-kchat-1", cacheDir: "/tmp/kchat" }),
+    // Block C Task 4 (Phase 13): historical-backfill IPC. Default
+    // resolves with a clean "completed in zero pages" outcome so
+    // components that touch the backfill surface (e.g. the
+    // `KchatSettingsCard` action menu) render without standing
+    // up the orchestrator + bridge stack. Tests that need to
+    // exercise specific outcomes (skipped / aborted) override
+    // this per-case.
+    backfillChannel: vi.fn().mockResolvedValue({
+      outcome: "completed",
+      pagesWalked: 0,
+      totalPostsIngested: 0,
+      totalPostsUnchanged: 0,
+      totalPostsSkippedRevoked: 0,
+    }),
     // Block B Task 1: push-based subscriptions. Defaults return
     // a no-op unsubscribe so components that subscribe-on-mount
     // can render and unmount cleanly in tests without standing

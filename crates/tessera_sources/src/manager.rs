@@ -291,6 +291,88 @@ pub enum KchatPostDeleteOutcome {
     AccessRevoked,
 }
 
+/// Block C Task 4 (Phase 13): persisted backfill state for a KChat
+/// channel.
+///
+/// The orchestrator uses this to decide whether to (a) start a new
+/// walk, (b) resume an interrupted walk from the persisted cursor,
+/// (c) skip a walk that already completed, or (d) refuse to walk a
+/// revoked / unlinked source. The discriminator is on the variant
+/// so a future field rename can't accidentally drop the
+/// "completed" sentinel via JSON drift.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KchatBackfillState {
+    /// The source exists and is eligible for backfill.
+    ///
+    /// - `oldest_post_id` is the persisted cursor; `None` means
+    ///   no walk has run yet, so the next REST fetch should omit
+    ///   the `before=` parameter and start at the newest post.
+    /// - `completed_at` is the RFC3339 timestamp at which the
+    ///   walk reached the end of channel history; `None` means
+    ///   the walk needs more pages (or has not started).
+    Idle {
+        source_id: SourceId,
+        oldest_post_id: Option<String>,
+        completed_at: Option<String>,
+    },
+    /// No `SourceType::Kchat` row exists for the cache_dir. The
+    /// orchestrator treats this as a no-op (the user removed the
+    /// channel between the IPC kickoff and the substrate call).
+    Unlinked,
+    /// The source exists but is revoked; the orchestrator must
+    /// not walk it (backfilling a revoked source would re-create
+    /// the very chunks the cryptoshred just destroyed).
+    AccessRevoked { source_id: SourceId },
+}
+
+/// Block C Task 4 (Phase 13): outcome of a single backfill page
+/// ingest.
+///
+/// Carries the per-page counters the audit row needs to record
+/// "what work this page did", plus the cursor the orchestrator
+/// uses to fetch the next page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KchatBackfillIngestOutcome {
+    /// The page was processed end-to-end. Counters break the page
+    /// down by per-post substrate outcome so the audit trail and
+    /// the renderer's progress indicator can show "X newly
+    /// indexed, Y already known, Z skipped due to revocation".
+    Ingested {
+        source_id: SourceId,
+        posts_ingested: u32,
+        posts_unchanged: u32,
+        posts_skipped_revoked: u32,
+        /// The post id the cursor was advanced to. `None` when
+        /// the page was empty (the orchestrator handles the
+        /// completion transition separately) or when no post in
+        /// the page was durably acknowledged (defensive — the
+        /// loop's invariants prevent this in practice).
+        oldest_post_id_in_page: Option<String>,
+    },
+    /// No `SourceType::Kchat` row exists for the cache_dir.
+    Unlinked,
+    /// The source flipped to `AccessRevoked` before or during
+    /// the page. The orchestrator stops the walk; the audit row
+    /// reflects an aborted-mid-walk transition.
+    AccessRevoked { source_id: SourceId },
+}
+
+/// Block C Task 4 (Phase 13): outcome of
+/// [`SourceManager::mark_kchat_backfill_complete`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KchatBackfillCompletionOutcome {
+    /// The completion sentinel was set. Re-trigger of
+    /// `runBackfillKchatChannel` short-circuits at
+    /// `kchat_backfill_state` from here on.
+    Completed { source_id: SourceId },
+    /// No `SourceType::Kchat` row exists for the cache_dir.
+    Unlinked,
+    /// The source is in `AccessRevoked` — the completion sentinel
+    /// is NOT set; a future re-grant will start the walk fresh
+    /// (the cryptoshred path already cleared the cursor).
+    AccessRevoked { source_id: SourceId },
+}
+
 pub struct SourceManager {
     store: SourceStore,
     indexer: Indexer,
@@ -1252,6 +1334,198 @@ impl SourceManager {
         Ok(KchatPostDeleteOutcome::Deleted {
             source_id: source.id,
             chunks_dropped,
+        })
+    }
+
+    /// Block C Task 4 (Phase 13): read the persisted backfill state
+    /// for a KChat channel.
+    ///
+    /// Returns `Ok(KchatBackfillState::Unlinked)` when no source
+    /// row exists for `cache_dir`; the caller (orchestrator) treats
+    /// that the same as `Idle { complete: false, oldest_post_id:
+    /// None }` because there's nothing to walk yet.
+    pub fn kchat_backfill_state(&self, cache_dir: &str) -> Result<KchatBackfillState> {
+        let Some(source) = self
+            .store
+            .find_source_by_type_and_path(&tessera_core::SourceType::Kchat, cache_dir)?
+        else {
+            return Ok(KchatBackfillState::Unlinked);
+        };
+        if source.status == SourceStatus::AccessRevoked {
+            return Ok(KchatBackfillState::AccessRevoked {
+                source_id: source.id,
+            });
+        }
+        let row = self.store.kchat_backfill_state(&source.id)?;
+        let (oldest_post_id, completed_at) = row.unwrap_or((None, None));
+        Ok(KchatBackfillState::Idle {
+            source_id: source.id,
+            oldest_post_id,
+            completed_at,
+        })
+    }
+
+    /// Block C Task 4 (Phase 13): ingest one page of historical
+    /// KChat posts as part of the backfill walk.
+    ///
+    /// Each post in the page flows through the same
+    /// [`SourceManager::ingest_kchat_post`] path as a live `posted`
+    /// WS event, so the dedupe / DEK-seal / chunk insertion /
+    /// FTS5-index / audit-bookkeeping pipeline is shared. The page
+    /// is processed in REST-returned order (newest-first), which
+    /// matters because the cursor we persist after the page is the
+    /// OLDEST post id in the page (the `prev_post_id` boundary the
+    /// next page will use as its `before=` cursor).
+    ///
+    /// **Idempotency**. A re-delivery of the same posts (e.g. the
+    /// orchestrator resumed from a slightly-stale cursor on app
+    /// restart) flows through the `find_kchat_post` dedupe in
+    /// `ingest_kchat_post` so re-runs cost only a hash lookup per
+    /// already-ingested post; no double-chunking, no double-FTS5
+    /// inserts, no double-audit-bookkeeping.
+    ///
+    /// **Mid-walk revocation**. If the source flips to
+    /// `AccessRevoked` between pages (e.g. the WS forwarder
+    /// processed a `channel_member_removed` event in parallel),
+    /// the per-post ingest returns `AccessRevoked` for every row,
+    /// the page outcome carries `posts_skipped_revoked == page.len()`
+    /// + `final_status = AccessRevoked`, and the orchestrator stops
+    ///   the walk. The cursor is NOT advanced because the substrate
+    ///   did not actually durably ingest anything from this page.
+    ///
+    /// **Cursor advancement**. The cursor is advanced to the
+    /// oldest post id in the page (`page.last().post_id`) when at
+    /// least one post in the page reached `Ingested` or `Unchanged`
+    /// (i.e. the post is durably present in `kchat_posts` for this
+    /// source). This guarantees the orchestrator never skips a
+    /// page on resume — the next `before=` value points at a row
+    /// the substrate has acknowledged.
+    pub fn ingest_kchat_backfill_page(
+        &self,
+        cache_dir: &str,
+        page: &[KchatPostIngestInput],
+    ) -> Result<KchatBackfillIngestOutcome> {
+        let Some(source) = self
+            .store
+            .find_source_by_type_and_path(&tessera_core::SourceType::Kchat, cache_dir)?
+        else {
+            return Ok(KchatBackfillIngestOutcome::Unlinked);
+        };
+        if source.status == SourceStatus::AccessRevoked {
+            return Ok(KchatBackfillIngestOutcome::AccessRevoked {
+                source_id: source.id,
+            });
+        }
+        if page.is_empty() {
+            // An empty page is the orchestrator's signal that the
+            // walk reached the end of channel history. We do NOT
+            // mark complete here — the orchestrator calls
+            // `mark_kchat_backfill_complete` explicitly after
+            // observing `prev_post_id == null` on the REST page,
+            // so the substrate has a single linearizable point of
+            // commitment and the audit row reflects "completed
+            // walk" rather than "ingested zero posts".
+            return Ok(KchatBackfillIngestOutcome::Ingested {
+                source_id: source.id,
+                posts_ingested: 0,
+                posts_unchanged: 0,
+                posts_skipped_revoked: 0,
+                oldest_post_id_in_page: None,
+            });
+        }
+
+        let mut posts_ingested = 0u32;
+        let mut posts_unchanged = 0u32;
+        let posts_skipped_revoked = 0u32;
+        let mut last_ingested_post_id: Option<String> = None;
+
+        for input in page {
+            let outcome = self.ingest_kchat_post(input)?;
+            match outcome {
+                KchatPostIngestOutcome::Ingested { .. } => {
+                    posts_ingested += 1;
+                    last_ingested_post_id = Some(input.post_id.clone());
+                }
+                KchatPostIngestOutcome::Unchanged { .. } => {
+                    posts_unchanged += 1;
+                    last_ingested_post_id = Some(input.post_id.clone());
+                }
+                KchatPostIngestOutcome::AccessRevoked => {
+                    // The source was revoked mid-walk. Stop
+                    // processing the rest of the page; the
+                    // orchestrator will compute "posts skipped due
+                    // to revocation" as `page.len() -
+                    // posts_ingested - posts_unchanged` from the
+                    // outcome it already has access to.
+                    return Ok(KchatBackfillIngestOutcome::AccessRevoked {
+                        source_id: source.id,
+                    });
+                }
+                KchatPostIngestOutcome::Unlinked => {
+                    // Shouldn't happen — we already verified the
+                    // source above and the manager holds the
+                    // shared connection mutex across this call.
+                    // Surface as a hard error so a future race
+                    // condition does NOT silently drop posts.
+                    return Err(Error::Database(format!(
+                        "ingest_kchat_backfill_page: source disappeared mid-walk for cache_dir={cache_dir}"
+                    )));
+                }
+            }
+        }
+
+        // Advance the cursor to the oldest post id in the page. KChat
+        // returns pages newest-first, so the LAST element of `page`
+        // is the oldest — that's the value we want to use as the
+        // `before=` cursor for the next REST page fetch (which will
+        // return strictly older posts).
+        let oldest_post_id_in_page = page.last().map(|p| p.post_id.clone());
+        if let Some(cursor) = oldest_post_id_in_page.as_deref() {
+            // Only advance the cursor when at least one post on
+            // the page was durably acknowledged by the substrate
+            // (Ingested OR Unchanged). The Unlinked branch above
+            // early-returns so we don't reach here with zero
+            // acknowledged rows in practice, but the explicit
+            // guard makes the invariant local and audit-friendly.
+            if last_ingested_post_id.is_some() {
+                self.store.set_kchat_backfill_cursor(&source.id, cursor)?;
+            }
+        }
+
+        Ok(KchatBackfillIngestOutcome::Ingested {
+            source_id: source.id,
+            posts_ingested,
+            posts_unchanged,
+            posts_skipped_revoked,
+            oldest_post_id_in_page,
+        })
+    }
+
+    /// Block C Task 4 (Phase 13): mark the backfill walk complete.
+    ///
+    /// Called by the orchestrator when the REST page returns
+    /// `prev_post_id == null` (the server says "no posts older
+    /// than the current cursor exist"). After this point a
+    /// re-trigger of `runBackfillKchatChannel` short-circuits at
+    /// `kchat_backfill_state`.
+    pub fn mark_kchat_backfill_complete(
+        &self,
+        cache_dir: &str,
+    ) -> Result<KchatBackfillCompletionOutcome> {
+        let Some(source) = self
+            .store
+            .find_source_by_type_and_path(&tessera_core::SourceType::Kchat, cache_dir)?
+        else {
+            return Ok(KchatBackfillCompletionOutcome::Unlinked);
+        };
+        if source.status == SourceStatus::AccessRevoked {
+            return Ok(KchatBackfillCompletionOutcome::AccessRevoked {
+                source_id: source.id,
+            });
+        }
+        self.store.mark_kchat_backfill_complete(&source.id)?;
+        Ok(KchatBackfillCompletionOutcome::Completed {
+            source_id: source.id,
         })
     }
 
@@ -3017,5 +3291,369 @@ mod tests {
             .ingest_kchat_post(&make_post_input(cache_dir, "p", "ch", "u", "body"))
             .unwrap();
         assert_eq!(outcome, KchatPostIngestOutcome::AccessRevoked);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Block C Task 4 (Phase 13) — historical backfill watermark
+    // ─────────────────────────────────────────────────────────────
+
+    /// A freshly-linked channel reports a clean backfill state:
+    /// `Idle { oldest_post_id: None, completed_at: None }`. The
+    /// orchestrator uses this to decide "start the walk at the
+    /// newest post".
+    #[test]
+    fn kchat_backfill_state_is_clean_on_fresh_channel() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+
+        let state = manager.kchat_backfill_state(cache_dir).unwrap();
+        assert_eq!(
+            state,
+            KchatBackfillState::Idle {
+                source_id: added.source.id,
+                oldest_post_id: None,
+                completed_at: None,
+            }
+        );
+    }
+
+    /// `kchat_backfill_state` against an unknown cache_dir returns
+    /// `Unlinked` (no panic, no DEK creation). The orchestrator
+    /// treats this as a no-op.
+    #[test]
+    fn kchat_backfill_state_unlinked_when_no_source() {
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        assert_eq!(
+            manager.kchat_backfill_state("/no/such/dir").unwrap(),
+            KchatBackfillState::Unlinked,
+        );
+    }
+
+    /// `kchat_backfill_state` against a revoked source returns
+    /// `AccessRevoked`. The orchestrator refuses to walk it — a
+    /// backfill against a revoked source would re-create the
+    /// chunks the cryptoshred just destroyed.
+    #[test]
+    fn kchat_backfill_state_access_revoked_after_revoke() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let _ = manager.revoke_kchat_source(cache_dir).unwrap();
+
+        assert_eq!(
+            manager.kchat_backfill_state(cache_dir).unwrap(),
+            KchatBackfillState::AccessRevoked {
+                source_id: added.source.id,
+            }
+        );
+    }
+
+    /// End-to-end happy path: ingest a 3-post page, confirm each
+    /// post lands in `kchat_posts` with chunks + AEAD seal, and
+    /// the cursor advances to the OLDEST post id in the page
+    /// (the last one, since KChat pages are newest-first).
+    #[test]
+    fn ingest_kchat_backfill_page_advances_cursor_to_oldest_post() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+
+        let page = vec![
+            make_post_input(cache_dir, "newest", "ch-1", "u-1", "first body"),
+            make_post_input(cache_dir, "middle", "ch-1", "u-1", "second body"),
+            make_post_input(cache_dir, "oldest", "ch-1", "u-1", "third body"),
+        ];
+
+        let outcome = manager
+            .ingest_kchat_backfill_page(cache_dir, &page)
+            .unwrap();
+        match outcome {
+            KchatBackfillIngestOutcome::Ingested {
+                source_id,
+                posts_ingested,
+                posts_unchanged,
+                posts_skipped_revoked,
+                oldest_post_id_in_page,
+            } => {
+                assert_eq!(source_id, added.source.id);
+                assert_eq!(posts_ingested, 3);
+                assert_eq!(posts_unchanged, 0);
+                assert_eq!(posts_skipped_revoked, 0);
+                assert_eq!(oldest_post_id_in_page.as_deref(), Some("oldest"));
+            }
+            other => panic!("expected Ingested, got {other:?}"),
+        }
+
+        // Cursor is persisted.
+        let state = manager.kchat_backfill_state(cache_dir).unwrap();
+        let cursor = match state {
+            KchatBackfillState::Idle {
+                oldest_post_id,
+                completed_at: None,
+                ..
+            } => oldest_post_id,
+            other => panic!("expected Idle (not complete), got {other:?}"),
+        };
+        assert_eq!(cursor.as_deref(), Some("oldest"));
+
+        // Each post is independently ingested.
+        for post_id in ["newest", "middle", "oldest"] {
+            let row = manager
+                .store
+                .find_kchat_post(&added.source.id, post_id)
+                .unwrap();
+            assert!(row.is_some(), "post {post_id} must have a bookkeeping row");
+        }
+    }
+
+    /// A re-delivery of the same page (e.g. resume after restart)
+    /// produces all-`posts_unchanged` and does NOT re-chunk any
+    /// post — the substrate dedupe in `ingest_kchat_post`
+    /// short-circuits at the body-hash lookup. The cursor remains
+    /// at the same oldest id.
+    #[test]
+    fn ingest_kchat_backfill_page_is_idempotent_on_redelivery() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+
+        let page = vec![
+            make_post_input(cache_dir, "p-1", "ch-1", "u-1", "body one"),
+            make_post_input(cache_dir, "p-2", "ch-1", "u-1", "body two"),
+        ];
+
+        // First run.
+        let _ = manager
+            .ingest_kchat_backfill_page(cache_dir, &page)
+            .unwrap();
+        let p1_chunks_before = manager
+            .store
+            .count_chunks_for_indexed_file(
+                manager
+                    .store
+                    .find_kchat_post(&added.source.id, "p-1")
+                    .unwrap()
+                    .unwrap()
+                    .0,
+            )
+            .unwrap();
+
+        // Re-delivery.
+        let outcome = manager
+            .ingest_kchat_backfill_page(cache_dir, &page)
+            .unwrap();
+        match outcome {
+            KchatBackfillIngestOutcome::Ingested {
+                posts_ingested,
+                posts_unchanged,
+                ..
+            } => {
+                assert_eq!(posts_ingested, 0);
+                assert_eq!(posts_unchanged, 2);
+            }
+            other => panic!("expected Ingested with all Unchanged, got {other:?}"),
+        }
+
+        // Chunk count must NOT have grown.
+        let p1_chunks_after = manager
+            .store
+            .count_chunks_for_indexed_file(
+                manager
+                    .store
+                    .find_kchat_post(&added.source.id, "p-1")
+                    .unwrap()
+                    .unwrap()
+                    .0,
+            )
+            .unwrap();
+        assert_eq!(p1_chunks_before, p1_chunks_after);
+    }
+
+    /// An empty page (the orchestrator's "end-of-history" signal)
+    /// returns `Ingested { ..zeros.., oldest_post_id_in_page: None
+    /// }` — the substrate does NOT mark the walk complete here;
+    /// the orchestrator calls `mark_kchat_backfill_complete`
+    /// explicitly. This keeps the linearization point in the
+    /// orchestrator's hands rather than smuggling it through a
+    /// zero-row ingest.
+    #[test]
+    fn ingest_kchat_backfill_page_empty_returns_zeros_without_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+
+        let outcome = manager.ingest_kchat_backfill_page(cache_dir, &[]).unwrap();
+        match outcome {
+            KchatBackfillIngestOutcome::Ingested {
+                source_id,
+                posts_ingested,
+                posts_unchanged,
+                posts_skipped_revoked,
+                oldest_post_id_in_page,
+            } => {
+                assert_eq!(source_id, added.source.id);
+                assert_eq!(posts_ingested, 0);
+                assert_eq!(posts_unchanged, 0);
+                assert_eq!(posts_skipped_revoked, 0);
+                assert_eq!(oldest_post_id_in_page, None);
+            }
+            other => panic!("expected Ingested (empty page), got {other:?}"),
+        }
+
+        // Completion sentinel is NOT set by the empty-page path.
+        let state = manager.kchat_backfill_state(cache_dir).unwrap();
+        assert!(
+            matches!(
+                state,
+                KchatBackfillState::Idle {
+                    completed_at: None,
+                    ..
+                }
+            ),
+            "empty page must not set completed_at: {state:?}"
+        );
+    }
+
+    /// Mark complete after an empty page: the sentinel is set,
+    /// any subsequent state read shows `completed_at` populated,
+    /// and the cursor (if previously advanced) survives unchanged.
+    #[test]
+    fn mark_kchat_backfill_complete_sets_completion_sentinel() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+
+        // Walk one page so a cursor exists.
+        let page = vec![make_post_input(cache_dir, "only", "ch", "u", "body")];
+        let _ = manager
+            .ingest_kchat_backfill_page(cache_dir, &page)
+            .unwrap();
+
+        let outcome = manager.mark_kchat_backfill_complete(cache_dir).unwrap();
+        match outcome {
+            KchatBackfillCompletionOutcome::Completed { source_id } => {
+                assert_eq!(source_id, added.source.id);
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+
+        let state = manager.kchat_backfill_state(cache_dir).unwrap();
+        match state {
+            KchatBackfillState::Idle {
+                oldest_post_id,
+                completed_at,
+                ..
+            } => {
+                assert_eq!(oldest_post_id.as_deref(), Some("only"));
+                assert!(completed_at.is_some(), "completed_at must be set");
+            }
+            other => panic!("expected Idle (completed), got {other:?}"),
+        }
+    }
+
+    /// If the source flips to `AccessRevoked` between pages, the
+    /// next ingest call returns `AccessRevoked` and the cursor is
+    /// NOT advanced (would point at a post id whose chunks were
+    /// just cryptoshredded).
+    #[test]
+    fn ingest_kchat_backfill_page_stops_on_access_revoked() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+
+        // First page lands cleanly.
+        let _ = manager
+            .ingest_kchat_backfill_page(
+                cache_dir,
+                &[make_post_input(cache_dir, "p-1", "ch", "u", "body one")],
+            )
+            .unwrap();
+
+        // Cursor was advanced once.
+        let cursor_before = match manager.kchat_backfill_state(cache_dir).unwrap() {
+            KchatBackfillState::Idle { oldest_post_id, .. } => oldest_post_id,
+            other => panic!("expected Idle, got {other:?}"),
+        };
+        assert_eq!(cursor_before.as_deref(), Some("p-1"));
+
+        // Revoke mid-walk.
+        let _ = manager.revoke_kchat_source(cache_dir).unwrap();
+
+        let outcome = manager
+            .ingest_kchat_backfill_page(
+                cache_dir,
+                &[make_post_input(cache_dir, "p-2", "ch", "u", "body two")],
+            )
+            .unwrap();
+        assert_eq!(
+            outcome,
+            KchatBackfillIngestOutcome::AccessRevoked {
+                source_id: added.source.id,
+            }
+        );
+
+        // State reflects the revocation; cursor was NOT advanced
+        // to p-2 (the cryptoshred would have wiped it anyway, but
+        // the substrate must not silently move the cursor past a
+        // post it never durably ingested).
+        let state = manager.kchat_backfill_state(cache_dir).unwrap();
+        match state {
+            KchatBackfillState::AccessRevoked { source_id } => {
+                assert_eq!(source_id, added.source.id);
+            }
+            other => panic!("expected AccessRevoked, got {other:?}"),
+        }
+    }
+
+    /// Cryptoshred-on-revoke (Block B Task 4) extension: the
+    /// `cryptoshred_kchat_source_evidence` path clears the
+    /// backfill cursor + completion sentinel inside the same
+    /// transaction as the chunks/files/posts/DEK deletes. A
+    /// future re-grant on the same source starts the walk fresh.
+    #[test]
+    fn cryptoshred_clears_kchat_backfill_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+
+        // Advance cursor + mark complete so we can verify both
+        // columns get cleared.
+        let page = vec![make_post_input(cache_dir, "p", "ch", "u", "body")];
+        let _ = manager
+            .ingest_kchat_backfill_page(cache_dir, &page)
+            .unwrap();
+        let _ = manager.mark_kchat_backfill_complete(cache_dir).unwrap();
+
+        // Pre-revoke state has cursor + completed_at populated.
+        let pre = manager
+            .store
+            .kchat_backfill_state(&added.source.id)
+            .unwrap();
+        let (pre_cursor, pre_completed) = pre.expect("source row must exist");
+        assert!(pre_cursor.is_some());
+        assert!(pre_completed.is_some());
+
+        // Cryptoshred via the manager (matches the
+        // `revoke_kchat_source` flow).
+        let _ = manager.revoke_kchat_source(cache_dir).unwrap();
+
+        // Post-revoke: both columns are cleared.
+        let post = manager
+            .store
+            .kchat_backfill_state(&added.source.id)
+            .unwrap();
+        let (post_cursor, post_completed) =
+            post.expect("source row must still exist (status=revoked)");
+        assert_eq!(post_cursor, None);
+        assert_eq!(post_completed, None);
     }
 }
