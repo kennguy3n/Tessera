@@ -470,8 +470,7 @@ impl SourceManager {
         // and this call) keeps the reject-by-default behaviour.
         let canonical_parent = std::fs::canonicalize(cache_path).ok();
         let canonical_target = std::fs::canonicalize(&target).ok();
-        if let (Some(parent), Some(t)) = (&canonical_parent, &canonical_target)
-        {
+        if let (Some(parent), Some(t)) = (&canonical_parent, &canonical_target) {
             let parent_with_sep = {
                 let mut s = parent.as_os_str().to_owned();
                 s.push(std::path::MAIN_SEPARATOR.to_string());

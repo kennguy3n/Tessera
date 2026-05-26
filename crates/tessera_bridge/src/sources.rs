@@ -171,10 +171,7 @@ pub struct KchatFileIndexOutcomeInfo {
 /// given `cache_dir`. The WS forwarder calls this before doing
 /// any network I/O on a `file_added` event so a push for a channel
 /// the user has not linked never triggers a download.
-pub fn is_kchat_channel_linked(
-    manager: &SourceManager,
-    cache_dir: &str,
-) -> BridgeResult<bool> {
+pub fn is_kchat_channel_linked(manager: &SourceManager, cache_dir: &str) -> BridgeResult<bool> {
     manager
         .is_kchat_channel_linked(cache_dir)
         .map_err(BridgeError::Core)
