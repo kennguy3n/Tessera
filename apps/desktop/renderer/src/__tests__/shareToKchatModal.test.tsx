@@ -142,7 +142,17 @@ describe("ShareToKchatModal", () => {
         api={api}
       />,
     );
-    await screen.findByTestId("kchat-share-channel");
+    // Same settle-chain wait as the success-path test above (lines
+    // 104-110): the Submit button is `disabled` until the channels
+    // effect resolves and `selectedChannel` commits, so clicking
+    // before that commit is silently no-opped by the browser (and by
+    // `fireEvent.click` on `<button disabled>`). Wait for the channel
+    // select's value to be set before clicking. Matches the pattern
+    // in `kchatChannelSourcePicker.test.tsx`.
+    const channelSelect = (await screen.findByTestId(
+      "kchat-share-channel",
+    )) as HTMLSelectElement;
+    await waitFor(() => expect(channelSelect.value).toBe("chan-1"));
     fireEvent.click(screen.getByTestId("kchat-share-submit"));
     expect(await screen.findByTestId("kchat-share-error")).toHaveTextContent(
       /rate-limited/,
