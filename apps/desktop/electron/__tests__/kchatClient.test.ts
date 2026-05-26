@@ -1357,6 +1357,72 @@ describe("KchatClient.connectWebSocket", () => {
     });
   });
 
+  it("warns at the trust boundary when seq is not a number", async () => {
+    // Eleventh-pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0005`) flagged that the trust
+    // boundary validated `event` / `broadcast` / `data` but did NOT
+    // validate `seq`, even though `KchatWebSocketEvent.seq` is
+    // declared `number`. A malicious server sending a string-typed
+    // `seq` would flow through the guards and reach downstream
+    // consumers as a typed `number` that's actually a string —
+    // breaking any arithmetic (e.g. future gap-detection logic
+    // mentioned in the type docs) the renderer eventually runs.
+    //
+    // Fix asserts the seq field at the same trust boundary as the
+    // other typed fields. This test feeds string + missing + bool
+    // + null `seq` shapes; all must drop with `malformed-seq`. A
+    // well-formed control afterward must still reach the listener.
+    const { ctor, instances } = mockWebSocketCtor();
+    const logWarn = vi.fn();
+    let clock = 0;
+    const c = buildClient({
+      webSocketCtor: ctor,
+      logWarn,
+      now: () => clock,
+    });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-secret");
+    const events: unknown[] = [];
+    c.onWebSocketEvent((e) => events.push(e));
+    await c.connectWebSocket();
+    instances[0].inst.onopen?.({});
+
+    const badSeqShapes = [
+      { event: "posted", data: {}, broadcast: {}, seq: "not-a-number" },
+      { event: "posted", data: {}, broadcast: {} },
+      { event: "posted", data: {}, broadcast: {}, seq: true },
+      { event: "posted", data: {}, broadcast: {}, seq: null },
+    ];
+    for (let i = 0; i < badSeqShapes.length; i++) {
+      // Advance the clock past the per-tuple cooldown so each
+      // shape's warning fires (the (event="posted", reason="malformed-seq")
+      // tuple is the same for all four; without clock advance only
+      // the first would warn).
+      // 60_000 is `WS_DROP_WARN_COOLDOWN_MS` in `kchatClient.ts`;
+      // not imported here to keep this test file's surface narrow.
+      clock += 60_001;
+      instances[0].inst.onmessage?.({ data: JSON.stringify(badSeqShapes[i]) });
+    }
+    expect(logWarn).toHaveBeenCalledTimes(4);
+    for (const call of logWarn.mock.calls) {
+      expect(call[1]).toMatchObject({
+        event: "posted",
+        reason: "malformed-seq",
+      });
+    }
+    // Control: well-formed event still reaches the listener.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        data: {},
+        broadcast: {},
+        seq: 7,
+      }),
+    });
+    expect(events).toHaveLength(1);
+    expect((events[0] as { seq: number }).seq).toBe(7);
+  });
+
   it("silently drops Mattermost control responses (seq_reply) without warning", async () => {
     // Tenth-pass Devin Review on PR #43
     // (`ANALYSIS_pr-review-job-...0001`) flagged that the

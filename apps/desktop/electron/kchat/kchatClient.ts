@@ -1064,7 +1064,11 @@ export class KchatClient {
    */
   private warnDroppedFrame(
     eventName: string | undefined,
-    reason: "missing-event" | "malformed-broadcast" | "malformed-data",
+    reason:
+      | "missing-event"
+      | "malformed-broadcast"
+      | "malformed-data"
+      | "malformed-seq",
   ): void {
     const name = eventName ?? "<no-event>";
     const key = `${name}::${reason}`;
@@ -1234,6 +1238,27 @@ export class KchatClient {
       Array.isArray(evt.data)
     ) {
       this.warnDroppedFrame(evt.event, "malformed-data");
+      return;
+    }
+    // `KchatWebSocketEvent.seq` is declared `number`. The trust
+    // boundary's contract is "after this function returns OK, every
+    // typed field on the asserted shape holds." Validating `seq`
+    // here means downstream consumers (`KchatSidebarSection`,
+    // `KchatEventForwarder`, future gap-detection logic) can branch
+    // on `view.seq` arithmetic without optional-chaining or runtime
+    // typeof checks scattered across call sites. The cost of one
+    // additional `typeof` is trivial against the consistency
+    // benefit. Eleventh-pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0005`) flagged that `seq` was the
+    // only typed field the trust boundary did not validate; a
+    // malicious server sending `{...,"seq":"not-a-number"}` would
+    // have flowed through as a string-typed `number` and broken any
+    // arithmetic the renderer eventually runs on it (gap detection
+    // is mentioned in this method's surrounding docs as a likely
+    // future use). Closing the gap now is cheap and prevents the
+    // class of bug.
+    if (typeof evt.seq !== "number") {
+      this.warnDroppedFrame(evt.event, "malformed-seq");
       return;
     }
     for (const l of this.wsListeners) {
