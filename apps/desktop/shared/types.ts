@@ -548,6 +548,74 @@ export interface SearchHitInfo {
   relevance: number;
 }
 
+/**
+ * Block D Task 1 (Phase 14): renderer-facing KChat-post search
+ * hit. Mirrors {@link SearchHit} for the fields the renderer's
+ * existing evidence-search UI already consumes, plus the
+ * KChat-specific metadata block (channel, post, sender,
+ * timestamps, permalink) the citation badge renders alongside
+ * the excerpt.
+ *
+ * The `permalink` is composed by the IPC handler — the substrate
+ * does not know the KChat server URL, only `kchatAuth` does, so
+ * the URL is built at the IPC layer from `channelId`/`postId` +
+ * the user's authenticated server base. A null `permalink` means
+ * the user is currently disconnected from KChat (the citation is
+ * still valid for retrieval but the "Open in KChat" button is
+ * disabled).
+ *
+ * `kind` is a fixed discriminator (`"kchat_post"`) so the
+ * renderer's CitationPanel can render the chat citation badge
+ * without branching on a tagged-union elsewhere.
+ */
+export interface KchatPostSearchHit {
+  kind: "kchat_post";
+  sourcePath: string;
+  sourceId: string;
+  chunkHash: string;
+  chunkContent: string;
+  relevanceScore: number;
+  excerpt: string;
+  postId: string;
+  channelId: string;
+  rootId: string | null;
+  senderUserId: string;
+  createdAtMs: number;
+  editedAtMs: number;
+  /** Composed `kchat://<server>/channel/<channel_id>/post/<post_id>`
+   * permalink, or `null` when the user is disconnected from KChat. */
+  permalink: string | null;
+}
+
+/**
+ * Block D Task 1 (Phase 14): bridge-side KChat-post search hit.
+ * This is the raw shape the Rust N-API returns. The renderer
+ * never sees this — the `kchat:searchPosts` IPC handler maps it
+ * to {@link KchatPostSearchHit} (renaming fields to camelCase
+ * shape, composing the permalink, and tagging with `kind`).
+ *
+ * Field ordering matches {@link SearchHitInfo} where the two
+ * overlap, plus the KChat-specific block tucked at the end so
+ * the napi-generated `.d.ts` stays diff-stable as either struct
+ * grows fields.
+ */
+export interface KchatPostSearchHitInfo {
+  content: string;
+  excerpt: string;
+  sourcePath: string;
+  sourceId: string;
+  chunkHash: string;
+  chunkIndex: number;
+  byteOffset: number;
+  relevance: number;
+  postId: string;
+  channelId: string;
+  rootId: string | null;
+  senderUserId: string;
+  createdAtMs: number;
+  editedAtMs: number;
+}
+
 // -----------------------------------------------------------------
 // Artifacts
 // -----------------------------------------------------------------
@@ -1889,6 +1957,16 @@ export interface KchatApi {
    * progression mid-flight.
    */
   backfillChannel: (channelId: string) => Promise<KchatBackfillRunOutcome>;
+  /**
+   * Block D Task 1 (Phase 14): KChat post-body retrieval. Returns
+   * AEAD-verified hits, ranked, with a composed permalink (or
+   * `null` when the user is disconnected). The handler enforces
+   * a 10/s sustained + 20-burst rate limit (`kchat:searchPosts`)
+   * matching `sources.search`, and emits a
+   * `KchatPostSearchExecuted` audit row carrying only the
+   * 16-hex SHA-256 of the query — never the raw query.
+   */
+  searchPosts: (query: string, limit: number) => Promise<KchatPostSearchHit[]>;
   /**
    * Subscribe to KChat connection-state changes surfaced by the
    * main process. The callback fires once on every successful

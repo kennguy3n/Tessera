@@ -485,6 +485,14 @@ const mockApi = {
       totalPostsUnchanged: 0,
       totalPostsSkippedRevoked: 0,
     }),
+    // Block D Task 1 (Phase 14): KChat post-body retrieval IPC.
+    // Default returns an empty hit list so dialogs that fan out
+    // a query into both `sources.search` and `kchat.searchPosts`
+    // render the file results without an unexpected KChat row.
+    // Tests that need to exercise the KChat branch override this
+    // per-case (e.g. the citation panel + replace dialog
+    // rendering tests in `citationPanelKchat.test.tsx`).
+    searchPosts: vi.fn().mockResolvedValue([]),
     // Block B Task 1: push-based subscriptions. Defaults return
     // a no-op unsubscribe so components that subscribe-on-mount
     // can render and unmount cleanly in tests without standing

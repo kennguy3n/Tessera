@@ -30,6 +30,8 @@ import type {
   KchatPostDeleteOutcomeInfo,
   KchatPostIngestInputInfo,
   KchatPostIngestOutcomeInfo,
+  KchatPostSearchHit,
+  KchatPostSearchHitInfo,
   KchatRevokeOutcomeInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
@@ -68,6 +70,8 @@ export type {
   KchatPostDeleteOutcomeInfo,
   KchatPostIngestInputInfo,
   KchatPostIngestOutcomeInfo,
+  KchatPostSearchHit,
+  KchatPostSearchHitInfo,
   KchatRevokeOutcomeInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
@@ -582,6 +586,29 @@ export interface NativeBridge {
     pagesWalked: number,
     totalPostsIngested: number,
   ): void;
+  /** Block D Task 1 (Phase 14): audit row emitted by the
+   *  `kchat:searchPosts` IPC handler after a successful retrieval.
+   *  The handler computes `queryHash` (SHA-256 hex, first 16
+   *  chars) and `latencyMs` (end-to-end IPC duration) before
+   *  passing — the substrate never sees the raw query string,
+   *  so a leaked audit log can't reveal what the user typed. */
+  bridgeLogKchatPostSearchExecuted(
+    queryHash: string,
+    hits: number,
+    sourcesTouched: number,
+    latencyMs: number,
+  ): void;
+  /** Block D Task 1 (Phase 14): FTS5 retrieval over chat-post
+   *  bodies. Returns AEAD-verified hits — sources whose DEK has
+   *  been dropped (revoked) yield no hits even if their old
+   *  chunks remain in the FTS5 index (defence-in-depth for the
+   *  cryptoshred guarantee). See
+   *  `tessera_sources::manager::search_kchat_posts` for the
+   *  pipeline. */
+  bridgeSearchKchatPosts(
+    query: string,
+    limit: number,
+  ): KchatPostSearchHitInfo[];
   // --- Audit query ---
   //
   // Renderer-facing read API over the audit store. The renderer

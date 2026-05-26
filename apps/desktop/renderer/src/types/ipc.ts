@@ -84,6 +84,7 @@ export type {
   SaveDialogResult,
   SchedulerStatus,
   SchedulerStatusInfo,
+  KchatPostSearchHit,
   SearchHit,
   SearchHitInfo,
   SettingsApi,

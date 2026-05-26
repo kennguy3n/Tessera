@@ -181,6 +181,9 @@ const bridgeMock = {
   bridgeLogKchatBackfillPageIngested: vi.fn(),
   bridgeLogKchatBackfillCompleted: vi.fn(),
   bridgeLogKchatBackfillAborted: vi.fn(),
+  // Block D Task 1 (Phase 14): retrieval bridge mocks.
+  bridgeSearchKchatPosts: vi.fn(() => [] as Array<unknown>),
+  bridgeLogKchatPostSearchExecuted: vi.fn(),
 };
 
 // `KchatAuthService` stub. `getClient()` returns an object with the
@@ -308,6 +311,7 @@ describe("kchat IPC registration", () => {
       "kchat:shareArtifact",
       "sources:addKchatChannel",
       "sources:backfillKchatChannel",
+      "kchat:searchPosts",
     ]) {
       expect(channels).toContain(want);
     }
@@ -2700,5 +2704,204 @@ describe("sources:backfillKchatChannel — orchestrator", () => {
     ).rejects.toThrow(/channelId/);
     expect(clientMock.getPostsForChannel).not.toHaveBeenCalled();
     expect(bridgeMock.bridgeGetKchatBackfillState).not.toHaveBeenCalled();
+  });
+});
+
+// =====================================================================
+// Block D Task 1 (Phase 14) — kchat:searchPosts retrieval IPC
+// ---------------------------------------------------------------------
+// Validates the renderer-facing post-body retrieval path:
+//
+//   1. Argument validation (query: string ≤ 10k, limit: 1..1000).
+//   2. Mapping from `bridgeSearchKchatPosts` rows to the renderer
+//      `KchatPostSearchHit` shape (camelCase, `kind: "kchat_post"`
+//      discriminator, permalink composition).
+//   3. Permalink composition: present when connected, `null` when
+//      disconnected.
+//   4. Audit emission: `bridgeLogKchatPostSearchExecuted` is called
+//      with the SHA-256 truncated hash (hex, 16 chars), the hit
+//      count, the distinct-source count, and a non-negative
+//      latency. The raw query is NEVER passed to the audit logger.
+//   5. Audit failure does NOT crash the search (best-effort).
+//   6. Empty / blank query short-circuits the bridge call.
+// =====================================================================
+describe("kchat:searchPosts (Block D Task 1)", () => {
+  // A minimal valid napi row matching the bridge's
+  // `KchatPostSearchHitInfo` shape.
+  function makeBridgeRow(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      content: "we agreed to push Q3 launch to Sept 15",
+      excerpt: "we agreed to push Q3 launch to Sept 15",
+      sourcePath: "/var/cache/tessera/kchat/channel-xyz",
+      sourceId: "src-uuid-1",
+      chunkHash: "blake3hash1",
+      chunkIndex: 0,
+      byteOffset: 0,
+      relevance: 0.5,
+      postId: "post-abc",
+      channelId: "channel-xyz",
+      rootId: null,
+      senderUserId: "user-ken",
+      createdAtMs: 1_700_000_000_000,
+      editedAtMs: 0,
+      ...overrides,
+    };
+  }
+
+  it("returns AEAD-verified hits mapped to renderer shape with permalink when connected", async () => {
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com/",
+      user: { username: "ken" },
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow(),
+      makeBridgeRow({
+        postId: "post-def",
+        chunkHash: "blake3hash2",
+        relevance: 0.25,
+        sourceId: "src-uuid-2",
+      }),
+    ]);
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3 launch deadline",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(bridgeMock.bridgeSearchKchatPosts).toHaveBeenCalledWith(
+      "Q3 launch deadline",
+      10,
+    );
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({
+      kind: "kchat_post",
+      chunkContent: "we agreed to push Q3 launch to Sept 15",
+      chunkHash: "blake3hash1",
+      postId: "post-abc",
+      channelId: "channel-xyz",
+      senderUserId: "user-ken",
+      relevanceScore: 0.5,
+      // Trailing slash on serverUrl is stripped, then redirect form
+      // is composed.
+      permalink:
+        "https://kchat.example.com/_redirect/pl/post-abc",
+    });
+    expect(out[1]).toMatchObject({
+      postId: "post-def",
+      relevanceScore: 0.25,
+      permalink: "https://kchat.example.com/_redirect/pl/post-def",
+    });
+  });
+
+  it("emits audit row with SHA-256 truncated hash, hit count, distinct sources, and latency", async () => {
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow(),
+      makeBridgeRow({
+        postId: "post-def",
+        sourceId: "src-uuid-1", // same source, distinct-count should stay 1
+      }),
+      makeBridgeRow({
+        postId: "post-ghi",
+        sourceId: "src-uuid-2", // distinct-count -> 2
+      }),
+    ]);
+
+    await handler("kchat:searchPosts")(EVENT, "secret-query-text", 25);
+
+    expect(bridgeMock.bridgeLogKchatPostSearchExecuted).toHaveBeenCalledTimes(
+      1,
+    );
+    const args =
+      bridgeMock.bridgeLogKchatPostSearchExecuted.mock.calls[0];
+    const [queryHash, hits, sourcesTouched, latencyMs] = args;
+    // 16 hex chars (= 64 bits of SHA-256).
+    expect(queryHash).toMatch(/^[0-9a-f]{16}$/);
+    // The audit row MUST NOT carry the raw query.
+    expect(queryHash).not.toContain("secret-query-text");
+    expect(hits).toBe(3);
+    expect(sourcesTouched).toBe(2);
+    expect(typeof latencyMs).toBe("number");
+    expect(latencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("emits the same hash for the same trimmed query (deterministic) and a different hash for a different query", async () => {
+    serviceMock.getState.mockReturnValue({ state: "disconnected" });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValue([]);
+
+    await handler("kchat:searchPosts")(EVENT, "  hello world  ", 10);
+    await handler("kchat:searchPosts")(EVENT, "hello world", 10);
+    await handler("kchat:searchPosts")(EVENT, "different query", 10);
+
+    const h1 =
+      bridgeMock.bridgeLogKchatPostSearchExecuted.mock.calls[0][0];
+    const h2 =
+      bridgeMock.bridgeLogKchatPostSearchExecuted.mock.calls[1][0];
+    const h3 =
+      bridgeMock.bridgeLogKchatPostSearchExecuted.mock.calls[2][0];
+    expect(h1).toBe(h2); // whitespace-normalised before hashing
+    expect(h1).not.toBe(h3);
+  });
+
+  it("leaves permalink null when the user is disconnected", async () => {
+    serviceMock.getState.mockReturnValue({ state: "disconnected" });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([makeBridgeRow()]);
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3 launch",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(1);
+    expect(out[0].permalink).toBeNull();
+  });
+
+  it("does NOT crash the search when audit logger throws (best-effort posture)", async () => {
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([makeBridgeRow()]);
+    bridgeMock.bridgeLogKchatPostSearchExecuted.mockImplementationOnce(() => {
+      throw new Error("audit logger poisoned");
+    });
+    // Silence the expected console.error noise from the
+    // best-effort audit failure path.
+    const consoleErr = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3 launch",
+      10,
+    )) as Array<Record<string, unknown>>;
+    expect(out).toHaveLength(1);
+    expect(consoleErr).toHaveBeenCalled();
+    consoleErr.mockRestore();
+  });
+
+  it("rejects malformed query (non-string) without touching the bridge", async () => {
+    await expect(
+      handler("kchat:searchPosts")(EVENT, 42, 10),
+    ).rejects.toThrow(/query/);
+    expect(bridgeMock.bridgeSearchKchatPosts).not.toHaveBeenCalled();
+    expect(bridgeMock.bridgeLogKchatPostSearchExecuted).not.toHaveBeenCalled();
+  });
+
+  it("rejects out-of-range limit", async () => {
+    await expect(
+      handler("kchat:searchPosts")(EVENT, "Q3", 0),
+    ).rejects.toThrow(/limit/);
+    await expect(
+      handler("kchat:searchPosts")(EVENT, "Q3", 1_000_000),
+    ).rejects.toThrow(/limit/);
+    expect(bridgeMock.bridgeSearchKchatPosts).not.toHaveBeenCalled();
   });
 });

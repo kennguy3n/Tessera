@@ -373,6 +373,68 @@ pub enum KchatBackfillCompletionOutcome {
     AccessRevoked { source_id: SourceId },
 }
 
+/// Block D Task 1 (Phase 14): one renderer-facing hit returned by
+/// [`SourceManager::search_kchat_posts`].
+///
+/// Each hit is one chunk of a KChat post body that matched the
+/// caller's FTS5 query AND whose AEAD ciphertext authenticates
+/// under the per-source DEK. The `content` field carries the
+/// verified plaintext (re-derived from the AEAD open, not the
+/// `chunks.content` column) so a tampered-disk attack that
+/// flipped a bit in the plaintext column without re-encrypting
+/// cannot ride through retrieval. The plaintext bit-for-bit
+/// matches what the indexer fed to FTS5 in the happy path.
+///
+/// Carries enough metadata for the renderer's citation surface
+/// to:
+///
+/// 1. Render a citation badge (`channel_id`, `post_id`,
+///    `created_at_ms`, `sender_user_id`) — the renderer maps
+///    `channel_id` to the user-visible channel name from its
+///    own local roster cache, and `sender_user_id` to a display
+///    name similarly.
+/// 2. Construct a "Jump to KChat" permalink (the IPC layer
+///    composes `{server}/channel/{channel_id}/post/{post_id}`
+///    using the kchat-auth server URL — the substrate does not
+///    know the server URL).
+/// 3. Insert a citation row with `source_type = "kchat_post"`,
+///    `chunk_hash = hash`, and the permalink as the `source_uri`.
+#[derive(Debug, Clone)]
+pub struct KchatPostSearchHit {
+    pub source_id: SourceId,
+    /// The KChat-channel cache_dir; equals `channel_id` by
+    /// construction (see `add_kchat_channel`). Surfaced for
+    /// parity with the file-search `source_path` field.
+    pub source_path: String,
+    pub post_id: String,
+    pub channel_id: String,
+    pub root_id: Option<String>,
+    pub sender_user_id: String,
+    pub created_at_ms: i64,
+    pub edited_at_ms: i64,
+    pub chunk_index: usize,
+    pub byte_offset: usize,
+    /// AEAD-verified plaintext content of the chunk. Bit-for-bit
+    /// equal to the `chunks.content` column in the happy path
+    /// (the manager asserts equality before yielding the hit).
+    pub content: String,
+    /// Query-aware ±50-char snippet centred on the first query
+    /// term, mirrors `search::build_excerpt` for visual parity
+    /// with the file-search citations.
+    pub excerpt: String,
+    /// BLAKE3 hex of the post-body plaintext (NOT the chunk
+    /// content). Citation rows use this so two citations of the
+    /// same post on different chunks dedupe sensibly at the
+    /// citation layer.
+    pub hash: String,
+    /// Position-stable relevance in `(0, 1]` — `1.0 / (rank + 1)`
+    /// where `rank` is the 1-based position in the BM25-ordered
+    /// hit list. Same scheme as
+    /// [`crate::search::SearchResult::relevance`] for consistent
+    /// surfacing across file-source and KChat-post citations.
+    pub relevance: f64,
+}
+
 pub struct SourceManager {
     store: SourceStore,
     indexer: Indexer,
@@ -1611,6 +1673,164 @@ impl SourceManager {
             .clone();
         let engine = SearchEngine::hybrid(&self.store, self.embedder.as_deref(), cfg);
         engine.search_broad(query, limit)
+    }
+
+    /// Block D Task 1 (Phase 14): retrieve KChat post chunks that
+    /// match `query`. The returned hits are the chat-body counterpart
+    /// to [`SourceManager::search`] (which only surfaces file
+    /// chunks).
+    ///
+    /// Pipeline:
+    ///
+    /// 1. The query is normalised via the same FTS5 sanitiser the
+    ///    file-search path uses
+    ///    ([`crate::search::build_fts_query`]) so a search like
+    ///    `Q3 launch` becomes `"Q3" AND "launch"`. Empty / all-
+    ///    stopword queries short-circuit to an empty result set
+    ///    (no SQL round-trip).
+    /// 2. The store-layer FTS5 join
+    ///    ([`crate::store::SourceStore::search_kchat_posts_fts`])
+    ///    handles the ACL gate (status != AccessRevoked), the
+    ///    chunk-kind filter (`'chat_post'`), and the DEK-row
+    ///    existence gate. Rows whose source no longer has a DEK
+    ///    cannot reach us.
+    /// 3. For each row this method first ensures the per-source
+    ///    DEK is unwrappable (load-only, never generate). Then it
+    ///    AEAD-opens `content_aead` and **compares the decrypted
+    ///    plaintext to the `content` column** — a mismatch means
+    ///    on-disk tampering (the `content` column has the
+    ///    attacker's text but the AEAD-sealed copy doesn't), and
+    ///    the hit is silently dropped. If the DEK exists in the
+    ///    row but unwrap fails (KEK rotation, corrupted blob,
+    ///    etc.) the hit is dropped and the source is marked as
+    ///    "DEK broken" in the in-memory cache so subsequent rows
+    ///    from the same source short-circuit without retrying.
+    ///    Finally, a query-aware excerpt is built via the shared
+    ///    helper so the excerpt formatting matches file-source
+    ///    hits byte-for-byte (the renderer's RelevanceBadge +
+    ///    excerpt component does not branch on hit kind).
+    /// 4. The final relevance is the 1-based reciprocal rank of
+    ///    the surviving hits — `1.0 / (i + 1.0)`. The same scheme
+    ///    [`crate::search::SearchEngine::search_with_mode`] uses
+    ///    for file hits, so a renderer that merges and re-sorts
+    ///    file + post hits gets a consistent score axis without
+    ///    having to know which kind produced each score.
+    pub fn search_kchat_posts(&self, query: &str, limit: usize) -> Result<Vec<KchatPostSearchHit>> {
+        let fts_query = crate::search::build_fts_query(query, true);
+        if fts_query.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Fetch a larger pool than `limit` so AEAD-verification
+        // drops (which should be rare — tamper / DEK-broken) do
+        // not cause the returned vec to undershoot the caller's
+        // limit. The factor of 2 is conservative — even a
+        // 50%-tamper-rate corpus would still return `limit` hits.
+        let pool = limit.saturating_mul(2).max(limit);
+        let rows = self.store.search_kchat_posts_fts(&fts_query, pool)?;
+
+        let mut verified: Vec<KchatPostSearchHit> = Vec::with_capacity(rows.len());
+        // Cache the per-source result of `ensure_dek_loaded` so a
+        // source whose unwrap fails once doesn't get retried for
+        // every chunk in the page — DEK unwrap is the expensive
+        // step in this pipeline (AES-GCM-256 init + decrypt).
+        let mut dek_status: std::collections::HashMap<String, bool> =
+            std::collections::HashMap::new();
+
+        for row in rows {
+            // The `chunks` table only contains rows we wrote, and
+            // every write goes through `Source::id` which is a
+            // `SourceId(Uuid)`. A parse failure here would mean
+            // someone hand-edited the DB to insert an invalid id;
+            // drop the hit rather than poison the whole search.
+            let Ok(uuid) = uuid::Uuid::parse_str(&row.source_id) else {
+                continue;
+            };
+            let source_id = SourceId(uuid);
+            let dek_ok = if let Some(v) = dek_status.get(&row.source_id) {
+                *v
+            } else {
+                // IMPORTANT: do NOT call `ensure_dek_loaded`
+                // here — that path *generates and persists a
+                // new DEK* if one does not already exist (the
+                // ingest path's first-write-wins logic). A
+                // cryptoshred that committed between the
+                // store-layer FTS5 query and this call would
+                // leave the DEK row deleted; if we generated a
+                // fresh DEK here we would (a) resurrect crypto
+                // material for a revoked source, and (b)
+                // silently re-key a future re-grant so the old
+                // AEAD chunks become unopenable — exactly the
+                // integrity gap Block C Task 2 closed.
+                // Load-only, never generate.
+                let ok = match self.store.load_wrapped_dek_for_source(&source_id) {
+                    Ok(Some(wrapped)) => self.kchat_crypto.unwrap_dek(&source_id, &wrapped).is_ok(),
+                    _ => false,
+                };
+                dek_status.insert(row.source_id.clone(), ok);
+                ok
+            };
+            if !dek_ok {
+                continue;
+            }
+
+            // The store-layer query already restricted to
+            // `kind = 'chat_post'`, which the ingest path always
+            // pairs with `content_aead` + `content_aead_nonce`
+            // BLOBs (see `SourceStore::insert_kchat_post_chunks`).
+            // A row missing either column is a corrupted DB — drop
+            // the hit rather than surfacing un-authenticated
+            // plaintext.
+            let (Some(ciphertext), Some(nonce)) =
+                (row.content_aead.as_ref(), row.content_aead_nonce.as_ref())
+            else {
+                continue;
+            };
+            let sealed = crate::kchat_crypto::SealedChunk {
+                nonce: nonce.clone(),
+                ciphertext: ciphertext.clone(),
+            };
+            let Ok(opened) = self.kchat_crypto.open_chunk(&source_id, &sealed) else {
+                continue;
+            };
+            // AEAD-verified plaintext MUST match the FTS5-indexed
+            // `content` column. If they diverge, the disk-level
+            // plaintext has been tampered with — the indexed
+            // column says one thing, the authenticated ciphertext
+            // says another. Drop the hit rather than choose a
+            // side; the operator's audit trail (which would catch
+            // a tampered DB on next backup) is the recovery path.
+            let Ok(opened_str) = String::from_utf8(opened) else {
+                continue;
+            };
+            if opened_str != row.content {
+                continue;
+            }
+
+            let excerpt = crate::search::build_excerpt(&opened_str, query, 200);
+            // 1-based reciprocal rank — `verified.len()` is the
+            // 0-based index of the hit that's about to be pushed.
+            let relevance = 1.0 / (verified.len() as f64 + 1.0);
+            verified.push(KchatPostSearchHit {
+                source_id,
+                source_path: row.source_path,
+                post_id: row.post_id,
+                channel_id: row.channel_id,
+                root_id: row.root_id,
+                sender_user_id: row.sender_user_id,
+                created_at_ms: row.created_at_ms,
+                edited_at_ms: row.edited_at_ms,
+                chunk_index: row.chunk_index,
+                byte_offset: row.byte_offset,
+                content: opened_str,
+                excerpt,
+                hash: row.hash,
+                relevance,
+            });
+            if verified.len() >= limit {
+                break;
+            }
+        }
+        Ok(verified)
     }
 
     pub fn list_indexed_files(&self, source_id: &SourceId) -> Result<Vec<IndexedFile>> {
@@ -3655,5 +3875,259 @@ mod tests {
             post.expect("source row must still exist (status=revoked)");
         assert_eq!(post_cursor, None);
         assert_eq!(post_completed, None);
+    }
+
+    // ----------------------------------------------------------------
+    // Block D Task 1 (Phase 14): KChat post retrieval bridge
+    // ----------------------------------------------------------------
+
+    /// Happy path: ingest a couple of post bodies, search for a
+    /// term that hits one of them, confirm we get back exactly the
+    /// expected hit with all metadata fields populated.
+    #[test]
+    fn search_kchat_posts_returns_matching_post_with_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+
+        let post_a = make_post_input(
+            cache_dir,
+            "post-A",
+            "channel-Z",
+            "user-author",
+            "the quarterly launch plan needs review",
+        );
+        let post_b = make_post_input(
+            cache_dir,
+            "post-B",
+            "channel-Z",
+            "user-other",
+            "lunch plans for friday",
+        );
+        manager.ingest_kchat_post(&post_a).unwrap();
+        manager.ingest_kchat_post(&post_b).unwrap();
+
+        let hits = manager.search_kchat_posts("quarterly launch", 10).unwrap();
+        assert_eq!(
+            hits.len(),
+            1,
+            "expected exactly one hit for quarterly+launch"
+        );
+        let hit = &hits[0];
+        assert_eq!(hit.source_id, added.source.id);
+        assert_eq!(hit.source_path, cache_dir);
+        assert_eq!(hit.post_id, "post-A");
+        assert_eq!(hit.channel_id, "channel-Z");
+        assert_eq!(hit.sender_user_id, "user-author");
+        assert_eq!(hit.created_at_ms, 1_700_000_000_000);
+        assert!(
+            hit.content.contains("quarterly") && hit.content.contains("launch"),
+            "content must carry the AEAD-verified plaintext (got {:?})",
+            hit.content
+        );
+        assert!(
+            hit.excerpt.to_lowercase().contains("quarterly")
+                || hit.excerpt.to_lowercase().contains("launch"),
+            "excerpt must focus on the query term"
+        );
+        assert!(
+            hit.relevance > 0.0 && hit.relevance <= 1.0,
+            "relevance must be a 1-based reciprocal rank in (0, 1]"
+        );
+    }
+
+    /// Empty-query / all-stopword-query short-circuit: no SQL round
+    /// trip, no hits.
+    #[test]
+    fn search_kchat_posts_empty_query_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let _added = manager.add_kchat_channel(cache_dir).unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "p",
+                "c",
+                "u",
+                "any plain body content here",
+            ))
+            .unwrap();
+
+        let hits_blank = manager.search_kchat_posts("", 10).unwrap();
+        assert!(hits_blank.is_empty(), "blank query must short-circuit");
+
+        let hits_stop = manager.search_kchat_posts("the and of", 10).unwrap();
+        assert!(
+            hits_stop.is_empty(),
+            "all-stopword query must short-circuit (was {:?})",
+            hits_stop
+        );
+    }
+
+    /// Block B Task 3 ACL gate: a revoked source's chunks must NOT
+    /// surface in `search_kchat_posts`, even if the FTS5 index
+    /// still has the tokens. The revoke path cryptoshreds chunks
+    /// too — this test verifies BOTH gates (status filter + DEK
+    /// drop) hold by leaning on the existing
+    /// `revoke_kchat_source` plumbing.
+    #[test]
+    fn search_kchat_posts_excludes_revoked_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.set_kchat_principal("self-user").unwrap();
+        let _added = manager.add_kchat_channel(cache_dir).unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "p-revoked",
+                "c-revoked",
+                "u-revoked",
+                "tangerine grapefruit pomelo citrus",
+            ))
+            .unwrap();
+
+        // Confirm the post is findable before revoke.
+        let pre = manager.search_kchat_posts("tangerine", 10).unwrap();
+        assert_eq!(pre.len(), 1, "pre-revoke must surface the hit");
+
+        // Revoke — this both flips status AND cryptoshreds chunks
+        // + DEK row.
+        let _ = manager.revoke_kchat_source(cache_dir).unwrap();
+
+        let post = manager.search_kchat_posts("tangerine", 10).unwrap();
+        assert!(
+            post.is_empty(),
+            "post-revoke must surface no hits (got {:?})",
+            post.iter().map(|h| h.post_id.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    /// Defence-in-depth: tampering with the plaintext `content`
+    /// column (e.g. an attacker swapping a row's plaintext without
+    /// re-encrypting the AEAD copy) must cause the hit to be
+    /// dropped. The plaintext-vs-AEAD comparison in
+    /// `search_kchat_posts` is the only thing standing between
+    /// "FTS5 matched on tampered text" and "tampered text reaches
+    /// the renderer".
+    #[test]
+    fn search_kchat_posts_drops_aead_mismatched_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.add_kchat_channel(cache_dir).unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "p-tamper",
+                "c",
+                "u",
+                "indigo violet ultraviolet xenon yttrium",
+            ))
+            .unwrap();
+
+        // Pre-tamper: hit returns.
+        let pre = manager.search_kchat_posts("ultraviolet", 10).unwrap();
+        assert_eq!(pre.len(), 1);
+
+        // Tamper the plaintext `content` column directly via the
+        // store's raw connection. We swap the chunk text for one
+        // that ALSO contains `ultraviolet` so the FTS5 MATCH still
+        // returns the row — only the AEAD-comparison gate can
+        // catch the swap.
+        manager
+            .store
+            .tamper_chunk_content_for_test("ultraviolet attacker tampered text payload")
+            .unwrap();
+
+        let post = manager.search_kchat_posts("ultraviolet", 10).unwrap();
+        assert!(
+            post.is_empty(),
+            "tampered chunk must not reach the renderer (got {:?})",
+            post.iter().map(|h| h.content.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    /// Cross-source partitioning: each KChat-channel source has
+    /// its own DEK + its own AEAD AAD (the source_id is bound into
+    /// the AAD by `chunk_aad`). A search must surface a hit from
+    /// each source independently — confirming that the per-source
+    /// DEK-load cache key in `search_kchat_posts` is keyed
+    /// correctly.
+    #[test]
+    fn search_kchat_posts_surfaces_hits_across_multiple_sources() {
+        let dir1 = tempfile::tempdir().unwrap();
+        let dir2 = tempfile::tempdir().unwrap();
+        let cd1 = dir1.path().to_str().unwrap();
+        let cd2 = dir2.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let a1 = manager.add_kchat_channel(cd1).unwrap();
+        let a2 = manager.add_kchat_channel(cd2).unwrap();
+
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cd1,
+                "p1",
+                "c1",
+                "u1",
+                "zephyr alpha bravo charlie",
+            ))
+            .unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cd2,
+                "p2",
+                "c2",
+                "u2",
+                "zephyr delta echo foxtrot",
+            ))
+            .unwrap();
+
+        let hits = manager.search_kchat_posts("zephyr", 10).unwrap();
+        assert_eq!(hits.len(), 2, "both sources must surface");
+        let by_source: std::collections::HashSet<_> = hits.iter().map(|h| h.source_id).collect();
+        assert!(by_source.contains(&a1.source.id));
+        assert!(by_source.contains(&a2.source.id));
+    }
+
+    /// Limit semantics: when more rows match than the caller's
+    /// limit, the BM25 ordering applied by the store-layer
+    /// `LIMIT ?2` keeps the top-N — and our reciprocal-rank
+    /// post-processing assigns 1.0, 0.5, ... to that order.
+    #[test]
+    fn search_kchat_posts_honors_limit_and_reciprocal_rank() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.add_kchat_channel(cache_dir).unwrap();
+        for i in 0..6 {
+            manager
+                .ingest_kchat_post(&make_post_input(
+                    cache_dir,
+                    &format!("p{i}"),
+                    "c",
+                    "u",
+                    &format!("kiwi mango pineapple round-{i}"),
+                ))
+                .unwrap();
+        }
+
+        let hits = manager.search_kchat_posts("kiwi", 3).unwrap();
+        assert_eq!(hits.len(), 3, "limit must cap the returned vec");
+        assert!(
+            (hits[0].relevance - 1.0).abs() < 1e-9,
+            "first hit must have relevance 1.0 (got {})",
+            hits[0].relevance
+        );
+        assert!(
+            (hits[1].relevance - 0.5).abs() < 1e-9,
+            "second hit must have relevance 0.5 (got {})",
+            hits[1].relevance
+        );
+        // Strictly decreasing.
+        assert!(hits[0].relevance > hits[1].relevance);
+        assert!(hits[1].relevance > hits[2].relevance);
     }
 }

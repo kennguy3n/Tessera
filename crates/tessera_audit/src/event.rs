@@ -167,6 +167,28 @@ pub enum AuditEventType {
     /// at the last successfully-acknowledged post id so a
     /// later retrigger resumes from there.
     KchatBackfillAborted,
+    /// Block D Task 1 (Phase 14): a KChat-post FTS5 retrieval
+    /// was executed. Details carry:
+    ///
+    /// - `query_hash=<16-hex>`: a 16-hex-character truncation
+    ///   of a cryptographic hash (SHA-256) of the normalised
+    ///   query string. Post bodies are NEVER logged, only the
+    ///   hash of the query — an operator can prove a particular
+    ///   question was asked without exposing what the user typed
+    ///   to anyone reading the audit log later. 16 hex chars
+    ///   (64 bits) is comfortably above the birthday bound for
+    ///   any realistic audit log retention window; the full
+    ///   hash would inflate the audit log unhelpfully.
+    /// - `hits=<count>`: the number of AEAD-verified hits
+    ///   returned to the renderer.
+    /// - `sources_touched=<count>`: the number of distinct
+    ///   `kchat`-typed sources represented in the hit set. Lets
+    ///   an operator answer "did this query span multiple
+    ///   channels" without re-running it.
+    /// - `latency_ms=<duration>`: the IPC-handler-observed end-
+    ///   to-end latency in milliseconds. Long-tail spikes
+    ///   correlate with DEK unwrap on cold sources.
+    KchatPostSearchExecuted,
 }
 
 impl AuditEventType {
@@ -213,6 +235,7 @@ impl AuditEventType {
             Self::KchatBackfillPageIngested => "kchat_backfill_page_ingested",
             Self::KchatBackfillCompleted => "kchat_backfill_completed",
             Self::KchatBackfillAborted => "kchat_backfill_aborted",
+            Self::KchatPostSearchExecuted => "kchat_post_search_executed",
         }
     }
 }
@@ -276,6 +299,7 @@ mod tests {
             AuditEventType::KchatBackfillPageIngested,
             AuditEventType::KchatBackfillCompleted,
             AuditEventType::KchatBackfillAborted,
+            AuditEventType::KchatPostSearchExecuted,
         ];
         for ev in all.iter() {
             let serde_form = serde_json::to_string(ev).unwrap();

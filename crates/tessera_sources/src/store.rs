@@ -1684,6 +1684,30 @@ impl SourceStore {
         }
     }
 
+    /// Block D Task 1 (Phase 14) test helper: overwrite the
+    /// plaintext `content` column of every chat_post chunk in the
+    /// store with the given string WITHOUT re-sealing the
+    /// `content_aead` ciphertext. Used by
+    /// `search_kchat_posts_drops_aead_mismatched_rows` to simulate
+    /// a disk-tamper attack — the FTS5 trigger re-tokenises the
+    /// new content, but the AEAD ciphertext still authenticates
+    /// the original plaintext, so the manager's plaintext-vs-AEAD
+    /// comparison drops the hit.
+    ///
+    /// Returns the number of rows touched. Test-only: never call
+    /// this from production code.
+    #[cfg(test)]
+    pub(crate) fn tamper_chunk_content_for_test(&self, new_content: &str) -> Result<u32> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let n = conn
+            .execute(
+                "UPDATE chunks SET content = ?1 WHERE kind = 'chat_post'",
+                params![new_content],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
     /// Return every chunk (including provenance columns) attached
     /// to the `indexed_files` row matching `path`, ordered by
     /// `chunk_index`. Used by tests + the renderer's per-file
@@ -1930,6 +1954,110 @@ impl SourceStore {
             rows.into_iter().map(|h| (h.chunk_id, h)).collect();
         let ordered: Vec<SearchHit> = ids.iter().filter_map(|id| by_id.remove(id)).collect();
         Ok(ordered)
+    }
+
+    /// Block D Task 1 (Phase 14): KChat-post-only BM25 search.
+    ///
+    /// Runs an FTS5 MATCH against the same `chunks_fts` virtual
+    /// table that the generic [`SourceStore::search_fts`] uses,
+    /// but with three additional joins / filters so the result
+    /// set is restricted to chunks that originated from a KChat
+    /// post body (`chunks.kind = 'chat_post'`) on a live source
+    /// (`sources.status != AccessRevoked`) whose per-source DEK
+    /// row exists (`kchat_source_deks.source_id IS NOT NULL`).
+    ///
+    /// The DEK-existence gate is structurally important: the
+    /// cryptoshred path drops `kchat_source_deks` rows in lockstep
+    /// with `chunks` (`SourceStore::cryptoshred_kchat_source_evidence`),
+    /// but a partial-failure scenario — e.g. the DEK delete
+    /// commits and the chunk delete rolls back — would leave
+    /// chunks that no longer have an unwrappable key. Filtering
+    /// at the SQL layer means those orphan rows can never reach
+    /// the manager's AEAD-verification step, which would otherwise
+    /// log a noisy "DEK not loaded" error per orphan chunk. The
+    /// gate also catches the future migration scenario where a
+    /// schema rev introduces post-ingestion before DEK generation
+    /// is wired (defence-in-depth — there is no such migration
+    /// today, but the predicate makes the invariant explicit at
+    /// the query layer rather than implicit at the manager layer).
+    ///
+    /// The `kchat_posts` join hydrates the citation-metadata
+    /// fields (channel id, post id, root id, sender id, timestamps)
+    /// the renderer needs to render a "from #channel on
+    /// 2026-01-15 by @user-id" badge alongside the excerpt. Joining
+    /// at the SQL layer (rather than via a follow-up
+    /// `find_kchat_post` call per hit) keeps the search path
+    /// single-query — no N+1.
+    ///
+    /// The result is ordered by FTS5 BM25 (`ORDER BY rank` —
+    /// `rank` is FTS5's non-positive log-relevance score), then
+    /// truncated to `limit`. The manager layer applies a
+    /// reciprocal-rank transformation before yielding hits to the
+    /// renderer so the surface score is stable across queries.
+    pub fn search_kchat_posts_fts(
+        &self,
+        fts_query: &str,
+        limit: usize,
+    ) -> Result<Vec<KchatPostSearchHitRow>> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT c.id, c.content, c.content_aead, c.content_aead_nonce,
+                        c.hash, c.chunk_index, c.byte_offset,
+                        f.source_id, s.path,
+                        p.post_id, p.channel_id, p.root_id, p.sender_user_id,
+                        p.created_at_ms, p.edited_at_ms,
+                        rank
+                 FROM chunks_fts fts
+                 JOIN chunks c        ON c.id = fts.rowid
+                 JOIN indexed_files f ON f.id = c.indexed_file_id
+                 JOIN sources s       ON s.id = f.source_id
+                 JOIN kchat_posts p   ON p.indexed_file_id = f.id
+                 WHERE chunks_fts MATCH ?1
+                   AND c.kind = 'chat_post'
+                   AND s.status != ?3
+                   AND EXISTS (
+                       SELECT 1 FROM kchat_source_deks d
+                       WHERE d.source_id = f.source_id
+                   )
+                 ORDER BY rank
+                 LIMIT ?2",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let rows: Vec<KchatPostSearchHitRow> = stmt
+            .query_map(
+                params![
+                    fts_query,
+                    limit as i64,
+                    SourceStatus::AccessRevoked.as_stored_json(),
+                ],
+                |row| {
+                    Ok(KchatPostSearchHitRow {
+                        chunk_id: row.get::<_, i64>(0)?,
+                        content: row.get(1)?,
+                        content_aead: row.get(2)?,
+                        content_aead_nonce: row.get(3)?,
+                        hash: row.get(4)?,
+                        chunk_index: row.get::<_, i64>(5)? as usize,
+                        byte_offset: row.get::<_, i64>(6)? as usize,
+                        source_id: row.get(7)?,
+                        source_path: row.get(8)?,
+                        post_id: row.get(9)?,
+                        channel_id: row.get(10)?,
+                        root_id: row.get(11)?,
+                        sender_user_id: row.get(12)?,
+                        created_at_ms: row.get::<_, i64>(13)?,
+                        edited_at_ms: row.get::<_, i64>(14)?,
+                        bm25_score: -row.get::<_, f64>(15)?,
+                    })
+                },
+            )
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+
+        Ok(rows)
     }
 
     /// Upsert an embedding for a chunk. Replaces any existing row with
@@ -2274,6 +2402,58 @@ pub struct SearchHit {
     pub source_path: String,
     pub source_id: String,
     pub relevance: f64,
+}
+
+/// Block D Task 1 (Phase 14): one raw chunk-hit row produced by
+/// [`SourceStore::search_kchat_posts_fts`].
+///
+/// This is intentionally a substrate-internal shape, not a
+/// renderer-facing one — the manager layer
+/// ([`crate::manager::SourceManager::search_kchat_posts`]) does
+/// two transformations before yielding hits to the bridge:
+///
+/// 1. It AEAD-verifies the chunk by re-opening
+///    `content_aead` under the per-source DEK and comparing the
+///    decrypted bytes against the plaintext `content` column,
+///    discarding any row whose ciphertext does not authenticate.
+///    Without this check, the search path would happily return
+///    the plaintext copy of a chunk whose AEAD tag fails — which
+///    would defeat the integrity property that motivated Block C
+///    Task 2's column-AEAD design in the first place.
+/// 2. It computes a query-aware excerpt and a reciprocal-rank
+///    relevance score so the renderer never sees the raw
+///    `bm25_score` (which is unstable across queries and
+///    corpus-dependent — see [`crate::search::SearchResult`]).
+///
+/// Plaintext `content`, `content_aead`, and `content_aead_nonce`
+/// flow through this struct because the AEAD verification step
+/// in the manager needs all three; they are dropped from the
+/// renderer-facing
+/// [`crate::manager::KchatPostSearchHit`] (which only carries the
+/// verified plaintext).
+#[derive(Debug, Clone)]
+pub struct KchatPostSearchHitRow {
+    pub chunk_id: i64,
+    pub content: String,
+    pub content_aead: Option<Vec<u8>>,
+    pub content_aead_nonce: Option<Vec<u8>>,
+    pub hash: String,
+    pub chunk_index: usize,
+    pub byte_offset: usize,
+    pub source_id: String,
+    pub source_path: String,
+    pub post_id: String,
+    pub channel_id: String,
+    pub root_id: Option<String>,
+    pub sender_user_id: String,
+    pub created_at_ms: i64,
+    pub edited_at_ms: i64,
+    /// Raw FTS5 BM25 score (`-rank` in the SQL — FTS5 reports
+    /// `rank` as a non-positive log-relevance, so we negate to
+    /// keep "higher is more relevant"). Used by the manager
+    /// layer to order hits before reciprocal-rank scoring;
+    /// never surfaced to the renderer.
+    pub bm25_score: f64,
 }
 
 #[derive(Debug, Clone)]

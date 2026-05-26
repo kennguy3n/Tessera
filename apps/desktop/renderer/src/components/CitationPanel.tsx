@@ -5,9 +5,88 @@ import type {
   CitationInfo,
   AddCitationRequest,
   CitationFreshness,
+  KchatPostSearchHit,
   ReplaceCitationRequest,
   SearchHit,
 } from "../types/ipc";
+
+/**
+ * Block D Task 1 (Phase 14): renderer-side merged-evidence row.
+ * The citation dialogs render file hits and KChat-post hits in a
+ * single list so the user picks among ALL retrieved evidence
+ * regardless of source kind. We keep the union discriminator
+ * (`kind`) at the row level rather than building two separate
+ * lists because the relevance scores are directly comparable
+ * (both pipelines run the same FTS5 / RRF ranking) and
+ * intermingling produces a better-than-segregated experience for
+ * the user.
+ */
+type EvidenceRow =
+  | { kind: "file"; hit: SearchHit }
+  | { kind: "kchat_post"; hit: KchatPostSearchHit };
+
+/**
+ * Format a millisecond Unix timestamp into a short, locale-aware
+ * date/time string for the KChat post badge. We intentionally
+ * pick a stable concise format (`MMM d, HH:mm`) so the badge
+ * fits the same line as the relevance score on a narrow
+ * citation row.
+ */
+function formatKchatTimestamp(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "";
+  try {
+    return new Date(ms).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Run both retrieval pipelines in parallel and interleave the
+ * results by relevance score. Failures in either path do NOT
+ * fail the whole dialog — the user still sees results from the
+ * other path. This is the renderer-side equivalent of the
+ * substrate's defence-in-depth: a stuck audit logger doesn't
+ * crash the search, and a stuck kchat-search doesn't hide file
+ * evidence.
+ */
+async function runMergedEvidenceSearch(
+  query: string,
+  limit: number,
+): Promise<EvidenceRow[]> {
+  const api = window.tessera;
+  if (!api) return [];
+  const [fileResult, postResult] = await Promise.allSettled([
+    api.sources.searchSources(query, limit),
+    // KChat surface is feature-gated: render gracefully when the
+    // KChat API or `searchPosts` is not present on the host (e.g.
+    // older preloads, locked-down enterprise tier).
+    api.kchat && typeof api.kchat.searchPosts === "function"
+      ? api.kchat.searchPosts(query, limit)
+      : Promise.resolve([] as KchatPostSearchHit[]),
+  ]);
+  const rows: EvidenceRow[] = [];
+  if (fileResult.status === "fulfilled") {
+    for (const hit of fileResult.value) rows.push({ kind: "file", hit });
+  }
+  if (postResult.status === "fulfilled") {
+    for (const hit of postResult.value) {
+      rows.push({ kind: "kchat_post", hit });
+    }
+  }
+  // Stable sort: highest relevance first, ties broken by
+  // insertion order (i.e. file hits before KChat hits at the
+  // same score) so the merged list is deterministic across
+  // renders. The substrate already returns each list sorted, so
+  // we only need an interleave-by-score pass here.
+  rows.sort((a, b) => b.hit.relevanceScore - a.hit.relevanceScore);
+  return rows;
+}
 
 interface CitationPanelProps {
   artifactId: string;
@@ -234,6 +313,126 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
   );
 }
 
+/**
+ * Block D Task 1 (Phase 14): render a single evidence row. Files
+ * render as before (path + excerpt + relevance). KChat posts
+ * render with a `KChat` badge, the sender/timestamp metadata,
+ * the excerpt, the relevance, and a permalink anchor when the
+ * IPC handler composed one (the anchor is presentational —
+ * clicking the surrounding row still selects the citation; the
+ * anchor `stopPropagation`s so opening the KChat link does NOT
+ * also pick the citation).
+ */
+function EvidenceRowButton({
+  row,
+  onSelect,
+  disabled,
+}: {
+  row: EvidenceRow;
+  onSelect: (row: EvidenceRow) => void;
+  disabled?: boolean;
+}) {
+  if (row.kind === "file") {
+    return (
+      <button
+        type="button"
+        className="citation-search-hit"
+        onClick={() => onSelect(row)}
+        disabled={disabled}
+      >
+        <span className="citation-hit-path">{row.hit.sourcePath}</span>
+        <span className="citation-hit-excerpt">{row.hit.excerpt}</span>
+        <RelevanceBadge score={row.hit.relevanceScore} />
+      </button>
+    );
+  }
+  const hit = row.hit;
+  const timestamp = formatKchatTimestamp(hit.createdAtMs);
+  return (
+    <button
+      type="button"
+      className="citation-search-hit citation-search-hit-kchat"
+      onClick={() => onSelect(row)}
+      disabled={disabled}
+      data-source-kind="kchat_post"
+    >
+      <span className="citation-hit-path">
+        <span
+          className="citation-source-badge citation-source-badge-kchat"
+          aria-label="KChat post"
+        >
+          KChat
+        </span>
+        <span className="citation-hit-kchat-sender">{hit.senderUserId}</span>
+        {timestamp && (
+          <span className="citation-hit-kchat-timestamp"> · {timestamp}</span>
+        )}
+      </span>
+      <span className="citation-hit-excerpt">{hit.excerpt}</span>
+      <span className="citation-hit-trailing">
+        {hit.permalink && (
+          <a
+            href={hit.permalink}
+            className="citation-hit-kchat-permalink"
+            target="_blank"
+            rel="noreferrer noopener"
+            onClick={(e) => e.stopPropagation()}
+            aria-label="Open post in KChat"
+          >
+            Open in KChat
+          </a>
+        )}
+        <RelevanceBadge score={hit.relevanceScore} />
+      </span>
+    </button>
+  );
+}
+
+/**
+ * Build an {@link AddCitationRequest} (and the same shape for
+ * Replace) from a chosen evidence row. The `sourceType` /
+ * `sourceUri` shape diverges between file and KChat hits:
+ *
+ *   - file hits: `sourceType="local_file"`, `sourceUri` is the
+ *     absolute path (same as before).
+ *   - KChat post: `sourceType="kchat_post"`, `sourceUri` is the
+ *     `kchat://channel/<id>/post/<id>` URN (note: NOT the
+ *     server-specific permalink — the URN is server-agnostic
+ *     and round-trips across re-connects to the same workspace,
+ *     where the permalink would break if the user re-connects
+ *     to a renamed server URL). Title is the channel id; the
+ *     citation badge in the artifact view resolves it to the
+ *     channel display name via the channel roster.
+ */
+function buildCitationFields(row: EvidenceRow): {
+  sourceId: string;
+  sourceType: string;
+  sourceTitle: string;
+  sourceUri: string;
+  chunkHash: string;
+  confidence: number;
+} {
+  if (row.kind === "file") {
+    return {
+      sourceId: row.hit.sourceId,
+      sourceType: "local_file",
+      sourceTitle: row.hit.sourcePath.split("/").pop() || row.hit.sourcePath,
+      sourceUri: row.hit.sourcePath,
+      chunkHash: row.hit.chunkHash,
+      confidence: row.hit.relevanceScore,
+    };
+  }
+  const hit = row.hit;
+  return {
+    sourceId: hit.sourceId,
+    sourceType: "kchat_post",
+    sourceTitle: hit.channelId,
+    sourceUri: `kchat://channel/${hit.channelId}/post/${hit.postId}`,
+    chunkHash: hit.chunkHash,
+    confidence: hit.relevanceScore,
+  };
+}
+
 function AddCitationDialog({
   artifactId,
   onAdd,
@@ -244,32 +443,31 @@ function AddCitationDialog({
   onCancel: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchHit[]>([]);
+  const [results, setResults] = useState<EvidenceRow[]>([]);
   const [searching, setSearching] = useState(false);
 
   const handleSearch = async () => {
     if (!query.trim()) return;
     setSearching(true);
     try {
-      const api = window.tessera;
-      if (!api) return;
-      const hits = await api.sources.searchSources(query, 10);
-      setResults(hits);
+      const rows = await runMergedEvidenceSearch(query, 10);
+      setResults(rows);
     } finally {
       setSearching(false);
     }
   };
 
-  const selectHit = (hit: SearchHit) => {
+  const selectHit = (row: EvidenceRow) => {
+    const fields = buildCitationFields(row);
     const req: AddCitationRequest = {
       artifactId,
-      sourceId: hit.sourceId,
-      sourceType: "local_file",
-      sourceTitle: hit.sourcePath.split("/").pop() || hit.sourcePath,
-      sourceUri: hit.sourcePath,
-      chunkHash: hit.chunkHash,
+      sourceId: fields.sourceId,
+      sourceType: fields.sourceType,
+      sourceTitle: fields.sourceTitle,
+      sourceUri: fields.sourceUri,
+      chunkHash: fields.chunkHash,
       page: null,
-      confidence: hit.relevanceScore,
+      confidence: fields.confidence,
       usedFor: "",
     };
     onAdd(req);
@@ -295,17 +493,16 @@ function AddCitationDialog({
       </div>
       {results.length > 0 && (
         <div className="citation-search-results" role="list">
-          {results.map((hit, i) => (
-            <button
-              key={i}
-              type="button"
-              className="citation-search-hit"
-              onClick={() => selectHit(hit)}
-            >
-              <span className="citation-hit-path">{hit.sourcePath}</span>
-              <span className="citation-hit-excerpt">{hit.excerpt}</span>
-              <RelevanceBadge score={hit.relevanceScore} />
-            </button>
+          {results.map((row, i) => (
+            <EvidenceRowButton
+              key={
+                row.kind === "file"
+                  ? `file-${row.hit.chunkHash}-${i}`
+                  : `kchat-${row.hit.postId}-${row.hit.chunkHash}-${i}`
+              }
+              row={row}
+              onSelect={selectHit}
+            />
           ))}
         </div>
       )}
@@ -328,7 +525,7 @@ function ReplaceCitationDialog({
   onCancel: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchHit[]>([]);
+  const [results, setResults] = useState<EvidenceRow[]>([]);
   const [searching, setSearching] = useState(false);
   const [replacing, setReplacing] = useState<string | null>(null);
 
@@ -336,28 +533,27 @@ function ReplaceCitationDialog({
     if (!query.trim()) return;
     setSearching(true);
     try {
-      const api = window.tessera;
-      if (!api) return;
-      const hits = await api.sources.searchSources(query, 10);
-      setResults(hits);
+      const rows = await runMergedEvidenceSearch(query, 10);
+      setResults(rows);
     } finally {
       setSearching(false);
     }
   };
 
-  const selectHit = async (hit: SearchHit) => {
-    setReplacing(hit.chunkHash);
+  const selectHit = async (row: EvidenceRow) => {
+    const fields = buildCitationFields(row);
+    setReplacing(fields.chunkHash);
     try {
       await onReplace({
         artifactId,
         citationId: citation.citationId,
-        sourceId: hit.sourceId,
-        sourceType: "local_file",
-        sourceTitle: hit.sourcePath.split("/").pop() || hit.sourcePath,
-        sourceUri: hit.sourcePath,
-        chunkHash: hit.chunkHash,
+        sourceId: fields.sourceId,
+        sourceType: fields.sourceType,
+        sourceTitle: fields.sourceTitle,
+        sourceUri: fields.sourceUri,
+        chunkHash: fields.chunkHash,
         page: null,
-        confidence: hit.relevanceScore,
+        confidence: fields.confidence,
       });
     } finally {
       setReplacing(null);
@@ -392,18 +588,17 @@ function ReplaceCitationDialog({
       </div>
       {results.length > 0 && (
         <div className="citation-search-results" role="list">
-          {results.map((hit, i) => (
-            <button
-              key={i}
-              type="button"
-              className="citation-search-hit"
-              onClick={() => selectHit(hit)}
+          {results.map((row, i) => (
+            <EvidenceRowButton
+              key={
+                row.kind === "file"
+                  ? `file-${row.hit.chunkHash}-${i}`
+                  : `kchat-${row.hit.postId}-${row.hit.chunkHash}-${i}`
+              }
+              row={row}
+              onSelect={selectHit}
               disabled={replacing != null}
-            >
-              <span className="citation-hit-path">{hit.sourcePath}</span>
-              <span className="citation-hit-excerpt">{hit.excerpt}</span>
-              <RelevanceBadge score={hit.relevanceScore} />
-            </button>
+            />
           ))}
         </div>
       )}

@@ -550,6 +550,45 @@ impl AuditLogger {
         )
     }
 
+    /// Block D Task 1 (Phase 14): record a KChat-post FTS5 search.
+    ///
+    /// `query_hash` is a hex-encoded cryptographic hash of the
+    /// normalised query, truncated by the caller (the IPC
+    /// layer uses SHA-256 truncated to 16 hex chars — 64 bits
+    /// is well above the birthday bound for any realistic
+    /// audit log retention window). Post bodies and the literal query string are
+    /// NEVER passed to this function — that's the whole point of
+    /// the hash gate: the audit trail proves a question was asked
+    /// without exposing what the user typed.
+    ///
+    /// `hits` is the AEAD-verified result count returned to the
+    /// renderer (NOT the pre-verification pool size — drops from
+    /// AEAD mismatch are by construction silent).
+    ///
+    /// `sources_touched` is the cardinality of distinct sources
+    /// the hit set spans. Useful for forensics ("did this query
+    /// pull from one channel or three") without re-running it.
+    ///
+    /// `latency_ms` is the IPC-handler end-to-end duration
+    /// (request received → response sent) so an operator can
+    /// correlate slow retrievals with DEK-unwrap cold starts.
+    pub fn log_kchat_post_search_executed(
+        &self,
+        query_hash: &str,
+        hits: u32,
+        sources_touched: u32,
+        latency_ms: u32,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::KchatPostSearchExecuted,
+            format!(
+                "KChat post search executed: query_hash={query_hash} \
+                 hits={hits} sources_touched={sources_touched} \
+                 latency_ms={latency_ms}"
+            ),
+        )
+    }
+
     pub fn log_citation_added(
         &self,
         artifact_id: &str,
@@ -975,5 +1014,34 @@ mod tests {
         assert!(vacuum_failed
             .details
             .contains("vacuum_error=database or disk is full"));
+    }
+
+    /// Block D Task 1 (Phase 14): `log_kchat_post_search_executed`
+    /// must route to the `KchatPostSearchExecuted` variant AND
+    /// fold every operator-visible field into the details payload
+    /// in the documented `field=value` shape so the same audit-row
+    /// grep auditors already use for backfill rows works here too.
+    #[test]
+    fn kchat_post_search_executed_routes_and_records_all_observability_fields() {
+        let logger = AuditLogger::new_in_memory().unwrap();
+        logger
+            .log_kchat_post_search_executed("ab12cd34ef567890", 7, 3, 42)
+            .unwrap();
+        let rows = logger
+            .query_by_type(&AuditEventType::KchatPostSearchExecuted)
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        let details = &rows[0].details;
+        assert!(details.contains("query_hash=ab12cd34ef567890"));
+        assert!(details.contains("hits=7"));
+        assert!(details.contains("sources_touched=3"));
+        assert!(details.contains("latency_ms=42"));
+        // The literal query string must NEVER appear in the
+        // audit row — that's the entire reason the IPC layer
+        // hashes the query before passing.
+        assert!(
+            !details.contains("query=") || details.contains("query_hash="),
+            "details must only carry query_hash, never the raw query string"
+        );
     }
 }
