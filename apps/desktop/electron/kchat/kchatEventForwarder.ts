@@ -1227,6 +1227,25 @@ export class KchatEventForwarder {
         // (now-orphaned) on-disk files behind — reviewable by
         // an operator — rather than scrubbing files referenced
         // by still-live substrate rows.
+        //
+        // Asymmetry vs. `handleChannelGoneEvent` (third-pass Devin
+        // Review ANALYSIS_0005): the channel-gone path gates the
+        // filesystem scrub on `outcome !== "unlinked"`, which
+        // covers both `revoked` and `already_revoked`. We gate on
+        // `=== "revoked"` here because `refresh_kchat_acl` (the
+        // membership/ACL path) does NOT have an `already_revoked`
+        // outcome — see `KchatAclRefreshOutcome` in the bridge
+        // crate vs. `KchatRevokeOutcome` returned by
+        // `bridgeRevokeKchatSource`. The substrate's
+        // `refresh_kchat_acl` always reports `Revoked` when the
+        // principal is missing (it idempotently re-deletes the
+        // ACL rows + re-runs the cryptoshred), so the two enums
+        // intentionally diverge: ACL refresh has no concept of
+        // "this was already revoked last time" because it always
+        // re-does the work. The channel-gone path explicitly
+        // distinguishes the two because the backfill case (no
+        // source row → `unlinked`) must NOT scrub the cache dir
+        // (we never created it).
         if (r.outcome === "revoked") {
           await secureDeleteChannelArtifacts(cacheDir);
         }
