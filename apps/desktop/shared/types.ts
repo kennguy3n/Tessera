@@ -186,6 +186,77 @@ export interface KchatFileIndexOutcomeInfo {
 }
 
 /**
+ * One row of the authoritative KChat-channel member roster the
+ * Node-side `KchatEventForwarder` passes to
+ * `bridgeRefreshKchatAcl`. Wire shape is intentionally narrow:
+ * the substrate persists only the user id + role string, never
+ * the human-readable display name / email / nickname (the audit
+ * + retrieval-filter paths only need the opaque KChat user id).
+ *
+ * Block B Task 3 (Phase 11).
+ */
+export interface KchatAclMemberInfo {
+  userId: string;
+  role: string;
+}
+
+/**
+ * Outcome of a `bridgeRefreshKchatAcl` call.
+ *
+ * `outcome` is the snake_case projection result the substrate
+ * produced from the refreshed roster:
+ *   - `"granted"` — principal in roster, source was already in
+ *     a non-revoked state (status untouched).
+ *   - `"regranted"` — principal in roster, source was previously
+ *     `AccessRevoked`; status transitioned back to `Indexed`.
+ *   - `"revoked"` — principal NOT in roster; status transitioned
+ *     to `AccessRevoked` and retrieval will start filtering the
+ *     source's chunks out on the next call.
+ *   - `"unlinked"` — no `SourceType::Kchat` source exists for
+ *     `cacheDir`; no rows persisted, no status changed.
+ *   - `"no_principal"` — substrate has no `kchat_principal` set
+ *     (no `kchat:connect` has happened yet); refresh treated as
+ *     a no-op rather than auto-revoking every linked source.
+ *
+ * `memberCount` is the roster size as persisted (always the
+ * count of `members` the caller passed; the field is there so
+ * downstream audit + telemetry don't have to re-thread the
+ * length through every call site).
+ *
+ * `principalPresent` mirrors the outcome — `true` for
+ * `granted` / `regranted`, `false` otherwise — and is the
+ * boolean flag the audit row records for operator dashboards.
+ */
+export interface KchatAclRefreshOutcomeInfo {
+  outcome:
+    | "granted"
+    | "regranted"
+    | "revoked"
+    | "unlinked"
+    | "no_principal";
+  memberCount: number;
+  principalPresent: boolean;
+}
+
+/**
+ * Outcome of a `bridgeRevokeKchatSource` call (explicit revoke
+ * for `channel_archived` / `channel_deleted` / self-`user_removed`
+ * events).
+ *
+ *   - `"revoked"` — source row transitioned from a non-revoked
+ *     state to `AccessRevoked`.
+ *   - `"already_revoked"` — source was already in
+ *     `AccessRevoked`; no status change. The audit row is still
+ *     emitted by the caller so operators see the repeat-event
+ *     in the trail.
+ *   - `"unlinked"` — no `SourceType::Kchat` source exists for
+ *     `cacheDir`; nothing to revoke.
+ */
+export interface KchatRevokeOutcomeInfo {
+  outcome: "revoked" | "already_revoked" | "unlinked";
+}
+
+/**
  * Renderer-facing search result. The IPC handler maps from the
  * Rust-side `SearchHitInfo` (which uses `content` / `relevance` /
  * `chunkIndex`) to this shape (`chunkContent` / `relevanceScore`,

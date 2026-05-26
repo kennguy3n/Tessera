@@ -268,6 +268,51 @@ impl AuditLogger {
         )
     }
 
+    /// Record that the Node-side `KchatEventForwarder` refreshed
+    /// a KChat channel's ACL roster against the substrate (Block
+    /// B Task 3, Phase 11).
+    ///
+    /// `channel_id` is the originating WS-event channel id (NOT
+    /// the cache_dir — operators correlate against KChat-server
+    /// activity by channel id); `member_count` is the size of the
+    /// refreshed roster as the substrate persisted it;
+    /// `principal_present` is the projection outcome from the
+    /// substrate's `refresh_kchat_acl`; `outcome` is one of
+    /// `granted` / `regranted` / `revoked` / `unlinked` /
+    /// `no_principal` so the audit trail shows the exact status
+    /// transition the refresh produced.
+    pub fn log_kchat_acl_refreshed(
+        &self,
+        channel_id: &str,
+        member_count: usize,
+        principal_present: bool,
+        outcome: &str,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::KchatAclRefreshed,
+            format!(
+                "KChat ACL refreshed: channel={channel_id} members={member_count} \
+                 principal_present={principal_present} outcome={outcome}"
+            ),
+        )
+    }
+
+    /// Record that a KChat-channel source was transitioned to
+    /// `SourceStatus::AccessRevoked` (Block B Task 3, Phase 11).
+    /// `reason` is a free-form short code identifying the
+    /// triggering event: `principal_removed` (an explicit
+    /// `user_removed` for the principal), `channel_archived`
+    /// (the channel was archived server-side), `channel_deleted`
+    /// (the channel was deleted server-side), or
+    /// `principal_missing_from_roster` (a routine `refresh_kchat_acl`
+    /// returned `Revoked`).
+    pub fn log_kchat_channel_access_revoked(&self, channel_id: &str, reason: &str) -> Result<()> {
+        self.log(
+            AuditEventType::KchatChannelAccessRevoked,
+            format!("KChat channel access revoked: channel={channel_id} reason={reason}"),
+        )
+    }
+
     pub fn log_citation_added(
         &self,
         artifact_id: &str,

@@ -133,6 +133,45 @@ impl SourceStore {
             CREATE TRIGGER IF NOT EXISTS chunks_ad_embeddings BEFORE DELETE ON chunks BEGIN
                 DELETE FROM chunk_embeddings WHERE chunk_id = old.id;
             END;
+
+            -- Block B Task 3 (Phase 11): per-channel ACL projection.
+            -- The Node-side `KchatEventForwarder` calls
+            -- `bridge_refresh_kchat_acl` after every membership
+            -- change event (`user_added`, `user_removed`,
+            -- `channel_updated`) with the authoritative member
+            -- roster from `GET /channels/{id}/members`. The roster
+            -- is persisted here so retrieval-side filters can
+            -- enforce \"principal is still a member\" without a
+            -- round-trip to the KChat server on every search.
+            --
+            -- The `kchat_principal` singleton (id='singleton') is
+            -- the locally-authenticated KChat user id. It is set
+            -- by `kchat:connect` after the `/users/me` probe
+            -- succeeds and cleared by `kchat:disconnect`. A NULL
+            -- principal means \"no KChat connection\" — the ACL
+            -- projection logic treats refresh calls as no-ops in
+            -- that state rather than auto-revoking every source.
+            CREATE TABLE IF NOT EXISTS kchat_principal (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                set_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS kchat_source_acl (
+                source_id TEXT NOT NULL,
+                member_user_id TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT '',
+                refreshed_at TEXT NOT NULL,
+                PRIMARY KEY (source_id, member_user_id),
+                FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
+            );
+
+            -- Indexed lookup for \"every source the principal is a
+            -- member of\". Used by `is_principal_member` to answer
+            -- the per-source ACL question in O(log n) rather than
+            -- scanning the full ACL table.
+            CREATE INDEX IF NOT EXISTS idx_kchat_source_acl_member
+                ON kchat_source_acl(member_user_id);
             ",
             )
             .map_err(|e| Error::Database(e.to_string()))?;
@@ -454,6 +493,171 @@ impl SourceStore {
         Ok(())
     }
 
+    /// Upsert the locally-authenticated KChat principal user id.
+    ///
+    /// The Node-side `kchat:connect` handler calls this with the
+    /// `id` returned by `GET /users/me` so the substrate knows
+    /// whose membership matters for ACL projection. Stored as a
+    /// singleton (id='singleton') so concurrent calls don't
+    /// accumulate rows. `set_at` carries the wall-clock for
+    /// debug / audit.
+    ///
+    /// Block B Task 3 (Phase 11).
+    pub fn set_kchat_principal(&self, user_id: &str) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .lock()
+            .expect("connection mutex poisoned")
+            .execute(
+                "INSERT INTO kchat_principal (id, user_id, set_at)
+                 VALUES ('singleton', ?1, ?2)
+                 ON CONFLICT(id) DO UPDATE SET
+                    user_id = excluded.user_id,
+                    set_at  = excluded.set_at",
+                params![user_id, now],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Return the locally-authenticated KChat principal user id,
+    /// or `None` when no `kchat:connect` has succeeded since the
+    /// last `kchat:disconnect`. `refresh_kchat_acl` treats a
+    /// missing principal as a no-op rather than auto-revoking
+    /// every source: a brief window between substrate startup and
+    /// the connect handler must not flap source statuses.
+    pub fn get_kchat_principal(&self) -> Result<Option<String>> {
+        match self
+            .conn
+            .lock()
+            .expect("connection mutex poisoned")
+            .query_row(
+                "SELECT user_id FROM kchat_principal WHERE id = 'singleton'",
+                [],
+                |row| row.get::<_, String>(0),
+            ) {
+            Ok(user_id) => Ok(Some(user_id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(Error::Database(e.to_string())),
+        }
+    }
+
+    /// Clear the principal singleton on `kchat:disconnect`. The
+    /// ACL roster rows are intentionally retained — a re-connect
+    /// with the same user id reuses them without a refresh
+    /// round-trip; a re-connect with a different user id will
+    /// flip every linked source to `AccessRevoked` on the next
+    /// refresh, which is the correct behaviour.
+    pub fn clear_kchat_principal(&self) -> Result<()> {
+        self.conn
+            .lock()
+            .expect("connection mutex poisoned")
+            .execute("DELETE FROM kchat_principal WHERE id = 'singleton'", [])
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Atomically replace the ACL roster for a single KChat source.
+    ///
+    /// `members` is the authoritative list returned by
+    /// `GET /channels/{id}/members` (or
+    /// `KchatClient.listChannelMembers`). All previously-cached
+    /// rows for `source_id` are dropped and the supplied
+    /// `(user_id, role)` pairs are inserted in their place inside
+    /// a single SQLite transaction so concurrent retrieval queries
+    /// can never observe a partial roster.
+    ///
+    /// `role` is the comma-separated KChat role list (e.g.
+    /// `"channel_user channel_admin"`); the substrate does not
+    /// interpret it but persists it for forensics + future
+    /// per-role retrieval filters.
+    pub fn replace_kchat_acl(
+        &self,
+        source_id: &SourceId,
+        members: &[(String, String)],
+    ) -> Result<()> {
+        let id_str = source_id.to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut conn = self.conn.lock().expect("connection mutex poisoned");
+        let tx = conn
+            .transaction()
+            .map_err(|e| Error::Database(e.to_string()))?;
+        tx.execute(
+            "DELETE FROM kchat_source_acl WHERE source_id = ?1",
+            params![id_str],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO kchat_source_acl
+                       (source_id, member_user_id, role, refreshed_at)
+                     VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(source_id, member_user_id) DO UPDATE SET
+                        role         = excluded.role,
+                        refreshed_at = excluded.refreshed_at",
+                )
+                .map_err(|e| Error::Database(e.to_string()))?;
+            for (user_id, role) in members {
+                stmt.execute(params![id_str, user_id, role, now])
+                    .map_err(|e| Error::Database(e.to_string()))?;
+            }
+        }
+        tx.commit().map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Return `true` iff `user_id` is in the cached ACL roster for
+    /// `source_id`. Backed by the `idx_kchat_source_acl_member`
+    /// composite index so the call is O(log n) on the roster row
+    /// count.
+    pub fn is_kchat_member(&self, source_id: &SourceId, user_id: &str) -> Result<bool> {
+        let id_str = source_id.to_string();
+        self.conn
+            .lock()
+            .expect("connection mutex poisoned")
+            .query_row(
+                "SELECT 1 FROM kchat_source_acl
+                 WHERE source_id = ?1 AND member_user_id = ?2",
+                params![id_str, user_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|_| true)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(false),
+                other => Err(Error::Database(other.to_string())),
+            })
+    }
+
+    /// List the cached ACL roster for `source_id`. Used by the
+    /// renderer's source-detail surface (so an operator can see
+    /// who else can read the channel) and by the cargo regression
+    /// tests.
+    pub fn list_kchat_acl(&self, source_id: &SourceId) -> Result<Vec<KchatAclRow>> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT member_user_id, role, refreshed_at
+                 FROM kchat_source_acl
+                 WHERE source_id = ?1
+                 ORDER BY member_user_id",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![id_str], |row| {
+                Ok(KchatAclRow {
+                    member_user_id: row.get(0)?,
+                    role: row.get(1)?,
+                    refreshed_at: row.get(2)?,
+                })
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+        Ok(rows)
+    }
+
     pub fn upsert_indexed_file(
         &self,
         source_id: &SourceId,
@@ -673,6 +877,18 @@ impl SourceStore {
 
     pub fn search_fts(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
+        // Block B Task 3 (Phase 11): retrieval-side ACL filter.
+        // The `JOIN sources s` + `WHERE s.status != ?3` clause
+        // excludes chunks whose source row has been transitioned
+        // to `SourceStatus::AccessRevoked` (the principal lost
+        // KChat-channel membership, or the channel was archived
+        // / deleted). Filtering BEFORE the LIMIT means revoked
+        // chunks don't consume top-k slots — the FTS5 engine
+        // still scores them but they're stripped before sorting
+        // truncates to `limit`. The status comparison uses the
+        // exact serde-JSON-stringified form (`SourceStatus::as_stored_json`)
+        // so a future variant rename cannot drift this predicate
+        // from the persistence layer.
         let mut stmt = conn
             .prepare(
                 "SELECT c.id, c.content, c.hash, c.chunk_index, c.byte_offset, f.path,
@@ -680,25 +896,34 @@ impl SourceStore {
                  FROM chunks_fts fts
                  JOIN chunks c ON c.id = fts.rowid
                  JOIN indexed_files f ON f.id = c.indexed_file_id
+                 JOIN sources s ON s.id = f.source_id
                  WHERE chunks_fts MATCH ?1
+                   AND s.status != ?3
                  ORDER BY rank
                  LIMIT ?2",
             )
             .map_err(|e| Error::Database(e.to_string()))?;
 
         let results = stmt
-            .query_map(params![query, limit as i64], |row| {
-                Ok(SearchHit {
-                    chunk_id: row.get::<_, i64>(0)?,
-                    content: row.get(1)?,
-                    hash: row.get(2)?,
-                    chunk_index: row.get::<_, i64>(3)? as usize,
-                    byte_offset: row.get::<_, i64>(4)? as usize,
-                    source_path: row.get(5)?,
-                    source_id: row.get(6)?,
-                    relevance: -row.get::<_, f64>(7)?,
-                })
-            })
+            .query_map(
+                params![
+                    query,
+                    limit as i64,
+                    SourceStatus::AccessRevoked.as_stored_json(),
+                ],
+                |row| {
+                    Ok(SearchHit {
+                        chunk_id: row.get::<_, i64>(0)?,
+                        content: row.get(1)?,
+                        hash: row.get(2)?,
+                        chunk_index: row.get::<_, i64>(3)? as usize,
+                        byte_offset: row.get::<_, i64>(4)? as usize,
+                        source_path: row.get(5)?,
+                        source_id: row.get(6)?,
+                        relevance: -row.get::<_, f64>(7)?,
+                    })
+                },
+            )
             .map_err(|e| Error::Database(e.to_string()))?
             .filter_map(std::result::Result::ok)
             .collect();
@@ -710,6 +935,19 @@ impl SourceStore {
     /// input order. Used by the hybrid retrieval pipeline to hydrate
     /// the final ranked list with chunk text + source metadata after
     /// fusion has determined the order.
+    ///
+    /// Block B Task 3 (Phase 11) defence-in-depth: the BM25 path
+    /// (`search_fts`) and the embedding-load path
+    /// (`load_embeddings_for_model`) already filter
+    /// `SourceStatus::AccessRevoked` chunks out before they reach
+    /// the fusion stage, but a chunk id arriving here that
+    /// belongs to a now-revoked source — e.g. a slow concurrent
+    /// `refresh_kchat_acl` revoked the source between the candidate
+    /// gather and this fetch — must still be dropped. The
+    /// `WHERE s.status != ?` clause is the last gate before
+    /// content text reaches the caller; revoked rows are simply
+    /// omitted (the caller's input-order reorder loop skips them
+    /// transparently).
     pub fn fetch_chunks_by_ids(&self, ids: &[i64]) -> Result<Vec<SearchHit>> {
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -722,15 +960,22 @@ impl SourceStore {
             "SELECT c.id, c.content, c.hash, c.chunk_index, c.byte_offset, f.path, f.source_id
              FROM chunks c
              JOIN indexed_files f ON f.id = c.indexed_file_id
-             WHERE c.id IN ({placeholders})"
+             JOIN sources s ON s.id = f.source_id
+             WHERE c.id IN ({placeholders})
+               AND s.status != ?"
         );
         let mut stmt = conn
             .prepare(&sql)
             .map_err(|e| Error::Database(e.to_string()))?;
-        let id_params: Vec<rusqlite::types::Value> = ids
+        let mut id_params: Vec<rusqlite::types::Value> = ids
             .iter()
             .map(|&i| rusqlite::types::Value::Integer(i))
             .collect();
+        // Bind the `s.status != ?` parameter at the end so its
+        // placeholder index matches the SQL above.
+        id_params.push(rusqlite::types::Value::Text(
+            SourceStatus::AccessRevoked.as_stored_json().to_owned(),
+        ));
         let rows: Vec<SearchHit> = stmt
             .query_map(rusqlite::params_from_iter(id_params.iter()), |row| {
                 Ok(SearchHit {
@@ -785,23 +1030,45 @@ impl SourceStore {
     /// enough that an in-memory scan is slow (~100K+ chunks), this
     /// can be replaced with an sqlite-vec / sqlite-vss native index;
     /// the trait surface stays the same.
+    ///
+    /// Block B Task 3 (Phase 11): the join through
+    /// `indexed_files → sources` and the `s.status != ?` filter
+    /// keep embedding rows from `AccessRevoked` sources out of the
+    /// candidate pool entirely, so the vector-cosine path matches
+    /// the BM25 path's ACL enforcement. Without this filter, a
+    /// revoked source's vectors would still rank in the cosine
+    /// top-k and waste fusion slots even though `fetch_chunks_by_ids`
+    /// would later drop them — wasting compute and risking
+    /// information leakage via timing / size-of-result-set side
+    /// channels.
     pub fn load_embeddings_for_model(&self, model_id: &str) -> Result<Vec<ChunkEmbeddingRow>> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
-            .prepare("SELECT chunk_id, model_id, vec FROM chunk_embeddings WHERE model_id = ?1")
+            .prepare(
+                "SELECT ce.chunk_id, ce.model_id, ce.vec
+                 FROM chunk_embeddings ce
+                 JOIN chunks c       ON c.id = ce.chunk_id
+                 JOIN indexed_files f ON f.id = c.indexed_file_id
+                 JOIN sources s      ON s.id = f.source_id
+                 WHERE ce.model_id = ?1
+                   AND s.status != ?2",
+            )
             .map_err(|e| Error::Database(e.to_string()))?;
         let rows = stmt
-            .query_map(params![model_id], |row| {
-                let chunk_id: i64 = row.get(0)?;
-                let model_id: String = row.get(1)?;
-                let bytes: Vec<u8> = row.get(2)?;
-                let vector = crate::embedding::decode_vec(&bytes).unwrap_or_default();
-                Ok(ChunkEmbeddingRow {
-                    chunk_id,
-                    model_id,
-                    vector,
-                })
-            })
+            .query_map(
+                params![model_id, SourceStatus::AccessRevoked.as_stored_json()],
+                |row| {
+                    let chunk_id: i64 = row.get(0)?;
+                    let model_id: String = row.get(1)?;
+                    let bytes: Vec<u8> = row.get(2)?;
+                    let vector = crate::embedding::decode_vec(&bytes).unwrap_or_default();
+                    Ok(ChunkEmbeddingRow {
+                        chunk_id,
+                        model_id,
+                        vector,
+                    })
+                },
+            )
             .map_err(|e| Error::Database(e.to_string()))?
             .filter_map(std::result::Result::ok)
             .filter(|r| !r.vector.is_empty())
@@ -1094,6 +1361,32 @@ pub struct IndexedFile {
     pub chunk_count: u64,
 }
 
+/// One row of the cached ACL roster for a KChat-backed source.
+///
+/// Block B Task 3 (Phase 11): the substrate persists the
+/// authoritative member list returned by
+/// `GET /channels/{id}/members` so retrieval-side filters can
+/// answer "is the locally-authenticated principal still a member
+/// of this channel" without a round-trip to KChat on every search.
+/// The roster is refreshed whenever the WS forwarder receives a
+/// membership-change event (`user_added`, `user_removed`,
+/// `channel_updated`).
+#[derive(Debug, Clone)]
+pub struct KchatAclRow {
+    /// KChat user id (the same opaque `id` returned by
+    /// `GET /users/me`). Stored verbatim — the substrate does
+    /// not canonicalise or normalise.
+    pub member_user_id: String,
+    /// KChat role list as a single space-separated string (the
+    /// wire form: `"channel_user channel_admin"`). Persisted for
+    /// forensics + future per-role retrieval filters; the
+    /// retrieval path itself only checks for the presence of a
+    /// row, not the role contents.
+    pub role: String,
+    /// RFC3339 wall-clock at which the roster was last refreshed.
+    pub refreshed_at: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1211,6 +1504,178 @@ mod tests {
         let results = store.search_fts("productivity workspace", 10).unwrap();
         assert!(!results.is_empty());
         assert!(results[0].content.contains("productivity"));
+    }
+
+    /// Block B Task 3 (Phase 11) retrieval-side ACL enforcement.
+    ///
+    /// `search_fts` joins through `indexed_files` to `sources` and
+    /// rejects chunks whose source's `status` matches the
+    /// stored-JSON form of `SourceStatus::AccessRevoked`. A
+    /// regression here would surface a chunk from a channel the
+    /// user has been removed from — exactly the failure mode the
+    /// task is designed to prevent. The test exercises BOTH the
+    /// "still indexed" → returned AND the "now revoked" → excluded
+    /// paths so a refactor that silently drops the predicate is
+    /// detected immediately rather than only at integration time.
+    #[test]
+    fn search_fts_excludes_chunks_whose_source_is_access_revoked() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_kchat_channel("/tmp/kchat-acl".to_string());
+        store.add_source(&source).unwrap();
+
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/kchat-acl/a.txt", "h1", "2026-01-01")
+            .unwrap();
+        store
+            .insert_chunks(
+                file_id,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/kchat-acl/a.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "operator secret rotation plan".to_string(),
+                    hash: "h-content".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+
+        // Pre-condition: while the source is in its default state,
+        // the chunk is searchable.
+        let hits_before = store.search_fts("operator", 10).unwrap();
+        assert_eq!(
+            hits_before.len(),
+            1,
+            "control: chunk must be searchable before revocation"
+        );
+
+        // Revoke the source.
+        store
+            .update_source_status(&source.id, SourceStatus::AccessRevoked, None)
+            .unwrap();
+
+        // Post-condition: the same query returns no rows because
+        // the source's status is now AccessRevoked.
+        let hits_after = store.search_fts("operator", 10).unwrap();
+        assert!(
+            hits_after.is_empty(),
+            "retrieval-side filter must exclude AccessRevoked sources \
+             but got {} hit(s)",
+            hits_after.len(),
+        );
+    }
+
+    /// Companion to `search_fts_excludes_...` covering the
+    /// `fetch_chunks_by_ids` defence-in-depth filter. A chunk
+    /// might enter the candidate set via the cosine path even
+    /// when the FTS predicate excluded it (e.g. if the
+    /// `load_embeddings_for_model` filter ever regresses); the
+    /// fetch-by-id boundary is the final gate.
+    #[test]
+    fn fetch_chunks_by_ids_excludes_chunks_whose_source_is_access_revoked() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_kchat_channel("/tmp/kchat-acl-fetch".to_string());
+        store.add_source(&source).unwrap();
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/kchat-acl-fetch/a.txt", "h1", "2026-01-01")
+            .unwrap();
+        store
+            .insert_chunks(
+                file_id,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/kchat-acl-fetch/a.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "yetanother secret".to_string(),
+                    hash: "h-fetch".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+        // Grab the chunk id via the search path (already verified
+        // above) while the source is still Indexable.
+        let hit = store
+            .search_fts("yetanother", 10)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("control hit must exist before revoke");
+
+        store
+            .update_source_status(&source.id, SourceStatus::AccessRevoked, None)
+            .unwrap();
+
+        let fetched = store.fetch_chunks_by_ids(&[hit.chunk_id]).unwrap();
+        assert!(
+            fetched.is_empty(),
+            "fetch_chunks_by_ids must filter AccessRevoked sources \
+             but got {} chunk(s)",
+            fetched.len(),
+        );
+    }
+
+    /// Vector-cosine candidate generator must also drop revoked
+    /// sources at the embedding-load boundary — otherwise the
+    /// fusion ranker still considers them top-k candidates
+    /// (wasting compute and risking a size-of-result-set side
+    /// channel even after `fetch_chunks_by_ids` drops them).
+    #[test]
+    fn load_embeddings_for_model_excludes_chunks_whose_source_is_access_revoked() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_kchat_channel("/tmp/kchat-acl-emb".to_string());
+        store.add_source(&source).unwrap();
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/kchat-acl-emb/a.txt", "h1", "2026-01-01")
+            .unwrap();
+        store
+            .insert_chunks(
+                file_id,
+                &[crate::chunker::Chunk {
+                    source_path: "/tmp/kchat-acl-emb/a.txt".to_string(),
+                    chunk_index: 0,
+                    byte_offset: 0,
+                    content: "vectoronly content".to_string(),
+                    hash: "h-emb".to_string(),
+                    extraction_method: None,
+                    extraction_model_id: None,
+                }],
+            )
+            .unwrap();
+        // Look up the chunk_id via the search path while the
+        // source is still in a non-revoked state.
+        let probe = store
+            .search_fts("vectoronly", 10)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("control hit must exist before revoke");
+        let chunk_id = probe.chunk_id;
+        let vec = [0.1f32, 0.2, 0.3, 0.4];
+        let vec_bytes = crate::embedding::encode_vec(&vec);
+        store
+            .upsert_chunk_embedding(chunk_id, "test-model", vec.len(), &vec_bytes)
+            .unwrap();
+
+        // Control: the embedding is loaded for an indexed source.
+        let rows_before = store.load_embeddings_for_model("test-model").unwrap();
+        assert_eq!(
+            rows_before.len(),
+            1,
+            "control: embedding must be loaded before revoke"
+        );
+
+        store
+            .update_source_status(&source.id, SourceStatus::AccessRevoked, None)
+            .unwrap();
+        let rows_after = store.load_embeddings_for_model("test-model").unwrap();
+        assert!(
+            rows_after.is_empty(),
+            "load_embeddings_for_model must drop AccessRevoked rows \
+             but got {} row(s)",
+            rows_after.len(),
+        );
     }
 
     #[test]

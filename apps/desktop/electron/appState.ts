@@ -19,8 +19,11 @@ import type {
   HybridSearchConfigInfo,
   HybridSearchConfigUpdate,
   IndexingProgressInfo,
+  KchatAclMemberInfo,
+  KchatAclRefreshOutcomeInfo,
   KchatChannelAddOutcomeInfo,
   KchatFileIndexOutcomeInfo,
+  KchatRevokeOutcomeInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
   SearchHitInfo,
@@ -47,8 +50,11 @@ export type {
   HybridSearchConfigUpdate,
   IndexedFileInfo,
   IndexingProgressInfo,
+  KchatAclMemberInfo,
+  KchatAclRefreshOutcomeInfo,
   KchatChannelAddOutcomeInfo,
   KchatFileIndexOutcomeInfo,
+  KchatRevokeOutcomeInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
   SearchHit,
@@ -121,6 +127,51 @@ export interface NativeBridge {
     cacheDir: string,
     fileBasename: string,
   ): KchatFileIndexOutcomeInfo;
+  /**
+   * Refresh a KChat channel's ACL roster + project status onto the
+   * source row (Block B Task 3, Phase 11). Called by
+   * `KchatEventForwarder` after every membership-change event
+   * (`user_added`, `user_removed`, `channel_updated`) with the
+   * authoritative roster fetched from `GET /channels/{id}/members`.
+   *
+   * Status projection rules:
+   *   - principal in roster + source previously `AccessRevoked` →
+   *     transitions back to `Indexed` (outcome `"regranted"`).
+   *   - principal in roster + any other state → status untouched
+   *     (outcome `"granted"`).
+   *   - principal NOT in roster → transitions to `AccessRevoked`
+   *     (outcome `"revoked"`).
+   *   - source not linked → `"unlinked"`.
+   *   - no `kchat_principal` set → `"no_principal"` (no-op).
+   *
+   * The roster is replaced atomically in a single SQLite
+   * transaction; concurrent retrieval queries see either the
+   * pre- or post-refresh state, never an empty intermediate.
+   */
+  bridgeRefreshKchatAcl(
+    cacheDir: string,
+    members: KchatAclMemberInfo[],
+  ): KchatAclRefreshOutcomeInfo;
+  /**
+   * Explicitly revoke a KChat-channel source (Block B Task 3,
+   * Phase 11). Used for `channel_archived` / `channel_deleted` /
+   * self-`user_removed` events where there is no roster to fetch.
+   * The ACL roster is left intact for forensics — "who else had
+   * access at the moment of revocation" is a real question
+   * operators ask.
+   */
+  bridgeRevokeKchatSource(cacheDir: string): KchatRevokeOutcomeInfo;
+  /**
+   * Set the locally-authenticated KChat principal user id on the
+   * substrate (Block B Task 3, Phase 11). Called by the
+   * `kchat:connect` IPC handler after `/users/me` returns. The
+   * substrate persists the id in a singleton `kchat_principal`
+   * row so subsequent `bridgeRefreshKchatAcl` calls can check
+   * membership without re-threading the id through every event.
+   */
+  bridgeSetKchatPrincipal(userId: string): void;
+  /** Clear the persisted KChat principal on `kchat:disconnect`. */
+  bridgeClearKchatPrincipal(): void;
   bridgeListSources(): SourceInfo[];
   bridgeRemoveSource(sourceId: string): void;
   bridgeSearchSources(query: string, limit: number): SearchHitInfo[];
@@ -299,6 +350,35 @@ export interface NativeBridge {
     channelId: string | null,
     fileId: string | null,
     triggeredReindex: boolean,
+  ): void;
+  /**
+   * No-throw audit append called by `KchatEventForwarder` after
+   * every `bridgeRefreshKchatAcl` call (Block B Task 3, Phase
+   * 11). Member ids / roles are NOT logged — only the roster
+   * size and the projection outcome (`granted` / `regranted` /
+   * `revoked` / `unlinked` / `no_principal`) so operators can
+   * see the ACL decision in the audit trail without re-querying
+   * the substrate.
+   */
+  bridgeLogKchatAclRefreshed(
+    channelId: string,
+    memberCount: number,
+    principalPresent: boolean,
+    outcome: string,
+  ): void;
+  /**
+   * No-throw audit append called by `KchatEventForwarder`
+   * whenever a KChat-channel source transitions to
+   * `SourceStatus::AccessRevoked` (Block B Task 3, Phase 11).
+   * `reason` is the operator-visible short code for the
+   * triggering event: `principal_removed` (explicit
+   * `user_removed` for the auth user), `channel_archived`,
+   * `channel_deleted`, or `principal_missing_from_roster` (a
+   * routine refresh returned `Revoked`).
+   */
+  bridgeLogKchatChannelAccessRevoked(
+    channelId: string,
+    reason: string,
   ): void;
   // --- Audit query ---
   //

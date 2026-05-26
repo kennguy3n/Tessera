@@ -536,6 +536,47 @@ export class KchatEventForwarder {
         );
       });
     }
+
+    // Block B Task 3 (Phase 11): membership / channel events
+    // drive the per-channel ACL projection so a user who loses
+    // access to a KChat channel can no longer retrieve evidence
+    // from it in subsequent corpus searches.
+    //
+    //   - `user_added` / `user_removed` / `channel_member_updated`
+    //     → refresh the cached roster via `GET /channels/{id}/members`
+    //     and let the substrate compare against the locally-
+    //     authenticated principal (status transitions to
+    //     `AccessRevoked` if the principal is no longer a member,
+    //     or back to `Indexed` if a previously-revoked principal
+    //     was re-added).
+    //   - `channel_archived` / `channel_deleted` → explicit
+    //     revoke (no roster to fetch, the channel is gone).
+    //   - `channel_updated` → refresh roster as well; KChat
+    //     uses this for visibility / archive transitions and we
+    //     don't trust the body, only the membership snapshot.
+    if (
+      view.event === "user_added" ||
+      view.event === "user_removed" ||
+      view.event === "channel_member_updated" ||
+      view.event === "channel_updated"
+    ) {
+      this.handleMembershipEvent(view).catch((err) => {
+        console.error(
+          "[KchatEventForwarder] membership side-effect failed:",
+          err,
+        );
+      });
+    } else if (
+      view.event === "channel_archived" ||
+      view.event === "channel_deleted"
+    ) {
+      this.handleChannelGoneEvent(view).catch((err) => {
+        console.error(
+          "[KchatEventForwarder] channel-gone side-effect failed:",
+          err,
+        );
+      });
+    }
   }
 
   private deliverToWindow(
@@ -939,6 +980,272 @@ export class KchatEventForwarder {
     } catch (err) {
       console.error(
         "[KchatEventForwarder] audit log failed:",
+        err,
+      );
+    }
+  }
+
+  /**
+   * Block B Task 3 (Phase 11): side-effect path for membership
+   * change events (`user_added`, `user_removed`,
+   * `channel_member_updated`, `channel_updated`).
+   *
+   * Sequence:
+   *   1. Drop if the event has no channel id (some KChat events
+   *      tag a team without a channel; nothing to project).
+   *   2. Drop if no KChat client is attached (the forwarder is
+   *      running before `start()` wired one up, or after
+   *      `dispose()` released it).
+   *   3. Skip the linked-channel fast path: if no
+   *      `SourceType::Kchat` source exists for `cacheDir`, no
+   *      roster to persist and no status to update — but still
+   *      emit the audit row with `outcome=unlinked` so an
+   *      operator sees the no-op in the trail.
+   *   4. Under `withChannelSyncLock(channelId)`:
+   *      a. Re-check linked-status (a concurrent unlink may
+   *         have raced this event into the queue).
+   *      b. Walk the paginated `listChannelMembers` endpoint
+   *         to build the full authoritative roster. The page
+   *         size matches `kchatClient.listChannelMembers`'s
+   *         default (200) — channels with thousands of
+   *         members still resolve in a small number of pages
+   *         and pagination keeps the JSON payload bounded.
+   *      c. Hand the roster to `bridgeRefreshKchatAcl`. The
+   *         substrate persists the rows atomically and
+   *         projects status (`granted` / `regranted` /
+   *         `revoked` / `unlinked` / `no_principal`).
+   *      d. Emit the `KchatAclRefreshed` audit row with the
+   *         projection outcome.
+   *      e. If the outcome was `revoked`, ALSO emit
+   *         `KchatChannelAccessRevoked` with
+   *         `reason=principal_missing_from_roster` so the
+   *         audit log has the same explanatory short-code
+   *         shape every revocation path produces.
+   *
+   * Errors at every step degrade to `outcome=unlinked` on the
+   * audit row and never propagate back into the forwarder's
+   * fire-and-forget event loop. The lock + atomic roster
+   * replace prevent a partial update from leaving the ACL row
+   * set in a half-deleted state.
+   */
+  private async handleMembershipEvent(
+    view: KchatWebSocketEventView,
+  ): Promise<void> {
+    const bridge = this.getBridgeFn();
+    if (!bridge) return;
+
+    const channelId = view.channelId;
+    const client = this.client;
+    if (channelId === null || client === null) {
+      this.safeAuditAclRefreshed(bridge, view.event, channelId, 0, false, "unlinked");
+      return;
+    }
+
+    const cacheDir = kchatChannelCacheDir(channelId);
+    let isLinked = false;
+    try {
+      isLinked = bridge.bridgeIsKchatChannelLinked(cacheDir);
+    } catch (err) {
+      console.error(
+        "[KchatEventForwarder] bridgeIsKchatChannelLinked failed:",
+        err,
+      );
+    }
+    if (!isLinked) {
+      this.safeAuditAclRefreshed(bridge, view.event, channelId, 0, false, "unlinked");
+      return;
+    }
+
+    let outcome: "granted" | "regranted" | "revoked" | "unlinked" | "no_principal" =
+      "unlinked";
+    let memberCount = 0;
+    let principalPresent = false;
+
+    try {
+      const result = await withChannelSyncLock(channelId, async () => {
+        // Re-check linked status under the lock — a concurrent
+        // `bridgeRemoveSource` may have unlinked the channel
+        // between the pre-lock check and the lock acquisition.
+        if (!bridge.bridgeIsKchatChannelLinked(cacheDir)) {
+          return {
+            outcome: "unlinked" as const,
+            memberCount: 0,
+            principalPresent: false,
+          };
+        }
+
+        // Build the full member roster across paginated
+        // responses. KChat's `/channels/{id}/members` returns
+        // up to `perPage` rows per call; the page size matches
+        // the client default (200). We stop when a page comes
+        // back shorter than `perPage` or when the cumulative
+        // size would exceed the safety cap (50_000 rows;
+        // channels with more members are pathological and
+        // would suggest a misconfigured server or a malicious
+        // payload that re-routes a teamwide all-hands).
+        const perPage = 200;
+        const safetyCap = 50_000;
+        const members: { userId: string; role: string }[] = [];
+        let page = 0;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const batch = await client.listChannelMembers(
+            channelId,
+            page,
+            perPage,
+          );
+          for (const m of batch) {
+            members.push({ userId: m.user_id, role: m.roles });
+          }
+          if (batch.length < perPage) break;
+          if (members.length >= safetyCap) break;
+          page += 1;
+        }
+
+        const r = bridge.bridgeRefreshKchatAcl(cacheDir, members);
+        return {
+          outcome: r.outcome,
+          memberCount: r.memberCount,
+          principalPresent: r.principalPresent,
+        };
+      });
+      outcome = result.outcome;
+      memberCount = result.memberCount;
+      principalPresent = result.principalPresent;
+    } catch (err) {
+      console.error(
+        "[KchatEventForwarder] ACL refresh failed:",
+        err,
+      );
+      outcome = "unlinked";
+    }
+
+    this.safeAuditAclRefreshed(
+      bridge,
+      view.event,
+      channelId,
+      memberCount,
+      principalPresent,
+      outcome,
+    );
+
+    if (outcome === "revoked") {
+      this.safeAuditAccessRevoked(
+        bridge,
+        channelId,
+        "principal_missing_from_roster",
+      );
+    }
+  }
+
+  /**
+   * Block B Task 3 (Phase 11): side-effect path for
+   * `channel_archived` / `channel_deleted` events.
+   *
+   * Sequence:
+   *   1. Drop if the event has no channel id (defensive — the
+   *      KChat server always tags these events with a
+   *      `broadcast.channel_id`, but we never assume).
+   *   2. Drop if no bridge is attached.
+   *   3. Under `withChannelSyncLock(channelId)`, call
+   *      `bridgeRevokeKchatSource(cacheDir)`. The substrate
+   *      transitions the source to `AccessRevoked` (or returns
+   *      `already_revoked` if a previous event already did so,
+   *      or `unlinked` if the channel was never linked as a
+   *      corpus source).
+   *   4. Emit `KchatChannelAccessRevoked` with the matching
+   *      `reason=channel_archived` / `channel_deleted` short
+   *      code so operators can answer "when did this channel
+   *      become unreachable, and why" without consulting the
+   *      KChat server's own log.
+   *
+   * `already_revoked` and `unlinked` outcomes still emit the
+   * audit row — operators want to see the event arrived
+   * (otherwise a repeated server-side archive event would
+   * silently drop). Errors degrade silently; the source row
+   * stays in whatever state it was already in.
+   */
+  private async handleChannelGoneEvent(
+    view: KchatWebSocketEventView,
+  ): Promise<void> {
+    const bridge = this.getBridgeFn();
+    if (!bridge) return;
+    const channelId = view.channelId;
+    if (channelId === null) return;
+
+    const cacheDir = kchatChannelCacheDir(channelId);
+    const reason =
+      view.event === "channel_archived"
+        ? "channel_archived"
+        : "channel_deleted";
+
+    try {
+      await withChannelSyncLock(channelId, async () => {
+        bridge.bridgeRevokeKchatSource(cacheDir);
+      });
+    } catch (err) {
+      console.error(
+        "[KchatEventForwarder] explicit revoke failed:",
+        err,
+      );
+    }
+
+    // Always emit the audit row even when the revoke returned
+    // `unlinked` / `already_revoked` — the operator-visible
+    // semantics are "we saw the event", not "we changed state".
+    this.safeAuditAccessRevoked(bridge, channelId, reason);
+  }
+
+  /**
+   * No-throw audit append for `bridgeLogKchatAclRefreshed`.
+   * Mirrors the {@link safeAuditFileAdded} pattern — audit is
+   * best-effort and must never wedge the forwarder.
+   *
+   * `eventName` is the originating WS event name so an operator
+   * scanning the audit trail can see whether a refresh was
+   * driven by `user_added`, `user_removed`,
+   * `channel_member_updated`, or `channel_updated`. It is
+   * folded into the projection outcome via the audit logger's
+   * `details` formatter.
+   */
+  private safeAuditAclRefreshed(
+    bridge: NativeBridge,
+    eventName: string,
+    channelId: string | null,
+    memberCount: number,
+    principalPresent: boolean,
+    outcome: string,
+  ): void {
+    if (channelId === null) return;
+    try {
+      bridge.bridgeLogKchatAclRefreshed(
+        channelId,
+        memberCount,
+        principalPresent,
+        `${outcome}:${eventName}`,
+      );
+    } catch (err) {
+      console.error(
+        "[KchatEventForwarder] ACL refresh audit log failed:",
+        err,
+      );
+    }
+  }
+
+  /**
+   * No-throw audit append for
+   * `bridgeLogKchatChannelAccessRevoked`.
+   */
+  private safeAuditAccessRevoked(
+    bridge: NativeBridge,
+    channelId: string,
+    reason: string,
+  ): void {
+    try {
+      bridge.bridgeLogKchatChannelAccessRevoked(channelId, reason);
+    } catch (err) {
+      console.error(
+        "[KchatEventForwarder] access-revoked audit log failed:",
         err,
       );
     }

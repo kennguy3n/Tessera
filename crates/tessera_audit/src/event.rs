@@ -81,6 +81,27 @@ pub enum AuditEventType {
     /// channel event without needing access to the KChat server
     /// audit log itself.
     KchatFileEventReceived,
+    /// The Node-side `KchatEventForwarder` refreshed a KChat
+    /// channel's ACL roster against the substrate (Block B Task 3,
+    /// Phase 11). Details carry the originating channel id, the
+    /// number of members in the refreshed roster, the boolean
+    /// `principal_present` projection (was the locally-authenticated
+    /// principal in the roster), and the projection outcome
+    /// (`granted` / `regranted` / `revoked` / `unlinked` /
+    /// `no_principal`). Member ids and roles are NOT logged — the
+    /// substrate stores them in the `kchat_source_acl` table and
+    /// the audit row's count is the operator-visible summary.
+    KchatAclRefreshed,
+    /// A KChat-channel source transitioned to
+    /// `SourceStatus::AccessRevoked` — either because
+    /// `refresh_kchat_acl` did not find the principal in the new
+    /// roster, or because the forwarder dispatched an explicit
+    /// revoke on `channel_archived` / `channel_deleted` / self-
+    /// `user_removed`. Details carry the originating channel id
+    /// and the reason string so an operator can answer "when did I
+    /// lose access to this channel, and why" without consulting
+    /// the KChat server log.
+    KchatChannelAccessRevoked,
 }
 
 impl AuditEventType {
@@ -117,6 +138,8 @@ impl AuditEventType {
             Self::KchatChannelUnlinked => "kchat_channel_unlinked",
             Self::KchatFileDownloaded => "kchat_file_downloaded",
             Self::KchatFileEventReceived => "kchat_file_event_received",
+            Self::KchatAclRefreshed => "kchat_acl_refreshed",
+            Self::KchatChannelAccessRevoked => "kchat_channel_access_revoked",
         }
     }
 }
@@ -170,6 +193,8 @@ mod tests {
             AuditEventType::KchatChannelUnlinked,
             AuditEventType::KchatFileDownloaded,
             AuditEventType::KchatFileEventReceived,
+            AuditEventType::KchatAclRefreshed,
+            AuditEventType::KchatChannelAccessRevoked,
         ];
         for ev in all.iter() {
             let serde_form = serde_json::to_string(ev).unwrap();
