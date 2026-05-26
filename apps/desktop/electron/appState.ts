@@ -686,6 +686,19 @@ export function getKchatEventForwarder(): KchatEventForwarder | null {
  * stub or a fresh instance between cases. Disposing the
  * forwarder here ensures a leftover IPC listener from a
  * previous test cannot leak into the next test's renderer.
+ *
+ * When `next` is non-null we ALSO construct a fresh forwarder
+ * and bind it to the new service's client. This preserves the
+ * "the forwarder is always live alongside an active auth
+ * service" invariant — without it, a caller that injects a
+ * non-null replacement would observe the auth service start
+ * with no WS forwarding (silent regression). Devin Review
+ * ANALYSIS_0003 (first pass on PR #43) called this out as a
+ * latent issue; fixed by re-creating the forwarder here.
+ * Tests that want a stub forwarder still have the escape hatch
+ * of calling {@link resetKchatEventForwarder} afterwards to
+ * swap the production forwarder for one with a fake
+ * `listWindows`.
  */
 export function resetKchatAuthService(
   next: KchatAuthService | null = null,
@@ -695,6 +708,10 @@ export function resetKchatAuthService(
     kchatEventForwarder = null;
   }
   kchatAuthService = next;
+  if (next) {
+    kchatEventForwarder = new KchatEventForwarder();
+    kchatEventForwarder.start(next.getClient());
+  }
 }
 
 /**

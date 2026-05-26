@@ -5,6 +5,8 @@ import type {
   ExternalProviderListModelsDraftOverrides,
   HybridSearchConfigUpdate,
   InstalledModelsByCapability,
+  KchatConnectionStateView,
+  KchatWebSocketEventPayload,
   ModelCapability,
   ModelDownloadProgress,
   OpenImageDialogOptions,

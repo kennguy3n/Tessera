@@ -145,8 +145,14 @@ describe("KchatSidebarSection", () => {
     const isAvailableCallsAfterProbe = (
       api.isAvailable as ReturnType<typeof vi.fn>
     ).mock.calls.length;
-    // Advance well past several 10s ticks. With the bug present, the
-    // interval would fire 3 more times → 3 more `status` calls.
+    // Advance past one full 30 s reconciliation tick. The interval
+    // cadence was bumped from 10 s → 30 s in Block B Task 1 when
+    // push delivery via `kchat:status` took over the common-path
+    // load (the 30 s value matches POLL_INTERVAL_MS for the file
+    // reconciliation poll). With the bug present, the interval
+    // would fire and issue another `status` call; with the fix,
+    // the effect's `available === false` short-circuit at the
+    // top of `probe` returns before either IPC fires.
     await vi.advanceTimersByTimeAsync(35_000);
     expect(status.mock.calls.length).toBe(statusCallsAfterProbe);
     expect(

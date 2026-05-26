@@ -275,9 +275,20 @@ export class KchatEventForwarder {
     }
 
     // Step 2: side effects beyond broadcast — auto-reindex on
-    // `file_added` and audit. We deliberately run these AFTER
-    // the broadcast so a slow bridge call cannot delay the
-    // renderer's UI update.
+    // `file_added` and audit. We enqueue the broadcast first via
+    // {@link deliverToWindow}, which pushes into the per-window
+    // buffer and defers the actual `webContents.send` to the next
+    // microtask. The synchronous bridge calls in `handleFileAdded`
+    // therefore complete BEFORE the drain delivers events to the
+    // renderer — the deferred-drain pattern serialises the burst
+    // through the ring buffer, not a per-event scheduling fence
+    // against bridge work. Bridge calls are kept off the WS
+    // reader's hot path only by being short (an indexed SQLite
+    // lookup + a fire-and-forget reindex spawn + an audit insert);
+    // if a future bridge call blocks for tens of ms we'd need to
+    // move this onto a setImmediate to preserve renderer latency.
+    // Today it is fast enough that the ordering is just "FIFO
+    // through the buffer".
     if (view.event === "file_added") {
       this.handleFileAdded(view).catch((err) => {
         // The reindex / audit path is best-effort. A failure
@@ -422,7 +433,28 @@ export class KchatEventForwarder {
     let triggeredReindex = false;
     if (channelId) {
       const cacheDir = kchatChannelCacheDir(channelId);
-      const source = bridge.bridgeFindKchatSourceByCacheDir(cacheDir);
+      // The source-lookup call itself can throw — a Rust
+      // mutex-poisoned condition or a transient SQLite
+      // `database is locked` error both surface as napi
+      // exceptions. If we let those propagate, the rejected
+      // Promise lands in the outer `.catch()` at
+      // {@link KchatEventForwarder.handleEvent} and the audit
+      // row at the bottom of this method NEVER fires — silently
+      // swallowing the event from the operator's perspective.
+      // Wrap the lookup explicitly so a lookup failure still
+      // produces an audit row with `triggered_reindex=false`
+      // and operators see that a `file_added` arrived even if
+      // we couldn't resolve it to a source.
+      let source: { id: string } | null = null;
+      try {
+        source = bridge.bridgeFindKchatSourceByCacheDir(cacheDir);
+      } catch (err) {
+        console.error(
+          "[KchatEventForwarder] source lookup failed for channel",
+          channelId,
+          err,
+        );
+      }
       if (source) {
         try {
           bridge.bridgeReindexSource(source.id);

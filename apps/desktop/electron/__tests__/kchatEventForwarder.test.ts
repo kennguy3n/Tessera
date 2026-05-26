@@ -448,6 +448,44 @@ describe("KchatEventForwarder", () => {
     fwd.dispose();
   });
 
+  // Regression pin for the first-pass Devin Review BUG_0001 finding
+  // on PR #43: an unhandled throw from
+  // `bridgeFindKchatSourceByCacheDir` (mutex poisoned, transient
+  // SQLite lock, etc.) used to crash the entire `handleFileAdded`
+  // Promise body, skipping the audit-log call at the bottom of the
+  // function. Operators would then see no record of the event,
+  // even though the `file_added` actually arrived. The forwarder
+  // now wraps the lookup in its own try/catch so the audit row
+  // always lands with `triggered_reindex=false`.
+  it("still audits with triggered_reindex=false when source lookup throws", async () => {
+    bridgeMock!.bridgeFindKchatSourceByCacheDir.mockImplementation(() => {
+      throw new Error("simulated SQLite busy");
+    });
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "file_added",
+        data: { file_id: "file-busy" },
+      }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      bridgeMock!.bridgeFindKchatSourceByCacheDir,
+    ).toHaveBeenCalledTimes(1);
+    expect(bridgeMock!.bridgeReindexSource).not.toHaveBeenCalled();
+    expect(
+      bridgeMock!.bridgeLogKchatFileEventReceived,
+    ).toHaveBeenCalledWith("file_added", "chan-A", "file-busy", false);
+    fwd.dispose();
+  });
+
   it("does not audit or reindex non-file_added events", async () => {
     bridgeMock!.bridgeFindKchatSourceByCacheDir.mockReturnValue({
       id: "src-1",

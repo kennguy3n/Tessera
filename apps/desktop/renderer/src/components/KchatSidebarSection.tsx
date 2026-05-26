@@ -276,6 +276,22 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // count from REST and overwrites whatever delta the WS path
   // accumulated. Both paths converge on the same `unread`
   // state.
+  //
+  // CAVEAT (Devin Review ANALYSIS_0002, first pass on PR #43):
+  // because the WS path is incremental (`n + 1`) and the poll is
+  // an absolute overwrite, the badge can briefly tick higher
+  // from WS events than the next poll cycle settles at — for
+  // example if the WS adds three `file_added` deltas and the
+  // next 30 s poll only counts two (page-size caps in REST or a
+  // file replaced before the poll observes it). The poll is the
+  // REST-authoritative count and intentionally wins; the badge
+  // may therefore briefly be non-monotonic across a poll
+  // boundary. This is documented as expected behavior — the
+  // alternative ("WS wins for X seconds after the increment")
+  // would either drift forever or introduce a separate
+  // dedupe-by-file_id store keyed by `lastSeen`, neither of
+  // which is worth the complexity for a UI badge that converges
+  // within 30 s anyway.
   useEffect(() => {
     if (!kchat || state.state !== "connected") return;
     const unsubscribe = kchat.onEvent((event: KchatWebSocketEventPayload) => {

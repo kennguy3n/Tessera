@@ -768,10 +768,7 @@ mod tests {
             .unwrap()
             .expect("registered channel should be found");
         assert_eq!(found.id, outcome.source.id);
-        assert!(matches!(
-            found.source_type,
-            tessera_core::SourceType::Kchat
-        ));
+        assert!(matches!(found.source_type, tessera_core::SourceType::Kchat));
         assert_eq!(found.path, cache_dir);
     }
 

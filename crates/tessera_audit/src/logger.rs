@@ -484,24 +484,14 @@ mod tests {
         // (channel may or may not be linked; this is the common
         // case for chat messages).
         logger
-            .log_kchat_file_event_received(
-                "posted",
-                Some("channel-def456"),
-                None,
-                false,
-            )
+            .log_kchat_file_event_received("posted", Some("channel-def456"), None, false)
             .unwrap();
 
         // A `channel_created` event with no channel id in scope —
         // exercises the `None` path on the channel parameter so
         // both Option arms are pinned.
         logger
-            .log_kchat_file_event_received(
-                "channel_created",
-                None,
-                None,
-                false,
-            )
+            .log_kchat_file_event_received("channel_created", None, None, false)
             .unwrap();
 
         assert_eq!(logger.event_count().unwrap(), 3);
