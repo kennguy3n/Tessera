@@ -138,6 +138,77 @@ pub fn add_kchat_channel(
     })
 }
 
+/// JS-facing pass-through of
+/// [`tessera_sources::manager::SourceManager::index_kchat_file`].
+///
+/// Returned by `bridge_index_kchat_file`. The Block B Task 2 WS
+/// forwarder uses this to set the `triggered_reindex` flag on the
+/// `KchatFileEventReceived` audit row:
+///   - `was_linked = false` → channel is not registered as a source;
+///     forwarder records `triggered_reindex = false`.
+///   - `was_linked = true && indexed = true` → file was newly
+///     indexed (or re-indexed because its content hash changed);
+///     forwarder records `triggered_reindex = true`.
+///   - `was_linked = true && indexed = false` → file's content
+///     hash matched an existing index entry (a concurrent full
+///     sync got there first); forwarder records `triggered_reindex
+///     = false` so the audit log accurately reflects whether THIS
+///     event drove indexer work.
+///
+/// `source_id` is populated only when `was_linked = true`; it is
+/// the empty string otherwise so the napi serialization layer
+/// doesn't need an `Option<String>` (the renderer never reads
+/// `source_id` when `was_linked` is false).
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct KchatFileIndexOutcomeInfo {
+    pub was_linked: bool,
+    pub indexed: bool,
+    pub source_id: String,
+}
+
+/// Returns whether a `SourceType::Kchat` source exists for the
+/// given `cache_dir`. The WS forwarder calls this before doing
+/// any network I/O on a `file_added` event so a push for a channel
+/// the user has not linked never triggers a download.
+pub fn is_kchat_channel_linked(
+    manager: &SourceManager,
+    cache_dir: &str,
+) -> BridgeResult<bool> {
+    manager
+        .is_kchat_channel_linked(cache_dir)
+        .map_err(BridgeError::Core)
+}
+
+/// Targeted single-file index for a KChat-channel source.
+///
+/// Called by the WS forwarder after it has downloaded the bytes
+/// referenced by a `file_added` event into the channel cache dir.
+/// `file_basename` is treated as untrusted; the substrate's
+/// `index_kchat_file` re-applies path-traversal containment
+/// checks on top of the Node-side sanitisation as defence-in-depth.
+pub fn index_kchat_file(
+    manager: &SourceManager,
+    cache_dir: &str,
+    file_basename: &str,
+) -> BridgeResult<KchatFileIndexOutcomeInfo> {
+    match manager
+        .index_kchat_file(cache_dir, file_basename)
+        .map_err(BridgeError::Core)?
+    {
+        None => Ok(KchatFileIndexOutcomeInfo {
+            was_linked: false,
+            indexed: false,
+            source_id: String::new(),
+        }),
+        Some((source_id, outcome)) => Ok(KchatFileIndexOutcomeInfo {
+            was_linked: true,
+            indexed: outcome.indexed,
+            source_id: source_id.to_string(),
+        }),
+    }
+}
+
 pub fn list_sources(manager: &SourceManager) -> BridgeResult<Vec<SourceInfo>> {
     let sources = manager.list_sources().map_err(BridgeError::Core)?;
     Ok(sources.iter().map(SourceInfo::from).collect())

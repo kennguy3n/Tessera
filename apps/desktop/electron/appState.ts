@@ -20,6 +20,7 @@ import type {
   HybridSearchConfigUpdate,
   IndexingProgressInfo,
   KchatChannelAddOutcomeInfo,
+  KchatFileIndexOutcomeInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
   SearchHitInfo,
@@ -47,6 +48,7 @@ export type {
   IndexedFileInfo,
   IndexingProgressInfo,
   KchatChannelAddOutcomeInfo,
+  KchatFileIndexOutcomeInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
   SearchHit,
@@ -94,6 +96,31 @@ export interface NativeBridge {
    * only.
    */
   bridgeAddKchatChannel(cacheDir: string): KchatChannelAddOutcomeInfo;
+  /**
+   * Returns whether a `SourceType::Kchat` source row exists for the
+   * given `cacheDir`. The Block B Task 2 WS forwarder calls this on
+   * every `file_added` event so a push for a channel the user has
+   * not linked never triggers a download. O(log n) on the
+   * `idx_sources_type_path` composite index — cheap enough to call
+   * once per push.
+   */
+  bridgeIsKchatChannelLinked(cacheDir: string): boolean;
+  /**
+   * Targeted single-file index for a KChat-channel source. Called
+   * by the Block B Task 2 WS forwarder after it has downloaded the
+   * bytes referenced by a `file_added` event into the channel cache
+   * directory. The substrate side re-applies path-traversal
+   * containment on `fileBasename` as defence-in-depth — the Node
+   * side also sanitises with `path.basename(...)` before writing
+   * the file. The returned `wasLinked && indexed` AND condition is
+   * what the forwarder records as the `triggered_reindex` flag on
+   * the `KchatFileEventReceived` audit row, so the audit log
+   * accurately reflects whether THIS event drove indexer work.
+   */
+  bridgeIndexKchatFile(
+    cacheDir: string,
+    fileBasename: string,
+  ): KchatFileIndexOutcomeInfo;
   bridgeListSources(): SourceInfo[];
   bridgeRemoveSource(sourceId: string): void;
   bridgeSearchSources(query: string, limit: number): SearchHitInfo[];

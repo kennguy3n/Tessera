@@ -62,6 +62,26 @@
  *      multicast loop.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as nodeOs from "os";
+import * as nodePath from "path";
+import * as nodeFs from "fs";
+
+// Redirect `os.homedir()` to a per-suite tmpdir so the Block B
+// Task 2 single-file sync (which writes downloaded bytes to
+// `<homedir>/.tessera/kchat-channels/<channelId>/`) does not
+// pollute the real user home with test fixtures. Mirrors the
+// pattern in `kchatIpc.test.ts`.
+const TEST_HOME = nodeFs.mkdtempSync(
+  nodePath.join(nodeOs.tmpdir(), "tessera-kchat-fwd-test-"),
+);
+vi.mock("os", async () => {
+  const actual = await vi.importActual<typeof import("os")>("os");
+  return {
+    ...actual,
+    default: actual,
+    homedir: () => TEST_HOME,
+  };
+});
 
 // We mock `electron` so importing the forwarder works under
 // vitest. The native bridge (formerly imported as a free
@@ -85,6 +105,9 @@ vi.mock("electron", () => {
 
 interface BridgeMockShape {
   bridgeLogKchatFileEventReceived: ReturnType<typeof vi.fn>;
+  bridgeIsKchatChannelLinked: ReturnType<typeof vi.fn>;
+  bridgeIndexKchatFile: ReturnType<typeof vi.fn>;
+  bridgeLogKchatFileDownloaded: ReturnType<typeof vi.fn>;
 }
 
 let bridgeMock: BridgeMockShape | null = null;
@@ -132,6 +155,30 @@ class FakeClient {
   triggerStatusChange(state: KchatConnectionState): void {
     for (const l of [...this.statusListeners]) l(state);
   }
+
+  // Block B Task 2: the forwarder's `handleFileAdded` calls
+  // `client.getFileInfo` and `client.downloadFile` to resolve
+  // and fetch the file referenced by a `file_added` event.
+  // Tests inject canned responses via these `vi.fn`s.
+  getFileInfo = vi.fn(async (fileId: string) => {
+    return {
+      id: fileId,
+      name: `${fileId}.txt`,
+      size: 4,
+      mime_type: "text/plain",
+      extension: "txt",
+      create_at: 1,
+      update_at: 1,
+      delete_at: 0,
+      user_id: "u-1",
+      channel_id: "c-1",
+      post_id: "p-1",
+    };
+  });
+
+  downloadFile = vi.fn(async (_fileId: string) =>
+    new Uint8Array([0x6f, 0x6b, 0x21, 0x0a]),
+  );
 }
 
 /**
@@ -187,6 +234,31 @@ class FakeWindow {
   }
 }
 
+/**
+ * Poll until `predicate()` returns true, or throw after
+ * `timeoutMs`. Used by the Block B Task 2 single-file sync
+ * tests so they can wait for real filesystem I/O (mkdir,
+ * writeFile, rename) to settle across macrotask boundaries —
+ * yielding microtasks alone is not enough because
+ * `fs/promises` resolves on the libuv thread pool.
+ */
+async function waitForCondition(
+  predicate: () => boolean,
+  timeoutMs = 2000,
+): Promise<void> {
+  const startedAt = Date.now();
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    if (predicate()) return;
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(
+        `waitForCondition timed out after ${timeoutMs}ms`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 function makeRawEvent(
   overrides: Partial<KchatWebSocketEvent> = {},
 ): KchatWebSocketEvent {
@@ -207,6 +279,15 @@ function makeRawEvent(
 beforeEach(() => {
   bridgeMock = {
     bridgeLogKchatFileEventReceived: vi.fn(),
+    // Default: channel unlinked. Tests that exercise the
+    // single-file sync override this to `true`.
+    bridgeIsKchatChannelLinked: vi.fn(() => false),
+    bridgeIndexKchatFile: vi.fn(() => ({
+      wasLinked: true,
+      indexed: true,
+      sourceId: "src-uuid",
+    })),
+    bridgeLogKchatFileDownloaded: vi.fn(),
   };
 });
 
@@ -391,18 +472,14 @@ describe("KchatEventForwarder", () => {
     fwd.dispose();
   });
 
-  // Regression pin for the second- and third-pass Devin Review on
-  // PR #43 (`BUG_pr-review-job-...0001` + `ANALYSIS_pr-review-job-
-  // ...0001`): the forwarder must audit the `file_added` event with
-  // `triggered_reindex=false` (the always-false sentinel) and must
-  // not consult the source registry. The first-pass implementation
-  // did a source lookup + reindex spawn; both were removed because
-  // the file isn't on disk yet at `file_added` time. The bridge no
-  // longer exposes the lookup helper at all (it was dead code after
-  // the lookup call site was removed) so the mock shape doesn't
-  // include it — a regression that re-added the lookup would fail
-  // to type-check against the trimmed `NativeBridge`.
-  it("audits file_added with triggered_reindex=false and no source-registry interaction", async () => {
+  // Block B Task 2: an unlinked channel (no `SourceType::Kchat`
+  // source row for `cacheDir`) short-circuits before any REST
+  // call. The audit row still fires with
+  // `triggered_reindex=false` — i.e. the indexer did NOT accept
+  // the event because there was no indexer state to update.
+  // This is the dominant case in production (most channels a
+  // user can see are NOT linked as corpus sources).
+  it("audits file_added with triggered_reindex=false when the channel is unlinked", async () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
@@ -423,16 +500,20 @@ describe("KchatEventForwarder", () => {
         },
       }),
     );
-    // The side-effect path is `async` (returns a Promise that
-    // resolves to undefined; the body itself is synchronous).
-    // Yield once for the resolution and once for the chained
-    // `.catch(...)` so the assertions observe the post-call
-    // bridge state.
-    await Promise.resolve();
-    await Promise.resolve();
+    // Yield several microtasks: the forwarder's
+    // `handleFileAdded` Promise resolves after at least one
+    // microtask, then the call-site `.catch(...)` adds another.
+    // Yielding 5 times covers any extra hop the syncer adds.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
     expect(
       bridgeMock!.bridgeLogKchatFileEventReceived,
     ).toHaveBeenCalledWith("file_added", "chan-A", "file-XYZ", false);
+    // The forwarder MUST NOT have called the REST client for
+    // an unlinked channel (the bridge linked-check is the
+    // fast-path early exit).
+    expect(client.getFileInfo).not.toHaveBeenCalled();
+    expect(client.downloadFile).not.toHaveBeenCalled();
+    expect(bridgeMock!.bridgeIndexKchatFile).not.toHaveBeenCalled();
     fwd.dispose();
   });
 
@@ -638,6 +719,238 @@ describe("KchatEventForwarder", () => {
     await Promise.resolve();
     expect(w1.sends).toHaveLength(1);
     expect(w1.sends[0].payload).toMatchObject({ event: "posted", seq: 3 });
+    fwd.dispose();
+  });
+
+  // ----------------------------------------------------------------
+  // Block B Task 2: targeted single-file sync on file_added.
+  // ----------------------------------------------------------------
+
+  it("targeted single-file sync downloads, writes, indexes, and audits triggered_reindex=true on a linked channel", async () => {
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    bridgeMock!.bridgeIndexKchatFile.mockReturnValue({
+      wasLinked: true,
+      indexed: true,
+      sourceId: "src-uuid",
+    });
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "file_added",
+        data: { file_id: "file-NEW-001" },
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-linked-1",
+          team_id: "team-1",
+          user_id: "user-1",
+        },
+      }),
+    );
+    // The single-file sync awaits real filesystem I/O (mkdir,
+    // readFile, writeFile, rename) so the assertions must wait
+    // for macrotask boundaries, not just microtasks. We poll
+    // until the `bridgeIndexKchatFile` spy fires or a timeout
+    // expires.
+    await waitForCondition(
+      () => bridgeMock!.bridgeIndexKchatFile.mock.calls.length > 0,
+    );
+
+    expect(bridgeMock!.bridgeIsKchatChannelLinked).toHaveBeenCalled();
+    expect(client.getFileInfo).toHaveBeenCalledWith("file-NEW-001");
+    expect(client.downloadFile).toHaveBeenCalledWith("file-NEW-001");
+    expect(bridgeMock!.bridgeIndexKchatFile).toHaveBeenCalledTimes(1);
+    const [cacheDir, basename] =
+      bridgeMock!.bridgeIndexKchatFile.mock.calls[0];
+    expect(cacheDir).toContain("chan-linked-1");
+    expect(basename).toBe("file-NEW-001.txt");
+    // Audit row reflects the successful index.
+    expect(
+      bridgeMock!.bridgeLogKchatFileEventReceived,
+    ).toHaveBeenCalledWith(
+      "file_added",
+      "chan-linked-1",
+      "file-NEW-001",
+      true,
+    );
+    // Per-file download audit row also lands.
+    expect(
+      bridgeMock!.bridgeLogKchatFileDownloaded,
+    ).toHaveBeenCalledWith("chan-linked-1", "file-NEW-001.txt", 4);
+    fwd.dispose();
+  });
+
+  it("targeted sync audits triggered_reindex=false when substrate dedupes the file (indexed=false)", async () => {
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    // Substrate reports `indexed=false` — i.e. the file's
+    // content hash matched an existing evidence row and no
+    // re-extraction was needed.
+    bridgeMock!.bridgeIndexKchatFile.mockReturnValue({
+      wasLinked: true,
+      indexed: false,
+      sourceId: "src-uuid",
+    });
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "file_added",
+        data: { file_id: "file-DEDUPED-001" },
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-linked-2",
+          team_id: "team-1",
+          user_id: "user-1",
+        },
+      }),
+    );
+    await waitForCondition(
+      () => bridgeMock!.bridgeIndexKchatFile.mock.calls.length > 0,
+    );
+
+    // The download and index calls still ran; the audit row
+    // reflects the indexer's decision (no acceptance).
+    expect(bridgeMock!.bridgeIndexKchatFile).toHaveBeenCalledTimes(1);
+    expect(
+      bridgeMock!.bridgeLogKchatFileEventReceived,
+    ).toHaveBeenCalledWith(
+      "file_added",
+      "chan-linked-2",
+      "file-DEDUPED-001",
+      false,
+    );
+    fwd.dispose();
+  });
+
+  it("targeted sync degrades to triggered_reindex=false when the REST download throws", async () => {
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    client.downloadFile.mockRejectedValue(
+      new Error("transient network failure"),
+    );
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "file_added",
+        data: { file_id: "file-NETWORK-001" },
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-linked-3",
+          team_id: "team-1",
+          user_id: "user-1",
+        },
+      }),
+    );
+    // The download throw rejects the lock body. Poll on the
+    // audit row firing (the forwarder's outer catch always
+    // audits before returning).
+    await waitForCondition(
+      () => bridgeMock!.bridgeLogKchatFileEventReceived.mock.calls.length > 0,
+    );
+
+    // The substrate was NOT called because the download
+    // failed before the index step.
+    expect(bridgeMock!.bridgeIndexKchatFile).not.toHaveBeenCalled();
+    // Audit row reflects the failure (triggered_reindex=false).
+    expect(
+      bridgeMock!.bridgeLogKchatFileEventReceived,
+    ).toHaveBeenCalledWith(
+      "file_added",
+      "chan-linked-3",
+      "file-NETWORK-001",
+      false,
+    );
+    fwd.dispose();
+  });
+
+  it("serialises concurrent file_added events for the same channel via withChannelSyncLock", async () => {
+    // Two file_added events fire back-to-back for the same
+    // channel. The per-channel mutex must serialise their
+    // `bridgeIndexKchatFile` calls so a manifest write race
+    // cannot drop one of the files from the recorded set.
+    // We pin the ordering by gating `downloadFile` on a
+    // manually-resolved promise per file id and asserting that
+    // the second call only starts after the first resolves.
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+
+    const downloadStarted: string[] = [];
+    let resolveFirst: ((v: Uint8Array) => void) | null = null;
+    client.downloadFile.mockImplementation(async (fileId: string) => {
+      downloadStarted.push(fileId);
+      if (fileId === "file-A") {
+        // Block on the first call; the second call should
+        // NOT have started by the time we observe `downloadStarted`.
+        return new Promise<Uint8Array>((r) => {
+          resolveFirst = r;
+        });
+      }
+      return new Uint8Array([0x6f, 0x6b]);
+    });
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "file_added",
+        data: { file_id: "file-A" },
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-serial",
+          team_id: "t",
+          user_id: "u",
+        },
+      }),
+    );
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "file_added",
+        data: { file_id: "file-B" },
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-serial",
+          team_id: "t",
+          user_id: "u",
+        },
+      }),
+    );
+    // Yield enough microtasks for the first `handleFileAdded`
+    // to start its download. Only the first file's download
+    // should have started; the second is queued on the lock.
+    await waitForCondition(() => downloadStarted.length === 1);
+    expect(downloadStarted).toEqual(["file-A"]);
+
+    // Resolve the first download; the second one should now
+    // run to completion.
+    resolveFirst?.(new Uint8Array([0x6f, 0x6b]));
+    await waitForCondition(
+      () => bridgeMock!.bridgeIndexKchatFile.mock.calls.length === 2,
+    );
+
+    expect(downloadStarted).toEqual(["file-A", "file-B"]);
+    expect(bridgeMock!.bridgeIndexKchatFile).toHaveBeenCalledTimes(2);
     fwd.dispose();
   });
 });
