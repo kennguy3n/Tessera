@@ -70,6 +70,17 @@ pub enum AuditEventType {
     /// id and the file name; bytes are not logged so the audit
     /// trail stays cheap.
     KchatFileDownloaded,
+    /// A KChat WebSocket event was received in the main process and
+    /// surfaced to the renderer / source-refresh pipeline. Details
+    /// carry the WS event name (`posted`, `file_added`, …) and the
+    /// originating channel id when present; payload bodies are
+    /// NOT logged so the audit trail does not leak message text or
+    /// file contents. The audit row gives operators a way to
+    /// correlate WS-driven indexer activity (auto-reindex of a
+    /// channel source on `file_added`) with the originating
+    /// channel event without needing access to the KChat server
+    /// audit log itself.
+    KchatFileEventReceived,
 }
 
 impl AuditEventType {
@@ -105,6 +116,7 @@ impl AuditEventType {
             Self::KchatChannelLinked => "kchat_channel_linked",
             Self::KchatChannelUnlinked => "kchat_channel_unlinked",
             Self::KchatFileDownloaded => "kchat_file_downloaded",
+            Self::KchatFileEventReceived => "kchat_file_event_received",
         }
     }
 }
@@ -157,6 +169,7 @@ mod tests {
             AuditEventType::KchatChannelLinked,
             AuditEventType::KchatChannelUnlinked,
             AuditEventType::KchatFileDownloaded,
+            AuditEventType::KchatFileEventReceived,
         ];
         for ev in all.iter() {
             let serde_form = serde_json::to_string(ev).unwrap();

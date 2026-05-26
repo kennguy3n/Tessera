@@ -4,6 +4,7 @@ import * as fs from "fs";
 import { ModelSidecar } from "./sidecar";
 import { DiffusionSidecar, resolveDiffusionBinary } from "./diffusionSidecar";
 import { KchatAuthService } from "./kchat/kchatAuth";
+import { KchatEventForwarder } from "./kchat/kchatEventForwarder";
 import { getOrCreateDbKeyAsync, EncryptionUnavailableError } from "./dbKey";
 import type {
   AddCitationRequest,
@@ -255,6 +256,39 @@ export interface NativeBridge {
     fileName: string,
     bytes: number,
   ): void;
+  /**
+   * No-throw audit append called by the `KchatEventForwarder` for
+   * each WebSocket event surfaced to renderers (and, on
+   * `file_added`, to the auto-reindex hook). Payload bodies are
+   * NOT passed — only the event name, originating channel id
+   * (when present in the broadcast envelope), an optional file id
+   * for `file_added` events, and the boolean `triggered_reindex`
+   * flag so operators can correlate WS-driven indexer activity
+   * with the originating event without consulting the KChat
+   * server's own audit log. See `napi_exports.rs:bridge_log_kchat_file_event_received`.
+   */
+  bridgeLogKchatFileEventReceived(
+    eventName: string,
+    channelId: string | null,
+    fileId: string | null,
+    triggeredReindex: boolean,
+  ): void;
+  /**
+   * Locate the `SourceType::Kchat` source row backing a given on-
+   * disk cache directory; returns `null` when no row exists.
+   *
+   * Called by the `KchatEventForwarder` on every `file_added`
+   * WebSocket event to decide whether the originating channel is
+   * currently linked as a Tessera source — if so, the forwarder
+   * follows up with `bridgeReindexSource(sourceId)` so the
+   * indexer picks up the newly-uploaded file without waiting for
+   * the user's next manual refresh.
+   *
+   * Returns `null` rather than throwing on "not linked" so the
+   * hot-path (event fires, channel not linked) is allocation-free
+   * and the forwarder can drop the event without a try/catch.
+   */
+  bridgeFindKchatSourceByCacheDir(cacheDir: string): SourceInfo | null;
   // --- Audit query ---
   //
   // Renderer-facing read API over the audit store. The renderer
@@ -353,6 +387,15 @@ let modelSidecar: ModelSidecar | null = null;
 // `getKchatAuthService()` call to keep cold-start cheap when the
 // user never connects KChat.
 let kchatAuthService: KchatAuthService | null = null;
+// KChat WebSocket forwarder singleton. Constructed lazily
+// alongside the auth service so an app run that never touches
+// KChat doesn't pay the cost. The forwarder subscribes to the
+// auth service's `KchatClient` and pushes events to every
+// renderer window via `kchat:event` IPC (see
+// `kchat/kchatEventForwarder.ts` for the Block B Task 1
+// design). Reset alongside the auth service in tests via
+// `resetKchatAuthService`.
+let kchatEventForwarder: KchatEventForwarder | null = null;
 // Vision sidecar runs the same `llama-server` binary as the text
 // sidecar but on a separate port (8385) and with `--mmproj`
 // appended so the multimodal projector is loaded alongside the
@@ -609,18 +652,64 @@ export function getDiffusionSidecar(): DiffusionSidecar | null {
 export function getKchatAuthService(): KchatAuthService {
   if (!kchatAuthService) {
     kchatAuthService = new KchatAuthService();
+    // Lazily construct + start the WS forwarder alongside the
+    // auth service. The forwarder must outlive every individual
+    // `connect` / `disconnect` cycle because the underlying
+    // `KchatClient` is reused — `KchatClient` re-attaches its
+    // own listeners (the WS event multicast set) on every
+    // connect, so the forwarder's single subscription stays
+    // valid across reconnects. Starting once at construction
+    // also means a renderer that opens before any KChat
+    // connect still has the IPC channel listener installed
+    // when the user finally connects.
+    kchatEventForwarder = new KchatEventForwarder();
+    kchatEventForwarder.start(kchatAuthService.getClient());
   }
   return kchatAuthService;
 }
 
 /**
- * Replace (or clear) the singleton KChat auth service. Used by
- * tests to inject a stub or a fresh instance between cases.
+ * Accessor for the singleton KChat WebSocket event forwarder.
+ * Returns `null` if {@link getKchatAuthService} has not yet
+ * been called (the forwarder is lazy-constructed alongside the
+ * auth service). Exposed so tests can introspect the
+ * forwarder's per-window ring buffer state and so a future
+ * Settings diagnostics surface can render dropped-event counts.
+ */
+export function getKchatEventForwarder(): KchatEventForwarder | null {
+  return kchatEventForwarder;
+}
+
+/**
+ * Replace (or clear) the singleton KChat auth service AND the
+ * companion WebSocket forwarder. Used by tests to inject a
+ * stub or a fresh instance between cases. Disposing the
+ * forwarder here ensures a leftover IPC listener from a
+ * previous test cannot leak into the next test's renderer.
  */
 export function resetKchatAuthService(
   next: KchatAuthService | null = null,
 ): void {
+  if (kchatEventForwarder) {
+    kchatEventForwarder.dispose();
+    kchatEventForwarder = null;
+  }
   kchatAuthService = next;
+}
+
+/**
+ * Replace (or clear) the singleton KChat WebSocket forwarder.
+ * Exposed for the tests in `__tests__/kchatEventForwarder.test.ts`
+ * which need to inject a forwarder with a stub `listWindows`
+ * enumerator. Production code should never call this.
+ */
+export function resetKchatEventForwarder(
+  next: KchatEventForwarder | null = null,
+): void {
+  if (kchatEventForwarder && kchatEventForwarder !== next) {
+    kchatEventForwarder.dispose();
+  }
+  kchatEventForwarder = next;
 }
 
 /**

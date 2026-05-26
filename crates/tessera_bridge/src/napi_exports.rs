@@ -251,6 +251,32 @@ pub fn bridge_list_sources() -> napi::Result<Vec<sources::SourceInfo>> {
     sources::list_sources(&mgr).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+/// JS-facing pass-through for [`sources::find_kchat_source_by_cache_dir`].
+/// Called by the Node-side `KchatEventForwarder` on every
+/// `file_added` WebSocket event to decide whether the originating
+/// channel is currently linked as a Tessera source — if so, the
+/// forwarder follows up with `bridge_reindex_source(sourceId)` so
+/// the indexer picks up the newly-uploaded file without waiting
+/// for the next manual refresh.
+///
+/// Returns `Ok(None)` when no `SourceType::Kchat` row matches the
+/// supplied `cache_dir`. Surfacing `Option<SourceInfo>` rather than
+/// throwing on "not found" keeps the hot-path branch (event fires,
+/// channel not linked) cheap and matches the no-allocation
+/// contract documented on the underlying Rust function.
+#[napi]
+pub fn bridge_find_kchat_source_by_cache_dir(
+    cache_dir: String,
+) -> napi::Result<Option<sources::SourceInfo>> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::find_kchat_source_by_cache_dir(&mgr, &cache_dir)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 #[napi]
 pub fn bridge_remove_source(source_id: String) -> napi::Result<()> {
     let s = state()?;
@@ -1772,6 +1798,40 @@ pub fn bridge_log_kchat_file_downloaded(
         // mis-coded caller passes a sentinel negative value.
         let bytes_u64 = if bytes < 0 { 0_u64 } else { bytes as u64 };
         let _ = logger.log_kchat_file_downloaded(&channel_id, &file_name, bytes_u64);
+    }
+    Ok(())
+}
+
+/// JS-facing pass-through for
+/// [`AuditLogger::log_kchat_file_event_received`]. Called by the
+/// Node-side `KchatEventForwarder` when a WebSocket event is
+/// received in the main process and surfaced to renderers (and,
+/// for `file_added` events on a linked KChat-channel source, to
+/// the source-refresh hook). Payload bodies are NOT passed in —
+/// only the event name, originating channel id, optional file id,
+/// and whether the event triggered an automatic source reindex.
+///
+/// The optional fields use `Option<String>` rather than empty
+/// strings so the napi bridge faithfully carries the "not present"
+/// signal across the FFI boundary; the logger collapses both to
+/// `""` in the audit row text, but downstream filters that ever
+/// want to scan for "events on a specific channel" can rely on
+/// the empty-string convention in the audit `details` payload.
+#[napi]
+pub fn bridge_log_kchat_file_event_received(
+    event_name: String,
+    channel_id: Option<String>,
+    file_id: Option<String>,
+    triggered_reindex: bool,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_file_event_received(
+            &event_name,
+            channel_id.as_deref(),
+            file_id.as_deref(),
+            triggered_reindex,
+        );
     }
     Ok(())
 }

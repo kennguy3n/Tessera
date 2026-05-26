@@ -43,6 +43,8 @@ function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
       sourceId: "src-kchat-1",
       cacheDir: "/cache/kchat/chan-1",
     }),
+    onStatusChange: vi.fn().mockReturnValue(() => {}),
+    onEvent: vi.fn().mockReturnValue(() => {}),
     ...overrides,
   } as unknown as typeof window.tessera.kchat;
 }

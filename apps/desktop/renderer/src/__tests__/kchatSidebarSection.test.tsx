@@ -59,6 +59,8 @@ function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
     ]),
     shareArtifact: vi.fn(),
     addChannelSource: vi.fn(),
+    onStatusChange: vi.fn().mockReturnValue(() => {}),
+    onEvent: vi.fn().mockReturnValue(() => {}),
     ...overrides,
   } as unknown as typeof window.tessera.kchat;
 }
@@ -361,5 +363,175 @@ describe("KchatSidebarSection — unread poll short-circuits on unmount (twelfth
     // already-in-flight cycle).
     await vi.advanceTimersByTimeAsync(120_000);
     expect(listChannelFiles).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Phase 11 Block B Task 1: live WebSocket push of `file_added`
+// events from the main process drives the unread badge without
+// waiting for the 30 s reconciliation poll. The renderer
+// subscribes via `kchat.onEvent(...)`; the main-process
+// forwarder calls the listener with a flattened
+// `KchatWebSocketEventPayload`. We verify the badge increments
+// on a `file_added` event for a channel in the live list AND
+// remains untouched for an event for a channel we're not
+// rendering, an event older than `lastSeen`, or a non-
+// file_added event type.
+describe("KchatSidebarSection — WebSocket push increments unread badge (Block B Task 1)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    window.localStorage.clear();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("increments the badge on a file_added event for a live channel", async () => {
+    // Hold the file-poll Promise open so the reconciliation
+    // path can't race the WS-driven increment.
+    const listChannelFiles = vi.fn().mockReturnValue(new Promise(() => {}));
+    let onEventListener:
+      | ((e: import("../../../shared/types").KchatWebSocketEventPayload) => void)
+      | null = null;
+    const onEvent = vi.fn().mockImplementation((cb: (e: unknown) => void) => {
+      onEventListener = cb as typeof onEventListener;
+      return () => {
+        onEventListener = null;
+      };
+    });
+    const api = makeApi({ listChannelFiles, onEvent });
+    render(<KchatSidebarSection api={api} />);
+    await screen.findByTestId("kchat-sidebar");
+    // Wait until the WS subscription has been installed by the
+    // post-connect effect.
+    await waitFor(() => expect(onEvent).toHaveBeenCalled());
+    expect(onEventListener).not.toBeNull();
+
+    // Push two `file_added` events for live channels — both
+    // should increment the badge. We use a `create_at` far in
+    // the future so it post-dates `lastSeen=0`.
+    onEventListener!({
+      event: "file_added",
+      channelId: "chan-1",
+      teamId: "team-1",
+      userId: "u1",
+      seq: 1,
+      data: { file_id: "f-A", create_at: 1_900_000_000_000 },
+    });
+    onEventListener!({
+      event: "file_added",
+      channelId: "chan-2",
+      teamId: "team-1",
+      userId: "u1",
+      seq: 2,
+      data: { file_id: "f-B", create_at: 1_900_000_000_000 },
+    });
+    await waitFor(() => {
+      const badge = screen.getByTestId("kchat-unread-badge");
+      expect(badge).toHaveTextContent("2");
+    });
+  });
+
+  it("ignores file_added events for channels not in the live list", async () => {
+    const listChannelFiles = vi.fn().mockReturnValue(new Promise(() => {}));
+    let onEventListener:
+      | ((e: import("../../../shared/types").KchatWebSocketEventPayload) => void)
+      | null = null;
+    const onEvent = vi.fn().mockImplementation((cb: (e: unknown) => void) => {
+      onEventListener = cb as typeof onEventListener;
+      return () => {
+        onEventListener = null;
+      };
+    });
+    const api = makeApi({ listChannelFiles, onEvent });
+    render(<KchatSidebarSection api={api} />);
+    await screen.findByTestId("kchat-sidebar");
+    await waitFor(() => expect(onEvent).toHaveBeenCalled());
+
+    onEventListener!({
+      event: "file_added",
+      channelId: "chan-other-team",
+      teamId: "team-other",
+      userId: "u1",
+      seq: 1,
+      data: { file_id: "f-X", create_at: 1_900_000_000_000 },
+    });
+    // Give React a tick to render any spurious badge.
+    await vi.advanceTimersByTimeAsync(50);
+    expect(screen.queryByTestId("kchat-unread-badge")).toBeNull();
+  });
+
+  it("ignores file_added events older than the last-seen timestamp", async () => {
+    window.localStorage.setItem(
+      "tessera.kchat.lastSeenAt",
+      "1_800_000_000_000".replace(/_/g, ""),
+    );
+    const listChannelFiles = vi.fn().mockReturnValue(new Promise(() => {}));
+    let onEventListener:
+      | ((e: import("../../../shared/types").KchatWebSocketEventPayload) => void)
+      | null = null;
+    const onEvent = vi.fn().mockImplementation((cb: (e: unknown) => void) => {
+      onEventListener = cb as typeof onEventListener;
+      return () => {
+        onEventListener = null;
+      };
+    });
+    const api = makeApi({ listChannelFiles, onEvent });
+    render(<KchatSidebarSection api={api} />);
+    await screen.findByTestId("kchat-sidebar");
+    await waitFor(() => expect(onEvent).toHaveBeenCalled());
+
+    // File predates lastSeen; must NOT increment.
+    onEventListener!({
+      event: "file_added",
+      channelId: "chan-1",
+      teamId: "team-1",
+      userId: "u1",
+      seq: 1,
+      data: { file_id: "f-old", create_at: 1_700_000_000_000 },
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(screen.queryByTestId("kchat-unread-badge")).toBeNull();
+  });
+
+  it("ignores non-file_added event types", async () => {
+    const listChannelFiles = vi.fn().mockReturnValue(new Promise(() => {}));
+    let onEventListener:
+      | ((e: import("../../../shared/types").KchatWebSocketEventPayload) => void)
+      | null = null;
+    const onEvent = vi.fn().mockImplementation((cb: (e: unknown) => void) => {
+      onEventListener = cb as typeof onEventListener;
+      return () => {
+        onEventListener = null;
+      };
+    });
+    const api = makeApi({ listChannelFiles, onEvent });
+    render(<KchatSidebarSection api={api} />);
+    await screen.findByTestId("kchat-sidebar");
+    await waitFor(() => expect(onEvent).toHaveBeenCalled());
+
+    onEventListener!({
+      event: "posted",
+      channelId: "chan-1",
+      teamId: "team-1",
+      userId: "u1",
+      seq: 1,
+      data: { post: "hi" },
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(screen.queryByTestId("kchat-unread-badge")).toBeNull();
+  });
+
+  it("unsubscribes from kchat.onEvent on unmount", async () => {
+    const unsubscribe = vi.fn();
+    const onEvent = vi.fn().mockReturnValue(unsubscribe);
+    const api = makeApi({
+      listChannelFiles: vi.fn().mockReturnValue(new Promise(() => {})),
+      onEvent,
+    });
+    const { unmount } = render(<KchatSidebarSection api={api} />);
+    await screen.findByTestId("kchat-sidebar");
+    await waitFor(() => expect(onEvent).toHaveBeenCalled());
+    unmount();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 });

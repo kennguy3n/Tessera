@@ -34,6 +34,7 @@ import {
   assertString,
 } from "./validate";
 import { KchatRequestError } from "../kchat/kchatClient";
+import { kchatChannelCacheDir } from "../kchat/kchatPaths";
 import {
   KchatChannel,
   KchatChannelMember,
@@ -845,12 +846,12 @@ export function registerKchatHandlers(): void {
     if (!bridge) throw new Error("Native bridge not available");
 
     const svc = getKchatAuthService();
-    const cacheDir = path.join(
-      os.homedir(),
-      ".tessera",
-      "kchat-channels",
-      id,
-    );
+    // Centralised cache-dir builder (see `kchat/kchatPaths.ts`)
+    // so this call site and the `KchatEventForwarder`'s reverse
+    // lookup stay in lockstep — a regression in either location
+    // would silently break the auto-reindex hook the forwarder
+    // relies on for `file_added` events.
+    const cacheDir = kchatChannelCacheDir(id);
     await fs.mkdir(cacheDir, { recursive: true });
 
     // Download the channel's existing file roster into the cache so

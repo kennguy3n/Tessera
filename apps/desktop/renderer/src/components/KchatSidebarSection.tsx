@@ -4,24 +4,35 @@
  * Renders nothing when KChat is unavailable or disconnected.
  * When connected: shows the user, default team, and channel count.
  *
- * The unread badge is driven by `listChannelFiles` polling — every
- * 30s we fetch the file list for the configured default-team's
- * channels and surface the count of files newer than the last
- * "seen" timestamp the user established by opening the artifact
- * editor or the Sources page.
+ * The unread badge is driven primarily by WebSocket push events
+ * surfaced over the `kchat:event` IPC channel (Phase 11 Block B
+ * Task 1). On every `file_added` event for a channel in the
+ * rendered list whose `create_at` post-dates the user's
+ * last-seen marker, the badge increments by 1 — no IPC poll
+ * required. The renderer subscribes via
+ * `window.tessera.kchat.onEvent(cb)` on mount and unsubscribes
+ * on unmount; the main-process forwarder owns the per-window
+ * ring buffer + drop-oldest backpressure.
  *
- * This is intentionally polling-based rather than WebSocket-based:
- * WebSocket events fire in the main process; surfacing them to the
- * renderer would require an extra IPC pipe and a backpressure
- * strategy that is overkill for a 30 s freshness window. If a
- * future iteration wants live updates the main process can flip
- * to push-based via an additional IPC channel.
+ * A 30 s `listChannelFiles` reconciliation poll is preserved as
+ * a fallback safety net for the rare case where the renderer
+ * subscribes mid-disconnect (so it misses events that arrived
+ * before its listener attached), or where the main-process
+ * forwarder had to drop events on a saturated buffer. The
+ * reconciliation poll computes the unread count from REST so
+ * even if every push event were dropped the badge would
+ * converge to the correct value within one poll cycle. Status
+ * transitions (`connecting` → `connected` / `error`) are
+ * delivered via `kchat:status` push, falling back to a 30 s
+ * status invoke poll if the push listener is racing the
+ * status emitter at mount.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getStoredDefaultTeamId } from "./KchatSettingsCard";
 import type {
   KchatChannelView,
   KchatConnectionStateView,
+  KchatWebSocketEventPayload,
 } from "../../../shared/types";
 
 const POLL_INTERVAL_MS = 30_000;
@@ -73,20 +84,34 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   const [unread, setUnread] = useState(0);
   const [available, setAvailable] = useState<boolean | null>(null);
 
-  // Status probe + 10s re-probe so a fresh connect/disconnect from
-  // Settings is reflected without a page reload. 10s is much
-  // shorter than the file-poll interval because the status read is
-  // cheap (a single in-memory lookup in main process).
+  // Status probe + push subscription. Block B Task 1 moves
+  // status transitions to a push channel (`kchat:status`); the
+  // renderer subscribes once on mount and the main-process
+  // forwarder pushes the new state on every connect /
+  // disconnect / health-check transition. The initial state is
+  // still fetched via the `kchat:status` invoke so a fresh
+  // mount catches up with whatever happened before the
+  // subscription installed.
   //
   // Polling teardown when the feature is unavailable: when
   // `kchat:isAvailable` returns false (enterprise licence not
   // active, future opt-out flag, etc.), the component renders
-  // `null` — but without this early return the 10s interval would
-  // continue burning an IPC call on every tick for the lifetime of
-  // the page. The effect depends on `available`, so once the first
-  // probe resolves to `false` it re-runs with the new value and
-  // bails out before arming the next interval. This was raised in
-  // Devin Review fifth-pass as ANALYSIS_0005.
+  // `null` and the subscription teardown below releases the
+  // IPC listener. Without this early return the listener
+  // would still be cheap (`subscribeIpc` is a single
+  // `ipcRenderer.on` call) but the per-window ring buffer in
+  // the main-process forwarder would accumulate events that
+  // the renderer can never consume — the eleventh-pass Devin
+  // Review ANALYSIS_0005 finding generalises here too, so we
+  // keep the gate.
+  //
+  // Reconciliation-only re-fetch: the initial-state read can
+  // race the first push event in theory, so we additionally
+  // re-fetch state on a slow 30 s timer as a safety net. The
+  // old 10 s aggressive poll is gone — push delivery makes it
+  // redundant for the common case, and the 30 s reconciliation
+  // timer matches the unread-badge file-poll cadence to amortise
+  // wakeups.
   useEffect(() => {
     if (!kchat) {
       setAvailable(false);
@@ -96,6 +121,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
       return;
     }
     let cancelled = false;
+    let unsubscribeStatus: (() => void) | null = null;
     const probe = async () => {
       try {
         if (available === null) {
@@ -104,6 +130,17 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
           setAvailable(ok);
           if (!ok) return;
         }
+        // Subscribe BEFORE the initial fetch so a transition
+        // that races the fetch is captured by the listener,
+        // and the listener simply overwrites the fetched
+        // initial state with whatever arrived. The reverse
+        // order would have a window where an event between
+        // fetch and subscribe is lost.
+        if (!unsubscribeStatus) {
+          unsubscribeStatus = kchat.onStatusChange((s) => {
+            if (!cancelled) setState(s);
+          });
+        }
         const s = await kchat.status();
         if (!cancelled) setState(s);
       } catch {
@@ -111,10 +148,16 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
       }
     };
     probe();
-    const id = window.setInterval(probe, 10_000);
+    // 30 s reconciliation re-fetch. Push delivery handles the
+    // common case; this timer exists only to converge after a
+    // missed transition (e.g. the renderer subscribed mid-
+    // reconnect and the main process emitted a transition
+    // before the listener was installed).
+    const id = window.setInterval(probe, POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      if (unsubscribeStatus) unsubscribeStatus();
     };
   }, [kchat, available]);
 
@@ -214,6 +257,47 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
     },
     [kchat, state.state],
   );
+
+  // Live WS event subscription. Block B Task 1 push pipeline:
+  // the main-process forwarder pushes parsed
+  // `KchatWebSocketEventPayload`s over `kchat:event`; we
+  // increment the unread badge by 1 on every `file_added` event
+  // whose originating channel appears in the rendered channel
+  // list AND whose `data.create_at` post-dates the user's
+  // last-seen marker. Events for channels we're not displaying
+  // (other teams, DMs the user isn't a member of) are ignored;
+  // events older than `lastSeen` are ignored (an already-seen
+  // file replayed after a reconnect).
+  //
+  // The subscription is independent of `pollUnread` — the poll
+  // exists as a reconciliation fallback. If the forwarder
+  // drops events on a saturated buffer, or if a renderer
+  // reconnects mid-stream, the 30 s poll re-derives the unread
+  // count from REST and overwrites whatever delta the WS path
+  // accumulated. Both paths converge on the same `unread`
+  // state.
+  useEffect(() => {
+    if (!kchat || state.state !== "connected") return;
+    const unsubscribe = kchat.onEvent((event: KchatWebSocketEventPayload) => {
+      if (event.event !== "file_added") return;
+      const live = channelsRef.current;
+      // The forwarder flattens `broadcast.channel_id` to the
+      // top-level `channelId` so we don't have to reach into a
+      // nested envelope. A missing channel id (server bug)
+      // disqualifies the event from incrementing the badge:
+      // there's no way to verify it belongs to a channel we're
+      // rendering.
+      if (!event.channelId) return;
+      if (!live.some((c) => c.id === event.channelId)) return;
+      const createAt =
+        typeof event.data.create_at === "number" ? event.data.create_at : 0;
+      if (createAt <= getLastSeen()) return;
+      setUnread((n) => n + 1);
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [kchat, state.state]);
 
   // Recursive `setTimeout` instead of `setInterval` (eleventh-pass
   // Devin Review ANALYSIS_0004). `setInterval` would fire every

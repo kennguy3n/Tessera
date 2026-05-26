@@ -228,6 +228,36 @@ impl AuditLogger {
         )
     }
 
+    /// Record that a KChat WebSocket event was received in the main
+    /// process and acted on. Payload bodies are NOT logged so the
+    /// audit row never contains message text or file contents — only
+    /// the event name, the originating `channel_id` when present,
+    /// and an optional `file_id` for `file_added` events so an
+    /// operator can correlate the audit row with the KChat server's
+    /// file metadata. A `triggered_reindex` flag records whether the
+    /// event resulted in a `bridgeReindexSource` call (true only for
+    /// `file_added` events whose channel is linked as a
+    /// `SourceType::Kchat` source), giving operators a one-line
+    /// trace of automatic re-indexing without inspecting the
+    /// indexer logs.
+    pub fn log_kchat_file_event_received(
+        &self,
+        event_name: &str,
+        channel_id: Option<&str>,
+        file_id: Option<&str>,
+        triggered_reindex: bool,
+    ) -> Result<()> {
+        let channel = channel_id.unwrap_or("");
+        let file = file_id.unwrap_or("");
+        self.log(
+            AuditEventType::KchatFileEventReceived,
+            format!(
+                "KChat WS event: event={event_name} channel={channel} file={file} \
+                 triggered_reindex={triggered_reindex}"
+            ),
+        )
+    }
+
     pub fn log_citation_added(
         &self,
         artifact_id: &str,
@@ -427,5 +457,84 @@ mod tests {
             .expect("parse row should be present");
         assert!(parse.details.contains("parse"));
         assert!(parse.details.contains("missing field `id`"));
+    }
+
+    /// `log_kchat_file_event_received` must route to the new
+    /// `KchatFileEventReceived` variant and surface the event name,
+    /// channel id, optional file id, and the `triggered_reindex`
+    /// flag in the details payload. Block B Task 1 introduces this
+    /// helper so the Node-side `KchatEventForwarder` can audit
+    /// every WS event it surfaces without leaking message bodies.
+    #[test]
+    fn kchat_file_event_received_helper_routes_to_correct_event_type() {
+        let logger = AuditLogger::new_in_memory().unwrap();
+
+        // A `file_added` event that DID trigger an automatic reindex
+        // (channel is linked as a Tessera source).
+        logger
+            .log_kchat_file_event_received(
+                "file_added",
+                Some("channel-abc123"),
+                Some("file-xyz789"),
+                true,
+            )
+            .unwrap();
+
+        // A `posted` event with no file id and no reindex trigger
+        // (channel may or may not be linked; this is the common
+        // case for chat messages).
+        logger
+            .log_kchat_file_event_received(
+                "posted",
+                Some("channel-def456"),
+                None,
+                false,
+            )
+            .unwrap();
+
+        // A `channel_created` event with no channel id in scope —
+        // exercises the `None` path on the channel parameter so
+        // both Option arms are pinned.
+        logger
+            .log_kchat_file_event_received(
+                "channel_created",
+                None,
+                None,
+                false,
+            )
+            .unwrap();
+
+        assert_eq!(logger.event_count().unwrap(), 3);
+
+        let rows = logger
+            .query_by_type(&AuditEventType::KchatFileEventReceived)
+            .unwrap();
+        assert_eq!(rows.len(), 3);
+
+        let file_added = rows
+            .iter()
+            .find(|row| row.details.contains("file=file-xyz789"))
+            .expect("file_added row should be present");
+        assert!(file_added.details.contains("event=file_added"));
+        assert!(file_added.details.contains("channel=channel-abc123"));
+        assert!(file_added.details.contains("triggered_reindex=true"));
+
+        let posted = rows
+            .iter()
+            .find(|row| row.details.contains("event=posted"))
+            .expect("posted row should be present");
+        assert!(posted.details.contains("channel=channel-def456"));
+        // Empty file id renders as `file=` per the
+        // `unwrap_or("")` convention documented on the bridge.
+        assert!(posted.details.contains("file="));
+        assert!(posted.details.contains("triggered_reindex=false"));
+
+        let channel_created = rows
+            .iter()
+            .find(|row| row.details.contains("event=channel_created"))
+            .expect("channel_created row should be present");
+        // Both Option arms collapse to empty strings.
+        assert!(channel_created.details.contains("channel="));
+        assert!(channel_created.details.contains("file="));
     }
 }

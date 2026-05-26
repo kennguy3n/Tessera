@@ -143,6 +143,26 @@ pub fn list_sources(manager: &SourceManager) -> BridgeResult<Vec<SourceInfo>> {
     Ok(sources.iter().map(SourceInfo::from).collect())
 }
 
+/// Locate the `SourceType::Kchat` row backing a given on-disk cache
+/// directory, returning `Ok(None)` when no matching row exists.
+///
+/// Surfaces the matching row as the napi-friendly [`SourceInfo`]
+/// view rather than the internal `Source` type. The Node-side
+/// `KchatEventForwarder` calls this to decide whether a `file_added`
+/// WebSocket event for a given channel should trigger an automatic
+/// `bridgeReindexSource(...)` call. The lookup is index-backed
+/// (O(log n)) so it can run on every WS event without becoming a
+/// hot-path cost.
+pub fn find_kchat_source_by_cache_dir(
+    manager: &SourceManager,
+    cache_dir: &str,
+) -> BridgeResult<Option<SourceInfo>> {
+    let row = manager
+        .find_kchat_source_by_cache_dir(cache_dir)
+        .map_err(BridgeError::Core)?;
+    Ok(row.as_ref().map(SourceInfo::from))
+}
+
 pub fn remove_source(manager: &SourceManager, source_id: &str) -> BridgeResult<()> {
     let uuid =
         uuid::Uuid::parse_str(source_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;

@@ -383,6 +383,28 @@ impl SourceManager {
         self.store.get_source(source_id)
     }
 
+    /// Locate the `SourceType::Kchat` row backing a given on-disk
+    /// cache directory, if one exists.
+    ///
+    /// Used by the Node-side `KchatEventForwarder` to map a
+    /// `file_added` WebSocket event back to the local source so the
+    /// indexer can reindex the channel's cache immediately (rather
+    /// than waiting for the next manual refresh).
+    ///
+    /// Returns `Ok(None)` when no matching row exists; only genuine
+    /// SQL / parse errors propagate as `Err`. This shape lets the
+    /// JS caller distinguish "channel is linked, reindex it" from
+    /// "no source for this channel, drop the event" without
+    /// allocating on the not-found path. The lookup uses the
+    /// composite `(source_type, path)` index introduced in
+    /// `SourceStore::find_source_by_type_and_path` (tenth-pass
+    /// Devin Review ANALYSIS_0004), so it is O(log n) regardless
+    /// of how many non-Kchat sources are also registered.
+    pub fn find_kchat_source_by_cache_dir(&self, cache_dir: &str) -> Result<Option<Source>> {
+        self.store
+            .find_source_by_type_and_path(&tessera_core::SourceType::Kchat, cache_dir)
+    }
+
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
         // Clone the snapshot under the lock and drop the guard
         // before any I/O so concurrent `update_hybrid_config` calls
@@ -724,6 +746,66 @@ mod tests {
             sources[0].file_count >= 2,
             "reindex on re-sync should pick up newly arrived files (got file_count={})",
             sources[0].file_count
+        );
+    }
+
+    /// `find_kchat_source_by_cache_dir` must surface a registered
+    /// channel's source so the Node-side `KchatEventForwarder` can
+    /// react to a `file_added` WS event by re-indexing the right
+    /// source. Block B Task 1 introduces this manager method.
+    #[test]
+    fn find_kchat_source_by_cache_dir_returns_registered_channel() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "kchat content").unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let outcome = manager.add_kchat_channel(cache_dir).unwrap();
+        assert!(outcome.newly_created);
+
+        let found = manager
+            .find_kchat_source_by_cache_dir(cache_dir)
+            .unwrap()
+            .expect("registered channel should be found");
+        assert_eq!(found.id, outcome.source.id);
+        assert!(matches!(
+            found.source_type,
+            tessera_core::SourceType::Kchat
+        ));
+        assert_eq!(found.path, cache_dir);
+    }
+
+    /// `find_kchat_source_by_cache_dir` must return `None` (not an
+    /// error) when no channel is linked at the supplied cache dir.
+    /// The Node-side caller treats this as "channel not linked,
+    /// drop the event" — surfacing an error would make every
+    /// non-linked WS event noisy in the audit log.
+    #[test]
+    fn find_kchat_source_by_cache_dir_returns_none_for_unlinked_channel() {
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let found = manager
+            .find_kchat_source_by_cache_dir("/nonexistent/path")
+            .unwrap();
+        assert!(found.is_none());
+    }
+
+    /// `find_kchat_source_by_cache_dir` must not surface a
+    /// `LocalFolder` row that happens to share the same path. The
+    /// `(source_type, path)` composite-index isolation is what
+    /// keeps the two namespaces from leaking into each other.
+    #[test]
+    fn find_kchat_source_by_cache_dir_ignores_local_folder_at_same_path() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "folder content").unwrap();
+        let shared_path = dir.path().to_str().unwrap();
+
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.add_local_folder(shared_path).unwrap();
+
+        let found = manager.find_kchat_source_by_cache_dir(shared_path).unwrap();
+        assert!(
+            found.is_none(),
+            "LocalFolder row must not satisfy a Kchat-typed lookup"
         );
     }
 

@@ -1425,6 +1425,60 @@ export interface KchatConnectionStateView {
   lastHealthyAt?: string;
 }
 
+/**
+ * Renderer-facing projection of a KChat WebSocket event surfaced
+ * by the main-process forwarder over the `kchat:event` push
+ * channel. The shape mirrors the main-process
+ * `KchatWebSocketEventView` (see `electron/kchat/kchatTypes.ts`)
+ * with the `omit_users` server-routing map dropped and the
+ * `broadcast.*` fields flattened so the renderer doesn't need to
+ * reach into a nested envelope to find the originating channel
+ * id.
+ *
+ * `event` is left as a free-form `string` rather than a union
+ * because the KChat WebSocket protocol is open-ended and the
+ * forwarder's filter list is the single source of truth for
+ * which subset reaches the renderer. Renderer consumers should
+ * narrow with an `if`/`switch` over the event name they care
+ * about and treat unrecognised values as no-ops.
+ *
+ * Phase 11 Block B Task 1 introduces this view; the Block A
+ * sidebar polled `kchat:listChannelFiles` every 30 s, which is
+ * still kept as a reconciliation fallback for the
+ * mid-disconnect window.
+ */
+export interface KchatWebSocketEventPayload {
+  /**
+   * Wire-level event name (`posted`, `file_added`,
+   * `channel_member_updated`, `channel_created`, …).
+   */
+  event: string;
+  /**
+   * Originating channel id when the KChat server tagged the
+   * broadcast envelope with one; many event types carry no
+   * channel scope and surface as `null`.
+   */
+  channelId: string | null;
+  /** Originating team id when present in the broadcast envelope. */
+  teamId: string | null;
+  /** Originating user id when present in the broadcast envelope. */
+  userId: string | null;
+  /**
+   * Monotonically-increasing sequence number assigned by the
+   * KChat server. The renderer can detect dropped events by
+   * watching for non-contiguous jumps; the 30 s reconciliation
+   * poll closes any gap by re-querying REST.
+   */
+  seq: number;
+  /**
+   * Opaque event-specific payload. Renderer consumers should
+   * narrow per-event (e.g. cast to `KchatPostedEvent` shape) and
+   * defensively check for missing fields, since the KChat server
+   * is treated as untrusted with respect to wire-payload shape.
+   */
+  data: Record<string, unknown>;
+}
+
 /** Renderer-facing KChat API namespace. */
 export interface KchatApi {
   isAvailable: () => Promise<boolean>;
@@ -1450,6 +1504,38 @@ export interface KchatApi {
     channelId: string,
     channelName: string,
   ) => Promise<{ sourceId: string; cacheDir: string }>;
+  /**
+   * Subscribe to KChat connection-state changes surfaced by the
+   * main process. The callback fires once on every successful
+   * connect, disconnect, or transient error transition. Returns
+   * an unsubscribe function the caller must invoke in the React
+   * cleanup phase to avoid leaking the IPC listener.
+   *
+   * This mirrors the `updates.onStatus` precedent so the
+   * renderer doesn't have to choose between blocking on
+   * `kchat.status()` Promise polling and a per-component
+   * reconciliation timer for connection-card refresh.
+   */
+  onStatusChange: (
+    cb: (status: KchatConnectionStateView) => void,
+  ) => () => void;
+  /**
+   * Subscribe to KChat WebSocket events surfaced by the main
+   * process forwarder. The callback fires on every event the
+   * forwarder accepts under its allowlist (`posted`,
+   * `file_added`, `channel_member_updated`,
+   * `channel_created`, `channel_deleted`, `user_added`,
+   * `user_removed`, `status_change`).
+   *
+   * Returns an unsubscribe function the caller must invoke in
+   * the React cleanup phase. The main-process forwarder uses a
+   * per-renderer-window ring buffer (drop-oldest, 100-event
+   * cap) so a stuck renderer can never wedge the WS reader; if
+   * the renderer misses events during a backpressure drop, the
+   * sidebar's 30 s reconciliation poll closes the gap on the
+   * next tick.
+   */
+  onEvent: (cb: (event: KchatWebSocketEventPayload) => void) => () => void;
 }
 
 // --- Audit (Phase 11 Task 6) ----------------------------------------------

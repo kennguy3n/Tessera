@@ -26,6 +26,8 @@ function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
     listChannelFiles: vi.fn().mockResolvedValue([]),
     shareArtifact: vi.fn().mockResolvedValue({ fileId: "file-1", fileName: "x.pdf" }),
     addChannelSource: vi.fn(),
+    onStatusChange: vi.fn().mockReturnValue(() => {}),
+    onEvent: vi.fn().mockReturnValue(() => {}),
     ...overrides,
   } as unknown as typeof window.tessera.kchat;
 }
