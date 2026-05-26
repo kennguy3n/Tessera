@@ -1120,7 +1120,7 @@ describe("KchatClient.connectWebSocket", () => {
 });
 
 describe("KchatClient.shutdown", () => {
-  it("clears the token, transitions to disconnected, and clears listeners", async () => {
+  it("clears the token and transitions to disconnected", async () => {
     const userResp = ok({
       id: "user1234567890abcdefgh",
       username: "ken",
@@ -1137,6 +1137,92 @@ describe("KchatClient.shutdown", () => {
     c.shutdown();
     expect(c.getState().state).toBe("disconnected");
     expect(c.getUser()).toBeNull();
+  });
+
+  it("preserves external WS and status listeners across a shutdown/reconnect cycle", async () => {
+    // Regression for fourth-pass Devin Review on PR #43
+    // (BUG_pr-review-job-..._0001). The previous shutdown()
+    // implementation called wsListeners.clear() +
+    // statusListeners.clear(), which silently stripped the
+    // KchatEventForwarder's subscription on the first disconnect
+    // and left no path for it to re-attach (its own start() guard
+    // is keyed on cached unsubscribe closures and would no-op).
+    // Subsequent reconnects therefore had a dead push pipeline.
+    // The fix is in KchatClient.shutdown(): only the client's own
+    // connection state is torn down; external listener Sets are
+    // left intact so the same forwarder subscription remains in
+    // place across reconnects.
+    const userResp1 = ok({
+      id: "user1234567890abcdefgh",
+      username: "ken",
+      email: "k@e.com",
+      first_name: "K",
+      last_name: "N",
+      roles: "system_user",
+    });
+    const userResp2 = ok({
+      id: "user1234567890abcdefgh",
+      username: "ken",
+      email: "k@e.com",
+      first_name: "K",
+      last_name: "N",
+      roles: "system_user",
+    });
+    const { fn: fetchFn } = makeFetch([userResp1, userResp2]);
+    const c = buildClient({ fetchFn });
+
+    const statusTransitions: string[] = [];
+    const wsEvents: unknown[] = [];
+    c.onStatusChange((s) => statusTransitions.push(s.state));
+    c.onWebSocketEvent((e) => wsEvents.push(e));
+
+    c.setToken("PAT");
+    await c.verifyConnection();
+    expect(c.getState().state).toBe("connected");
+
+    c.shutdown();
+    expect(c.getState().state).toBe("disconnected");
+
+    // Reconnect on the SAME client instance — this is exactly the
+    // flow KchatAuthService.disconnect() + connect() exercises.
+    c.setToken("PAT");
+    await c.verifyConnection();
+    expect(c.getState().state).toBe("connected");
+
+    // The status listener must have observed BOTH the
+    // post-shutdown `disconnected` transition AND the
+    // post-reconnect `connecting`/`connected` transitions. If
+    // shutdown had cleared the listener Set the second connect
+    // cycle's transitions would be invisible to the subscriber.
+    expect(statusTransitions).toContain("disconnected");
+    expect(
+      statusTransitions.slice(statusTransitions.indexOf("disconnected") + 1),
+    ).toContain("connected");
+
+    // Now drive a WebSocket event after the reconnect to prove
+    // the WS listener Set also survived the shutdown.
+    const { ctor, instances } = mockWebSocketCtor();
+    const c2 = buildClient({ webSocketCtor: ctor, fetchFn });
+    const c2WsEvents: unknown[] = [];
+    c2.onWebSocketEvent((e) => c2WsEvents.push(e));
+    c2.shutdown();
+    // After shutdown the existing onWebSocketEvent subscription
+    // must still be live. Drive a WS event through and assert
+    // delivery.
+    c2.setServerUrl("https://kchat.example.com");
+    c2.setToken("PAT");
+    await c2.connectWebSocket();
+    expect(instances).toHaveLength(1);
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        broadcast: { channel_id: "ch1" },
+        data: { foo: 1 },
+        seq: 7,
+      }),
+    });
+    expect(c2WsEvents).toHaveLength(1);
+    expect((c2WsEvents[0] as { event: string }).event).toBe("posted");
   });
 });
 

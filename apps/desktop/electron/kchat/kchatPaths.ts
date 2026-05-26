@@ -6,17 +6,26 @@
  *
  *   `~/.tessera/kchat-channels/<channelId>/`
  *
- * This convention is referenced in two places — the
- * `sources:addKchatChannel` IPC handler (which writes downloaded
- * files into the directory and registers it as a
- * `SourceType::Kchat` source), and the `KchatEventForwarder`
- * (which uses it to map a `file_added` WebSocket event back to
- * the source row so the indexer can be triggered immediately
- * rather than waiting for a manual refresh). Centralising the
- * builder here prevents the two call sites from drifting; a
- * regression in either location would otherwise cause the
- * forwarder to mis-locate the source on every event, silently
- * suppressing auto-reindex.
+ * The sole consumer today is the `sources:addKchatChannel` IPC
+ * handler (`electron/ipc/kchat.ts`), which writes downloaded files
+ * into the directory and registers it as a `SourceType::Kchat`
+ * source. The helper is still exported from a dedicated module so
+ * any future caller that needs to refer to the same cache dir
+ * (for example, an auto-reindex path triggered from the WS
+ * forwarder once `runAddKchatChannel` is extracted into a shared
+ * service — see the top-of-file doc on `kchatEventForwarder.ts`)
+ * has a single source of truth and cannot drift.
+ *
+ * An earlier draft of this file claimed the forwarder also
+ * imported this helper to map a `file_added` event back to a
+ * source row, but the second/third-pass Devin Review on PR #43
+ * removed that lookup as dead code (the file isn't on disk at
+ * `file_added` time, so the lookup never produced useful output).
+ * The note is preserved here so a future contributor doesn't try
+ * to re-introduce the same dead surface — the right way to wire
+ * auto-reindex is to share the existing `runAddKchatChannel`
+ * pipeline, not to add a per-event source-registry lookup back
+ * onto this helper.
  *
  * The helper is purely synchronous and only depends on `os` /
  * `path`, so it stays cheap to import from hot-path code.

@@ -96,7 +96,10 @@ import type {
   KchatWebSocketEvent,
   KchatWebSocketEventView,
 } from "./kchatTypes";
-import type { KchatWebSocketEventPayload } from "../../shared/types";
+import type {
+  KchatConnectionStateView,
+  KchatWebSocketEventPayload,
+} from "../../shared/types";
 
 /**
  * Compile-time structural equivalence check between the main-
@@ -131,6 +134,30 @@ const _assertPayloadIsView = (
 ): KchatWebSocketEventView => p;
 void _assertViewIsPayload;
 void _assertPayloadIsView;
+
+/**
+ * Equivalent tripwire for the connection-state shape. The
+ * forwarder pushes `KchatConnectionState` (the main-process
+ * `kchatTypes.ts` interface) directly over `kchat:status`, and
+ * renderer consumers — the preload bridge, `KchatSidebarSection`,
+ * `KchatSettingsCard` — receive it as `KchatConnectionStateView`
+ * (the `shared/types.ts` interface). Because IPC is structurally
+ * typed at the wire the two declarations must stay
+ * bi-assignable; without this check a future field added to one
+ * side only (or a renamed `lastHealthyAt`, or a tightened union
+ * on `state`) would compile cleanly on both sides and ship a
+ * latent shape drift to the renderer at runtime. The pattern
+ * matches the WS event check above. Fourth-pass Devin Review on
+ * PR #43 (`ANALYSIS_pr-review-job-...0001`).
+ */
+const _assertConnectionStateIsView = (
+  s: KchatConnectionState,
+): KchatConnectionStateView => s;
+const _assertConnectionStateViewIsState = (
+  v: KchatConnectionStateView,
+): KchatConnectionState => v;
+void _assertConnectionStateIsView;
+void _assertConnectionStateViewIsState;
 
 /**
  * Per-renderer-window cap on the ring buffer. 100 events is
@@ -227,6 +254,29 @@ export class KchatEventForwarder {
   private readonly windowStates = new Map<number, WindowState>();
   private unsubscribeWs: (() => void) | null = null;
   private unsubscribeStatus: (() => void) | null = null;
+  /**
+   * Set to `true` by `dispose()`, reset to `false` by `start()`.
+   *
+   * The forwarder defers per-window drains to a microtask via
+   * `queueMicrotask` so a burst of synchronous WS events
+   * accumulates in the ring buffer before draining. `queueMicrotask`
+   * is unconditional — once scheduled, the JS runtime provides no
+   * mechanism to cancel it. The drain closure captures a
+   * `WindowState` reference and a `BrowserWindow` reference, both
+   * of which `dispose()` releases. Without this flag, a drain that
+   * was scheduled before `dispose()` ran but fired after would
+   * touch the cleared state and attempt `webContents.send` on a
+   * stale window — at best a no-op, at worst a "send to released
+   * window" diagnostic in tests that recycle the forwarder.
+   *
+   * The guard lives at the top of `drainWindow` (the microtask
+   * body) so any in-flight drain bails out cleanly once disposed.
+   * `start()` resets the flag so a forwarder disposed between tests
+   * (or hot-reload in dev) can be re-attached and resume
+   * delivering. Fourth-pass Devin Review on PR #43
+   * (`ANALYSIS_pr-review-job-...0005`).
+   */
+  private disposed = false;
   private windowDestroyHandlers: Array<{
     win: BrowserWindow;
     handler: () => void;
@@ -262,6 +312,12 @@ export class KchatEventForwarder {
    */
   start(client: KchatClient): void {
     if (this.unsubscribeWs || this.unsubscribeStatus) return;
+    // Re-arm after a previous `dispose()` so a forwarder that
+    // was disposed (between tests, or during a hot-reload in
+    // dev) can be re-started cleanly. Without this, `disposed`
+    // would stay sticky after the first dispose and silently
+    // drop every subsequent event.
+    this.disposed = false;
     this.unsubscribeWs = client.onWebSocketEvent((event) => {
       try {
         this.handleEvent(event);
@@ -297,6 +353,7 @@ export class KchatEventForwarder {
    * cases.
    */
   dispose(): void {
+    this.disposed = true;
     if (this.unsubscribeWs) {
       this.unsubscribeWs();
       this.unsubscribeWs = null;
@@ -440,6 +497,18 @@ export class KchatEventForwarder {
   }
 
   private drainWindow(win: BrowserWindow, state: WindowState): void {
+    // The microtask captures `state` + `win` references that
+    // outlive `dispose()` — see the field comment on `disposed`.
+    // If the forwarder has since been disposed (between the
+    // schedule and the drain), clear the buffer and bail out
+    // rather than touching a stale `webContents`. This keeps
+    // post-dispose sends from leaking into tests that recycle
+    // the forwarder, and matches the guarantee callers rely on:
+    // "once `dispose()` returns, no further events are sent".
+    if (this.disposed) {
+      state.buffer.length = 0;
+      return;
+    }
     if (win.isDestroyed()) {
       // Renderer went away between schedule and drain. Drop
       // the buffer — the `closed` handler will release the

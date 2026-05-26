@@ -840,15 +840,43 @@ export class KchatClient {
     }
   }
 
-  /** Full client shutdown — token, WS, timers, listeners all cleared. */
+  /**
+   * Tear down the client's own connection state — token, WebSocket,
+   * health-check / reconnect timers. Emits one final
+   * `disconnected` transition so subscribers observe the shutdown
+   * before the timers are gone.
+   *
+   * `wsListeners` and `statusListeners` are deliberately NOT
+   * cleared here. External subscribers (notably
+   * `KchatEventForwarder`, which is constructed once in
+   * `getKchatAuthService()` and outlives every connect/disconnect
+   * cycle in the app lifetime) own their own listener lifecycle
+   * via the unsubscribe closure returned from
+   * `onWebSocketEvent` / `onStatusChange`. Clearing the Sets here
+   * would silently strip those external subscribers from the
+   * client without their `unsubscribe()` ever running, and there
+   * is no mechanism for the forwarder to detect the loss and
+   * re-attach on the subsequent reconnect (its own `start()` guard
+   * would treat the call as a no-op because the cached
+   * `unsubscribeWs` / `unsubscribeStatus` closures are still
+   * non-null). The result on the previous draft was a permanently
+   * dead push pipeline after the first disconnect/reconnect cycle;
+   * the 30 s reconciliation poll papered over it for the sidebar
+   * badge but every push consumer downstream lost delivery.
+   *
+   * The auth service drives the lifecycle from `disconnect()` /
+   * `connect()` — `shutdown()` is invoked on disconnect and the
+   * same client instance is reused across reconnects, so keeping
+   * external subscribers attached across the gap is exactly what
+   * preserves the forwarder's IPC delivery. Fourth-pass Devin
+   * Review on PR #43 (`BUG_pr-review-job-…_0001`).
+   */
   shutdown(): void {
     this.disconnectWebSocket();
     this.stopHealthCheck();
     this.token = null;
     this.user = null;
-    this.wsListeners.clear();
     this.transition({ state: "disconnected", serverUrl: this.serverUrl });
-    this.statusListeners.clear();
   }
 
   // --- Internal helpers ------------------------------------------------

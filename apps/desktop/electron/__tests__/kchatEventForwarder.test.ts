@@ -551,4 +551,53 @@ describe("KchatEventForwarder", () => {
     expect(client.statusListeners.size).toBe(1);
     fwd.dispose();
   });
+
+  it("dispose() short-circuits a pending drain microtask", async () => {
+    // Regression for fourth-pass Devin Review on PR #43
+    // (ANALYSIS_pr-review-job-..._0005). `queueMicrotask`
+    // cannot be cancelled, so a drain scheduled before
+    // `dispose()` will fire after. Without the `disposed`
+    // guard the drain would call `webContents.send` on a
+    // stale window reference. With the guard the drain
+    // observes `disposed === true` and bails out cleanly.
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(makeRawEvent({ event: "posted", seq: 1 }));
+    // The drain is queued but not yet run. Dispose
+    // immediately, before the microtask boundary.
+    fwd.dispose();
+    // Yield so the queued microtask gets a chance to fire.
+    await Promise.resolve();
+    // The window must NOT have received the send — the drain
+    // must have short-circuited on the `disposed` flag.
+    expect(w1.sends).toHaveLength(0);
+  });
+
+  it("start() after dispose() re-arms the forwarder", async () => {
+    // Tests recycle forwarders by calling dispose() then
+    // start() again. The `disposed` flag is sticky inside
+    // dispose() so we explicitly reset it on start() —
+    // otherwise the second-cycle forwarder would silently
+    // drop every event because `disposed` was still true.
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+    fwd.dispose();
+    // Re-start on a fresh client — same forwarder instance.
+    const client2 = new FakeClient();
+    fwd.start(client2 as unknown as KchatClient);
+    client2.triggerWsEvent(makeRawEvent({ event: "posted", seq: 3 }));
+    await Promise.resolve();
+    expect(w1.sends).toHaveLength(1);
+    expect(w1.sends[0].payload).toMatchObject({ event: "posted", seq: 3 });
+    fwd.dispose();
+  });
 });
