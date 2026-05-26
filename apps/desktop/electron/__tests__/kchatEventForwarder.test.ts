@@ -36,18 +36,18 @@
  *
  *   4. `file_added` side-effect: every `file_added` event lands a
  *      `bridgeLogKchatFileEventReceived(...)` audit row with
- *      `triggered_reindex=false`. The forwarder no longer calls
- *      `bridgeReindexSource` or `bridgeFindKchatSourceByCacheDir`
- *      — the previous draft did so, but the second-pass Devin
- *      Review on PR #43 (`BUG_pr-review-job-...0001` +
- *      `ANALYSIS_pr-review-job-...0001`) caught that a
- *      `file_added` event arrives BEFORE the new file is
- *      downloaded into the cache directory, so reindex was a
- *      blocking no-op under the source-manager mutex. The audit
- *      flag is preserved as a reserved slot for the future
- *      auto-sync iteration; for now it is always `false`. When
- *      the bridge is absent, no audit row is observable but the
- *      forwarder MUST NOT throw.
+ *      `triggered_reindex=false`. The forwarder does not call
+ *      any source-registry or reindex bridge methods — the
+ *      second-pass Devin Review on PR #43 (`BUG_pr-review-job-
+ *      ...0001`) caught that a `file_added` event arrives BEFORE
+ *      the new file is downloaded into the cache directory, so
+ *      reindex was a blocking no-op under the source-manager
+ *      mutex; the third-pass review (`ANALYSIS_pr-review-job-
+ *      ...0001`) followed up by removing the now-dead source
+ *      lookup surface. The audit flag is preserved as a reserved
+ *      slot for the future auto-sync iteration; for now it is
+ *      always `false`. When the bridge is absent, no audit row
+ *      is observable but the forwarder MUST NOT throw.
  *
  *   5. Status push: `client.onStatusChange` callbacks are
  *      forwarded over `kchat:status` to every non-destroyed
@@ -77,8 +77,6 @@ vi.mock("electron", () => {
 
 interface BridgeMockShape {
   bridgeLogKchatFileEventReceived: ReturnType<typeof vi.fn>;
-  bridgeFindKchatSourceByCacheDir: ReturnType<typeof vi.fn>;
-  bridgeReindexSource: ReturnType<typeof vi.fn>;
 }
 
 let bridgeMock: BridgeMockShape | null = null;
@@ -204,8 +202,6 @@ function makeRawEvent(
 beforeEach(() => {
   bridgeMock = {
     bridgeLogKchatFileEventReceived: vi.fn(),
-    bridgeFindKchatSourceByCacheDir: vi.fn(),
-    bridgeReindexSource: vi.fn(),
   };
 });
 
@@ -385,19 +381,18 @@ describe("KchatEventForwarder", () => {
     fwd.dispose();
   });
 
-  // Regression pin for the second-pass Devin Review on PR #43
-  // (`BUG_pr-review-job-...0001` + `ANALYSIS_pr-review-job-...0001`):
-  // the forwarder must NOT call `bridgeReindexSource` or
-  // `bridgeFindKchatSourceByCacheDir` on `file_added`. The first-
-  // pass implementation did both — the source lookup populated a
-  // `triggered_reindex` audit flag, and the reindex picked up the
-  // "newly uploaded" file. The second-pass review caught that the
-  // file isn't on disk yet at `file_added` time (download happens
-  // via the `sources:addKchatChannel` reconciliation poll), so the
-  // reindex was a guaranteed no-op blocking the napi worker thread.
-  // We now skip both calls; the audit row's reserved
-  // `triggered_reindex` slot is always `false`.
-  it("audits with triggered_reindex=false on file_added without source lookup or reindex", async () => {
+  // Regression pin for the second- and third-pass Devin Review on
+  // PR #43 (`BUG_pr-review-job-...0001` + `ANALYSIS_pr-review-job-
+  // ...0001`): the forwarder must audit the `file_added` event with
+  // `triggered_reindex=false` (the always-false sentinel) and must
+  // not consult the source registry. The first-pass implementation
+  // did a source lookup + reindex spawn; both were removed because
+  // the file isn't on disk yet at `file_added` time. The bridge no
+  // longer exposes the lookup helper at all (it was dead code after
+  // the lookup call site was removed) so the mock shape doesn't
+  // include it — a regression that re-added the lookup would fail
+  // to type-check against the trimmed `NativeBridge`.
+  it("audits file_added with triggered_reindex=false and no source-registry interaction", async () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
@@ -425,20 +420,15 @@ describe("KchatEventForwarder", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(
-      bridgeMock!.bridgeFindKchatSourceByCacheDir,
-    ).not.toHaveBeenCalled();
-    expect(bridgeMock!.bridgeReindexSource).not.toHaveBeenCalled();
-    expect(
       bridgeMock!.bridgeLogKchatFileEventReceived,
     ).toHaveBeenCalledWith("file_added", "chan-A", "file-XYZ", false);
     fwd.dispose();
   });
 
-  // A `file_added` event for a channel with no linked source: the
-  // audit row still fires (the forwarder no longer consults the
-  // source registry at all, so "unlinked" is indistinguishable
-  // from "linked" at this layer).
-  it("audits file_added even for channels with no linked source", async () => {
+  // A `file_added` event for a channel that may or may not be
+  // linked as a source: the audit row still fires (the forwarder
+  // doesn't consult the source registry at this layer).
+  it("audits file_added even when no channel-id is present in broadcast", async () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
@@ -454,15 +444,13 @@ describe("KchatEventForwarder", () => {
     );
     await Promise.resolve();
     await Promise.resolve();
-    expect(bridgeMock!.bridgeReindexSource).not.toHaveBeenCalled();
-    expect(bridgeMock!.bridgeFindKchatSourceByCacheDir).not.toHaveBeenCalled();
     expect(
       bridgeMock!.bridgeLogKchatFileEventReceived,
     ).toHaveBeenCalledWith("file_added", "chan-A", "file-ABC", false);
     fwd.dispose();
   });
 
-  it("does not audit or reindex non-file_added events", async () => {
+  it("does not audit non-file_added events", async () => {
     const w1 = new FakeWindow();
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
@@ -473,8 +461,6 @@ describe("KchatEventForwarder", () => {
     client.triggerWsEvent(makeRawEvent({ event: "posted" }));
     await Promise.resolve();
     await Promise.resolve();
-    expect(bridgeMock!.bridgeFindKchatSourceByCacheDir).not.toHaveBeenCalled();
-    expect(bridgeMock!.bridgeReindexSource).not.toHaveBeenCalled();
     expect(bridgeMock!.bridgeLogKchatFileEventReceived).not.toHaveBeenCalled();
     fwd.dispose();
   });

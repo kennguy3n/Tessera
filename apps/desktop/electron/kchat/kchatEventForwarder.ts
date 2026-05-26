@@ -35,11 +35,18 @@
  *      c. Audit every `file_added` event via
  *         `bridgeLogKchatFileEventReceived`. The audit row
  *         records the event name, originating channel id,
- *         server-supplied file id, and a `channel_linked` flag
- *         (whether the channel matched a registered
- *         `SourceType::Kchat` source) so an operator can
- *         correlate WS traffic with the source registry. Other
- *         event types (chat `posted`, membership changes,
+ *         server-supplied file id, and a `triggered_reindex`
+ *         boolean. The flag is currently always `false` from
+ *         the Node side — the previous draft consulted the
+ *         source registry here to set it true on a hit, but
+ *         the second/third-pass Devin Review on PR #43 removed
+ *         both the reindex call (the file isn't on disk yet)
+ *         and the lookup helper (no remaining callers). The
+ *         field is preserved on the audit row + napi boundary
+ *         as a reserved slot for the future auto-sync iteration
+ *         described in step `d` below, so the audit row text
+ *         format does not have to change when that work lands.
+ *         Other event types (chat `posted`, membership changes,
  *         presence) are NOT audited at the per-event
  *         granularity — that would flood the audit log with
  *         content most operators don't want to grep.
@@ -89,6 +96,41 @@ import type {
   KchatWebSocketEvent,
   KchatWebSocketEventView,
 } from "./kchatTypes";
+import type { KchatWebSocketEventPayload } from "../../shared/types";
+
+/**
+ * Compile-time structural equivalence check between the main-
+ * process `KchatWebSocketEventView` (the shape this forwarder
+ * sends over `kchat:event`) and the renderer-facing
+ * `KchatWebSocketEventPayload` (the shape the preload bridge
+ * surfaces to renderer consumers). Electron's
+ * `webContents.send` is structurally typed at the wire — the
+ * receiver gets whatever shape the sender pushed, regardless of
+ * the declared TypeScript types on either side. If the two
+ * interfaces ever drift (a field is renamed in one but not the
+ * other, a new field is added to one only, an existing field
+ * changes optionality), renderers would silently receive a
+ * stale-typed payload and the bug would surface only when a
+ * `.someNewField` access on the renderer side returns
+ * `undefined` at runtime.
+ *
+ * Two bidirectional assignment functions force the type
+ * checker to prove each shape is assignable to the other. A
+ * divergence on either side fails `tsc --noEmit` immediately
+ * with a precise field-level diagnostic, well before the
+ * payload reaches IPC. The functions are intentionally not
+ * exported, never called, and have no runtime cost — the
+ * declarations live solely as a tripwire. Third-pass Devin
+ * Review on PR #43 (`ANALYSIS_pr-review-job-...0006`).
+ */
+const _assertViewIsPayload = (
+  v: KchatWebSocketEventView,
+): KchatWebSocketEventPayload => v;
+const _assertPayloadIsView = (
+  p: KchatWebSocketEventPayload,
+): KchatWebSocketEventView => p;
+void _assertViewIsPayload;
+void _assertPayloadIsView;
 
 /**
  * Per-renderer-window cap on the ring buffer. 100 events is

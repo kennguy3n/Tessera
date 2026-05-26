@@ -273,22 +273,6 @@ export interface NativeBridge {
     fileId: string | null,
     triggeredReindex: boolean,
   ): void;
-  /**
-   * Locate the `SourceType::Kchat` source row backing a given on-
-   * disk cache directory; returns `null` when no row exists.
-   *
-   * Called by the `KchatEventForwarder` on every `file_added`
-   * WebSocket event to decide whether the originating channel is
-   * currently linked as a Tessera source — if so, the forwarder
-   * follows up with `bridgeReindexSource(sourceId)` so the
-   * indexer picks up the newly-uploaded file without waiting for
-   * the user's next manual refresh.
-   *
-   * Returns `null` rather than throwing on "not linked" so the
-   * hot-path (event fires, channel not linked) is allocation-free
-   * and the forwarder can drop the event without a try/catch.
-   */
-  bridgeFindKchatSourceByCacheDir(cacheDir: string): SourceInfo | null;
   // --- Audit query ---
   //
   // Renderer-facing read API over the audit store. The renderer

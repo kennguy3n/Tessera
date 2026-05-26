@@ -35,6 +35,29 @@ import type {
   KchatWebSocketEventPayload,
 } from "../../../shared/types";
 
+/**
+ * Reconciliation poll cadence in milliseconds.
+ *
+ * Block A used 10 s for both the unread-files poll and the
+ * status probe (it was the only delivery mechanism — the
+ * sidebar received no push events at all). Block B Task 1
+ * added a main-process WebSocket forwarder that pushes
+ * `kchat:event` and `kchat:status` over IPC, so the poll
+ * stopped being the primary delivery path and became a
+ * reconciliation fallback for the narrow case where the push
+ * listener missed a transition (renderer subscribed mid-
+ * reconnect; a `kchat:event` was dropped by the main-process
+ * ring buffer under burst load; the OS suspended the renderer
+ * during a transition). 30 s is the convergence target: a
+ * missed event surfaces within ~30 s in the worst case, while
+ * the steady-state cost (REST round-trip every 30 s × number
+ * of channels in `CHANNELS_PER_TICK`, currently 10) stays well
+ * below the global KChat REST limiter's 5 req/s × burst 20
+ * budget. Third-pass Devin Review on PR #43
+ * (`ANALYSIS_pr-review-job-...0005`) flagged that the cadence
+ * change from 10 s → 30 s was not documented in the source;
+ * this comment is that documentation.
+ */
 const POLL_INTERVAL_MS = 30_000;
 const SEEN_LS_KEY = "tessera.kchat.lastSeenAt";
 

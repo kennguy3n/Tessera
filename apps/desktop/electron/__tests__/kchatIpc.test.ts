@@ -89,15 +89,13 @@ const bridgeMock = {
   bridgeLogKchatChannelLinked: vi.fn(),
   bridgeLogKchatChannelUnlinked: vi.fn(),
   bridgeLogKchatFileDownloaded: vi.fn(),
-  // Block B Task 1: napi pass-throughs the IPC layer doesn't
-  // exercise itself (they're called by the WS forwarder, not by
-  // any `kchat:*` IPC handler) but that the NativeBridge surface
-  // must still expose so the bridge mock matches the production
-  // shape. Tests for the forwarder live in
+  // Block B Task 1: napi pass-through called by the WS forwarder,
+  // not by any `kchat:*` IPC handler. We still wire it on the
+  // bridge mock so the surface matches the production
+  // `NativeBridge` shape and IPC tests that construct a fake
+  // bridge type-check against it. Tests for the forwarder live in
   // `__tests__/kchatEventForwarder.test.ts`.
   bridgeLogKchatFileEventReceived: vi.fn(),
-  bridgeFindKchatSourceByCacheDir: vi.fn(() => null),
-  bridgeReindexSource: vi.fn(),
 };
 
 // `KchatAuthService` stub. `getClient()` returns an object with the
