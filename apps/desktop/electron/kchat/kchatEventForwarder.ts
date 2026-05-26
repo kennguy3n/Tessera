@@ -98,6 +98,17 @@ import type {
  * worst-case memory at ~100 × ~200 B per JSON view = ~20 KB per
  * window. A slow renderer cannot grow the buffer past this
  * cap — the oldest event is dropped on overflow.
+ *
+ * Implementation note: the buffer is a plain JS `Array` and
+ * drop-oldest is `Array.prototype.shift()`, which is O(n) per
+ * drop. At `RING_BUFFER_CAP = 100` the worst-case cost of a
+ * fully-saturated buffer is ~10,000 element moves per drain,
+ * which is well inside the per-tick budget. If this cap is
+ * ever increased past ~1000 the shape should switch to a
+ * pointer-based circular buffer (write/read indices over a
+ * fixed-size array) — the shift cost crosses the renderer-
+ * tick budget around that scale. See Devin Review thread
+ * `ANALYSIS_pr-review-job-…_0004` on PR #43 for the analysis.
  */
 export const RING_BUFFER_CAP = 100;
 
