@@ -2014,7 +2014,18 @@ pub fn bridge_log_kchat_channel_access_revoked(
 /// locked by another process on Windows). Operators grep the audit
 /// log for `fs_scrub_succeeded=false` to find revokes whose on-disk
 /// plaintext survived the scrub.
+///
+/// `vacuum_succeeded` / `vacuum_error` come from the substrate's
+/// Phase 5 `VACUUM` (forwarded through
+/// `KchatRevokeOutcomeInfo` / `KchatAclRefreshOutcomeInfo`). Fifth-pass
+/// Devin Review fix (ANALYSIS_pr-review-job-ef3c7d6c..._0001): a
+/// `VACUUM` failure after the DELETE + UPDATE transaction commits
+/// is non-fatal — the row-level scrub already ran under
+/// `secure_delete = ON` so the cryptographic guarantee holds — but
+/// the audit row records `vacuum_succeeded=false` so operators can
+/// re-run `VACUUM` manually once the underlying issue resolves.
 #[napi]
+#[allow(clippy::too_many_arguments)]
 pub fn bridge_log_kchat_source_cryptoshredded(
     channel_id: String,
     reason: String,
@@ -2022,6 +2033,8 @@ pub fn bridge_log_kchat_source_cryptoshredded(
     files_dropped: u32,
     fs_scrub_succeeded: bool,
     fs_scrub_error: Option<String>,
+    vacuum_succeeded: bool,
+    vacuum_error: Option<String>,
 ) -> napi::Result<()> {
     let s = state()?;
     if let Ok(logger) = s.audit_logger.lock() {
@@ -2032,6 +2045,8 @@ pub fn bridge_log_kchat_source_cryptoshredded(
             files_dropped,
             fs_scrub_succeeded,
             fs_scrub_error.as_deref(),
+            vacuum_succeeded,
+            vacuum_error.as_deref(),
         );
     }
     Ok(())

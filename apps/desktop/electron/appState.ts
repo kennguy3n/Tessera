@@ -410,6 +410,19 @@ export interface NativeBridge {
    * manifest sidecar are removed. Operators grep
    * `fs_scrub_succeeded=false` in the audit log to find revokes
    * whose on-disk plaintext survived the scrub.
+   *
+   * `vacuumSucceeded` / `vacuumError` are the substrate's Phase 5
+   * `VACUUM` outcomes, forwarded through the bridge revoke /
+   * refresh outcome structs (fifth-pass Devin Review fix,
+   * ANALYSIS_pr-review-job-ef3c7d6c..._0001). A `false` value is
+   * NOT a scrub failure — the row-level DELETE + UPDATE already
+   * committed under `secure_delete = ON` so the cryptographic
+   * guarantee holds — but operators want the audit row to record
+   * the degraded state so they can re-run `VACUUM` manually once
+   * the underlying issue resolves. Previously a VACUUM failure
+   * propagated `?` up to the forwarder's catch block and defaulted
+   * the audit row to `outcome=unlinked`, hiding the successful
+   * scrub from the trail.
    */
   bridgeLogKchatSourceCryptoshredded(
     channelId: string,
@@ -418,6 +431,8 @@ export interface NativeBridge {
     filesDropped: number,
     fsScrubSucceeded: boolean,
     fsScrubError: string | undefined,
+    vacuumSucceeded: boolean,
+    vacuumError: string | undefined,
   ): void;
   // --- Audit query ---
   //

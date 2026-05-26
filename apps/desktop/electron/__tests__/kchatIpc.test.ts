@@ -131,6 +131,10 @@ const bridgeMock = {
     // non-revoke outcomes always emit zero.
     chunksDropped: 0,
     filesDropped: 0,
+    // Fifth-pass Devin Review fix: VACUUM outcome surface;
+    // happy-path no-op flows true / undefined.
+    vacuumSucceeded: true,
+    vacuumError: undefined,
   })),
   // Block B Task 4 (Phase 11): the revoke outcome carries the
   // substrate's cryptoshred counters. The IPC suite does not
@@ -140,6 +144,8 @@ const bridgeMock = {
     outcome: "revoked",
     chunksDropped: 0,
     filesDropped: 0,
+    vacuumSucceeded: true,
+    vacuumError: undefined,
   })),
   bridgeLogKchatAclRefreshed: vi.fn(),
   bridgeLogKchatChannelAccessRevoked: vi.fn(),

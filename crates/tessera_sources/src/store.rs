@@ -696,6 +696,19 @@ impl SourceStore {
     ///    in Phase 4 still ran on the actual delete path, so the
     ///    cryptographic guarantee holds; VACUUM is the
     ///    belt-and-braces freelist sweep, not the primary scrub.
+    ///    Fifth-pass Devin Review fix
+    ///    (ANALYSIS_pr-review-job-ef3c7d6c..._0001): a VACUUM
+    ///    failure here is NON-FATAL — the row-level scrub already
+    ///    committed under `secure_delete = ON`, so the cryptographic
+    ///    property holds even when VACUUM cannot rewrite the file.
+    ///    The function returns `Ok(outcome)` with
+    ///    `vacuum_succeeded = false` and the error text in
+    ///    `vacuum_error`, which the bridge + audit logger surface as
+    ///    a `vacuum_succeeded=false` row so an operator grep finds
+    ///    revokes that need a manual `VACUUM` re-run. Previously a
+    ///    `?`-propagated VACUUM error reached the forwarder's catch
+    ///    block and defaulted the audit row to `"unlinked"`, hiding
+    ///    the successful scrub from the trail.
     /// 6. **`PRAGMA secure_delete = OFF`** — restore the connection
     ///    to the default low-overhead delete path. The pragma is
     ///    connection-scoped and the connection is shared, so this
@@ -811,24 +824,55 @@ impl SourceStore {
 
             txn.commit().map_err(|e| Error::Database(e.to_string()))?;
 
-            // Phase 5 — VACUUM (cannot run inside a transaction).
-            // Only pay the full-file-rewrite cost when we actually
-            // deleted rows; the idempotent `already_revoked` path
-            // is a no-op so there is nothing for VACUUM to reclaim.
-            // SQLCipher still encrypts every page under the master
-            // key, but the belt-and-braces VACUUM means a
-            // compromised master key cannot recover the
-            // cryptoshredded chunks even via the freelist; we
-            // already zero-filled the pages in Phase 2+3, VACUUM
-            // additionally rebuilds the file so the freed pages are
-            // removed from the on-disk layout entirely.
-            if chunks_to_drop > 0 || files_to_drop > 0 {
-                conn.execute_batch("VACUUM;")
-                    .map_err(|e| Error::Database(e.to_string()))?;
-            }
-
             Ok(())
         })();
+
+        // Phase 5 — VACUUM (cannot run inside a transaction). Moved
+        // OUT of the scrub_result closure (fifth-pass Devin Review
+        // fix, ANALYSIS_pr-review-job-ef3c7d6c..._0001): a VACUUM
+        // failure after the DELETE + UPDATE transaction commits is
+        // NOT a scrub failure. The row-level deletes already ran
+        // under `PRAGMA secure_delete = ON` so the freed pages are
+        // zero-filled; the cryptographic property holds. VACUUM is
+        // the belt-and-braces freelist sweep — a failure here means
+        // the on-disk freelist still holds zero-filled pages but in
+        // the original file layout. Operators want to learn about
+        // that so they can re-run `VACUUM` once disk space recovers,
+        // but propagating the error as a hard failure would default
+        // the forwarder's audit row to `"unlinked"` ("we never saw
+        // the revoke") when in fact the substrate scrub succeeded.
+        //
+        // Only pay the full-file-rewrite cost when we actually
+        // deleted rows; the idempotent `already_revoked` path is a
+        // no-op so there is nothing for VACUUM to reclaim.
+        //
+        // Skip VACUUM entirely if the scrub_result already errored —
+        // there's no point rebuilding the file when the rows weren't
+        // deleted in the first place, and running VACUUM against a
+        // poisoned connection would mask the original error.
+        let (vacuum_succeeded, vacuum_error) =
+            if scrub_result.is_ok() && (chunks_to_drop > 0 || files_to_drop > 0) {
+                match conn.execute_batch("VACUUM;") {
+                    Ok(()) => (true, None),
+                    Err(e) => {
+                        let msg = e.to_string();
+                        eprintln!(
+                            "[cryptoshred] VACUUM failed for source {id_str} after a \
+                         successful row-level scrub; secure_delete zero-filled the \
+                         freed pages so the cryptographic guarantee holds, but the \
+                         freelist sweep did not rebuild the file layout. Re-run \
+                         VACUUM manually once the underlying issue resolves: {msg}"
+                        );
+                        (false, Some(msg))
+                    }
+                }
+            } else {
+                // No VACUUM run — either the scrub failed (we will
+                // propagate the scrub error below) or there was nothing
+                // to reclaim. Both are non-failures for the VACUUM
+                // observability surface.
+                (true, None)
+            };
 
         // Phase 6 — ALWAYS restore the connection's default delete
         // mode, even if the scrub above failed. If we propagated
@@ -852,10 +896,14 @@ impl SourceStore {
         //
         // The original `scrub_result` error still takes precedence
         // as the function's return value — it's what the caller
-        // primarily needs to know about (e.g. a VACUUM disk-full
-        // bubbling up). The reset failure rides along in stderr
-        // so an operator grep-ing the logs can correlate both
-        // failures with the same audit row.
+        // primarily needs to know about (e.g. a `BEGIN IMMEDIATE`
+        // failing under lock contention, or a DELETE hitting a
+        // poisoned page). VACUUM errors no longer flow through
+        // here (Phase 5 is post-closure and reports via
+        // `outcome.vacuum_succeeded` / `outcome.vacuum_error`
+        // instead). The reset failure rides along in stderr so an
+        // operator grep-ing the logs can correlate both failures
+        // with the same audit row.
         let reset_result = conn
             .execute_batch("PRAGMA secure_delete = OFF;")
             .map_err(|e| Error::Database(e.to_string()));
@@ -874,6 +922,8 @@ impl SourceStore {
         Ok(KchatSourceCryptoshredOutcome {
             chunks_dropped: u32::try_from(chunks_to_drop).unwrap_or(u32::MAX),
             files_dropped: u32::try_from(files_to_drop).unwrap_or(u32::MAX),
+            vacuum_succeeded,
+            vacuum_error,
         })
     }
 
@@ -1613,7 +1663,25 @@ pub struct KchatAclRow {
 /// (`KchatSourceCryptoshredded`) records how much evidence was
 /// scrubbed. `u32` is wide enough — a single KChat-backed source
 /// will not realistically index billions of chunks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `vacuum_succeeded` records whether Phase 5 (`VACUUM`) completed
+/// cleanly. Phase 5 is the belt-and-braces freelist sweep that runs
+/// AFTER the DELETE + UPDATE transaction has already committed under
+/// `PRAGMA secure_delete = ON` (Phase 2-4): the cryptographic scrub
+/// is already done at that point — SQLite zero-filled the freed
+/// pages on the row-level DELETEs. A `VACUUM` failure (e.g. disk
+/// pressure preventing the temp-file rewrite) is therefore NOT a
+/// scrub failure; it just means the freelist pages were not
+/// additionally rewritten to a fresh file layout. The data is gone
+/// either way — but operators rely on the audit trail to learn that
+/// the belt-and-braces sweep didn't complete so they can re-run
+/// `VACUUM` manually when disk space recovers. Fifth-pass Devin
+/// Review fix (ANALYSIS_pr-review-job-ef3c7d6c..._0001): previously
+/// a `VACUUM` failure propagated `?` up to the forwarder's catch
+/// block, defaulting the outcome to `"unlinked"` — operator-visible
+/// audit said "we never saw the revoke" when in fact the row-level
+/// scrub committed successfully.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KchatSourceCryptoshredOutcome {
     /// Number of rows deleted from the `chunks` table (which also
     /// cascades to `chunks_fts` and `chunk_embeddings` via the
@@ -1621,6 +1689,17 @@ pub struct KchatSourceCryptoshredOutcome {
     pub chunks_dropped: u32,
     /// Number of rows deleted from the `indexed_files` table.
     pub files_dropped: u32,
+    /// `true` when Phase 5 (`VACUUM`) ran cleanly OR was skipped
+    /// because there was nothing to reclaim (idempotent
+    /// `already_revoked` path drops zero rows). `false` only when
+    /// `VACUUM` actually ran and rusqlite returned an error.
+    pub vacuum_succeeded: bool,
+    /// First-error message text on a `VACUUM` failure. `None`
+    /// otherwise. Surfaced to the audit row via
+    /// `bridge_log_kchat_source_cryptoshredded` so operators have
+    /// the underlying SQLite error code (e.g. `database or disk
+    /// is full`) without needing to chase the eprintln in stderr.
+    pub vacuum_error: Option<String>,
 }
 
 #[cfg(test)]
@@ -1995,6 +2074,8 @@ mod tests {
             KchatSourceCryptoshredOutcome {
                 chunks_dropped: 2,
                 files_dropped: 2,
+                vacuum_succeeded: true,
+                vacuum_error: None,
             },
         );
 

@@ -232,6 +232,11 @@ interface KchatRevokeOutcomeView {
   outcome: "revoked" | "already_revoked" | "unlinked";
   chunksDropped: number;
   filesDropped: number;
+  // Fifth-pass Devin Review fix
+  // (ANALYSIS_pr-review-job-ef3c7d6c..._0001): VACUUM observability
+  // surface threaded through bridge → forwarder → audit logger.
+  vacuumSucceeded: boolean;
+  vacuumError?: string;
 }
 interface KchatAclRefreshOutcomeView {
   outcome:
@@ -244,6 +249,11 @@ interface KchatAclRefreshOutcomeView {
   principalPresent: boolean;
   chunksDropped: number;
   filesDropped: number;
+  // Fifth-pass Devin Review fix
+  // (ANALYSIS_pr-review-job-ef3c7d6c..._0001): see
+  // `KchatRevokeOutcomeView` above.
+  vacuumSucceeded: boolean;
+  vacuumError?: string;
 }
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
 const _assertRevokeInfoIsView = (
@@ -1183,6 +1193,15 @@ export class KchatEventForwarder {
     // didn't fail).
     let fsScrubSucceeded = true;
     let fsScrubError: string | undefined;
+    // Fifth-pass Devin Review fix
+    // (ANALYSIS_pr-review-job-ef3c7d6c..._0001): substrate-side
+    // `VACUUM` outcome surfaced via `KchatAclRefreshOutcomeInfo`.
+    // A `false` is not a scrub failure (the row-level DELETE +
+    // UPDATE already committed under `secure_delete = ON`) but the
+    // audit row must record it so operators can grep for
+    // `vacuum_succeeded=false` and re-run `VACUUM` manually.
+    let vacuumSucceeded = true;
+    let vacuumError: string | undefined;
 
     try {
       const result = await withChannelSyncLock(channelId, async () => {
@@ -1198,6 +1217,8 @@ export class KchatEventForwarder {
             filesDropped: 0,
             fsScrubSucceeded: true,
             fsScrubError: undefined as string | undefined,
+            vacuumSucceeded: true,
+            vacuumError: undefined as string | undefined,
           };
         }
 
@@ -1274,6 +1295,8 @@ export class KchatEventForwarder {
           filesDropped: r.filesDropped,
           fsScrubSucceeded: scrubSucceeded,
           fsScrubError: scrubError,
+          vacuumSucceeded: r.vacuumSucceeded,
+          vacuumError: r.vacuumError,
         };
       });
       outcome = result.outcome;
@@ -1283,6 +1306,8 @@ export class KchatEventForwarder {
       filesDropped = result.filesDropped;
       fsScrubSucceeded = result.fsScrubSucceeded;
       fsScrubError = result.fsScrubError;
+      vacuumSucceeded = result.vacuumSucceeded;
+      vacuumError = result.vacuumError;
     } catch (err) {
       console.error(
         "[KchatEventForwarder] ACL refresh failed:",
@@ -1319,6 +1344,8 @@ export class KchatEventForwarder {
         filesDropped,
         fsScrubSucceeded,
         fsScrubError,
+        vacuumSucceeded,
+        vacuumError,
       );
     } else if (outcome === "regranted") {
       // Block B Task 4 (Phase 11) second-pass Devin Review
@@ -1421,6 +1448,8 @@ export class KchatEventForwarder {
       filesDropped: 0,
       fsScrubSucceeded: true,
       fsScrubError: undefined,
+      vacuumSucceeded: true,
+      vacuumError: undefined,
     };
     try {
       result = await withChannelSyncLock(channelId, async () => {
@@ -1454,6 +1483,14 @@ export class KchatEventForwarder {
     const filesDropped = result.filesDropped;
     const fsScrubSucceeded = result.fsScrubSucceeded;
     const fsScrubError = result.fsScrubError;
+    // Fifth-pass Devin Review fix
+    // (ANALYSIS_pr-review-job-ef3c7d6c..._0001): pass through the
+    // substrate's Phase 5 `VACUUM` outcome onto the audit row so a
+    // `vacuum_succeeded=false` from the bridge surfaces as
+    // `vacuum_succeeded=false` in the audit trail (instead of being
+    // hidden behind a default-true that masked the degraded state).
+    const vacuumSucceeded = result.vacuumSucceeded;
+    const vacuumError = result.vacuumError;
 
     // Always emit the access-revoked audit row even when the
     // bridge returned `unlinked` / `already_revoked` — the
@@ -1477,6 +1514,8 @@ export class KchatEventForwarder {
         filesDropped,
         fsScrubSucceeded,
         fsScrubError,
+        vacuumSucceeded,
+        vacuumError,
       );
     }
   }
@@ -1556,6 +1595,8 @@ export class KchatEventForwarder {
     filesDropped: number,
     fsScrubSucceeded: boolean,
     fsScrubError: string | undefined,
+    vacuumSucceeded: boolean,
+    vacuumError: string | undefined,
   ): void {
     try {
       bridge.bridgeLogKchatSourceCryptoshredded(
@@ -1565,6 +1606,8 @@ export class KchatEventForwarder {
         filesDropped,
         fsScrubSucceeded,
         fsScrubError,
+        vacuumSucceeded,
+        vacuumError,
       );
     } catch (err) {
       console.error(

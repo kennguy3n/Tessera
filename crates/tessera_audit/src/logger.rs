@@ -338,6 +338,23 @@ impl AuditLogger {
     /// (e.g. `fs.rm` blocked by another process on Windows) and
     /// must be re-run by hand. `fs_scrub_error` carries the first
     /// `fs.rm` error message in that case.
+    ///
+    /// `vacuum_succeeded` records whether the substrate's Phase 5
+    /// `VACUUM` (the belt-and-braces freelist sweep that rebuilds
+    /// the SQLite file layout AFTER the DELETE + UPDATE transaction
+    /// commits under `PRAGMA secure_delete = ON`) ran cleanly. A
+    /// `false` value here is NOT a scrub failure — the row-level
+    /// scrub already committed and the cryptographic guarantee
+    /// holds — but operators want to learn that the on-disk
+    /// freelist was not additionally rewritten so they can re-run
+    /// `VACUUM` manually once the underlying issue resolves.
+    /// `vacuum_error` carries the first SQLite error message in
+    /// that case (e.g. `database or disk is full`). Fifth-pass
+    /// Devin Review fix (ANALYSIS_pr-review-job-ef3c7d6c..._0001):
+    /// previously a `VACUUM` failure propagated `?` up to the
+    /// forwarder's catch block and defaulted the audit row to
+    /// `outcome=unlinked`, hiding the successful row-level scrub.
+    #[allow(clippy::too_many_arguments)]
     pub fn log_kchat_source_cryptoshredded(
         &self,
         channel_id: &str,
@@ -346,9 +363,15 @@ impl AuditLogger {
         files_dropped: u32,
         fs_scrub_succeeded: bool,
         fs_scrub_error: Option<&str>,
+        vacuum_succeeded: bool,
+        vacuum_error: Option<&str>,
     ) -> Result<()> {
         let fs_error_segment = match fs_scrub_error {
             Some(e) if !e.is_empty() => format!(" fs_scrub_error={e}"),
+            _ => String::new(),
+        };
+        let vacuum_error_segment = match vacuum_error {
+            Some(e) if !e.is_empty() => format!(" vacuum_error={e}"),
             _ => String::new(),
         };
         self.log(
@@ -356,7 +379,8 @@ impl AuditLogger {
             format!(
                 "KChat source cryptoshredded: channel={channel_id} reason={reason} \
                  chunks_dropped={chunks_dropped} files_dropped={files_dropped} \
-                 fs_scrub_succeeded={fs_scrub_succeeded}{fs_error_segment}"
+                 fs_scrub_succeeded={fs_scrub_succeeded}{fs_error_segment} \
+                 vacuum_succeeded={vacuum_succeeded}{vacuum_error_segment}"
             ),
         )
     }
@@ -660,6 +684,8 @@ mod tests {
                 7,
                 true,
                 None,
+                true,
+                None,
             )
             .unwrap();
         logger
@@ -668,6 +694,8 @@ mod tests {
                 "channel_archived",
                 0,
                 0,
+                true,
+                None,
                 true,
                 None,
             )
@@ -683,13 +711,34 @@ mod tests {
                 3,
                 false,
                 Some("cacheDir(/tmp/k/c-003): EBUSY: resource busy"),
+                true,
+                None,
+            )
+            .unwrap();
+        // Fourth row: real shred where the row-level DELETE
+        // committed cleanly but the belt-and-braces VACUUM failed.
+        // Fifth-pass Devin Review regression
+        // (ANALYSIS_pr-review-job-ef3c7d6c..._0001) pins the
+        // operator-grep contract for `vacuum_succeeded=false` so a
+        // future audit-shape change can't drop the field without
+        // breaking a test.
+        logger
+            .log_kchat_source_cryptoshredded(
+                "channel-shred-004",
+                "channel_deleted",
+                23,
+                4,
+                true,
+                None,
+                false,
+                Some("database or disk is full"),
             )
             .unwrap();
 
         let rows = logger
             .query_by_type(&AuditEventType::KchatSourceCryptoshredded)
             .unwrap();
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 4);
 
         let real = rows
             .iter()
@@ -702,6 +751,8 @@ mod tests {
         assert!(real.details.contains("files_dropped=7"));
         assert!(real.details.contains("fs_scrub_succeeded=true"));
         assert!(!real.details.contains("fs_scrub_error="));
+        assert!(real.details.contains("vacuum_succeeded=true"));
+        assert!(!real.details.contains("vacuum_error="));
 
         let idempotent = rows
             .iter()
@@ -711,6 +762,8 @@ mod tests {
         assert!(idempotent.details.contains("chunks_dropped=0"));
         assert!(idempotent.details.contains("files_dropped=0"));
         assert!(idempotent.details.contains("fs_scrub_succeeded=true"));
+        assert!(idempotent.details.contains("vacuum_succeeded=true"));
+        assert!(!idempotent.details.contains("vacuum_error="));
 
         let fs_failed = rows
             .iter()
@@ -723,5 +776,23 @@ mod tests {
             .details
             .contains("fs_scrub_error=cacheDir(/tmp/k/c-003)"));
         assert!(fs_failed.details.contains("EBUSY"));
+        // VACUUM succeeded on the fs-failed row — the two
+        // observability surfaces are independent.
+        assert!(fs_failed.details.contains("vacuum_succeeded=true"));
+
+        let vacuum_failed = rows
+            .iter()
+            .find(|row| row.details.contains("channel=channel-shred-004"))
+            .expect("vacuum-failed-shred row should be present");
+        assert!(vacuum_failed.details.contains("reason=channel_deleted"));
+        assert!(vacuum_failed.details.contains("chunks_dropped=23"));
+        assert!(vacuum_failed.details.contains("files_dropped=4"));
+        // The row-level scrub committed (`fs_scrub` is independent
+        // and trivially true on this row's input).
+        assert!(vacuum_failed.details.contains("fs_scrub_succeeded=true"));
+        assert!(vacuum_failed.details.contains("vacuum_succeeded=false"));
+        assert!(vacuum_failed
+            .details
+            .contains("vacuum_error=database or disk is full"));
     }
 }

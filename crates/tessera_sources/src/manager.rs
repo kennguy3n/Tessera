@@ -98,6 +98,21 @@ pub enum KchatAclRefreshOutcome {
         chunks_dropped: u32,
         /// Count of indexed_file rows scrubbed by the inline cryptoshred.
         files_dropped: u32,
+        /// Fifth-pass Devin Review fix
+        /// (ANALYSIS_pr-review-job-ef3c7d6c..._0001): `true` when the
+        /// belt-and-braces `VACUUM` ran cleanly (or was skipped
+        /// because there was nothing to reclaim). `false` only when
+        /// `VACUUM` ran and failed; the row-level scrub still
+        /// committed under `secure_delete = ON` in that case so the
+        /// cryptographic guarantee holds.
+        vacuum_succeeded: bool,
+        /// First-error message text on a `VACUUM` failure. `None`
+        /// when `vacuum_succeeded` is `true`. The Node-side forwarder
+        /// surfaces this on the `KchatSourceCryptoshredded` audit row
+        /// so operators can grep for `vacuum_succeeded=false` and
+        /// learn the underlying SQLite error without chasing
+        /// stderr.
+        vacuum_error: Option<String>,
     },
     /// No `SourceType::Kchat` row exists for the cache_dir the
     /// caller passed. The roster was NOT persisted (there's no
@@ -127,6 +142,12 @@ pub enum KchatRevokeOutcome {
         chunks_dropped: u32,
         /// Count of indexed_file rows scrubbed by the inline cryptoshred.
         files_dropped: u32,
+        /// Fifth-pass Devin Review fix: see
+        /// [`KchatAclRefreshOutcome::Revoked::vacuum_succeeded`].
+        vacuum_succeeded: bool,
+        /// Fifth-pass Devin Review fix: see
+        /// [`KchatAclRefreshOutcome::Revoked::vacuum_error`].
+        vacuum_error: Option<String>,
     },
     /// The source row was already `AccessRevoked` — no status
     /// change applied. The audit row is still emitted by the
@@ -145,6 +166,17 @@ pub enum KchatRevokeOutcome {
         chunks_dropped: u32,
         /// Count of indexed_file rows scrubbed by the inline cryptoshred.
         files_dropped: u32,
+        /// Fifth-pass Devin Review fix: see
+        /// [`KchatAclRefreshOutcome::Revoked::vacuum_succeeded`].
+        /// Typically `true` on this path because the idempotent
+        /// re-shred drops zero rows so `VACUUM` is skipped — but a
+        /// backfill of a Task-3-era soft-revoked source that still
+        /// has chunks/indexed_files rows WILL run `VACUUM` and could
+        /// fail.
+        vacuum_succeeded: bool,
+        /// Fifth-pass Devin Review fix: see
+        /// [`KchatAclRefreshOutcome::Revoked::vacuum_error`].
+        vacuum_error: Option<String>,
     },
     /// No `SourceType::Kchat` row exists for the cache_dir the
     /// caller passed. Returned when the forwarder races a
@@ -727,6 +759,8 @@ impl SourceManager {
             return Ok(KchatAclRefreshOutcome::Revoked {
                 chunks_dropped: shred.chunks_dropped,
                 files_dropped: shred.files_dropped,
+                vacuum_succeeded: shred.vacuum_succeeded,
+                vacuum_error: shred.vacuum_error,
             });
         }
 
@@ -800,16 +834,22 @@ impl SourceManager {
         let shred = self.store.cryptoshred_kchat_source_evidence(&source.id)?;
         let chunks_dropped = shred.chunks_dropped;
         let files_dropped = shred.files_dropped;
+        let vacuum_succeeded = shred.vacuum_succeeded;
+        let vacuum_error = shred.vacuum_error;
 
         Ok(if was_already_revoked {
             KchatRevokeOutcome::AlreadyRevoked {
                 chunks_dropped,
                 files_dropped,
+                vacuum_succeeded,
+                vacuum_error,
             }
         } else {
             KchatRevokeOutcome::Revoked {
                 chunks_dropped,
                 files_dropped,
+                vacuum_succeeded,
+                vacuum_error,
             }
         })
     }
@@ -1439,6 +1479,8 @@ mod tests {
             KchatAclRefreshOutcome::Revoked {
                 chunks_dropped: 1,
                 files_dropped: 1,
+                vacuum_succeeded: true,
+                vacuum_error: None,
             },
         );
         let refreshed = manager.get_source(&added.source.id).unwrap();
@@ -1520,6 +1562,8 @@ mod tests {
             KchatRevokeOutcome::Revoked {
                 chunks_dropped: 1,
                 files_dropped: 1,
+                vacuum_succeeded: true,
+                vacuum_error: None,
             },
         );
         assert_eq!(
@@ -1538,6 +1582,8 @@ mod tests {
             KchatRevokeOutcome::AlreadyRevoked {
                 chunks_dropped: 0,
                 files_dropped: 0,
+                vacuum_succeeded: true,
+                vacuum_error: None,
             },
         );
     }
@@ -1583,7 +1629,20 @@ mod tests {
             KchatRevokeOutcome::Revoked {
                 chunks_dropped,
                 files_dropped,
-            } => (chunks_dropped, files_dropped),
+                vacuum_succeeded,
+                vacuum_error,
+            } => {
+                // Fifth-pass Devin Review fix
+                // (ANALYSIS_pr-review-job-ef3c7d6c..._0001): the
+                // happy-path multi-file revoke must always report a
+                // clean VACUUM. The dedicated
+                // `cryptoshred_kchat_source_evidence_records_vacuum_failure`
+                // test in `store.rs` exercises the failure path via a
+                // poisoned connection.
+                assert!(vacuum_succeeded, "happy-path VACUUM must succeed");
+                assert!(vacuum_error.is_none());
+                (chunks_dropped, files_dropped)
+            }
             other => panic!("expected Revoked variant, got {other:?}"),
         };
         assert_eq!(
@@ -1617,6 +1676,8 @@ mod tests {
             KchatRevokeOutcome::AlreadyRevoked {
                 chunks_dropped: 0,
                 files_dropped: 0,
+                vacuum_succeeded: true,
+                vacuum_error: None,
             },
         );
     }
@@ -1651,7 +1712,13 @@ mod tests {
             KchatAclRefreshOutcome::Revoked {
                 chunks_dropped,
                 files_dropped,
-            } => (chunks_dropped, files_dropped),
+                vacuum_succeeded,
+                vacuum_error,
+            } => {
+                assert!(vacuum_succeeded, "happy-path VACUUM must succeed");
+                assert!(vacuum_error.is_none());
+                (chunks_dropped, files_dropped)
+            }
             other => panic!("expected Revoked variant, got {other:?}"),
         };
         assert_eq!(files_dropped, 2);

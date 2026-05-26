@@ -256,6 +256,20 @@ export interface KchatAclRefreshOutcomeInfo {
    *  inline cryptoshred on the revoke path; 0 on every non-revoke
    *  outcome. */
   filesDropped: number;
+  /** Fifth-pass Devin Review fix
+   *  (ANALYSIS_pr-review-job-ef3c7d6c..._0001): `true` when the
+   *  substrate's belt-and-braces `VACUUM` ran cleanly (or was
+   *  skipped because there was nothing to reclaim). `false` only
+   *  when `VACUUM` ran and failed; the row-level scrub still
+   *  committed under `secure_delete = ON` in that case so the
+   *  cryptographic guarantee holds. Forwarded onto the
+   *  `KchatSourceCryptoshredded` audit row so operators can grep
+   *  for `vacuum_succeeded=false`. */
+  vacuumSucceeded: boolean;
+  /** Fifth-pass Devin Review fix: first-error message text on a
+   *  `VACUUM` failure. `undefined` (mapped from Rust `None`) when
+   *  `vacuumSucceeded` is true. */
+  vacuumError?: string;
 }
 
 /**
@@ -284,6 +298,12 @@ export interface KchatRevokeOutcomeInfo {
    *  scrubbed by the inline cryptoshred. Same semantics as
    *  `chunksDropped`. */
   filesDropped: number;
+  /** Fifth-pass Devin Review fix: see
+   *  {@link KchatAclRefreshOutcomeInfo.vacuumSucceeded}. */
+  vacuumSucceeded: boolean;
+  /** Fifth-pass Devin Review fix: see
+   *  {@link KchatAclRefreshOutcomeInfo.vacuumError}. */
+  vacuumError?: string;
 }
 
 /**
