@@ -43,6 +43,8 @@ function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
       sourceId: "src-kchat-1",
       cacheDir: "/cache/kchat/chan-1",
     }),
+    onStatusChange: vi.fn().mockReturnValue(() => {}),
+    onEvent: vi.fn().mockReturnValue(() => {}),
     ...overrides,
   } as unknown as typeof window.tessera.kchat;
 }
@@ -84,7 +86,28 @@ describe("KchatChannelSourcePicker", () => {
       />,
     );
     await screen.findByTestId("kchat-source-add");
-    await waitFor(() => expect(api.listChannels).toHaveBeenCalled());
+    // Wait for the full settle chain to converge before clicking. The
+    // picker has three sequential effects:
+    //   1. `useEffect[isOpen, kchat]` → `listTeams` → `setSelectedTeam`
+    //   2. `useEffect[isOpen, kchat, selectedTeam]` → `listChannels` →
+    //      `setSelectedChannel`
+    //   3. `useEffect[isOpen, kchat, selectedChannel]` →
+    //      `listChannelFiles` → `setFiles`
+    // The Add button is `disabled={busy || !selectedChannel}`, so
+    // clicking before step 2's `setSelectedChannel` commit re-renders
+    // makes the click a no-op (the browser drops events on disabled
+    // buttons, and `fireEvent.click` honours that). Waiting only for
+    // `listChannels` to have been *called* satisfies the spy assertion
+    // before the resulting state commit lands, racing the click under
+    // CI's parallel-suite CPU pressure. Wait for the file-list render
+    // — that's a guaranteed-after-step-3 signal that the entire chain
+    // has settled and the button is enabled. Devin Review on PR #43
+    // flagged this race pattern in earlier Block A passes; the same
+    // architectural fix applies here.
+    await waitFor(() =>
+      expect(api.listChannelFiles).toHaveBeenCalledWith("chan-1", 0, 50),
+    );
+    await screen.findByText("spec.pdf");
     fireEvent.click(screen.getByTestId("kchat-source-add"));
     await waitFor(() =>
       expect(api.addChannelSource).toHaveBeenCalledWith("chan-1", "General"),
@@ -102,7 +125,13 @@ describe("KchatChannelSourcePicker", () => {
       <KchatChannelSourcePicker isOpen onClose={() => {}} api={api} />,
     );
     await screen.findByTestId("kchat-source-add");
-    await waitFor(() => expect(api.listChannels).toHaveBeenCalled());
+    // Same settle-chain wait as the success-path test above — the
+    // Add button is disabled until `selectedChannel` commits, and a
+    // racy click before that commit silently no-ops.
+    await waitFor(() =>
+      expect(api.listChannelFiles).toHaveBeenCalledWith("chan-1", 0, 50),
+    );
+    await screen.findByText("spec.pdf");
     fireEvent.click(screen.getByTestId("kchat-source-add"));
     expect(await screen.findByTestId("kchat-source-error")).toHaveTextContent(
       /network error/,

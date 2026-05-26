@@ -157,3 +157,57 @@ export interface KchatConnectionState {
   /** ISO-8601 timestamp of the last successful health check. */
   lastHealthyAt?: string;
 }
+
+/**
+ * Renderer-safe projection of a [`KchatWebSocketEvent`] surfaced
+ * by the main process over the `kchat:event` push channel. The
+ * shape is a narrowed subset of the full wire envelope — the
+ * `omit_users` map is dropped (it carries internal KChat-server
+ * routing metadata that no renderer surface inspects) and the
+ * remaining fields are flattened so the renderer doesn't have to
+ * reach into `broadcast.*` to find the channel id.
+ *
+ * `data` is preserved as an opaque `Record<string, unknown>` so
+ * downstream code can opt into event-specific narrowings (e.g.
+ * the `KchatPostedEvent`-style shapes already declared above) on
+ * a case-by-case basis without forcing every consumer through a
+ * discriminated-union match.
+ *
+ * `event` is left as a free-form `string` rather than a union
+ * because KChat's WebSocket protocol is open-ended: new server
+ * builds add new event names regularly, and the forwarder's
+ * filter set (defined in `kchatEventForwarder.ts`) is the
+ * single source of truth for which subset reaches the renderer.
+ */
+export interface KchatWebSocketEventView {
+  /**
+   * Wire-level event name (`posted`, `file_added`,
+   * `channel_member_updated`, `channel_created`, …). The
+   * renderer should treat any unrecognised value as a no-op
+   * rather than throwing — the forwarder may broaden the
+   * filter set without a coordinated renderer release.
+   */
+  event: string;
+  /**
+   * Originating channel id when the KChat server tagged the
+   * broadcast envelope with one. Many event types (`hello`,
+   * `status_change`) carry no channel scope and surface as
+   * `null`.
+   */
+  channelId: string | null;
+  /** Originating team id when present in the broadcast envelope. */
+  teamId: string | null;
+  /** Originating user id when present in the broadcast envelope. */
+  userId: string | null;
+  /**
+   * Monotonically-increasing sequence number assigned by the
+   * KChat server. A gap (`seq` jumps by more than 1) signals the
+   * server dropped an intermediate event before delivering it to
+   * the WebSocket; clients reconcile by re-querying REST. The
+   * renderer's reconciliation poll (`KchatSidebarSection`'s
+   * 30 s fallback) closes the gap automatically.
+   */
+  seq: number;
+  /** Opaque event-specific payload. Type narrowed per-event by consumers. */
+  data: Record<string, unknown>;
+}

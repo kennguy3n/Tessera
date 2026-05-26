@@ -88,6 +88,70 @@ const WS_RECONNECT_BASE_MS = 500;
 const WS_RECONNECT_CAP_MS = 30_000;
 
 /**
+ * Hard cap on the number of `(eventName, reason)` entries the
+ * trust-boundary drop-warn cooldown map will hold AT ONCE.
+ *
+ * The keys are `${eventName}::${reason}`, and `eventName` is the
+ * untrusted `parsed.event` value off the wire. A malicious or buggy
+ * peer that floods malformed frames with thousands of unique made-
+ * up event names can grow the map indefinitely without this cap.
+ * Ninth-pass Devin Review on PR #43
+ * (`ANALYSIS_pr-review-job-...0001`) flagged that the prior
+ * "~8 MB for 100k entries is acceptable" argument missed the
+ * across-reconnect dimension: every reconnect re-opens the WS but
+ * the map persists, so over a long-lived process under attack the
+ * map is truly unbounded.
+ *
+ * 256 entries is well above the legitimate ceiling (the KChat /
+ * Mattermost event vocabulary is ~30 named events × 3 drop reasons
+ * = 90 tuples; doubling that for headroom against future protocol
+ * additions still leaves slack) and small enough that the worst-
+ * case memory footprint of the map is bounded at ~20 KB regardless
+ * of how long the process runs or how many reconnects occur. When
+ * the cap is hit we clear the map entirely (rather than evicting
+ * an LRU entry) so the next legitimate event-name observation gets
+ * a warning fresh — the cooldown semantics already tolerate the
+ * occasional re-warn within a window, and the simpler clear-on-cap
+ * has predictable behavior under flood.
+ */
+const WS_DROP_WARN_COOLDOWN_MAX_ENTRIES = 256;
+
+/**
+ * Minimum interval between trust-boundary drop warnings for the
+ * SAME `(eventName, reason)` tuple.
+ *
+ * `handleWsMessage` is the sole point where untrusted JSON becomes
+ * typed `KchatWebSocketEvent` (see the block-comment in that
+ * function for why every malformed-frame guard must short-circuit
+ * here rather than being deferred to downstream consumers).
+ *
+ * The first iteration of the trust boundary silently `return`-ed
+ * on every dropped frame, which left operators blind to two
+ * legitimate operational concerns flagged by Devin Review on PR
+ * #43 (`ANALYSIS_pr-review-job-...0005`):
+ *
+ *   1. **Protocol evolution**: a future KChat protocol version
+ *      that introduces a legitimate event with no `data` field
+ *      would be silently dropped with no diagnostic in the logs
+ *      — the only signal would be "users report missing events".
+ *   2. **Buggy / misconfigured peer**: a self-hosted KChat server
+ *      that ships malformed frames (bug, version mismatch, MITM
+ *      proxy mangling, etc.) would look identical to "no events"
+ *      in production — there'd be no way to distinguish a quiet
+ *      WS from a wedged-by-trust-boundary WS.
+ *
+ * We log a `console.warn` at each drop site so operators can
+ * correlate, BUT we rate-limit per `(eventName, reason)` tuple
+ * to bound the worst case: a malicious or buggy peer flooding
+ * malformed frames at 1000/s must not flood the main-process
+ * stderr / dev-tools console with 1000/s warnings. 60 s is the
+ * standard cooldown — long enough to compress a flood, short
+ * enough that a real protocol-evolution gap is still visible
+ * promptly during a debugging session.
+ */
+const WS_DROP_WARN_COOLDOWN_MS = 60_000;
+
+/**
  * Sleep helper that can be mocked from tests by passing a custom
  * `sleep` implementation through {@link KchatClientOptions}.
  */
@@ -128,6 +192,19 @@ export interface KchatClientOptions {
   sleep?: SleepFn;
   /** Now-source for backoff jitter; defaults to `Math.random`. */
   random?: () => number;
+  /**
+   * Wall-clock source for the trust-boundary drop-warn cooldown
+   * map. Defaults to `Date.now`. Tests pin this to a controlled
+   * clock so the cooldown logic is deterministic.
+   */
+  now?: () => number;
+  /**
+   * Log sink for trust-boundary drop warnings. Defaults to
+   * `console.warn`. Tests inject a spy so they can assert on the
+   * structured drop-warning payload without polluting suite
+   * output with real stderr writes.
+   */
+  logWarn?: (message: string, context: Record<string, unknown>) => void;
 }
 
 /** Listener for the parsed WebSocket events. */
@@ -285,6 +362,36 @@ export class KchatClient {
   private readonly rateLimiter: RateLimiter;
   private readonly sleep: SleepFn;
   private readonly random: () => number;
+  private readonly now: () => number;
+  private readonly logWarn: (
+    message: string,
+    context: Record<string, unknown>,
+  ) => void;
+
+  /**
+   * Last-warned timestamp per `(eventName, reason)` tuple, used
+   * to rate-limit trust-boundary drop warnings. Keyed by
+   * `"${eventName}::${reason}"` so a flood that targets one event
+   * type doesn't suppress warnings for a genuinely-different
+   * malformed frame on another event type.
+   *
+   * The map is hard-capped at `WS_DROP_WARN_COOLDOWN_MAX_ENTRIES`
+   * entries (see the module-level constant for the rationale) and
+   * cleared entirely when the cap is reached, so the size cannot
+   * exceed that bound regardless of how many unique untrusted
+   * `eventName` values arrive. The map is ALSO cleared on every
+   * `disconnectWebSocket()` so each new WS session starts from a
+   * clean slate — defeating an adversarial peer that tries to
+   * accumulate entries across forced reconnects. Both invariants
+   * are exercised by regression tests in `kchatClient.test.ts`:
+   * `caps the drop-warn cooldown map under adversarial event-name
+   * flood` and `clears the trust-boundary drop-warn cooldown on
+   * disconnect`. Tenth-pass Devin Review on PR #43
+   * (`ANALYSIS_pr-review-job-...0005`) flagged that an earlier
+   * iteration of this comment claimed the map was unbounded —
+   * stale once the cap landed in ninth-pass.
+   */
+  private readonly wsDropWarnCooldown = new Map<string, number>();
 
   constructor(options: KchatClientOptions = {}) {
     this.fetchFn = options.fetchFn ?? globalThis.fetch.bind(globalThis);
@@ -303,6 +410,12 @@ export class KchatClient {
           setTimeout(resolve, ms);
         }));
     this.random = options.random ?? Math.random;
+    this.now = options.now ?? Date.now;
+    this.logWarn =
+      options.logWarn ??
+      ((message, context) => {
+        console.warn(message, context);
+      });
   }
 
   /**
@@ -838,17 +951,58 @@ export class KchatClient {
       }
       this.ws = null;
     }
+    // Reset the trust-boundary drop-warn cooldown so the next
+    // connection (potentially against a different server URL after
+    // a `setServerUrl()` cutover) starts from a clean slate. Without
+    // this, an adversarial peer that cycles unique made-up event
+    // names across forced reconnects could accumulate entries
+    // across the lifetime of the process, defeating the per-
+    // connection bound enforced by `WS_DROP_WARN_COOLDOWN_MAX_ENTRIES`.
+    // The cooldown's intent is "don't double-warn the operator
+    // about the same drop pattern" — once the WS is gone, the
+    // drop-pattern provenance is gone too, and the next session
+    // deserves its own warnings. Ninth-pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0001`).
+    this.wsDropWarnCooldown.clear();
   }
 
-  /** Full client shutdown — token, WS, timers, listeners all cleared. */
+  /**
+   * Tear down the client's own connection state — token, WebSocket,
+   * health-check / reconnect timers. Emits one final
+   * `disconnected` transition so subscribers observe the shutdown
+   * before the timers are gone.
+   *
+   * `wsListeners` and `statusListeners` are deliberately NOT
+   * cleared here. External subscribers (notably
+   * `KchatEventForwarder`, which is constructed once in
+   * `getKchatAuthService()` and outlives every connect/disconnect
+   * cycle in the app lifetime) own their own listener lifecycle
+   * via the unsubscribe closure returned from
+   * `onWebSocketEvent` / `onStatusChange`. Clearing the Sets here
+   * would silently strip those external subscribers from the
+   * client without their `unsubscribe()` ever running, and there
+   * is no mechanism for the forwarder to detect the loss and
+   * re-attach on the subsequent reconnect (its own `start()` guard
+   * would treat the call as a no-op because the cached
+   * `unsubscribeWs` / `unsubscribeStatus` closures are still
+   * non-null). The result on the previous draft was a permanently
+   * dead push pipeline after the first disconnect/reconnect cycle;
+   * the 30 s reconciliation poll papered over it for the sidebar
+   * badge but every push consumer downstream lost delivery.
+   *
+   * The auth service drives the lifecycle from `disconnect()` /
+   * `connect()` — `shutdown()` is invoked on disconnect and the
+   * same client instance is reused across reconnects, so keeping
+   * external subscribers attached across the gap is exactly what
+   * preserves the forwarder's IPC delivery. Fourth-pass Devin
+   * Review on PR #43 (`BUG_pr-review-job-…_0001`).
+   */
   shutdown(): void {
     this.disconnectWebSocket();
     this.stopHealthCheck();
     this.token = null;
     this.user = null;
-    this.wsListeners.clear();
     this.transition({ state: "disconnected", serverUrl: this.serverUrl });
-    this.statusListeners.clear();
   }
 
   // --- Internal helpers ------------------------------------------------
@@ -894,18 +1048,222 @@ export class KchatClient {
     });
   }
 
+  /**
+   * Emit a trust-boundary drop warning, rate-limited per
+   * `(eventName, reason)` tuple. Called only from
+   * `handleWsMessage` — the only function that drops untrusted
+   * frames at the trust boundary.
+   *
+   * The cooldown is per-tuple (not global) so a flood that
+   * targets one event type doesn't mask warnings for a genuinely
+   * different malformed-frame shape on another event type. A
+   * future protocol-evolution gap (e.g. a new event introduced
+   * with no `data` field) would consistently emit one warning
+   * per minute until an operator notices, rather than being
+   * compressed to a single warning per process lifetime.
+   */
+  private warnDroppedFrame(
+    eventName: string | undefined,
+    reason:
+      | "missing-event"
+      | "malformed-broadcast"
+      | "malformed-data"
+      | "malformed-seq",
+  ): void {
+    const name = eventName ?? "<no-event>";
+    const key = `${name}::${reason}`;
+    const now = this.now();
+    // Use `Map.has()` to distinguish "first occurrence of this
+    // tuple" from "subsequent occurrence within cooldown". The
+    // earlier shape `(this.wsDropWarnCooldown.get(key) ?? 0)`
+    // collapsed both cases to `lastWarned === 0`, which made the
+    // very first warning at `now === 0` (and any test that pinned
+    // the clock to 0) suppressed by the cooldown comparison.
+    const lastWarned = this.wsDropWarnCooldown.get(key);
+    if (
+      lastWarned !== undefined &&
+      now - lastWarned < WS_DROP_WARN_COOLDOWN_MS
+    ) {
+      return;
+    }
+    // Bounded-growth guard: if the map has hit its hard cap, drop
+    // every existing entry and start fresh. The keys include the
+    // untrusted `eventName` so an adversarial peer that cycles
+    // unique event names across reconnects can otherwise grow the
+    // map without bound (the cooldown alone doesn't shrink it).
+    // Clearing (rather than LRU-evicting one entry) is the simpler
+    // shape and predictable under flood: the next 256 distinct
+    // tuples all get a fresh warning, then the next 256 fold into
+    // their cooldown again. The cooldown semantics already tolerate
+    // an occasional re-warn within a window. Ninth-pass Devin
+    // Review on PR #43 (`ANALYSIS_pr-review-job-...0001`).
+    if (this.wsDropWarnCooldown.size >= WS_DROP_WARN_COOLDOWN_MAX_ENTRIES) {
+      this.wsDropWarnCooldown.clear();
+    }
+    this.wsDropWarnCooldown.set(key, now);
+    this.logWarn(
+      "[KchatClient] dropped malformed WS frame at trust boundary",
+      {
+        event: name,
+        reason,
+        // The cooldown means an operator who notices ONE warning
+        // should treat it as "the actual rate is at least 1 per
+        // 60 s for this tuple", not as a single-occurrence event.
+        cooldownMs: WS_DROP_WARN_COOLDOWN_MS,
+      },
+    );
+  }
+
   private handleWsMessage(raw: unknown): void {
     if (typeof raw !== "string") return;
-    let parsed: KchatWebSocketEvent;
+    let parsed: unknown;
     try {
-      parsed = JSON.parse(raw) as KchatWebSocketEvent;
+      parsed = JSON.parse(raw);
     } catch {
       return;
     }
-    if (typeof parsed.event !== "string") return;
+    // `JSON.parse` returns the parsed JSON value, which can be a
+    // primitive (number / boolean / string / null) or an array, not
+    // just an object. The literal frame `"null"` parses to the
+    // JavaScript value `null`; `"42"` parses to `42`; `"[]"` parses
+    // to an empty array. The subsequent `parsed.event` access
+    // crashes on `null` with `TypeError: Cannot read properties of
+    // null (reading 'event')`, and the error would propagate
+    // unhandled out of `ws.onmessage`, taking the WS reader loop
+    // down on a malicious or buggy peer that sends those literals.
+    // Ninth-pass Devin Review on PR #43
+    // (`BUG_pr-review-job-...0001`) flagged this as a real crash
+    // vector at the trust boundary. The earlier `broadcast` and
+    // `data` guards are STRUCTURAL guards (the frame parsed to a
+    // non-null object but some inner field was malformed); this is
+    // a PARSE-TYPE guard (the whole JSON value isn't an object at
+    // all). It must run first because the structural guards each
+    // reach through `parsed.*`.
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      this.warnDroppedFrame(undefined, "missing-event");
+      return;
+    }
+    // After the parse-type guard above we know `parsed` is a
+    // non-null, non-array object — narrow it to a generic record
+    // so we can inspect Mattermost control fields before the
+    // protocol-event narrowing below.
+    const obj = parsed as Record<string, unknown>;
+    // Mattermost / KChat WebSocket protocol carries two distinct
+    // frame families on the same wire:
+    //
+    //   1. Server-pushed EVENTS: framed with a top-level `event`
+    //      string (e.g. `"posted"`, `"file_added"`) and the
+    //      `broadcast` + `data` envelopes the rest of this method
+    //      validates. These are what our subscribers consume.
+    //
+    //   2. Client-request RESPONSES: framed with `seq_reply` (the
+    //      sequence number the client put on its request) and a
+    //      `status` field (`"OK"` / `"FAIL"`). NO `event` field is
+    //      present. We send exactly one such request per
+    //      connection: the `authentication_challenge` issued on
+    //      `onopen` (see lines 906–916). Mattermost responds with
+    //      `{"status":"OK","seq_reply":N}`; on a token reject we
+    //      get `{"status":"FAIL","seq_reply":N,"error":{...}}`.
+    //
+    // The eighth-pass drop-warn path treated EVERY non-event frame
+    // as "malformed" and emitted a `missing-event` warning. That's
+    // accurate for genuinely-malformed frames but emits a warning
+    // on every legitimate auth response, which fires once per
+    // reconnect — a steady cadence of "malformed frame" warnings
+    // on a healthy connection is operationally misleading. Tenth-
+    // pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0001`) flagged this. The fix is
+    // to treat `seq_reply` as the discriminator: any frame with a
+    // numeric `seq_reply` is a control response we deliberately
+    // do not surface to subscribers, and is not a malformed-frame
+    // warning candidate. We drop it silently. Frames with neither
+    // `event` NOR `seq_reply` are genuinely malformed and continue
+    // to fire the rate-limited drop warning.
+    if (typeof obj.seq_reply === "number") {
+      return;
+    }
+    const evt = obj as unknown as KchatWebSocketEvent;
+    if (typeof evt.event !== "string") {
+      this.warnDroppedFrame(undefined, "missing-event");
+      return;
+    }
+    // The KChat / Mattermost protocol always frames events with a
+    // `broadcast` object (`channel_id`, `team_id`, `user_id`,
+    // `omit_users`) AND a `data` object (event-specific payload —
+    // `create_at`, `file_id`, `channel_name`, etc.). A server we
+    // do not control could in principle ship a malformed frame —
+    // `{"event":"hello","seq":0}` with no `broadcast` field at
+    // all, `{"broadcast":null}`, `{"data":[]}`, or
+    // `{"event":"posted","broadcast":{...}}` with no `data` — and
+    // the downstream projection (`toRendererEventView` and any
+    // listener that destructures `parsed.broadcast.*` /
+    // `parsed.data.*`) would TypeError on the property access. The
+    // error would surface only as a swallowed exception in the
+    // per-listener try/catch below; the listener would silently
+    // drop the event and the forwarder's ring buffer would lose
+    // it without an audit trail. Renderer consumers (notably
+    // `KchatSidebarSection` which destructures `event.data.create_at`)
+    // would receive a typed `KchatWebSocketEventView` that lies
+    // about `data` being defined and TypeError in the renderer
+    // event loop with no try/catch above it.
+    //
+    // The trust boundary for the WS frame is THIS function — once
+    // we leave it, every consumer assumes `KchatWebSocketEvent`
+    // matches its TypeScript shape. Reject malformed frames here
+    // (rather than scattering optional-chain guards at every
+    // projection site) so the post-parse contract holds.
+    // Fifth-pass Devin Review on PR #43 added the `broadcast`
+    // guard (`ANALYSIS_pr-review-job-..._0001`); sixth-pass added
+    // the symmetric `data` guard (`BUG_pr-review-job-...0001`)
+    // for the same renderer-TypeError reason on a different field;
+    // eighth-pass added the rate-limited drop-warn logging
+    // (`ANALYSIS_pr-review-job-...0005`) so protocol-evolution
+    // gaps and buggy peers don't go silently undetected in
+    // production.
+    if (
+      typeof evt.broadcast !== "object" ||
+      evt.broadcast === null ||
+      Array.isArray(evt.broadcast)
+    ) {
+      this.warnDroppedFrame(evt.event, "malformed-broadcast");
+      return;
+    }
+    if (
+      typeof evt.data !== "object" ||
+      evt.data === null ||
+      Array.isArray(evt.data)
+    ) {
+      this.warnDroppedFrame(evt.event, "malformed-data");
+      return;
+    }
+    // `KchatWebSocketEvent.seq` is declared `number`. The trust
+    // boundary's contract is "after this function returns OK, every
+    // typed field on the asserted shape holds." Validating `seq`
+    // here means downstream consumers (`KchatSidebarSection`,
+    // `KchatEventForwarder`, future gap-detection logic) can branch
+    // on `view.seq` arithmetic without optional-chaining or runtime
+    // typeof checks scattered across call sites. The cost of one
+    // additional `typeof` is trivial against the consistency
+    // benefit. Eleventh-pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0005`) flagged that `seq` was the
+    // only typed field the trust boundary did not validate; a
+    // malicious server sending `{...,"seq":"not-a-number"}` would
+    // have flowed through as a string-typed `number` and broken any
+    // arithmetic the renderer eventually runs on it (gap detection
+    // is mentioned in this method's surrounding docs as a likely
+    // future use). Closing the gap now is cheap and prevents the
+    // class of bug.
+    if (typeof evt.seq !== "number") {
+      this.warnDroppedFrame(evt.event, "malformed-seq");
+      return;
+    }
     for (const l of this.wsListeners) {
       try {
-        l(parsed);
+        l(evt);
       } catch {
         // Listener errors must not break the WS read loop.
       }

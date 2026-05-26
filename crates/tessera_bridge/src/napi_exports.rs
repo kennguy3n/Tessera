@@ -1776,6 +1776,51 @@ pub fn bridge_log_kchat_file_downloaded(
     Ok(())
 }
 
+/// JS-facing pass-through for
+/// [`AuditLogger::log_kchat_file_event_received`]. Called by the
+/// Node-side `KchatEventForwarder` when a WebSocket event is
+/// received in the main process and surfaced to renderers.
+/// Payload bodies are NOT passed in — only the event name,
+/// originating channel id, optional file id, and a
+/// `triggered_reindex` flag.
+///
+/// `triggered_reindex` is currently always `false` from the Node
+/// side: the previous draft of `KchatEventForwarder.handleFileAdded`
+/// called `bridge_reindex_source` for linked channels, but a
+/// `file_added` event arrives BEFORE the file has been downloaded
+/// into the channel's local cache directory, so the reindex was
+/// a guaranteed no-op (walking an empty diff under the source-
+/// manager mutex). The flag is preserved on the napi boundary and
+/// audit row so the auto-sync iteration that wires
+/// `runAddKchatChannel` into the WS forwarder can repopulate it
+/// without breaking the audit row text format. See the second-
+/// pass Devin Review on PR #43 (`BUG_pr-review-job-...0001`).
+///
+/// The optional fields use `Option<String>` rather than empty
+/// strings so the napi bridge faithfully carries the "not present"
+/// signal across the FFI boundary; the logger collapses both to
+/// `""` in the audit row text, but downstream filters that ever
+/// want to scan for "events on a specific channel" can rely on
+/// the empty-string convention in the audit `details` payload.
+#[napi]
+pub fn bridge_log_kchat_file_event_received(
+    event_name: String,
+    channel_id: Option<String>,
+    file_id: Option<String>,
+    triggered_reindex: bool,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_file_event_received(
+            &event_name,
+            channel_id.as_deref(),
+            file_id.as_deref(),
+            triggered_reindex,
+        );
+    }
+    Ok(())
+}
+
 /// Renderer-facing audit row. The Rust `AuditEvent` carries a
 /// strongly-typed `AuditEventType` enum and a `DateTime<Utc>`;
 /// neither survives the napi boundary cleanly, so we serialise the

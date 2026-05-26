@@ -32,6 +32,13 @@ function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
     listChannelFiles: vi.fn().mockResolvedValue([]),
     shareArtifact: vi.fn(),
     addChannelSource: vi.fn(),
+    // Block B Task 1 push subscriptions — defaults to a no-op
+    // unsubscribe so `KchatSettingsCard`'s on-mount listener
+    // wiring (when it eventually adopts the push API) doesn't
+    // throw under tests; `overrides` lets a test inject a stub
+    // that captures the callback.
+    onStatusChange: vi.fn().mockReturnValue(() => {}),
+    onEvent: vi.fn().mockReturnValue(() => {}),
     ...overrides,
   } as unknown as typeof window.tessera.kchat;
 }

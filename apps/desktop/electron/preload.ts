@@ -5,6 +5,8 @@ import type {
   ExternalProviderListModelsDraftOverrides,
   HybridSearchConfigUpdate,
   InstalledModelsByCapability,
+  KchatConnectionStateView,
+  KchatWebSocketEventPayload,
   ModelCapability,
   ModelDownloadProgress,
   OpenImageDialogOptions,
@@ -97,6 +99,8 @@ export type {
   UpdatesApi,
   UpdateStatusInfo,
   UpdateTaskRequest,
+  KchatConnectionStateView,
+  KchatWebSocketEventPayload,
 } from "../shared/types";
 
 /**
@@ -450,6 +454,19 @@ const api: TesseraApi = {
       ),
     addChannelSource: (channelId: string, channelName: string) =>
       ipcRenderer.invoke("sources:addKchatChannel", channelId, channelName),
+    // Block B Task 1: push-based delivery of KChat connection
+    // state + WebSocket events. The status channel mirrors
+    // `updates.onStatus` so the connection card / sidebar no
+    // longer have to poll `kchat:status` to detect a
+    // reconnect; the event channel surfaces the renderer-safe
+    // projection emitted by the main-process
+    // `KchatEventForwarder`. Both helpers return an
+    // unsubscribe function the caller must invoke in the
+    // React cleanup phase to avoid leaking IPC listeners.
+    onStatusChange: (cb: (s: KchatConnectionStateView) => void) =>
+      subscribeIpc<KchatConnectionStateView>("kchat:status", cb),
+    onEvent: (cb: (e: KchatWebSocketEventPayload) => void) =>
+      subscribeIpc<KchatWebSocketEventPayload>("kchat:event", cb),
   },
   audit: {
     listRecent: (limit?: number, offset?: number) =>

@@ -127,6 +127,8 @@ function buildClient(overrides: Partial<{
   rateLimiter: RateLimiter;
   sleep: (ms: number) => Promise<void>;
   random: () => number;
+  now: () => number;
+  logWarn: (message: string, context: Record<string, unknown>) => void;
 }> = {}) {
   const client = new KchatClient({
     fetchFn: overrides.fetchFn,
@@ -134,6 +136,8 @@ function buildClient(overrides: Partial<{
     rateLimiter: overrides.rateLimiter,
     sleep: overrides.sleep ?? (async () => {}),
     random: overrides.random ?? (() => 0.5),
+    now: overrides.now,
+    logWarn: overrides.logWarn,
   });
   return client;
 }
@@ -1107,6 +1111,546 @@ describe("KchatClient.connectWebSocket", () => {
     expect((events[0] as { event: string }).event).toBe("posted");
   });
 
+  it("drops malformed WS frames that lack a broadcast or data object", async () => {
+    // Regression for fifth-pass Devin Review on PR #43 (the
+    // `broadcast` guard — `ANALYSIS_pr-review-job-...0001`) plus
+    // the sixth-pass extension to the symmetric `data` guard
+    // (`BUG_pr-review-job-...0001`). KChat's protocol always
+    // includes both a `broadcast` object AND a `data` object on
+    // every event, but the WS peer is treated as fully untrusted
+    // — a malformed payload missing either (or with either as
+    // `null` or an array) must not reach the listener set,
+    // because every downstream consumer destructures
+    // `parsed.broadcast.*` / `parsed.data.*` directly and would
+    // otherwise throw. The renderer's `event.data.create_at` access
+    // in `KchatSidebarSection` is the critical case — it would
+    // TypeError in the renderer event loop with no try/catch above
+    // it, surfacing as an unhandled exception in the UI.
+    //
+    // The trust boundary is `handleWsMessage`. We feed it six
+    // malformed frames plus one well-formed control, and assert
+    // only the control reaches the listener. We also assert the
+    // eighth-pass drop-warn observability path
+    // (`ANALYSIS_pr-review-job-...0005`) — every drop must emit
+    // one structured warning per `(eventName, reason)` tuple
+    // within the cooldown window, so operators can correlate
+    // missing-event reports with trust-boundary drops in
+    // production (the original silent-`return` left this
+    // invisible).
+    const { ctor, instances } = mockWebSocketCtor();
+    const logWarn = vi.fn();
+    // Pin the clock so the cooldown logic is deterministic. Each
+    // call to `now()` returns the next pinned timestamp; the test
+    // bumps `clock` by 1 ms per drop so every (eventName, reason)
+    // tuple is well inside the 60 s cooldown window — successive
+    // drops for the SAME tuple are suppressed, drops for distinct
+    // tuples each emit one warning.
+    let clock = 1_700_000_000_000;
+    const c = buildClient({
+      webSocketCtor: ctor,
+      logWarn,
+      now: () => {
+        const t = clock;
+        clock += 1;
+        return t;
+      },
+    });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-secret");
+    const events: unknown[] = [];
+    c.onWebSocketEvent((e) => events.push(e));
+    await c.connectWebSocket();
+    instances[0].inst.onopen?.({});
+
+    // 1. Missing `broadcast` entirely.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({ event: "posted", data: {}, seq: 1 }),
+    });
+    // 2. `broadcast: null`.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        data: {},
+        broadcast: null,
+        seq: 2,
+      }),
+    });
+    // 3. `broadcast` is an array (typeof === "object" but
+    //    structurally wrong — the early Array.isArray guard must
+    //    reject this).
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        data: {},
+        broadcast: [],
+        seq: 3,
+      }),
+    });
+    // 4. Missing `data` entirely. The renderer's
+    //    `event.data.create_at` access in `KchatSidebarSection`
+    //    would TypeError without this guard.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        broadcast: { channel_id: "chid" },
+        seq: 4,
+      }),
+    });
+    // 5. `data: null`.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        broadcast: { channel_id: "chid" },
+        data: null,
+        seq: 5,
+      }),
+    });
+    // 6. `data` is an array.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        broadcast: { channel_id: "chid" },
+        data: [],
+        seq: 6,
+      }),
+    });
+    // 7. Well-formed control.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        data: { channel_name: "design" },
+        broadcast: { channel_id: "chid" },
+        seq: 7,
+      }),
+    });
+
+    expect(events).toHaveLength(1);
+    expect((events[0] as { seq: number }).seq).toBe(7);
+
+    // Six malformed frames, all under "posted" event name, split
+    // across two reasons:
+    //   - `malformed-broadcast`: frames 1, 2, 3
+    //   - `malformed-data`: frames 4, 5, 6
+    // Two distinct (eventName, reason) tuples → exactly two
+    // warnings (the cooldown suppresses the 2nd and 3rd drop in
+    // each tuple). The first call to each tuple emits the warning
+    // because the cooldown map is empty at process start.
+    expect(logWarn).toHaveBeenCalledTimes(2);
+    const calls = logWarn.mock.calls;
+    const reasons = calls.map((c) => (c[1] as { reason: string }).reason);
+    expect(reasons).toContain("malformed-broadcast");
+    expect(reasons).toContain("malformed-data");
+    for (const [msg, ctx] of calls) {
+      expect(msg).toBe(
+        "[KchatClient] dropped malformed WS frame at trust boundary",
+      );
+      const c = ctx as { event: string; reason: string; cooldownMs: number };
+      expect(c.event).toBe("posted");
+      expect(c.cooldownMs).toBe(60_000);
+    }
+  });
+
+  it("rate-limits drop warnings per (eventName, reason) tuple", async () => {
+    // Eighth-pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0005`) flagged that the silent
+    // drop with no logging would hide protocol-evolution gaps
+    // from operators. The fix adds drop-warn logging, but a
+    // naive `console.warn` on every drop would let a malicious
+    // or buggy peer flood the main-process console with 1000
+    // warnings/s. The cooldown logic is the architectural
+    // backpressure for that.
+    //
+    // This test pins the clock and:
+    //   - Feeds 5 malformed frames at the SAME (eventName,
+    //     reason) tuple, within the 60 s cooldown window →
+    //     exactly ONE warning fires.
+    //   - Advances the clock past the cooldown → the NEXT
+    //     malformed frame for the same tuple fires a SECOND
+    //     warning (the cooldown is per-tuple, not global, and
+    //     re-arms after `WS_DROP_WARN_COOLDOWN_MS`).
+    //   - Feeds a DIFFERENT (eventName, reason) tuple inside
+    //     the first cooldown window → that distinct tuple is
+    //     not suppressed; it fires its own warning.
+    // Net: 3 warnings total across 7 dropped frames.
+    const { ctor, instances } = mockWebSocketCtor();
+    const logWarn = vi.fn();
+    let clock = 0;
+    const c = buildClient({
+      webSocketCtor: ctor,
+      logWarn,
+      now: () => clock,
+    });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-secret");
+    c.onWebSocketEvent(() => {
+      /* test only inspects logWarn */
+    });
+    await c.connectWebSocket();
+    instances[0].inst.onopen?.({});
+
+    // Five identical malformed frames within the cooldown window
+    // → one warning.
+    for (let i = 0; i < 5; i++) {
+      clock = 1_000 + i; // all within the 60 s cooldown
+      instances[0].inst.onmessage?.({
+        data: JSON.stringify({ event: "posted", data: {}, seq: i }),
+      });
+    }
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    expect(logWarn.mock.calls[0]?.[1]).toMatchObject({
+      event: "posted",
+      reason: "malformed-broadcast",
+    });
+
+    // A different (eventName, reason) tuple inside the same
+    // cooldown window → distinct tuple, distinct warning.
+    clock = 1_500;
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "typing",
+        broadcast: { channel_id: "c1" },
+        data: null,
+        seq: 10,
+      }),
+    });
+    expect(logWarn).toHaveBeenCalledTimes(2);
+    expect(logWarn.mock.calls[1]?.[1]).toMatchObject({
+      event: "typing",
+      reason: "malformed-data",
+    });
+
+    // Advance the clock past the cooldown for the first tuple,
+    // then repeat the original malformed shape → cooldown has
+    // re-armed, so a second warning fires.
+    clock = 60_000 + 1_001; // > cooldown after the first warning
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({ event: "posted", data: {}, seq: 100 }),
+    });
+    expect(logWarn).toHaveBeenCalledTimes(3);
+    expect(logWarn.mock.calls[2]?.[1]).toMatchObject({
+      event: "posted",
+      reason: "malformed-broadcast",
+    });
+  });
+
+  it("warns at the trust boundary when the WS frame omits the event field", async () => {
+    // Frames with no string `event` field hit the earliest guard
+    // in `handleWsMessage`. The eighth-pass drop-warn extension
+    // (`ANALYSIS_pr-review-job-...0005`) also covers this drop
+    // site — operators need to see "the peer is sending frames
+    // with no event name" diagnostics, not just the `broadcast` /
+    // `data` malformations covered above.
+    const { ctor, instances } = mockWebSocketCtor();
+    const logWarn = vi.fn();
+    const c = buildClient({ webSocketCtor: ctor, logWarn });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-secret");
+    await c.connectWebSocket();
+    instances[0].inst.onopen?.({});
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({ seq: 1, data: {}, broadcast: {} }),
+    });
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    expect(logWarn.mock.calls[0]?.[1]).toMatchObject({
+      event: "<no-event>",
+      reason: "missing-event",
+    });
+  });
+
+  it("warns at the trust boundary when seq is not a number", async () => {
+    // Eleventh-pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0005`) flagged that the trust
+    // boundary validated `event` / `broadcast` / `data` but did NOT
+    // validate `seq`, even though `KchatWebSocketEvent.seq` is
+    // declared `number`. A malicious server sending a string-typed
+    // `seq` would flow through the guards and reach downstream
+    // consumers as a typed `number` that's actually a string —
+    // breaking any arithmetic (e.g. future gap-detection logic
+    // mentioned in the type docs) the renderer eventually runs.
+    //
+    // Fix asserts the seq field at the same trust boundary as the
+    // other typed fields. This test feeds string + missing + bool
+    // + null `seq` shapes; all must drop with `malformed-seq`. A
+    // well-formed control afterward must still reach the listener.
+    const { ctor, instances } = mockWebSocketCtor();
+    const logWarn = vi.fn();
+    let clock = 0;
+    const c = buildClient({
+      webSocketCtor: ctor,
+      logWarn,
+      now: () => clock,
+    });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-secret");
+    const events: unknown[] = [];
+    c.onWebSocketEvent((e) => events.push(e));
+    await c.connectWebSocket();
+    instances[0].inst.onopen?.({});
+
+    const badSeqShapes = [
+      { event: "posted", data: {}, broadcast: {}, seq: "not-a-number" },
+      { event: "posted", data: {}, broadcast: {} },
+      { event: "posted", data: {}, broadcast: {}, seq: true },
+      { event: "posted", data: {}, broadcast: {}, seq: null },
+    ];
+    for (let i = 0; i < badSeqShapes.length; i++) {
+      // Advance the clock past the per-tuple cooldown so each
+      // shape's warning fires (the (event="posted", reason="malformed-seq")
+      // tuple is the same for all four; without clock advance only
+      // the first would warn).
+      // 60_000 is `WS_DROP_WARN_COOLDOWN_MS` in `kchatClient.ts`;
+      // not imported here to keep this test file's surface narrow.
+      clock += 60_001;
+      instances[0].inst.onmessage?.({ data: JSON.stringify(badSeqShapes[i]) });
+    }
+    expect(logWarn).toHaveBeenCalledTimes(4);
+    for (const call of logWarn.mock.calls) {
+      expect(call[1]).toMatchObject({
+        event: "posted",
+        reason: "malformed-seq",
+      });
+    }
+    // Control: well-formed event still reaches the listener.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        data: {},
+        broadcast: {},
+        seq: 7,
+      }),
+    });
+    expect(events).toHaveLength(1);
+    expect((events[0] as { seq: number }).seq).toBe(7);
+  });
+
+  it("silently drops Mattermost control responses (seq_reply) without warning", async () => {
+    // Tenth-pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0001`) flagged that the
+    // Mattermost / KChat WebSocket protocol carries client-request
+    // RESPONSES on the same wire as server-pushed EVENTS. Responses
+    // are framed with `seq_reply` + `status` (NO `event` field) and
+    // are sent in reply to the `authentication_challenge` we issue
+    // on every `onopen`. The eighth-pass drop-warn path classified
+    // these as `missing-event` and emitted a warning per reconnect,
+    // which is operationally misleading noise on a healthy
+    // connection.
+    //
+    // This test feeds the canonical OK + FAIL auth-challenge
+    // response shapes (and a synthetic `seq_reply: 99` to prove the
+    // discriminator works on any sequence number) and asserts:
+    //   1. No warning fires.
+    //   2. The forwarder remains alive and continues delivering
+    //      legitimate server-pushed events afterward.
+    const { ctor, instances } = mockWebSocketCtor();
+    const logWarn = vi.fn();
+    const c = buildClient({ webSocketCtor: ctor, logWarn });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-secret");
+    const events: unknown[] = [];
+    c.onWebSocketEvent((e) => events.push(e));
+    await c.connectWebSocket();
+    instances[0].inst.onopen?.({});
+
+    // Mattermost OK response to authentication_challenge.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({ status: "OK", seq_reply: 0 }),
+    });
+    // Mattermost FAIL response shape.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        status: "FAIL",
+        seq_reply: 1,
+        error: { id: "api.invalid_token", message: "Invalid token" },
+      }),
+    });
+    // Synthetic response on a different seq.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({ seq_reply: 99, status: "OK" }),
+    });
+    expect(logWarn).not.toHaveBeenCalled();
+
+    // Well-formed event reaches the listener — proving the WS
+    // reader loop is still alive after the control-frame sequence.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        data: { channel_name: "design" },
+        broadcast: { channel_id: "chid" },
+        seq: 1,
+      }),
+    });
+    expect(events).toHaveLength(1);
+  });
+
+  it("does not crash on JSON literals that parse to non-object values", async () => {
+    // Ninth-pass Devin Review on PR #43
+    // (`BUG_pr-review-job-...0001`) flagged that `JSON.parse("null")`
+    // returns the JS value `null`, and the subsequent
+    // `parsed.event` access would throw
+    // `TypeError: Cannot read properties of null (reading 'event')`.
+    // The error would propagate unhandled out of `ws.onmessage`,
+    // taking the WS reader loop down on a malicious or buggy peer
+    // that sends any of the JSON literals that don't parse to a
+    // non-null object: `"null"`, `"42"`, `"true"`, `"\"x\""`, `"[]"`.
+    //
+    // The fix is a PARSE-TYPE guard at the top of `handleWsMessage`,
+    // ahead of the existing STRUCTURAL guards for `broadcast` and
+    // `data`. This test feeds every literal that the JSON grammar
+    // accepts but the protocol contract rejects, plus one
+    // well-formed control. The forwarder must remain alive (the
+    // control reaches the listener) and every non-object literal
+    // must drop with a `missing-event` warning. The test also
+    // asserts that the synchronous handler does not throw — the
+    // `ws.onmessage` adapter has no try/catch, so an uncaught
+    // throw would surface as a test failure here.
+    const { ctor, instances } = mockWebSocketCtor();
+    const logWarn = vi.fn();
+    const c = buildClient({ webSocketCtor: ctor, logWarn });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-secret");
+    const events: unknown[] = [];
+    c.onWebSocketEvent((e) => events.push(e));
+    await c.connectWebSocket();
+    instances[0].inst.onopen?.({});
+
+    // Each of these is a *valid* JSON document on the wire, but
+    // none of them parse to an object — `parsed.event` would
+    // throw on `null` and silently return `undefined` on the rest.
+    // The PARSE-TYPE guard at the trust boundary drops all of them.
+    const nonObjectFrames = ["null", "42", "true", "false", '"x"', "[]"];
+    for (const raw of nonObjectFrames) {
+      expect(() => {
+        instances[0].inst.onmessage?.({ data: raw });
+      }).not.toThrow();
+    }
+
+    // Well-formed control reaches the listener — proving the WS
+    // reader loop is still alive after the malformed frames.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        data: { channel_name: "design" },
+        broadcast: { channel_id: "chid" },
+        seq: 99,
+      }),
+    });
+    expect(events).toHaveLength(1);
+    expect((events[0] as { seq: number }).seq).toBe(99);
+  });
+
+  it("caps the drop-warn cooldown map under adversarial event-name flood", async () => {
+    // Ninth-pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0001`) flagged that the
+    // `wsDropWarnCooldown` map could grow without bound if a
+    // peer floods malformed frames with thousands of unique
+    // made-up event names. The fix caps the map at 256 entries
+    // and clears it entirely when the cap is reached. This test
+    // sends 300 unique-event-name malformed frames in a row and
+    // asserts that:
+    //
+    //   1. Every cleared-slate warning fires (so the operator
+    //      retains visibility — no silent suppression by a
+    //      saturated map).
+    //   2. The forwarder doesn't crash or stall.
+    //   3. A subsequent malformed frame at one of the EARLIEST
+    //      event names (the ones that would have been evicted by
+    //      the cap) fires a fresh warning, proving the cap reset
+    //      worked and the cooldown is no longer suppressing it.
+    const { ctor, instances } = mockWebSocketCtor();
+    const logWarn = vi.fn();
+    let clock = 0;
+    const c = buildClient({
+      webSocketCtor: ctor,
+      logWarn,
+      now: () => clock,
+    });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-secret");
+    await c.connectWebSocket();
+    instances[0].inst.onopen?.({});
+
+    // Send 300 frames each with a UNIQUE made-up event name —
+    // beyond the 256-entry cap. Each frame has missing `broadcast`,
+    // so they all hit the `malformed-broadcast` drop site.
+    for (let i = 0; i < 300; i++) {
+      clock += 1;
+      instances[0].inst.onmessage?.({
+        data: JSON.stringify({
+          event: `attack-${i}`,
+          data: {},
+          seq: i,
+        }),
+      });
+    }
+    // Every distinct tuple emitted exactly one warning, so 300
+    // warnings total. The cap doesn't suppress warnings — it
+    // resets the *cooldown* memory.
+    expect(logWarn).toHaveBeenCalledTimes(300);
+
+    // Now repeat one of the earliest event names. Without the
+    // cap-reset path that entry would still be in the map and
+    // the cooldown would suppress the warning. With the
+    // cap-reset (the map was cleared when entry 257 arrived),
+    // the entry is gone and a fresh warning fires.
+    clock += 1;
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "attack-0",
+        data: {},
+        seq: 1000,
+      }),
+    });
+    expect(logWarn).toHaveBeenCalledTimes(301);
+  });
+
+  it("clears the trust-boundary drop-warn cooldown on disconnect", async () => {
+    // Ninth-pass Devin Review on PR #43
+    // (`ANALYSIS_pr-review-job-...0001`) flagged that the
+    // `wsDropWarnCooldown` map is keyed by the untrusted
+    // `eventName` and never shrinks. Across many reconnects a
+    // peer cycling unique made-up event names could grow the map
+    // without bound (the cooldown alone doesn't evict). The fix
+    // is twofold: a hard cap at 256 entries (clear when reached)
+    // AND a clean-slate reset on every `disconnectWebSocket()`.
+    // This test exercises the disconnect arm: warn at a tuple,
+    // disconnect, reconnect, warn at the SAME tuple. The cooldown
+    // must have been reset, so the second warning fires (whereas
+    // without the reset it would be suppressed by the 60 s
+    // cooldown from before disconnect).
+    const { ctor, instances } = mockWebSocketCtor();
+    const logWarn = vi.fn();
+    let clock = 1_000;
+    const c = buildClient({
+      webSocketCtor: ctor,
+      logWarn,
+      now: () => clock,
+    });
+    c.setServerUrl("https://kchat.example.com");
+    c.setToken("PAT-secret");
+    await c.connectWebSocket();
+    instances[0].inst.onopen?.({});
+
+    // First connection: malformed frame fires a warning.
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({ event: "posted", data: {}, seq: 1 }),
+    });
+    expect(logWarn).toHaveBeenCalledTimes(1);
+
+    // Disconnect, reconnect, advance clock by only 1 ms (well
+    // inside the 60 s cooldown window). If the cooldown survived
+    // the disconnect, this would suppress the warning. With the
+    // ninth-pass fix the cooldown is cleared on disconnect, so
+    // the SAME tuple fires a second warning on the new connection.
+    c.disconnectWebSocket();
+    clock += 1;
+    await c.connectWebSocket();
+    instances[1].inst.onopen?.({});
+    instances[1].inst.onmessage?.({
+      data: JSON.stringify({ event: "posted", data: {}, seq: 2 }),
+    });
+    expect(logWarn).toHaveBeenCalledTimes(2);
+  });
+
   it("user-initiated disconnect does NOT schedule a reconnect", async () => {
     const { ctor, instances } = mockWebSocketCtor();
     const c = buildClient({ webSocketCtor: ctor });
@@ -1120,7 +1664,7 @@ describe("KchatClient.connectWebSocket", () => {
 });
 
 describe("KchatClient.shutdown", () => {
-  it("clears the token, transitions to disconnected, and clears listeners", async () => {
+  it("clears the token and transitions to disconnected", async () => {
     const userResp = ok({
       id: "user1234567890abcdefgh",
       username: "ken",
@@ -1137,6 +1681,92 @@ describe("KchatClient.shutdown", () => {
     c.shutdown();
     expect(c.getState().state).toBe("disconnected");
     expect(c.getUser()).toBeNull();
+  });
+
+  it("preserves external WS and status listeners across a shutdown/reconnect cycle", async () => {
+    // Regression for fourth-pass Devin Review on PR #43
+    // (BUG_pr-review-job-..._0001). The previous shutdown()
+    // implementation called wsListeners.clear() +
+    // statusListeners.clear(), which silently stripped the
+    // KchatEventForwarder's subscription on the first disconnect
+    // and left no path for it to re-attach (its own start() guard
+    // is keyed on cached unsubscribe closures and would no-op).
+    // Subsequent reconnects therefore had a dead push pipeline.
+    // The fix is in KchatClient.shutdown(): only the client's own
+    // connection state is torn down; external listener Sets are
+    // left intact so the same forwarder subscription remains in
+    // place across reconnects.
+    const userResp1 = ok({
+      id: "user1234567890abcdefgh",
+      username: "ken",
+      email: "k@e.com",
+      first_name: "K",
+      last_name: "N",
+      roles: "system_user",
+    });
+    const userResp2 = ok({
+      id: "user1234567890abcdefgh",
+      username: "ken",
+      email: "k@e.com",
+      first_name: "K",
+      last_name: "N",
+      roles: "system_user",
+    });
+    const { fn: fetchFn } = makeFetch([userResp1, userResp2]);
+    const c = buildClient({ fetchFn });
+
+    const statusTransitions: string[] = [];
+    const wsEvents: unknown[] = [];
+    c.onStatusChange((s) => statusTransitions.push(s.state));
+    c.onWebSocketEvent((e) => wsEvents.push(e));
+
+    c.setToken("PAT");
+    await c.verifyConnection();
+    expect(c.getState().state).toBe("connected");
+
+    c.shutdown();
+    expect(c.getState().state).toBe("disconnected");
+
+    // Reconnect on the SAME client instance — this is exactly the
+    // flow KchatAuthService.disconnect() + connect() exercises.
+    c.setToken("PAT");
+    await c.verifyConnection();
+    expect(c.getState().state).toBe("connected");
+
+    // The status listener must have observed BOTH the
+    // post-shutdown `disconnected` transition AND the
+    // post-reconnect `connecting`/`connected` transitions. If
+    // shutdown had cleared the listener Set the second connect
+    // cycle's transitions would be invisible to the subscriber.
+    expect(statusTransitions).toContain("disconnected");
+    expect(
+      statusTransitions.slice(statusTransitions.indexOf("disconnected") + 1),
+    ).toContain("connected");
+
+    // Now drive a WebSocket event after the reconnect to prove
+    // the WS listener Set also survived the shutdown.
+    const { ctor, instances } = mockWebSocketCtor();
+    const c2 = buildClient({ webSocketCtor: ctor, fetchFn });
+    const c2WsEvents: unknown[] = [];
+    c2.onWebSocketEvent((e) => c2WsEvents.push(e));
+    c2.shutdown();
+    // After shutdown the existing onWebSocketEvent subscription
+    // must still be live. Drive a WS event through and assert
+    // delivery.
+    c2.setServerUrl("https://kchat.example.com");
+    c2.setToken("PAT");
+    await c2.connectWebSocket();
+    expect(instances).toHaveLength(1);
+    instances[0].inst.onmessage?.({
+      data: JSON.stringify({
+        event: "posted",
+        broadcast: { channel_id: "ch1" },
+        data: { foo: 1 },
+        seq: 7,
+      }),
+    });
+    expect(c2WsEvents).toHaveLength(1);
+    expect((c2WsEvents[0] as { event: string }).event).toBe("posted");
   });
 });
 

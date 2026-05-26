@@ -471,6 +471,15 @@ const mockApi = {
     addChannelSource: vi
       .fn()
       .mockResolvedValue({ sourceId: "src-kchat-1", cacheDir: "/tmp/kchat" }),
+    // Block B Task 1: push-based subscriptions. Defaults return
+    // a no-op unsubscribe so components that subscribe-on-mount
+    // can render and unmount cleanly in tests without standing
+    // up an actual IPC channel; tests that need to drive events
+    // through the callback override these per-case (e.g. the
+    // `KchatSidebarSection` pivot test in
+    // `kchatSidebarSection.test.tsx`).
+    onStatusChange: vi.fn().mockReturnValue(() => {}),
+    onEvent: vi.fn().mockReturnValue(() => {}),
   },
   audit: {
     listRecent: vi.fn().mockResolvedValue([]),
