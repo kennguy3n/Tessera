@@ -436,11 +436,11 @@ Theme 4 — Documentation
 |---|---|---|
 | 20 | `PHASES.md` recreated | `DONE` |
 | 21 | `PROGRESS.md` recreated | `DONE` |
-| 22 | `ARCHITECTURE.md` updated — KChat directory listing, vision/imagegen/audit IPC, VisionPage, asset protocol, kchat_crypto/vision_extractor/pdf_extractor crates, ARM/ROCm/RPM/AppImage/.deb, extension bridge diagram | `IN PROGRESS` |
-| 23 | `README.md` updated — KChat Integration section, uney-chat-desktop link, repo layout, `.rpm` packaging, vision + imagegen capabilities, Linux arm64 prerequisites | `IN PROGRESS` |
-| 24 | `CHANGELOG.md` updated | `IN PROGRESS` |
-| 25 | `docs/IPC_AUDIT.md` updated for KChat + vision + imagegen channels | `DONE` (Theme 1 portion: extension surface) |
-| 26 | `PHASES.md` / `PROGRESS.md` consistency audit | `IN PROGRESS` |
+| 22 | `ARCHITECTURE.md` updated — KChat directory listing under repo layout, `kchat.ts` / `audit.ts` / `vision.ts` / `imagegen.ts` in IPC tree, `kchat_crypto.rs` / `vision_extractor.rs` / `pdf_extractor.rs` mentioned in `tessera_sources` blurb, dedicated "KChat integration" section with extension-bridge data flow diagram and seven key invariants | `DONE` (Theme 4 / PR #54) |
+| 23 | `README.md` updated — KChat row in Source connectors table; new "KChat integration" subsection covering dual-mode auth, what gets indexed (AEAD, watermarked backfill, cryptoshred), retrieval surfaces (RRF, thread context), evidence-pack share, scheduler action | `DONE` (Theme 4 / PR #54) |
+| 24 | `CHANGELOG.md` updated — 7 Added + 3 Changed + 4 Tests entries under `[Unreleased]` covering Phase 13 Themes 1–3 | `DONE` (Theme 4 / PR #54) |
+| 25 | `docs/IPC_AUDIT.md` updated — added missing `kchat:fetchThreadContext` row with real rate-limit profile (5/s burst 10) and input shape; documented export-path deny-list invariant below `artifacts:*` table | `DONE` (Theme 4 / PR #54) |
+| 26 | `PHASES.md` / `PROGRESS.md` consistency audit — Tasks 1–19 flipped to `DONE` with PR-link attribution, exit criteria checkboxes updated, three new dated changelog entries (#51 / #52 / #53) | `DONE` (Theme 4 / PR #54) |
 
 Theme 5 — Remaining polish
 
@@ -479,9 +479,12 @@ Theme 5 — Remaining polish
       `backfill_kchat_channel` action, export-path deny-list, token
       expiry + refresh + invalidation, and preload contract tests all
       pass locally. *(Theme 3 / PR #53)*
-- [ ] Documentation matches reality: every `ipcMain.handle(` / typed
+- [x] Documentation matches reality: every `ipcMain.handle(` / typed
       preload entry / surface mentioned in PROPOSAL appears in
-      ARCHITECTURE / README / IPC_AUDIT.
+      ARCHITECTURE / README / IPC_AUDIT. *(Theme 4 / PR #54: added
+      `kchat:fetchThreadContext` to IPC_AUDIT, full KChat directory
+      listing in ARCHITECTURE repo layout, dedicated "KChat
+      integration" sections in both ARCHITECTURE and README.)*
 - [ ] Remaining polish: KChat source-type icon, dark-theme audit,
       Linux extension discovery hardening (Theme 5).
 
