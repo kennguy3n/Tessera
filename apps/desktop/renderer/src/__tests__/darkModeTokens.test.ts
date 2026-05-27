@@ -397,8 +397,17 @@ describe("dark-mode CSS variable enforcement", () => {
         // Look for any color-bearing property whose value is a bare
         // color literal. The first capture group is the offending
         // value; we surface both class + value for easy fixing.
+        //
+        // Include the directional border shorthands (border-left /
+        // border-right / border-top / border-bottom) explicitly —
+        // the bare `border` alternative does NOT match
+        // `border-left:` because the `\s*:\s*` segment fails on
+        // `-left:`. Without these alternatives, a future regression
+        // that replaces `border-left: 3px solid var(--color-primary)`
+        // with `border-left: 3px solid #7c3aed` would silently pass
+        // this check. Per Devin Review PR #55 ANALYSIS_0001.
         const bareRe =
-          /(?:background-color|background|color|border|border-color|outline|outline-color|fill|stroke)\s*:\s*([^;}]*)/g;
+          /(?:background-color|background|color|border-left|border-right|border-top|border-bottom|border-color|border|outline-color|outline|fill|stroke)\s*:\s*([^;}]*)/g;
         let mm: RegExpExecArray | null;
         while ((mm = bareRe.exec(body)) !== null) {
           const value = mm[1].trim();
