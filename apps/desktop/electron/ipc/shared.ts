@@ -13,6 +13,7 @@
  */
 import { app } from "electron";
 import * as os from "os";
+import * as path from "path";
 import { getLogger } from "../logger";
 import { createDefaultContext } from "./context";
 import { defaultRateLimiter } from "./rateLimiter";
@@ -82,6 +83,32 @@ export function getSafeExportRoots(): string[] {
     roots.push(os.tmpdir());
   } catch {
     // skip
+  }
+  return roots;
+}
+
+/**
+ * Directories that are NEVER valid export targets, even when they
+ * fall inside a safe root. A compromised renderer must not be able to
+ * overwrite the KChat channel cache (which lives under HOME) via an
+ * export IPC and thereby inject attacker-controlled content that the
+ * KChat connector would later ingest.
+ *
+ * The list uses the same `~/.tessera/kchat-channels` canonical prefix
+ * from `kchatPaths.ts`.
+ *
+ * Defensive symmetry with `getSafeExportRoots`: wrap path resolution in
+ * try/catch so a misconfigured environment (theoretical `os.homedir()`
+ * failure on a severely broken system) does not throw out of the IPC
+ * handler. A failed deny-root lookup is the safe direction — the
+ * allow-list will still gate writes; we just lose one defence layer.
+ */
+export function getDenyExportRoots(): string[] {
+  const roots: string[] = [];
+  try {
+    roots.push(path.join(os.homedir(), ".tessera", "kchat-channels"));
+  } catch {
+    // skip if homedir is unavailable; allow-list still gates writes
   }
   return roots;
 }

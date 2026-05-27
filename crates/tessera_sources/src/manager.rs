@@ -4768,4 +4768,637 @@ mod tests {
             "self-exclusion must keep the hit out of its own context (got {ids:?})"
         );
     }
+
+    // ----------------------------------------------------------------
+    // Phase 13 Theme 3 Task 14: AEAD full-lifecycle round-trip
+    // ----------------------------------------------------------------
+
+    /// Full-lifecycle round-trip: ingest → search → cryptoshred →
+    /// verify DEK gone → re-grant → re-ingest → search again.
+    ///
+    /// This is the end-to-end test described in PROGRESS.md Task 14:
+    /// "KChat post ingest AEAD round-trip test (post → DEK →
+    /// ciphertext → decrypt → cryptoshred)". Existing tests cover
+    /// individual stages (e.g. `ingest_kchat_post_seals_chunks_and_
+    /// persists_dek` tests ingest + seal + open; `search_kchat_posts_
+    /// excludes_revoked_sources` tests revoke-then-search). This test
+    /// proves the invariant across the COMPLETE lifecycle: data that
+    /// was cryptographically erased can never resurface, and the
+    /// substrate recovers cleanly into a functional state after a
+    /// cryptoshred + re-grant.
+    #[test]
+    fn kchat_aead_full_lifecycle_ingest_search_cryptoshred_regrant() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.set_kchat_principal("self-user").unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let source_id = added.source.id;
+
+        // ── Phase 1: ingest two posts, verify DEK + AEAD round-trip ──
+
+        let post_alpha = make_post_input(
+            cache_dir,
+            "pa-lifecycle",
+            "ch-lifecycle",
+            "u-alice",
+            "rhodium palladium osmium iridium platinum",
+        );
+        let post_beta = make_post_input(
+            cache_dir,
+            "pb-lifecycle",
+            "ch-lifecycle",
+            "u-bob",
+            "ruthenium rhodium rhenium technetium molybdenum",
+        );
+        let outcome_a = manager.ingest_kchat_post(&post_alpha).unwrap();
+        let outcome_b = manager.ingest_kchat_post(&post_beta).unwrap();
+
+        let chunk_ids_a = match &outcome_a {
+            KchatPostIngestOutcome::Ingested { chunk_ids, .. } => chunk_ids.clone(),
+            other => panic!("expected Ingested for alpha, got {other:?}"),
+        };
+        let chunk_ids_b = match &outcome_b {
+            KchatPostIngestOutcome::Ingested { chunk_ids, .. } => chunk_ids.clone(),
+            other => panic!("expected Ingested for beta, got {other:?}"),
+        };
+
+        // DEK row exists.
+        let wrapped_pre = manager
+            .store
+            .load_wrapped_dek_for_source(&source_id)
+            .unwrap();
+        assert!(
+            wrapped_pre.is_some(),
+            "wrapped DEK must be persisted after ingest"
+        );
+
+        // AEAD round-trip: every chunk decrypts to non-empty plaintext.
+        for chunk_id in chunk_ids_a.iter().chain(chunk_ids_b.iter()) {
+            let sealed = manager
+                .store
+                .load_chunk_aead(*chunk_id)
+                .unwrap()
+                .expect("AEAD blob must be persisted");
+            let pt = manager
+                .kchat_crypto()
+                .open_chunk(&source_id, &sealed)
+                .expect("AEAD must decrypt under the source DEK");
+            assert!(!pt.is_empty(), "decrypted plaintext must be non-empty");
+        }
+
+        // ── Phase 2: search returns both posts ──
+
+        let hits_pre = manager.search_kchat_posts("rhodium", 10).unwrap();
+        assert_eq!(
+            hits_pre.len(),
+            2,
+            "pre-cryptoshred: both posts contain 'rhodium' and must surface"
+        );
+        for hit in &hits_pre {
+            assert!(
+                hit.content.contains("rhodium"),
+                "hit content must carry the AEAD-verified plaintext"
+            );
+        }
+
+        // ── Phase 3: cryptoshred via revoke ──
+
+        // Save a sealed chunk from before the shred so we can prove it
+        // is undecryptable after the DEK is destroyed.
+        let sealed_before_shred = manager
+            .store
+            .load_chunk_aead(chunk_ids_a[0])
+            .unwrap()
+            .expect("pre-shred: chunk AEAD must still exist");
+
+        let revoke_outcome = manager.revoke_kchat_source(cache_dir).unwrap();
+        assert!(
+            matches!(
+                revoke_outcome,
+                KchatRevokeOutcome::Revoked {
+                    chunks_dropped, ..
+                } if chunks_dropped > 0
+            ),
+            "revoke must cryptoshred chunks (got {revoke_outcome:?})"
+        );
+
+        // DEK row gone from store.
+        let wrapped_post = manager
+            .store
+            .load_wrapped_dek_for_source(&source_id)
+            .unwrap();
+        assert!(
+            wrapped_post.is_none(),
+            "wrapped DEK row must be deleted after cryptoshred"
+        );
+
+        // In-memory DEK cache evicted.
+        assert_eq!(
+            manager.kchat_crypto().cache_size(),
+            0,
+            "in-memory DEK cache must be empty after cryptoshred"
+        );
+
+        // The saved sealed chunk is now undecryptable: the DEK is gone.
+        let open_err = manager
+            .kchat_crypto()
+            .open_chunk(&source_id, &sealed_before_shred);
+        assert!(
+            open_err.is_err(),
+            "opening a sealed chunk after DEK destruction must fail"
+        );
+
+        // ── Phase 4: search returns nothing ──
+
+        let hits_post_shred = manager.search_kchat_posts("rhodium", 10).unwrap();
+        assert!(
+            hits_post_shred.is_empty(),
+            "post-cryptoshred: no hits must surface (got {} hits)",
+            hits_post_shred.len()
+        );
+
+        // ── Phase 5: re-grant the source ──
+
+        let regrant = manager
+            .refresh_kchat_acl(
+                cache_dir,
+                &[make_acl_member("self-user", "channel_admin")],
+            )
+            .unwrap();
+        assert_eq!(
+            regrant,
+            KchatAclRefreshOutcome::Regranted,
+            "ACL refresh with principal present must re-grant"
+        );
+        let source_after = manager.get_source(&source_id).unwrap();
+        assert_eq!(
+            source_after.status,
+            SourceStatus::Connected,
+            "re-granted source should be Connected (not Indexed — content was shredded)"
+        );
+
+        // No DEK exists yet for the re-granted source (the old one was
+        // shredded; a new one is generated on next ingest).
+        let wrapped_regranted = manager
+            .store
+            .load_wrapped_dek_for_source(&source_id)
+            .unwrap();
+        assert!(
+            wrapped_regranted.is_none(),
+            "no DEK until new content is ingested post-regrant"
+        );
+
+        // ── Phase 6: re-ingest a new post under the fresh DEK ──
+
+        let post_gamma = KchatPostIngestInput {
+            cache_dir: cache_dir.to_string(),
+            post_id: "pg-lifecycle".to_string(),
+            channel_id: "ch-lifecycle".to_string(),
+            root_id: None,
+            sender_user_id: "u-charlie".to_string(),
+            body: "rhodium is a transition metal element".to_string(),
+            created_at_ms: 1_700_000_001_000,
+            edited_at_ms: 0,
+        };
+        let outcome_g = manager.ingest_kchat_post(&post_gamma).unwrap();
+        let chunk_ids_g = match &outcome_g {
+            KchatPostIngestOutcome::Ingested { chunk_ids, .. } => chunk_ids.clone(),
+            other => panic!("expected Ingested for gamma, got {other:?}"),
+        };
+
+        // New DEK generated.
+        let wrapped_new = manager
+            .store
+            .load_wrapped_dek_for_source(&source_id)
+            .unwrap();
+        assert!(
+            wrapped_new.is_some(),
+            "new DEK must be generated on first ingest post-regrant"
+        );
+
+        // New AEAD round-trips under the new DEK.
+        for chunk_id in &chunk_ids_g {
+            let sealed = manager
+                .store
+                .load_chunk_aead(*chunk_id)
+                .unwrap()
+                .expect("post-regrant chunk must have AEAD blob");
+            let pt = manager
+                .kchat_crypto()
+                .open_chunk(&source_id, &sealed)
+                .expect("post-regrant AEAD must decrypt under new DEK");
+            assert!(
+                !pt.is_empty(),
+                "post-regrant decrypted plaintext must be non-empty"
+            );
+        }
+
+        // The pre-shred sealed chunk STILL fails to open (the new DEK
+        // is different from the old one — the old one was randomly
+        // generated and is now gone).
+        let open_err_again = manager
+            .kchat_crypto()
+            .open_chunk(&source_id, &sealed_before_shred);
+        assert!(
+            open_err_again.is_err(),
+            "pre-shred ciphertext must remain undecryptable even after re-grant (new DEK differs)"
+        );
+
+        // ── Phase 7: search returns only the new post ──
+
+        let hits_final = manager.search_kchat_posts("rhodium", 10).unwrap();
+        assert_eq!(
+            hits_final.len(),
+            1,
+            "only the post-regrant post must surface (got {:?})",
+            hits_final
+                .iter()
+                .map(|h| h.post_id.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(hits_final[0].post_id, "pg-lifecycle");
+        assert!(
+            hits_final[0].content.contains("rhodium"),
+            "post-regrant hit must carry AEAD-verified plaintext"
+        );
+    }
+
+    /// Thread-context retrieval across the cryptoshred boundary:
+    /// after a source is cryptoshredded and then re-granted with
+    /// new content, `fetch_kchat_thread_context` must return only
+    /// messages sealed under the current DEK, not ghosts from the
+    /// pre-shred era.
+    #[test]
+    fn kchat_aead_thread_context_survives_cryptoshred_cycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.set_kchat_principal("self-user").unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let source_id = added.source.id;
+
+        // Pre-shred: ingest a thread (root + reply).
+        manager
+            .ingest_kchat_post(&KchatPostIngestInput {
+                cache_dir: cache_dir.to_string(),
+                post_id: "root-pre".to_string(),
+                channel_id: "ch-ctx".to_string(),
+                root_id: None,
+                sender_user_id: "u-x".to_string(),
+                body: "hafnium zirconium titanium".to_string(),
+                created_at_ms: 1_000,
+                edited_at_ms: 0,
+            })
+            .unwrap();
+        manager
+            .ingest_kchat_post(&KchatPostIngestInput {
+                cache_dir: cache_dir.to_string(),
+                post_id: "reply-pre".to_string(),
+                channel_id: "ch-ctx".to_string(),
+                root_id: Some("root-pre".to_string()),
+                sender_user_id: "u-y".to_string(),
+                body: "niobium tantalum vanadium".to_string(),
+                created_at_ms: 2_000,
+                edited_at_ms: 0,
+            })
+            .unwrap();
+
+        // Thread context works pre-shred.
+        let ctx_pre = manager
+            .fetch_kchat_thread_context(&source_id, "reply-pre")
+            .unwrap();
+        assert_eq!(
+            ctx_pre.len(),
+            1,
+            "pre-shred: root must appear as context for the reply"
+        );
+        assert_eq!(ctx_pre[0].post_id, "root-pre");
+
+        // Cryptoshred.
+        manager.revoke_kchat_source(cache_dir).unwrap();
+
+        // Thread context returns empty after shred (DEK gone).
+        let ctx_shredded = manager
+            .fetch_kchat_thread_context(&source_id, "reply-pre")
+            .unwrap();
+        assert!(
+            ctx_shredded.is_empty(),
+            "post-shred: no thread context must be returned"
+        );
+
+        // Re-grant.
+        manager
+            .refresh_kchat_acl(
+                cache_dir,
+                &[make_acl_member("self-user", "channel_admin")],
+            )
+            .unwrap();
+
+        // Re-ingest a new thread.
+        manager
+            .ingest_kchat_post(&KchatPostIngestInput {
+                cache_dir: cache_dir.to_string(),
+                post_id: "root-post".to_string(),
+                channel_id: "ch-ctx".to_string(),
+                root_id: None,
+                sender_user_id: "u-z".to_string(),
+                body: "scandium yttrium lanthanum".to_string(),
+                created_at_ms: 3_000,
+                edited_at_ms: 0,
+            })
+            .unwrap();
+        manager
+            .ingest_kchat_post(&KchatPostIngestInput {
+                cache_dir: cache_dir.to_string(),
+                post_id: "reply-post".to_string(),
+                channel_id: "ch-ctx".to_string(),
+                root_id: Some("root-post".to_string()),
+                sender_user_id: "u-w".to_string(),
+                body: "cerium praseodymium neodymium".to_string(),
+                created_at_ms: 4_000,
+                edited_at_ms: 0,
+            })
+            .unwrap();
+
+        // Thread context works for the new thread under the new DEK.
+        let ctx_post = manager
+            .fetch_kchat_thread_context(&source_id, "reply-post")
+            .unwrap();
+        assert_eq!(
+            ctx_post.len(),
+            1,
+            "post-regrant: root of the new thread must appear as context"
+        );
+        assert_eq!(ctx_post[0].post_id, "root-post");
+        assert!(
+            ctx_post[0].content.contains("scandium"),
+            "post-regrant context must carry AEAD-verified new-DEK plaintext"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // Phase 13 Theme 3 Task 15: Hybrid search ordering + revocation
+    // ----------------------------------------------------------------
+
+    /// The reciprocal-rank scoring contract between file-search and
+    /// KChat-post-search is that both produce scores in (0, 1]:
+    /// `1.0 / (rank + 1.0)` where rank is 0-based position within
+    /// the returned vec. A renderer that interleaves file hits and
+    /// post hits can sort by `relevance` desc to produce a single
+    /// merged ranking without distinguishing hit types. This test
+    /// verifies both search methods produce scores on the same axis.
+    #[test]
+    fn search_scoring_axis_is_consistent_between_files_and_kchat_posts() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        // Create a doc file so the folder source has content.
+        std::fs::write(
+            dir.path().join("doc.txt"),
+            "beryllium magnesium calcium strontium barium radium",
+        )
+        .unwrap();
+
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        // Add a file source (index the folder).
+        manager
+            .add_local_folder(dir.path().to_str().unwrap())
+            .unwrap();
+        // Add a KChat source and ingest posts.
+        let _added = manager.add_kchat_channel(cache_dir).unwrap();
+        for i in 0..3 {
+            manager
+                .ingest_kchat_post(&make_post_input(
+                    cache_dir,
+                    &format!("p-axis-{i}"),
+                    "c-axis",
+                    "u-axis",
+                    &format!("beryllium strontium element-{i} alkaline earth metal"),
+                ))
+                .unwrap();
+        }
+
+        // File search (hybrid engine).
+        let file_hits = manager.search("beryllium", 10).unwrap();
+        assert!(
+            !file_hits.is_empty(),
+            "file search must find the indexed txt"
+        );
+        // KChat post search.
+        let post_hits = manager.search_kchat_posts("beryllium", 10).unwrap();
+        assert_eq!(
+            post_hits.len(),
+            3,
+            "post search must find all 3 ingested posts"
+        );
+
+        // Both use the same reciprocal rank formula.
+        assert!(
+            (file_hits[0].relevance - 1.0).abs() < 1e-9,
+            "first file hit must be 1.0 (got {})",
+            file_hits[0].relevance
+        );
+        assert!(
+            (post_hits[0].relevance - 1.0).abs() < 1e-9,
+            "first post hit must be 1.0 (got {})",
+            post_hits[0].relevance
+        );
+        assert!(
+            (post_hits[1].relevance - 0.5).abs() < 1e-9,
+            "second post hit must be 0.5 (got {})",
+            post_hits[1].relevance
+        );
+        assert!(
+            (post_hits[2].relevance - (1.0 / 3.0)).abs() < 1e-9,
+            "third post hit must be 1/3 (got {})",
+            post_hits[2].relevance
+        );
+
+        // All scores are in (0, 1].
+        for hit in &file_hits {
+            assert!(
+                hit.relevance > 0.0 && hit.relevance <= 1.0,
+                "file hit score must be in (0, 1] (got {})",
+                hit.relevance
+            );
+        }
+        for hit in &post_hits {
+            assert!(
+                hit.relevance > 0.0 && hit.relevance <= 1.0,
+                "post hit score must be in (0, 1] (got {})",
+                hit.relevance
+            );
+        }
+    }
+
+    /// Revocation mid-session: the same `search_kchat_posts` call
+    /// returns hits from a source, then that source is revoked, then
+    /// the SAME call (no manager re-creation) returns no hits. This
+    /// proves the runtime revocation is visible to subsequent queries
+    /// without a process restart.
+    #[test]
+    fn search_kchat_posts_revocation_takes_effect_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.set_kchat_principal("self-user").unwrap();
+        manager.add_kchat_channel(cache_dir).unwrap();
+
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "p-rev-1",
+                "c-rev",
+                "u-rev",
+                "tungsten wolfram transition metal element",
+            ))
+            .unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "p-rev-2",
+                "c-rev",
+                "u-rev",
+                "tungsten filament incandescent bulb",
+            ))
+            .unwrap();
+
+        // Pre-revoke: both posts surface.
+        let pre = manager.search_kchat_posts("tungsten", 10).unwrap();
+        assert_eq!(pre.len(), 2, "pre-revoke must surface both hits");
+
+        // Revoke the source (cryptoshred + status flip).
+        let outcome = manager.revoke_kchat_source(cache_dir).unwrap();
+        assert!(
+            matches!(outcome, KchatRevokeOutcome::Revoked { .. }),
+            "revoke must succeed"
+        );
+
+        // Post-revoke: zero hits from the SAME manager instance.
+        let post = manager.search_kchat_posts("tungsten", 10).unwrap();
+        assert!(
+            post.is_empty(),
+            "post-revoke must surface zero hits (got {} hits: {:?})",
+            post.len(),
+            post.iter().map(|h| h.post_id.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    /// BM25 relevance ordering is preserved through AEAD verification:
+    /// if two posts have different BM25 scores (one is a closer lexical
+    /// match to the query), the BM25-ranked order must survive the
+    /// verification pipeline — the AEAD check must not re-order or
+    /// drop verified hits that are correctly sealed.
+    #[test]
+    fn search_kchat_posts_bm25_ordering_preserved_through_verification() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.add_kchat_channel(cache_dir).unwrap();
+
+        // Post A: high relevance (query terms repeated, exact phrase).
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "p-hi",
+                "c-ord",
+                "u-ord",
+                "xenon krypton xenon krypton noble gas element xenon",
+            ))
+            .unwrap();
+        // Post B: lower relevance (query term once, more diluted).
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "p-lo",
+                "c-ord",
+                "u-ord",
+                "the atmospheric composition contains traces of xenon alongside nitrogen oxygen argon",
+            ))
+            .unwrap();
+
+        let hits = manager.search_kchat_posts("xenon krypton", 10).unwrap();
+        assert!(
+            hits.len() >= 2,
+            "both posts must surface (got {})",
+            hits.len()
+        );
+        // The post with repeated query terms should rank higher.
+        let pos_hi = hits.iter().position(|h| h.post_id == "p-hi");
+        let pos_lo = hits.iter().position(|h| h.post_id == "p-lo");
+        assert!(
+            pos_hi.is_some() && pos_lo.is_some(),
+            "both posts must be present in results"
+        );
+        assert!(
+            pos_hi.unwrap() < pos_lo.unwrap(),
+            "higher-BM25-score post must rank before lower-score post \
+             (high={:?}, low={:?})",
+            pos_hi,
+            pos_lo
+        );
+        // The first hit should have relevance 1.0 (reciprocal rank).
+        assert!(
+            (hits[0].relevance - 1.0).abs() < 1e-9,
+            "top hit must have relevance 1.0"
+        );
+    }
+
+    /// Cross-source revocation isolation: revoking source A must not
+    /// affect posts from source B. After revocation, only source B's
+    /// posts surface.
+    #[test]
+    fn search_kchat_posts_cross_source_revocation_isolation() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let cd_a = dir_a.path().to_str().unwrap();
+        let cd_b = dir_b.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.set_kchat_principal("self-user").unwrap();
+        let added_a = manager.add_kchat_channel(cd_a).unwrap();
+        let added_b = manager.add_kchat_channel(cd_b).unwrap();
+
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cd_a,
+                "p-src-a",
+                "ch-a",
+                "u-a",
+                "promethium samarium europium gadolinium",
+            ))
+            .unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cd_b,
+                "p-src-b",
+                "ch-b",
+                "u-b",
+                "promethium terbium dysprosium holmium",
+            ))
+            .unwrap();
+
+        // Both surface before any revoke.
+        let pre = manager.search_kchat_posts("promethium", 10).unwrap();
+        assert_eq!(pre.len(), 2, "both sources must surface pre-revoke");
+
+        // Revoke source A only.
+        manager.revoke_kchat_source(cd_a).unwrap();
+
+        // Only source B's post survives.
+        let post = manager.search_kchat_posts("promethium", 10).unwrap();
+        assert_eq!(
+            post.len(),
+            1,
+            "only source B must survive (got {:?})",
+            post.iter().map(|h| h.post_id.as_str()).collect::<Vec<_>>()
+        );
+        assert_eq!(post[0].post_id, "p-src-b");
+        assert_eq!(post[0].source_id, added_b.source.id);
+
+        // Source A's post is gone.
+        assert!(
+            !post.iter().any(|h| h.source_id == added_a.source.id),
+            "revoked source A must not appear in results"
+        );
+    }
 }

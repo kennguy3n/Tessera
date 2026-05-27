@@ -391,6 +391,29 @@ describe("kchat IPC registration", () => {
     expect(unexpected).toEqual([]);
   });
 
+  it("every registered kchat:* / sources:* channel has a matching ipcRenderer.invoke in preload.ts", () => {
+    // Source-text regression: the preload is the only surface through
+    // which the renderer can reach these channels. A handler that's
+    // registered in `registerKchatHandlers` but missing from
+    // `preload.ts` is silently unreachable from the renderer.
+    // Reading source text avoids needing to spin up a real Electron
+    // `contextBridge` (same pattern as sandboxPreloadContract.test.ts).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require("path");
+    const preloadSource: string = fs.readFileSync(
+      path.resolve(__dirname, "..", "preload.ts"),
+      "utf-8",
+    );
+    for (const channel of EXPECTED_KCHAT_CHANNELS) {
+      expect(
+        preloadSource,
+        `preload.ts must contain ipcRenderer.invoke("${channel}") — the renderer has no way to reach this handler otherwise`,
+      ).toContain(`"${channel}"`);
+    }
+  });
+
   it("registers each `kchat:*` / `sources:*` channel exactly once (no double-registration)", () => {
     // Defence-in-depth against a refactor that calls
     // `registerKchatHandlers` twice (e.g. hot-reload regression).

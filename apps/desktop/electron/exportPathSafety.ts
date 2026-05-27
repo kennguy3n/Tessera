@@ -41,10 +41,19 @@ import * as path from "path";
  *
  * `safeRoots` should be a non-empty list of canonical absolute directory
  * paths. An empty list always returns `false`.
+ *
+ * `denyRoots` (optional) is a list of absolute directory paths that are
+ * NEVER allowed as export targets, even if they fall inside a `safeRoot`.
+ * Deny-list takes precedence: it is checked BEFORE the allow-list, and a
+ * path inside any deny-root is rejected immediately regardless of whether
+ * it would also have matched an allow-root. This lets callers carve out
+ * sensitive subtrees (e.g. the KChat channel cache under
+ * `~/.tessera/kchat-channels/`) from a broad allow-root like HOME.
  */
 export function isSafeExportPath(
   requestedPath: string,
   safeRoots: readonly string[],
+  denyRoots: readonly string[] = [],
 ): boolean {
   if (!path.isAbsolute(requestedPath)) {
     return false;
@@ -58,6 +67,16 @@ export function isSafeExportPath(
   // `/Users/me/Downloads/../../etc/passwd` would naïvely match the
   // Downloads prefix even though it escapes that directory.
   const normalisedRequested = path.resolve(requestedPath);
+
+  // Deny-list takes precedence: if the path is inside any deny-root,
+  // reject immediately regardless of allow-root membership.
+  for (const deny of denyRoots) {
+    if (!deny) continue;
+    const normalisedDeny = path.resolve(deny);
+    if (isPathInsideRoot(normalisedRequested, normalisedDeny)) {
+      return false;
+    }
+  }
 
   for (const root of safeRoots) {
     if (!root) continue;

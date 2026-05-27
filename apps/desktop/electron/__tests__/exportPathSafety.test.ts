@@ -113,3 +113,72 @@ describe("isSafeExportPath", () => {
     });
   }
 });
+
+// ----------------------------------------------------------------
+// Phase 13 Theme 3 Task 18: deny-list carves out KChat cache dirs
+// ----------------------------------------------------------------
+
+const KCHAT_CACHE = path.join(HOME, ".tessera", "kchat-channels");
+
+describe("isSafeExportPath with denyRoots", () => {
+  it("rejects a path inside the KChat channel cache even though it is inside HOME", () => {
+    // Without the deny-list this would pass because HOME is in ROOTS.
+    const target = path.join(KCHAT_CACHE, "chidabcdef1234567890abcd", "file.md");
+    expect(isSafeExportPath(target, ROOTS, [KCHAT_CACHE])).toBe(false);
+  });
+
+  it("rejects the KChat cache root directory itself", () => {
+    expect(isSafeExportPath(KCHAT_CACHE, ROOTS, [KCHAT_CACHE])).toBe(false);
+  });
+
+  it("rejects paths nested arbitrarily deep under a deny-root", () => {
+    const deep = path.join(KCHAT_CACHE, "ch1", "sub", "deep", "x.pdf");
+    expect(isSafeExportPath(deep, ROOTS, [KCHAT_CACHE])).toBe(false);
+  });
+
+  it("does not reject paths that share a prefix but are siblings of the deny-root", () => {
+    // `~/.tessera/kchat-channels2/x.pdf` is NOT inside
+    // `~/.tessera/kchat-channels/` — the separator check must
+    // distinguish them.
+    const sibling = `${KCHAT_CACHE}2${path.sep}x.pdf`;
+    expect(isSafeExportPath(sibling, ROOTS, [KCHAT_CACHE])).toBe(true);
+  });
+
+  it("rejects paths that escape the deny-root via .. but resolve back inside it", () => {
+    // `kchat-channels/foo/../../kchat-channels/bar/x` resolves to
+    // `kchat-channels/bar/x` which is inside the deny-root.
+    const escape = path.join(KCHAT_CACHE, "foo", "..", "..", "kchat-channels", "bar", "x.md");
+    expect(isSafeExportPath(escape, ROOTS, [KCHAT_CACHE])).toBe(false);
+  });
+
+  it("still allows normal export paths when a deny-root is active", () => {
+    // Downloads is not inside the deny-root.
+    expect(
+      isSafeExportPath(path.join(DOWNLOADS, "export.pdf"), ROOTS, [KCHAT_CACHE]),
+    ).toBe(true);
+    expect(
+      isSafeExportPath(path.join(TMP, "test.xlsx"), ROOTS, [KCHAT_CACHE]),
+    ).toBe(true);
+  });
+
+  it("rejects when path escapes allow-root even if deny-list is empty", () => {
+    // Regression: the deny-list addition must not break the allow-list logic.
+    const escape = path.join(DOWNLOADS, "..", "..", "etc", "passwd");
+    expect(isSafeExportPath(escape, ROOTS, [])).toBe(false);
+  });
+
+  it("rejects everything when deny-root covers the allow-root", () => {
+    // If HOME is both allowed AND denied, deny wins.
+    expect(
+      isSafeExportPath(path.join(HOME, "file.pdf"), [HOME], [HOME]),
+    ).toBe(false);
+  });
+
+  it("ignores empty string entries in the deny-list", () => {
+    // An empty deny entry must not cause false-reject (an empty string
+    // `path.resolve("")` is cwd, which is typically inside HOME).
+    expect(
+      isSafeExportPath(path.join(DOWNLOADS, "ok.pdf"), ROOTS, [""]),
+    ).toBe(true);
+  });
+});
