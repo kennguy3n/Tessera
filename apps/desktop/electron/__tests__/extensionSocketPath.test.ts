@@ -54,7 +54,7 @@
  * is exercised by `kchatExtension.test.ts` and the
  * `defaultExtensionSocketDiscovery` integration test below.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as os from "os";
 import * as path from "path";
 
@@ -63,6 +63,38 @@ import {
   extensionSocketPath,
   type ExtensionSocketDiscovery,
 } from "../kchat/kchatExtensionBridge";
+
+/**
+ * Whole-suite parallel-safety assertion. Captures
+ * `process.platform` / `process.env.XDG_RUNTIME_DIR` /
+ * `process.getuid` BEFORE any test in this file runs, asserts
+ * they are unchanged AFTER all tests complete. Defense-in-depth
+ * against a future test that reintroduces global mutation
+ * (e.g., `Object.defineProperty(process, "platform", ...)`)
+ * — even if that hypothetical test restores its mutation in
+ * `afterEach`, this `afterAll` would catch any pollution that
+ * leaked past the per-test boundary, AND it catches mutations
+ * inside tests other than the explicit
+ * `parallel-safety > does not touch process.platform / ...`
+ * meta-test below (which only validates the calls inside its
+ * own body, not the whole file). Per Devin Review PR #57
+ * pass 2 ANALYSIS_0002.
+ */
+let suiteInitialPlatform: NodeJS.Platform;
+let suiteInitialXdg: string | undefined;
+let suiteInitialGetuid: typeof process.getuid;
+
+beforeAll(() => {
+  suiteInitialPlatform = process.platform;
+  suiteInitialXdg = process.env.XDG_RUNTIME_DIR;
+  suiteInitialGetuid = process.getuid;
+});
+
+afterAll(() => {
+  expect(process.platform).toBe(suiteInitialPlatform);
+  expect(process.env.XDG_RUNTIME_DIR).toBe(suiteInitialXdg);
+  expect(process.getuid).toBe(suiteInitialGetuid);
+});
 
 /**
  * Helper: build an `ExtensionSocketDiscovery` from a partial
