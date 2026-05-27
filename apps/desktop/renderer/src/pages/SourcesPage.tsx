@@ -12,6 +12,13 @@ import ConnectorsList from "../components/ConnectorsList";
 import DriveFilePicker from "../components/DriveFilePicker";
 import KchatChannelSourcePicker from "../components/KchatChannelSourcePicker";
 import { useSourceList, useAddSource, useRemoveSource } from "../hooks/useSources";
+// Phase 13 Theme 2 (Task 11 review-pass fix, ANALYSIS_0005 on
+// f7c8dd1): import from the shared utility module instead of from
+// `./SourceDetailPage`. The two pages are siblings; routing list
+// pages through detail-page imports creates a structurally
+// unjustified coupling and pulls the SourceDetailPage component
+// tree into SourcesPage's module graph.
+import { formatSourceTypeLabel } from "../utils/sourceLabels";
 import type {
   CompareSourcesResult,
   ConnectorFileInfo,
@@ -412,7 +419,7 @@ export default function SourcesPage() {
                     <StatusBadge status={source.status} />
                   </div>
                   <div className="card-description">
-                    {source.sourceType === "local_folder" ? "Folder" : "File"}{" "}
+                    {formatSourceTypeLabel(source.sourceType)}{" "}
                     &middot; {source.fileCount} files
                     {source.lastIndexed && (
                       <>

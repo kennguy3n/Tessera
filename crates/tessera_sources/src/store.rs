@@ -1341,6 +1341,181 @@ impl SourceStore {
         Ok(row)
     }
 
+    /// Phase 13 Theme 2 Task 13: look up the citation-metadata of
+    /// a `kchat_posts` row by `(source_id, post_id)`.
+    ///
+    /// Returns `(channel_id, root_id, created_at_ms)` so the
+    /// manager-layer `fetch_kchat_thread_context` can:
+    ///
+    /// 1. Short-circuit on a top-level post (`root_id IS NULL`),
+    ///    because a post that is its own root has no parent
+    ///    messages to surface.
+    /// 2. Cap the parent-message window at the hit's
+    ///    `created_at_ms`, so the renderer never sees a "parent"
+    ///    that was actually posted AFTER the hit (which would be
+    ///    a future-leak in a re-ingested thread where reply
+    ///    indices got reordered).
+    ///
+    /// Sibling of [`find_kchat_post`] but surfaced separately so
+    /// the existing call sites (ingest dedupe, edit re-chunk) can
+    /// stay on the cheaper two-column lookup. This shape carries
+    /// the substrate-side metadata the renderer needs to build a
+    /// thread-context request.
+    pub fn find_kchat_post_metadata(
+        &self,
+        source_id: &SourceId,
+        post_id: &str,
+    ) -> Result<Option<(String, Option<String>, i64)>> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let row: Option<(String, Option<String>, i64)> = conn
+            .query_row(
+                "SELECT channel_id, root_id, created_at_ms
+                 FROM kchat_posts
+                 WHERE source_id = ?1 AND post_id = ?2",
+                params![id_str, post_id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, Option<String>>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .ok();
+        Ok(row)
+    }
+
+    /// Phase 13 Theme 2 Task 13: fetch up to `max_context` rows
+    /// of thread context for a search hit whose `root_id` resolves
+    /// to `root_post_id`.
+    ///
+    /// Returns the thread root (`post_id = root_post_id`) AND the
+    /// most-recent earlier-replies (`root_id = root_post_id AND
+    /// created_at_ms < before_created_at_ms`), capped at
+    /// `max_context` rows total. The root, when present, is
+    /// always included — the SQL orders by `(post_id = root) DESC`
+    /// first so a row matching the root flips the boolean cast to
+    /// `1` and slots ahead of any sibling reply in the same
+    /// `LIMIT` window. Within the remaining slots, siblings are
+    /// taken most-recent-first so the renderer surfaces the
+    /// closest-in-time context to the hit rather than the thread's
+    /// oldest replies.
+    ///
+    /// The outer `ORDER BY created_at_ms ASC` renders the result
+    /// chronologically (oldest first) for top-down conversation
+    /// display.
+    ///
+    /// **Single-chunk preview semantics.** Only the leading chunk
+    /// (`chunks.chunk_index = 0`) of each context post is returned.
+    /// In the typical case a KChat post body fits in one chunk
+    /// (the default `Chunker` produces 1 chunk per ≤ 1024-char
+    /// post; threaded replies are short by convention), so this
+    /// is the entire body. For unusually-long parent messages the
+    /// renderer can render a "…" affordance and offer a "show
+    /// full thread" expansion.
+    ///
+    /// **Trust boundary.** This function returns `content` in
+    /// plaintext (from `chunks.content`) AND the `content_aead` /
+    /// `content_aead_nonce` ciphertext+nonce columns so the
+    /// manager layer can re-verify the AEAD tag before yielding
+    /// to the renderer. Rows whose ciphertext columns are NULL
+    /// (cryptoshredded) survive the SQL filter (the WHERE clause
+    /// does not require non-null ciphertext) so the manager
+    /// distinguishes "no thread context" from "thread context
+    /// dropped by AEAD verification"; both surface to the
+    /// renderer as an empty / partial vec.
+    ///
+    /// **Same-source isolation.** The `source_id` filter is
+    /// load-bearing — a `root_id` can be re-used across sources
+    /// if the same post id appears in different KChat channels
+    /// linked under different sources (e.g. two principals
+    /// indexing the same channel). Without this filter, a
+    /// `root_id` collision across sources would surface other
+    /// principals' messages as thread context. The Block C Task 3
+    /// per-source DEK gate at the manager layer would still drop
+    /// other principals' rows on AEAD verification, but
+    /// short-circuiting at the SQL layer is cheaper and
+    /// independently correct.
+    ///
+    /// Manager-side wrapper:
+    /// [`crate::manager::SourceManager::fetch_kchat_thread_context`].
+    pub fn fetch_kchat_thread_context_rows(
+        &self,
+        source_id: &SourceId,
+        root_post_id: &str,
+        before_created_at_ms: i64,
+        max_context: usize,
+    ) -> Result<Vec<KchatThreadContextRow>> {
+        let id_str = source_id.to_string();
+        // Clamp to a sane upper bound — even a thread with
+        // hundreds of replies should only surface a handful of
+        // most-recent siblings; SQL `LIMIT` larger than
+        // `i64::MAX` is a wire-format error.
+        let limit = max_context.min(i64::MAX as usize) as i64;
+
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
+            .prepare(
+                // Phase 13 Theme 2 Task 13 — Devin Review pass 1
+                // ANALYSIS_0001 (5860a94): the CTE's ordering relies on
+                // SQLite casting the boolean `(post_id = ?2)` to 1/0,
+                // so `... DESC, created_at_ms DESC` pulls the root row
+                // (boolean 1) ahead of every sibling reply (boolean 0)
+                // in the LIMIT window, then fills remaining slots with
+                // most-recent siblings. The outer `ORDER BY
+                // s.created_at_ms ASC` then restores chronological
+                // order for the renderer. See the function's doc
+                // comment for the full rationale.
+                "WITH selected AS (
+                     SELECT p.post_id, p.channel_id, p.root_id, p.sender_user_id,
+                            p.created_at_ms, p.edited_at_ms, p.indexed_file_id
+                     FROM kchat_posts p
+                     WHERE p.source_id = ?1
+                       AND (
+                           p.post_id = ?2
+                           OR (p.root_id = ?2 AND p.created_at_ms < ?3)
+                       )
+                     -- (post_id = ?2) casts to 1 for the root, 0 for
+                     -- siblings; DESC pulls the root first.
+                     ORDER BY (p.post_id = ?2) DESC, p.created_at_ms DESC
+                     LIMIT ?4
+                 )
+                 SELECT s.post_id, s.channel_id, s.root_id, s.sender_user_id,
+                        s.created_at_ms, s.edited_at_ms,
+                        c.content, c.content_aead, c.content_aead_nonce
+                 FROM selected s
+                 JOIN chunks c ON c.indexed_file_id = s.indexed_file_id
+                 WHERE c.chunk_index = 0
+                 -- Renderer expects oldest-first conversation order.
+                 ORDER BY s.created_at_ms ASC",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let rows: Vec<KchatThreadContextRow> = stmt
+            .query_map(
+                params![id_str, root_post_id, before_created_at_ms, limit],
+                |row| {
+                    Ok(KchatThreadContextRow {
+                        post_id: row.get(0)?,
+                        channel_id: row.get(1)?,
+                        root_id: row.get(2)?,
+                        sender_user_id: row.get(3)?,
+                        created_at_ms: row.get::<_, i64>(4)?,
+                        edited_at_ms: row.get::<_, i64>(5)?,
+                        content: row.get(6)?,
+                        content_aead: row.get(7)?,
+                        content_aead_nonce: row.get(8)?,
+                    })
+                },
+            )
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+
+        Ok(rows)
+    }
+
     /// Insert a new `kchat_posts` row and the matching
     /// `indexed_files` row, returning the indexed_files row id so
     /// the caller can insert chunks against it.
@@ -1703,6 +1878,41 @@ impl SourceStore {
             .execute(
                 "UPDATE chunks SET content = ?1 WHERE kind = 'chat_post'",
                 params![new_content],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
+    /// Phase 13 Theme 2 Task 13: variant of
+    /// [`Self::tamper_chunk_content_for_test`] that targets a
+    /// single `kchat_posts` row by `(source_id, post_id)`.
+    ///
+    /// Used by `fetch_kchat_thread_context_drops_aead_tampered_rows`
+    /// to assert that a single tampered context row is dropped from
+    /// the result without taking the honest siblings with it. The
+    /// broader `tamper_chunk_content_for_test` helper rewrites every
+    /// chat-post chunk, which would conflate the drop semantics
+    /// across the whole thread.
+    ///
+    /// Returns the number of rows touched. Test-only: never call
+    /// from production code.
+    #[cfg(test)]
+    pub(crate) fn tamper_chunk_content_for_post_test(
+        &self,
+        source_id: &SourceId,
+        post_id: &str,
+        new_content: &str,
+    ) -> Result<u32> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let n = conn
+            .execute(
+                "UPDATE chunks SET content = ?1
+                 WHERE indexed_file_id = (
+                     SELECT indexed_file_id FROM kchat_posts
+                     WHERE source_id = ?2 AND post_id = ?3
+                 )",
+                params![new_content, id_str, post_id],
             )
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(u32::try_from(n).unwrap_or(u32::MAX))
@@ -2454,6 +2664,39 @@ pub struct KchatPostSearchHitRow {
     /// layer to order hits before reciprocal-rank scoring;
     /// never surfaced to the renderer.
     pub bm25_score: f64,
+}
+
+/// Phase 13 Theme 2 Task 13: one raw row produced by
+/// [`SourceStore::fetch_kchat_thread_context_rows`].
+///
+/// Substrate-internal shape — the manager layer
+/// ([`crate::manager::SourceManager::fetch_kchat_thread_context`])
+/// AEAD-verifies each row's ciphertext against the per-source
+/// DEK before yielding to the renderer. A row whose ciphertext
+/// fails verification is dropped (same posture as
+/// [`KchatPostSearchHitRow`] → search results) — the renderer
+/// gets a partial vec rather than a hard error, on the principle
+/// that a tampered DB should never hide ALL thread context for
+/// honest sibling rows.
+///
+/// Plaintext `content` flows alongside the ciphertext so the
+/// manager's verification step can compare the AEAD-opened bytes
+/// to the indexed plaintext column; divergence (a row whose
+/// `chunks.content` was edited out-of-band but whose
+/// `content_aead` still authenticates as the original) is a
+/// substrate-integrity event the manager surfaces as a dropped
+/// row.
+#[derive(Debug, Clone)]
+pub struct KchatThreadContextRow {
+    pub post_id: String,
+    pub channel_id: String,
+    pub root_id: Option<String>,
+    pub sender_user_id: String,
+    pub created_at_ms: i64,
+    pub edited_at_ms: i64,
+    pub content: String,
+    pub content_aead: Option<Vec<u8>>,
+    pub content_aead_nonce: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]

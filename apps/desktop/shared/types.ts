@@ -585,6 +585,30 @@ export interface KchatPostSearchHit {
   /** Composed `kchat://<server>/channel/<channel_id>/post/<post_id>`
    * permalink, or `null` when the user is disconnected from KChat. */
   permalink: string | null;
+  /**
+   * Phase 13 Theme 2 Task 9: human-readable sender username,
+   * resolved by the IPC handler from `senderUserId` via the KChat
+   * `POST /users/ids` bulk endpoint and cached at the IPC layer.
+   *
+   * `null` when the user is disconnected from KChat OR when the
+   * referenced user is no longer visible to the authenticated
+   * principal (e.g. account deleted, lost cross-team visibility).
+   * The renderer falls back to the raw `senderUserId` for display
+   * in that case so the citation row still renders.
+   */
+  senderUsername: string | null;
+  /**
+   * Phase 13 Theme 2 Task 9: human-readable channel display name,
+   * resolved by the IPC handler from `channelId` via the KChat
+   * `GET /channels/{id}` endpoint and cached at the IPC layer.
+   *
+   * `null` when disconnected OR the channel is no longer visible
+   * (e.g. user was removed from the channel). The renderer falls
+   * back to the raw `channelId` for display, and the underlying
+   * citation is still stored against the channel id so the
+   * indexed post remains retrievable.
+   */
+  channelDisplayName: string | null;
 }
 
 /**
@@ -614,6 +638,53 @@ export interface KchatPostSearchHitInfo {
   senderUserId: string;
   createdAtMs: number;
   editedAtMs: number;
+}
+
+/**
+ * Phase 13 Theme 2 Task 13: bridge-side single message in a KChat
+ * thread context lookup. One element of the array returned by
+ * `bridgeFetchKchatThreadContext` — the IPC layer maps these to
+ * {@link KchatThreadContextMessage} (enriching with `senderUsername`
+ * / `channelDisplayName` via the same cache the search path uses).
+ */
+export interface KchatThreadContextMessageInfo {
+  postId: string;
+  channelId: string;
+  senderUserId: string;
+  createdAtMs: number;
+  editedAtMs: number;
+  content: string;
+  /** `true` for the thread root, `false` for the earlier-reply
+   *  siblings that frame the conversation. The substrate guarantees
+   *  at most one row in a result vec carries `isRoot: true`. */
+  isRoot: boolean;
+}
+
+/**
+ * Phase 13 Theme 2 Task 13: renderer-facing thread-context message.
+ * One element of the chronologically-ordered transcript returned
+ * by `window.kchat.fetchThreadContext(...)`. The IPC layer
+ * enriches each row with the sender username / channel display
+ * name resolved through the same LRU cache the search path uses;
+ * unresolvable names surface as `null` and the renderer falls back
+ * to raw ids (matching `KchatPostSearchHit`'s posture).
+ *
+ * The renderer should render these top-down: `[0]` is the
+ * chronologically-earliest message (typically the thread root),
+ * `[N-1]` is the most-recent earlier-reply before the search hit.
+ */
+export interface KchatThreadContextMessage {
+  postId: string;
+  channelId: string;
+  senderUserId: string;
+  createdAtMs: number;
+  editedAtMs: number;
+  content: string;
+  isRoot: boolean;
+  /** Resolved sender username (`null` ⇒ raw-id fallback). */
+  senderUsername: string | null;
+  /** Resolved channel display name (`null` ⇒ raw-id fallback). */
+  channelDisplayName: string | null;
 }
 
 // -----------------------------------------------------------------
@@ -1826,11 +1897,30 @@ export interface KchatChannelMemberView {
 /** Sanitised KChat file metadata. */
 export interface KchatFileView {
   id: string;
+  /**
+   * Uploader's KChat user id. Surfaced to the renderer so the
+   * "channel files" preview can show *who* uploaded each file
+   * (Phase 13 Theme 2 Task 11). The id is validated against the
+   * KChat object-id shape at the client/deserialisation boundary
+   * inside `KchatClient.listChannelFiles`, so the renderer can
+   * trust it as opaque-but-shape-valid.
+   */
+  user_id: string;
   name: string;
   size: number;
   mime_type: string;
   extension: string;
   create_at: number;
+  /**
+   * Resolved uploader username (Phase 13 Theme 2 Task 11). The
+   * IPC layer enriches this field via the existing module-level
+   * `KCHAT_USERNAME_CACHE` + `getUsersByIds()` path the citation
+   * enrichment uses. `null` when the enrichment couldn't resolve
+   * the id (transient REST failure, disconnected state, server
+   * elided the user from the response). The renderer must
+   * tolerate `null` and fall back to the raw `user_id`.
+   */
+  uploaderUsername: string | null;
 }
 
 /**
@@ -2041,6 +2131,31 @@ export interface KchatApi {
    * 16-hex SHA-256 of the query — never the raw query.
    */
   searchPosts: (query: string, limit: number) => Promise<KchatPostSearchHit[]>;
+  /**
+   * Phase 13 Theme 2 Task 13: fetch up to 3 thread-context
+   * messages for a search hit whose `rootId` is non-null. Returns
+   * a chronologically-ordered transcript (oldest first) of:
+   *
+   *   - the thread root (`isRoot: true`), AND
+   *   - up to 2 most-recent earlier-replies (`isRoot: false`)
+   *     occurring strictly before the hit.
+   *
+   * Returns an empty array when the post id is unknown, the hit
+   * is itself a top-level post, the source has been revoked
+   * (cryptoshredded DEK), or every available row failed AEAD
+   * verification. The renderer should therefore gate the "expand
+   * thread" affordance on `hit.rootId != null` AND fallback to
+   * just rendering the hit when the array comes back empty.
+   *
+   * Rate-limited at 5/s sustained + burst 10
+   * (`kchat:fetchThreadContext`); a poorly-built renderer cannot
+   * pin the substrate by auto-expanding every hit on a results
+   * page.
+   */
+  fetchThreadContext: (
+    sourceId: string,
+    postId: string,
+  ) => Promise<KchatThreadContextMessage[]>;
   /**
    * Phase 13 Task 7: probe the `uney-chat-desktop` extension
    * bridge. Returns whether the desktop app is reachable on its

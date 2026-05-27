@@ -265,19 +265,74 @@ export default function KchatChannelSourcePicker({
                 No files in this channel yet.
               </div>
             ) : (
-              <ul style={{ margin: 0, padding: "var(--spacing-sm) var(--spacing-md)" }}>
+              <ul
+                style={{
+                  margin: 0,
+                  padding: "var(--spacing-sm) var(--spacing-md)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "var(--spacing-xs)",
+                  listStyle: "none",
+                }}
+              >
                 {files.map((f) => (
-                  <li key={f.id} style={{ padding: "2px 0" }}>
-                    <span>{f.name}</span>
+                  <li
+                    key={f.id}
+                    data-testid={`kchat-source-file-${f.id}`}
+                    style={{
+                      display: "flex",
+                      gap: "var(--spacing-sm)",
+                      alignItems: "flex-start",
+                      padding: "var(--spacing-xs) 0",
+                    }}
+                  >
                     <span
+                      aria-hidden="true"
+                      data-testid={`kchat-source-file-${f.id}-icon`}
                       style={{
-                        marginLeft: "var(--spacing-sm)",
-                        color: "var(--color-text-secondary)",
+                        fontSize: "1.25em",
+                        lineHeight: "1.1",
+                        flex: "0 0 auto",
+                        width: "1.5em",
+                        textAlign: "center",
                       }}
                     >
-                      ({f.mime_type || f.extension || "file"} ·{" "}
-                      {formatBytes(f.size)})
+                      {fileTypeIcon(f)}
                     </span>
+                    <div
+                      style={{
+                        flex: "1 1 auto",
+                        minWidth: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                      }}
+                    >
+                      <span
+                        style={{
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          fontWeight: "var(--font-weight-medium)" as unknown as number,
+                        }}
+                        title={f.name}
+                      >
+                        {f.name}
+                      </span>
+                      <span
+                        data-testid={`kchat-source-file-${f.id}-meta`}
+                        style={{
+                          color: "var(--color-text-secondary)",
+                          fontSize: "calc(var(--font-size-sm) * 0.9)",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {formatFileType(f)} · {formatBytes(f.size)} ·{" "}
+                        Uploaded by {formatUploader(f)} on{" "}
+                        {formatUploadDate(f.create_at)}
+                      </span>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -326,6 +381,122 @@ function formatBytes(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+/**
+ * Phase 13 Theme 2 Task 11: human-friendly type label for the
+ * file preview row. Prefers `extension` (3-4 chars, capitalised
+ * for visual weight) over the raw `mime_type` because the
+ * preview row is space-constrained — `PDF` is friendlier than
+ * `application/pdf` at a glance. Falls back to the mime when no
+ * extension is present (e.g. uploads from clients that didn't
+ * preserve the file extension), and finally to a generic label.
+ */
+function formatFileType(f: { mime_type?: string; extension?: string }): string {
+  if (f.extension) return f.extension.toUpperCase();
+  if (f.mime_type) return f.mime_type;
+  return "file";
+}
+
+/**
+ * Phase 13 Theme 2 Task 11: choose a Unicode glyph that gives a
+ * coarse visual hint about the file type. The Tessera renderer
+ * does not download file bytes during the preview phase (would
+ * waste bandwidth and rate-limit budget for every "add channel
+ * as source" modal open), so we cannot show an actual image
+ * thumbnail — a glyph is the right scope. The glyph set mirrors
+ * the visual language used elsewhere in the Sources surface
+ * (📄 for documents, 🖼️ for images, etc.). The icon is rendered
+ * inside a fixed-width span so different glyphs don't shift the
+ * row baseline.
+ */
+function fileTypeIcon(f: {
+  mime_type?: string;
+  extension?: string;
+}): string {
+  const mime = (f.mime_type ?? "").toLowerCase();
+  const ext = (f.extension ?? "").toLowerCase();
+  if (mime.startsWith("image/") || /^(png|jpe?g|gif|webp|svg|bmp|heic|heif|avif)$/.test(ext)) {
+    return "🖼️";
+  }
+  if (mime.startsWith("video/") || /^(mp4|mov|webm|mkv|avi|m4v)$/.test(ext)) {
+    return "🎬";
+  }
+  if (mime.startsWith("audio/") || /^(mp3|wav|flac|m4a|aac|ogg|opus)$/.test(ext)) {
+    return "🎵";
+  }
+  if (mime === "application/pdf" || ext === "pdf") return "📕";
+  // Note: `csv` and `tsv` are intentionally classified as the
+  // text family rather than the spreadsheet family. They are
+  // plain-text formats by definition and can be opened in any
+  // text editor; tabbing them as "📊 spreadsheet" would surprise
+  // users who treat them as data dumps. The classification is
+  // load-bearing: the spreadsheet regex below must NOT include
+  // `csv`/`tsv` (Devin Review pass 1 on f7c8dd1 ANALYSIS_0001
+  // flagged the previous duplicate `csv` entry as dead code; the
+  // duplicate is now removed).
+  if (mime.startsWith("text/") || /^(md|txt|log|json|yaml|yml|xml|csv|tsv|html|css|js|ts|tsx|jsx|rs|py|go|rb|java|c|h|cpp|hpp|sh|toml)$/.test(ext)) {
+    return "📄";
+  }
+  if (/^(zip|tar|gz|tgz|bz2|7z|rar|xz)$/.test(ext) || mime === "application/zip" || mime === "application/x-tar" || mime === "application/gzip") {
+    return "🗜️";
+  }
+  if (mime.includes("word") || /^(doc|docx|odt|rtf)$/.test(ext)) return "📝";
+  if (mime.includes("sheet") || mime.includes("excel") || /^(xls|xlsx|ods)$/.test(ext)) return "📊";
+  if (mime.includes("presentation") || mime.includes("powerpoint") || /^(ppt|pptx|odp|key)$/.test(ext)) return "💽";
+  return "📎";
+}
+
+/**
+ * Phase 13 Theme 2 Task 11: format an uploader handle for the
+ * preview row. Prefers the enriched `uploaderUsername` (from
+ * `enrichKchatFileViews` in the main process); falls back to a
+ * shortened raw user id when enrichment didn't resolve
+ * (transient REST failure, disconnected state). The raw-id
+ * fallback shows the first 8 characters so the column stays
+ * narrow — the full 26-char id is preserved on the wire and
+ * accessible from the row's `title` (devtools) for debugging.
+ */
+function formatUploader(f: {
+  user_id: string;
+  uploaderUsername: string | null;
+}): string {
+  if (f.uploaderUsername) return `@${f.uploaderUsername}`;
+  // Defensive: a `user_id` that doesn't look like an opaque
+  // KChat object id (e.g. empty string, freshly seeded test
+  // data) should never leak through `assertKchatServerObjectId`,
+  // but display a stable "unknown" rather than `@` if it ever
+  // does.
+  if (!f.user_id) return "unknown user";
+  // Truncate the raw id for visual fit. The full id is on the
+  // wire and can be inspected via devtools; the preview row only
+  // needs enough characters to disambiguate one uploader from
+  // another at a glance.
+  return `@${f.user_id.slice(0, 8)}…`;
+}
+
+/**
+ * Phase 13 Theme 2 Task 11: format the upload epoch ms in the
+ * user's locale. Uses `Intl.DateTimeFormat` with a fixed shape
+ * (`day month year`) so the column width is predictable across
+ * locales without being arbitrarily long. A non-finite or
+ * non-positive timestamp returns the literal `unknown` so the
+ * row stays legible — the IPC layer initialises `create_at`
+ * from the server but a future zero-bytes upload (rare) could
+ * land with `create_at: 0`, which would otherwise render as
+ * `Jan 1, 1970`.
+ */
+function formatUploadDate(createAt: number): string {
+  if (!Number.isFinite(createAt) || createAt <= 0) return "unknown date";
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    }).format(new Date(createAt));
+  } catch {
+    return "unknown date";
+  }
 }
 
 function msg(err: unknown): string {

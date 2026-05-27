@@ -937,6 +937,65 @@ describe("KchatClient server-id validation at deserialisation boundary", () => {
       c.listChannelFiles("chid0000000000000000abcd", 0, 60),
     ).rejects.toThrow(/not a valid KChat object id/);
   });
+
+  // -------------------------------------------------------------
+  // Phase 13 Theme 2 Task 11: `listChannelFiles` now also
+  // validates `fi.user_id` at the deserialisation boundary
+  // because the renderer-facing file preview surfaces the
+  // uploader (post-sanitisation) and feeds the id through the
+  // shared `getUsersByIds` enrichment path. A substrate that
+  // returns a well-formed file id but a malformed user id must
+  // be rejected — otherwise the username cache could be poisoned
+  // with a key like `../etc/passwd` and `getUsersByIds(["../"])`
+  // would throw a generic shape error mid-batch, suppressing the
+  // valid rows' enrichment.
+  // -------------------------------------------------------------
+  it("listChannelFiles rejects files with a malformed user_id (Phase 13 Theme 2 Task 11)", async () => {
+    const filesResp = ok([
+      {
+        // Valid file id (26-char lowercase alphanumeric).
+        id: "f".repeat(26),
+        // Malformed user id — short + containing a separator.
+        user_id: "u/evil",
+        channel_id: "c".repeat(26),
+        name: "report.pdf",
+        size: 1,
+        mime_type: "application/pdf",
+        extension: "pdf",
+        create_at: 0,
+        update_at: 0,
+      },
+    ]);
+    const { fn: fetchFn } = makeFetch([filesResp]);
+    const c = buildClient({ fetchFn, rateLimiter: freshLimiter() });
+    c.setToken("PAT");
+    await expect(
+      c.listChannelFiles("chid0000000000000000abcd", 0, 60),
+    ).rejects.toThrow(/fileInfo\.user_id.*not a valid KChat object id/);
+  });
+
+  it("getFileInfo rejects a malformed user_id (Phase 13 Theme 2 Task 11)", async () => {
+    const fileResp = ok({
+      // Valid file id (the validator the request URL went
+      // through enforces this at the caller boundary too).
+      id: "f".repeat(26),
+      // Malformed user id at the deserialisation boundary.
+      user_id: "u",
+      channel_id: "c".repeat(26),
+      name: "report.pdf",
+      size: 1,
+      mime_type: "application/pdf",
+      extension: "pdf",
+      create_at: 0,
+      update_at: 0,
+    });
+    const { fn: fetchFn } = makeFetch([fileResp]);
+    const c = buildClient({ fetchFn, rateLimiter: freshLimiter() });
+    c.setToken("PAT");
+    await expect(c.getFileInfo("f".repeat(26))).rejects.toThrow(
+      /fileInfo\.user_id.*not a valid KChat object id/,
+    );
+  });
 });
 
 describe("KchatClient health check teardown invariants", () => {
@@ -2159,5 +2218,160 @@ describe("KchatClient.getPostsForChannel", () => {
       /not a valid KChat object id/,
     );
     expect(calls.length).toBe(0);
+  });
+});
+
+// =====================================================================
+// Phase 13 Theme 2 Task 9: name-enrichment endpoints
+// =====================================================================
+describe("KchatClient.getUsersByIds (Phase 13 Theme 2 Task 9)", () => {
+  function fresh() {
+    return new RateLimiter();
+  }
+  it("POSTs the id array to /api/v4/users/ids and parses the response", async () => {
+    const { fn: fetchFn, calls } = makeFetch([
+      ok([
+        {
+          id: "user1234567890abcdefgh",
+          username: "ken",
+          email: "k@example.com",
+          first_name: "K",
+          last_name: "N",
+          roles: "system_user",
+        },
+        {
+          id: "user2234567890abcdefgh",
+          username: "alex",
+          email: "a@example.com",
+          first_name: "A",
+          last_name: "L",
+          roles: "system_user",
+        },
+      ]),
+    ]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+
+    const users = await c.getUsersByIds([
+      "user1234567890abcdefgh",
+      "user2234567890abcdefgh",
+    ]);
+
+    expect(users).toHaveLength(2);
+    expect(users[0].username).toBe("ken");
+    expect(users[1].username).toBe("alex");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toMatch(/\/api\/v4\/users\/ids$/);
+    expect(calls[0].init.method).toBe("POST");
+    expect((calls[0].init.headers as Record<string, string>)["Content-Type"]).toBe(
+      "application/json",
+    );
+    expect(calls[0].init.body).toBe(
+      JSON.stringify(["user1234567890abcdefgh", "user2234567890abcdefgh"]),
+    );
+  });
+
+  it("short-circuits to [] when called with an empty list (no network call)", async () => {
+    const { fn: fetchFn, calls } = makeFetch([]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    const users = await c.getUsersByIds([]);
+    expect(users).toEqual([]);
+    // The empty-input short-circuit MUST NOT touch the network.
+    // Calling /users/ids with an empty body is wasteful, and we
+    // don't want the rate limiter token consumed for nothing.
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects malformed caller-supplied ids before contacting the server (boundary check)", async () => {
+    const { fn: fetchFn, calls } = makeFetch([]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    await expect(
+      c.getUsersByIds(["user1234567890abcdefgh", "../etc/passwd"]),
+    ).rejects.toThrow(/not a valid KChat object id/);
+    expect(calls.length).toBe(0);
+  });
+
+  it("rejects malformed server-supplied ids in the response (defence-in-depth)", async () => {
+    const { fn: fetchFn } = makeFetch([
+      ok([
+        {
+          id: "../etc/passwd",
+          username: "evil",
+          email: "e@example.com",
+          first_name: "",
+          last_name: "",
+          roles: "system_user",
+        },
+      ]),
+    ]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    await expect(
+      c.getUsersByIds(["user1234567890abcdefgh"]),
+    ).rejects.toThrow(/not a valid KChat object id/);
+  });
+});
+
+describe("KchatClient.getChannel (Phase 13 Theme 2 Task 9)", () => {
+  function fresh() {
+    return new RateLimiter();
+  }
+  it("GETs /api/v4/channels/{id} and parses the response", async () => {
+    const { fn: fetchFn, calls } = makeFetch([
+      ok({
+        id: "chid0000000000000000abcd",
+        team_id: "tid000000000000000000ab",
+        name: "general",
+        display_name: "General",
+        type: "O",
+        purpose: "",
+        header: "",
+        total_msg_count: 0,
+        create_at: 0,
+        update_at: 0,
+      }),
+    ]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+
+    const channel = await c.getChannel("chid0000000000000000abcd");
+    expect(channel.display_name).toBe("General");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toMatch(/\/api\/v4\/channels\/chid0000000000000000abcd$/);
+    expect(calls[0].init.method).toBe("GET");
+  });
+
+  it("rejects the caller-supplied channelId before contacting the server", async () => {
+    const { fn: fetchFn, calls } = makeFetch([]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    await expect(c.getChannel("../etc/passwd")).rejects.toThrow(
+      /not a valid KChat object id/,
+    );
+    expect(calls.length).toBe(0);
+  });
+
+  it("rejects malformed server-supplied channel.id / team_id in the response (defence-in-depth)", async () => {
+    const { fn: fetchFn } = makeFetch([
+      ok({
+        id: "../etc/passwd",
+        team_id: "tid000000000000000000ab",
+        name: "evil",
+        display_name: "Evil",
+        type: "O",
+        purpose: "",
+        header: "",
+        total_msg_count: 0,
+        create_at: 0,
+        update_at: 0,
+      }),
+    ]);
+    const c = buildClient({ fetchFn, rateLimiter: fresh() });
+    c.setToken("T");
+    await expect(c.getChannel("chid0000000000000000abcd")).rejects.toThrow(
+      /not a valid KChat object id/,
+    );
   });
 });

@@ -35,6 +35,7 @@ import type {
   KchatBackfillRunOutcome,
   KchatPostIngestInputInfo,
   KchatPostSearchHit,
+  KchatThreadContextMessage,
 } from "../../shared/types";
 import { idempotentHandle } from "./register";
 import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
@@ -44,7 +45,10 @@ import {
   assertNumber,
   assertString,
 } from "./validate";
-import { KchatRequestError } from "../kchat/kchatClient";
+import {
+  KchatRequestError,
+  isKchatObjectId,
+} from "../kchat/kchatClient";
 import { kchatChannelCacheDir } from "../kchat/kchatPaths";
 import { enforceKchatServerUrl } from "../kchat/ssrfGuard";
 import {
@@ -79,11 +83,22 @@ type RendererChannelMember = Pick<
   "channel_id" | "user_id" | "roles"
 >;
 
-/** Subset of `KchatFileInfo` the renderer is allowed to read. */
+/**
+ * Subset of `KchatFileInfo` the renderer is allowed to read,
+ * extended with the resolved uploader name (Phase 13 Theme 2
+ * Task 11). The `user_id` lives here because the renderer needs
+ * to render `@user_id` as a stable fallback when enrichment
+ * doesn't resolve `uploaderUsername`. The full `update_at` /
+ * `delete_at` / `channel_id` / `post_id` columns on the wire
+ * format stay stripped — the file preview only needs upload
+ * provenance, not the full mutation history.
+ */
 type RendererFileInfo = Pick<
   KchatFileInfo,
-  "id" | "name" | "size" | "mime_type" | "extension" | "create_at"
->;
+  "id" | "user_id" | "name" | "size" | "mime_type" | "extension" | "create_at"
+> & {
+  uploaderUsername: string | null;
+};
 
 // `KchatChannelManifest` + `manifestPathFor` + `readManifest` +
 // `writeManifest` live in `../kchat/kchatChannelSyncer` so the
@@ -135,11 +150,23 @@ function sanitizeMember(m: KchatChannelMember): RendererChannelMember {
 function sanitizeFile(f: KchatFileInfo): RendererFileInfo {
   return {
     id: f.id,
+    // Phase 13 Theme 2 Task 11: surface uploader id (validated at
+    // the deserialisation boundary inside
+    // `KchatClient.listChannelFiles`) so the renderer's file
+    // preview can show "uploaded by @username" with a graceful
+    // raw-id fallback when enrichment doesn't resolve in time.
+    user_id: f.user_id,
     name: f.name,
     size: f.size,
     mime_type: f.mime_type,
     extension: f.extension,
     create_at: f.create_at,
+    // Phase 13 Theme 2 Task 11: initialise to `null` so the wire
+    // shape is well-formed even when the IPC handler skips
+    // enrichment (zero files, disconnected state, transient
+    // failure). The handler fills this in via the shared
+    // `populateKchatUsernameCache` path below.
+    uploaderUsername: null,
   };
 }
 
@@ -202,7 +229,560 @@ function toIpcError(err: unknown): Error {
   return new Error(scrub(String(err)));
 }
 
+/**
+ * Phase 13 Theme 2 Task 9: bounded LRU cache that resolves
+ * KChat object ids (user / channel) to their human-readable
+ * display strings (username / channel display name).
+ *
+ * The cache is populated lazily by `kchat:searchPosts` as a
+ * side-effect of building citation rows — `Map` iteration order
+ * is insertion order, so deleting + re-inserting a key on every
+ * read gives us LRU semantics with `O(1)` operations.
+ *
+ * Bound is per-cache; the user cache and channel cache each get
+ * their own quota so a long session with many channels doesn't
+ * starve user-name lookups (or vice versa). A miss returns
+ * `null`; the renderer falls back to displaying the raw object
+ * id in that case so the row still renders.
+ *
+ * The cache is cleared on every connection-state transition
+ * away from `connected` so a re-handshake to a different server
+ * (or the same server after the user is removed from a channel)
+ * cannot return stale names. The clear is wired in
+ * `registerKchatHandlers` via `KchatAuthService.onStatusChange`.
+ */
+class KchatNameCache {
+  private readonly entries = new Map<string, string>();
+  constructor(private readonly maxEntries: number) {
+    if (maxEntries <= 0) {
+      throw new Error("KchatNameCache: maxEntries must be > 0");
+    }
+  }
+
+  get(id: string): string | null {
+    const v = this.entries.get(id);
+    if (v === undefined) return null;
+    // LRU touch: move to end of insertion order.
+    this.entries.delete(id);
+    this.entries.set(id, v);
+    return v;
+  }
+
+  set(id: string, name: string): void {
+    // ANALYSIS_0004 (Devin Review pass 1 on fafc5f6): reject
+    // empty-string display names at the boundary. The renderer
+    // uses nullish coalescing (`?? rawId`) for fallback; an
+    // empty string would be cached as a positive value and
+    // surface as `#` / `@` with no text. Mattermost
+    // server-side validation already requires a non-empty
+    // `display_name` / `username` for the channel + user kinds
+    // we cache, so this is defence-in-depth against a future
+    // protocol drift or a maliciously crafted response. The
+    // caller side already trims to a single field per id; we
+    // do not need to trim whitespace here.
+    if (name === "") {
+      return;
+    }
+    // If already present, refresh and move to end.
+    if (this.entries.has(id)) {
+      this.entries.delete(id);
+    } else if (this.entries.size >= this.maxEntries) {
+      // Evict the least-recently-used (first inserted).
+      const oldest = this.entries.keys().next().value;
+      if (oldest !== undefined) {
+        this.entries.delete(oldest);
+      }
+    }
+    this.entries.set(id, name);
+  }
+
+  clear(): void {
+    this.entries.clear();
+  }
+
+  /** Test-only accessor. */
+  size(): number {
+    return this.entries.size;
+  }
+}
+
+/**
+ * Bounds chosen to fit the citation-search hot path:
+ *   - Users: each search hit references one sender; a typical
+ *     workspace has ≤ 200 active senders within retrieval scope,
+ *     so 500 leaves comfortable headroom.
+ *   - Channels: 100 channels would cover most teams; 200 leaves
+ *     room for cross-team browsing within a single session.
+ *
+ * Both caches are bounded at the IPC layer (NOT the bridge) so a
+ * memory-pressure scenario can't pin them through a process restart.
+ *
+ * **Scope: module-level, intentionally asymmetric with
+ * `runningBackfillCounters` / `inFlightBackfillKchatChannel`.**
+ *
+ * ANALYSIS_0003 (Devin Review pass 4 on d0731ec): the
+ * backfill-related maps below live INSIDE the
+ * `registerKchatHandlers` closure, so every fresh call to that
+ * function (e.g. test `beforeEach`) gets a brand-new map and
+ * cross-test contamination is impossible by construction. The
+ * name caches MUST be module-scoped: the `KchatAuthService`
+ * status listener (installed by `registerKchatHandlers`) clears
+ * THESE specific instances on every disconnect, so they have to
+ * outlive any single `registerKchatHandlers` invocation for the
+ * production reconnect path to wipe the same cache the
+ * enrichment path reads from. Moving the caches inside the
+ * closure would silently disable the disconnect-clear path the
+ * first time the closure was rebuilt (test re-mount, HMR, etc.).
+ *
+ * The asymmetry is paid for in tests via the top-level
+ * `beforeEach` in `kchatIpc.test.ts`, which calls
+ * `_resetKchatNameCachesForTest()` before every
+ * `registerKchatHandlers()` so the module-scoped state is
+ * reset in lockstep with the closure-scoped state. Any future
+ * test author who adds a name-enrichment test does NOT need to
+ * remember to call the reset themselves — the suite-level
+ * `beforeEach` already handles it.
+ */
+const KCHAT_USERNAME_CACHE = new KchatNameCache(500);
+const KCHAT_CHANNEL_NAME_CACHE = new KchatNameCache(200);
+
+/**
+ * Reset the IPC-layer KChat name caches. Exported only for the
+ * test suite so a test that exercises name-cache eviction
+ * boundaries can start from a known state.
+ *
+ * ANALYSIS_0005 (Devin Review pass 2 on bef2fa0): if a previous
+ * `registerKchatHandlers` invocation successfully installed the
+ * `onStatusChange` subscriber, call its unsubscribe handle so
+ * the next install path can re-subscribe cleanly. Without this,
+ * a hypothetical production caller (or a future test path that
+ * dispatches real status events through the live auth service)
+ * would orphan the prior listener AND register a new one,
+ * defeating the very idempotency guard the flag was added for.
+ */
+export function _resetKchatNameCachesForTest(): void {
+  KCHAT_USERNAME_CACHE.clear();
+  KCHAT_CHANNEL_NAME_CACHE.clear();
+  if (KCHAT_STATUS_LISTENER_UNSUBSCRIBE !== null) {
+    try {
+      KCHAT_STATUS_LISTENER_UNSUBSCRIBE();
+    } catch {
+      // The unsubscribe contract is `() => void`. A throw here
+      // would only be possible from a future stateful listener
+      // implementation; swallow it so the reset stays robust to
+      // changes in the auth service.
+    }
+    KCHAT_STATUS_LISTENER_UNSUBSCRIBE = null;
+  }
+  KCHAT_STATUS_LISTENER_INSTALLED = false;
+}
+
+/**
+ * ANALYSIS_0005 (Devin Review pass 1 on fafc5f6): one-shot
+ * idempotency guard for the `KchatAuthService.onStatusChange`
+ * subscriber that clears the name caches on disconnect.
+ *
+ * In production `registerKchatHandlers` runs exactly once at
+ * app start, so the subscriber count is naturally 1. The
+ * vitest harness mounts the IPC layer multiple times during a
+ * run (once per `describe` block in some files), and Electron
+ * forge dev-mode HMR can re-invoke the IPC entrypoint without
+ * tearing down the long-lived `KchatAuthService`. Without this
+ * guard, every re-mount stacks another listener that would
+ * `.clear()` the caches on every status push — effectively
+ * disabling the cache after the first re-mount.
+ *
+ * Reset by `_resetKchatNameCachesForTest` so the unit test for
+ * the registration path remains deterministic.
+ */
+let KCHAT_STATUS_LISTENER_INSTALLED = false;
+
+/**
+ * ANALYSIS_0005 (Devin Review pass 2 on bef2fa0): handle to the
+ * unsubscribe callback returned by
+ * `KchatAuthService.onStatusChange`. Stored at the module level
+ * so `_resetKchatNameCachesForTest` can clean up the live
+ * listener before flipping the install flag back to `false`.
+ */
+let KCHAT_STATUS_LISTENER_UNSUBSCRIBE: (() => void) | null = null;
+
+/**
+ * Phase 13 Theme 2 Task 11: shared user-id bulk lookup helper.
+ * Extracted from `enrichKchatPostHits` so both the search
+ * enrichment path AND the file-list enrichment path land on the
+ * exact same cache-population shape (empty-set short-circuit,
+ * best-effort error swallow, single REST round-trip per call).
+ *
+ * Mutates only the module-level `KCHAT_USERNAME_CACHE`; the
+ * call site is responsible for the post-population read-back
+ * pass and for collecting the `missingIds` set in the first
+ * place. Always returns a resolved promise — errors are
+ * swallowed because every caller treats username resolution as
+ * best-effort (renderer falls back to the raw user id).
+ *
+ * Performance note: callers are expected to deduplicate ids
+ * before invoking this helper (the bulk REST endpoint accepts a
+ * deduplicated list and the cache is module-scoped, so passing
+ * the same id twice would only waste bytes on the request
+ * payload). The helper itself does not de-duplicate — doing so
+ * would force every caller to allocate a `Set` even when it
+ * already has one, defeating the point of a shared helper.
+ */
+async function populateKchatUsernameCache(
+  client: ReturnType<ReturnType<typeof getKchatAuthService>["getClient"]>,
+  missingIds: ReadonlySet<string>,
+): Promise<void> {
+  if (missingIds.size === 0) return;
+  try {
+    const users = await client.getUsersByIds(Array.from(missingIds));
+    for (const u of users) {
+      KCHAT_USERNAME_CACHE.set(u.id, u.username);
+    }
+  } catch {
+    // Intentional: leave un-resolved ids as `null`; the renderer
+    // falls back to displaying the raw id. Documented best-effort
+    // contract — a transient REST failure must not hide a hit /
+    // file from the user.
+  }
+}
+
+/**
+ * Phase 13 Theme 2 Task 11: enrich a list of renderer-facing
+ * file views with `uploaderUsername`. Mutates the input array's
+ * elements in-place.
+ *
+ * Used by `kchat:listChannelFiles` so the channel-files preview
+ * in `KchatChannelSourcePicker` can render "uploaded by
+ * @alice" alongside size / type / date. The shape mirrors
+ * `enrichKchatPostHits` (collect missing ids → bulk lookup →
+ * second-pass read-back) but is intentionally a separate
+ * function because the input shape is different (files have one
+ * id-to-resolve, search hits have two) and bundling them would
+ * have forced both call sites through a generic with awkward
+ * type plumbing.
+ *
+ * Performance shape: the picker's preview window pages 50 files
+ * at a time. Even in the worst case (50 distinct uploaders) the
+ * deduplicated bulk lookup is a single `POST /users/ids` round
+ * trip; the cache then absorbs subsequent picker renders for the
+ * lifetime of the connection.
+ *
+ * Failure mode: any failure to resolve a username leaves the
+ * file's `uploaderUsername` as `null`. The renderer falls back
+ * to the raw user id, which always passes the
+ * `assertKchatServerObjectId` boundary check in
+ * `listChannelFiles` — so the fallback path is always safe to
+ * render.
+ */
+async function enrichKchatFileViews(
+  files: RendererFileInfo[],
+  client: ReturnType<ReturnType<typeof getKchatAuthService>["getClient"]>,
+): Promise<void> {
+  // First pass: serve from cache, collect cache-misses.
+  //
+  // Symmetric with `enrichKchatPostHits`: only ids that pass
+  // `isKchatObjectId` enter the network request set, so a
+  // substrate-corrupted row that slipped past the deserialisation
+  // boundary (e.g. a future server-side bug that lets through a
+  // mixed-case id) cannot suppress enrichment for the entire
+  // batch via a thrown `assertKchatServerObjectId` inside
+  // `getUsersByIds`.
+  const missingUserIds = new Set<string>();
+  for (const f of files) {
+    const cached = KCHAT_USERNAME_CACHE.get(f.user_id);
+    if (cached !== null) {
+      f.uploaderUsername = cached;
+    } else if (isKchatObjectId(f.user_id)) {
+      missingUserIds.add(f.user_id);
+    }
+  }
+
+  await populateKchatUsernameCache(client, missingUserIds);
+
+  // Second pass: apply newly-cached values to files that were
+  // missing in the first pass. A file whose id never made it
+  // into the bulk lookup (failed `isKchatObjectId`) or whose
+  // username didn't come back in the server response keeps the
+  // `null` value initialised in `sanitizeFile`.
+  for (const f of files) {
+    if (f.uploaderUsername === null) {
+      f.uploaderUsername = KCHAT_USERNAME_CACHE.get(f.user_id);
+    }
+  }
+}
+
+/**
+ * Phase 13 Theme 2 Task 9: enrich a list of post-hits with the
+ * sender username and channel display name. Mutates the input
+ * array's elements in-place.
+ *
+ * Performance shape: a single search returns ≤ 1000 hits (the
+ * `kchat:searchPosts` IPC enforces this upper bound); within a
+ * single search the number of UNIQUE sender / channel ids is
+ * typically much smaller (≤ N senders per channel). We
+ * deduplicate before issuing network calls.
+ *
+ * Failure mode: any failure to resolve a name leaves the hit's
+ * `senderUsername` / `channelDisplayName` as `null`. The renderer
+ * falls back to the raw id in that case, so a transient failure
+ * never hides a citation candidate from the user.
+ */
+async function enrichKchatPostHits(
+  hits: KchatPostSearchHit[],
+  client: ReturnType<ReturnType<typeof getKchatAuthService>["getClient"]>,
+): Promise<void> {
+  // 1. Collect unique missing ids per cache.
+  //
+  //    ANALYSIS_0002 (Devin Review pass 2 on bef2fa0): only ids
+  //    that pass `isKchatObjectId` are added to the network
+  //    request sets. A substrate-corrupted row carrying a
+  //    malformed id would otherwise cause the per-id assertion
+  //    inside `getUsersByIds` to throw, suppressing username
+  //    enrichment for the ENTIRE search result set. The strict
+  //    assertion stays on `getUsersByIds` itself so internal
+  //    callers (background sync, future helpers) still get the
+  //    defence-in-depth check; the enrichment-layer best-effort
+  //    semantics push the filtering up to where it belongs.
+  //    Hits whose ids are malformed simply keep `null` enrichment
+  //    fields and the renderer falls back to the raw id.
+  const missingUserIds = new Set<string>();
+  const missingChannelIds = new Set<string>();
+  for (const h of hits) {
+    const cachedUser = KCHAT_USERNAME_CACHE.get(h.senderUserId);
+    if (cachedUser !== null) {
+      h.senderUsername = cachedUser;
+    } else if (isKchatObjectId(h.senderUserId)) {
+      missingUserIds.add(h.senderUserId);
+    }
+    const cachedChan = KCHAT_CHANNEL_NAME_CACHE.get(h.channelId);
+    if (cachedChan !== null) {
+      h.channelDisplayName = cachedChan;
+    } else if (isKchatObjectId(h.channelId)) {
+      missingChannelIds.add(h.channelId);
+    }
+  }
+
+  // 2. Run the user bulk lookup AND the per-channel parallel
+  //    fan-out CONCURRENTLY (Devin Review pass 2 on bef2fa0
+  //    ANALYSIS_0001). The two REST endpoints are independent
+  //    and previously ran sequentially — wall-clock cost was
+  //    additive (`Tuser + Tchannel_max`), now it is
+  //    `max(Tuser, Tchannel_max)`. Each side keeps its own
+  //    per-call error isolation (an inner try / `allSettled`)
+  //    so one failing branch never suppresses the other's
+  //    successful enrichments.
+  // The username branch is now delegated to the shared
+  // `populateKchatUsernameCache` helper so the post-hits path
+  // and the file-list enrichment path share one canonical
+  // implementation of "dedupe → bulk fetch → populate cache →
+  // swallow errors". Keeping the wrapper here preserves the
+  // concurrent fan-out semantics (`userTask` || `channelTask`)
+  // and the catch-then-empty-resolve guarantee the
+  // `Promise.all` below depends on.
+  const userTask: Promise<void> = populateKchatUsernameCache(
+    client,
+    missingUserIds,
+  );
+
+  const channelTask: Promise<void> =
+    missingChannelIds.size > 0
+      ? (async () => {
+          // ANALYSIS_0001 (Devin Review pass 3 on e3d9562): wrap
+          // the entire branch body in a try/catch so it is
+          // *symmetric* with `userTask`. `Promise.allSettled`
+          // itself never rejects per spec and `KchatNameCache.set`
+          // cannot throw today, but a future change to either side
+          // (e.g. instrumentation that throws on a contract
+          // violation, a stateful cache implementation that wants
+          // to validate inputs) would otherwise turn this branch
+          // into an unhandled-rejection path that aborts
+          // `Promise.all` BEFORE the second pass at the end of
+          // `enrichKchatPostHits` runs — dropping any user-side
+          // enrichments that already landed in the cache for the
+          // current hit batch. The cost of the wrapping catch is
+          // a single `try` block; the benefit is invariant
+          // preservation of the documented best-effort contract.
+          try {
+            const results = await Promise.allSettled(
+              Array.from(missingChannelIds).map((id) =>
+                client.getChannel(id),
+              ),
+            );
+            for (const r of results) {
+              if (r.status === "fulfilled") {
+                KCHAT_CHANNEL_NAME_CACHE.set(
+                  r.value.id,
+                  r.value.display_name,
+                );
+              }
+            }
+          } catch {
+            // Same rationale as userTask: leave un-resolved
+            // ids as `null`; the renderer falls back to the raw
+            // id. We intentionally swallow rather than rethrow
+            // so the second-pass cache-application loop still
+            // runs even if a future change introduces a throw
+            // here.
+          }
+        })()
+      : Promise.resolve();
+
+  await Promise.all([userTask, channelTask]);
+
+  // 3. Second pass: apply newly-cached values to hits that were
+  //    missing in the first pass.
+  for (const h of hits) {
+    if (h.senderUsername === null) {
+      h.senderUsername = KCHAT_USERNAME_CACHE.get(h.senderUserId);
+    }
+    if (h.channelDisplayName === null) {
+      h.channelDisplayName = KCHAT_CHANNEL_NAME_CACHE.get(h.channelId);
+    }
+  }
+}
+
+/**
+ * Phase 13 Theme 2 Task 13: enrich thread-context messages with
+ * sender username and channel display name. Structurally identical
+ * to {@link enrichKchatPostHits} but operates on the
+ * `KchatThreadContextMessage[]` shape. Reuses the same
+ * `KCHAT_USERNAME_CACHE` / `KCHAT_CHANNEL_NAME_CACHE` and the
+ * shared `populateKchatUsernameCache` helper so the two paths stay
+ * cache-coherent — a username resolved during a search enrichment
+ * is immediately available for thread-context enrichment without
+ * a redundant network round-trip, and vice versa.
+ *
+ * **Maintenance contract** (Phase 13 Theme 2 Task 13 — Devin Review
+ * pass 1 ANALYSIS_0002, pass 2 ANALYSIS_0002 edit): the body of this
+ * function shares its enrichment posture with two siblings:
+ *
+ *   - `enrichKchatPostHits` (lines 530-642): full two-cache shape
+ *     (user + channel) for search hits.
+ *   - `enrichKchatFileViews` (lines 477-528): single-cache shape
+ *     (user only) for channel-file previews; channel name is not
+ *     enriched at that layer because the file row already lives
+ *     inside a known-channel UI context.
+ *   - `enrichKchatThreadContextMessages` (this function): full
+ *     two-cache shape for thread-context rows.
+ *
+ * Any change to the shared enrichment posture — circuit breaker,
+ * retry policy, `isKchatObjectId` filter semantics, cache-write
+ * rules — MUST land in ALL three functions. The shared
+ * `populateKchatUsernameCache` helper (line 431) absorbs the
+ * user-cache half of the duplication; the channel-cache half is
+ * still copy-pasted across this function and `enrichKchatPostHits`
+ * because pulling it out behind a generic accessor would force the
+ * call sites through 4 closure parameters (field accessor + cache
+ * ref + write target + key for each side), which would land as a
+ * worse readability story than the duplication at 2 call sites. The
+ * file-view path is single-cache so it doesn't need that lift. A
+ * fourth caller is the right point to revisit the abstraction.
+ */
+async function enrichKchatThreadContextMessages(
+  messages: KchatThreadContextMessage[],
+  client: ReturnType<ReturnType<typeof getKchatAuthService>["getClient"]>,
+): Promise<void> {
+  const missingUserIds = new Set<string>();
+  const missingChannelIds = new Set<string>();
+  for (const m of messages) {
+    const cachedUser = KCHAT_USERNAME_CACHE.get(m.senderUserId);
+    if (cachedUser !== null) {
+      m.senderUsername = cachedUser;
+    } else if (isKchatObjectId(m.senderUserId)) {
+      missingUserIds.add(m.senderUserId);
+    }
+    const cachedChan = KCHAT_CHANNEL_NAME_CACHE.get(m.channelId);
+    if (cachedChan !== null) {
+      m.channelDisplayName = cachedChan;
+    } else if (isKchatObjectId(m.channelId)) {
+      missingChannelIds.add(m.channelId);
+    }
+  }
+
+  const userTask: Promise<void> = populateKchatUsernameCache(
+    client,
+    missingUserIds,
+  );
+  const channelTask: Promise<void> =
+    missingChannelIds.size > 0
+      ? (async () => {
+          try {
+            const results = await Promise.allSettled(
+              Array.from(missingChannelIds).map((id) =>
+                client.getChannel(id),
+              ),
+            );
+            for (const r of results) {
+              if (r.status === "fulfilled") {
+                KCHAT_CHANNEL_NAME_CACHE.set(
+                  r.value.id,
+                  r.value.display_name,
+                );
+              }
+            }
+          } catch {
+            // Best-effort: leave un-resolved ids as `null`.
+          }
+        })()
+      : Promise.resolve();
+
+  await Promise.all([userTask, channelTask]);
+
+  for (const m of messages) {
+    if (m.senderUsername === null) {
+      m.senderUsername = KCHAT_USERNAME_CACHE.get(m.senderUserId);
+    }
+    if (m.channelDisplayName === null) {
+      m.channelDisplayName = KCHAT_CHANNEL_NAME_CACHE.get(m.channelId);
+    }
+  }
+}
+
 export function registerKchatHandlers(): void {
+  // Phase 13 Theme 2 Task 9: clear the IPC-layer KChat name
+  // caches on every transition away from `connected`. A
+  // re-handshake to a different server (or the same server with
+  // changed channel membership) must not return stale names.
+  // The subscription survives the handler lifetime; the IPC
+  // layer is mounted once per process and never torn down.
+  //
+  // ANALYSIS_0005 (Devin Review pass 1 on fafc5f6): the
+  // module-level `KCHAT_STATUS_LISTENER_INSTALLED` flag guards
+  // against listener-stacking if `registerKchatHandlers` is
+  // re-invoked (vitest harness re-mounting between describe
+  // blocks, Electron forge dev-mode HMR). The `idempotentHandle`
+  // pattern below already protects the IPC channel registrations
+  // from re-registration; this is the equivalent guard for the
+  // status-subscriber, since `onStatusChange` does not return an
+  // unsubscribe handle that survives the IPC re-mount.
+  if (!KCHAT_STATUS_LISTENER_INSTALLED) {
+    try {
+      // ANALYSIS_0005 (Devin Review pass 2 on bef2fa0): store
+      // the unsubscribe handle so `_resetKchatNameCachesForTest`
+      // can detach it before flipping the install flag back to
+      // `false`. Without this, a subsequent re-install would
+      // stack a second listener on top of the first — the very
+      // failure mode the pass-1 guard was supposed to prevent.
+      KCHAT_STATUS_LISTENER_UNSUBSCRIBE = getKchatAuthService().onStatusChange(
+        (state) => {
+          if (state.state !== "connected") {
+            KCHAT_USERNAME_CACHE.clear();
+            KCHAT_CHANNEL_NAME_CACHE.clear();
+          }
+        },
+      );
+      KCHAT_STATUS_LISTENER_INSTALLED = true;
+    } catch {
+      // The auth service may be uninitialised in test contexts
+      // that mount the IPC layer ahead of `appState`. The caches
+      // start empty, and the first search after a real handshake
+      // will populate them; missing the cleanup hook there is a
+      // benign no-op (the test harness uses fresh state per test
+      // anyway). Leave the flag false so a later well-formed
+      // mount can install the listener correctly.
+    }
+  }
+
   // --- Feature gate ---
   idempotentHandle("kchat:isAvailable", async () => {
     // Always true for now — KChat is shipping with this phase. The
@@ -503,8 +1083,40 @@ export function registerKchatHandlers(): void {
         : assertNumber(perPage, "perPage", { integer: true, min: 1, max: 200 });
       const svc = getKchatAuthService();
       try {
-        const files = await svc.getClient().listChannelFiles(id, p, per);
-        return files.map(sanitizeFile);
+        const client = svc.getClient();
+        const rawFiles = await client.listChannelFiles(id, p, per);
+        const files = rawFiles.map(sanitizeFile);
+
+        // Phase 13 Theme 2 Task 11: enrich each file with the
+        // uploader username so the renderer's file preview can
+        // render `@alice` instead of the raw 26-char user id.
+        //
+        // The enrichment is gated on a `connected` state for the
+        // same reason `enrichKchatPostHits` is: a transitional
+        // state's `getClient()` can hand back a client whose
+        // token has just been cleared, and the bulk-lookup REST
+        // call would 401 — that 401 would be caught by
+        // `populateKchatUsernameCache`'s catch (correctly,
+        // best-effort), but it would also waste a rate-limit
+        // token and surface an audit-log warning every time the
+        // picker is opened mid-handshake. Skipping the call
+        // entirely when state isn't `connected` is the cheap
+        // correct shape; the renderer's raw-id fallback handles
+        // the resulting `null` uploaderUsername without surfacing
+        // anything user-visible.
+        if (files.length > 0 && svc.getState().state === "connected") {
+          try {
+            await enrichKchatFileViews(files, client);
+          } catch {
+            // Defence-in-depth: enrichment is best-effort. Any
+            // unexpected throw (cache-implementation invariant,
+            // future instrumentation) must NOT prevent the file
+            // list from reaching the renderer. The fallback
+            // `uploaderUsername: null` initialised in
+            // `sanitizeFile` keeps the wire shape correct.
+          }
+        }
+        return files;
       } catch (err) {
         throw toIpcError(err);
       }
@@ -1095,6 +1707,38 @@ export function registerKchatHandlers(): void {
     Promise<KchatBackfillRunOutcome>
   >();
   /**
+   * Phase 13 Task 10 fix (Devin Review on 869295e, ANALYSIS_0001):
+   * per-channel running counters surfaced through `kchat:backfillProgress`
+   * so the renderer's progress card shows live `postsIngested` and
+   * `oldestFetched` values while a walk is in flight, instead of the
+   * hardcoded `0` / `null` placeholders the first cut shipped with.
+   *
+   * The substrate (`KchatBackfillState`) intentionally does NOT carry a
+   * running cumulative-ingested counter — that value is re-derivable from
+   * the audit log and recomputing it on every state read would be wasteful.
+   * The orchestrator already has both pieces of information in-process:
+   *   - `totalPostsIngested` is its own loop accumulator.
+   *   - `oldestPostCreateAtMs` is the minimum `createAt` of the posts
+   *     it has already ack'd to the substrate (REST returns newest-first
+   *     so it is the `createAt` of the LAST input in the most-recent
+   *     page).
+   * Storing both in a map keyed by channel id, updated synchronously
+   * inside the walk loop, makes them readable by the progress IPC
+   * without a substrate round-trip. The entry is cleaned up in the
+   * same `.finally()` that clears `inFlightBackfillKchatChannel`, so a
+   * post-completion read of the progress IPC sees `idle` /
+   * `complete` with `postsIngested: 0` (consistent with the
+   * substrate-side contract that the persisted state does not carry a
+   * cumulative counter).
+   */
+  const runningBackfillCounters = new Map<
+    string,
+    {
+      postsIngested: number;
+      oldestPostCreateAtMs: number | null;
+    }
+  >();
+  /**
    * Per-channel cumulative cap. KChat REST caps `per_page` at 200,
    * so 50_000 posts ≈ 250 round-trips — large enough that real
    * channels never hit the cap, small enough that a misbehaving
@@ -1178,6 +1822,21 @@ export function registerKchatHandlers(): void {
     let totalPostsUnchanged = 0;
     let totalPostsSkippedRevoked = 0;
     let totalPostsTouched = 0;
+
+    // Phase 13 Task 10 fix (ANALYSIS_0001): initialise the live progress
+    // counters BEFORE the first REST round-trip so a poll that lands in
+    // the narrow window between `inFlightBackfillKchatChannel.set(id, ...)`
+    // and the first `bridgeLogKchatBackfillPageIngested` sees
+    // `postsIngested: 0` / `oldestFetched: null` (consistent with the
+    // pre-fix behaviour for the first-poll case). The entry is removed in
+    // the same `.finally()` that clears `inFlightBackfillKchatChannel`,
+    // so a post-completion observer naturally falls back to those same
+    // defaults via the `runningBackfillCounters.get(id) ?? ...` path in
+    // the progress IPC.
+    runningBackfillCounters.set(id, {
+      postsIngested: 0,
+      oldestPostCreateAtMs: null,
+    });
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
@@ -1264,6 +1923,35 @@ export function registerKchatHandlers(): void {
         result.oldestPostIdInPage,
       );
 
+      // Phase 13 Task 10 fix (ANALYSIS_0001): update the live counter
+      // entry inside the walk loop so a `kchat:backfillProgress` poll
+      // that arrives between two pages sees the current cumulative
+      // count and the oldest `createAt` we have ack'd. The REST page is
+      // newest-first so the last input has the smallest `createAtMs`;
+      // we still defensively pick the min across the page to tolerate
+      // any future page-reordering on the server side. The map entry
+      // was set BEFORE the loop began so `entry` is always defined
+      // here; we still guard via optional chaining so a future refactor
+      // that early-exits before the `set` cannot crash the walker.
+      const entry = runningBackfillCounters.get(id);
+      if (entry !== undefined) {
+        entry.postsIngested = totalPostsIngested;
+        if (inputs.length > 0) {
+          let pageOldest = inputs[0]!.createdAtMs;
+          for (const input of inputs) {
+            if (input.createdAtMs < pageOldest) {
+              pageOldest = input.createdAtMs;
+            }
+          }
+          if (
+            entry.oldestPostCreateAtMs === null ||
+            pageOldest < entry.oldestPostCreateAtMs
+          ) {
+            entry.oldestPostCreateAtMs = pageOldest;
+          }
+        }
+      }
+
       // Two end-of-walk signals from the REST server:
       //   - `prevPostId === null` means the server says "no posts
       //     exist older than what you just fetched" — definitive
@@ -1338,6 +2026,13 @@ export function registerKchatHandlers(): void {
     ).finally(() => {
       if (inFlightBackfillKchatChannel.get(id) === work) {
         inFlightBackfillKchatChannel.delete(id);
+        // Phase 13 Task 10 fix (ANALYSIS_0001): drop the live progress
+        // entry once the walk has resolved (either committed or aborted)
+        // so a subsequent `kchat:backfillProgress` poll falls through to
+        // the substrate-side `complete` / `idle` discriminator with the
+        // documented `postsIngested: 0` placeholder rather than reading
+        // stale numbers from a finished walk.
+        runningBackfillCounters.delete(id);
       }
     });
     inFlightBackfillKchatChannel.set(id, work);
@@ -1358,6 +2053,11 @@ export function registerKchatHandlers(): void {
       ).finally(() => {
         if (inFlightBackfillKchatChannel.get(id) === work) {
           inFlightBackfillKchatChannel.delete(id);
+          // Phase 13 Task 10 fix (ANALYSIS_0001): see the symmetric
+          // cleanup in `setKchatBackfillImpl`. The two registration paths
+          // both have to drop the running-counters entry so the progress
+          // IPC cannot serve stale data from a finished walk.
+          runningBackfillCounters.delete(id);
         }
       });
       inFlightBackfillKchatChannel.set(id, work);
@@ -1451,21 +2151,39 @@ export function registerKchatHandlers(): void {
           status: "idle",
         };
       }
-      // Substrate stores `oldestPostId` as the cursor used to
-      // advance the walk; the renderer's "X posts ingested"
-      // counter is not surfaced by the state read (the substrate
-      // doesn't keep a running counter because the value is
-      // re-derivable from the audit log). We expose 0 here when
-      // no walk has run yet and let the renderer subscribe to
-      // audit-row tail-follow if it wants live counters. The
-      // important UX is the discriminator (active vs
-      // complete vs idle), which the renderer renders as a
-      // progress *indicator* rather than a precise %-bar — the
-      // protocol-evolution comment block in
-      // `bridgeGetKchatBackfillState` (substrate side) explains
-      // why an exact post count is not always available.
+      // Phase 13 Task 10 fix (Devin Review on 869295e, ANALYSIS_0001):
+      // surface the orchestrator's live counters when a walk is
+      // currently in flight so the renderer's `postsIngested` /
+      // `oldestFetched` counters reflect real progress instead of
+      // the hardcoded `0` / `null` placeholders the first cut
+      // shipped with. The counters entry is initialised at the top
+      // of `runBackfillKchatChannel` and removed in the same
+      // `.finally()` that clears `inFlightBackfillKchatChannel`,
+      // so:
+      //   - `inFlight === true`  → entry present → live values.
+      //   - `inFlight === false` → entry absent  → default 0 / null
+      //                                            (substrate does
+      //                                            not surface a
+      //                                            cumulative count).
+      // We deliberately keep `totalPosts: null` because KChat does
+      // not always surface a channel-level post total; the renderer
+      // projects that into an indeterminate progress indicator.
+      const liveCounters = runningBackfillCounters.get(id);
+      const live = liveCounters ?? {
+        postsIngested: 0,
+        oldestPostCreateAtMs: null,
+      };
       const completedAt = state.completedAt ?? null;
       if (completedAt !== null) {
+        // Walk has finished. Substrate-persisted state does not carry
+        // a cumulative ingest counter, so we cannot retroactively
+        // attribute a post count to the `complete` badge — the
+        // renderer treats `complete` as a discriminator only and
+        // shows "Channel history fully fetched" without a number.
+        // `oldestFetched: null` for the same reason — substrate only
+        // stores `oldestPostId` (the cursor), not its `createAt`
+        // timestamp; deriving the timestamp would require a separate
+        // post lookup and is out of scope for Task 10.
         return {
           channelId: id,
           oldestFetched: null,
@@ -1476,9 +2194,9 @@ export function registerKchatHandlers(): void {
       }
       return {
         channelId: id,
-        oldestFetched: null,
+        oldestFetched: live.oldestPostCreateAtMs,
         totalPosts: null,
-        postsIngested: 0,
+        postsIngested: live.postsIngested,
         status: inFlight ? "active" : "idle",
       };
     },
@@ -1585,10 +2303,57 @@ export function registerKchatHandlers(): void {
           createdAtMs: h.createdAtMs,
           editedAtMs: h.editedAtMs,
           permalink,
+          // Phase 13 Theme 2 Task 9: filled in by
+          // `enrichKchatPostHits` below. We initialise to `null`
+          // so a code path that returns early (e.g. zero raw
+          // hits) emits a wire-shape-correct value the renderer
+          // can render without an `undefined` check.
+          senderUsername: null,
+          channelDisplayName: null,
         };
       });
 
+      // Phase 13 Theme 2 Task 9 — ANALYSIS_0001 (Devin Review pass
+      // 1 on fafc5f6): the audit `latencyMs` metric must continue
+      // to measure ONLY the synchronous bridge work (the part of
+      // the search that lands on the substrate). Enrichment is a
+      // pure-IPC-layer concern that fires network calls to KChat
+      // for username/channel-name resolution; folding that into
+      // the same metric would alias substrate-side regressions
+      // against transient KChat REST latency and break any SLO
+      // alert that was previously calibrated on the pre-PR meaning
+      // of this field. Capture the substrate latency NOW, then
+      // enrich.
       const latencyMs = Date.now() - start;
+
+      // Phase 13 Theme 2 Task 9: enrich hits with sender username
+      // and channel display name. Only attempt enrichment when
+      // the connection is fully `connected` (NOT `connecting`).
+      //
+      // ANALYSIS_0003 (Devin Review pass 2 on bef2fa0): the
+      // previous guard `if (hits.length > 0 && serverUrl)` was
+      // permissive because `serverUrl` is non-null in both
+      // `connected` AND `connecting` (see the conditional 30
+      // lines up). The mid-handshake `connecting` window can
+      // race the auth service's `setToken` ordering, and a
+      // verification request that hasn't completed yet would
+      // surface as failed enrichments. Restricting enrichment
+      // to `connected` aligns this gate with the renderer's
+      // "connected" banner gating: enrichment is only attempted
+      // in the same state where the rest of the search is
+      // expected to fully work.
+      if (hits.length > 0 && connState.state === "connected") {
+        try {
+          await enrichKchatPostHits(hits, svc.getClient());
+        } catch {
+          // Defence-in-depth: enrichment is best-effort. Any
+          // unexpected throw (e.g. an error inside the LRU cache
+          // implementation itself) must NOT hide search results
+          // from the user. The hits already have `senderUsername`
+          // and `channelDisplayName` set to `null` — the renderer
+          // falls back to raw ids in that case.
+        }
+      }
       const sourcesTouched = new Set(hits.map((h) => h.sourceId)).size;
       try {
         bridge.bridgeLogKchatPostSearchExecuted(
@@ -1610,6 +2375,89 @@ export function registerKchatHandlers(): void {
       }
 
       return hits;
+    },
+  );
+
+  /**
+   * Phase 13 Theme 2 Task 13: fetch thread-context messages for a
+   * KChat search hit. The substrate returns up to 3
+   * AEAD-verified messages: the thread root + up to 2 most-recent
+   * earlier-replies, ordered chronologically. The IPC handler:
+   *
+   *   1. Rate-limits via `kchat:fetchThreadContext` (5/s sustained,
+   *      10 burst) — the legitimate caller fires this once per
+   *      expand-click.
+   *   2. Validates `sourceId` (Tessera source UUID shape via
+   *      `assertId`, which the Rust bridge parses with
+   *      `uuid::Uuid::parse_str`) and `postId` (Mattermost 26-char
+   *      object-id shape via `assertKchatId`) at the deserialisation
+   *      boundary. See the BUG_0001 comment below the rate-limit
+   *      call for the rationale.
+   *   3. Calls `bridgeFetchKchatThreadContext` for the AEAD-verified
+   *      row set.
+   *   4. Enriches each row with `senderUsername` / `channelDisplayName`
+   *      through the same LRU cache the search path uses (best-effort;
+   *      `null` ⇒ renderer falls back to raw ids).
+   */
+  idempotentHandle(
+    "kchat:fetchThreadContext",
+    async (
+      _event,
+      sourceId: unknown,
+      postId: unknown,
+    ): Promise<KchatThreadContextMessage[]> => {
+      defaultRateLimiter.consume(
+        "kchat:fetchThreadContext",
+        RATE_LIMIT_PROFILES["kchat:fetchThreadContext"],
+      );
+      // BUG_0001 (Devin Review pass 1 on 5860a94): use the same
+      // shape-strict validators every other KChat handler uses.
+      // `assertId` enforces the Tessera source UUID shape (the
+      // bridge layer parses this with `uuid::Uuid::parse_str` and
+      // would otherwise return a bridge-level error for a string
+      // that the IPC boundary should have rejected). `assertKchatId`
+      // enforces the Mattermost 26-char object-id shape — see
+      // `kchat:searchPosts` (line 2022), `kchat:listChannelPosts`
+      // (line 2084), `kchat:shareArtifact` (line 1112) for the
+      // same posture. Generic `assertString` here would consume a
+      // rate-limit token + mutex lock for any request that can't
+      // possibly succeed downstream.
+      const sid = assertId(sourceId, "sourceId");
+      const pid = assertKchatId(postId, "postId");
+      const bridge = getBridge();
+      if (!bridge) return [];
+
+      const raw = bridge.bridgeFetchKchatThreadContext(sid, pid);
+
+      const messages: KchatThreadContextMessage[] = raw.map((m) => ({
+        postId: m.postId,
+        channelId: m.channelId,
+        senderUserId: m.senderUserId,
+        createdAtMs: m.createdAtMs,
+        editedAtMs: m.editedAtMs,
+        content: m.content,
+        isRoot: m.isRoot,
+        senderUsername: null,
+        channelDisplayName: null,
+      }));
+
+      // Best-effort enrichment: reuse the same cache + enrichment
+      // path the search handler uses. The thread-context messages
+      // carry the same `senderUserId` / `channelId` fields.
+      const svc = getKchatAuthService();
+      const connState = svc.getState();
+      if (messages.length > 0 && connState.state === "connected") {
+        try {
+          await enrichKchatThreadContextMessages(
+            messages,
+            svc.getClient(),
+          );
+        } catch {
+          // Same best-effort posture as search enrichment.
+        }
+      }
+
+      return messages;
     },
   );
 }

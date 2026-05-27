@@ -276,6 +276,21 @@ export const RATE_LIMIT_PROFILES = {
     intervalMs: 1_000,
     burst: 5,
   },
+  // Phase 13 Theme 2 Task 13: thread-context retrieval is called
+  // on-demand when the user expands a search hit's thread
+  // affordance. The substrate call is cheap (single SQL window
+  // bounded at 3 rows + per-row AEAD verify); no network. A
+  // legitimate caller fires this once per expand-click — a
+  // sustained 5/s with burst 10 lets a user rapidly expand
+  // several threads in quick succession (e.g. cycling through
+  // search hits) without throttling, while still being tight
+  // enough that a buggy auto-expand-all renderer can't pin a
+  // CPU.
+  "kchat:fetchThreadContext": {
+    tokensPerInterval: 5,
+    intervalMs: 1_000,
+    burst: 10,
+  },
 } satisfies Record<string, RateLimitConfig>;
 
 /** Shared default limiter instance used by the IPC layer. */

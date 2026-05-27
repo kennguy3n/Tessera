@@ -233,10 +233,40 @@ export default function CitationPanel({ artifactId, isOpen, onClose }: CitationP
         <ul className="citation-list" aria-label="Citation list">
           {citations.map((citation) => {
             const status = freshness[citation.citationId] ?? "fresh";
+            // Phase 13 Theme 2 Task 9: post-sourced citations
+            // render with the KChat badge + channel display title
+            // instead of a file path. The discriminator is
+            // `sourceType === "kchat_post"` (set by
+            // `buildCitationFields` when the row was first
+            // picked). We branch on this here so the stored
+            // citation list communicates "this evidence lives in
+            // KChat" at a glance, matching the search-hit row
+            // rendering above.
+            const isKchatPost = citation.sourceType === "kchat_post";
             return (
-              <li key={citation.citationId} className="citation-item">
+              <li
+                key={citation.citationId}
+                className={
+                  isKchatPost
+                    ? "citation-item citation-item-kchat"
+                    : "citation-item"
+                }
+                data-source-type={citation.sourceType}
+              >
                 <div className="citation-item-header">
-                  <span className="citation-source-title">{citation.sourceTitle}</span>
+                  {isKchatPost && (
+                    <span
+                      className="citation-source-badge citation-source-badge-kchat"
+                      aria-label="KChat post"
+                    >
+                      KChat
+                    </span>
+                  )}
+                  <span className="citation-source-title">
+                    {isKchatPost
+                      ? `#${citation.sourceTitle}`
+                      : citation.sourceTitle}
+                  </span>
                   {status === "changed" && (
                     <span
                       className="citation-changed-badge"
@@ -348,6 +378,13 @@ function EvidenceRowButton({
   }
   const hit = row.hit;
   const timestamp = formatKchatTimestamp(hit.createdAtMs);
+  // Phase 13 Theme 2 Task 9: fall back to the raw object id when
+  // the IPC handler couldn't resolve the display string (offline,
+  // user removed from the channel, etc.). The row still renders
+  // — the spec is "icon + sender + channel" with graceful
+  // degradation, not "hide the row when names are missing".
+  const senderLabel = hit.senderUsername ?? hit.senderUserId;
+  const channelLabel = hit.channelDisplayName ?? hit.channelId;
   return (
     <button
       type="button"
@@ -363,7 +400,13 @@ function EvidenceRowButton({
         >
           KChat
         </span>
-        <span className="citation-hit-kchat-sender">{hit.senderUserId}</span>
+        <span
+          className="citation-hit-kchat-channel"
+          aria-label={`channel ${channelLabel}`}
+        >
+          #{channelLabel}
+        </span>
+        <span className="citation-hit-kchat-sender">@{senderLabel}</span>
         {timestamp && (
           <span className="citation-hit-kchat-timestamp"> · {timestamp}</span>
         )}
@@ -400,9 +443,13 @@ function EvidenceRowButton({
  *     server-specific permalink — the URN is server-agnostic
  *     and round-trips across re-connects to the same workspace,
  *     where the permalink would break if the user re-connects
- *     to a renamed server URL). Title is the channel id; the
- *     citation badge in the artifact view resolves it to the
- *     channel display name via the channel roster.
+ *     to a renamed server URL). Title is the channel display
+ *     name when the IPC handler resolved it (Phase 13 Theme 2
+ *     Task 9), falling back to the raw channel id when offline
+ *     so the stored citation remains retrievable end-to-end.
+ *     Persisting the resolved name (rather than re-resolving on
+ *     every render) means the artifact stays attributable even
+ *     after the user disconnects from KChat.
  */
 function buildCitationFields(row: EvidenceRow): {
   sourceId: string;
@@ -423,10 +470,17 @@ function buildCitationFields(row: EvidenceRow): {
     };
   }
   const hit = row.hit;
+  // Phase 13 Theme 2 Task 9: prefer the resolved channel display
+  // name as the stored sourceTitle so a saved citation reads
+  // "#general" rather than "channel-xyz" in the artifact's
+  // citation list. Fallback path is the raw channelId — that
+  // also remains a valid retrieval key, so the citation is never
+  // silently broken by the rename / disconnect path.
+  const channelTitle = hit.channelDisplayName ?? hit.channelId;
   return {
     sourceId: hit.sourceId,
     sourceType: "kchat_post",
-    sourceTitle: hit.channelId,
+    sourceTitle: channelTitle,
     sourceUri: `kchat://channel/${hit.channelId}/post/${hit.postId}`,
     chunkHash: hit.chunkHash,
     confidence: hit.relevanceScore,

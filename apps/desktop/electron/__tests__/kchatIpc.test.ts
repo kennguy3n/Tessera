@@ -184,6 +184,8 @@ const bridgeMock = {
   // Block D Task 1 (Phase 14): retrieval bridge mocks.
   bridgeSearchKchatPosts: vi.fn(() => [] as Array<unknown>),
   bridgeLogKchatPostSearchExecuted: vi.fn(),
+  // Phase 13 Theme 2 Task 13: thread-context retrieval mock.
+  bridgeFetchKchatThreadContext: vi.fn(() => [] as Array<unknown>),
 };
 
 // `KchatAuthService` stub. `getClient()` returns an object with the
@@ -200,6 +202,13 @@ interface StubClient {
   // Block C Task 4 (Phase 13): the historical-backfill
   // orchestrator drives this REST method page-by-page.
   getPostsForChannel: ReturnType<typeof vi.fn>;
+  // Phase 13 Theme 2 Task 9: name-enrichment helpers wired into
+  // `kchat:searchPosts` to render `@username` + `#channel` in
+  // citation rows. Default: reject — tests that exercise the
+  // enrichment path set explicit implementations; other tests
+  // verify the catch-and-degrade posture via the rejection.
+  getUsersByIds: ReturnType<typeof vi.fn>;
+  getChannel: ReturnType<typeof vi.fn>;
   scrubMessage: ReturnType<typeof vi.fn>;
 }
 const clientMock: StubClient = {
@@ -210,6 +219,8 @@ const clientMock: StubClient = {
   uploadFile: vi.fn(),
   downloadFile: vi.fn(),
   getPostsForChannel: vi.fn(),
+  getUsersByIds: vi.fn(),
+  getChannel: vi.fn(),
   // Default: pass-through. Tests that need to assert scrub
   // behaviour replace this implementation in their own `beforeEach`.
   scrubMessage: vi.fn((msg: string) => msg),
@@ -217,6 +228,11 @@ const clientMock: StubClient = {
 const serviceMock = {
   getClient: () => clientMock,
   getState: vi.fn(),
+  // Phase 13 Theme 2 Task 9: the IPC layer subscribes to status
+  // transitions to clear the name caches on disconnect. Tests
+  // don't drive this subscriber, so we return a no-op
+  // unsubscribe so the registration path completes cleanly.
+  onStatusChange: vi.fn(() => () => {}),
   connect: vi.fn(),
   disconnect: vi.fn(),
 };
@@ -240,7 +256,10 @@ vi.mock("../appState", () => ({
   setKchatBackfillImpl: vi.fn(),
 }));
 
-import { registerKchatHandlers } from "../ipc/kchat";
+import {
+  registerKchatHandlers,
+  _resetKchatNameCachesForTest,
+} from "../ipc/kchat";
 import type { KchatBackfillRunOutcome } from "../../shared/types";
 
 function handler(channel: string) {
@@ -293,27 +312,103 @@ beforeEach(() => {
   serviceMock.getState.mockReset();
   serviceMock.connect.mockReset();
   serviceMock.disconnect.mockReset();
+  // ANALYSIS_0003 (Devin Review pass 4 on d0731ec): the
+  // `runningBackfillCounters` / `inFlightBackfillKchatChannel`
+  // maps are scoped inside the `registerKchatHandlers` closure
+  // and reset automatically on every `registerKchatHandlers()`
+  // call below. The `KCHAT_USERNAME_CACHE` /
+  // `KCHAT_CHANNEL_NAME_CACHE` are module-scoped (production-
+  // correct: a live `KchatAuthService` reconnect via the status
+  // listener must keep clearing the same cache instance the
+  // enrichment path reads), so they DO NOT reset automatically.
+  // Closing the footgun before it bites a future test author:
+  // reset the module-scoped caches AND tear down the status
+  // listener before re-installing the IPC layer, so every test
+  // starts from a clean module state regardless of whether the
+  // test itself remembers to call `_resetKchatNameCachesForTest`
+  // explicitly. The redundant per-test invocations elsewhere in
+  // the file are intentionally kept as documentation that the
+  // test exercises cache state.
+  _resetKchatNameCachesForTest();
   registerKchatHandlers();
 });
 
 describe("kchat IPC registration", () => {
-  it("registers every kchat:* channel exactly once", () => {
+  // Devin Review pass 2 on f686e5c (ANALYSIS_0004): the master list
+  // is the canonical registration contract — any new `kchat:*` /
+  // `sources:*` channel added to `registerKchatHandlers` must be
+  // listed here. The dedicated per-channel tests further down still
+  // exercise behaviour, but the master list is what catches a future
+  // refactor that accidentally drops a registration entirely.
+  //
+  // The Phase 13 Theme 1 (Task 7) extension-bridge channels
+  // (`kchat:extensionStatus`, `kchat:extensionConnect`,
+  // `kchat:extensionDisconnect`) and the Phase 13 Theme 2 (Task 10)
+  // backfill-progress channel (`kchat:backfillProgress`) were
+  // missing from the original list — added here so the master-list
+  // contract matches reality.
+  const EXPECTED_KCHAT_CHANNELS: readonly string[] = [
+    "kchat:isAvailable",
+    "kchat:status",
+    "kchat:connect",
+    "kchat:disconnect",
+    "kchat:extensionStatus",
+    "kchat:extensionConnect",
+    "kchat:extensionDisconnect",
+    "kchat:listTeams",
+    "kchat:listChannels",
+    "kchat:listMembers",
+    "kchat:listChannelFiles",
+    "kchat:shareArtifact",
+    "sources:addKchatChannel",
+    "sources:backfillKchatChannel",
+    "kchat:backfillProgress",
+    "kchat:searchPosts",
+    "kchat:fetchThreadContext",
+  ];
+
+  it("registers every kchat:* / sources:* channel from the master list", () => {
     const channels = handleMock.mock.calls.map((c) => c[0] as string);
-    for (const want of [
-      "kchat:isAvailable",
-      "kchat:status",
-      "kchat:connect",
-      "kchat:disconnect",
-      "kchat:listTeams",
-      "kchat:listChannels",
-      "kchat:listMembers",
-      "kchat:listChannelFiles",
-      "kchat:shareArtifact",
-      "sources:addKchatChannel",
-      "sources:backfillKchatChannel",
-      "kchat:searchPosts",
-    ]) {
+    for (const want of EXPECTED_KCHAT_CHANNELS) {
       expect(channels).toContain(want);
+    }
+  });
+
+  it("does not register any unexpected `kchat:*` / `sources:addKchatChannel` / `sources:backfillKchatChannel` channels", () => {
+    // Counter-assertion that makes the master list authoritative in
+    // BOTH directions: adding a channel to `registerKchatHandlers`
+    // without listing it in `EXPECTED_KCHAT_CHANNELS` also fails the
+    // suite, so the contract can't silently drift.
+    const channels = handleMock.mock.calls.map((c) => c[0] as string);
+    const kchatChannels = channels.filter(
+      (c) =>
+        c.startsWith("kchat:") ||
+        c === "sources:addKchatChannel" ||
+        c === "sources:backfillKchatChannel",
+    );
+    const expectedSet = new Set(EXPECTED_KCHAT_CHANNELS);
+    const unexpected = kchatChannels.filter((c) => !expectedSet.has(c));
+    expect(unexpected).toEqual([]);
+  });
+
+  it("registers each `kchat:*` / `sources:*` channel exactly once (no double-registration)", () => {
+    // Defence-in-depth against a refactor that calls
+    // `registerKchatHandlers` twice (e.g. hot-reload regression).
+    // `idempotentHandle` is supposed to guard this at runtime, but
+    // the test makes the invariant a contract.
+    const channels = handleMock.mock.calls.map((c) => c[0] as string);
+    const counts = new Map<string, number>();
+    for (const c of channels) {
+      if (
+        c.startsWith("kchat:") ||
+        c === "sources:addKchatChannel" ||
+        c === "sources:backfillKchatChannel"
+      ) {
+        counts.set(c, (counts.get(c) ?? 0) + 1);
+      }
+    }
+    for (const [channel, count] of counts) {
+      expect(count, `${channel} registered ${count} times`).toBe(1);
     }
   });
 });
@@ -2903,5 +2998,1551 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
       handler("kchat:searchPosts")(EVENT, "Q3", 1_000_000),
     ).rejects.toThrow(/limit/);
     expect(bridgeMock.bridgeSearchKchatPosts).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------
+  // Phase 13 Theme 2 Task 9: KChat name-enrichment tests.
+  //
+  // These tests use VALID KChat object-id format (26 lowercase
+  // alphanumeric chars) so the per-id `assertCallerObjectId`
+  // check inside `getUsersByIds` / `getChannel` lets the bulk
+  // lookup proceed. The legacy tests above use unvalidated test
+  // ids ("user-ken" / "channel-xyz") which fail the per-id
+  // validator; that exercises the catch-and-degrade branch where
+  // each hit's `senderUsername` / `channelDisplayName` stays
+  // `null`. Both branches are part of the contract.
+  // -------------------------------------------------------------
+  const VALID_USER_ID = "u".repeat(26);
+  const VALID_USER_ID_2 = "v".repeat(26);
+  const VALID_CHANNEL_ID = "c".repeat(26);
+  const VALID_CHANNEL_ID_2 = "d".repeat(26);
+
+  it("enriches hits with sender username + channel display name via bulk lookup (Phase 13 Theme 2 Task 9)", async () => {
+    // Lazy import: the reset helper lives in the IPC module
+    // alongside the cache itself, exported only for tests so we
+    // start from a known-empty state regardless of test order.
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+    ]);
+    clientMock.getChannel.mockResolvedValueOnce({
+      id: VALID_CHANNEL_ID,
+      team_id: "t".repeat(26),
+      display_name: "Engineering",
+    });
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3 launch",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      senderUserId: VALID_USER_ID,
+      senderUsername: "ken",
+      channelId: VALID_CHANNEL_ID,
+      channelDisplayName: "Engineering",
+    });
+    // Bulk-user lookup is called once with the deduped id array.
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+    expect(clientMock.getUsersByIds).toHaveBeenCalledWith([VALID_USER_ID]);
+    // Per-channel lookup runs once for the unique channel id.
+    expect(clientMock.getChannel).toHaveBeenCalledTimes(1);
+    expect(clientMock.getChannel).toHaveBeenCalledWith(VALID_CHANNEL_ID);
+  });
+
+  it("deduplicates lookups across multiple hits referencing the same sender/channel (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    // Three hits, only two distinct senders / one distinct channel.
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        postId: "post-a",
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+      makeBridgeRow({
+        postId: "post-b",
+        senderUserId: VALID_USER_ID, // same sender
+        channelId: VALID_CHANNEL_ID, // same channel
+        sourceId: "src-b",
+      }),
+      makeBridgeRow({
+        postId: "post-c",
+        senderUserId: VALID_USER_ID_2,
+        channelId: VALID_CHANNEL_ID, // same channel as #1, #2
+        sourceId: "src-c",
+      }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+      { id: VALID_USER_ID_2, username: "alex" },
+    ]);
+    clientMock.getChannel.mockResolvedValueOnce({
+      id: VALID_CHANNEL_ID,
+      team_id: "t".repeat(26),
+      display_name: "Engineering",
+    });
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(3);
+    expect(out[0].senderUsername).toBe("ken");
+    expect(out[1].senderUsername).toBe("ken");
+    expect(out[2].senderUsername).toBe("alex");
+    expect(out[0].channelDisplayName).toBe("Engineering");
+    expect(out[1].channelDisplayName).toBe("Engineering");
+    expect(out[2].channelDisplayName).toBe("Engineering");
+
+    // Bulk-lookup is called with deduplicated ids — 2 users
+    // (not 3), 1 channel (not 3).
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+    const passedUserIds = clientMock.getUsersByIds.mock.calls[0][0] as string[];
+    expect(new Set(passedUserIds)).toEqual(
+      new Set([VALID_USER_ID, VALID_USER_ID_2]),
+    );
+    expect(clientMock.getChannel).toHaveBeenCalledTimes(1);
+    expect(clientMock.getChannel).toHaveBeenCalledWith(VALID_CHANNEL_ID);
+  });
+
+  it("caches names across calls so a repeated search does NOT re-hit the bulk endpoints (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValue([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+    ]);
+    clientMock.getChannel.mockResolvedValueOnce({
+      id: VALID_CHANNEL_ID,
+      team_id: "t".repeat(26),
+      display_name: "Engineering",
+    });
+
+    // Two consecutive searches against the same workspace.
+    await handler("kchat:searchPosts")(EVENT, "Q3", 10);
+    await handler("kchat:searchPosts")(EVENT, "Q3", 10);
+
+    // Bulk lookups still ran only once — the second search was
+    // served entirely from the IPC-layer LRU cache.
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+    expect(clientMock.getChannel).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves enriched fields null when bulk lookup throws (best-effort posture) (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+    ]);
+    // Both lookups fail. The IPC handler MUST still return the
+    // hit — the renderer falls back to displaying raw ids.
+    clientMock.getUsersByIds.mockRejectedValueOnce(
+      new Error("transient 503"),
+    );
+    clientMock.getChannel.mockRejectedValueOnce(
+      new Error("network unreachable"),
+    );
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(1);
+    expect(out[0].senderUsername).toBeNull();
+    expect(out[0].channelDisplayName).toBeNull();
+    // The raw ids round-trip so the renderer can render a
+    // fallback row.
+    expect(out[0].senderUserId).toBe(VALID_USER_ID);
+    expect(out[0].channelId).toBe(VALID_CHANNEL_ID);
+  });
+
+  it("does not call the bulk endpoints when there are zero hits (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([]);
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "needle that finds nothing",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toEqual([]);
+    expect(clientMock.getUsersByIds).not.toHaveBeenCalled();
+    expect(clientMock.getChannel).not.toHaveBeenCalled();
+  });
+
+  it("does not call the bulk endpoints when the user is disconnected (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({ state: "disconnected" });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+    ]);
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(1);
+    // Disconnected: permalink is null and enrichment is skipped
+    // (the bulk REST calls would fail synchronously anyway). The
+    // renderer renders the row with raw-id fallbacks.
+    expect(out[0].permalink).toBeNull();
+    expect(out[0].senderUsername).toBeNull();
+    expect(out[0].channelDisplayName).toBeNull();
+    expect(clientMock.getUsersByIds).not.toHaveBeenCalled();
+    expect(clientMock.getChannel).not.toHaveBeenCalled();
+  });
+
+  it("recovers gracefully when only one of the two lookups fails (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+    ]);
+    // Users resolve OK, channels fail. The username should be
+    // populated; the channel display name should be null.
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+    ]);
+    clientMock.getChannel.mockRejectedValueOnce(
+      new Error("403 forbidden"),
+    );
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out[0].senderUsername).toBe("ken");
+    expect(out[0].channelDisplayName).toBeNull();
+  });
+
+  it("partial-result resilience: an unresolved user id leaves only that hit's senderUsername null (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        postId: "post-a",
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+      makeBridgeRow({
+        postId: "post-b",
+        senderUserId: VALID_USER_ID_2, // intentionally NOT in lookup response
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-b",
+      }),
+    ]);
+    // KChat's `POST /users/ids` omits ids not visible to the
+    // authenticated principal. The handler treats the missing
+    // id as a graceful null, not an error.
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+    ]);
+    clientMock.getChannel.mockResolvedValueOnce({
+      id: VALID_CHANNEL_ID,
+      team_id: "t".repeat(26),
+      display_name: "Engineering",
+    });
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(2);
+    expect(out[0].senderUsername).toBe("ken");
+    expect(out[1].senderUsername).toBeNull();
+    // Channel lookup succeeded so both hits carry the same name.
+    expect(out[0].channelDisplayName).toBe("Engineering");
+    expect(out[1].channelDisplayName).toBe("Engineering");
+  });
+
+  it("uses one parallel batch of getChannel calls across multiple channels (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        postId: "post-a",
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+      makeBridgeRow({
+        postId: "post-b",
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID_2,
+        sourceId: "src-b",
+      }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+    ]);
+    clientMock.getChannel.mockImplementation(async (id: string) => ({
+      id,
+      team_id: "t".repeat(26),
+      display_name: id === VALID_CHANNEL_ID ? "Engineering" : "Product",
+    }));
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out[0].channelDisplayName).toBe("Engineering");
+    expect(out[1].channelDisplayName).toBe("Product");
+    // Two distinct channels => two getChannel calls, ONE bulk
+    // user lookup.
+    expect(clientMock.getChannel).toHaveBeenCalledTimes(2);
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------
+  // Phase 13 Theme 2 Task 9 — Devin Review pass 1 (fafc5f6)
+  // ANALYSIS_0001 / 0004 / 0005 regression tests.
+  // -------------------------------------------------------------
+
+  it("ANALYSIS_0001: audit latencyMs measures only the bridge call, NOT the enrichment network time (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    _resetKchatNameCachesForTest();
+    defaultRateLimiter.reset();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+      }),
+    ]);
+
+    // Make the enrichment take ≥ 50 ms (well above scheduler
+    // jitter on every supported runner) by delaying the bulk
+    // lookups. If the audit metric included this wait, the
+    // assertion below would observe ≥ 50 ms and fail. The fix
+    // captures `latencyMs = Date.now() - start` BEFORE calling
+    // `enrichKchatPostHits`, so the audit metric stays bounded
+    // by the synchronous bridge call (well under 10 ms).
+    clientMock.getUsersByIds.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(
+            () => resolve([{ id: VALID_USER_ID, username: "ken" }]),
+            60,
+          );
+        }),
+    );
+    clientMock.getChannel.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(
+            () =>
+              resolve({
+                id: VALID_CHANNEL_ID,
+                team_id: "t".repeat(26),
+                display_name: "Engineering",
+              }),
+            60,
+          );
+        }),
+    );
+
+    await handler("kchat:searchPosts")(EVENT, "Q3 launch", 10);
+
+    expect(bridgeMock.bridgeLogKchatPostSearchExecuted).toHaveBeenCalledTimes(
+      1,
+    );
+    const [, , , latencyMs] =
+      bridgeMock.bridgeLogKchatPostSearchExecuted.mock.calls[0];
+    // The substrate-side bridge is a synchronous mock (it
+    // returns immediately). 25 ms gives generous headroom for
+    // scheduler jitter on slow CI runners while still being far
+    // below the artificial 60 ms enrichment delay. If the metric
+    // accidentally folds in enrichment, this assertion fails.
+    expect(latencyMs).toBeLessThan(25);
+  });
+
+  it("ANALYSIS_0004: empty-string display_name / username is NOT cached (defence-in-depth against protocol drift) (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    _resetKchatNameCachesForTest();
+    defaultRateLimiter.reset();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValue([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+    ]);
+    // Server returns empty-string display strings (simulates
+    // protocol drift or a maliciously crafted response). The
+    // cache must reject these so the renderer falls back to the
+    // raw ids, preserving the row.
+    clientMock.getUsersByIds.mockResolvedValue([
+      { id: VALID_USER_ID, username: "" },
+    ]);
+    clientMock.getChannel.mockResolvedValue({
+      id: VALID_CHANNEL_ID,
+      team_id: "t".repeat(26),
+      display_name: "",
+    });
+
+    // First call: enrichment runs, but the empty strings must
+    // NOT be cached as positive values. The hit's enriched
+    // fields stay `null` (so the renderer falls back to ids).
+    const out1 = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3 launch",
+      10,
+    )) as Array<Record<string, unknown>>;
+    expect(out1[0].senderUsername).toBeNull();
+    expect(out1[0].channelDisplayName).toBeNull();
+
+    // Second call: because the empty values were NOT cached,
+    // the bulk endpoints are re-invoked. (Were the empty strings
+    // cached, the second pass would short-circuit and the
+    // call counts below would stay at 1.) The retry semantics
+    // are correct: a future well-formed response IS allowed to
+    // populate the cache without us having to invalidate first.
+    await handler("kchat:searchPosts")(EVENT, "Q3 launch", 10);
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(2);
+    expect(clientMock.getChannel).toHaveBeenCalledTimes(2);
+  });
+
+  it("ANALYSIS_0005: onStatusChange subscriber is registered exactly once across re-mounts (idempotency guard) (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest, registerKchatHandlers } =
+      await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+    serviceMock.onStatusChange.mockClear();
+
+    // Re-invoke the handler-registration entrypoint three
+    // times. Without the guard, every call would stack another
+    // listener on top of `KchatAuthService.onStatusChange` —
+    // which would then over-clear the caches on every status
+    // push (effectively disabling the cache after the first
+    // re-mount).
+    registerKchatHandlers();
+    registerKchatHandlers();
+    registerKchatHandlers();
+
+    expect(serviceMock.onStatusChange).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------
+  // Phase 13 Theme 2 Task 9 — Devin Review pass 2 (bef2fa0)
+  // ANALYSIS_0001 (parallel fetches) / 0002 (malformed-id filter)
+  // / 0003 (connected-only enrichment) / 0005 (unsubscribe handle)
+  // regression tests.
+  // -------------------------------------------------------------
+
+  it("pass2-ANALYSIS_0001: user + channel enrichment lookups run concurrently, not sequentially (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    _resetKchatNameCachesForTest();
+    defaultRateLimiter.reset();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+      }),
+    ]);
+
+    // Each REST call takes 80 ms. If they run SEQUENTIALLY,
+    // wall-clock is ≥ 160 ms. If they run CONCURRENTLY,
+    // wall-clock stays close to 80 ms. The threshold below
+    // (130 ms) is safely between the two so the test
+    // distinguishes the two execution shapes on every supported
+    // runner (including slow CI).
+    clientMock.getUsersByIds.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(
+            () => resolve([{ id: VALID_USER_ID, username: "ken" }]),
+            80,
+          );
+        }),
+    );
+    clientMock.getChannel.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(
+            () =>
+              resolve({
+                id: VALID_CHANNEL_ID,
+                team_id: "t".repeat(26),
+                display_name: "Engineering",
+              }),
+            80,
+          );
+        }),
+    );
+
+    const t0 = Date.now();
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3 launch",
+      10,
+    )) as Array<Record<string, unknown>>;
+    const elapsedMs = Date.now() - t0;
+
+    // Sanity: both enrichment fields landed (so the test
+    // actually exercised the parallel branch).
+    expect(out[0].senderUsername).toBe("ken");
+    expect(out[0].channelDisplayName).toBe("Engineering");
+    // The actual parallel-execution check. If a future change
+    // accidentally re-introduces sequential awaits, elapsed
+    // would jump past 130 ms and the test fails.
+    expect(elapsedMs).toBeLessThan(130);
+  });
+
+  it("pass2-ANALYSIS_0002: malformed senderUserId / channelId is filtered out of bulk lookups (does not suppress other hits) (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    _resetKchatNameCachesForTest();
+    defaultRateLimiter.reset();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    // Two hits: the first carries a substrate-corrupted (or
+    // legacy non-compliant) sender id, the second carries a
+    // valid one. Pre-fix, the per-id assertion inside
+    // `getUsersByIds` would throw on the malformed id and the
+    // catch-and-degrade branch would null out BOTH hits'
+    // `senderUsername` (suppressing the valid one too). Post
+    // fix, the malformed id is filtered out of the bulk request
+    // and the valid id is resolved normally.
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: "user-malformed", // does NOT match the regex
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-b",
+      }),
+    ]);
+    // The bulk endpoint must be called with ONLY the valid id;
+    // we assert on that below by inspecting the call args.
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+    ]);
+    clientMock.getChannel.mockResolvedValueOnce({
+      id: VALID_CHANNEL_ID,
+      team_id: "t".repeat(26),
+      display_name: "Engineering",
+    });
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3 launch",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    // The malformed id was filtered — the corresponding hit
+    // keeps senderUsername null (renderer falls back to raw
+    // id), while the valid hit is enriched.
+    expect(out[0].senderUsername).toBeNull();
+    expect(out[1].senderUsername).toBe("ken");
+    // Both hits share the same channel id, so the channel
+    // lookup runs once and both get the display name.
+    expect(out[0].channelDisplayName).toBe("Engineering");
+    expect(out[1].channelDisplayName).toBe("Engineering");
+    // The bulk POST must have received only the valid id (the
+    // malformed one was filtered upstream of the call).
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+    expect(clientMock.getUsersByIds).toHaveBeenCalledWith([VALID_USER_ID]);
+  });
+
+  it("pass2-ANALYSIS_0003: enrichment skipped during 'connecting' state (only runs when fully 'connected') (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    _resetKchatNameCachesForTest();
+    defaultRateLimiter.reset();
+
+    // Mid-handshake state: serverUrl is set but the auth
+    // service has NOT transitioned to `connected` yet. The
+    // verification request may still be in flight; running
+    // enrichment now would surface as failed lookups. The
+    // fix gates enrichment on `state === "connected"`.
+    serviceMock.getState.mockReturnValue({
+      state: "connecting",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+      }),
+    ]);
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3 launch",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    // The bridge result is returned; permalink stays null
+    // (composing it requires a stable serverUrl, but the
+    // existing renderer treats null-permalink as "Open in
+    // KChat" disabled which is the correct UX during a
+    // mid-handshake search).
+    expect(out).toHaveLength(1);
+    expect(out[0].senderUsername).toBeNull();
+    expect(out[0].channelDisplayName).toBeNull();
+    // The two enrichment endpoints must NOT have been
+    // exercised during a `connecting` state.
+    expect(clientMock.getUsersByIds).not.toHaveBeenCalled();
+    expect(clientMock.getChannel).not.toHaveBeenCalled();
+  });
+
+  it("pass2-ANALYSIS_0005: _resetKchatNameCachesForTest calls the onStatusChange unsubscribe handle (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest, registerKchatHandlers } =
+      await import("../ipc/kchat");
+
+    // Install a tracked unsubscribe spy and re-wire
+    // `serviceMock.onStatusChange` so it returns it. The reset
+    // helper must call this spy when it detaches the listener.
+    const unsubscribeSpy = vi.fn();
+    serviceMock.onStatusChange.mockReturnValue(unsubscribeSpy);
+
+    // First reset flushes any prior install state from earlier
+    // tests so we start from a known clean slate.
+    _resetKchatNameCachesForTest();
+    serviceMock.onStatusChange.mockClear();
+    // Install fresh; the install path stores the spy as the
+    // module-level unsubscribe handle.
+    registerKchatHandlers();
+    expect(serviceMock.onStatusChange).toHaveBeenCalledTimes(1);
+
+    // Now reset: this must call the stored unsubscribe handle.
+    _resetKchatNameCachesForTest();
+    expect(unsubscribeSpy).toHaveBeenCalledTimes(1);
+
+    // After reset, the install flag is `false` again — a
+    // subsequent registerKchatHandlers must re-subscribe.
+    registerKchatHandlers();
+    expect(serviceMock.onStatusChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("pass3-ANALYSIS_0001: channelTask is fault-isolated symmetrically with userTask (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    _resetKchatNameCachesForTest();
+    defaultRateLimiter.reset();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+      }),
+    ]);
+
+    // User branch succeeds normally and populates the username
+    // cache. Channel branch's `Promise.allSettled` resolves with
+    // a fulfilled result, but we simulate a throw from the
+    // `.set()` step by feeding a channel object that triggers
+    // the cache's empty-string-reject path AT FIRST, then
+    // (separately) verify that a hypothetical synchronous throw
+    // inside the loop body cannot abort the second-pass
+    // application loop. We achieve this by mocking the channel
+    // response with an `id` that the cache's `set` will throw on
+    // — we use a Proxy whose `set` trap throws to confirm the
+    // outer try/catch swallows the throw and the second pass
+    // still runs.
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+    ]);
+    // Channel fetch resolves with a value whose `id` getter
+    // throws when accessed during the `.set(r.value.id, …)`
+    // step. This is the only way to force a throw inside the
+    // post-allSettled loop (the cache itself cannot reject by
+    // contract). Pre-fix the throw would propagate up through
+    // the IIFE's async function, reject the channelTask
+    // promise, abort `Promise.all`, and skip the second-pass
+    // loop — so even though the username was cached, the hit
+    // would never get its `senderUsername` populated. Post-fix
+    // the symmetric try/catch swallows the throw and the
+    // second pass runs.
+    const throwingChannel = new Proxy(
+      {
+        id: VALID_CHANNEL_ID,
+        team_id: "t".repeat(26),
+        display_name: "Engineering",
+      },
+      {
+        get(target, prop) {
+          if (prop === "id") {
+            throw new Error("simulated channel.id getter throw");
+          }
+          return (target as Record<string | symbol, unknown>)[prop];
+        },
+      },
+    );
+    clientMock.getChannel.mockResolvedValueOnce(throwingChannel);
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3 launch",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    // The user-side enrichment must still land on the hit
+    // (proving the second-pass loop ran).
+    expect(out[0].senderUsername).toBe("ken");
+    // Channel side stayed null — the throw was swallowed
+    // symmetrically (renderer falls back to raw id).
+    expect(out[0].channelDisplayName).toBeNull();
+  });
+});
+
+// =====================================================================
+// Phase 13 Task 10 — kchat:backfillProgress (progress projection IPC)
+// ---------------------------------------------------------------------
+// The handler is a pure read of two pieces of state:
+//
+//   1. `inFlightBackfillKchatChannel.has(id)` — is a walk currently
+//      running? Drives the `active` vs `idle/complete` discriminator.
+//   2. `bridgeGetKchatBackfillState(cacheDir)` — substrate-persisted
+//      state. Surfaces `oldestPostId`, `completedAt`, revocation
+//      outcome.
+//
+// These tests pin every branch the renderer projection depends on:
+// - `idle` when no walk has run AND substrate state is idle/unlinked/
+//    access_revoked
+// - `complete` when substrate state has a `completedAt` (regardless of
+//    `inFlight`, because a re-trigger after completion is a no-op)
+// - `active` when a walk is in flight AND substrate state has not
+//    completed yet
+// - `error` with the underlying message when:
+//    (a) the native bridge is unavailable, OR
+//    (b) the substrate state read throws
+// - The handler rejects malformed channelIds at the boundary
+// =====================================================================
+describe("kchat:backfillProgress — progress projection IPC", () => {
+  // 26-char channel id reused across cases. Doesn't share the
+  // CHANNEL_ID constant used by the backfill orchestrator
+  // describe block above so a future change to that fixture
+  // doesn't accidentally couple the two suites.
+  const PROGRESS_CHANNEL_ID = "chidprogresstttttttttttttta";
+
+  beforeEach(async () => {
+    // Reset the rate-limiter so a previous test in this suite
+    // that exhausts the bucket doesn't bleed into the next case.
+    // `kchat:backfillProgress` is gated at 2 tokens / 1 s sustained
+    // (see RATE_LIMIT_PROFILES["kchat:backfillProgress"]) — too
+    // tight to share across cases.
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    defaultRateLimiter.reset();
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValue({
+      outcome: "idle",
+      sourceId: "src-uuid",
+      oldestPostId: undefined,
+      completedAt: undefined,
+    });
+  });
+
+  it("registers the `kchat:backfillProgress` channel", () => {
+    const channels = handleMock.mock.calls.map((c) => c[0] as string);
+    expect(channels).toContain("kchat:backfillProgress");
+  });
+
+  it("returns `status: idle` when no walk has run and state is idle", async () => {
+    const out = (await handler("kchat:backfillProgress")(
+      EVENT,
+      PROGRESS_CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(out.status).toBe("idle");
+    expect(out.channelId).toBe(PROGRESS_CHANNEL_ID);
+    expect(out.oldestFetched).toBeNull();
+    expect(out.totalPosts).toBeNull();
+    expect(out.postsIngested).toBe(0);
+  });
+
+  it("returns `status: idle` when substrate state is `unlinked` (race against unlink)", async () => {
+    // The renderer must NOT show an error for an unlinked
+    // channel — that's a normal state during the gap between
+    // the user clicking "Remove KChat source" and the substrate
+    // GC. The handler projects it to `idle` so the UI shows
+    // "no walk has run" rather than a scary error banner.
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValueOnce({
+      outcome: "unlinked",
+      sourceId: undefined,
+      oldestPostId: undefined,
+      completedAt: undefined,
+    });
+    const out = (await handler("kchat:backfillProgress")(
+      EVENT,
+      PROGRESS_CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(out.status).toBe("idle");
+  });
+
+  it("returns `status: idle` when substrate state is `access_revoked`", async () => {
+    // Same UX rationale as `unlinked`: revoked sources are still
+    // listed in the UI (the user can re-link), and the backfill
+    // card shouldn't show an error for a state the user
+    // explicitly chose. The substrate-side cryptoshred already
+    // removed the data; the renderer just sees `idle`.
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValueOnce({
+      outcome: "access_revoked",
+      sourceId: "src-uuid",
+      oldestPostId: undefined,
+      completedAt: undefined,
+    });
+    const out = (await handler("kchat:backfillProgress")(
+      EVENT,
+      PROGRESS_CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(out.status).toBe("idle");
+  });
+
+  it("returns `status: complete` when substrate state has a `completedAt`", async () => {
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValueOnce({
+      outcome: "idle",
+      sourceId: "src-uuid",
+      oldestPostId: "postnewa00000000000000000a",
+      completedAt: "2024-01-01T00:00:00Z",
+    });
+    const out = (await handler("kchat:backfillProgress")(
+      EVENT,
+      PROGRESS_CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(out.status).toBe("complete");
+    expect(out.channelId).toBe(PROGRESS_CHANNEL_ID);
+  });
+
+  it("returns `status: error` when the bridge state read throws", async () => {
+    bridgeMock.bridgeGetKchatBackfillState.mockImplementationOnce(() => {
+      throw new Error("substrate corruption: dek missing");
+    });
+    const out = (await handler("kchat:backfillProgress")(
+      EVENT,
+      PROGRESS_CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(out.status).toBe("error");
+    // The substrate error message must reach the renderer so
+    // the user has a chance to act on it (e.g. cryptoshred and
+    // re-link). The handler scrubs nothing here because the
+    // path is internal — there is no token/header to leak.
+    expect(out.error).toMatch(/substrate corruption/);
+  });
+
+  it("rejects malformed channelIds at the boundary", async () => {
+    await expect(
+      handler("kchat:backfillProgress")(EVENT, "!!!notvalid!!!"),
+    ).rejects.toThrow(/channelId/);
+    expect(bridgeMock.bridgeGetKchatBackfillState).not.toHaveBeenCalled();
+  });
+
+  it("passes the per-channel cache directory to the bridge state read", async () => {
+    // Regression guard: a future refactor that changes the
+    // cacheDir derivation must not accidentally start passing
+    // the raw channelId or the workspace root. The substrate
+    // keys state on the cacheDir, so a regression here would
+    // silently make every renderer poll think the walk is
+    // `idle` even after a successful completion.
+    await handler("kchat:backfillProgress")(EVENT, PROGRESS_CHANNEL_ID);
+    expect(bridgeMock.bridgeGetKchatBackfillState).toHaveBeenCalledTimes(1);
+    const arg = bridgeMock.bridgeGetKchatBackfillState.mock.calls[0][0] as string;
+    expect(arg).toContain(PROGRESS_CHANNEL_ID);
+    expect(arg).toMatch(/kchat-channels/);
+  });
+
+  it("rate-limits repeated calls per the `kchat:backfillProgress` profile", async () => {
+    // The handler is rate-limited at 2 tokens / 1 s sustained
+    // with 5 burst — see RATE_LIMIT_PROFILES. We drive enough
+    // calls to drain the bucket and assert the next call
+    // rejects with the limiter's diagnostic.
+    for (let i = 0; i < 5; i++) {
+      await handler("kchat:backfillProgress")(EVENT, PROGRESS_CHANNEL_ID);
+    }
+    await expect(
+      handler("kchat:backfillProgress")(EVENT, PROGRESS_CHANNEL_ID),
+    ).rejects.toThrow(/Rate limit/i);
+  });
+
+  it("surfaces live `postsIngested` and `oldestFetched` while a walk is in flight (ANALYSIS_0001)", async () => {
+    // Devin Review on 869295e (ANALYSIS_0001): the handler used to
+    // hard-code `postsIngested: 0` and `oldestFetched: null` for the
+    // `active` discriminator because the comment claimed the
+    // substrate didn't carry a running counter. The orchestrator
+    // already accumulates `totalPostsIngested` page-by-page; this
+    // fix routes that value through a per-channel in-flight map
+    // (`runningBackfillCounters`) which the progress IPC reads.
+    //
+    // This test exercises the through-line end-to-end:
+    //   1. Drive the first page of a walk via the orchestrator.
+    //   2. Pause the walk before the second page resolves.
+    //   3. Hit the progress IPC and assert it surfaces the live
+    //      cumulative count (2 posts) and the oldest `createAt`
+    //      (1500ms epoch) ingested so far.
+    //   4. Resolve the second page (end-of-history) so the walk
+    //      completes, then assert a follow-up progress IPC returns
+    //      `complete` with the documented `postsIngested: 0`
+    //      fallback (substrate doesn't carry a cumulative counter,
+    //      so we can't retroactively attribute the count to the
+    //      finished walk).
+    //
+    // We use the orchestrator's CHANNEL_ID (not the
+    // PROGRESS_CHANNEL_ID this describe usually uses) because the
+    // live counter is keyed on whichever id the orchestrator
+    // happens to be walking.
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    defaultRateLimiter.reset();
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValue({
+      outcome: "idle",
+      sourceId: SOURCE_ID,
+      oldestPostId: undefined,
+      completedAt: undefined,
+    });
+    bridgeMock.bridgeMarkKchatBackfillComplete.mockReturnValue({
+      outcome: "completed",
+      sourceId: SOURCE_ID,
+    });
+
+    // Deferred second-page promise so the orchestrator's REST loop
+    // pauses between page 1 and page 2 while we poll the progress
+    // IPC. Page 1 has 2 posts at createAt 2000ms / 1500ms (REST
+    // returns newest-first so the LAST post is the oldest, which is
+    // what `runningBackfillCounters.oldestPostCreateAtMs` should
+    // converge to).
+    let resolveSecondPage!: (v: unknown) => void;
+    const secondPage = new Promise<unknown>((r) => {
+      resolveSecondPage = r;
+    });
+    clientMock.getPostsForChannel
+      .mockResolvedValueOnce(
+        makePage(
+          [
+            makePost("postlive00000000000000000a", "newer", 2000),
+            makePost("postlive00000000000000000b", "older", 1500),
+          ],
+          "postlive00000000000000000b",
+        ),
+      )
+      .mockReturnValueOnce(secondPage as never);
+    bridgeMock.bridgeIngestKchatBackfillPage.mockReturnValueOnce({
+      outcome: "ingested",
+      sourceId: SOURCE_ID,
+      postsIngested: 2,
+      postsUnchanged: 0,
+      postsSkippedRevoked: 0,
+      oldestPostIdInPage: "postlive00000000000000000b",
+    });
+
+    // Start the walk; do NOT await — the second page is pending.
+    const walkPromise = handler("sources:backfillKchatChannel")(
+      EVENT,
+      CHANNEL_ID,
+    );
+
+    // Spin the microtask queue until the first page is fully
+    // ingested and the orchestrator is waiting on the second page.
+    // 50 ticks is overkill (the path is ~6 awaits) but keeps the
+    // test robust against future refactors that interleave more
+    // awaits before the loop pauses.
+    for (let i = 0; i < 50; i++) {
+      await Promise.resolve();
+    }
+
+    // Reset the rate-limiter so the progress IPC isn't drained by
+    // the orchestrator's startup cost (the two share the
+    // `defaultRateLimiter` instance even though their token buckets
+    // are independent).
+    defaultRateLimiter.reset();
+
+    const live = (await handler("kchat:backfillProgress")(
+      EVENT,
+      CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(live.status).toBe("active");
+    expect(live.channelId).toBe(CHANNEL_ID);
+    // The exact value the orchestrator just reported — proves the
+    // through-line is wired correctly (was hardcoded 0 pre-fix).
+    expect(live.postsIngested).toBe(2);
+    // The min `createAt` across the page; REST returns newest-first
+    // so it is the LAST post in page 1.
+    expect(live.oldestFetched).toBe(1500);
+    expect(live.totalPosts).toBeNull();
+
+    // Resolve the second page as empty (end-of-history) so the
+    // orchestrator finalises the walk.
+    resolveSecondPage(makePage([], null));
+    await walkPromise;
+
+    // Post-completion: the orchestrator's `.finally()` removed the
+    // counters entry, so a subsequent progress IPC falls back to
+    // the substrate-side discriminator with the documented `0` /
+    // `null` placeholders (substrate doesn't carry a cumulative
+    // count, so we cannot retroactively attribute it).
+    defaultRateLimiter.reset();
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValueOnce({
+      outcome: "idle",
+      sourceId: SOURCE_ID,
+      oldestPostId: "postlive00000000000000000b",
+      completedAt: "2024-01-01T00:00:00Z",
+    });
+    const after = (await handler("kchat:backfillProgress")(
+      EVENT,
+      CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(after.status).toBe("complete");
+    expect(after.postsIngested).toBe(0);
+    expect(after.oldestFetched).toBeNull();
+  });
+
+  it("falls back to `postsIngested: 0` / `oldestFetched: null` when no walk is in flight", async () => {
+    // Defence-in-depth around the cleanup contract: the in-flight
+    // counters map MUST be empty between walks. If a previous walk
+    // (in a different test) leaked an entry, this test would see
+    // non-zero values for an `idle` channel and the regression
+    // would be invisible because the previous test's expectations
+    // still pass.
+    const out = (await handler("kchat:backfillProgress")(
+      EVENT,
+      PROGRESS_CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(out.status).toBe("idle");
+    expect(out.postsIngested).toBe(0);
+    expect(out.oldestFetched).toBeNull();
+  });
+});
+
+// =====================================================================
+// Phase 13 Theme 2 Task 11 — `kchat:listChannelFiles` uploader
+// enrichment via the shared `KCHAT_USERNAME_CACHE` /
+// `getUsersByIds()` path the citation enrichment uses. The IPC
+// handler:
+//
+//   - Sanitises raw `KchatFileInfo` rows into `RendererFileInfo`
+//     (strips `update_at` / `delete_at` / `channel_id` / `post_id`).
+//   - Carries `user_id` forward as the cache-key fallback.
+//   - Initialises `uploaderUsername: null` so the wire shape is
+//     well-formed before enrichment runs.
+//   - Calls `enrichKchatFileViews(files, client)` ONLY when the
+//     service state is `connected` AND the file list is non-empty.
+//   - Swallows enrichment failures so a transient REST error never
+//     hides the file list from the renderer.
+//
+// These tests mirror the post-hit enrichment suite above and use
+// the same VALID KChat object-id constants so the
+// `assertCallerObjectId` / `isKchatObjectId` defence-in-depth
+// branches don't suppress the enrichment.
+// =====================================================================
+describe("kchat:listChannelFiles — uploader enrichment (Phase 13 Theme 2 Task 11)", () => {
+  // Reuse the 26-char object-id constants from the post-search
+  // suite by re-declaring them here. We intentionally do NOT
+  // import or share — the two suites' fixtures must be able to
+  // drift independently.
+  const VALID_FILE_USER_ID = "a".repeat(26);
+  const VALID_FILE_USER_ID_2 = "b".repeat(26);
+  const VALID_FILE_CHANNEL_ID = "e".repeat(26);
+
+  beforeEach(async () => {
+    // Reset rate limiter + the module-scoped name caches so the
+    // first test under this describe runs against a fresh state
+    // — matching the ANALYSIS_0003 reset shape installed in the
+    // top-level `beforeEach`. Redundant with the top-level reset
+    // but documents the invariant explicitly at the suite level.
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    defaultRateLimiter.reset();
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+    // Re-register so the status listener that
+    // `_resetKchatNameCachesForTest` tore down is installed again
+    // for the enrichment path. The top-level beforeEach already
+    // does this, but reset-then-register matches the failure mode
+    // we want to cover: a subsequent enrichment must always find
+    // an attached listener.
+    registerKchatHandlers();
+
+    // Default to a connected service state — the enrichment path
+    // is gated on this. Individual tests override when they need
+    // a different state.
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+  });
+
+  function makeFile(overrides: {
+    id: string;
+    user_id: string;
+    create_at?: number;
+    name?: string;
+    extension?: string;
+    mime_type?: string;
+    size?: number;
+  }) {
+    return {
+      id: overrides.id,
+      user_id: overrides.user_id,
+      channel_id: VALID_FILE_CHANNEL_ID,
+      name: overrides.name ?? `${overrides.id}.txt`,
+      extension: overrides.extension ?? "txt",
+      mime_type: overrides.mime_type ?? "text/plain",
+      size: overrides.size ?? 64,
+      create_at: overrides.create_at ?? 1700000000000,
+      update_at: 1700000000000,
+      delete_at: 0,
+      post_id: "p".repeat(26),
+    };
+  }
+
+  it("enriches each file with the uploader username via a single bulk lookup", async () => {
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "f".repeat(26), user_id: VALID_FILE_USER_ID }),
+      makeFile({ id: "g".repeat(26), user_id: VALID_FILE_USER_ID }),
+      makeFile({ id: "h".repeat(26), user_id: VALID_FILE_USER_ID_2 }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_FILE_USER_ID, username: "alice" },
+      { id: VALID_FILE_USER_ID_2, username: "bob" },
+    ]);
+
+    const out = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+
+    // Every file is sanitised + enriched.
+    expect(out).toHaveLength(3);
+    expect(out[0]).toMatchObject({
+      user_id: VALID_FILE_USER_ID,
+      uploaderUsername: "alice",
+    });
+    expect(out[1]).toMatchObject({
+      user_id: VALID_FILE_USER_ID,
+      uploaderUsername: "alice",
+    });
+    expect(out[2]).toMatchObject({
+      user_id: VALID_FILE_USER_ID_2,
+      uploaderUsername: "bob",
+    });
+
+    // The deduplicated id set is exactly two ids — the bulk
+    // endpoint is hit exactly once for the whole listing.
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+    const calledIds = clientMock.getUsersByIds.mock.calls[0][0] as string[];
+    expect(new Set(calledIds)).toEqual(
+      new Set([VALID_FILE_USER_ID, VALID_FILE_USER_ID_2]),
+    );
+  });
+
+  it("reuses the module-level cache across consecutive listings", async () => {
+    // First call populates the cache.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "f".repeat(26), user_id: VALID_FILE_USER_ID }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_FILE_USER_ID, username: "alice" },
+    ]);
+    await handler("kchat:listChannelFiles")(EVENT, VALID_FILE_CHANNEL_ID, 0, 50);
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+
+    // Second call resolves from cache — no second REST round trip.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "g".repeat(26), user_id: VALID_FILE_USER_ID }),
+    ]);
+    const out2 = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+    expect(out2[0]).toMatchObject({ uploaderUsername: "alice" });
+  });
+
+  it("skips the bulk lookup entirely when zero files are returned", async () => {
+    clientMock.listChannelFiles.mockResolvedValueOnce([]);
+    const out = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+    expect(out).toEqual([]);
+    // Important: enrichment must NOT consume a rate-limit token
+    // or hit the REST endpoint when there is nothing to enrich.
+    expect(clientMock.getUsersByIds).not.toHaveBeenCalled();
+  });
+
+  it("skips enrichment when the service is not connected", async () => {
+    serviceMock.getState.mockReturnValue({
+      state: "connecting",
+      serverUrl: "https://kchat.example.com",
+    });
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "f".repeat(26), user_id: VALID_FILE_USER_ID }),
+    ]);
+    const out = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(1);
+    // `user_id` carries through the sanitiser; `uploaderUsername`
+    // stays `null` so the renderer's raw-id fallback path is
+    // exercised.
+    expect(out[0]).toMatchObject({
+      user_id: VALID_FILE_USER_ID,
+      uploaderUsername: null,
+    });
+    expect(clientMock.getUsersByIds).not.toHaveBeenCalled();
+  });
+
+  it("leaves uploaderUsername null when the bulk lookup throws (best-effort posture)", async () => {
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "f".repeat(26), user_id: VALID_FILE_USER_ID }),
+    ]);
+    clientMock.getUsersByIds.mockRejectedValueOnce(
+      new Error("transient 503 from /users/ids"),
+    );
+
+    const out = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+
+    // The file list is still returned (best-effort enrichment
+    // never hides files from the renderer).
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      user_id: VALID_FILE_USER_ID,
+      uploaderUsername: null,
+    });
+  });
+
+  it("filters malformed user_id values out of the bulk request set", async () => {
+    // One valid id, one short id that fails `isKchatObjectId`.
+    // The malformed-id row keeps `uploaderUsername: null`; the
+    // valid-id row enriches normally. Critically the bulk
+    // endpoint MUST NOT be called with the malformed id — the
+    // entire bulk would otherwise throw from the per-id check
+    // inside `getUsersByIds` and suppress the valid row's
+    // enrichment.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "f".repeat(26), user_id: VALID_FILE_USER_ID }),
+      makeFile({ id: "g".repeat(26), user_id: "short" }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_FILE_USER_ID, username: "alice" },
+    ]);
+
+    const out = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out[0]).toMatchObject({ uploaderUsername: "alice" });
+    expect(out[1]).toMatchObject({ uploaderUsername: null });
+    // Bulk request set contains exactly the well-formed id.
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+    const called = clientMock.getUsersByIds.mock.calls[0][0] as string[];
+    expect(called).toEqual([VALID_FILE_USER_ID]);
+  });
+
+  it("leaves uploaderUsername null for files the bulk server response elided", async () => {
+    // Server returned only one of the two requested users — the
+    // unreturned id's row stays null (mirrors the citation
+    // enrichment's partial-response resilience).
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "f".repeat(26), user_id: VALID_FILE_USER_ID }),
+      makeFile({ id: "g".repeat(26), user_id: VALID_FILE_USER_ID_2 }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_FILE_USER_ID, username: "alice" },
+      // VALID_FILE_USER_ID_2 omitted on purpose.
+    ]);
+
+    const out = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out[0]).toMatchObject({ uploaderUsername: "alice" });
+    expect(out[1]).toMatchObject({ uploaderUsername: null });
+  });
+
+  it("sanitises out the fields the renderer must not see", async () => {
+    // Server includes `update_at` / `delete_at` / `channel_id` /
+    // `post_id` (per `KchatFileInfo`). The sanitiser must strip
+    // these from the wire shape so the renderer cannot leak them
+    // into devtools / crash reporters.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "f".repeat(26), user_id: VALID_FILE_USER_ID }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_FILE_USER_ID, username: "alice" },
+    ]);
+
+    const out = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out[0]).not.toHaveProperty("update_at");
+    expect(out[0]).not.toHaveProperty("delete_at");
+    expect(out[0]).not.toHaveProperty("channel_id");
+    expect(out[0]).not.toHaveProperty("post_id");
+    // But the surfaced shape includes the explicit Task 11
+    // additions.
+    expect(out[0]).toHaveProperty("user_id");
+    expect(out[0]).toHaveProperty("uploaderUsername");
+  });
+});
+
+// ------------------------------------------------------------------
+// kchat:fetchThreadContext — Phase 13 Theme 2 Task 13
+// ------------------------------------------------------------------
+describe("kchat:fetchThreadContext (Phase 13 Theme 2 Task 13)", () => {
+  // Valid Tessera source UUID shape (assertId allows alphanumerics +
+  // _ - : . up to 128 chars).
+  const VALID_SOURCE_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+  // Valid KChat 26-char object id (lowercase a-z + 0-9).
+  const VALID_POST_ID = "abcdefghij1234567890abcdef";
+
+  function makeBridgeContextRow(
+    overrides: Partial<Record<string, unknown>> = {},
+  ) {
+    return {
+      postId: VALID_POST_ID,
+      channelId: "ch" + "a".repeat(24),
+      senderUserId: "u" + "b".repeat(25),
+      createdAtMs: 1_700_000_000_000,
+      editedAtMs: 0,
+      content: "thread root message",
+      isRoot: true,
+      ...overrides,
+    };
+  }
+
+  it("rejects malformed sourceId (shell metachar) without touching the bridge", async () => {
+    await expect(
+      handler("kchat:fetchThreadContext")(EVENT, "../../etc/passwd", VALID_POST_ID),
+    ).rejects.toThrow(/sourceId/);
+    expect(bridgeMock.bridgeFetchKchatThreadContext).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed postId (uppercase / special chars) without touching the bridge", async () => {
+    await expect(
+      handler("kchat:fetchThreadContext")(EVENT, VALID_SOURCE_ID, "INVALID-POST-ID!!"),
+    ).rejects.toThrow(/postId/);
+    expect(bridgeMock.bridgeFetchKchatThreadContext).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-string sourceId", async () => {
+    await expect(
+      handler("kchat:fetchThreadContext")(EVENT, 42, VALID_POST_ID),
+    ).rejects.toThrow(/sourceId/);
+    expect(bridgeMock.bridgeFetchKchatThreadContext).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-string postId", async () => {
+    await expect(
+      handler("kchat:fetchThreadContext")(EVENT, VALID_SOURCE_ID, null),
+    ).rejects.toThrow(/postId/);
+    expect(bridgeMock.bridgeFetchKchatThreadContext).not.toHaveBeenCalled();
+  });
+
+  it("returns enriched messages with username and channelDisplayName when connected", async () => {
+    const senderId = "u" + "b".repeat(25);
+    const channelId = "ch" + "a".repeat(24);
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+      user: { username: "ken" },
+    });
+    bridgeMock.bridgeFetchKchatThreadContext.mockReturnValueOnce([
+      makeBridgeContextRow({
+        senderUserId: senderId,
+        channelId,
+        isRoot: true,
+      }),
+      makeBridgeContextRow({
+        postId: "reply" + "0".repeat(21),
+        senderUserId: senderId,
+        channelId,
+        isRoot: false,
+        content: "thread reply",
+      }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: senderId, username: "alice" },
+    ]);
+    clientMock.getChannel.mockResolvedValueOnce({
+      id: channelId,
+      display_name: "General",
+    });
+
+    const out = (await handler("kchat:fetchThreadContext")(
+      EVENT,
+      VALID_SOURCE_ID,
+      VALID_POST_ID,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({
+      isRoot: true,
+      senderUsername: "alice",
+      channelDisplayName: "General",
+    });
+    expect(out[1]).toMatchObject({
+      isRoot: false,
+      senderUsername: "alice",
+      channelDisplayName: "General",
+      content: "thread reply",
+    });
+  });
+
+  it("returns messages with null enrichment when disconnected", async () => {
+    serviceMock.getState.mockReturnValue({ state: "disconnected" });
+    bridgeMock.bridgeFetchKchatThreadContext.mockReturnValueOnce([
+      makeBridgeContextRow(),
+    ]);
+
+    const out = (await handler("kchat:fetchThreadContext")(
+      EVENT,
+      VALID_SOURCE_ID,
+      VALID_POST_ID,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      senderUsername: null,
+      channelDisplayName: null,
+    });
+    // No enrichment calls when disconnected.
+    expect(clientMock.getUsersByIds).not.toHaveBeenCalled();
+    expect(clientMock.getChannel).not.toHaveBeenCalled();
+  });
+
+  it("returns empty array when bridge returns empty (top-level / unknown post)", async () => {
+    bridgeMock.bridgeFetchKchatThreadContext.mockReturnValueOnce([]);
+
+    const out = await handler("kchat:fetchThreadContext")(
+      EVENT,
+      VALID_SOURCE_ID,
+      VALID_POST_ID,
+    );
+
+    expect(out).toEqual([]);
   });
 });
