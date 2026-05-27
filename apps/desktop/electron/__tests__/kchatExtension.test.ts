@@ -664,7 +664,138 @@ describe("uney-chat-desktop extension bridge integration", () => {
     }
   });
 
-  it("8. SSRF on extension handshake serverUrl is rejected", async () => {
+  it("8. shutdown push during extension-disconnect carries authMode=none, not stale 'extension' (Devin Review BUG_0001/BUG_0002)", async () => {
+    // Devin Review pass on f37e60e flagged a stale-authMode bug:
+    // `KchatAuthService.handleExtensionDisconnect` and
+    // `handleExtensionRefreshFailure` called
+    // `this.client.shutdown()` BEFORE setting
+    // `this.authMode = "none"`. Because `shutdown()` synchronously
+    // fans out a `disconnected` status push through the
+    // `onStatusChange` wrapper at lines 163-171 (which reads
+    // `this.authMode` at call time), subscribers saw an
+    // intermediate `{ state: "disconnected", authMode: "extension" }`
+    // push followed by the final `{ state: "error",
+    // authMode: "none" }` push. The intermediate push was
+    // misleading and caused `KchatSettingsCard.onStatusChange`
+    // to re-probe the extension on a torn-down session.
+    //
+    // The fix is to flip `authMode = "none"` BEFORE
+    // `client.shutdown()`. This test exercises the
+    // desktop-disconnect path and asserts that every
+    // `disconnected` push received by an `onStatusChange`
+    // subscriber carries `authMode: "none"` — never `"extension"`.
+    const server = await startMockServer((frame) => {
+      if (frame.type === "discover") {
+        return {
+          type: "discover_response",
+          requestId: frame.requestId,
+          ok: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake"],
+        };
+      }
+      if (frame.type === "handshake") {
+        return {
+          type: "handshake_response",
+          requestId: frame.requestId,
+          ok: true,
+          user: {
+            id: "user1234567890abcdefgh",
+            username: "ken",
+            email: "k@e.com",
+            firstName: "K",
+            lastName: "N",
+          },
+          token: "delegation-token-1",
+          expiresAtMs: Date.now() + 5 * 60_000,
+          serverUrl: "https://kchat.example.com",
+          scopesGranted: ["kchat:posts.read"],
+        };
+      }
+      return null;
+    });
+    try {
+      const fetchFn = vi.fn(
+        async (_input: RequestInfo | URL): Promise<Response> => {
+          return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            text: async () => "",
+            json: async () => ({
+              id: "user1234567890abcdefgh",
+              username: "ken",
+              email: "k@e.com",
+              first_name: "K",
+              last_name: "N",
+              roles: "system_user",
+            }),
+            arrayBuffer: async () => new ArrayBuffer(0),
+          } as unknown as Response;
+        },
+      );
+      const client = new KchatClient({ fetchFn });
+      const svc = new KchatAuthService(client, {
+        extensionFactory: () =>
+          new ExtensionConnection({ socketPath: server.socketPath }),
+        probeFn: async () => ({
+          available: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake"],
+        }),
+      });
+
+      // Subscribe BEFORE connect so we capture every status
+      // transition. The `disconnected` push from the eventual
+      // `client.shutdown()` is the one under test.
+      const pushes: Array<{
+        state: string;
+        authMode: "none" | "pat" | "extension";
+      }> = [];
+      const unsubscribe = svc.onStatusChange((state) => {
+        pushes.push({
+          state: state.state,
+          authMode: state.authMode,
+        });
+      });
+      try {
+        await svc.connectViaExtension();
+        expect(svc.getAuthMode()).toBe("extension");
+        // Clear so we only inspect post-disconnect pushes.
+        pushes.length = 0;
+
+        // Trigger the disconnect path: desktop app pushes a
+        // `disconnect` frame, which the bridge converts to an
+        // `onDisconnect("desktop-app-shutdown")` callback that
+        // routes to `handleExtensionDisconnect`.
+        server.emitDisconnect("desktop-app-shutdown");
+        // Give the socket a tick to deliver the frame and the
+        // synchronous status pushes to land.
+        await new Promise((r) => setTimeout(r, 100));
+
+        // Critical invariant: NO `disconnected` push may carry
+        // `authMode: "extension"`. Before the fix, the first
+        // post-disconnect push was `{ state: "disconnected",
+        // authMode: "extension" }`. After the fix, the
+        // disconnected push carries `authMode: "none"`.
+        const staleDisconnectedPushes = pushes.filter(
+          (p) => p.state === "disconnected" && p.authMode === "extension",
+        );
+        expect(staleDisconnectedPushes).toHaveLength(0);
+
+        // The final auth mode must be "none".
+        expect(svc.getAuthMode()).toBe("none");
+      } finally {
+        unsubscribe();
+      }
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("9. SSRF on extension handshake serverUrl is rejected", async () => {
     const server = await startMockServer((frame) => {
       if (frame.type === "discover") {
         return {

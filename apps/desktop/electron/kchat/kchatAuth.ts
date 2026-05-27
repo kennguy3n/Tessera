@@ -300,6 +300,25 @@ export class KchatAuthService {
     try {
       await enforceKchatServerUrl(restored.serverUrl);
     } catch (err) {
+      // Phase 13 Theme 1 Devin Review ANALYSIS_0002 (this commit):
+      // `session.restoreFromVault()` above scheduled a refresh
+      // timer. We must cancel it via `session.disconnect()`
+      // before throwing — otherwise the timer fires on a closed
+      // connection, the refresh fails (caught internally), and
+      // we get a spurious `onRefreshFailure` -> error push.
+      // `session.disconnect()` is idempotent w/r/t the vault entry
+      // — it deletes the entry, which is correct here because
+      // the SSRF failure means the saved delegation can't be
+      // restored under the current policy and re-handshaking is
+      // required anyway. The `.unref()`'d timer wouldn't block
+      // process exit, but the cleanest fix is to cancel it
+      // explicitly so the post-throw event loop has no pending
+      // refresh-on-closed-conn callbacks.
+      try {
+        session.disconnect();
+      } catch {
+        // intentional — disconnect is best-effort
+      }
       try {
         conn.close();
       } catch {
@@ -317,6 +336,17 @@ export class KchatAuthService {
       // half-open socket + in-memory client; leave the vault
       // entry in place so the user can manually re-handshake from
       // Settings rather than silently losing the saved session.
+      //
+      // Phase 13 Theme 1 Devin Review ANALYSIS_0002 (this commit):
+      // cancel the refresh timer that `restoreFromVault()`
+      // scheduled. `session.disconnect()` deletes the vault entry
+      // as a side effect though — which conflicts with the
+      // "leave the vault entry in place" comment above. We
+      // can't use `disconnect()` here. Instead the session
+      // exposes `cancelRefresh()` as the no-side-effects timer
+      // canceller; we call that and leave the vault entry
+      // untouched so the user can re-handshake later.
+      session.cancelRefresh();
       try {
         conn.close();
       } catch {
@@ -487,6 +517,20 @@ export class KchatAuthService {
     if (this.authMode === "extension") {
       userId = this.extensionSession?.disconnect() ?? null;
       this.teardownExtensionConnection();
+      // Phase 13 Theme 1 Devin Review BUG_0001/BUG_0002 (this
+      // commit): same authMode-before-shutdown ordering as
+      // `handleExtensionRefreshFailure` / `handleExtensionDisconnect`
+      // — see those comments for the full rationale. The user-
+      // initiated explicit-disconnect path was also affected
+      // because `client.shutdown()` synchronously emits a
+      // `disconnected` status push that captures `this.authMode`
+      // through the `onStatusChange` wrapper at lines 163-171,
+      // and the renderer would see an intermediate
+      // `{ state: "disconnected", authMode: "extension" }` push
+      // before the final `authMode: "none"` push later in this
+      // method. Setting `authMode` first gives subscribers a
+      // clean `{ state: "disconnected", authMode: "none" }`.
+      this.authMode = "none";
       this.client.shutdown();
       // Phase 13 Task 28: also wipe a PAT entry left over from a
       // previous PAT session that the user explicitly disconnected
@@ -495,14 +539,23 @@ export class KchatAuthService {
       // PAT just because they're disconnecting the extension. The
       // extension provider entry is wiped by
       // `KchatExtensionSession.disconnect()` above.
+      return userId;
     } else {
       const stored = readStoredAuth();
       userId = stored?.userId ?? null;
+      // Same ordering as the extension branch above: clear
+      // `authMode` before `shutdown()` so the disconnected
+      // status push carries the post-disconnect authMode value.
+      // The PAT branch was less affected because `authMode` was
+      // `"pat"` at the start of this method and the renderer's
+      // PAT-mode UI handles a stale `authMode: "pat"` on a
+      // disconnected push gracefully (it falls back to a
+      // reconnect CTA), but the symmetry is worth preserving.
+      this.authMode = "none";
       this.client.shutdown();
       deleteTokens(KCHAT_VAULT_PROVIDER);
+      return userId;
     }
-    this.authMode = "none";
-    return userId;
   }
 
   /**
@@ -515,8 +568,23 @@ export class KchatAuthService {
     if (this.authMode !== "extension") return;
     this.extensionSession?.disconnect();
     this.teardownExtensionConnection();
-    this.client.shutdown();
+    // Phase 13 Theme 1 Devin Review BUG_0001/ANALYSIS_0004: flip
+    // `authMode` to `"none"` BEFORE `client.shutdown()`.
+    // `shutdown()` synchronously calls `transition()` which fans
+    // out to all `statusListeners`, and the `onStatusChange`
+    // wrapper at lines 163-171 reads `this.authMode` at call time.
+    // If we shutdown first, the intermediate `disconnected` push
+    // is decorated with stale `authMode: "extension"` — even
+    // though the extension session was already torn down on the
+    // line above. Setting `authMode` first means listeners see
+    // the correct `{ state: "disconnected", authMode: "none" }`.
+    // In `teardownExtension`'s case the caller (`connect` /
+    // `connectViaExtension`) overwrites the state again
+    // immediately, but we keep the ordering correct for
+    // consistency with the disconnect/refresh-failure handlers
+    // that have the same shape.
     this.authMode = "none";
+    this.client.shutdown();
   }
 
   private attachExtensionConnection(
@@ -637,8 +705,24 @@ export class KchatAuthService {
     // synchronous socket-close from `teardownExtensionConnection`,
     // re-emitting a duplicate `error` push.
     this.teardownExtensionConnection();
-    this.client.shutdown();
+    // Phase 13 Theme 1 Devin Review BUG_0001 (this commit):
+    // flip `authMode` to `"none"` BEFORE `client.shutdown()`.
+    // `shutdown()` synchronously emits a `disconnected` status
+    // push through `transition()`, which fans out to all
+    // listeners. The `onStatusChange` wrapper at lines 163-171
+    // reads `this.authMode` at call time, so an emit with
+    // `authMode = "extension"` still set produces a stale
+    // intermediate push `{ state: "disconnected", authMode:
+    // "extension" }` even though the extension session was
+    // already torn down on the line above. Subscribers (e.g.
+    // `KchatSettingsCard.onStatusChange`) react to the stale
+    // push by re-probing the extension or showing a brief
+    // wrong UI state. Setting `authMode` first means the
+    // disconnected push carries `authMode: "none"` and the
+    // subsequent `emitExtensionAuthError` push carries
+    // `authMode: "none"` too — a clean monotonic sequence.
     this.authMode = "none";
+    this.client.shutdown();
     // Re-surface the already-scrubbed message through the client
     // so the status push has the same error shape as PAT-side
     // failures.
@@ -658,8 +742,16 @@ export class KchatAuthService {
       `KChat Desktop disconnected (${reason})`,
     );
     this.teardownExtensionConnection();
-    this.client.shutdown();
+    // Phase 13 Theme 1 Devin Review BUG_0002 (this commit):
+    // same authMode-before-shutdown ordering as
+    // `handleExtensionRefreshFailure` above — see that comment
+    // for the full rationale. tl;dr: `client.shutdown()` emits
+    // a synchronous status push that captures `this.authMode`
+    // through the `onStatusChange` wrapper; if we shutdown
+    // first, listeners see a stale `authMode: "extension"` on
+    // the intermediate disconnected push.
     this.authMode = "none";
+    this.client.shutdown();
     this.client.emitExtensionAuthError(scrubbedMessage);
   }
 }

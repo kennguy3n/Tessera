@@ -558,16 +558,28 @@ export class ExtensionConnection {
 
   private onData(chunk: string): void {
     this.buffer += chunk;
-    if (this.buffer.length > MAX_EXTENSION_FRAME_BYTES) {
-      // A single frame is over the limit before a `\n` arrived —
-      // protocol-violation by the desktop app, drop the connection.
-      this.notifyDisconnect("frame-too-large");
-      this.close();
-      return;
-    }
+    // Phase 13 Theme 1 Devin Review ANALYSIS_0005 (this commit):
+    // the buffer-size check previously ran BEFORE the frame-
+    // consumption loop. If a large chunk containing many small
+    // complete NDJSON frames arrived at once (e.g. a burst of
+    // desktop-app events), the combined buffer could exceed
+    // `MAX_EXTENSION_FRAME_BYTES` even though no individual frame
+    // was over-size. The check is now at the END of the loop —
+    // after all complete frames have been consumed — so it applies
+    // only to the remaining *partial* frame waiting for its
+    // terminating `\n`. This is the semantically correct
+    // invariant: "no single in-flight frame may exceed the limit."
     for (;;) {
       const nl = this.buffer.indexOf("\n");
-      if (nl === -1) return;
+      if (nl === -1) {
+        // No more complete frames — check if the partial frame
+        // (waiting for `\n`) exceeds the per-frame limit.
+        if (this.buffer.length > MAX_EXTENSION_FRAME_BYTES) {
+          this.notifyDisconnect("frame-too-large");
+          this.close();
+        }
+        return;
+      }
       const line = this.buffer.slice(0, nl);
       this.buffer = this.buffer.slice(nl + 1);
       if (line.length === 0) continue;

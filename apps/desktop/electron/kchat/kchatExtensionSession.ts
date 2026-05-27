@@ -429,7 +429,19 @@ export class KchatExtensionSession {
     this.refreshTimer.unref?.();
   }
 
-  private cancelRefresh(): void {
+  /**
+   * Cancel the pending refresh timer without deleting the vault
+   * entry or clearing `this.current`. Used by `KchatAuthService`
+   * in `restoreExtensionFromVault`'s verify-failure path where
+   * the vault entry should survive for a future re-handshake but
+   * the orphaned timer must not fire on a closed connection.
+   *
+   * Phase 13 Theme 1 Devin Review ANALYSIS_0002: promoted from
+   * private → public so `restoreExtensionFromVault` can cancel
+   * the timer without the vault-deleting side-effect of
+   * `disconnect()`.
+   */
+  cancelRefresh(): void {
     if (this.refreshTimer) {
       clearTimeout(this.refreshTimer);
       this.refreshTimer = null;

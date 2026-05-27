@@ -33,6 +33,25 @@ function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
     listChannelFiles: vi.fn().mockResolvedValue([]),
     shareArtifact: vi.fn(),
     addChannelSource: vi.fn(),
+    // Phase 13 Theme 1 Devin Review ANALYSIS_0003 (this commit):
+    // The Settings card's mount-time `useEffect` calls
+    // `kchat.extensionStatus()` to probe the extension bridge.
+    // Previously the makeApi helper didn't include this method,
+    // so the probe threw `TypeError: not a function`, the
+    // `reprobeExtension` catch handler set `showManual = true`,
+    // and existing tests passed by accident. Providing an
+    // explicit mock exercises the intended code path (probe
+    // succeeds → extension unavailable → PAT form auto-shown)
+    // instead of relying on the error path as a substitute.
+    extensionStatus: vi.fn().mockResolvedValue({
+      available: false,
+      protocolVersion: 0,
+      desktopVersion: null,
+      capabilities: [],
+    }),
+    extensionConnect: vi.fn(),
+    extensionDisconnect: vi.fn(),
+    backfillProgress: vi.fn(),
     // Block B Task 1 push subscriptions — defaults to a no-op
     // unsubscribe so `KchatSettingsCard`'s on-mount listener
     // wiring (when it eventually adopts the push API) doesn't
