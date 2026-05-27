@@ -129,8 +129,9 @@ connector that ships with its own dedicated UI surfaces.
 
 - `kchat:searchPosts` — AEAD-verified post search; results render in
   `CitationPanel` as `#channel @sender` with chat semantics.
-- `kchat:fetchThreadContext` — up-to-3 parent messages surface on
-  threaded hits so retrieval includes the conversational context
+- `kchat:fetchThreadContext` — thread root + up to 2 earlier replies
+  (3 rows total, chronologically ordered) surface on threaded hits so
+  retrieval includes the conversational context
   that motivated the matched post.
 - File hits coexist with post hits under a single Reciprocal Rank
   Fusion (RRF) scoring axis, so the renderer can merge them without

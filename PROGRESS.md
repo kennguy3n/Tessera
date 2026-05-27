@@ -471,9 +471,10 @@ Theme 5 — Remaining polish
       backfill progress is observable from `SourceDetailPage` via the
       `useKchatBackfillProgress` hook (2 s poll, transport-failure
       self-heal at 3 consecutive failures). *(Theme 2 / PR #52)*
-- [x] Thread context (up to 3 parents) surfaces on threaded hits via
-      `fetch_kchat_thread_context` (Rust `SourceStore` → `SourceManager` →
-      N-API bridge → `kchat:fetchThreadContext` IPC). *(Theme 2 / PR #52)*
+- [x] Thread context (thread root + up to 2 earlier replies, 3 rows
+      total) surfaces on threaded hits via `fetch_kchat_thread_context`
+      (Rust `SourceStore` → `SourceManager` → N-API bridge →
+      `kchat:fetchThreadContext` IPC). *(Theme 2 / PR #52)*
 - [x] AEAD round-trip, revocation-excludes-posts (cross-source isolation),
       RRF scoring-axis consistency, BM25-through-AEAD ordering, scheduler
       `backfill_kchat_channel` action, export-path deny-list, token
@@ -560,8 +561,9 @@ Theme 5 — Remaining polish
 - **Task 13** — Thread context: `fetch_kchat_thread_context(post_id)`
   on `SourceStore` (Rust); `SourceManager::fetch_kchat_thread_context`
   → N-API bridge → `kchat:fetchThreadContext` IPC (rate-limited, name
-  enrichment reuses the shared LRUs); up-to-3 parent messages surface
-  on threaded hits.
+  enrichment reuses the shared LRUs); thread root + up to 2 earlier
+  replies (3 rows total, chronologically ordered) surface on threaded
+  hits.
 
 ### 2026-05-27 — Phase 13 Theme 1 (PR #51, merged 11:48 UTC+7)
 

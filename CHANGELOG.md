@@ -45,7 +45,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   successful and pack-only-failure paths; primary-upload failures
   are not audited (no phantom records for an unchanged channel).
 - **KChat thread context.** `fetch_kchat_thread_context(post_id)` on
-  `SourceStore` surfaces up to 3 parent messages on threaded hits.
+  `SourceStore` surfaces the thread root plus up to 2 earlier replies
+  (3 rows total, chronologically ordered) on threaded hits.
   The retrieval pipeline is plumbed end to end:
   `SourceStore` → `SourceManager` → N-API bridge →
   `kchat:fetchThreadContext` IPC → `CitationPanel`.

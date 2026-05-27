@@ -731,7 +731,7 @@ notes in [`docs/IPC_AUDIT.md`](docs/IPC_AUDIT.md). A summary:
 | `kchat:listTeams` / `kchat:listChannels` / `kchat:listMembers` / `kchat:listChannelFiles` | Read-only browse surface |
 | `kchat:shareArtifact` | Share an artifact (optionally with evidence pack) to a channel |
 | `kchat:searchPosts` | AEAD-verified post search (rate-limited) |
-| `kchat:fetchThreadContext` | Up-to-3 parent messages for a threaded hit |
+| `kchat:fetchThreadContext` | Thread root + up to 2 earlier replies (3 rows total) for a threaded hit |
 | `kchat:backfillProgress` | Live counters during historical backfill |
 | `sources:addKchatChannel` / `sources:backfillKchatChannel` | Add a channel as a source + manual backfill trigger |
 

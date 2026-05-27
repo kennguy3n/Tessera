@@ -46,7 +46,12 @@ extra scrutiny.
 | `sources:getDetail`                   | scalar-helper   |      |
 | `sources:reindex`                     | scalar-helper   |      |
 | `sources:getIndexingProgress`         | scalar-helper   |      |
-| `sources:addKchatChannel`             | scalar-helper (KChat-id + name) | ✓ — uses KChat token from vault to download channel files |
+
+KChat-specific `sources:*` channels (`sources:addKchatChannel`,
+`sources:backfillKchatChannel`) are listed in the
+[KChat section](#kchat) below alongside the rest of the 17-channel
+KChat surface, to keep the consolidated KChat master list authoritative
+(it matches `EXPECTED_KCHAT_CHANNELS` in `kchatIpc.test.ts`).
 
 ## Artifacts
 
@@ -200,7 +205,7 @@ the entire KChat UI when `kchat:isAvailable` returns `false`.
 | `kchat:extensionDisconnect`           | no-input                                                  | ✓ — tears down only the extension session; PAT vault entry survives; rate-limited 1 per 5 s |
 | `kchat:backfillProgress`              | scalar-helper (KChat-id)                                  | ✓ — pure read of substrate state; rate-limited 2/s burst 5 |
 | `sources:backfillKchatChannel`        | scalar-helper (KChat-id)                                  | ✓ — historical-walk over `kchat:posts` REST surface |
-| `sources:addKchatChannel`             | scalar-helper (KChat-id + display-name)                   | ✓ — fan-out channel file download into the source vault |
+| `sources:addKchatChannel`             | scalar-helper (KChat-id + display-name)                   | ✓ — uses the KChat token from the vault to fan-out channel-file downloads into the source vault |
 
 ### Phase 13 trust model for the extension surface
 
