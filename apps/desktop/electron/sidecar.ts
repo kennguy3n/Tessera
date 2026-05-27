@@ -110,10 +110,17 @@ export class ModelSidecar {
     // lazily on every `start()` call. Tests inject a fixed `platform`
     // via `options` to pin per-platform behaviour without process-level
     // mutation. Per Devin Review PR #55 Finding 6 follow-up.
+    //
+    // Nullish coalescing instead of `{ ...DEFAULT, platform:
+    // process.platform, ...options }`: because `options` is
+    // `Partial<SidecarOptions>`, a caller passing `{ platform:
+    // undefined }` would otherwise win the spread and clobber the
+    // default to `undefined`. Defensive guard: explicit-undefined
+    // collapses to the live platform.
     this.options = {
       ...DEFAULT_OPTIONS,
-      platform: process.platform,
       ...options,
+      platform: options.platform ?? process.platform,
     };
   }
 

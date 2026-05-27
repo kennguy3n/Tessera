@@ -152,10 +152,18 @@ export class DiffusionSidecar {
     // (the sidecar is constructed once at app startup, so the
     // construction-time snapshot is observationally identical to a
     // per-call read).
+    //
+    // Nullish coalescing instead of `{ ...DEFAULT, platform:
+    // process.platform, ...options }`: because `options` is
+    // `Partial<DiffusionSidecarOptions>`, a caller passing
+    // `{ platform: undefined }` would otherwise win the spread and
+    // clobber the default to `undefined`. Defensive guard: explicit-
+    // undefined collapses to the live platform. Matches
+    // `ModelSidecar.constructor` in `./sidecar.ts`.
     this.options = {
       ...DEFAULT_OPTIONS,
-      platform: process.platform,
       ...options,
+      platform: options.platform ?? process.platform,
     };
   }
 

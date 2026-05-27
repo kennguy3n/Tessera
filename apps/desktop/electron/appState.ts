@@ -945,8 +945,16 @@ export async function initAppState(): Promise<boolean> {
   return true;
 }
 
-function resolveSidecarBinary(): string {
-  const ext = process.platform === "win32" ? ".exe" : "";
+// `platform` is injectable for architectural parity with
+// `resolveDiffusionBinary()` in `diffusionSidecar.ts` so the `.exe`-
+// suffix decision can be pinned per-platform in future tests without
+// mutating `process.platform`. Production callers pass no argument
+// and get the live platform. Per Devin Review PR #59 pass 2
+// ANALYSIS_0003.
+function resolveSidecarBinary(
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const ext = platform === "win32" ? ".exe" : "";
   const binaryName = `llama-server${ext}`;
   // electron-builder copies sidecars/llama-server/ into process.resourcesPath/sidecars/llama-server
   // for packaged builds. In dev we look relative to the repo root.
