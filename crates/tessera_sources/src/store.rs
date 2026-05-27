@@ -1457,6 +1457,16 @@ impl SourceStore {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let mut stmt = conn
             .prepare(
+                // Phase 13 Theme 2 Task 13 — Devin Review pass 1
+                // ANALYSIS_0001 (5860a94): the CTE's ordering relies on
+                // SQLite casting the boolean `(post_id = ?2)` to 1/0,
+                // so `... DESC, created_at_ms DESC` pulls the root row
+                // (boolean 1) ahead of every sibling reply (boolean 0)
+                // in the LIMIT window, then fills remaining slots with
+                // most-recent siblings. The outer `ORDER BY
+                // s.created_at_ms ASC` then restores chronological
+                // order for the renderer. See the function's doc
+                // comment for the full rationale.
                 "WITH selected AS (
                      SELECT p.post_id, p.channel_id, p.root_id, p.sender_user_id,
                             p.created_at_ms, p.edited_at_ms, p.indexed_file_id
@@ -1466,6 +1476,8 @@ impl SourceStore {
                            p.post_id = ?2
                            OR (p.root_id = ?2 AND p.created_at_ms < ?3)
                        )
+                     -- (post_id = ?2) casts to 1 for the root, 0 for
+                     -- siblings; DESC pulls the root first.
                      ORDER BY (p.post_id = ?2) DESC, p.created_at_ms DESC
                      LIMIT ?4
                  )
@@ -1475,6 +1487,7 @@ impl SourceStore {
                  FROM selected s
                  JOIN chunks c ON c.indexed_file_id = s.indexed_file_id
                  WHERE c.chunk_index = 0
+                 -- Renderer expects oldest-first conversation order.
                  ORDER BY s.created_at_ms ASC",
             )
             .map_err(|e| Error::Database(e.to_string()))?;
