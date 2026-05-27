@@ -47,19 +47,48 @@ import type { KchatBackfillProgressView } from "../types/ipc";
  * IPC promise rejected — the catch arm would otherwise schedule a
  * new tick that fires after the cleanup ran.
  *
- * **Why we swallow IPC errors.** The `kchat:backfillProgress`
+ * **Transport-error surfacing.** The `kchat:backfillProgress`
  * handler itself catches every substrate-level failure and
  * surfaces it through the `status: "error"` discriminator with an
  * `error: string` field, so a *handler-level* failure is already
  * a successful IPC. A *transport-level* failure (preload bridge
- * missing, the user quit mid-poll, the IPC channel was torn down
- * for some other reason) is unrecoverable from the renderer's
- * perspective; we keep ticking so the next interval can re-attempt
- * but we deliberately do NOT surface the transport error to the
- * caller. That avoids a flicker between "valid backfill state"
- * and "renderer-level IPC error" during a transient transport
- * blip, and the polling loop self-heals.
+ * missing, IPC channel torn down, etc.) is harder — for a single
+ * transient blip we want to keep polling and self-heal without
+ * flickering the UI from a valid snapshot into a synthetic error.
+ *
+ * Devin Review pass 3 on d7290e0 (ANALYSIS_0004): pre-fix we
+ * swallowed every transport error indefinitely, which meant a
+ * permanently-broken preload bridge would pin the UI in a
+ * "Loading backfill state…" placeholder forever — indistinguishable
+ * from "the IPC is just slow" without devtools. The fix surfaces a
+ * synthetic `status: "error"` view AFTER
+ * `TRANSPORT_FAILURE_THRESHOLD` consecutive transport failures, so:
+ *
+ *   - 1–2 consecutive failures → keep the last known good snapshot
+ *     (or `null` if none yet) and silently retry.
+ *   - ≥ 3 consecutive failures → render the error card with a
+ *     "renderer transport failure" message so the user has a hint
+ *     to surface in a bug report, even though the polling loop
+ *     itself keeps running and will self-heal once the next tick
+ *     succeeds.
+ *
+ * The counter resets on EVERY successful IPC round-trip
+ * (regardless of the substrate-level `status`), so a permanent
+ * substrate error doesn't accidentally re-trip the transport-error
+ * branch, and an intermittent transport failure between two good
+ * polls is invisible to the user.
  */
+
+/**
+ * Number of consecutive transport-level IPC failures before the
+ * hook surfaces a synthetic `status: "error"` view to the caller.
+ * Three failures at the default 2s interval = ~6s of broken IPC
+ * before the UI changes — long enough to ride out a transient
+ * channel-teardown / preload-reload blip, short enough that a
+ * permanently broken bridge isn't invisible to the user.
+ */
+const TRANSPORT_FAILURE_THRESHOLD = 3;
+
 export function useKchatBackfillProgress(
   channelId: string | null,
   intervalMs = 2000,
@@ -89,21 +118,53 @@ export function useKchatBackfillProgress(
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // Devin Review pass 3 on d7290e0 (ANALYSIS_0004): per-effect
+    // counter of consecutive transport-level failures. Lives in the
+    // effect closure (NOT a ref) because a `channelId` change tears
+    // down the effect and starts a fresh counter — we don't want a
+    // previous channel's failures to contaminate the new channel's
+    // threshold.
+    let consecutiveTransportFailures = 0;
 
     const tick = async () => {
       if (cancelled) return;
       try {
         const next = await window.tessera.kchat.backfillProgress(channelId);
         if (cancelled) return;
+        // Successful IPC: reset the transport-failure counter
+        // BEFORE setting state so a future failure starts from a
+        // clean baseline. We reset on any successful round-trip
+        // regardless of substrate-level `status` — a permanent
+        // substrate `error` is the handler's responsibility to
+        // signal, not the transport layer's.
+        consecutiveTransportFailures = 0;
         setSnap(next);
       } catch {
-        // Transport-level failure — keep ticking; the next
-        // interval can re-attempt. The IPC handler surfaces
-        // substrate-level failures through the `status: "error"`
-        // discriminator, so reaching this catch means the
-        // renderer-to-main IPC itself failed (bridge missing,
-        // channel torn down, etc.) which is unrecoverable from
-        // here.
+        // Transport-level failure — the renderer-to-main IPC
+        // itself failed (bridge missing, channel torn down, etc.).
+        // We keep ticking so the next interval can re-attempt and
+        // the loop self-heals, but after
+        // `TRANSPORT_FAILURE_THRESHOLD` consecutive failures we
+        // surface a synthetic error view so the UI isn't pinned
+        // in a "Loading…" placeholder for a permanently broken
+        // bridge. The handler captures `cancelled` AFTER the
+        // increment so a threshold-crossing tick that races
+        // cleanup never sets state on an unmounted component.
+        consecutiveTransportFailures += 1;
+        if (
+          !cancelled &&
+          consecutiveTransportFailures >= TRANSPORT_FAILURE_THRESHOLD
+        ) {
+          setSnap({
+            channelId,
+            oldestFetched: null,
+            totalPosts: null,
+            postsIngested: 0,
+            status: "error",
+            error:
+              "Renderer transport failure (kchat:backfillProgress). The polling loop will keep retrying; if the card stays in this state, restart the app.",
+          });
+        }
       }
       if (!cancelled) {
         timer = setTimeout(tick, intervalMs);
