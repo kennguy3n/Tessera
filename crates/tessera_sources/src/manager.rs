@@ -4768,4 +4768,372 @@ mod tests {
             "self-exclusion must keep the hit out of its own context (got {ids:?})"
         );
     }
+
+    // ----------------------------------------------------------------
+    // Phase 13 Theme 3 Task 14: AEAD full-lifecycle round-trip
+    // ----------------------------------------------------------------
+
+    /// Full-lifecycle round-trip: ingest → search → cryptoshred →
+    /// verify DEK gone → re-grant → re-ingest → search again.
+    ///
+    /// This is the end-to-end test described in PROGRESS.md Task 14:
+    /// "KChat post ingest AEAD round-trip test (post → DEK →
+    /// ciphertext → decrypt → cryptoshred)". Existing tests cover
+    /// individual stages (e.g. `ingest_kchat_post_seals_chunks_and_
+    /// persists_dek` tests ingest + seal + open; `search_kchat_posts_
+    /// excludes_revoked_sources` tests revoke-then-search). This test
+    /// proves the invariant across the COMPLETE lifecycle: data that
+    /// was cryptographically erased can never resurface, and the
+    /// substrate recovers cleanly into a functional state after a
+    /// cryptoshred + re-grant.
+    #[test]
+    fn kchat_aead_full_lifecycle_ingest_search_cryptoshred_regrant() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.set_kchat_principal("self-user").unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let source_id = added.source.id;
+
+        // ── Phase 1: ingest two posts, verify DEK + AEAD round-trip ──
+
+        let post_alpha = make_post_input(
+            cache_dir,
+            "pa-lifecycle",
+            "ch-lifecycle",
+            "u-alice",
+            "rhodium palladium osmium iridium platinum",
+        );
+        let post_beta = make_post_input(
+            cache_dir,
+            "pb-lifecycle",
+            "ch-lifecycle",
+            "u-bob",
+            "ruthenium rhodium rhenium technetium molybdenum",
+        );
+        let outcome_a = manager.ingest_kchat_post(&post_alpha).unwrap();
+        let outcome_b = manager.ingest_kchat_post(&post_beta).unwrap();
+
+        let chunk_ids_a = match &outcome_a {
+            KchatPostIngestOutcome::Ingested { chunk_ids, .. } => chunk_ids.clone(),
+            other => panic!("expected Ingested for alpha, got {other:?}"),
+        };
+        let chunk_ids_b = match &outcome_b {
+            KchatPostIngestOutcome::Ingested { chunk_ids, .. } => chunk_ids.clone(),
+            other => panic!("expected Ingested for beta, got {other:?}"),
+        };
+
+        // DEK row exists.
+        let wrapped_pre = manager
+            .store
+            .load_wrapped_dek_for_source(&source_id)
+            .unwrap();
+        assert!(
+            wrapped_pre.is_some(),
+            "wrapped DEK must be persisted after ingest"
+        );
+
+        // AEAD round-trip: every chunk decrypts to non-empty plaintext.
+        for chunk_id in chunk_ids_a.iter().chain(chunk_ids_b.iter()) {
+            let sealed = manager
+                .store
+                .load_chunk_aead(*chunk_id)
+                .unwrap()
+                .expect("AEAD blob must be persisted");
+            let pt = manager
+                .kchat_crypto()
+                .open_chunk(&source_id, &sealed)
+                .expect("AEAD must decrypt under the source DEK");
+            assert!(!pt.is_empty(), "decrypted plaintext must be non-empty");
+        }
+
+        // ── Phase 2: search returns both posts ──
+
+        let hits_pre = manager.search_kchat_posts("rhodium", 10).unwrap();
+        assert_eq!(
+            hits_pre.len(),
+            2,
+            "pre-cryptoshred: both posts contain 'rhodium' and must surface"
+        );
+        for hit in &hits_pre {
+            assert!(
+                hit.content.contains("rhodium"),
+                "hit content must carry the AEAD-verified plaintext"
+            );
+        }
+
+        // ── Phase 3: cryptoshred via revoke ──
+
+        // Save a sealed chunk from before the shred so we can prove it
+        // is undecryptable after the DEK is destroyed.
+        let sealed_before_shred = manager
+            .store
+            .load_chunk_aead(chunk_ids_a[0])
+            .unwrap()
+            .expect("pre-shred: chunk AEAD must still exist");
+
+        let revoke_outcome = manager.revoke_kchat_source(cache_dir).unwrap();
+        assert!(
+            matches!(
+                revoke_outcome,
+                KchatRevokeOutcome::Revoked {
+                    chunks_dropped, ..
+                } if chunks_dropped > 0
+            ),
+            "revoke must cryptoshred chunks (got {revoke_outcome:?})"
+        );
+
+        // DEK row gone from store.
+        let wrapped_post = manager
+            .store
+            .load_wrapped_dek_for_source(&source_id)
+            .unwrap();
+        assert!(
+            wrapped_post.is_none(),
+            "wrapped DEK row must be deleted after cryptoshred"
+        );
+
+        // In-memory DEK cache evicted.
+        assert_eq!(
+            manager.kchat_crypto().cache_size(),
+            0,
+            "in-memory DEK cache must be empty after cryptoshred"
+        );
+
+        // The saved sealed chunk is now undecryptable: the DEK is gone.
+        let open_err = manager
+            .kchat_crypto()
+            .open_chunk(&source_id, &sealed_before_shred);
+        assert!(
+            open_err.is_err(),
+            "opening a sealed chunk after DEK destruction must fail"
+        );
+
+        // ── Phase 4: search returns nothing ──
+
+        let hits_post_shred = manager.search_kchat_posts("rhodium", 10).unwrap();
+        assert!(
+            hits_post_shred.is_empty(),
+            "post-cryptoshred: no hits must surface (got {} hits)",
+            hits_post_shred.len()
+        );
+
+        // ── Phase 5: re-grant the source ──
+
+        let regrant = manager
+            .refresh_kchat_acl(
+                cache_dir,
+                &[make_acl_member("self-user", "channel_admin")],
+            )
+            .unwrap();
+        assert_eq!(
+            regrant,
+            KchatAclRefreshOutcome::Regranted,
+            "ACL refresh with principal present must re-grant"
+        );
+        let source_after = manager.get_source(&source_id).unwrap();
+        assert_eq!(
+            source_after.status,
+            SourceStatus::Connected,
+            "re-granted source should be Connected (not Indexed — content was shredded)"
+        );
+
+        // No DEK exists yet for the re-granted source (the old one was
+        // shredded; a new one is generated on next ingest).
+        let wrapped_regranted = manager
+            .store
+            .load_wrapped_dek_for_source(&source_id)
+            .unwrap();
+        assert!(
+            wrapped_regranted.is_none(),
+            "no DEK until new content is ingested post-regrant"
+        );
+
+        // ── Phase 6: re-ingest a new post under the fresh DEK ──
+
+        let post_gamma = KchatPostIngestInput {
+            cache_dir: cache_dir.to_string(),
+            post_id: "pg-lifecycle".to_string(),
+            channel_id: "ch-lifecycle".to_string(),
+            root_id: None,
+            sender_user_id: "u-charlie".to_string(),
+            body: "rhodium is a transition metal element".to_string(),
+            created_at_ms: 1_700_000_001_000,
+            edited_at_ms: 0,
+        };
+        let outcome_g = manager.ingest_kchat_post(&post_gamma).unwrap();
+        let chunk_ids_g = match &outcome_g {
+            KchatPostIngestOutcome::Ingested { chunk_ids, .. } => chunk_ids.clone(),
+            other => panic!("expected Ingested for gamma, got {other:?}"),
+        };
+
+        // New DEK generated.
+        let wrapped_new = manager
+            .store
+            .load_wrapped_dek_for_source(&source_id)
+            .unwrap();
+        assert!(
+            wrapped_new.is_some(),
+            "new DEK must be generated on first ingest post-regrant"
+        );
+
+        // New AEAD round-trips under the new DEK.
+        for chunk_id in &chunk_ids_g {
+            let sealed = manager
+                .store
+                .load_chunk_aead(*chunk_id)
+                .unwrap()
+                .expect("post-regrant chunk must have AEAD blob");
+            let pt = manager
+                .kchat_crypto()
+                .open_chunk(&source_id, &sealed)
+                .expect("post-regrant AEAD must decrypt under new DEK");
+            assert!(
+                !pt.is_empty(),
+                "post-regrant decrypted plaintext must be non-empty"
+            );
+        }
+
+        // The pre-shred sealed chunk STILL fails to open (the new DEK
+        // is different from the old one — the old one was randomly
+        // generated and is now gone).
+        let open_err_again = manager
+            .kchat_crypto()
+            .open_chunk(&source_id, &sealed_before_shred);
+        assert!(
+            open_err_again.is_err(),
+            "pre-shred ciphertext must remain undecryptable even after re-grant (new DEK differs)"
+        );
+
+        // ── Phase 7: search returns only the new post ──
+
+        let hits_final = manager.search_kchat_posts("rhodium", 10).unwrap();
+        assert_eq!(
+            hits_final.len(),
+            1,
+            "only the post-regrant post must surface (got {:?})",
+            hits_final
+                .iter()
+                .map(|h| h.post_id.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(hits_final[0].post_id, "pg-lifecycle");
+        assert!(
+            hits_final[0].content.contains("rhodium"),
+            "post-regrant hit must carry AEAD-verified plaintext"
+        );
+    }
+
+    /// Thread-context retrieval across the cryptoshred boundary:
+    /// after a source is cryptoshredded and then re-granted with
+    /// new content, `fetch_kchat_thread_context` must return only
+    /// messages sealed under the current DEK, not ghosts from the
+    /// pre-shred era.
+    #[test]
+    fn kchat_aead_thread_context_survives_cryptoshred_cycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.set_kchat_principal("self-user").unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let source_id = added.source.id;
+
+        // Pre-shred: ingest a thread (root + reply).
+        manager
+            .ingest_kchat_post(&KchatPostIngestInput {
+                cache_dir: cache_dir.to_string(),
+                post_id: "root-pre".to_string(),
+                channel_id: "ch-ctx".to_string(),
+                root_id: None,
+                sender_user_id: "u-x".to_string(),
+                body: "hafnium zirconium titanium".to_string(),
+                created_at_ms: 1_000,
+                edited_at_ms: 0,
+            })
+            .unwrap();
+        manager
+            .ingest_kchat_post(&KchatPostIngestInput {
+                cache_dir: cache_dir.to_string(),
+                post_id: "reply-pre".to_string(),
+                channel_id: "ch-ctx".to_string(),
+                root_id: Some("root-pre".to_string()),
+                sender_user_id: "u-y".to_string(),
+                body: "niobium tantalum vanadium".to_string(),
+                created_at_ms: 2_000,
+                edited_at_ms: 0,
+            })
+            .unwrap();
+
+        // Thread context works pre-shred.
+        let ctx_pre = manager
+            .fetch_kchat_thread_context(&source_id, "reply-pre")
+            .unwrap();
+        assert_eq!(
+            ctx_pre.len(),
+            1,
+            "pre-shred: root must appear as context for the reply"
+        );
+        assert_eq!(ctx_pre[0].post_id, "root-pre");
+
+        // Cryptoshred.
+        manager.revoke_kchat_source(cache_dir).unwrap();
+
+        // Thread context returns empty after shred (DEK gone).
+        let ctx_shredded = manager
+            .fetch_kchat_thread_context(&source_id, "reply-pre")
+            .unwrap();
+        assert!(
+            ctx_shredded.is_empty(),
+            "post-shred: no thread context must be returned"
+        );
+
+        // Re-grant.
+        manager
+            .refresh_kchat_acl(
+                cache_dir,
+                &[make_acl_member("self-user", "channel_admin")],
+            )
+            .unwrap();
+
+        // Re-ingest a new thread.
+        manager
+            .ingest_kchat_post(&KchatPostIngestInput {
+                cache_dir: cache_dir.to_string(),
+                post_id: "root-post".to_string(),
+                channel_id: "ch-ctx".to_string(),
+                root_id: None,
+                sender_user_id: "u-z".to_string(),
+                body: "scandium yttrium lanthanum".to_string(),
+                created_at_ms: 3_000,
+                edited_at_ms: 0,
+            })
+            .unwrap();
+        manager
+            .ingest_kchat_post(&KchatPostIngestInput {
+                cache_dir: cache_dir.to_string(),
+                post_id: "reply-post".to_string(),
+                channel_id: "ch-ctx".to_string(),
+                root_id: Some("root-post".to_string()),
+                sender_user_id: "u-w".to_string(),
+                body: "cerium praseodymium neodymium".to_string(),
+                created_at_ms: 4_000,
+                edited_at_ms: 0,
+            })
+            .unwrap();
+
+        // Thread context works for the new thread under the new DEK.
+        let ctx_post = manager
+            .fetch_kchat_thread_context(&source_id, "reply-post")
+            .unwrap();
+        assert_eq!(
+            ctx_post.len(),
+            1,
+            "post-regrant: root of the new thread must appear as context"
+        );
+        assert_eq!(ctx_post[0].post_id, "root-post");
+        assert!(
+            ctx_post[0].content.contains("scandium"),
+            "post-regrant context must carry AEAD-verified new-DEK plaintext"
+        );
+    }
 }
