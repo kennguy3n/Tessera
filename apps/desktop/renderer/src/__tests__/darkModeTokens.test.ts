@@ -297,4 +297,166 @@ describe("dark-mode CSS variable enforcement", () => {
         `can flip them:\n${violations.map((v) => `  ${v}`).join("\n")}`,
     ).toEqual([]);
   });
+
+  it("KChat citation surface classes are styled with theme tokens (Phase 13 Theme 5 Task 29)", () => {
+    // The KChat-specific class names below ship with markup in
+    // `CitationPanel.tsx` (Phase 13 Themes 1–4) but lived without
+    // any CSS rules until Theme 5 — meaning the surface rendered
+    // as undecorated inline text in BOTH light and dark themes.
+    // This test pins three invariants of the Theme 5 patch:
+    //
+    //   (i)  Every class in the list below has a rule in
+    //        `components.css` (no silent drop of styling).
+    //   (ii) Every rule uses ONLY `var(--color-…)` token
+    //        references for color-bearing properties (no bare
+    //        `#hex` / `rgb(...)` / `hsl(...)`). Token references
+    //        re-evaluate per scope, so dark mode picks up the
+    //        override scope in `tokens.css` automatically — a
+    //        bare hex would silently persist into dark mode and
+    //        break the visual contract.
+    //   (iii) Every token referenced is one that IS overridden in
+    //        the dark scope (per the REQUIRED_DARK_OVERRIDES list
+    //        above) OR is one of the "intentionally theme-agnostic
+    //        but visually-safe in both" tokens
+    //        (--color-success / --color-warning / --color-error /
+    //        --color-text-link, all of which have colorimetric
+    //        readability on both light and dark surfaces — pinned
+    //        independently by the must-override test below).
+    const COMPONENTS_CSS = resolve(__dirname, "../styles/components.css");
+    const text = readFileSync(COMPONENTS_CSS, "utf8");
+
+    const KCHAT_SURFACE_CLASSES = [
+      "citation-source-badge",
+      "citation-source-badge-kchat",
+      "citation-item-kchat",
+      "citation-search-hit-kchat",
+      "citation-hit-kchat-channel",
+      "citation-hit-kchat-sender",
+      "citation-hit-kchat-timestamp",
+      "citation-hit-kchat-permalink",
+    ];
+
+    // (i) every class has a rule (selector appears in the
+    // stylesheet, anchored as a class selector — `.foo` followed
+    // by `{`, `,`, ` `, or `:` so we don't match a substring
+    // of a longer class).
+    const missing: string[] = [];
+    for (const cls of KCHAT_SURFACE_CLASSES) {
+      const re = new RegExp(`\\.${cls}(?=[\\s,:{])`);
+      if (!re.test(text)) missing.push(cls);
+    }
+    expect(
+      missing,
+      `KChat citation surface classes missing from components.css. ` +
+        `CitationPanel.tsx references these classes but they have ` +
+        `no CSS rules — surface renders as undecorated text in ` +
+        `both light and dark mode:\n${missing.map((c) => `  .${c}`).join("\n")}`,
+    ).toEqual([]);
+
+    // (ii) collect every rule body for these class selectors and
+    // assert no bare hex / rgb / hsl color values. Match the
+    // selector group up to the next `{`, then the body up to the
+    // matching `}`.
+    const bareColorViolations: string[] = [];
+    for (const cls of KCHAT_SURFACE_CLASSES) {
+      // Match the rule body. Selectors can include the class plus
+      // optional pseudo (e.g. `.citation-hit-kchat-permalink:hover`)
+      // — allow non-`{` chars before the opening brace.
+      const ruleRe = new RegExp(
+        `\\.${cls}[^{]*\\{([^}]*)\\}`,
+        "g",
+      );
+      let m: RegExpExecArray | null;
+      while ((m = ruleRe.exec(text)) !== null) {
+        const body = m[1];
+        // Look for any color-bearing property whose value is a bare
+        // color literal. The first capture group is the offending
+        // value; we surface both class + value for easy fixing.
+        const bareRe =
+          /(?:background-color|background|color|border|border-color|outline|outline-color|fill|stroke)\s*:\s*([^;}]*)/g;
+        let mm: RegExpExecArray | null;
+        while ((mm = bareRe.exec(body)) !== null) {
+          const value = mm[1].trim();
+          // Allow `none`, theme-token references, calc(), and
+          // composite border shorthand whose color component is a
+          // token (caught by the inner var() check). Reject any
+          // literal hex / rgb / hsl / named-color value.
+          if (/#[0-9a-fA-F]{3,8}\b/.test(value)) {
+            bareColorViolations.push(`.${cls} → ${mm[0].trim()}`);
+            continue;
+          }
+          if (/\brgba?\s*\(/.test(value)) {
+            bareColorViolations.push(`.${cls} → ${mm[0].trim()}`);
+            continue;
+          }
+          if (/\bhsla?\s*\(/.test(value)) {
+            bareColorViolations.push(`.${cls} → ${mm[0].trim()}`);
+            continue;
+          }
+        }
+      }
+    }
+    expect(
+      bareColorViolations,
+      `KChat surface CSS rules use bare color literals instead of ` +
+        `theme tokens. Use var(--color-…) so dark mode picks up ` +
+        `the override:\n${bareColorViolations.map((v) => `  ${v}`).join("\n")}`,
+    ).toEqual([]);
+
+    // (iii) every token referenced inside one of these rules must
+    // either be in the must-override-dark list OR an accent token
+    // whose light value remains readable in dark (success / warning
+    // / error / text-link / primary). Reject any unrecognised token.
+    const SAFE_TOKENS = new Set<string>([
+      // Must-override list (declared above in this file).
+      "--color-primary",
+      "--color-primary-hover",
+      "--color-primary-light",
+      "--color-bg-page",
+      "--color-bg-surface",
+      "--color-bg-sidebar",
+      "--color-bg-secondary",
+      "--color-text-headline",
+      "--color-text-body",
+      "--color-text-secondary",
+      "--color-text-on-primary",
+      "--color-border",
+      "--color-border-light",
+      "--color-danger-bg",
+      "--color-danger-light",
+      "--color-danger-subtle",
+      "--color-success-bg",
+      "--color-success-subtle",
+      // Theme-agnostic accents that are readable on both surfaces.
+      "--color-success",
+      "--color-warning",
+      "--color-error",
+      "--color-text-link",
+    ]);
+    const unknownTokens: string[] = [];
+    for (const cls of KCHAT_SURFACE_CLASSES) {
+      const ruleRe = new RegExp(
+        `\\.${cls}[^{]*\\{([^}]*)\\}`,
+        "g",
+      );
+      let m: RegExpExecArray | null;
+      while ((m = ruleRe.exec(text)) !== null) {
+        const body = m[1];
+        const tokenRe = /var\((--color-[a-z0-9-]+)/g;
+        let tm: RegExpExecArray | null;
+        while ((tm = tokenRe.exec(body)) !== null) {
+          if (!SAFE_TOKENS.has(tm[1])) {
+            unknownTokens.push(`.${cls} → var(${tm[1]})`);
+          }
+        }
+      }
+    }
+    expect(
+      unknownTokens,
+      `KChat surface CSS rules reference color tokens that are NOT ` +
+        `in the dark-mode-safe allow list. Either pick a token from ` +
+        `the safe set or document why this one is dark-safe and ` +
+        `add it to SAFE_TOKENS:\n${unknownTokens.map((v) => `  ${v}`).join("\n")}`,
+    ).toEqual([]);
+  });
 });

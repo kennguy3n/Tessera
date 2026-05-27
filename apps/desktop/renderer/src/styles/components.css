@@ -224,6 +224,108 @@
   color: var(--color-primary);
 }
 
+/*
+ * Phase 13 Theme 5 Task 29 — Dark-theme audit for KChat citation
+ * surfaces in `CitationPanel`.
+ *
+ * The KChat-specific class names below were introduced incrementally
+ * across Phase 13 Themes 1–4 (`citation-source-badge-kchat`,
+ * `citation-item-kchat`, `citation-search-hit-kchat`, and the
+ * `citation-hit-kchat-*` family). All of them shipped without CSS
+ * rules — they served as test selectors and semantic markers only,
+ * which meant the surface rendered as undecorated inline text in
+ * BOTH light and dark themes. Theme 5 lands the styling so:
+ *
+ *   1. The KChat badge actually looks like a badge (rounded chip
+ *      with a primary-tinted background) and reads as a distinct
+ *      KChat marker, matching the source-type icon work in Task 27.
+ *   2. KChat-derived citation items + search hits carry a left-side
+ *      accent in the primary colour so a scan down a mixed list
+ *      gives an immediate visual fix on the KChat-derived rows.
+ *   3. KChat metadata fragments (channel / sender / timestamp /
+ *      permalink) use the existing text-secondary + text-link
+ *      tokens so they inherit the dark-mode overrides in
+ *      `tokens.css` automatically.
+ *
+ * Every colour value in this block is a theme token reference
+ * (no bare `#hex`) so the dark theme picks up the override scope
+ * for free.
+ */
+.citation-source-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  border-radius: var(--radius-button);
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-body);
+  line-height: 1.4;
+}
+
+.citation-source-badge-kchat {
+  /* Tinted with the primary-light token so it picks up
+   * the dark-mode override (`#312e81`) and stays visually
+   * distinct from generic source badges in both themes. */
+  background-color: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.citation-item-kchat {
+  /* Subtle left accent in the brand colour to mark
+   * KChat-derived citations at a glance. The padding-left
+   * pushes content past the accent stripe so the layout
+   * doesn't shift relative to non-KChat items in a mixed
+   * list (the list-level padding compensates for the
+   * border-width below). */
+  border-left: 3px solid var(--color-primary);
+  padding-left: calc(var(--spacing-sm) - 3px);
+}
+
+.citation-search-hit-kchat {
+  /* Same left accent for KChat search hits — consistency
+   * with the saved-citation item style above. */
+  border-left: 3px solid var(--color-primary);
+  padding-left: calc(var(--spacing-sm) - 3px);
+}
+
+.citation-hit-kchat-channel,
+.citation-hit-kchat-sender,
+.citation-hit-kchat-timestamp {
+  /* Muted secondary text — matches the design intent for
+   * KChat metadata fragments (they are context, not the
+   * primary signal of the row). text-secondary IS overridden
+   * in the dark-theme scope so this carries over cleanly. */
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.citation-hit-kchat-channel {
+  /* The channel name carries the highest semantic weight
+   * among the metadata fragments — bump weight back to
+   * medium so it stands out from the sender + timestamp. */
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-body);
+}
+
+.citation-hit-kchat-permalink {
+  /* Link styling driven by the theme link token so
+   * dark mode picks up the lighter `#a5b4fc` shade. */
+  color: var(--color-text-link);
+  text-decoration: underline;
+  font-size: var(--font-size-xs);
+}
+
+.citation-hit-kchat-permalink:hover {
+  text-decoration: none;
+}
+
+.citation-hit-kchat-permalink:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-input);
+}
+
 @keyframes toast-in {
   from {
     opacity: 0;
