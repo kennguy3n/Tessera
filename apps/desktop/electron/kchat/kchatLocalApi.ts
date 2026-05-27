@@ -459,7 +459,16 @@ export class KchatLocalApiServer {
 
 async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
   const contentType = req.headers["content-type"] ?? "";
-  if (!/^application\/json(\b|;)/.test(contentType)) {
+  // Accept ONLY `application/json` (optionally followed by whitespace
+  // and `;parameters`). The previous `^application\/json(\b|;)`
+  // pattern matched `application/json-ld`, `application/json-patch+json`,
+  // etc. because `\b` matches between `n` and `-` (the hyphen is a
+  // non-word character). The .kcz extension we ship only sends
+  // `application/json`, so a stricter check has no behavioural cost
+  // and closes the door on a future caller (or a stray proxy) sneaking
+  // in a sibling JSON-family subtype the rest of `readJsonBody`
+  // doesn't actually parse.
+  if (!/^application\/json(?:\s*$|\s*;)/i.test(contentType)) {
     throw new LocalApiError(
       400,
       "invalid_request",

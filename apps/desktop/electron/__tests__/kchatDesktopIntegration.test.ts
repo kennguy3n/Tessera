@@ -436,6 +436,61 @@ describe("KchatLocalApiServer — route surface", () => {
     expect(res.status).toBe(400);
   });
 
+  // Phase 14 Round 4 Devin Review polish: the previous Content-Type
+  // regex used `(\b|;)`, which matched `application/json-ld` because
+  // `\b` matches the boundary between `n` and `-`. Tighten the
+  // contract to ONLY accept `application/json` (with optional
+  // `;parameters`) so a future caller (or a misconfigured proxy)
+  // can't sneak in a JSON-family sibling type that the rest of
+  // `readJsonBody` doesn't actually parse. The .kcz extension we
+  // ship only sends `application/json`, so this is a no-op in
+  // practice.
+  it.each([
+    "application/json-ld",
+    "application/json-patch+json",
+    "application/vnd.api+json",
+    "application/jsonp",
+  ])(
+    "rejects sibling JSON-family Content-Type %s",
+    async (contentType: string) => {
+      const { handlers } = makeHandlers();
+      running = await startServer(handlers);
+      const res = await fetch(`${running.baseUrl}/api/ingest-channel`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${TEST_TOKEN}`,
+          "content-type": contentType,
+        },
+        body: JSON.stringify({ channelId: "c", channelName: "n" }),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code: string };
+      expect(body.code).toBe("invalid_request");
+    },
+  );
+
+  it.each([
+    "application/json",
+    "application/json; charset=utf-8",
+    "Application/JSON; charset=UTF-8",
+    "application/json;charset=utf-8",
+    "application/json ",
+  ])("accepts canonical Content-Type %s", async (contentType: string) => {
+    const { handlers } = makeHandlers();
+    running = await startServer(handlers);
+    const res = await fetch(`${running.baseUrl}/api/ingest-channel`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${TEST_TOKEN}`,
+        "content-type": contentType,
+      },
+      body: JSON.stringify({ channelId: "c", channelName: "n" }),
+    });
+    // 200 (success path) — confirms the Content-Type gate passes
+    // AND the rest of the request validates fine.
+    expect(res.status).toBe(200);
+  });
+
   it("rejects a body larger than 64 KiB", async () => {
     const { handlers } = makeHandlers();
     running = await startServer(handlers);

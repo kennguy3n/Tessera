@@ -107,3 +107,16 @@ export interface TesseraPortFileV1 {
   startedAt: string;
   pid: number;
 }
+
+/**
+ * Minimum acceptable length of the bearer token (in characters) the
+ * extension will tolerate before refusing to connect. Tessera's
+ * server always mints a 43-character base64url-encoded 256-bit
+ * value (`crypto.randomBytes(32).toString("base64url")`), so any
+ * length below this constant indicates either a corrupted port file
+ * or a hostile actor planting a guessable token. The portFile reader
+ * AND the client constructor both reject below this threshold so a
+ * test seam that bypasses `readPortFile` (e.g. `props.client` in
+ * the sources-panel view) can't accidentally widen the contract.
+ */
+export const MIN_TOKEN_LENGTH = 32;

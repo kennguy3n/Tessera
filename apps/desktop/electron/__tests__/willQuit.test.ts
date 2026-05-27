@@ -205,6 +205,26 @@ function makeEvent() {
   return { event: { preventDefault }, preventDefault };
 }
 
+/**
+ * Phase 14 Round 4 Devin Review polish: `handleWillQuit` now takes
+ * `stopKchatLocalApi` and `detachKchatDeeplinkBridge` via the same
+ * dep-injection seam as `stopScheduler` / `stopAllSidecars` /
+ * `quit`. Tests that don't specifically care about these two
+ * steps (the bulk of the existing suite) get no-op spies so the
+ * outer `try/finally` ordering remains the only thing under test.
+ * Tests that DO care about the ordering of the new steps build
+ * their own deps inline so they can observe the call order.
+ */
+function makeKchatShutdownDeps(): {
+  stopKchatLocalApi: ReturnType<typeof vi.fn>;
+  detachKchatDeeplinkBridge: ReturnType<typeof vi.fn>;
+} {
+  return {
+    stopKchatLocalApi: vi.fn().mockResolvedValue(undefined),
+    detachKchatDeeplinkBridge: vi.fn(),
+  };
+}
+
 describe("handleWillQuit", () => {
   it("calls preventDefault, then stopScheduler, then stopAllSidecars, then quit", async () => {
     const order: string[] = [];
@@ -219,7 +239,12 @@ describe("handleWillQuit", () => {
     });
 
     const { event, preventDefault } = makeEvent();
-    await handleWillQuit(event, { stopScheduler, stopAllSidecars, quit });
+    await handleWillQuit(event, {
+      ...makeKchatShutdownDeps(),
+      stopScheduler,
+      stopAllSidecars,
+      quit,
+    });
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(stopScheduler).toHaveBeenCalledTimes(1);
@@ -230,6 +255,130 @@ describe("handleWillQuit", () => {
     // sidecar that's already SIGTERM'd.
     expect(order).toEqual(["stopScheduler", "stopAllSidecars", "quit"]);
   });
+
+  // Phase 14 Round 4 Devin Review polish: now that the
+  // kchat-localhost-API shutdown and the deeplink detach run
+  // through the dep-injection seam (rather than as direct module
+  // imports), pin the full ordering: scheduler → sidecars →
+  // kchatLocalApi → detachDeeplink → quit. Sidecars must drain
+  // before the local API server stops because the .kcz extension
+  // inside KChat Desktop should be told "Tessera is gone" (via the
+  // socket close) AFTER any in-flight sidecar requests have been
+  // settled — closing earlier would leave the extension polling a
+  // dead socket while Tessera is still drawing CPU cycles. The
+  // deeplink detach runs last because it has the smallest blast
+  // radius: removing the Electron listeners cannot affect any
+  // other shutdown step.
+  it(
+    "runs the full shutdown order: scheduler → sidecars → kchatLocalApi → " +
+      "detachDeeplink → quit",
+    async () => {
+      const order: string[] = [];
+      const stopScheduler = vi.fn().mockImplementation(async () => {
+        order.push("stopScheduler");
+      });
+      const stopAllSidecars = vi.fn().mockImplementation(async () => {
+        order.push("stopAllSidecars");
+      });
+      const stopKchatLocalApi = vi.fn().mockImplementation(async () => {
+        order.push("stopKchatLocalApi");
+      });
+      const detachKchatDeeplinkBridge = vi.fn().mockImplementation(() => {
+        order.push("detachKchatDeeplinkBridge");
+      });
+      const quit = vi.fn().mockImplementation(() => {
+        order.push("quit");
+      });
+
+      const { event } = makeEvent();
+      await handleWillQuit(event, {
+        stopScheduler,
+        stopAllSidecars,
+        stopKchatLocalApi,
+        detachKchatDeeplinkBridge,
+        quit,
+      });
+
+      expect(order).toEqual([
+        "stopScheduler",
+        "stopAllSidecars",
+        "stopKchatLocalApi",
+        "detachKchatDeeplinkBridge",
+        "quit",
+      ]);
+    },
+  );
+
+  it(
+    "calls app.quit() even when stopKchatLocalApi rejects (errors swallowed)",
+    async () => {
+      const errSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      const stopKchatLocalApi = vi
+        .fn()
+        .mockRejectedValue(new Error("local API hung on socket close"));
+      const detachKchatDeeplinkBridge = vi.fn();
+      const quit = vi.fn();
+
+      const { event } = makeEvent();
+      await handleWillQuit(event, {
+        stopScheduler: vi.fn().mockResolvedValue(undefined),
+        stopAllSidecars: vi.fn().mockResolvedValue(undefined),
+        stopKchatLocalApi,
+        detachKchatDeeplinkBridge,
+        quit,
+      });
+
+      // The local-API shutdown failure MUST NOT skip the deeplink
+      // detach OR the outer `app.quit()`. The two new steps each
+      // own a `try/catch` and share the outer `finally` with the
+      // existing steps, so the doomsday "every step throws" case
+      // still terminates the process.
+      expect(stopKchatLocalApi).toHaveBeenCalledTimes(1);
+      expect(detachKchatDeeplinkBridge).toHaveBeenCalledTimes(1);
+      expect(quit).toHaveBeenCalledTimes(1);
+      expect(errSpy).toHaveBeenCalled();
+      const allCalls = errSpy.mock.calls
+        .map((c) => c.map((v) => String(v)).join(" "))
+        .join("\n");
+      expect(allCalls).toContain("kchatLocalApi shutdown failed");
+      expect(allCalls).toContain("local API hung on socket close");
+    },
+  );
+
+  it(
+    "calls app.quit() even when detachKchatDeeplinkBridge throws (errors swallowed)",
+    async () => {
+      const errSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      const detachKchatDeeplinkBridge = vi.fn().mockImplementation(() => {
+        throw new Error("deeplink removeListener threw");
+      });
+      const quit = vi.fn();
+
+      const { event } = makeEvent();
+      await handleWillQuit(event, {
+        stopScheduler: vi.fn().mockResolvedValue(undefined),
+        stopAllSidecars: vi.fn().mockResolvedValue(undefined),
+        stopKchatLocalApi: vi.fn().mockResolvedValue(undefined),
+        detachKchatDeeplinkBridge,
+        quit,
+      });
+
+      // The deeplink detach is the LAST inner step, so a throw
+      // from it must still let the outer `finally` fire `quit()`.
+      expect(detachKchatDeeplinkBridge).toHaveBeenCalledTimes(1);
+      expect(quit).toHaveBeenCalledTimes(1);
+      expect(errSpy).toHaveBeenCalled();
+      const allCalls = errSpy.mock.calls
+        .map((c) => c.map((v) => String(v)).join(" "))
+        .join("\n");
+      expect(allCalls).toContain("kchatDeeplink detach failed");
+      expect(allCalls).toContain("deeplink removeListener threw");
+    },
+  );
 
   it("calls preventDefault SYNCHRONOUSLY so Electron defers the quit", async () => {
     // The Electron docs require preventDefault to be called from the
@@ -250,6 +399,7 @@ describe("handleWillQuit", () => {
 
     const { event, preventDefault } = makeEvent();
     const pending = handleWillQuit(event, {
+      ...makeKchatShutdownDeps(),
       stopScheduler,
       stopAllSidecars,
       quit,
@@ -278,7 +428,12 @@ describe("handleWillQuit", () => {
     const quit = vi.fn();
 
     const { event } = makeEvent();
-    await handleWillQuit(event, { stopScheduler, stopAllSidecars, quit });
+    await handleWillQuit(event, {
+      ...makeKchatShutdownDeps(),
+      stopScheduler,
+      stopAllSidecars,
+      quit,
+    });
 
     expect(stopScheduler).toHaveBeenCalledTimes(1);
     // A scheduler throw MUST NOT short-circuit the sidecar drain \u2014
@@ -305,7 +460,12 @@ describe("handleWillQuit", () => {
     const quit = vi.fn();
 
     const { event } = makeEvent();
-    await handleWillQuit(event, { stopScheduler, stopAllSidecars, quit });
+    await handleWillQuit(event, {
+      ...makeKchatShutdownDeps(),
+      stopScheduler,
+      stopAllSidecars,
+      quit,
+    });
 
     // The `finally` MUST fire even when the sidecar drain throws \u2014
     // otherwise the user would hit Cmd-Q again and see a still-
@@ -330,7 +490,12 @@ describe("handleWillQuit", () => {
     const quit = vi.fn();
 
     const { event } = makeEvent();
-    await handleWillQuit(event, { stopScheduler, stopAllSidecars, quit });
+    await handleWillQuit(event, {
+      ...makeKchatShutdownDeps(),
+      stopScheduler,
+      stopAllSidecars,
+      quit,
+    });
 
     // The doomsday case: both subsystems are misbehaving, and the
     // process still terminates cleanly because the two try/catches
@@ -385,7 +550,12 @@ describe("handleWillQuit", () => {
     // `.catch()` can still observe and log it); the `expect(quit)`
     // matcher further down asserts the outer finally fired first.
     await expect(
-      handleWillQuit(event, { stopScheduler, stopAllSidecars, quit }),
+      handleWillQuit(event, {
+        ...makeKchatShutdownDeps(),
+        stopScheduler,
+        stopAllSidecars,
+        quit,
+      }),
     ).rejects.toThrow("logger broke");
 
     expect(stopScheduler).toHaveBeenCalledTimes(1);
@@ -413,6 +583,7 @@ describe("handleWillQuit", () => {
 
     const { event: firstEvent } = makeEvent();
     await handleWillQuit(firstEvent, {
+      ...makeKchatShutdownDeps(),
       stopScheduler,
       stopAllSidecars,
       quit,
@@ -425,6 +596,7 @@ describe("handleWillQuit", () => {
     // terminates the process.
     const { event: secondEvent, preventDefault: secondPrevent } = makeEvent();
     await handleWillQuit(secondEvent, {
+      ...makeKchatShutdownDeps(),
       stopScheduler,
       stopAllSidecars,
       quit,
@@ -454,7 +626,12 @@ describe("handleWillQuit", () => {
     const quit = vi.fn();
 
     const { event } = makeEvent();
-    await handleWillQuit(event, { stopScheduler, stopAllSidecars, quit });
+    await handleWillQuit(event, {
+      ...makeKchatShutdownDeps(),
+      stopScheduler,
+      stopAllSidecars,
+      quit,
+    });
 
     // The handler must have AWAITED the drain (not raced ahead).
     expect(quit).toHaveBeenCalledTimes(1);

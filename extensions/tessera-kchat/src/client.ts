@@ -14,6 +14,7 @@
  *   4. Reject any redirect — the API is loopback-bound, so a 30x
  *      response would indicate a bug or a hijack attempt.
  */
+import { MIN_TOKEN_LENGTH } from "./types";
 import type {
   IngestChannelRequest,
   IngestChannelResponse,
@@ -71,9 +72,19 @@ export class TesseraLocalApiClient {
         "Tessera local API port is invalid.",
       );
     }
-    if (!opts.portFile.token || opts.portFile.token.length < 16) {
+    if (
+      !opts.portFile.token ||
+      opts.portFile.token.length < MIN_TOKEN_LENGTH
+    ) {
+      // Defence in depth: the port-file reader (`readPortFile()`)
+      // applies the same check before constructing this client, but
+      // a test seam that wires `props.client` directly into the
+      // sources-panel view bypasses that path. Enforcing the same
+      // floor here keeps the contract uniform and prevents a future
+      // contributor from accidentally exercising the client with a
+      // shorter-than-production token.
       throw new TesseraLocalApiUnavailableError(
-        "Tessera local API token is missing or too short.",
+        `Tessera local API token is missing or shorter than ${MIN_TOKEN_LENGTH} characters.`,
       );
     }
     this.baseUrl = `http://127.0.0.1:${opts.portFile.port}`;

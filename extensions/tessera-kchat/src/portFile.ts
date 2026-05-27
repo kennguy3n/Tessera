@@ -12,7 +12,7 @@
  * actual disk access. This keeps the module browser-friendly for
  * tests and lets the SDK enforce the user-data sandbox.
  */
-import type { TesseraPortFileV1 } from "./types";
+import { MIN_TOKEN_LENGTH, type TesseraPortFileV1 } from "./types";
 
 export interface PortFileReadOptions {
   /**
@@ -87,11 +87,11 @@ export function validatePortFile(parsed: unknown): PortFileResult {
       detail: `port=${String(obj.port)}`,
     };
   }
-  if (typeof obj.token !== "string" || obj.token.length < 32) {
+  if (typeof obj.token !== "string" || obj.token.length < MIN_TOKEN_LENGTH) {
     return {
       ok: false,
       reason: "missing-token",
-      detail: "token must be at least 32 characters",
+      detail: `token must be at least ${MIN_TOKEN_LENGTH} characters`,
     };
   }
   const startedAt =

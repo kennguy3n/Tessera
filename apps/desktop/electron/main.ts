@@ -799,6 +799,15 @@ export async function handleWillQuit(
   deps: {
     stopScheduler: () => Promise<void>;
     stopAllSidecars: () => Promise<void>;
+    // Phase 14 Round 4 Devin Review polish: take the kchat
+    // localhost-API shutdown and the deeplink-bridge detach via
+    // dep-injection so this function follows the same testability
+    // pattern as the existing scheduler / sidecar drains. The
+    // production caller passes the real implementations; the
+    // will-quit tests can inject spies and verify ordering against
+    // the other shutdown steps.
+    stopKchatLocalApi: () => Promise<void>;
+    detachKchatDeeplinkBridge: () => void;
     quit: () => void;
   },
 ): Promise<void> {
@@ -854,7 +863,7 @@ export async function handleWillQuit(
       // Phase 14 Task 2: stop the localhost API server and remove
       // the port-file so a future Tessera launch on a different
       // port doesn't have to race a stale discovery file.
-      await stopKchatLocalApiServer();
+      await deps.stopKchatLocalApi();
     } catch (e) {
       console.error("[tessera] kchatLocalApi shutdown failed:", e);
     }
@@ -862,7 +871,7 @@ export async function handleWillQuit(
       // Phase 14 Task 3: detach the deeplink listeners so a
       // re-launched main process (test harness) does not stack
       // duplicates.
-      detachKchatDeeplinkBridge();
+      deps.detachKchatDeeplinkBridge();
     } catch (e) {
       console.error("[tessera] kchatDeeplink detach failed:", e);
     }
@@ -888,6 +897,8 @@ app.on("will-quit", (event) => {
   handleWillQuit(event, {
     stopScheduler,
     stopAllSidecars,
+    stopKchatLocalApi: stopKchatLocalApiServer,
+    detachKchatDeeplinkBridge,
     quit: () => app.quit(),
   }).catch((e) => {
     console.error("[tessera] handleWillQuit rejected during quit:", e);

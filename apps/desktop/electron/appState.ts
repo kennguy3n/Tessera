@@ -1352,6 +1352,24 @@ export function resetKchatAuthService(
   // and a test that calls `resetKchatAuthService(null)` should
   // never observe an impl that closes over a torn-down service.
   setKchatBackfillImpl(null);
+  // Phase 14 Round 4 Devin Review polish: the three local-API
+  // provider slots (`localApiSourcesProvider`,
+  // `localApiIngestChannelHandler`,
+  // `localApiShareArtifactHandler`) are reachable from the
+  // localhost API server via `buildLocalApiHandlers()`. When the
+  // future IPC registration layer (Phase 14 Tasks 9–13) wires
+  // them up, the supplied closures will capture
+  // `getKchatAuthService()` / `getBridge()` just like the resync
+  // and backfill impls above — so the same "stale closure surviving
+  // a `resetKchatAuthService(null)` could deref a torn-down
+  // service" hazard applies. Clearing the slots here pre-emptively
+  // means the future wiring PR doesn't have to remember to update
+  // this reset path; the local API server's null-checks already
+  // map "slot is null" to a 503 `tessera_unavailable` envelope,
+  // which is the correct post-reset behaviour in tests.
+  setLocalApiSourcesProvider(null);
+  setLocalApiIngestChannelHandler(null);
+  setLocalApiShareArtifactHandler(null);
   kchatAuthService = next;
   if (next) {
     kchatEventForwarder = new KchatEventForwarder({
