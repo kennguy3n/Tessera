@@ -4,29 +4,43 @@ import {
   expect,
   afterEach,
   beforeEach,
+  beforeAll,
+  afterAll,
   vi,
   type Mock,
 } from "vitest";
 import { EventEmitter } from "events";
 import { buildSpawnEnv } from "../sidecar";
 
+// File-scope defense-in-depth: assert that no test in this file mutates
+// `process.platform`. The prior incarnation of this suite used
+// `Object.defineProperty(process, "platform", ...)` + an `afterEach`
+// restore — a sequential-only pattern that becomes a parallel-safety
+// footgun under `vitest --pool=threads` with shared worker pools (a
+// concurrent test in another describe block could observe the mutated
+// global). The current suite injects `platform` either as a direct
+// argument to `buildSpawnEnv()` or as a `SidecarOptions.platform`
+// field on `new ModelSidecar(...)`. These hooks snapshot the live
+// `process.platform` at file load and assert it's unchanged at
+// teardown so any future test that reintroduces global mutation
+// fails loudly here rather than silently corrupting a neighbour.
+// Mirrors the architectural pattern landed in PR #57 for
+// `extensionSocketPath.test.ts`.
+const ORIGINAL_PLATFORM = process.platform;
+beforeAll(() => {
+  expect(process.platform).toBe(ORIGINAL_PLATFORM);
+});
+afterAll(() => {
+  expect(process.platform).toBe(ORIGINAL_PLATFORM);
+});
+
 describe("buildSpawnEnv", () => {
-  const originalPlatform = process.platform;
-
-  afterEach(() => {
-    Object.defineProperty(process, "platform", { value: originalPlatform });
-  });
-
-  function setPlatform(p: NodeJS.Platform) {
-    Object.defineProperty(process, "platform", { value: p });
-  }
-
   it("prepends binary dir to LD_LIBRARY_PATH on Linux", () => {
-    setPlatform("linux");
-    const env = buildSpawnEnv("/opt/tessera/sidecars/llama-server/llama-server", {
-      LD_LIBRARY_PATH: "/usr/local/lib",
-      HOME: "/home/test",
-    });
+    const env = buildSpawnEnv(
+      "/opt/tessera/sidecars/llama-server/llama-server",
+      { LD_LIBRARY_PATH: "/usr/local/lib", HOME: "/home/test" },
+      "linux",
+    );
     expect(env.LD_LIBRARY_PATH).toBe(
       "/opt/tessera/sidecars/llama-server:/usr/local/lib",
     );
@@ -34,26 +48,60 @@ describe("buildSpawnEnv", () => {
   });
 
   it("sets LD_LIBRARY_PATH on Linux when not previously set", () => {
-    setPlatform("linux");
-    const env = buildSpawnEnv("/opt/llama-server", {});
+    const env = buildSpawnEnv("/opt/llama-server", {}, "linux");
     expect(env.LD_LIBRARY_PATH).toBe("/opt");
   });
 
   it("leaves env untouched on macOS", () => {
-    setPlatform("darwin");
-    const env = buildSpawnEnv("/opt/llama-server", {
-      LD_LIBRARY_PATH: "/should/not/change",
-      FOO: "bar",
-    });
+    const env = buildSpawnEnv(
+      "/opt/llama-server",
+      { LD_LIBRARY_PATH: "/should/not/change", FOO: "bar" },
+      "darwin",
+    );
     expect(env.LD_LIBRARY_PATH).toBe("/should/not/change");
     expect(env.FOO).toBe("bar");
   });
 
   it("leaves env untouched on Windows", () => {
-    setPlatform("win32");
-    const env = buildSpawnEnv("C:\\tessera\\llama-server.exe", { PATH: "C:\\bin" });
+    const env = buildSpawnEnv(
+      "C:\\tessera\\llama-server.exe",
+      { PATH: "C:\\bin" },
+      "win32",
+    );
     expect(env.LD_LIBRARY_PATH).toBeUndefined();
     expect(env.PATH).toBe("C:\\bin");
+  });
+
+  // Regression: the no-arg-platform path must equal calling the
+  // function with the live `process.platform` value. Production
+  // callers (`ModelSidecar.start()` via `this.options.platform`,
+  // which defaults to `process.platform` at construction) rely on
+  // this default behavior. If a future refactor accidentally
+  // hard-coded `"linux"` as the default this test would catch it
+  // on every non-Linux runner.
+  it("no-platform call matches the explicit-platform call for the live platform", () => {
+    const env1 = buildSpawnEnv("/opt/llama-server", { HOME: "/x" });
+    const env2 = buildSpawnEnv(
+      "/opt/llama-server",
+      { HOME: "/x" },
+      process.platform,
+    );
+    expect(env1).toEqual(env2);
+  });
+
+  // Parallel-safety meta-test: prove that calling buildSpawnEnv
+  // with various injected platforms does NOT mutate
+  // `process.platform`. The prior implementation of this suite
+  // mutated the global via `Object.defineProperty` and restored
+  // it in `afterEach` — a sequential-only pattern. This test
+  // pins the architectural guarantee that the current
+  // implementation is purely a pure function of its arguments.
+  it("does not mutate process.platform when called with various platforms", () => {
+    const before = process.platform;
+    for (const platform of ["linux", "darwin", "win32", "freebsd"] as const) {
+      buildSpawnEnv("/opt/llama-server", {}, platform);
+    }
+    expect(process.platform).toBe(before);
   });
 });
 
@@ -66,10 +114,12 @@ describe("buildSpawnEnv", () => {
  * fallback) an abnormal main-process shutdown would leave the sidecar as an
  * orphan holding port 8384. These tests pin the mitigations in place so a
  * future refactor cannot silently regress them.
+ *
+ * The platform under test is passed via the `SidecarOptions.platform`
+ * field rather than by mutating `process.platform` — see the
+ * file-scope `beforeAll`/`afterAll` for rationale.
  */
 describe("ModelSidecar lifecycle (POSIX detached spawn)", () => {
-  const originalPlatform = process.platform;
-
   // We need to mock child_process.spawn before importing the module so the
   // class picks up our fake spawn. Use dynamic imports inside each test.
   let spawnMock: Mock;
@@ -85,7 +135,6 @@ describe("ModelSidecar lifecycle (POSIX detached spawn)", () => {
     // would never run because the static `import { spawn }` at the top of
     // sidecar.ts was resolved during the previous suite's evaluation.
     vi.resetModules();
-    Object.defineProperty(process, "platform", { value: "linux" });
     const emitter = new EventEmitter();
     fakeChild = Object.assign(emitter, {
       pid: 99999,
@@ -104,14 +153,16 @@ describe("ModelSidecar lifecycle (POSIX detached spawn)", () => {
   });
 
   afterEach(() => {
-    Object.defineProperty(process, "platform", { value: originalPlatform });
     vi.doUnmock("child_process");
     vi.resetModules();
   });
 
   it("calls unref() on the detached child so Node's event loop is not pinned by it", async () => {
     const { ModelSidecar } = await import("../sidecar");
-    const sidecar = new ModelSidecar({ modelPath: "/tmp/model.gguf" });
+    const sidecar = new ModelSidecar({
+      modelPath: "/tmp/model.gguf",
+      platform: "linux",
+    });
     await sidecar.start();
     expect(spawnMock).toHaveBeenCalledTimes(1);
     expect(fakeChild.unref).toHaveBeenCalledTimes(1);
@@ -123,7 +174,10 @@ describe("ModelSidecar lifecycle (POSIX detached spawn)", () => {
 
   it("registers a synchronous process.on('exit') handler that kills the child process group", async () => {
     const { ModelSidecar } = await import("../sidecar");
-    const sidecar = new ModelSidecar({ modelPath: "/tmp/model.gguf" });
+    const sidecar = new ModelSidecar({
+      modelPath: "/tmp/model.gguf",
+      platform: "linux",
+    });
 
     const exitListenersBefore = process.listenerCount("exit");
     await sidecar.start();
@@ -155,7 +209,10 @@ describe("ModelSidecar lifecycle (POSIX detached spawn)", () => {
 
   it("removes the exit handler when stop() runs cleanly so it cannot fire after a normal shutdown", async () => {
     const { ModelSidecar } = await import("../sidecar");
-    const sidecar = new ModelSidecar({ modelPath: "/tmp/model.gguf" });
+    const sidecar = new ModelSidecar({
+      modelPath: "/tmp/model.gguf",
+      platform: "linux",
+    });
 
     const exitListenersBefore = process.listenerCount("exit");
     await sidecar.start();
@@ -182,7 +239,10 @@ describe("ModelSidecar lifecycle (POSIX detached spawn)", () => {
     // here because we only spawn once, but the assertion guards
     // the cleanup contract.
     const { ModelSidecar } = await import("../sidecar");
-    const sidecar = new ModelSidecar({ modelPath: "/tmp/model.gguf" });
+    const sidecar = new ModelSidecar({
+      modelPath: "/tmp/model.gguf",
+      platform: "linux",
+    });
 
     const exitListenersBefore = process.listenerCount("exit");
     await sidecar.start();
@@ -197,9 +257,11 @@ describe("ModelSidecar lifecycle (POSIX detached spawn)", () => {
   });
 
   it("does not register the unref/exit-handler pair on Windows (no detached spawn)", async () => {
-    Object.defineProperty(process, "platform", { value: "win32" });
     const { ModelSidecar } = await import("../sidecar");
-    const sidecar = new ModelSidecar({ modelPath: "/tmp/model.gguf" });
+    const sidecar = new ModelSidecar({
+      modelPath: "/tmp/model.gguf",
+      platform: "win32",
+    });
 
     const exitListenersBefore = process.listenerCount("exit");
     await sidecar.start();
@@ -225,9 +287,11 @@ describe("ModelSidecar lifecycle (POSIX detached spawn)", () => {
  * The tests mock `globalThis.fetch` so they don't require a real
  * HTTP listener (the spawn mock from the parent describe block
  * already prevents any real sidecar process from starting).
+ *
+ * Platform is passed via `SidecarOptions.platform` rather than
+ * by mutating `process.platform`.
  */
 describe("ModelSidecar.waitForReady (HTTP listener readiness gate)", () => {
-  const originalPlatform = process.platform;
   const originalFetch = globalThis.fetch;
   let spawnMock: Mock;
   let fakeChild: EventEmitter & {
@@ -238,7 +302,6 @@ describe("ModelSidecar.waitForReady (HTTP listener readiness gate)", () => {
 
   beforeEach(() => {
     vi.resetModules();
-    Object.defineProperty(process, "platform", { value: "linux" });
     const emitter = new EventEmitter();
     fakeChild = Object.assign(emitter, {
       pid: 88888,
@@ -257,7 +320,6 @@ describe("ModelSidecar.waitForReady (HTTP listener readiness gate)", () => {
   });
 
   afterEach(() => {
-    Object.defineProperty(process, "platform", { value: originalPlatform });
     vi.doUnmock("child_process");
     vi.resetModules();
     globalThis.fetch = originalFetch;
@@ -268,6 +330,7 @@ describe("ModelSidecar.waitForReady (HTTP listener readiness gate)", () => {
     const sidecar = new ModelSidecar({
       modelPath: "/tmp/model.gguf",
       healthCheckIntervalMs: 100,
+      platform: "linux",
     });
     await sidecar.start();
 
@@ -292,6 +355,7 @@ describe("ModelSidecar.waitForReady (HTTP listener readiness gate)", () => {
     const sidecar = new ModelSidecar({
       modelPath: "/tmp/model.gguf",
       healthCheckIntervalMs: 50,
+      platform: "linux",
     });
     await sidecar.start();
 
@@ -316,6 +380,7 @@ describe("ModelSidecar.waitForReady (HTTP listener readiness gate)", () => {
     const sidecar = new ModelSidecar({
       modelPath: "/tmp/model.gguf",
       healthCheckIntervalMs: 30,
+      platform: "linux",
     });
     await sidecar.start();
 
@@ -336,7 +401,10 @@ describe("ModelSidecar.waitForReady (HTTP listener readiness gate)", () => {
 
   it("returns false immediately when the sidecar isn't running", async () => {
     const { ModelSidecar } = await import("../sidecar");
-    const sidecar = new ModelSidecar({ modelPath: "/tmp/model.gguf" });
+    const sidecar = new ModelSidecar({
+      modelPath: "/tmp/model.gguf",
+      platform: "linux",
+    });
     const ready = await sidecar.waitForReady(5_000);
     expect(ready).toBe(false);
   });

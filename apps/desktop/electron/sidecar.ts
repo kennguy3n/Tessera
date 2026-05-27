@@ -30,9 +30,29 @@ export interface SidecarOptions {
    * output. Free-form; never parsed.
    */
   label: string;
+  /**
+   * Platform the sidecar should target for spawn-options shape
+   * (`detached`, POSIX-vs-Windows process-group signalling, the
+   * synchronous `exit` SIGKILL fallback). Defaults to
+   * `process.platform` so production code is unchanged; exposed as
+   * an option so tests can pin per-platform behaviour deterministically
+   * WITHOUT mutating `process.platform` via `Object.defineProperty`
+   * (the mutation pattern is safe under the default vitest worker
+   * model but breaks under `--pool=threads` with shared worker pools).
+   * Per Devin Review PR #55 Finding 6 follow-up.
+   */
+  platform: NodeJS.Platform;
 }
 
-const DEFAULT_OPTIONS: SidecarOptions = {
+/**
+ * `platform` is excluded from this module-scope default because
+ * `process.platform` is itself a process-level immutable value
+ * (Node freezes it at startup); the per-instance default is
+ * computed inside the constructor so the type system enforces
+ * `SidecarOptions.platform` being present on every constructed
+ * `ModelSidecar` even though callers omit it.
+ */
+const DEFAULT_OPTIONS: Omit<SidecarOptions, "platform"> = {
   binaryPath: "llama-server",
   modelPath: "",
   port: 8384,
@@ -51,12 +71,18 @@ const STARTUP_GRACE_MS = 60_000;
  * directory to LD_LIBRARY_PATH so the dynamic linker finds them. macOS uses
  * @loader_path-relative install names and Windows uses the binary directory as
  * a DLL search path automatically, so no extra env is needed there.
+ *
+ * Accepts an optional `platform` parameter so tests can pin each branch
+ * deterministically WITHOUT mutating `process.platform` via
+ * `Object.defineProperty`. Production callers omit it and read from
+ * `process.platform`. Per Devin Review PR #55 Finding 6 follow-up.
  */
 export function buildSpawnEnv(
   binaryPath: string,
   baseEnv: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
-  if (process.platform !== "linux") return { ...baseEnv };
+  if (platform !== "linux") return { ...baseEnv };
   const binaryDir = path.dirname(binaryPath);
   const existing = baseEnv.LD_LIBRARY_PATH ?? "";
   const ldLibraryPath = existing ? `${binaryDir}:${existing}` : binaryDir;
@@ -78,7 +104,17 @@ export class ModelSidecar {
   private crashCleanupHandler: (() => void) | null = null;
 
   constructor(options: Partial<SidecarOptions> = {}) {
-    this.options = { ...DEFAULT_OPTIONS, ...options };
+    // `platform` defaults to the live `process.platform` at construction
+    // time. Production code constructs sidecars once at app startup so
+    // capturing it here is observationally identical to reading it
+    // lazily on every `start()` call. Tests inject a fixed `platform`
+    // via `options` to pin per-platform behaviour without process-level
+    // mutation. Per Devin Review PR #55 Finding 6 follow-up.
+    this.options = {
+      ...DEFAULT_OPTIONS,
+      platform: process.platform,
+      ...options,
+    };
   }
 
   get isRunning(): boolean {
@@ -132,10 +168,14 @@ export class ModelSidecar {
     }
 
     const spawnOpts: SpawnOptions = {
-      env: buildSpawnEnv(this.options.binaryPath),
+      env: buildSpawnEnv(
+        this.options.binaryPath,
+        process.env,
+        this.options.platform,
+      ),
       // Detach on POSIX so we can deliver SIGTERM/SIGKILL to the whole process
       // group; on Windows leave the default tied to the parent.
-      detached: process.platform !== "win32",
+      detached: this.options.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     };
     // Core arg triple comes first so any --model / --port / --host the
@@ -177,7 +217,7 @@ export class ModelSidecar {
     //      tearing down and we just need the child reaped, not gracefully
     //      shut down. The normal `stop()` path runs *before* 'exit' fires
     //      and clears the handler so we never double-signal.
-    if (process.platform !== "win32" && typeof this.process.pid === "number") {
+    if (this.options.platform !== "win32" && typeof this.process.pid === "number") {
       this.process.unref();
       const pid = this.process.pid;
       const handler = () => {
@@ -248,10 +288,16 @@ export class ModelSidecar {
     this.stopIdleMonitor();
 
     if (this.process) {
-      sendSignal(this.process, process.platform === "win32" ? "SIGKILL" : "SIGTERM");
+      sendSignal(
+        this.process,
+        this.options.platform === "win32" ? "SIGKILL" : "SIGTERM",
+        this.options.platform,
+      );
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
-          if (this.process) sendSignal(this.process, "SIGKILL");
+          if (this.process) {
+            sendSignal(this.process, "SIGKILL", this.options.platform);
+          }
           resolve();
         }, 5000);
         if (this.process) {
@@ -389,12 +435,19 @@ export class ModelSidecar {
  * Send a signal to a child process. On POSIX we deliver to the negative pid
  * to reach the whole process group (since we spawned with detached:true);
  * on Windows the signal name is ignored and the process is terminated.
+ *
+ * Accepts an optional `platform` parameter so callers (notably
+ * `ModelSidecar`) can route the signal based on the platform the
+ * sidecar was constructed for rather than the live `process.platform`,
+ * which lets tests inject a per-instance platform without mutating
+ * globals. Per Devin Review PR #55 Finding 6 follow-up.
  */
 function sendSignal(
   child: ChildProcess,
   signal: NodeJS.Signals,
+  platform: NodeJS.Platform = process.platform,
 ): void {
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     try {
       child.kill();
     } catch {
