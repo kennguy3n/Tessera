@@ -81,12 +81,35 @@ export interface ShareArtifactResponse {
   permalink: string | null;
 }
 
-/** Standard error envelope for non-2xx responses. */
+/**
+ * Standard error envelope for non-2xx responses.
+ *
+ * Wire codes (mirror of the canonical `LocalApiErrorCode` in
+ * `apps/desktop/electron/kchat/kchatLocalApi.ts` — both must stay in
+ * sync):
+ *
+ *   - `unauthorized`        → 401. Bearer token missing or wrong.
+ *   - `forbidden`           → 403. Token is fine, but the request is
+ *                              rejected on a separate policy grounds
+ *                              (currently: non-loopback `Host`
+ *                              header). The extension MUST NOT retry
+ *                              after a 403/`forbidden` — the request
+ *                              is structurally blocked, not stale.
+ *                              A 401/`unauthorized`, in contrast, is
+ *                              a "refresh the port file and retry"
+ *                              signal.
+ *   - `invalid_request`     → 400. Malformed payload, headers, URL.
+ *   - `not_found`           → 404. Unknown route or resource.
+ *   - `rate_limited`        → 429. (Reserved; not currently emitted.)
+ *   - `internal_error`      → 500. Uncaught handler exception.
+ *   - `tessera_unavailable` → 503. Handler slot not wired yet.
+ */
 export interface TesseraLocalApiError {
   error: string;
   /** Machine-readable code so the extension can branch UX on it. */
   code:
     | "unauthorized"
+    | "forbidden"
     | "invalid_request"
     | "not_found"
     | "rate_limited"

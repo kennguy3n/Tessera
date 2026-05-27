@@ -243,7 +243,7 @@ describe("KchatLocalApiServer — auth + Host header policy", () => {
     expect(body.code).toBe("unauthorized");
   });
 
-  it("rejects requests with a non-loopback Host header", async () => {
+  it("rejects requests with a non-loopback Host header (403 + 'forbidden' code)", async () => {
     const { handlers } = makeHandlers();
     running = await startServer(handlers);
     // Bypass `fetch`'s automatic Host computation by going
@@ -270,7 +270,23 @@ describe("KchatLocalApiServer — auth + Host header policy", () => {
         ].join("\r\n"),
       );
     });
+    // Phase 14 Round 6 Devin Review ANALYSIS_0005: the DNS-rebinding
+    // defence must surface as HTTP 403 `forbidden`, not 403
+    // `unauthorized`. The wire-code distinction is load-bearing for
+    // the .kcz extension's retry logic: a 401/`unauthorized` is a
+    // refresh-port-file-and-retry signal, a 403/`forbidden` is a
+    // do-not-retry signal. Pinning both the status line and the body
+    // code prevents a future change from putting them back out of
+    // sync.
     expect(reply.startsWith("HTTP/1.1 403")).toBe(true);
+    const bodyStart = reply.indexOf("\r\n\r\n");
+    expect(bodyStart).toBeGreaterThan(0);
+    const body = JSON.parse(reply.slice(bodyStart + 4)) as {
+      code: string;
+      error: string;
+    };
+    expect(body.code).toBe("forbidden");
+    expect(body.error).toMatch(/Host header .* is not loopback/);
   });
 
   it("accepts a request with the correct token and updates the heartbeat", async () => {

@@ -105,6 +105,37 @@ describe("KchatSettingsCard", () => {
     ).toBeNull();
   });
 
+  it("does not poll desktopBridgeStatus when the feature is disabled", async () => {
+    // Phase 14 Round 6 Devin Review ANALYSIS_0004: the bridge-status
+    // poll previously fired even when `kchat.isAvailable()` returned
+    // false (and the component rendered null), creating IPC traffic
+    // with no visible consumer. The fix gates the polling effect on
+    // `available === true` so the IPC heartbeat stops alongside the
+    // rendering. The IPC call is individually cheap (single
+    // in-memory read in the main process), but the structural fix
+    // makes the gating contract consistent with the status / teams
+    // effects in the same component and prevents idle CPU drift in
+    // builds that ship with the feature flag off.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = makeApi({
+      isAvailable: vi.fn().mockResolvedValue(false),
+    });
+    const { container } = wrap(<KchatSettingsCard api={api} />);
+    await waitFor(() => expect(api.isAvailable).toHaveBeenCalled());
+    expect(
+      container.querySelector('[data-testid="kchat-settings-card"]'),
+    ).toBeNull();
+    // Even after the feature-gate check has resolved, the poll
+    // effect must not have run because `available === false`.
+    expect(api.desktopBridgeStatus).not.toHaveBeenCalled();
+    // Advance the bridge-status poll cadence (the `setInterval`
+    // tick is 10 s; advance well beyond it). The gated effect
+    // should still produce zero calls — the component is rendered
+    // null, so an idle IPC heartbeat here is pure waste.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(api.desktopBridgeStatus).not.toHaveBeenCalled();
+  });
+
   it("renders the disconnected card with Server URL + token inputs", async () => {
     const api = makeApi();
     wrap(<KchatSettingsCard api={api} />);

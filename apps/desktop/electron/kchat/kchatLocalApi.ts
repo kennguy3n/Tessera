@@ -118,8 +118,37 @@ export interface ShareArtifactResponse {
   permalink: string | null;
 }
 
+/**
+ * Wire-level error codes returned in the JSON body of every non-2xx
+ * response. Each code is paired with a single canonical HTTP status:
+ *
+ *   - `unauthorized`        → 401. The bearer token is missing or
+ *                              does not match. RFC 9110 §15.5.2.
+ *   - `forbidden`           → 403. The bearer token is fine, but the
+ *                              request is rejected on a separate
+ *                              policy grounds (currently: the `Host`
+ *                              header is not loopback, which is a
+ *                              DNS-rebinding defence). RFC 9110
+ *                              §15.5.4.
+ *   - `invalid_request`     → 400. The request payload, headers, or
+ *                              URL is malformed.
+ *   - `not_found`           → 404. The route does not exist or the
+ *                              referenced resource is unknown.
+ *   - `rate_limited`        → 429. (Reserved; not currently emitted.)
+ *   - `internal_error`      → 500. Uncaught exception in a handler.
+ *   - `tessera_unavailable` → 503. A handler slot has not been wired
+ *                              yet (e.g. Tessera is starting up or
+ *                              the orchestrator has not registered
+ *                              its concrete handlers).
+ *
+ * The split between `unauthorized` (401) and `forbidden` (403) is
+ * load-bearing: the .kcz extension may legitimately treat a 401 as
+ * "my token is stale, refresh the port file" but must treat a 403
+ * as "the host rejected this request on policy grounds; do not retry".
+ */
 export type LocalApiErrorCode =
   | "unauthorized"
+  | "forbidden"
   | "invalid_request"
   | "not_found"
   | "rate_limited"
@@ -419,11 +448,21 @@ export class KchatLocalApiServer {
     // that swing a public hostname onto loopback. The bound port is
     // not enforced here — multiple bound ports across restarts share
     // the same security posture.
+    //
+    // The wire-format error code is `forbidden`, not `unauthorized`:
+    // the request HAS a bearer token (or could acquire one), but is
+    // rejected on a separate policy grounds (the Host header). The
+    // distinction matters for the .kcz extension's retry logic — a
+    // 401 `unauthorized` is a "refresh the port file and retry"
+    // signal, whereas a 403 `forbidden` is a "this transport is
+    // structurally blocked; do not retry". Aligning the HTTP status
+    // and the error code keeps that signal coherent (see
+    // `LocalApiErrorCode` jsdoc above for the canonical mapping).
     const match = /^127\.0\.0\.1(?::(\d+))?$/.exec(host);
     if (!match) {
       throw new LocalApiError(
         403,
-        "unauthorized",
+        "forbidden",
         `Host header ${JSON.stringify(host)} is not loopback`,
       );
     }

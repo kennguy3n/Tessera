@@ -160,8 +160,20 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
   // without a Settings remount. The poll is cheap (a single IPC
   // round-trip into the main process); the interval is generous
   // (10 s) to keep idle CPU near zero.
+  //
+  // Phase 14 Round 6 Devin Review ANALYSIS_0004: the poll is gated on
+  // `available === true` in addition to `kchat` being present, so the
+  // effect does not fire IPC calls when the renderer-side feature
+  // flag (`kchat.isAvailable()`) is off and the component renders
+  // null. This matches the gating on the status / teams effects
+  // elsewhere in this component — without it, a build that ships
+  // with `available === false` would still pay the cost of a 10 s
+  // IPC heartbeat with no consumer rendering the result. The IPC
+  // round-trip is cheap individually, but consistency-of-gating is
+  // a clearer contract for future readers than "this one effect is
+  // special".
   useEffect(() => {
-    if (!kchat) return;
+    if (!kchat || !available) return;
     let cancelled = false;
     const pull = async () => {
       try {
@@ -186,7 +198,7 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
       cancelled = true;
       window.clearInterval(handle);
     };
-  }, [kchat]);
+  }, [kchat, available]);
 
   // Once connected, hydrate the team list so the default-team
   // selector can render.
