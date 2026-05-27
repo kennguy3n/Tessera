@@ -492,7 +492,7 @@ Theme 5 — Remaining polish
 
 ## Phase changelog
 
-### 2026-05-27 — Phase 13 Theme 3 (PR #53)
+### 2026-05-27 — Phase 13 Theme 3 (PR #53, merged 19:32 UTC+7)
 
 - **Task 14** — AEAD full-lifecycle round-trip integration tests on
   `tessera_sources::manager`: ingest → DEK wrap → ciphertext → decrypt →
@@ -532,7 +532,7 @@ Theme 5 — Remaining polish
   silently unreachable from renderer" failure mode that the
   bidirectional master-list assertion alone cannot detect.
 
-### 2026-05-26 — Phase 13 Theme 2 (PR #52)
+### 2026-05-27 — Phase 13 Theme 2 (PR #52, merged 17:12 UTC+7)
 
 - **Task 9** — KChat post citation name enrichment: `CitationPanel`
   resolves `#channel @sender` for every post hit via two module-scoped
@@ -563,7 +563,7 @@ Theme 5 — Remaining polish
   enrichment reuses the shared LRUs); up-to-3 parent messages surface
   on threaded hits.
 
-### 2026-05-25 — Phase 13 Theme 1 (PR #51)
+### 2026-05-27 — Phase 13 Theme 1 (PR #51, merged 11:48 UTC+7)
 
 - **Task 1** — `kchatExtensionBridge.ts`: IPC-based discovery
   protocol, per-platform handshake socket (Linux `$XDG_RUNTIME_DIR`,
@@ -598,7 +598,7 @@ Theme 5 — Remaining polish
   SSRF, refresh-failure invalidation, stale-authMode push regression
   (4 shutdown sites covered).
 
-### 2026-05-27 — Phase 13 opens
+### 2026-05-27 — Phase 13 opens (start of session)
 
 - Recovered `PROGRESS.md` and `PHASES.md` from `phase10-final-docs-close`
   baseline (Phase 10 → DONE) and brought them forward with the actual
