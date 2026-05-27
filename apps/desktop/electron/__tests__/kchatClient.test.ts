@@ -937,6 +937,65 @@ describe("KchatClient server-id validation at deserialisation boundary", () => {
       c.listChannelFiles("chid0000000000000000abcd", 0, 60),
     ).rejects.toThrow(/not a valid KChat object id/);
   });
+
+  // -------------------------------------------------------------
+  // Phase 13 Theme 2 Task 11: `listChannelFiles` now also
+  // validates `fi.user_id` at the deserialisation boundary
+  // because the renderer-facing file preview surfaces the
+  // uploader (post-sanitisation) and feeds the id through the
+  // shared `getUsersByIds` enrichment path. A substrate that
+  // returns a well-formed file id but a malformed user id must
+  // be rejected — otherwise the username cache could be poisoned
+  // with a key like `../etc/passwd` and `getUsersByIds(["../"])`
+  // would throw a generic shape error mid-batch, suppressing the
+  // valid rows' enrichment.
+  // -------------------------------------------------------------
+  it("listChannelFiles rejects files with a malformed user_id (Phase 13 Theme 2 Task 11)", async () => {
+    const filesResp = ok([
+      {
+        // Valid file id (26-char lowercase alphanumeric).
+        id: "f".repeat(26),
+        // Malformed user id — short + containing a separator.
+        user_id: "u/evil",
+        channel_id: "c".repeat(26),
+        name: "report.pdf",
+        size: 1,
+        mime_type: "application/pdf",
+        extension: "pdf",
+        create_at: 0,
+        update_at: 0,
+      },
+    ]);
+    const { fn: fetchFn } = makeFetch([filesResp]);
+    const c = buildClient({ fetchFn, rateLimiter: freshLimiter() });
+    c.setToken("PAT");
+    await expect(
+      c.listChannelFiles("chid0000000000000000abcd", 0, 60),
+    ).rejects.toThrow(/fileInfo\.user_id.*not a valid KChat object id/);
+  });
+
+  it("getFileInfo rejects a malformed user_id (Phase 13 Theme 2 Task 11)", async () => {
+    const fileResp = ok({
+      // Valid file id (the validator the request URL went
+      // through enforces this at the caller boundary too).
+      id: "f".repeat(26),
+      // Malformed user id at the deserialisation boundary.
+      user_id: "u",
+      channel_id: "c".repeat(26),
+      name: "report.pdf",
+      size: 1,
+      mime_type: "application/pdf",
+      extension: "pdf",
+      create_at: 0,
+      update_at: 0,
+    });
+    const { fn: fetchFn } = makeFetch([fileResp]);
+    const c = buildClient({ fetchFn, rateLimiter: freshLimiter() });
+    c.setToken("PAT");
+    await expect(c.getFileInfo("f".repeat(26))).rejects.toThrow(
+      /fileInfo\.user_id.*not a valid KChat object id/,
+    );
+  });
 });
 
 describe("KchatClient health check teardown invariants", () => {

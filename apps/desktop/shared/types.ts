@@ -1850,11 +1850,30 @@ export interface KchatChannelMemberView {
 /** Sanitised KChat file metadata. */
 export interface KchatFileView {
   id: string;
+  /**
+   * Uploader's KChat user id. Surfaced to the renderer so the
+   * "channel files" preview can show *who* uploaded each file
+   * (Phase 13 Theme 2 Task 11). The id is validated against the
+   * KChat object-id shape at the client/deserialisation boundary
+   * inside `KchatClient.listChannelFiles`, so the renderer can
+   * trust it as opaque-but-shape-valid.
+   */
+  user_id: string;
   name: string;
   size: number;
   mime_type: string;
   extension: string;
   create_at: number;
+  /**
+   * Resolved uploader username (Phase 13 Theme 2 Task 11). The
+   * IPC layer enriches this field via the existing module-level
+   * `KCHAT_USERNAME_CACHE` + `getUsersByIds()` path the citation
+   * enrichment uses. `null` when the enrichment couldn't resolve
+   * the id (transient REST failure, disconnected state, server
+   * elided the user from the response). The renderer must
+   * tolerate `null` and fall back to the raw `user_id`.
+   */
+  uploaderUsername: string | null;
 }
 
 /**

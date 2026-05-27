@@ -82,11 +82,22 @@ type RendererChannelMember = Pick<
   "channel_id" | "user_id" | "roles"
 >;
 
-/** Subset of `KchatFileInfo` the renderer is allowed to read. */
+/**
+ * Subset of `KchatFileInfo` the renderer is allowed to read,
+ * extended with the resolved uploader name (Phase 13 Theme 2
+ * Task 11). The `user_id` lives here because the renderer needs
+ * to render `@user_id` as a stable fallback when enrichment
+ * doesn't resolve `uploaderUsername`. The full `update_at` /
+ * `delete_at` / `channel_id` / `post_id` columns on the wire
+ * format stay stripped — the file preview only needs upload
+ * provenance, not the full mutation history.
+ */
 type RendererFileInfo = Pick<
   KchatFileInfo,
-  "id" | "name" | "size" | "mime_type" | "extension" | "create_at"
->;
+  "id" | "user_id" | "name" | "size" | "mime_type" | "extension" | "create_at"
+> & {
+  uploaderUsername: string | null;
+};
 
 // `KchatChannelManifest` + `manifestPathFor` + `readManifest` +
 // `writeManifest` live in `../kchat/kchatChannelSyncer` so the
@@ -138,11 +149,23 @@ function sanitizeMember(m: KchatChannelMember): RendererChannelMember {
 function sanitizeFile(f: KchatFileInfo): RendererFileInfo {
   return {
     id: f.id,
+    // Phase 13 Theme 2 Task 11: surface uploader id (validated at
+    // the deserialisation boundary inside
+    // `KchatClient.listChannelFiles`) so the renderer's file
+    // preview can show "uploaded by @username" with a graceful
+    // raw-id fallback when enrichment doesn't resolve in time.
+    user_id: f.user_id,
     name: f.name,
     size: f.size,
     mime_type: f.mime_type,
     extension: f.extension,
     create_at: f.create_at,
+    // Phase 13 Theme 2 Task 11: initialise to `null` so the wire
+    // shape is well-formed even when the IPC handler skips
+    // enrichment (zero files, disconnected state, transient
+    // failure). The handler fills this in via the shared
+    // `populateKchatUsernameCache` path below.
+    uploaderUsername: null,
   };
 }
 
@@ -383,6 +406,111 @@ let KCHAT_STATUS_LISTENER_INSTALLED = false;
 let KCHAT_STATUS_LISTENER_UNSUBSCRIBE: (() => void) | null = null;
 
 /**
+ * Phase 13 Theme 2 Task 11: shared user-id bulk lookup helper.
+ * Extracted from `enrichKchatPostHits` so both the search
+ * enrichment path AND the file-list enrichment path land on the
+ * exact same cache-population shape (empty-set short-circuit,
+ * best-effort error swallow, single REST round-trip per call).
+ *
+ * Mutates only the module-level `KCHAT_USERNAME_CACHE`; the
+ * call site is responsible for the post-population read-back
+ * pass and for collecting the `missingIds` set in the first
+ * place. Always returns a resolved promise — errors are
+ * swallowed because every caller treats username resolution as
+ * best-effort (renderer falls back to the raw user id).
+ *
+ * Performance note: callers are expected to deduplicate ids
+ * before invoking this helper (the bulk REST endpoint accepts a
+ * deduplicated list and the cache is module-scoped, so passing
+ * the same id twice would only waste bytes on the request
+ * payload). The helper itself does not de-duplicate — doing so
+ * would force every caller to allocate a `Set` even when it
+ * already has one, defeating the point of a shared helper.
+ */
+async function populateKchatUsernameCache(
+  client: ReturnType<ReturnType<typeof getKchatAuthService>["getClient"]>,
+  missingIds: ReadonlySet<string>,
+): Promise<void> {
+  if (missingIds.size === 0) return;
+  try {
+    const users = await client.getUsersByIds(Array.from(missingIds));
+    for (const u of users) {
+      KCHAT_USERNAME_CACHE.set(u.id, u.username);
+    }
+  } catch {
+    // Intentional: leave un-resolved ids as `null`; the renderer
+    // falls back to displaying the raw id. Documented best-effort
+    // contract — a transient REST failure must not hide a hit /
+    // file from the user.
+  }
+}
+
+/**
+ * Phase 13 Theme 2 Task 11: enrich a list of renderer-facing
+ * file views with `uploaderUsername`. Mutates the input array's
+ * elements in-place.
+ *
+ * Used by `kchat:listChannelFiles` so the channel-files preview
+ * in `KchatChannelSourcePicker` can render "uploaded by
+ * @alice" alongside size / type / date. The shape mirrors
+ * `enrichKchatPostHits` (collect missing ids → bulk lookup →
+ * second-pass read-back) but is intentionally a separate
+ * function because the input shape is different (files have one
+ * id-to-resolve, search hits have two) and bundling them would
+ * have forced both call sites through a generic with awkward
+ * type plumbing.
+ *
+ * Performance shape: the picker's preview window pages 50 files
+ * at a time. Even in the worst case (50 distinct uploaders) the
+ * deduplicated bulk lookup is a single `POST /users/ids` round
+ * trip; the cache then absorbs subsequent picker renders for the
+ * lifetime of the connection.
+ *
+ * Failure mode: any failure to resolve a username leaves the
+ * file's `uploaderUsername` as `null`. The renderer falls back
+ * to the raw user id, which always passes the
+ * `assertKchatServerObjectId` boundary check in
+ * `listChannelFiles` — so the fallback path is always safe to
+ * render.
+ */
+async function enrichKchatFileViews(
+  files: RendererFileInfo[],
+  client: ReturnType<ReturnType<typeof getKchatAuthService>["getClient"]>,
+): Promise<void> {
+  // First pass: serve from cache, collect cache-misses.
+  //
+  // Symmetric with `enrichKchatPostHits`: only ids that pass
+  // `isKchatObjectId` enter the network request set, so a
+  // substrate-corrupted row that slipped past the deserialisation
+  // boundary (e.g. a future server-side bug that lets through a
+  // mixed-case id) cannot suppress enrichment for the entire
+  // batch via a thrown `assertKchatServerObjectId` inside
+  // `getUsersByIds`.
+  const missingUserIds = new Set<string>();
+  for (const f of files) {
+    const cached = KCHAT_USERNAME_CACHE.get(f.user_id);
+    if (cached !== null) {
+      f.uploaderUsername = cached;
+    } else if (isKchatObjectId(f.user_id)) {
+      missingUserIds.add(f.user_id);
+    }
+  }
+
+  await populateKchatUsernameCache(client, missingUserIds);
+
+  // Second pass: apply newly-cached values to files that were
+  // missing in the first pass. A file whose id never made it
+  // into the bulk lookup (failed `isKchatObjectId`) or whose
+  // username didn't come back in the server response keeps the
+  // `null` value initialised in `sanitizeFile`.
+  for (const f of files) {
+    if (f.uploaderUsername === null) {
+      f.uploaderUsername = KCHAT_USERNAME_CACHE.get(f.user_id);
+    }
+  }
+}
+
+/**
  * Phase 13 Theme 2 Task 9: enrich a list of post-hits with the
  * sender username and channel display name. Mutates the input
  * array's elements in-place.
@@ -442,22 +570,18 @@ async function enrichKchatPostHits(
   //    per-call error isolation (an inner try / `allSettled`)
   //    so one failing branch never suppresses the other's
   //    successful enrichments.
-  const userTask: Promise<void> =
-    missingUserIds.size > 0
-      ? (async () => {
-          try {
-            const users = await client.getUsersByIds(
-              Array.from(missingUserIds),
-            );
-            for (const u of users) {
-              KCHAT_USERNAME_CACHE.set(u.id, u.username);
-            }
-          } catch {
-            // Intentional: leave un-resolved ids as `null`; the
-            // renderer falls back to displaying the raw id.
-          }
-        })()
-      : Promise.resolve();
+  // The username branch is now delegated to the shared
+  // `populateKchatUsernameCache` helper so the post-hits path
+  // and the file-list enrichment path share one canonical
+  // implementation of "dedupe → bulk fetch → populate cache →
+  // swallow errors". Keeping the wrapper here preserves the
+  // concurrent fan-out semantics (`userTask` || `channelTask`)
+  // and the catch-then-empty-resolve guarantee the
+  // `Promise.all` below depends on.
+  const userTask: Promise<void> = populateKchatUsernameCache(
+    client,
+    missingUserIds,
+  );
 
   const channelTask: Promise<void> =
     missingChannelIds.size > 0
@@ -861,8 +985,40 @@ export function registerKchatHandlers(): void {
         : assertNumber(perPage, "perPage", { integer: true, min: 1, max: 200 });
       const svc = getKchatAuthService();
       try {
-        const files = await svc.getClient().listChannelFiles(id, p, per);
-        return files.map(sanitizeFile);
+        const client = svc.getClient();
+        const rawFiles = await client.listChannelFiles(id, p, per);
+        const files = rawFiles.map(sanitizeFile);
+
+        // Phase 13 Theme 2 Task 11: enrich each file with the
+        // uploader username so the renderer's file preview can
+        // render `@alice` instead of the raw 26-char user id.
+        //
+        // The enrichment is gated on a `connected` state for the
+        // same reason `enrichKchatPostHits` is: a transitional
+        // state's `getClient()` can hand back a client whose
+        // token has just been cleared, and the bulk-lookup REST
+        // call would 401 — that 401 would be caught by
+        // `populateKchatUsernameCache`'s catch (correctly,
+        // best-effort), but it would also waste a rate-limit
+        // token and surface an audit-log warning every time the
+        // picker is opened mid-handshake. Skipping the call
+        // entirely when state isn't `connected` is the cheap
+        // correct shape; the renderer's raw-id fallback handles
+        // the resulting `null` uploaderUsername without surfacing
+        // anything user-visible.
+        if (files.length > 0 && svc.getState().state === "connected") {
+          try {
+            await enrichKchatFileViews(files, client);
+          } catch {
+            // Defence-in-depth: enrichment is best-effort. Any
+            // unexpected throw (cache-implementation invariant,
+            // future instrumentation) must NOT prevent the file
+            // list from reaching the renderer. The fallback
+            // `uploaderUsername: null` initialised in
+            // `sanitizeFile` keeps the wire shape correct.
+          }
+        }
+        return files;
       } catch (err) {
         throw toIpcError(err);
       }

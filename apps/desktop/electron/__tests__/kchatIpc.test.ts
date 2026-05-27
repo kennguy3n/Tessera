@@ -4108,3 +4108,300 @@ describe("kchat:backfillProgress — progress projection IPC", () => {
     expect(out.oldestFetched).toBeNull();
   });
 });
+
+// =====================================================================
+// Phase 13 Theme 2 Task 11 — `kchat:listChannelFiles` uploader
+// enrichment via the shared `KCHAT_USERNAME_CACHE` /
+// `getUsersByIds()` path the citation enrichment uses. The IPC
+// handler:
+//
+//   - Sanitises raw `KchatFileInfo` rows into `RendererFileInfo`
+//     (strips `update_at` / `delete_at` / `channel_id` / `post_id`).
+//   - Carries `user_id` forward as the cache-key fallback.
+//   - Initialises `uploaderUsername: null` so the wire shape is
+//     well-formed before enrichment runs.
+//   - Calls `enrichKchatFileViews(files, client)` ONLY when the
+//     service state is `connected` AND the file list is non-empty.
+//   - Swallows enrichment failures so a transient REST error never
+//     hides the file list from the renderer.
+//
+// These tests mirror the post-hit enrichment suite above and use
+// the same VALID KChat object-id constants so the
+// `assertCallerObjectId` / `isKchatObjectId` defence-in-depth
+// branches don't suppress the enrichment.
+// =====================================================================
+describe("kchat:listChannelFiles — uploader enrichment (Phase 13 Theme 2 Task 11)", () => {
+  // Reuse the 26-char object-id constants from the post-search
+  // suite by re-declaring them here. We intentionally do NOT
+  // import or share — the two suites' fixtures must be able to
+  // drift independently.
+  const VALID_FILE_USER_ID = "a".repeat(26);
+  const VALID_FILE_USER_ID_2 = "b".repeat(26);
+  const VALID_FILE_CHANNEL_ID = "e".repeat(26);
+
+  beforeEach(async () => {
+    // Reset rate limiter + the module-scoped name caches so the
+    // first test under this describe runs against a fresh state
+    // — matching the ANALYSIS_0003 reset shape installed in the
+    // top-level `beforeEach`. Redundant with the top-level reset
+    // but documents the invariant explicitly at the suite level.
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    defaultRateLimiter.reset();
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+    // Re-register so the status listener that
+    // `_resetKchatNameCachesForTest` tore down is installed again
+    // for the enrichment path. The top-level beforeEach already
+    // does this, but reset-then-register matches the failure mode
+    // we want to cover: a subsequent enrichment must always find
+    // an attached listener.
+    registerKchatHandlers();
+
+    // Default to a connected service state — the enrichment path
+    // is gated on this. Individual tests override when they need
+    // a different state.
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+  });
+
+  function makeFile(overrides: {
+    id: string;
+    user_id: string;
+    create_at?: number;
+    name?: string;
+    extension?: string;
+    mime_type?: string;
+    size?: number;
+  }) {
+    return {
+      id: overrides.id,
+      user_id: overrides.user_id,
+      channel_id: VALID_FILE_CHANNEL_ID,
+      name: overrides.name ?? `${overrides.id}.txt`,
+      extension: overrides.extension ?? "txt",
+      mime_type: overrides.mime_type ?? "text/plain",
+      size: overrides.size ?? 64,
+      create_at: overrides.create_at ?? 1700000000000,
+      update_at: 1700000000000,
+      delete_at: 0,
+      post_id: "p".repeat(26),
+    };
+  }
+
+  it("enriches each file with the uploader username via a single bulk lookup", async () => {
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "f".repeat(26), user_id: VALID_FILE_USER_ID }),
+      makeFile({ id: "g".repeat(26), user_id: VALID_FILE_USER_ID }),
+      makeFile({ id: "h".repeat(26), user_id: VALID_FILE_USER_ID_2 }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_FILE_USER_ID, username: "alice" },
+      { id: VALID_FILE_USER_ID_2, username: "bob" },
+    ]);
+
+    const out = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+
+    // Every file is sanitised + enriched.
+    expect(out).toHaveLength(3);
+    expect(out[0]).toMatchObject({
+      user_id: VALID_FILE_USER_ID,
+      uploaderUsername: "alice",
+    });
+    expect(out[1]).toMatchObject({
+      user_id: VALID_FILE_USER_ID,
+      uploaderUsername: "alice",
+    });
+    expect(out[2]).toMatchObject({
+      user_id: VALID_FILE_USER_ID_2,
+      uploaderUsername: "bob",
+    });
+
+    // The deduplicated id set is exactly two ids — the bulk
+    // endpoint is hit exactly once for the whole listing.
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+    const calledIds = clientMock.getUsersByIds.mock.calls[0][0] as string[];
+    expect(new Set(calledIds)).toEqual(
+      new Set([VALID_FILE_USER_ID, VALID_FILE_USER_ID_2]),
+    );
+  });
+
+  it("reuses the module-level cache across consecutive listings", async () => {
+    // First call populates the cache.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "f".repeat(26), user_id: VALID_FILE_USER_ID }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_FILE_USER_ID, username: "alice" },
+    ]);
+    await handler("kchat:listChannelFiles")(EVENT, VALID_FILE_CHANNEL_ID, 0, 50);
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+
+    // Second call resolves from cache — no second REST round trip.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "g".repeat(26), user_id: VALID_FILE_USER_ID }),
+    ]);
+    const out2 = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+    expect(out2[0]).toMatchObject({ uploaderUsername: "alice" });
+  });
+
+  it("skips the bulk lookup entirely when zero files are returned", async () => {
+    clientMock.listChannelFiles.mockResolvedValueOnce([]);
+    const out = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+    expect(out).toEqual([]);
+    // Important: enrichment must NOT consume a rate-limit token
+    // or hit the REST endpoint when there is nothing to enrich.
+    expect(clientMock.getUsersByIds).not.toHaveBeenCalled();
+  });
+
+  it("skips enrichment when the service is not connected", async () => {
+    serviceMock.getState.mockReturnValue({
+      state: "connecting",
+      serverUrl: "https://kchat.example.com",
+    });
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "f".repeat(26), user_id: VALID_FILE_USER_ID }),
+    ]);
+    const out = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(1);
+    // `user_id` carries through the sanitiser; `uploaderUsername`
+    // stays `null` so the renderer's raw-id fallback path is
+    // exercised.
+    expect(out[0]).toMatchObject({
+      user_id: VALID_FILE_USER_ID,
+      uploaderUsername: null,
+    });
+    expect(clientMock.getUsersByIds).not.toHaveBeenCalled();
+  });
+
+  it("leaves uploaderUsername null when the bulk lookup throws (best-effort posture)", async () => {
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "f".repeat(26), user_id: VALID_FILE_USER_ID }),
+    ]);
+    clientMock.getUsersByIds.mockRejectedValueOnce(
+      new Error("transient 503 from /users/ids"),
+    );
+
+    const out = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+
+    // The file list is still returned (best-effort enrichment
+    // never hides files from the renderer).
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      user_id: VALID_FILE_USER_ID,
+      uploaderUsername: null,
+    });
+  });
+
+  it("filters malformed user_id values out of the bulk request set", async () => {
+    // One valid id, one short id that fails `isKchatObjectId`.
+    // The malformed-id row keeps `uploaderUsername: null`; the
+    // valid-id row enriches normally. Critically the bulk
+    // endpoint MUST NOT be called with the malformed id — the
+    // entire bulk would otherwise throw from the per-id check
+    // inside `getUsersByIds` and suppress the valid row's
+    // enrichment.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "f".repeat(26), user_id: VALID_FILE_USER_ID }),
+      makeFile({ id: "g".repeat(26), user_id: "short" }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_FILE_USER_ID, username: "alice" },
+    ]);
+
+    const out = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out[0]).toMatchObject({ uploaderUsername: "alice" });
+    expect(out[1]).toMatchObject({ uploaderUsername: null });
+    // Bulk request set contains exactly the well-formed id.
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+    const called = clientMock.getUsersByIds.mock.calls[0][0] as string[];
+    expect(called).toEqual([VALID_FILE_USER_ID]);
+  });
+
+  it("leaves uploaderUsername null for files the bulk server response elided", async () => {
+    // Server returned only one of the two requested users — the
+    // unreturned id's row stays null (mirrors the citation
+    // enrichment's partial-response resilience).
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "f".repeat(26), user_id: VALID_FILE_USER_ID }),
+      makeFile({ id: "g".repeat(26), user_id: VALID_FILE_USER_ID_2 }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_FILE_USER_ID, username: "alice" },
+      // VALID_FILE_USER_ID_2 omitted on purpose.
+    ]);
+
+    const out = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out[0]).toMatchObject({ uploaderUsername: "alice" });
+    expect(out[1]).toMatchObject({ uploaderUsername: null });
+  });
+
+  it("sanitises out the fields the renderer must not see", async () => {
+    // Server includes `update_at` / `delete_at` / `channel_id` /
+    // `post_id` (per `KchatFileInfo`). The sanitiser must strip
+    // these from the wire shape so the renderer cannot leak them
+    // into devtools / crash reporters.
+    clientMock.listChannelFiles.mockResolvedValueOnce([
+      makeFile({ id: "f".repeat(26), user_id: VALID_FILE_USER_ID }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_FILE_USER_ID, username: "alice" },
+    ]);
+
+    const out = (await handler("kchat:listChannelFiles")(
+      EVENT,
+      VALID_FILE_CHANNEL_ID,
+      0,
+      50,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out[0]).not.toHaveProperty("update_at");
+    expect(out[0]).not.toHaveProperty("delete_at");
+    expect(out[0]).not.toHaveProperty("channel_id");
+    expect(out[0]).not.toHaveProperty("post_id");
+    // But the surfaced shape includes the explicit Task 11
+    // additions.
+    expect(out[0]).toHaveProperty("user_id");
+    expect(out[0]).toHaveProperty("uploaderUsername");
+  });
+});

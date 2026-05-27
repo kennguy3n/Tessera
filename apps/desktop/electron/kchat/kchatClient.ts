@@ -903,6 +903,16 @@ export class KchatClient {
    * URL from `fi.id` without going through `downloadFile` (e.g. a
    * tracing/debug helper that logs the file path) still cannot
    * embed a malicious id.
+   *
+   * **Phase 13 Theme 2 Task 11**: `fi.user_id` is also validated
+   * here because the renderer-facing file preview now surfaces
+   * the uploader (post-sanitisation) and feeds the id through the
+   * shared `getUsersByIds` enrichment path. Validating at the
+   * deserialisation boundary keeps the trust-boundary contract
+   * symmetric with `listChannels` / `listChannelMembers` (which
+   * already validate `c.id`/`c.team_id` and `m.channel_id`/
+   * `m.user_id`) and prevents a substrate-compromised row from
+   * propagating a malformed id into the username-cache key space.
    */
   async listChannelFiles(
     channelId: string,
@@ -916,6 +926,7 @@ export class KchatClient {
     );
     for (const fi of files) {
       assertKchatServerObjectId(fi.id, "fileInfo.id");
+      assertKchatServerObjectId(fi.user_id, "fileInfo.user_id");
     }
     return files;
   }
@@ -945,6 +956,12 @@ export class KchatClient {
       `/api/v4/files/${fileId}/info`,
     );
     assertKchatServerObjectId(fi.id, "fileInfo.id");
+    // Phase 13 Theme 2 Task 11: symmetry with `listChannelFiles`
+    // — a WS-driven `file_added` event uses this path to resolve
+    // the file's metadata before downloading bytes, so a
+    // substrate-compromised payload must not be able to slip a
+    // malformed user id into the downstream cache key space.
+    assertKchatServerObjectId(fi.user_id, "fileInfo.user_id");
     return fi;
   }
 
