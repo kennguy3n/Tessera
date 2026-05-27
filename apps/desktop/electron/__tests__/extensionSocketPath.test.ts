@@ -70,6 +70,10 @@ import {
  * opt into the platform / env values it cares about — leaving
  * one unset and accidentally inheriting another test's value
  * is impossible because every call returns a fresh object.
+ *
+ * All fields are eager values per the discovery snapshot
+ * contract (no closures). Per Devin Review PR #57 pass 1
+ * ANALYSIS_0001 — see `ExtensionSocketDiscovery` JSDoc.
  */
 function discovery(
   overrides: Partial<ExtensionSocketDiscovery> = {},
@@ -77,9 +81,9 @@ function discovery(
   return {
     platform: "linux",
     xdgRuntimeDir: undefined,
-    getuid: () => 1000,
-    tmpdir: () => "/tmp",
-    homedir: () => "/home/test",
+    uid: 1000,
+    tmpdir: "/tmp",
+    homedir: "/home/test",
     ...overrides,
   };
 }
@@ -119,7 +123,7 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
       discovery({
         platform: "linux",
         xdgRuntimeDir: undefined,
-        tmpdir: () => "/var/tmp/sandbox",
+        tmpdir: "/var/tmp/sandbox",
       }),
     );
     expect(p).toBe(
@@ -137,7 +141,7 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
       discovery({
         platform: "linux",
         xdgRuntimeDir: "",
-        tmpdir: () => "/tmp",
+        tmpdir: "/tmp",
       }),
     );
     expect(p).toBe(
@@ -145,17 +149,18 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
     );
   });
 
-  it("Linux + getuid undefined: falls back to uid=0 in the socket name", () => {
-    // On Windows hosts `process.getuid` is undefined. The
-    // production code guards on `typeof getuid === "function"`
-    // and defaults to 0. The injection refactor preserves this
-    // defence because the discovery type carries
-    // `getuid: (() => number) | undefined`.
+  it("Linux + uid is null: falls back to uid=0 in the socket name", () => {
+    // On Windows hosts `process.getuid` is undefined, so the
+    // default factory snapshots `uid: null`. The production
+    // code guards on `uid ?? 0` so the fallback uid is 0. The
+    // discovery type carries `uid: number | null` after the
+    // eager-snapshot refactor (was `getuid: (() => number) |
+    // undefined`); the test exercises the null branch.
     const p = extensionSocketPath(
       discovery({
         platform: "linux",
-        getuid: undefined,
-        tmpdir: () => "/tmp",
+        uid: null,
+        tmpdir: "/tmp",
       }),
     );
     expect(p).toBe(path.join("/tmp", "tessera-kchat-extension-0.sock"));
@@ -209,7 +214,7 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
     const p = extensionSocketPath(
       discovery({
         platform: "darwin",
-        homedir: () => "/Users/test",
+        homedir: "/Users/test",
       }),
     );
     expect(p).toBe(
@@ -240,8 +245,8 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
     const p = extensionSocketPath(
       discovery({
         platform: "win32",
-        tmpdir: () => "/SHOULD-NEVER-APPEAR-tmp",
-        homedir: () => "/SHOULD-NEVER-APPEAR-home",
+        tmpdir: "/SHOULD-NEVER-APPEAR-tmp",
+        homedir: "/SHOULD-NEVER-APPEAR-home",
       }),
     );
     expect(p.startsWith("\\\\.\\pipe\\")).toBe(true);
@@ -259,33 +264,41 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
     const p = extensionSocketPath(
       discovery({
         platform: "linux",
-        getuid: () => 4242,
-        tmpdir: () => "/tmp",
+        uid: 4242,
+        tmpdir: "/tmp",
       }),
     );
     expect(p).toMatch(/tessera-kchat-extension-4242\.sock$/);
   });
 
   describe("defaultExtensionSocketDiscovery", () => {
-    it("captures process.platform / process.env.XDG_RUNTIME_DIR / process.getuid at call time", () => {
+    it("snapshots process.platform / process.env.XDG_RUNTIME_DIR / process.getuid / os.tmpdir / os.homedir at call time", () => {
       // Direct unit test of the default factory so a future
       // refactor that breaks the integration with `process.*`
-      // surfaces here rather than only in production. The
-      // factory MUST return fresh values on each call (not a
-      // cached singleton) so a long-lived session that
+      // / `os.*` surfaces here rather than only in production.
+      // The factory MUST return fresh values on each call (not
+      // a cached singleton) so a long-lived session that
       // experiences an `XDG_RUNTIME_DIR` change picks up the
-      // new value.
+      // new value on the next call.
+      //
+      // All five fields are eager value snapshots (per
+      // ExtensionSocketDiscovery JSDoc). The previous shape
+      // had `tmpdir` / `homedir` as lazy closures and `getuid`
+      // as a bound function reference — an eager-vs-lazy
+      // asymmetry that would surface as partial-staleness if a
+      // caller cached the discovery object. Per Devin Review
+      // PR #57 pass 1 ANALYSIS_0001 + ANALYSIS_0002.
       const d = defaultExtensionSocketDiscovery();
       expect(d.platform).toBe(process.platform);
       expect(d.xdgRuntimeDir).toBe(process.env.XDG_RUNTIME_DIR);
-      expect(d.tmpdir()).toBe(os.tmpdir());
-      expect(d.homedir()).toBe(os.homedir());
-      // `getuid` is a function on Unix, `undefined` on Windows.
+      expect(d.tmpdir).toBe(os.tmpdir());
+      expect(d.homedir).toBe(os.homedir());
+      // `uid` is a number on Unix, `null` on Windows.
       if (typeof process.getuid === "function") {
-        expect(typeof d.getuid).toBe("function");
-        expect(d.getuid?.()).toBe(process.getuid());
+        expect(typeof d.uid).toBe("number");
+        expect(d.uid).toBe(process.getuid());
       } else {
-        expect(d.getuid).toBeUndefined();
+        expect(d.uid).toBeNull();
       }
     });
 
@@ -330,7 +343,7 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
       extensionSocketPath(
         discovery({ xdgRuntimeDir: "/should-not-leak" }),
       );
-      extensionSocketPath(discovery({ getuid: () => 99999 }));
+      extensionSocketPath(discovery({ uid: 99999 }));
       expect(process.platform).toBe(platformBefore);
       expect(process.env.XDG_RUNTIME_DIR).toBe(xdgBefore);
       expect(process.getuid).toBe(getuidBefore);

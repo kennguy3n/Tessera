@@ -208,19 +208,28 @@ export interface DisconnectFrame {
 }
 
 /**
- * Discovery surface for `extensionSocketPath()`. Bundles the
- * three process-level globals the helper reads:
+ * Discovery surface for `extensionSocketPath()`. A point-in-time
+ * snapshot of the process-level inputs the helper reads:
  *
  *   - `platform`: `process.platform` value (`"linux"`, `"darwin"`,
  *     `"win32"`, etc.).
  *   - `xdgRuntimeDir`: `process.env.XDG_RUNTIME_DIR` value, or
  *     `undefined` if unset.
- *   - `getuid`: `process.getuid` function reference, or
- *     `undefined` if not available (Windows hosts).
- *   - `tmpdir`: zero-arg factory returning the system tmpdir
- *     (`os.tmpdir()`).
- *   - `homedir`: zero-arg factory returning the user's home dir
- *     (`os.homedir()`).
+ *   - `uid`: user id from `process.getuid()`, or `null` if the
+ *     platform does not expose it (Windows hosts — `process.getuid`
+ *     is `undefined` there).
+ *   - `tmpdir`: the system tmpdir (`os.tmpdir()` result).
+ *   - `homedir`: the user's home directory (`os.homedir()` result).
+ *
+ * **All fields are eagerly captured values, NOT lazy closures or
+ * function references.** Per Devin Review PR #57 pass 1
+ * ANALYSIS_0001 + ANALYSIS_0002, the previous shape had an
+ * eager-vs-lazy asymmetry (eager `platform` / `xdgRuntimeDir`,
+ * lazy `tmpdir` / `homedir`, eager-bound-function `getuid`) that
+ * would surface as partial-staleness if a future caller cached
+ * the discovery object across calls. Eager-everywhere makes the
+ * snapshot semantics explicit: a discovery object describes the
+ * state at the moment it was constructed, never later.
  *
  * Exposed as an injectable parameter so tests can pin every
  * branch deterministically WITHOUT mutating `process.platform`
@@ -237,30 +246,30 @@ export interface DisconnectFrame {
 export interface ExtensionSocketDiscovery {
   platform: NodeJS.Platform;
   xdgRuntimeDir: string | undefined;
-  getuid: (() => number) | undefined;
-  tmpdir: () => string;
-  homedir: () => string;
+  uid: number | null;
+  tmpdir: string;
+  homedir: string;
 }
 
 /**
- * Default discovery: read from `process.*` / `os.*` globals.
- * Captured in a factory rather than a constant so each call
- * re-reads the env vars / functions — `XDG_RUNTIME_DIR` may
- * change across calls in a long-lived session (extremely rare
- * but technically allowed), and `process.getuid` may be
- * monkey-patched by tests that haven't migrated to dependency
- * injection yet.
+ * Default discovery: take a fresh snapshot from `process.*` /
+ * `os.*` globals. A new snapshot per call so a long-lived
+ * session that experiences an `XDG_RUNTIME_DIR` change (or any
+ * other input change) picks up the new value on the next
+ * `extensionSocketPath()` invocation — production always uses
+ * the no-arg call signature which triggers a fresh snapshot.
+ *
+ * `process.getuid` is called directly (no `.bind(process)`) —
+ * the C++ binding doesn't use `this`, so binding was pure
+ * overhead. Per Devin Review PR #57 pass 1 ANALYSIS_0002.
  */
 export function defaultExtensionSocketDiscovery(): ExtensionSocketDiscovery {
   return {
     platform: process.platform,
     xdgRuntimeDir: process.env.XDG_RUNTIME_DIR,
-    getuid:
-      typeof process.getuid === "function"
-        ? process.getuid.bind(process)
-        : undefined,
-    tmpdir: () => os.tmpdir(),
-    homedir: () => os.homedir(),
+    uid: typeof process.getuid === "function" ? process.getuid() : null,
+    tmpdir: os.tmpdir(),
+    homedir: os.homedir(),
   };
 }
 
@@ -279,13 +288,13 @@ export function defaultExtensionSocketDiscovery(): ExtensionSocketDiscovery {
 export function extensionSocketPath(
   discovery: ExtensionSocketDiscovery = defaultExtensionSocketDiscovery(),
 ): string {
-  const { platform, xdgRuntimeDir, getuid, tmpdir, homedir } = discovery;
+  const { platform, xdgRuntimeDir, uid, tmpdir, homedir } = discovery;
   if (platform === "win32") {
     return "\\\\.\\pipe\\tessera-kchat-extension";
   }
   if (platform === "darwin") {
     return path.join(
-      homedir(),
+      homedir,
       "Library",
       "Application Support",
       "Tessera",
@@ -302,8 +311,8 @@ export function extensionSocketPath(
   if (xdgRuntimeDir && xdgRuntimeDir.length > 0) {
     return path.join(xdgRuntimeDir, "tessera-kchat-extension.sock");
   }
-  const uid = typeof getuid === "function" ? getuid() : 0;
-  return path.join(tmpdir(), `tessera-kchat-extension-${uid}.sock`);
+  const effectiveUid = uid ?? 0;
+  return path.join(tmpdir, `tessera-kchat-extension-${effectiveUid}.sock`);
 }
 
 /**
