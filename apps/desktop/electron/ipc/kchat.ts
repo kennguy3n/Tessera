@@ -45,6 +45,7 @@ import {
   assertNumber,
   assertString,
 } from "./validate";
+import { KchatNameCache } from "../kchat/kchatNameCache";
 import {
   KchatRequestError,
   isKchatObjectId,
@@ -234,77 +235,16 @@ function toIpcError(err: unknown): Error {
  * KChat object ids (user / channel) to their human-readable
  * display strings (username / channel display name).
  *
- * The cache is populated lazily by `kchat:searchPosts` as a
- * side-effect of building citation rows — `Map` iteration order
- * is insertion order, so deleting + re-inserting a key on every
- * read gives us LRU semantics with `O(1)` operations.
- *
- * Bound is per-cache; the user cache and channel cache each get
- * their own quota so a long session with many channels doesn't
- * starve user-name lookups (or vice versa). A miss returns
- * `null`; the renderer falls back to displaying the raw object
- * id in that case so the row still renders.
- *
- * The cache is cleared on every connection-state transition
- * away from `connected` so a re-handshake to a different server
- * (or the same server after the user is removed from a channel)
- * cannot return stale names. The clear is wired in
+ * The class lives in `electron/kchat/kchatNameCache.ts` so it
+ * can be unit-tested independently of the IPC + status-listener
+ * wiring. The cache is populated lazily by `kchat:searchPosts`
+ * as a side-effect of building citation rows. The cache is
+ * cleared on every connection-state transition away from
+ * `connected` so a re-handshake to a different server (or the
+ * same server after the user is removed from a channel) cannot
+ * return stale names. The clear is wired below in
  * `registerKchatHandlers` via `KchatAuthService.onStatusChange`.
  */
-class KchatNameCache {
-  private readonly entries = new Map<string, string>();
-  constructor(private readonly maxEntries: number) {
-    if (maxEntries <= 0) {
-      throw new Error("KchatNameCache: maxEntries must be > 0");
-    }
-  }
-
-  get(id: string): string | null {
-    const v = this.entries.get(id);
-    if (v === undefined) return null;
-    // LRU touch: move to end of insertion order.
-    this.entries.delete(id);
-    this.entries.set(id, v);
-    return v;
-  }
-
-  set(id: string, name: string): void {
-    // ANALYSIS_0004 (Devin Review pass 1 on fafc5f6): reject
-    // empty-string display names at the boundary. The renderer
-    // uses nullish coalescing (`?? rawId`) for fallback; an
-    // empty string would be cached as a positive value and
-    // surface as `#` / `@` with no text. Mattermost
-    // server-side validation already requires a non-empty
-    // `display_name` / `username` for the channel + user kinds
-    // we cache, so this is defence-in-depth against a future
-    // protocol drift or a maliciously crafted response. The
-    // caller side already trims to a single field per id; we
-    // do not need to trim whitespace here.
-    if (name === "") {
-      return;
-    }
-    // If already present, refresh and move to end.
-    if (this.entries.has(id)) {
-      this.entries.delete(id);
-    } else if (this.entries.size >= this.maxEntries) {
-      // Evict the least-recently-used (first inserted).
-      const oldest = this.entries.keys().next().value;
-      if (oldest !== undefined) {
-        this.entries.delete(oldest);
-      }
-    }
-    this.entries.set(id, name);
-  }
-
-  clear(): void {
-    this.entries.clear();
-  }
-
-  /** Test-only accessor. */
-  size(): number {
-    return this.entries.size;
-  }
-}
 
 /**
  * Bounds chosen to fit the citation-search hot path:
