@@ -9,6 +9,7 @@ import {
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import SourceDetailPage, {
   extractKchatChannelIdFromSource,
+  formatSourceTypeLabel,
 } from "../pages/SourceDetailPage";
 import type { SourceInfo } from "../types/ipc";
 
@@ -120,6 +121,78 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
           path: `/home/u/.tessera/kchat-channels/${KCHAT_CHANNEL_ID}/`,
         }),
       ).toBe(KCHAT_CHANNEL_ID);
+    });
+
+    it("returns the basename for a Windows-style backslash path (BUG_0001)", () => {
+      // Devin Review on 869295e (BUG_0001): the main process's
+      // `kchatChannelCacheDir` uses Node `path.join(...)` which produces
+      // backslash-separated paths on Windows. A `/`-only split would yield
+      // a single segment that fails `assertKchatId` at the IPC boundary and
+      // the renderer would silently never render a progress card on
+      // Windows. The helper must split on both separators.
+      expect(
+        extractKchatChannelIdFromSource({
+          ...KCHAT_SOURCE,
+          path: `C:\\Users\\u\\.tessera\\kchat-channels\\${KCHAT_CHANNEL_ID}`,
+        }),
+      ).toBe(KCHAT_CHANNEL_ID);
+    });
+
+    it("returns the basename for a mixed-separator path", () => {
+      // Defence-in-depth — Electron on Windows occasionally surfaces paths
+      // that have been normalised through a `path.join` that mixes
+      // separators (e.g. when the path came in as a forward-slash literal
+      // but was joined against a backslash root). Splitting on both keeps
+      // the helper robust to whichever ordering happens to win.
+      expect(
+        extractKchatChannelIdFromSource({
+          ...KCHAT_SOURCE,
+          path: `C:\\Users\\u/.tessera/kchat-channels\\${KCHAT_CHANNEL_ID}`,
+        }),
+      ).toBe(KCHAT_CHANNEL_ID);
+    });
+
+    it("returns the basename for a trailing-backslash Windows path", () => {
+      expect(
+        extractKchatChannelIdFromSource({
+          ...KCHAT_SOURCE,
+          path: `C:\\Users\\u\\.tessera\\kchat-channels\\${KCHAT_CHANNEL_ID}\\`,
+        }),
+      ).toBe(KCHAT_CHANNEL_ID);
+    });
+  });
+
+  describe("formatSourceTypeLabel", () => {
+    // Devin Review on 869295e (ANALYSIS_0003): KChat sources rendered as
+    // "Local File" in the Source Information card pre-fix, which is
+    // confusing once the page actively renders KChat channels. The
+    // mapping is now centralised in `formatSourceTypeLabel`.
+    it("renders Local Folder for local_folder", () => {
+      expect(formatSourceTypeLabel("local_folder")).toBe("Local Folder");
+    });
+
+    it("renders Local File for local_file", () => {
+      expect(formatSourceTypeLabel("local_file")).toBe("Local File");
+    });
+
+    it("renders KChat Channel for kchat", () => {
+      expect(formatSourceTypeLabel("kchat")).toBe("KChat Channel");
+    });
+
+    it("humanises an unknown source kind by title-casing snake_case", () => {
+      // Forward compatibility: a future variant should render reasonably
+      // even before we land an explicit case for it.
+      expect(formatSourceTypeLabel("some_new_kind")).toBe("Some New Kind");
+    });
+
+    it("handles a single-segment unknown kind", () => {
+      expect(formatSourceTypeLabel("widget")).toBe("Widget");
+    });
+
+    it("tolerates an empty discriminator without throwing", () => {
+      // Defence-in-depth — should never happen in production but the
+      // helper must not crash the entire page render path.
+      expect(formatSourceTypeLabel("")).toBe("");
     });
   });
 
@@ -242,6 +315,35 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       const status = screen.getByTestId("kchat-backfill-status");
       expect(status).toHaveAttribute("data-status", "error");
       expect(status.textContent).toContain("bridge unavailable");
+    });
+
+    it("renders 'KChat Channel' as the source type in the Source Information card (ANALYSIS_0003)", async () => {
+      // Devin Review on 869295e (ANALYSIS_0003): the Source Information
+      // card used to render "Local File" for any source that wasn't a
+      // `local_folder`, including KChat channels. Now that Task 10 lit
+      // up the page for KChat sources, the label is centralised in
+      // `formatSourceTypeLabel` and the card shows the correct kind.
+      window.tessera.kchat.backfillProgress = vi.fn().mockResolvedValue({
+        channelId: KCHAT_CHANNEL_ID,
+        oldestFetched: null,
+        totalPosts: null,
+        postsIngested: 0,
+        status: "idle",
+      });
+      renderWithRoute();
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("kchat-backfill-card"),
+        ).toBeInTheDocument();
+      });
+      // Find the row in the Source Information card whose left cell
+      // is the "Type" label, and assert the right cell shows the
+      // KChat-specific copy. Using `getAllByText` because "Type" is
+      // a common word; we restrict to the source detail page.
+      const typeRow = screen.getByText("Type", { selector: "span" });
+      const valueCell = typeRow.nextElementSibling as HTMLElement | null;
+      expect(valueCell).not.toBeNull();
+      expect(valueCell!.textContent).toBe("KChat Channel");
     });
 
     it("does NOT render the KChat card for a non-KChat (local_folder) source", async () => {

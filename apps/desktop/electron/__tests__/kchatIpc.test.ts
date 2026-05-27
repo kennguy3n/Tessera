@@ -3883,4 +3883,150 @@ describe("kchat:backfillProgress — progress projection IPC", () => {
       handler("kchat:backfillProgress")(EVENT, PROGRESS_CHANNEL_ID),
     ).rejects.toThrow(/Rate limit/i);
   });
+
+  it("surfaces live `postsIngested` and `oldestFetched` while a walk is in flight (ANALYSIS_0001)", async () => {
+    // Devin Review on 869295e (ANALYSIS_0001): the handler used to
+    // hard-code `postsIngested: 0` and `oldestFetched: null` for the
+    // `active` discriminator because the comment claimed the
+    // substrate didn't carry a running counter. The orchestrator
+    // already accumulates `totalPostsIngested` page-by-page; this
+    // fix routes that value through a per-channel in-flight map
+    // (`runningBackfillCounters`) which the progress IPC reads.
+    //
+    // This test exercises the through-line end-to-end:
+    //   1. Drive the first page of a walk via the orchestrator.
+    //   2. Pause the walk before the second page resolves.
+    //   3. Hit the progress IPC and assert it surfaces the live
+    //      cumulative count (2 posts) and the oldest `createAt`
+    //      (1500ms epoch) ingested so far.
+    //   4. Resolve the second page (end-of-history) so the walk
+    //      completes, then assert a follow-up progress IPC returns
+    //      `complete` with the documented `postsIngested: 0`
+    //      fallback (substrate doesn't carry a cumulative counter,
+    //      so we can't retroactively attribute the count to the
+    //      finished walk).
+    //
+    // We use the orchestrator's CHANNEL_ID (not the
+    // PROGRESS_CHANNEL_ID this describe usually uses) because the
+    // live counter is keyed on whichever id the orchestrator
+    // happens to be walking.
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    defaultRateLimiter.reset();
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValue({
+      outcome: "idle",
+      sourceId: SOURCE_ID,
+      oldestPostId: undefined,
+      completedAt: undefined,
+    });
+    bridgeMock.bridgeMarkKchatBackfillComplete.mockReturnValue({
+      outcome: "completed",
+      sourceId: SOURCE_ID,
+    });
+
+    // Deferred second-page promise so the orchestrator's REST loop
+    // pauses between page 1 and page 2 while we poll the progress
+    // IPC. Page 1 has 2 posts at createAt 2000ms / 1500ms (REST
+    // returns newest-first so the LAST post is the oldest, which is
+    // what `runningBackfillCounters.oldestPostCreateAtMs` should
+    // converge to).
+    let resolveSecondPage!: (v: unknown) => void;
+    const secondPage = new Promise<unknown>((r) => {
+      resolveSecondPage = r;
+    });
+    clientMock.getPostsForChannel
+      .mockResolvedValueOnce(
+        makePage(
+          [
+            makePost("postlive00000000000000000a", "newer", 2000),
+            makePost("postlive00000000000000000b", "older", 1500),
+          ],
+          "postlive00000000000000000b",
+        ),
+      )
+      .mockReturnValueOnce(secondPage as never);
+    bridgeMock.bridgeIngestKchatBackfillPage.mockReturnValueOnce({
+      outcome: "ingested",
+      sourceId: SOURCE_ID,
+      postsIngested: 2,
+      postsUnchanged: 0,
+      postsSkippedRevoked: 0,
+      oldestPostIdInPage: "postlive00000000000000000b",
+    });
+
+    // Start the walk; do NOT await — the second page is pending.
+    const walkPromise = handler("sources:backfillKchatChannel")(
+      EVENT,
+      CHANNEL_ID,
+    );
+
+    // Spin the microtask queue until the first page is fully
+    // ingested and the orchestrator is waiting on the second page.
+    // 50 ticks is overkill (the path is ~6 awaits) but keeps the
+    // test robust against future refactors that interleave more
+    // awaits before the loop pauses.
+    for (let i = 0; i < 50; i++) {
+      await Promise.resolve();
+    }
+
+    // Reset the rate-limiter so the progress IPC isn't drained by
+    // the orchestrator's startup cost (the two share the
+    // `defaultRateLimiter` instance even though their token buckets
+    // are independent).
+    defaultRateLimiter.reset();
+
+    const live = (await handler("kchat:backfillProgress")(
+      EVENT,
+      CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(live.status).toBe("active");
+    expect(live.channelId).toBe(CHANNEL_ID);
+    // The exact value the orchestrator just reported — proves the
+    // through-line is wired correctly (was hardcoded 0 pre-fix).
+    expect(live.postsIngested).toBe(2);
+    // The min `createAt` across the page; REST returns newest-first
+    // so it is the LAST post in page 1.
+    expect(live.oldestFetched).toBe(1500);
+    expect(live.totalPosts).toBeNull();
+
+    // Resolve the second page as empty (end-of-history) so the
+    // orchestrator finalises the walk.
+    resolveSecondPage(makePage([], null));
+    await walkPromise;
+
+    // Post-completion: the orchestrator's `.finally()` removed the
+    // counters entry, so a subsequent progress IPC falls back to
+    // the substrate-side discriminator with the documented `0` /
+    // `null` placeholders (substrate doesn't carry a cumulative
+    // count, so we cannot retroactively attribute it).
+    defaultRateLimiter.reset();
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValueOnce({
+      outcome: "idle",
+      sourceId: SOURCE_ID,
+      oldestPostId: "postlive00000000000000000b",
+      completedAt: "2024-01-01T00:00:00Z",
+    });
+    const after = (await handler("kchat:backfillProgress")(
+      EVENT,
+      CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(after.status).toBe("complete");
+    expect(after.postsIngested).toBe(0);
+    expect(after.oldestFetched).toBeNull();
+  });
+
+  it("falls back to `postsIngested: 0` / `oldestFetched: null` when no walk is in flight", async () => {
+    // Defence-in-depth around the cleanup contract: the in-flight
+    // counters map MUST be empty between walks. If a previous walk
+    // (in a different test) leaked an entry, this test would see
+    // non-zero values for an `idle` channel and the regression
+    // would be invisible because the previous test's expectations
+    // still pass.
+    const out = (await handler("kchat:backfillProgress")(
+      EVENT,
+      PROGRESS_CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(out.status).toBe("idle");
+    expect(out.postsIngested).toBe(0);
+    expect(out.oldestFetched).toBeNull();
+  });
 });

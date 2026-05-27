@@ -12,6 +12,7 @@ import ConnectorsList from "../components/ConnectorsList";
 import DriveFilePicker from "../components/DriveFilePicker";
 import KchatChannelSourcePicker from "../components/KchatChannelSourcePicker";
 import { useSourceList, useAddSource, useRemoveSource } from "../hooks/useSources";
+import { formatSourceTypeLabel } from "./SourceDetailPage";
 import type {
   CompareSourcesResult,
   ConnectorFileInfo,
@@ -412,7 +413,7 @@ export default function SourcesPage() {
                     <StatusBadge status={source.status} />
                   </div>
                   <div className="card-description">
-                    {source.sourceType === "local_folder" ? "Folder" : "File"}{" "}
+                    {formatSourceTypeLabel(source.sourceType)}{" "}
                     &middot; {source.fileCount} files
                     {source.lastIndexed && (
                       <>

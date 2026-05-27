@@ -21,6 +21,14 @@ import type { ExtractedItem, SourceInfo } from "../types/ipc";
  * renderer treats `null` as "don't poll backfill state" — the
  * `useKchatBackfillProgress` hook is quiescent for `null`.
  *
+ * Splits on BOTH `/` and `\` so the helper works on Windows where
+ * `path.join(...)` in the main process produces backslash-separated
+ * paths like `C:\Users\user\.tessera\kchat-channels\<id>` (Devin
+ * Review on 869295e, BUG_0001). A POSIX-only split would yield a
+ * single segment containing the full Windows path string, which
+ * then fails the IPC's `assertKchatId` regex and the renderer would
+ * silently never render a progress card on Windows.
+ *
  * We intentionally do NOT re-validate the 26-char object-id shape
  * here. The IPC handler at `kchat:backfillProgress` re-validates
  * via `assertKchatId(channelId, "channelId")` so any malformed
@@ -33,9 +41,44 @@ export function extractKchatChannelIdFromSource(
   source: SourceInfo,
 ): string | null {
   if (source.sourceType !== "kchat") return null;
-  const segments = source.path.split("/").filter((s) => s.length > 0);
+  const segments = source.path.split(/[\\/]/).filter((s) => s.length > 0);
   const id = segments[segments.length - 1];
   return id && id.length > 0 ? id : null;
+}
+
+/**
+ * Render a human-readable label for a `SourceInfo.sourceType` so
+ * the Source Information card (and any other surface that displays
+ * the type) shows something coherent for every known kind.
+ *
+ * Phase 13 Task 10 fix (Devin Review on 869295e, ANALYSIS_0003): the
+ * pre-Task-10 page only rendered local sources, so the card used a
+ * binary `local_folder ? "Local Folder" : "Local File"` ternary.
+ * Task 10 lit up the page for KChat sources too, which made the
+ * fallthrough "Local File" label misleading. The helper centralises
+ * the mapping so any future source kind only has to be added in
+ * one place. Unknown / future kinds fall through to a humanised
+ * version of the raw `sourceType` string so the UI degrades
+ * gracefully instead of mis-attributing the kind.
+ */
+export function formatSourceTypeLabel(sourceType: string): string {
+  switch (sourceType) {
+    case "local_folder":
+      return "Local Folder";
+    case "local_file":
+      return "Local File";
+    case "kchat":
+      return "KChat Channel";
+    default:
+      // Humanise an unknown discriminator (`some_new_kind` →
+      // `Some New Kind`) so a future variant looks reasonable
+      // in the UI even before we land an explicit case here.
+      return sourceType
+        .split("_")
+        .filter((s) => s.length > 0)
+        .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+        .join(" ");
+  }
 }
 
 export default function SourceDetailPage() {
@@ -569,9 +612,7 @@ export default function SourceDetailPage() {
             }}
           >
             <span style={{ fontWeight: 600 }}>Type</span>
-            <span>
-              {source.sourceType === "local_folder" ? "Local Folder" : "Local File"}
-            </span>
+            <span>{formatSourceTypeLabel(source.sourceType)}</span>
 
             <span style={{ fontWeight: 600 }}>Status</span>
             <span>

@@ -1427,6 +1427,38 @@ export function registerKchatHandlers(): void {
     Promise<KchatBackfillRunOutcome>
   >();
   /**
+   * Phase 13 Task 10 fix (Devin Review on 869295e, ANALYSIS_0001):
+   * per-channel running counters surfaced through `kchat:backfillProgress`
+   * so the renderer's progress card shows live `postsIngested` and
+   * `oldestFetched` values while a walk is in flight, instead of the
+   * hardcoded `0` / `null` placeholders the first cut shipped with.
+   *
+   * The substrate (`KchatBackfillState`) intentionally does NOT carry a
+   * running cumulative-ingested counter — that value is re-derivable from
+   * the audit log and recomputing it on every state read would be wasteful.
+   * The orchestrator already has both pieces of information in-process:
+   *   - `totalPostsIngested` is its own loop accumulator.
+   *   - `oldestPostCreateAtMs` is the minimum `createAt` of the posts
+   *     it has already ack'd to the substrate (REST returns newest-first
+   *     so it is the `createAt` of the LAST input in the most-recent
+   *     page).
+   * Storing both in a map keyed by channel id, updated synchronously
+   * inside the walk loop, makes them readable by the progress IPC
+   * without a substrate round-trip. The entry is cleaned up in the
+   * same `.finally()` that clears `inFlightBackfillKchatChannel`, so a
+   * post-completion read of the progress IPC sees `idle` /
+   * `complete` with `postsIngested: 0` (consistent with the
+   * substrate-side contract that the persisted state does not carry a
+   * cumulative counter).
+   */
+  const runningBackfillCounters = new Map<
+    string,
+    {
+      postsIngested: number;
+      oldestPostCreateAtMs: number | null;
+    }
+  >();
+  /**
    * Per-channel cumulative cap. KChat REST caps `per_page` at 200,
    * so 50_000 posts ≈ 250 round-trips — large enough that real
    * channels never hit the cap, small enough that a misbehaving
@@ -1510,6 +1542,21 @@ export function registerKchatHandlers(): void {
     let totalPostsUnchanged = 0;
     let totalPostsSkippedRevoked = 0;
     let totalPostsTouched = 0;
+
+    // Phase 13 Task 10 fix (ANALYSIS_0001): initialise the live progress
+    // counters BEFORE the first REST round-trip so a poll that lands in
+    // the narrow window between `inFlightBackfillKchatChannel.set(id, ...)`
+    // and the first `bridgeLogKchatBackfillPageIngested` sees
+    // `postsIngested: 0` / `oldestFetched: null` (consistent with the
+    // pre-fix behaviour for the first-poll case). The entry is removed in
+    // the same `.finally()` that clears `inFlightBackfillKchatChannel`,
+    // so a post-completion observer naturally falls back to those same
+    // defaults via the `runningBackfillCounters.get(id) ?? ...` path in
+    // the progress IPC.
+    runningBackfillCounters.set(id, {
+      postsIngested: 0,
+      oldestPostCreateAtMs: null,
+    });
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
@@ -1596,6 +1643,35 @@ export function registerKchatHandlers(): void {
         result.oldestPostIdInPage,
       );
 
+      // Phase 13 Task 10 fix (ANALYSIS_0001): update the live counter
+      // entry inside the walk loop so a `kchat:backfillProgress` poll
+      // that arrives between two pages sees the current cumulative
+      // count and the oldest `createAt` we have ack'd. The REST page is
+      // newest-first so the last input has the smallest `createAtMs`;
+      // we still defensively pick the min across the page to tolerate
+      // any future page-reordering on the server side. The map entry
+      // was set BEFORE the loop began so `entry` is always defined
+      // here; we still guard via optional chaining so a future refactor
+      // that early-exits before the `set` cannot crash the walker.
+      const entry = runningBackfillCounters.get(id);
+      if (entry !== undefined) {
+        entry.postsIngested = totalPostsIngested;
+        if (inputs.length > 0) {
+          let pageOldest = inputs[0]!.createdAtMs;
+          for (const input of inputs) {
+            if (input.createdAtMs < pageOldest) {
+              pageOldest = input.createdAtMs;
+            }
+          }
+          if (
+            entry.oldestPostCreateAtMs === null ||
+            pageOldest < entry.oldestPostCreateAtMs
+          ) {
+            entry.oldestPostCreateAtMs = pageOldest;
+          }
+        }
+      }
+
       // Two end-of-walk signals from the REST server:
       //   - `prevPostId === null` means the server says "no posts
       //     exist older than what you just fetched" — definitive
@@ -1670,6 +1746,13 @@ export function registerKchatHandlers(): void {
     ).finally(() => {
       if (inFlightBackfillKchatChannel.get(id) === work) {
         inFlightBackfillKchatChannel.delete(id);
+        // Phase 13 Task 10 fix (ANALYSIS_0001): drop the live progress
+        // entry once the walk has resolved (either committed or aborted)
+        // so a subsequent `kchat:backfillProgress` poll falls through to
+        // the substrate-side `complete` / `idle` discriminator with the
+        // documented `postsIngested: 0` placeholder rather than reading
+        // stale numbers from a finished walk.
+        runningBackfillCounters.delete(id);
       }
     });
     inFlightBackfillKchatChannel.set(id, work);
@@ -1690,6 +1773,11 @@ export function registerKchatHandlers(): void {
       ).finally(() => {
         if (inFlightBackfillKchatChannel.get(id) === work) {
           inFlightBackfillKchatChannel.delete(id);
+          // Phase 13 Task 10 fix (ANALYSIS_0001): see the symmetric
+          // cleanup in `setKchatBackfillImpl`. The two registration paths
+          // both have to drop the running-counters entry so the progress
+          // IPC cannot serve stale data from a finished walk.
+          runningBackfillCounters.delete(id);
         }
       });
       inFlightBackfillKchatChannel.set(id, work);
@@ -1783,21 +1871,39 @@ export function registerKchatHandlers(): void {
           status: "idle",
         };
       }
-      // Substrate stores `oldestPostId` as the cursor used to
-      // advance the walk; the renderer's "X posts ingested"
-      // counter is not surfaced by the state read (the substrate
-      // doesn't keep a running counter because the value is
-      // re-derivable from the audit log). We expose 0 here when
-      // no walk has run yet and let the renderer subscribe to
-      // audit-row tail-follow if it wants live counters. The
-      // important UX is the discriminator (active vs
-      // complete vs idle), which the renderer renders as a
-      // progress *indicator* rather than a precise %-bar — the
-      // protocol-evolution comment block in
-      // `bridgeGetKchatBackfillState` (substrate side) explains
-      // why an exact post count is not always available.
+      // Phase 13 Task 10 fix (Devin Review on 869295e, ANALYSIS_0001):
+      // surface the orchestrator's live counters when a walk is
+      // currently in flight so the renderer's `postsIngested` /
+      // `oldestFetched` counters reflect real progress instead of
+      // the hardcoded `0` / `null` placeholders the first cut
+      // shipped with. The counters entry is initialised at the top
+      // of `runBackfillKchatChannel` and removed in the same
+      // `.finally()` that clears `inFlightBackfillKchatChannel`,
+      // so:
+      //   - `inFlight === true`  → entry present → live values.
+      //   - `inFlight === false` → entry absent  → default 0 / null
+      //                                            (substrate does
+      //                                            not surface a
+      //                                            cumulative count).
+      // We deliberately keep `totalPosts: null` because KChat does
+      // not always surface a channel-level post total; the renderer
+      // projects that into an indeterminate progress indicator.
+      const liveCounters = runningBackfillCounters.get(id);
+      const live = liveCounters ?? {
+        postsIngested: 0,
+        oldestPostCreateAtMs: null,
+      };
       const completedAt = state.completedAt ?? null;
       if (completedAt !== null) {
+        // Walk has finished. Substrate-persisted state does not carry
+        // a cumulative ingest counter, so we cannot retroactively
+        // attribute a post count to the `complete` badge — the
+        // renderer treats `complete` as a discriminator only and
+        // shows "Channel history fully fetched" without a number.
+        // `oldestFetched: null` for the same reason — substrate only
+        // stores `oldestPostId` (the cursor), not its `createAt`
+        // timestamp; deriving the timestamp would require a separate
+        // post lookup and is out of scope for Task 10.
         return {
           channelId: id,
           oldestFetched: null,
@@ -1808,9 +1914,9 @@ export function registerKchatHandlers(): void {
       }
       return {
         channelId: id,
-        oldestFetched: null,
+        oldestFetched: live.oldestPostCreateAtMs,
         totalPosts: null,
-        postsIngested: 0,
+        postsIngested: live.postsIngested,
         status: inFlight ? "active" : "idle",
       };
     },
