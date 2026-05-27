@@ -535,9 +535,9 @@ Theme 5 — Remaining polish
 ### 2026-05-26 — Phase 13 Theme 2 (PR #52)
 
 - **Task 9** — KChat post citation name enrichment: `CitationPanel`
-  resolves `#channel @sender` for every post hit via a shared
-  `KchatNameCache` LRU (1024-entry cap, empty-string rejection,
-  reconnect-safe module-scoped state).
+  resolves `#channel @sender` for every post hit via two module-scoped
+  `KchatNameCache` LRUs (500-entry user-id cache, 200-entry channel-id
+  cache; both empty-string-rejecting and reconnect-safe).
 - **Task 10** — Backfill progress UI: new `kchat:backfillProgress` IPC
   with live counters (`postsIngested`, `oldestFetched`) maintained by
   the orchestrator; `useKchatBackfillProgress` hook (2 s poll,

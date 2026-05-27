@@ -25,10 +25,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   surfaces without polling.
 - **KChat post citation rendering.** KChat post hits in `CitationPanel`
   render with chat semantics — chat icon, `#channel @sender`, threaded
-  indicator. A shared module-scoped `KchatNameCache` LRU (1024-entry
-  cap, empty-string rejection, reconnect-safe) resolves channel and
-  user display names from server ids via a dedupe-then-bulk-fetch
-  enrichment pass.
+  indicator. Two module-scoped `KchatNameCache` LRUs (500-entry user-id
+  cache, 200-entry channel-id cache; both empty-string-rejecting and
+  reconnect-safe) resolve display names from server ids via a
+  dedupe-then-bulk-fetch enrichment pass.
 - **KChat backfill progress UI.** `kchat:backfillProgress` IPC surfaces
   live `postsIngested` / `oldestFetched` counters maintained by the
   orchestrator during a historical-backfill walk. The
