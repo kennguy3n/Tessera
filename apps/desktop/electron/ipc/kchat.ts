@@ -44,7 +44,10 @@ import {
   assertNumber,
   assertString,
 } from "./validate";
-import { KchatRequestError } from "../kchat/kchatClient";
+import {
+  KchatRequestError,
+  isKchatObjectId,
+} from "../kchat/kchatClient";
 import { kchatChannelCacheDir } from "../kchat/kchatPaths";
 import { enforceKchatServerUrl } from "../kchat/ssrfGuard";
 import {
@@ -297,10 +300,30 @@ const KCHAT_CHANNEL_NAME_CACHE = new KchatNameCache(200);
  * Reset the IPC-layer KChat name caches. Exported only for the
  * test suite so a test that exercises name-cache eviction
  * boundaries can start from a known state.
+ *
+ * ANALYSIS_0005 (Devin Review pass 2 on bef2fa0): if a previous
+ * `registerKchatHandlers` invocation successfully installed the
+ * `onStatusChange` subscriber, call its unsubscribe handle so
+ * the next install path can re-subscribe cleanly. Without this,
+ * a hypothetical production caller (or a future test path that
+ * dispatches real status events through the live auth service)
+ * would orphan the prior listener AND register a new one,
+ * defeating the very idempotency guard the flag was added for.
  */
 export function _resetKchatNameCachesForTest(): void {
   KCHAT_USERNAME_CACHE.clear();
   KCHAT_CHANNEL_NAME_CACHE.clear();
+  if (KCHAT_STATUS_LISTENER_UNSUBSCRIBE !== null) {
+    try {
+      KCHAT_STATUS_LISTENER_UNSUBSCRIBE();
+    } catch {
+      // The unsubscribe contract is `() => void`. A throw here
+      // would only be possible from a future stateful listener
+      // implementation; swallow it so the reset stays robust to
+      // changes in the auth service.
+    }
+    KCHAT_STATUS_LISTENER_UNSUBSCRIBE = null;
+  }
   KCHAT_STATUS_LISTENER_INSTALLED = false;
 }
 
@@ -325,6 +348,15 @@ export function _resetKchatNameCachesForTest(): void {
 let KCHAT_STATUS_LISTENER_INSTALLED = false;
 
 /**
+ * ANALYSIS_0005 (Devin Review pass 2 on bef2fa0): handle to the
+ * unsubscribe callback returned by
+ * `KchatAuthService.onStatusChange`. Stored at the module level
+ * so `_resetKchatNameCachesForTest` can clean up the live
+ * listener before flipping the install flag back to `false`.
+ */
+let KCHAT_STATUS_LISTENER_UNSUBSCRIBE: (() => void) | null = null;
+
+/**
  * Phase 13 Theme 2 Task 9: enrich a list of post-hits with the
  * sender username and channel display name. Mutates the input
  * array's elements in-place.
@@ -345,57 +377,82 @@ async function enrichKchatPostHits(
   client: ReturnType<ReturnType<typeof getKchatAuthService>["getClient"]>,
 ): Promise<void> {
   // 1. Collect unique missing ids per cache.
+  //
+  //    ANALYSIS_0002 (Devin Review pass 2 on bef2fa0): only ids
+  //    that pass `isKchatObjectId` are added to the network
+  //    request sets. A substrate-corrupted row carrying a
+  //    malformed id would otherwise cause the per-id assertion
+  //    inside `getUsersByIds` to throw, suppressing username
+  //    enrichment for the ENTIRE search result set. The strict
+  //    assertion stays on `getUsersByIds` itself so internal
+  //    callers (background sync, future helpers) still get the
+  //    defence-in-depth check; the enrichment-layer best-effort
+  //    semantics push the filtering up to where it belongs.
+  //    Hits whose ids are malformed simply keep `null` enrichment
+  //    fields and the renderer falls back to the raw id.
   const missingUserIds = new Set<string>();
   const missingChannelIds = new Set<string>();
   for (const h of hits) {
     const cachedUser = KCHAT_USERNAME_CACHE.get(h.senderUserId);
     if (cachedUser !== null) {
       h.senderUsername = cachedUser;
-    } else {
+    } else if (isKchatObjectId(h.senderUserId)) {
       missingUserIds.add(h.senderUserId);
     }
     const cachedChan = KCHAT_CHANNEL_NAME_CACHE.get(h.channelId);
     if (cachedChan !== null) {
       h.channelDisplayName = cachedChan;
-    } else {
+    } else if (isKchatObjectId(h.channelId)) {
       missingChannelIds.add(h.channelId);
     }
   }
 
-  // 2. Bulk-resolve missing users via `POST /users/ids`. We catch
-  //    here so a user-resolution failure does NOT block the
-  //    channel-resolution branch (defence-in-depth: the two REST
-  //    calls are unrelated and a transient 5xx on one should not
-  //    suppress the other).
-  if (missingUserIds.size > 0) {
-    try {
-      const users = await client.getUsersByIds(Array.from(missingUserIds));
-      for (const u of users) {
-        KCHAT_USERNAME_CACHE.set(u.id, u.username);
-      }
-    } catch {
-      // Intentional: leave un-resolved ids as `null`; the
-      // renderer falls back to displaying the raw id.
-    }
-  }
+  // 2. Run the user bulk lookup AND the per-channel parallel
+  //    fan-out CONCURRENTLY (Devin Review pass 2 on bef2fa0
+  //    ANALYSIS_0001). The two REST endpoints are independent
+  //    and previously ran sequentially — wall-clock cost was
+  //    additive (`Tuser + Tchannel_max`), now it is
+  //    `max(Tuser, Tchannel_max)`. Each side keeps its own
+  //    per-call error isolation (an inner try / `allSettled`)
+  //    so one failing branch never suppresses the other's
+  //    successful enrichments.
+  const userTask: Promise<void> =
+    missingUserIds.size > 0
+      ? (async () => {
+          try {
+            const users = await client.getUsersByIds(
+              Array.from(missingUserIds),
+            );
+            for (const u of users) {
+              KCHAT_USERNAME_CACHE.set(u.id, u.username);
+            }
+          } catch {
+            // Intentional: leave un-resolved ids as `null`; the
+            // renderer falls back to displaying the raw id.
+          }
+        })()
+      : Promise.resolve();
 
-  // 3. Resolve missing channels via `GET /channels/{id}` in
-  //    parallel. Bounded by `missingChannelIds.size` which is
-  //    naturally small (a search seldom spans more than a handful
-  //    of channels). Each call is independently caught so one
-  //    unreachable channel doesn't suppress the rest.
-  if (missingChannelIds.size > 0) {
-    const results = await Promise.allSettled(
-      Array.from(missingChannelIds).map((id) => client.getChannel(id)),
-    );
-    for (const r of results) {
-      if (r.status === "fulfilled") {
-        KCHAT_CHANNEL_NAME_CACHE.set(r.value.id, r.value.display_name);
-      }
-    }
-  }
+  const channelTask: Promise<void> =
+    missingChannelIds.size > 0
+      ? (async () => {
+          const results = await Promise.allSettled(
+            Array.from(missingChannelIds).map((id) => client.getChannel(id)),
+          );
+          for (const r of results) {
+            if (r.status === "fulfilled") {
+              KCHAT_CHANNEL_NAME_CACHE.set(
+                r.value.id,
+                r.value.display_name,
+              );
+            }
+          }
+        })()
+      : Promise.resolve();
 
-  // 4. Second pass: apply newly-cached values to hits that were
+  await Promise.all([userTask, channelTask]);
+
+  // 3. Second pass: apply newly-cached values to hits that were
   //    missing in the first pass.
   for (const h of hits) {
     if (h.senderUsername === null) {
@@ -426,12 +483,20 @@ export function registerKchatHandlers(): void {
   // unsubscribe handle that survives the IPC re-mount.
   if (!KCHAT_STATUS_LISTENER_INSTALLED) {
     try {
-      getKchatAuthService().onStatusChange((state) => {
-        if (state.state !== "connected") {
-          KCHAT_USERNAME_CACHE.clear();
-          KCHAT_CHANNEL_NAME_CACHE.clear();
-        }
-      });
+      // ANALYSIS_0005 (Devin Review pass 2 on bef2fa0): store
+      // the unsubscribe handle so `_resetKchatNameCachesForTest`
+      // can detach it before flipping the install flag back to
+      // `false`. Without this, a subsequent re-install would
+      // stack a second listener on top of the first — the very
+      // failure mode the pass-1 guard was supposed to prevent.
+      KCHAT_STATUS_LISTENER_UNSUBSCRIBE = getKchatAuthService().onStatusChange(
+        (state) => {
+          if (state.state !== "connected") {
+            KCHAT_USERNAME_CACHE.clear();
+            KCHAT_CHANNEL_NAME_CACHE.clear();
+          }
+        },
+      );
       KCHAT_STATUS_LISTENER_INSTALLED = true;
     } catch {
       // The auth service may be uninitialised in test contexts
@@ -1851,12 +1916,21 @@ export function registerKchatHandlers(): void {
 
       // Phase 13 Theme 2 Task 9: enrich hits with sender username
       // and channel display name. Only attempt enrichment when
-      // there's an active connection — when offline, the REST
-      // calls would fail synchronously with "KChat token is not
-      // configured" and the renderer would already be rendering
-      // a "disconnected" banner. The empty-hits short-circuit
-      // avoids the network roundtrip when there's nothing to do.
-      if (hits.length > 0 && serverUrl) {
+      // the connection is fully `connected` (NOT `connecting`).
+      //
+      // ANALYSIS_0003 (Devin Review pass 2 on bef2fa0): the
+      // previous guard `if (hits.length > 0 && serverUrl)` was
+      // permissive because `serverUrl` is non-null in both
+      // `connected` AND `connecting` (see the conditional 30
+      // lines up). The mid-handshake `connecting` window can
+      // race the auth service's `setToken` ordering, and a
+      // verification request that hasn't completed yet would
+      // surface as failed enrichments. Restricting enrichment
+      // to `connected` aligns this gate with the renderer's
+      // "connected" banner gating: enrichment is only attempted
+      // in the same state where the rest of the search is
+      // expected to fully work.
+      if (hits.length > 0 && connState.state === "connected") {
         try {
           await enrichKchatPostHits(hits, svc.getClient());
         } catch {

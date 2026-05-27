@@ -260,6 +260,31 @@ export class KchatRequestError extends Error {
 const KCHAT_OBJECT_ID_RE = /^[a-z0-9]{20,32}$/;
 
 /**
+ * Non-throwing variant of {@link assertCallerObjectId} for the
+ * enrichment layer (Phase 13 Theme 2 Task 9, Devin Review pass 2
+ * on bef2fa0, ANALYSIS_0002).
+ *
+ * The bulk-enrichment path in `kchat:searchPosts` calls
+ * `getUsersByIds` with a list of ids whose validity it cannot
+ * vouch for individually — a single substrate-corrupted row would
+ * cause the assertion inside `getUsersByIds` to reject the entire
+ * batch, suppressing username enrichment for every other hit in
+ * the result set. Pre-filtering with this predicate lets the
+ * enrichment layer partition into "send these" vs "leave as raw
+ * id" without changing the trust-boundary semantics of the bulk
+ * endpoint itself (which keeps its strict assertion).
+ *
+ * Note: the helper is intentionally narrow — it returns `false`
+ * for both malformed strings and non-string inputs. Callers
+ * upstream may already have a `string` type contract, but the
+ * narrower predicate is friendlier to call sites that have
+ * `unknown` / `string | null` in scope.
+ */
+export function isKchatObjectId(value: unknown): value is string {
+  return typeof value === "string" && KCHAT_OBJECT_ID_RE.test(value);
+}
+
+/**
  * Validate a KChat object id that originated from the **server**
  * (e.g. an `id` field on a `KchatFileInfo` returned by
  * `listChannelFiles`). The renderer-facing IPC validator
