@@ -795,6 +795,391 @@ describe("uney-chat-desktop extension bridge integration", () => {
     }
   });
 
+  // ----------------------------------------------------------------
+  // Phase 13 Theme 3 Task 16: token expiry + refresh tests
+  // ----------------------------------------------------------------
+
+  it("10. auto-refresh timer fires and rotates token before expiry", async () => {
+    // Uses fake timers to exercise the `scheduleRefresh` path.
+    // The delegation expires in 60s; `REFRESH_MARGIN_MS` is 30s so
+    // the timer fires at 60s - 30s = 30s. Advancing fake timers by
+    // 31s should trigger the auto-refresh.
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    const now = Date.now();
+    let tokenCounter = 0;
+    const server = await startMockServer((frame) => {
+      if (frame.type === "discover") {
+        return {
+          type: "discover_response",
+          requestId: frame.requestId,
+          ok: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake", "token_refresh"],
+        };
+      }
+      if (frame.type === "handshake") {
+        tokenCounter += 1;
+        return {
+          type: "handshake_response",
+          requestId: frame.requestId,
+          ok: true,
+          user: {
+            id: "user1234567890abcdefgh",
+            username: "ken",
+            email: "k@e.com",
+            firstName: "K",
+            lastName: "N",
+          },
+          token: `token-${tokenCounter}`,
+          expiresAtMs: now + 60_000,
+          serverUrl: "https://kchat.example.com",
+          scopesGranted: ["kchat:posts.read"],
+        };
+      }
+      if (frame.type === "token_refresh") {
+        tokenCounter += 1;
+        return {
+          type: "token_refresh_response",
+          requestId: frame.requestId,
+          ok: true,
+          token: `token-${tokenCounter}`,
+          // Next expiry is 60s from "now" in the fake-timer sense.
+          expiresAtMs: Date.now() + 60_000,
+        };
+      }
+      return null;
+    });
+    try {
+      const fetchFn = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: "user1234567890abcdefgh",
+          username: "ken",
+          email: "k@e.com",
+          first_name: "K",
+          last_name: "N",
+          roles: "system_user",
+        }),
+        text: async () => "",
+        arrayBuffer: async () => new ArrayBuffer(0),
+      })) as unknown as typeof globalThis.fetch;
+      const client = new KchatClient({ fetchFn });
+      const setTokenSpy = vi.spyOn(client, "setToken");
+      const svc = new KchatAuthService(client, {
+        extensionFactory: () =>
+          new ExtensionConnection({ socketPath: server.socketPath }),
+        probeFn: async () => ({
+          available: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake", "token_refresh"],
+        }),
+      });
+      await svc.connectViaExtension();
+      expect(setTokenSpy).toHaveBeenLastCalledWith("token-1");
+      setTokenSpy.mockClear();
+
+      // Advance past the refresh margin (30s floor = expiresAt - 30s
+      // = 30s delay). Advance 31s to cross the threshold.
+      await vi.advanceTimersByTimeAsync(31_000);
+
+      // The auto-refresh should have fired and rotated the token.
+      expect(setTokenSpy).toHaveBeenCalledWith("token-2");
+      svc.disconnect();
+    } finally {
+      vi.useRealTimers();
+      await server.close();
+    }
+  });
+
+  it("11. refresh failure (rejected) transitions to error via listener", async () => {
+    const server = await startMockServer((frame) => {
+      if (frame.type === "discover") {
+        return {
+          type: "discover_response",
+          requestId: frame.requestId,
+          ok: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake", "token_refresh"],
+        };
+      }
+      if (frame.type === "handshake") {
+        return {
+          type: "handshake_response",
+          requestId: frame.requestId,
+          ok: true,
+          user: {
+            id: "user1234567890abcdefgh",
+            username: "ken",
+            email: "k@e.com",
+            firstName: "K",
+            lastName: "N",
+          },
+          token: "token-valid",
+          expiresAtMs: Date.now() + 5 * 60_000,
+          serverUrl: "https://kchat.example.com",
+          scopesGranted: ["kchat:posts.read"],
+        };
+      }
+      if (frame.type === "token_refresh") {
+        // Desktop app rejects the refresh.
+        return {
+          type: "token_refresh_response",
+          requestId: frame.requestId,
+          ok: false,
+          error: "user_revoked_delegation",
+        };
+      }
+      return null;
+    });
+    try {
+      const fetchFn = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: "user1234567890abcdefgh",
+          username: "ken",
+          email: "k@e.com",
+          first_name: "K",
+          last_name: "N",
+          roles: "system_user",
+        }),
+        text: async () => "",
+        arrayBuffer: async () => new ArrayBuffer(0),
+      })) as unknown as typeof globalThis.fetch;
+      const client = new KchatClient({ fetchFn });
+      const svc = new KchatAuthService(client, {
+        extensionFactory: () =>
+          new ExtensionConnection({ socketPath: server.socketPath }),
+        probeFn: async () => ({
+          available: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake", "token_refresh"],
+        }),
+      });
+      await svc.connectViaExtension();
+      expect(svc.getAuthMode()).toBe("extension");
+
+      // Access the internal session and attempt a manual refresh.
+      const session = (svc as unknown as {
+        extensionSession: KchatExtensionSession | null;
+      }).extensionSession;
+      expect(session).not.toBeNull();
+
+      // The refresh should throw because the server rejects it.
+      await expect(session!.refresh()).rejects.toThrow(
+        /user_revoked_delegation|refresh rejected/i,
+      );
+
+      // After a failed refresh, the session's `current` is nulled
+      // (the failure handler clears it). Calling `refresh()` again
+      // should throw "no active session" proving the session is dead.
+      await expect(session!.refresh()).rejects.toThrow(
+        /no active session/i,
+      );
+
+      svc.disconnect();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("12. refresh with already-expired token fires protocol-error", async () => {
+    const server = await startMockServer((frame) => {
+      if (frame.type === "discover") {
+        return {
+          type: "discover_response",
+          requestId: frame.requestId,
+          ok: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake", "token_refresh"],
+        };
+      }
+      if (frame.type === "handshake") {
+        return {
+          type: "handshake_response",
+          requestId: frame.requestId,
+          ok: true,
+          user: {
+            id: "user1234567890abcdefgh",
+            username: "ken",
+            email: "k@e.com",
+            firstName: "K",
+            lastName: "N",
+          },
+          token: "token-init",
+          expiresAtMs: Date.now() + 5 * 60_000,
+          serverUrl: "https://kchat.example.com",
+          scopesGranted: ["kchat:posts.read"],
+        };
+      }
+      if (frame.type === "token_refresh") {
+        // Return a token that's already expired (in the past).
+        return {
+          type: "token_refresh_response",
+          requestId: frame.requestId,
+          ok: true,
+          token: "token-expired",
+          expiresAtMs: Date.now() - 1_000, // expired 1s ago
+        };
+      }
+      return null;
+    });
+    try {
+      const fetchFn = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: "user1234567890abcdefgh",
+          username: "ken",
+          email: "k@e.com",
+          first_name: "K",
+          last_name: "N",
+          roles: "system_user",
+        }),
+        text: async () => "",
+        arrayBuffer: async () => new ArrayBuffer(0),
+      })) as unknown as typeof globalThis.fetch;
+      const client = new KchatClient({ fetchFn });
+      const svc = new KchatAuthService(client, {
+        extensionFactory: () =>
+          new ExtensionConnection({ socketPath: server.socketPath }),
+        probeFn: async () => ({
+          available: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake", "token_refresh"],
+        }),
+      });
+      await svc.connectViaExtension();
+
+      const session = (svc as unknown as {
+        extensionSession: KchatExtensionSession | null;
+      }).extensionSession;
+      expect(session).not.toBeNull();
+
+      // The refresh should throw because the returned token is
+      // already expired — the session classifies this as
+      // `protocol-error`.
+      await expect(session!.refresh()).rejects.toThrow(
+        /already-expired/i,
+      );
+
+      // Session should be invalidated — a subsequent refresh attempt
+      // fails with "no active session".
+      await expect(session!.refresh()).rejects.toThrow(
+        /no active session/i,
+      );
+
+      svc.disconnect();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("13. multiple consecutive auto-refreshes maintain valid session", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    let tokenCounter = 0;
+    const server = await startMockServer((frame) => {
+      if (frame.type === "discover") {
+        return {
+          type: "discover_response",
+          requestId: frame.requestId,
+          ok: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake", "token_refresh"],
+        };
+      }
+      if (frame.type === "handshake") {
+        tokenCounter += 1;
+        return {
+          type: "handshake_response",
+          requestId: frame.requestId,
+          ok: true,
+          user: {
+            id: "user1234567890abcdefgh",
+            username: "ken",
+            email: "k@e.com",
+            firstName: "K",
+            lastName: "N",
+          },
+          token: `token-${tokenCounter}`,
+          // Expires in 60s — refresh fires at 30s.
+          expiresAtMs: Date.now() + 60_000,
+          serverUrl: "https://kchat.example.com",
+          scopesGranted: ["kchat:posts.read"],
+        };
+      }
+      if (frame.type === "token_refresh") {
+        tokenCounter += 1;
+        return {
+          type: "token_refresh_response",
+          requestId: frame.requestId,
+          ok: true,
+          token: `token-${tokenCounter}`,
+          expiresAtMs: Date.now() + 60_000,
+        };
+      }
+      return null;
+    });
+    try {
+      const fetchFn = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: "user1234567890abcdefgh",
+          username: "ken",
+          email: "k@e.com",
+          first_name: "K",
+          last_name: "N",
+          roles: "system_user",
+        }),
+        text: async () => "",
+        arrayBuffer: async () => new ArrayBuffer(0),
+      })) as unknown as typeof globalThis.fetch;
+      const client = new KchatClient({ fetchFn });
+      const setTokenSpy = vi.spyOn(client, "setToken");
+      const svc = new KchatAuthService(client, {
+        extensionFactory: () =>
+          new ExtensionConnection({ socketPath: server.socketPath }),
+        probeFn: async () => ({
+          available: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake", "token_refresh"],
+        }),
+      });
+      await svc.connectViaExtension();
+      expect(setTokenSpy).toHaveBeenLastCalledWith("token-1");
+
+      // First auto-refresh (at ~30s).
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(setTokenSpy).toHaveBeenLastCalledWith("token-2");
+
+      // Second auto-refresh (30s after the first).
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(setTokenSpy).toHaveBeenLastCalledWith("token-3");
+
+      // Third auto-refresh.
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(setTokenSpy).toHaveBeenLastCalledWith("token-4");
+
+      // Session is still alive.
+      expect(svc.getAuthMode()).toBe("extension");
+
+      svc.disconnect();
+    } finally {
+      vi.useRealTimers();
+      await server.close();
+    }
+  });
+
   it("9. SSRF on extension handshake serverUrl is rejected", async () => {
     const server = await startMockServer((frame) => {
       if (frame.type === "discover") {
