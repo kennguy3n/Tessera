@@ -465,6 +465,16 @@ const api: TesseraApi = {
      */
     backfillChannel: (channelId: string) =>
       ipcRenderer.invoke("sources:backfillKchatChannel", channelId),
+    /**
+     * Block D Task 1 (Phase 14): KChat post-body retrieval. The
+     * renderer's evidence-search UI calls this alongside
+     * `sources.search` so chat threads surface as evidence
+     * alongside files. See the IPC handler in
+     * `electron/ipc/kchat.ts` for the AEAD-verify gate, audit
+     * shape, and permalink composition.
+     */
+    searchPosts: (query: string, limit: number) =>
+      ipcRenderer.invoke("kchat:searchPosts", query, limit),
     // Block B Task 1: push-based delivery of KChat connection
     // state + WebSocket events. The status channel mirrors
     // `updates.onStatus` so the connection card / sidebar no

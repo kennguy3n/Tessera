@@ -25,6 +25,7 @@ import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
 import { promises as dnsPromises } from "dns";
+import { createHash } from "crypto";
 import {
   getBridge,
   getKchatAuthService,
@@ -34,8 +35,10 @@ import {
 import type {
   KchatBackfillRunOutcome,
   KchatPostIngestInputInfo,
+  KchatPostSearchHit,
 } from "../../shared/types";
 import { idempotentHandle } from "./register";
+import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
 import {
   assertBoolean,
   assertId,
@@ -1512,6 +1515,135 @@ export function registerKchatHandlers(): void {
       });
       inFlightBackfillKchatChannel.set(id, work);
       return work;
+    },
+  );
+
+  /**
+   * Block D Task 1 (Phase 14): KChat post-body retrieval.
+   *
+   * The renderer's evidence-search UI calls this alongside
+   * `sources:search` so chat threads surface as evidence
+   * alongside files. The handler:
+   *
+   *   1. Rate-limits via the `kchat:searchPosts` profile
+   *      (10 r/s sustained, 20 burst — same as `sources:search`).
+   *   2. Validates `query` (string, max 10k chars to mirror
+   *      `sources:search`) and `limit` (1..1000 — the substrate
+   *      pulls 2x this many rows before AEAD-verifying to
+   *      tolerate tamper drops).
+   *   3. Computes a SHA-256 hash of the query (truncated to 16
+   *      hex chars) for the audit row — the raw query string
+   *      MUST NOT cross into the audit log, that's the privacy
+   *      property of `KchatPostSearchExecuted`.
+   *   4. Calls `bridgeSearchKchatPosts` for the AEAD-verified
+   *      hit set.
+   *   5. Composes a `kchat://<server>/channel/<channel_id>/post/
+   *      <post_id>` permalink per hit IF the user is currently
+   *      connected to KChat; otherwise leaves `permalink: null`
+   *      and lets the renderer disable the "Open in KChat"
+   *      button.
+   *   6. Emits the `KchatPostSearchExecuted` audit row
+   *      best-effort (a poisoned audit mutex must not crash the
+   *      search — the user's retrieval has already succeeded by
+   *      the time this runs).
+   */
+  idempotentHandle(
+    "kchat:searchPosts",
+    async (
+      _event,
+      query: unknown,
+      limit: unknown,
+    ): Promise<KchatPostSearchHit[]> => {
+      defaultRateLimiter.consume(
+        "kchat:searchPosts",
+        RATE_LIMIT_PROFILES["kchat:searchPosts"],
+      );
+      const q = assertString(query, "query", { maxLen: 10_000 });
+      const n = assertNumber(limit, "limit", {
+        integer: true,
+        min: 1,
+        max: 1_000,
+      });
+      const bridge = getBridge();
+      if (!bridge) return [];
+
+      const start = Date.now();
+      const queryHash = createHash("sha256")
+        .update(q.trim())
+        .digest("hex")
+        .slice(0, 16);
+
+      const raw = bridge.bridgeSearchKchatPosts(q, n);
+
+      // Compose the permalink only when the user is actually
+      // connected — the renderer disables the "Open in KChat"
+      // button when `permalink` is null. We read the connection
+      // state from the auth service (NOT the persisted vault,
+      // which would still return a serverUrl after a disconnect).
+      const svc = getKchatAuthService();
+      const connState = svc.getState();
+      const serverUrl =
+        (connState.state === "connected" ||
+          connState.state === "connecting") &&
+        connState.serverUrl
+          ? connState.serverUrl
+          : null;
+      const hits: KchatPostSearchHit[] = raw.map((h) => {
+        let permalink: string | null = null;
+        if (serverUrl) {
+          // KChat / Mattermost permalink convention: the team
+          // segment is required by the server but the substrate
+          // does not persist team-per-channel. The renderer can
+          // either fall back to `/_redirect/pl/<post_id>` (which
+          // the server resolves) or compose the team-aware path
+          // from the local roster cache. We emit the redirect
+          // form here because it round-trips cleanly without
+          // the IPC layer having to peek into the renderer's
+          // roster cache.
+          permalink =
+            `${serverUrl.replace(/\/$/, "")}` +
+            `/_redirect/pl/${encodeURIComponent(h.postId)}`;
+        }
+        return {
+          kind: "kchat_post",
+          sourcePath: h.sourcePath,
+          sourceId: h.sourceId,
+          chunkHash: h.chunkHash,
+          chunkContent: h.content,
+          relevanceScore: h.relevance,
+          excerpt: h.excerpt,
+          postId: h.postId,
+          channelId: h.channelId,
+          rootId: h.rootId,
+          senderUserId: h.senderUserId,
+          createdAtMs: h.createdAtMs,
+          editedAtMs: h.editedAtMs,
+          permalink,
+        };
+      });
+
+      const latencyMs = Date.now() - start;
+      const sourcesTouched = new Set(hits.map((h) => h.sourceId)).size;
+      try {
+        bridge.bridgeLogKchatPostSearchExecuted(
+          queryHash,
+          hits.length,
+          sourcesTouched,
+          latencyMs,
+        );
+      } catch (err) {
+        // Best-effort audit (matches the
+        // `bridgeLogKchatBackfillAborted` posture). The retrieval
+        // already succeeded — breaking the user's search because
+        // the audit logger is poisoned would be the wrong
+        // trade-off.
+        console.error(
+          "[kchat] bridgeLogKchatPostSearchExecuted failed:",
+          err,
+        );
+      }
+
+      return hits;
     },
   );
 }

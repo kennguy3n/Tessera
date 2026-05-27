@@ -229,6 +229,19 @@ export const RATE_LIMIT_PROFILES = {
     tokensPerInterval: 1,
     intervalMs: 15_000,
   },
+  // Block D Task 1 (Phase 14): KChat post-body retrieval. Mirrors
+  // the `sources:search` profile (10 r/s sustained, 20 burst) so
+  // a renderer that debounces and fires both `sources:search` +
+  // `kchat:searchPosts` for every keystroke can keep up under
+  // typical typing speed without tripping either gate. The IPC
+  // handler also performs an AEAD-verify per chunk (one AES-GCM-
+  // 256 open per hit), so the actual cost ceiling is bounded by
+  // the limit * verification cost, not by the IPC call rate.
+  "kchat:searchPosts": {
+    tokensPerInterval: 10,
+    intervalMs: 1_000,
+    burst: 20,
+  },
 } satisfies Record<string, RateLimitConfig>;
 
 /** Shared default limiter instance used by the IPC layer. */

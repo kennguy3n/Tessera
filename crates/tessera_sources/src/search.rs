@@ -283,7 +283,7 @@ fn is_stopword(word: &str) -> bool {
     STOPWORDS.contains(&word.to_ascii_lowercase().as_str())
 }
 
-fn build_fts_query(query: &str, use_or: bool) -> String {
+pub(crate) fn build_fts_query(query: &str, use_or: bool) -> String {
     let terms: Vec<String> = query
         .split_whitespace()
         .filter(|w| !use_or || !is_stopword(w))
@@ -315,7 +315,7 @@ fn ceil_char_boundary(s: &str, mut idx: usize) -> usize {
     idx
 }
 
-fn build_excerpt(content: &str, query: &str, max_len: usize) -> String {
+pub(crate) fn build_excerpt(content: &str, query: &str, max_len: usize) -> String {
     let query_terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
 
     let best_pos = query_terms

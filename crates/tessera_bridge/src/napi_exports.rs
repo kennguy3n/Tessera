@@ -418,6 +418,28 @@ pub fn bridge_search_sources(
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+/// Block D Task 1 (Phase 14): query the KChat-post FTS5 index for
+/// chat-body chunks that match `query`. The Node-side
+/// `kchat:searchPosts` IPC handler maps the returned shape
+/// (which carries channel id, post id, sender id, timestamps)
+/// into a renderer-facing structure that includes a
+/// `kchat://<server>/channel/<channel_id>/post/<post_id>`
+/// permalink — the IPC layer composes the URL because the
+/// substrate does not know the server URL, only kchat-auth does.
+#[napi]
+pub fn bridge_search_kchat_posts(
+    query: String,
+    limit: u32,
+) -> napi::Result<Vec<sources::KchatPostSearchHitInfo>> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::search_kchat_posts(&mgr, &query, limit as usize)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 #[napi]
 pub fn bridge_get_source_detail(source_id: String) -> napi::Result<sources::SourceDetailInfo> {
     let s = state()?;
@@ -2622,6 +2644,35 @@ pub fn bridge_log_kchat_backfill_aborted(
             pages_walked,
             total_posts_ingested,
         );
+    }
+    Ok(())
+}
+
+/// Block D Task 1 (Phase 14): record a `KchatPostSearchExecuted`
+/// audit row when the renderer's evidence search calls into the
+/// KChat-content retrieval bridge. The IPC handler computes
+/// `query_hash` (SHA-256 over the normalised query, hex-encoded
+/// + truncated to 16 chars) and `latency_ms` (end-to-end IPC
+/// duration) before calling — the substrate intentionally does
+/// not log the raw query (privacy property).
+///
+/// Mirrors `bridge_log_kchat_backfill_aborted`'s
+/// best-effort-not-fatal failure shape: a poisoned audit-logger
+/// mutex does NOT crash the search path, just drops the audit
+/// row (the search itself already succeeded by the time this
+/// is called, and breaking observability on a degraded mutex
+/// would block the user's actual retrieval flow).
+#[napi]
+pub fn bridge_log_kchat_post_search_executed(
+    query_hash: String,
+    hits: u32,
+    sources_touched: u32,
+    latency_ms: u32,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ =
+            logger.log_kchat_post_search_executed(&query_hash, hits, sources_touched, latency_ms);
     }
     Ok(())
 }

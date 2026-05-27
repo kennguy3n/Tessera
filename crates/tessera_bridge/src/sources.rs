@@ -4,7 +4,7 @@ use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tessera_core::SourceId;
 use tessera_sources::hybrid::{HybridSearchConfig, HybridSearchConfigInput};
-use tessera_sources::manager::SourceManager;
+use tessera_sources::manager::{KchatPostSearchHit, SourceManager};
 use tessera_sources::progress::{EmbeddingProgressTracker, EmbeddingStatus};
 use tessera_sources::search::SearchResult;
 use tessera_sources::source::Source;
@@ -49,6 +49,48 @@ pub struct IndexedFileInfo {
     pub hash: String,
     pub last_modified: String,
     pub chunk_count: i32,
+}
+
+/// Block D Task 1 (Phase 14): JS-facing pass-through of
+/// [`tessera_sources::manager::KchatPostSearchHit`].
+///
+/// Returned by `bridge_search_kchat_posts`. Differs from
+/// [`SearchHitInfo`] in three ways:
+///
+/// 1. Carries chat-specific metadata (channel id, post id,
+///    root id, sender id, timestamps) so the renderer can render
+///    a KChat-flavoured citation badge alongside the excerpt and
+///    construct a `kchat://` permalink for the "Jump to KChat"
+///    action.
+/// 2. `source_path` carries the channel cache dir (== channel id
+///    by construction) rather than a synthetic `kchat:post:<id>`
+///    handle — the renderer maps it to the user-visible channel
+///    name from its local roster cache.
+/// 3. `chunk_index` and `byte_offset` are surfaced so two
+///    citations of the same post on different chunks can be
+///    distinguished in the citations list without ambiguity.
+///
+/// Field ordering matches [`SearchHitInfo`] where the two
+/// overlap, plus the KChat-specific block tucked at the end so
+/// the napi-generated `.d.ts` is diff-stable when one struct or
+/// the other grows a field.
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct KchatPostSearchHitInfo {
+    pub content: String,
+    pub excerpt: String,
+    pub source_path: String,
+    pub source_id: String,
+    pub chunk_hash: String,
+    pub chunk_index: i32,
+    pub byte_offset: i32,
+    pub relevance: f64,
+    pub post_id: String,
+    pub channel_id: String,
+    pub root_id: Option<String>,
+    pub sender_user_id: String,
+    pub created_at_ms: i64,
+    pub edited_at_ms: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -97,6 +139,27 @@ impl From<&SearchResult> for SearchHitInfo {
             chunk_hash: r.hash.clone(),
             chunk_index: r.chunk_index as i32,
             relevance: r.relevance,
+        }
+    }
+}
+
+impl From<&KchatPostSearchHit> for KchatPostSearchHitInfo {
+    fn from(h: &KchatPostSearchHit) -> Self {
+        Self {
+            content: h.content.clone(),
+            excerpt: h.excerpt.clone(),
+            source_path: h.source_path.clone(),
+            source_id: h.source_id.to_string(),
+            chunk_hash: h.hash.clone(),
+            chunk_index: h.chunk_index as i32,
+            byte_offset: h.byte_offset as i32,
+            relevance: h.relevance,
+            post_id: h.post_id.clone(),
+            channel_id: h.channel_id.clone(),
+            root_id: h.root_id.clone(),
+            sender_user_id: h.sender_user_id.clone(),
+            created_at_ms: h.created_at_ms,
+            edited_at_ms: h.edited_at_ms,
         }
     }
 }
@@ -491,6 +554,32 @@ pub fn search_sources(
 ) -> BridgeResult<Vec<SearchHitInfo>> {
     let results = manager.search(query, limit).map_err(BridgeError::Core)?;
     Ok(results.iter().map(SearchHitInfo::from).collect())
+}
+
+/// Block D Task 1 (Phase 14): bridge counterpart of
+/// [`SourceManager::search_kchat_posts`]. Returns AEAD-verified
+/// KChat post-body chunks ranked by BM25 + reciprocal rank.
+///
+/// Intentionally a sibling of [`search_sources`] (rather than a
+/// merged "search-everywhere") so the renderer can:
+///
+/// 1. Display file and chat citations with distinct visual
+///    treatment without branching on a tagged-union return type.
+/// 2. Apply per-kind privacy controls — e.g. the renderer could
+///    suppress KChat post results in the Comparison surface but
+///    keep them in the Artifact surface.
+/// 3. Audit the two query kinds independently — the
+///    `KchatPostSearchExecuted` audit row only fires when this
+///    bridge is called (see `bridge_log_kchat_post_search_executed`).
+pub fn search_kchat_posts(
+    manager: &SourceManager,
+    query: &str,
+    limit: usize,
+) -> BridgeResult<Vec<KchatPostSearchHitInfo>> {
+    let results = manager
+        .search_kchat_posts(query, limit)
+        .map_err(BridgeError::Core)?;
+    Ok(results.iter().map(KchatPostSearchHitInfo::from).collect())
 }
 
 pub fn get_source_detail(
@@ -1116,6 +1205,62 @@ mod tests {
             .recency_halflife_secs
             .expect("halflife should be Some when decay is enabled");
         assert!((returned - want_halflife).abs() < 1.0);
+    }
+
+    /// Block D Task 1 (Phase 14): the bridge `search_kchat_posts`
+    /// wrapper must round-trip the substrate's
+    /// [`KchatPostSearchHit`] into the napi-shaped
+    /// [`KchatPostSearchHitInfo`] preserving every metadata field
+    /// the renderer needs (channel id, post id, sender id,
+    /// created_at, edited_at, byte_offset, root_id). Loss of any
+    /// of these fields would silently break the citation badge or
+    /// the `kchat://` permalink construction downstream.
+    #[test]
+    fn bridge_search_kchat_posts_round_trips_metadata() {
+        use tessera_sources::manager::KchatPostIngestInput;
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.add_kchat_channel(cache_dir).unwrap();
+        let _ = manager
+            .ingest_kchat_post(&KchatPostIngestInput {
+                cache_dir: cache_dir.to_string(),
+                post_id: "post-bridge".to_string(),
+                channel_id: "ch-bridge".to_string(),
+                root_id: Some("root-thread".to_string()),
+                sender_user_id: "u-author".to_string(),
+                body: "narwhal walrus dolphin orca whale".to_string(),
+                created_at_ms: 1_700_000_001_000,
+                edited_at_ms: 1_700_000_002_000,
+            })
+            .unwrap();
+
+        let hits = search_kchat_posts(&manager, "narwhal", 10).unwrap();
+        assert_eq!(hits.len(), 1, "expected one hit (got {})", hits.len());
+        let h = &hits[0];
+        assert_eq!(h.post_id, "post-bridge");
+        assert_eq!(h.channel_id, "ch-bridge");
+        assert_eq!(h.root_id.as_deref(), Some("root-thread"));
+        assert_eq!(h.sender_user_id, "u-author");
+        assert_eq!(h.created_at_ms, 1_700_000_001_000);
+        assert_eq!(h.edited_at_ms, 1_700_000_002_000);
+        assert_eq!(h.source_path, cache_dir);
+        assert!(h.content.contains("narwhal"));
+        assert!(!h.chunk_hash.is_empty());
+        assert!(h.byte_offset >= 0);
+        assert!(h.relevance > 0.0 && h.relevance <= 1.0);
+    }
+
+    /// Block D Task 1 (Phase 14): empty result set must round-trip
+    /// as an empty `Vec` — NOT as an error. The renderer's
+    /// CitationPanel relies on this to render "no chat results"
+    /// alongside file results without branching on error vs.
+    /// empty.
+    #[test]
+    fn bridge_search_kchat_posts_empty_returns_empty_vec() {
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let hits = search_kchat_posts(&manager, "nonexistent-term-xyz", 10).unwrap();
+        assert!(hits.is_empty());
     }
 
     #[test]
