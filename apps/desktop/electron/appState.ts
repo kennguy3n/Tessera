@@ -749,7 +749,15 @@ let kchatEventForwarder: KchatEventForwarder | null = null;
 // Phase 14 Task 2: localhost HTTP server the Tessera `.kcz`
 // extension (running inside KChat Desktop) talks to. Lazily
 // started by `startKchatLocalApiServer()` from the main-process
-// `whenReady` chain; reset alongside the auth service in tests.
+// `whenReady` chain and torn down by `stopKchatLocalApiServer()`
+// from the `will-quit` chain (or by tests that need a fresh
+// instance between cases). NOTE: this slot is intentionally NOT
+// cleared by `resetKchatAuthService` — unlike the auth
+// service's companion `KchatEventForwarder`, the local API
+// server holds an active bound HTTP port and a synchronous
+// `slot = null` would leak the listening socket. Tests that
+// need a clean slate must call the async
+// `stopKchatLocalApiServer()` explicitly.
 let kchatLocalApiServer: KchatLocalApiServer | null = null;
 // Phase 14 Task 3: `tessera://` deeplink router. Constructed
 // eagerly at module load so a pre-ready `open-url` event from
