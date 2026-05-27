@@ -527,24 +527,52 @@ export class KchatAuthService {
     // The vault entry survives so the user can manually
     // reconnect (the saved delegation may simply need a fresh
     // handshake).
+    //
+    // Ordering invariant: scrub the error message through
+    // `KchatClient.scrubMessage` BEFORE `shutdown()` runs, because
+    // `shutdown()` sets `this.token = null` and the literal-token
+    // redaction in `scrubMessage` only fires while `this.token` is
+    // non-null (`kchatClient.ts:559`). The PAT-side `connect()` and
+    // `connectViaExtension()` both preserve scrub-then-clear; this
+    // path now does too. The fallback `Bearer …` regex in
+    // `scrubMessage` would still fire post-shutdown, but the
+    // literal scrub is the stronger defense-in-depth layer and
+    // catches token shapes that don't appear in a `Bearer` header
+    // (e.g. raw token literal embedded in a JSON error body from
+    // the desktop app's refresh-rejection response). If the
+    // pre-scrub itself throws (it can't today, but a future
+    // overload that calls into Intl could), we still fall through
+    // to the `setConnectionState`-level scrub at
+    // `kchatClient.ts:1266` so the renderer never receives a
+    // post-shutdown unscrubbed string.
+    const scrubbedMessage = this.client.scrubMessage(
+      `KChat Desktop session refresh failed: ${err.message}`,
+    );
     this.client.shutdown();
     this.teardownExtensionConnection();
     this.authMode = "none";
-    // Re-surface the underlying message through the client so the
-    // status push has the same error shape as PAT-side failures.
-    this.client.emitExtensionAuthError(
-      `KChat Desktop session refresh failed: ${err.message}`,
-    );
+    // Re-surface the already-scrubbed message through the client
+    // so the status push has the same error shape as PAT-side
+    // failures.
+    this.client.emitExtensionAuthError(scrubbedMessage);
   }
 
   private handleExtensionDisconnect(reason: string): void {
     if (this.authMode !== "extension") return;
+    // Same scrub-then-clear ordering as `handleExtensionRefreshFailure`
+    // for consistency. `reason` here is a static disconnect
+    // discriminator produced by `ExtensionConnection.close()`
+    // (e.g. "EOF", "transport-error: <code>") and is not known to
+    // carry tokens today, but mirroring the defense-in-depth
+    // ordering prevents a future code path that injects a
+    // server-supplied reason from regressing.
+    const scrubbedMessage = this.client.scrubMessage(
+      `KChat Desktop disconnected (${reason})`,
+    );
     this.teardownExtensionConnection();
     this.client.shutdown();
     this.authMode = "none";
-    this.client.emitExtensionAuthError(
-      `KChat Desktop disconnected (${reason})`,
-    );
+    this.client.emitExtensionAuthError(scrubbedMessage);
   }
 }
 
