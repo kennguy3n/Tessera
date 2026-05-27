@@ -208,19 +208,93 @@ export interface DisconnectFrame {
 }
 
 /**
+ * Discovery surface for `extensionSocketPath()`. A point-in-time
+ * snapshot of the process-level inputs the helper reads:
+ *
+ *   - `platform`: `process.platform` value (`"linux"`, `"darwin"`,
+ *     `"win32"`, etc.).
+ *   - `xdgRuntimeDir`: `process.env.XDG_RUNTIME_DIR` value, or
+ *     `undefined` if unset.
+ *   - `uid`: user id from `process.getuid()`, or `null` if the
+ *     platform does not expose it (Windows hosts — `process.getuid`
+ *     is `undefined` there).
+ *   - `tmpdir`: the system tmpdir (`os.tmpdir()` result).
+ *   - `homedir`: the user's home directory (`os.homedir()` result).
+ *
+ * **All fields are eagerly captured values, NOT lazy closures or
+ * function references.** Per Devin Review PR #57 pass 1
+ * ANALYSIS_0001 + ANALYSIS_0002, the previous shape had an
+ * eager-vs-lazy asymmetry (eager `platform` / `xdgRuntimeDir`,
+ * lazy `tmpdir` / `homedir`, eager-bound-function `getuid`) that
+ * would surface as partial-staleness if a future caller cached
+ * the discovery object across calls. Eager-everywhere makes the
+ * snapshot semantics explicit: a discovery object describes the
+ * state at the moment it was constructed, never later.
+ *
+ * Exposed as an injectable parameter so tests can pin every
+ * branch deterministically WITHOUT mutating `process.platform`
+ * via `Object.defineProperty` or shadowing `process.env`. The
+ * mutation pattern is safe under the default vitest worker
+ * model (one file per worker) but breaks under
+ * `--pool=threads` with shared worker pools, because a
+ * concurrent test in the same worker could observe the
+ * mutated `process.platform` between mutation and restore.
+ * Per Devin Review PR #55 ANALYSIS_pr-review-job-
+ * 41b66cb55f664fa380d0e1b4ea53bba1_0001 (Finding 6 in user's
+ * cumulative paste).
+ */
+export interface ExtensionSocketDiscovery {
+  platform: NodeJS.Platform;
+  xdgRuntimeDir: string | undefined;
+  uid: number | null;
+  tmpdir: string;
+  homedir: string;
+}
+
+/**
+ * Default discovery: take a fresh snapshot from `process.*` /
+ * `os.*` globals. A new snapshot per call so a long-lived
+ * session that experiences an `XDG_RUNTIME_DIR` change (or any
+ * other input change) picks up the new value on the next
+ * `extensionSocketPath()` invocation — production always uses
+ * the no-arg call signature which triggers a fresh snapshot.
+ *
+ * `process.getuid` is called directly (no `.bind(process)`) —
+ * the C++ binding doesn't use `this`, so binding was pure
+ * overhead. Per Devin Review PR #57 pass 1 ANALYSIS_0002.
+ */
+export function defaultExtensionSocketDiscovery(): ExtensionSocketDiscovery {
+  return {
+    platform: process.platform,
+    xdgRuntimeDir: process.env.XDG_RUNTIME_DIR,
+    uid: typeof process.getuid === "function" ? process.getuid() : null,
+    tmpdir: os.tmpdir(),
+    homedir: os.homedir(),
+  };
+}
+
+/**
  * Return the well-known extension socket path for this platform.
  * Phase 13 Task 30: per-platform shape following the same pattern
  * `dbKey.ts` uses for the SQLCipher key blob location.
+ *
+ * Accepts an optional `discovery` parameter to make the
+ * per-platform branches independently testable WITHOUT
+ * mutating `process.platform` / `process.env` / `process.getuid`
+ * globals. Production call sites use the no-arg default which
+ * reads from the real globals — see
+ * `defaultExtensionSocketDiscovery()`.
  */
-export function extensionSocketPath(): string {
-  const platform = process.platform;
+export function extensionSocketPath(
+  discovery: ExtensionSocketDiscovery = defaultExtensionSocketDiscovery(),
+): string {
+  const { platform, xdgRuntimeDir, uid, tmpdir, homedir } = discovery;
   if (platform === "win32") {
     return "\\\\.\\pipe\\tessera-kchat-extension";
   }
   if (platform === "darwin") {
-    const home = os.homedir();
     return path.join(
-      home,
+      homedir,
       "Library",
       "Application Support",
       "Tessera",
@@ -234,12 +308,11 @@ export function extensionSocketPath(): string {
   // `/tmp/tessera-kchat-extension-<uid>.sock` (uid-suffixed to
   // avoid collisions on multi-user systems) when the variable is
   // unset — minimal containers and some CI runners don't set it.
-  const xdgRuntime = process.env.XDG_RUNTIME_DIR;
-  if (xdgRuntime && xdgRuntime.length > 0) {
-    return path.join(xdgRuntime, "tessera-kchat-extension.sock");
+  if (xdgRuntimeDir && xdgRuntimeDir.length > 0) {
+    return path.join(xdgRuntimeDir, "tessera-kchat-extension.sock");
   }
-  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
-  return path.join(os.tmpdir(), `tessera-kchat-extension-${uid}.sock`);
+  const effectiveUid = uid ?? 0;
+  return path.join(tmpdir, `tessera-kchat-extension-${effectiveUid}.sock`);
 }
 
 /**
