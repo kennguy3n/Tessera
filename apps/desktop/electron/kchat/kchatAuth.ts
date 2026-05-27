@@ -513,6 +513,25 @@ export class KchatAuthService {
    * was disconnected (for audit logging).
    */
   disconnect(): string | null {
+    // Phase 13 Theme 5 Devin Review PR #55 ANALYSIS_0005: early
+    // return when already disconnected. Without this guard, a
+    // redundant `disconnect()` call (e.g. UI rerender that fires
+    // the action twice, automation script that calls disconnect
+    // defensively on app close, or a second user click before the
+    // first call's status push lands) falls through to the
+    // else-branch below, which unconditionally calls
+    // `deleteTokens(KCHAT_VAULT_PROVIDER)` and would silently wipe
+    // a saved PAT that the extension-mode branch above had
+    // deliberately preserved. The double-disconnect scenario
+    // surfaced when test 14 (`kchatExtension.test.ts`) documented
+    // that calling `disconnect()` twice while a saved PAT was
+    // present would wipe the PAT on the second call — a UX bug
+    // for users toggling between modes. With this guard the
+    // second (and Nth) call is a no-op: no vault mutation, no
+    // status push, no audit row.
+    if (this.authMode === "none") {
+      return null;
+    }
     let userId: string | null = null;
     if (this.authMode === "extension") {
       userId = this.extensionSession?.disconnect() ?? null;

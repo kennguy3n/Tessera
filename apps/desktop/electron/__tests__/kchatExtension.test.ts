@@ -1390,30 +1390,42 @@ describe("uney-chat-desktop extension bridge integration", () => {
         );
         expect(cleanDisconnectedPushes.length).toBeGreaterThanOrEqual(1);
 
-        // (f) second disconnect is idempotent — no throw, and the
-        // service stays in `authMode: "none"`. The second call
-        // routes through the PAT branch (`authMode` is "none"
-        // now, not "extension", so the else-branch fires). The
-        // PAT branch reads the kchat vault entry to pull the
-        // disconnected userId for audit logging, then deletes
-        // the entry. The seeded entry has no userId metadata
-        // (scopes: []) so `readStoredAuth` returns userId="" —
-        // we assert the return value is a string rather than
-        // pinning a specific value because it depends on how the
-        // upstream seed was written.
+        // (f) second disconnect is a strict no-op. The
+        // `kchatAuth.ts.disconnect()` early-return guard (added
+        // per Devin Review PR #55 ANALYSIS_0005) detects
+        // `authMode === "none"` and short-circuits before touching
+        // any vault, status, or audit state. Returns null because
+        // there is no userId to disconnect.
+        //
+        // CRITICAL: the saved PAT under `kchat` MUST remain
+        // present after a redundant disconnect — that's the
+        // whole point of the guard. Without it, the second call
+        // would have fallen through to the PAT branch (since
+        // authMode is "none", not "extension") and called
+        // `deleteTokens(KCHAT_VAULT_PROVIDER)` unconditionally,
+        // silently wiping a credential the user had deliberately
+        // saved across mode toggles.
+        const pushesBeforeSecondCall = pushes.length;
         const secondCall = svc.disconnect();
-        expect(typeof secondCall).toBe("string");
-        // The saved PAT under `kchat` IS wiped by the second
-        // call because it now goes through the PAT branch (which
-        // unconditionally calls `deleteTokens(KCHAT_VAULT_PROVIDER)`).
-        // This is the documented PAT-mode-disconnect behaviour —
-        // the asymmetry with the first call's preservation is
-        // intentional. We don't assert on `vaultStore.has("kchat")`
-        // after the second call to keep this test focused on the
-        // extension-mode invariants; the asymmetry is pinned
-        // separately by the PAT-mode-disconnect tests in
-        // kchatIpc.test.ts.
+        expect(secondCall).toBeNull();
         expect(svc.getAuthMode()).toBe("none");
+        expect(vaultStore.has("kchat")).toBe(true);
+        expect(vaultStore.get("kchat")?.accessToken).toBe(
+          "saved-pat-token-from-prior-session",
+        );
+        // And no extra status push was fired — the guard returns
+        // before `client.shutdown()` can synchronously emit one.
+        // Give the event loop a tick to confirm nothing fires
+        // asynchronously either.
+        await new Promise((r) => setTimeout(r, 50));
+        expect(pushes.length).toBe(pushesBeforeSecondCall);
+
+        // (g) Nth disconnect is also a no-op (the guard isn't a
+        // one-shot — it should fire on every call when authMode
+        // is "none", including the third, fourth, ... etc).
+        const thirdCall = svc.disconnect();
+        expect(thirdCall).toBeNull();
+        expect(vaultStore.has("kchat")).toBe(true);
       } finally {
         unsubscribe();
       }

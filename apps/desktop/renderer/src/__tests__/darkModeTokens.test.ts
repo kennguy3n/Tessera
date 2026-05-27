@@ -169,13 +169,15 @@ const REQUIRED_DARK_OVERRIDES: readonly string[] = [
   // unreadable on dark grey.
   "--color-priority-high",
   // Warning surface tokens (Phase 13 Theme 5 Task 29 / Devin
-  // Review PR #55 ANALYSIS_0003) — bg/subtle/fg trio mirroring
-  // the success/danger family. The badge-warning / toast-warning
-  // pre-existing surfaces used bare hex literals that didn't
-  // flip; we point them at these tokens now and pin the dark
-  // override here.
+  // Review PR #55 ANALYSIS_0003). The pre-existing `.badge-warning`
+  // surface used bare hex literals that didn't flip; we point
+  // it at these tokens now and pin the dark override here.
+  // Pass-5 ANALYSIS_0002 dropped a speculative `-subtle` variant
+  // that had no consumer — we only pin tokens that actually
+  // ship a consumer, so a future patch that adds an unused
+  // token fails the must-override test at the same time as the
+  // unused-token reviewer surfaces the gap.
   "--color-warning-bg",
-  "--color-warning-subtle",
   "--color-warning-fg",
   // success/danger badge & toast foregrounds. Without dark
   // overrides the historic light-on-light pairing (#065f46 on
