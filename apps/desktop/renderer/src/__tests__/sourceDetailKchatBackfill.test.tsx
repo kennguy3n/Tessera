@@ -190,10 +190,23 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       expect(formatSourceTypeLabel("widget")).toBe("Widget");
     });
 
-    it("tolerates an empty discriminator without throwing", () => {
-      // Defence-in-depth — should never happen in production but the
-      // helper must not crash the entire page render path.
-      expect(formatSourceTypeLabel("")).toBe("");
+    it("returns the 'Unknown' sentinel for an empty discriminator", () => {
+      // Per Devin Review on PR #55 (ANALYSIS_0005), an empty
+      // discriminator used to fall through to `""` (the humanised
+      // form of an empty input), which then cascaded into
+      // malformed downstream surfaces — most visibly
+      // `sourceTypeIcon("")` returning `ariaLabel: " source"`
+      // with a leading space. The fix at the
+      // `formatSourceTypeLabel` boundary returns a stable
+      // "Unknown" sentinel for any input that humanises to empty,
+      // keeping every consumer well-formed.
+      expect(formatSourceTypeLabel("")).toBe("Unknown");
+    });
+
+    it("returns the 'Unknown' sentinel for an underscore-only discriminator (humanises to empty)", () => {
+      // `"___"` splits to `["", "", "", ""]`, filtered to `[]`,
+      // joined to `""` — i.e. humanises to empty. Same fallback.
+      expect(formatSourceTypeLabel("___")).toBe("Unknown");
     });
   });
 
@@ -233,10 +246,16 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       expect(t.ariaLabel).toBe("Some New Kind source");
     });
 
-    it("returns an empty glyph for an empty discriminator without throwing", () => {
+    it("returns an empty glyph and a well-formed 'Unknown source' ariaLabel for an empty discriminator", () => {
+      // Per Devin Review on PR #55 (ANALYSIS_0005), an empty
+      // input previously fell through to `" source"` with a
+      // leading space because `formatSourceTypeLabel("")` returned
+      // an empty string. The fix lives in `formatSourceTypeLabel`:
+      // any input that humanises to "" returns "Unknown", which
+      // propagates here as a stable, well-formed ariaLabel.
       const t = sourceTypeIcon("");
       expect(t.glyph).toBe("");
-      expect(t.ariaLabel).toBe(" source");
+      expect(t.ariaLabel).toBe("Unknown source");
     });
 
     it("ariaLabel for every known kind ends with the word 'source' so screen readers announce the cell purpose", () => {

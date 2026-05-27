@@ -289,23 +289,38 @@
   padding-left: calc(var(--spacing-sm) - 3px);
 }
 
-.citation-hit-kchat-channel,
+/*
+ * Sender + timestamp use the muted-secondary text token.
+ * Channel name is intentionally NOT grouped here — see the
+ * dedicated `.citation-hit-kchat-channel` rule below for why.
+ * `text-secondary` IS overridden in the dark-theme scope so
+ * this carries over cleanly.
+ */
 .citation-hit-kchat-sender,
 .citation-hit-kchat-timestamp {
-  /* Muted secondary text — matches the design intent for
-   * KChat metadata fragments (they are context, not the
-   * primary signal of the row). text-secondary IS overridden
-   * in the dark-theme scope so this carries over cleanly. */
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
 }
 
+/*
+ * Channel name carries the highest semantic weight among the
+ * three KChat metadata fragments (sender / timestamp / channel),
+ * so it gets a self-contained rule with ALL three properties
+ * declared explicitly (color, font-weight, font-size) — NOT a
+ * partial override that depends on appearing later than a
+ * grouped selector with the same specificity. A previous shape
+ * grouped `.citation-hit-kchat-channel` with sender + timestamp
+ * and then overrode color/font-weight in a sibling rule;
+ * Devin Review (PR #55, ANALYSIS_0002) flagged that as
+ * source-order fragile — a `prettier`/`stylelint` reformat or
+ * a refactor could silently flip the order and break the
+ * channel name's visual distinction. The standalone rule below
+ * is order-independent.
+ */
 .citation-hit-kchat-channel {
-  /* The channel name carries the highest semantic weight
-   * among the metadata fragments — bump weight back to
-   * medium so it stands out from the sender + timestamp. */
-  font-weight: var(--font-weight-medium);
   color: var(--color-text-body);
+  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-xs);
 }
 
 .citation-hit-kchat-permalink {

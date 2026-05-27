@@ -85,15 +85,27 @@ export function formatSourceTypeLabel(sourceType: string): string {
       return "Local File";
     case "kchat":
       return "KChat Channel";
-    default:
+    default: {
       // Humanise an unknown discriminator (`some_new_kind` →
       // `Some New Kind`) so a future variant looks reasonable
       // in the UI even before we land an explicit case here.
-      return sourceType
+      //
+      // Guard against empty / whitespace-only input: the raw
+      // `_`-split produces no non-empty segments which would
+      // bubble up as `""` and cascade into malformed downstream
+      // surfaces (e.g. `sourceTypeIcon("")` previously returned
+      // `ariaLabel: " source"` with a leading space — see
+      // ANALYSIS_0005 on PR #55). Returning a stable "Unknown"
+      // sentinel keeps every consumer well-formed and matches
+      // the convention used for KChat sender/channel raw-id
+      // fallback in `CitationPanel`.
+      const humanised = sourceType
         .split("_")
         .filter((s) => s.length > 0)
         .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
         .join(" ");
+      return humanised.length > 0 ? humanised : "Unknown";
+    }
   }
 }
 

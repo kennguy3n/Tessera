@@ -127,6 +127,64 @@ function collectDeclaredTokenValues(
   return declared;
 }
 
+// Tokens whose light value would be wrong in dark mode and that
+// MUST be overridden in the dark scope. Declared at describe-level
+// so the must-override test (below) and the KChat-surface
+// dark-mode-safe-tokens test (further below) can share the same
+// single source of truth — Devin Review (PR #55, ANALYSIS_0004)
+// flagged that duplicating this list inside the KChat test would
+// silently diverge if a future patch added a token to one list
+// but not the other.
+const REQUIRED_DARK_OVERRIDES: readonly string[] = [
+  "--color-primary",
+  "--color-primary-hover",
+  "--color-primary-light",
+  "--color-bg-page",
+  "--color-bg-surface",
+  "--color-bg-sidebar",
+  "--color-bg-secondary",
+  "--color-text-headline",
+  "--color-text-body",
+  "--color-text-secondary",
+  "--color-text-on-primary",
+  "--color-border",
+  "--color-border-light",
+  // Tinted backgrounds where the light value mixes white with
+  // the brand; left at light values they would clash on dark.
+  "--color-danger-bg",
+  "--color-danger-light",
+  "--color-danger-subtle",
+  "--color-success-bg",
+  "--color-success-subtle",
+  "--color-relevance-high-fg",
+  "--color-relevance-high-bg",
+  "--color-relevance-medium-fg",
+  "--color-relevance-medium-bg",
+  "--color-relevance-low-fg",
+  "--color-relevance-low-bg",
+  // --color-priority-high was added to give the "high" priority
+  // badge a dedicated dark value (#fb923c orange-400) for
+  // contrast on dark surfaces. If a future patch drops the dark
+  // override, the badge silently reverts to orange-700 which is
+  // unreadable on dark grey.
+  "--color-priority-high",
+];
+
+// Theme-agnostic accent tokens whose light values remain
+// readable on both light and dark surfaces (success / warning /
+// error / link). They are intentionally NOT in
+// REQUIRED_DARK_OVERRIDES because forcing a dark override would
+// reduce contrast — the light values are calibrated to work on
+// both palettes. Centralising them here lets the KChat-surface
+// dark-mode-safe test extend the must-override allow list
+// without duplicating either list.
+const THEME_AGNOSTIC_ACCENT_TOKENS: readonly string[] = [
+  "--color-success",
+  "--color-warning",
+  "--color-error",
+  "--color-text-link",
+];
+
 describe("dark-mode CSS variable enforcement", () => {
   it("every var(--color-…) reference in the renderer maps to a declared token", () => {
     const refs = collectTokenRefs();
@@ -201,43 +259,10 @@ describe("dark-mode CSS variable enforcement", () => {
   it("every primary palette / surface / text token is overridden in [data-theme=\"dark\"]", () => {
     // The contract: the dark scope must override every token
     // whose light-mode value would be wrong in dark mode. We pin
-    // an explicit list rather than computing it because some
-    // tokens (radii, font sizes) are theme-agnostic by design and
+    // an explicit list (`REQUIRED_DARK_OVERRIDES`, declared at
+    // module scope) rather than computing it because some tokens
+    // (radii, font sizes) are theme-agnostic by design and
     // SHOULDN'T be in the dark scope.
-    const REQUIRED_DARK_OVERRIDES = [
-      "--color-primary",
-      "--color-primary-hover",
-      "--color-primary-light",
-      "--color-bg-page",
-      "--color-bg-surface",
-      "--color-bg-sidebar",
-      "--color-bg-secondary",
-      "--color-text-headline",
-      "--color-text-body",
-      "--color-text-secondary",
-      "--color-text-on-primary",
-      "--color-border",
-      "--color-border-light",
-      // Tinted backgrounds where the light value mixes white with
-      // the brand; left at light values they would clash on dark.
-      "--color-danger-bg",
-      "--color-danger-light",
-      "--color-danger-subtle",
-      "--color-success-bg",
-      "--color-success-subtle",
-      "--color-relevance-high-fg",
-      "--color-relevance-high-bg",
-      "--color-relevance-medium-fg",
-      "--color-relevance-medium-bg",
-      "--color-relevance-low-fg",
-      "--color-relevance-low-bg",
-      // --color-priority-high was added to give the "high" priority
-      // badge a dedicated dark value (#fb923c orange-400) for
-      // contrast on dark surfaces. If a
-      // future patch drops the dark override, the badge silently
-      // reverts to orange-700 which is unreadable on dark grey.
-      "--color-priority-high",
-    ];
     const dark = collectDeclaredTokens("dark");
     const missing = REQUIRED_DARK_OVERRIDES.filter((t) => !dark.has(t));
     expect(
@@ -404,34 +429,18 @@ describe("dark-mode CSS variable enforcement", () => {
     ).toEqual([]);
 
     // (iii) every token referenced inside one of these rules must
-    // either be in the must-override-dark list OR an accent token
-    // whose light value remains readable in dark (success / warning
-    // / error / text-link / primary). Reject any unrecognised token.
+    // either be in the must-override-dark list OR a theme-agnostic
+    // accent whose light value remains readable in dark
+    // (success / warning / error / text-link). Derived from the
+    // describe-level `REQUIRED_DARK_OVERRIDES` and
+    // `THEME_AGNOSTIC_ACCENT_TOKENS` constants so there is exactly
+    // one source of truth: a future patch that adds a token to
+    // either list automatically extends the dark-mode-safe surface
+    // here, with no manual sync. Per Devin Review (PR #55,
+    // ANALYSIS_0004).
     const SAFE_TOKENS = new Set<string>([
-      // Must-override list (declared above in this file).
-      "--color-primary",
-      "--color-primary-hover",
-      "--color-primary-light",
-      "--color-bg-page",
-      "--color-bg-surface",
-      "--color-bg-sidebar",
-      "--color-bg-secondary",
-      "--color-text-headline",
-      "--color-text-body",
-      "--color-text-secondary",
-      "--color-text-on-primary",
-      "--color-border",
-      "--color-border-light",
-      "--color-danger-bg",
-      "--color-danger-light",
-      "--color-danger-subtle",
-      "--color-success-bg",
-      "--color-success-subtle",
-      // Theme-agnostic accents that are readable on both surfaces.
-      "--color-success",
-      "--color-warning",
-      "--color-error",
-      "--color-text-link",
+      ...REQUIRED_DARK_OVERRIDES,
+      ...THEME_AGNOSTIC_ACCENT_TOKENS,
     ]);
     const unknownTokens: string[] = [];
     for (const cls of KCHAT_SURFACE_CLASSES) {
