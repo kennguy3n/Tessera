@@ -76,7 +76,15 @@
  * the correct posture: production code paths reach this handler
  * only after `connect()` has accepted the URL once.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  afterAll,
+} from "vitest";
 import * as http from "http";
 import * as crypto from "crypto";
 import { AddressInfo } from "net";
@@ -212,6 +220,38 @@ interface UploadServer {
   close: () => Promise<void>;
 }
 
+/**
+ * Phase 13 Theme 2 Task 12 — Devin Review pass 4 ANALYSIS_0005:
+ * the integration test spawns real `http.Server` instances on
+ * `127.0.0.1:0`. The normal cleanup path (`afterEach`) is the
+ * authoritative close, but if a test times out / hangs before
+ * `afterEach` runs, the socket survives until the vitest worker
+ * process exits — which can cause subsequent runs on the same worker
+ * to hit transient port-allocation pressure under high test load.
+ *
+ * `LIVE_SERVERS` tracks every `http.Server` spawned by this file
+ * (the `startUploadServer` helper AND the inline `failServer` in the
+ * 'primary upload fails' test). `afterAll` and a `beforeExit` hook
+ * close any survivors. `process.on('beforeExit')` runs even when
+ * vitest hard-cancels a test, so the safety net catches the case
+ * where `afterEach` did not run at all.
+ */
+const LIVE_SERVERS = new Set<http.Server>();
+
+async function closeServerQuiet(srv: http.Server): Promise<void> {
+  if (!srv.listening) {
+    LIVE_SERVERS.delete(srv);
+    return;
+  }
+  try {
+    await new Promise<void>((resolve, reject) =>
+      srv.close((err) => (err ? reject(err) : resolve())),
+    );
+  } finally {
+    LIVE_SERVERS.delete(srv);
+  }
+}
+
 async function startUploadServer(): Promise<UploadServer> {
   const uploads: CapturedUpload[] = [];
   const server = http.createServer((req, res) => {
@@ -249,14 +289,12 @@ async function startUploadServer(): Promise<UploadServer> {
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  LIVE_SERVERS.add(server);
   const addr = server.address() as AddressInfo;
   return {
     url: `http://127.0.0.1:${addr.port}`,
     uploads,
-    close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((err) => (err ? reject(err) : resolve())),
-      ),
+    close: () => closeServerQuiet(server),
   };
 }
 
@@ -388,6 +426,32 @@ afterEach(async () => {
     server = null;
   }
   liveClient = null;
+});
+
+// Devin Review pass 4 ANALYSIS_0005: belt-and-suspenders for the
+// case where a hung test prevents `afterEach` from running. Closes
+// every `http.Server` still in `LIVE_SERVERS` at file teardown so
+// the worker process exits with no orphaned sockets, AND registers
+// a `beforeExit` hook for the harder case where vitest hard-kills
+// the worker before `afterAll` would otherwise run.
+afterAll(async () => {
+  const survivors = Array.from(LIVE_SERVERS);
+  LIVE_SERVERS.clear();
+  await Promise.allSettled(survivors.map((srv) => closeServerQuiet(srv)));
+});
+
+process.on("beforeExit", () => {
+  for (const srv of LIVE_SERVERS) {
+    // Synchronous best-effort close; the `close()` callback may
+    // still run after `beforeExit` returns but the listening socket
+    // is closed immediately so no new accept() can occur.
+    try {
+      srv.close();
+    } catch {
+      // Already-closed servers throw; ignore.
+    }
+  }
+  LIVE_SERVERS.clear();
 });
 
 // ---------- The integration test ----------
@@ -591,6 +655,7 @@ describe("kchat:shareArtifact — end-to-end evidence-pack upload (integration)"
     await new Promise<void>((resolve) =>
       partialServer.listen(0, "127.0.0.1", resolve),
     );
+    LIVE_SERVERS.add(partialServer);
     const addr = partialServer.address() as AddressInfo;
     try {
       liveClient = new KchatClient({
@@ -630,9 +695,7 @@ describe("kchat:shareArtifact — end-to-end evidence-pack upload (integration)"
         false,
       );
     } finally {
-      await new Promise<void>((resolve, reject) =>
-        partialServer.close((err) => (err ? reject(err) : resolve())),
-      );
+      await closeServerQuiet(partialServer);
     }
   });
 
@@ -657,6 +720,7 @@ describe("kchat:shareArtifact — end-to-end evidence-pack upload (integration)"
     await new Promise<void>((resolve) =>
       failServer.listen(0, "127.0.0.1", resolve),
     );
+    LIVE_SERVERS.add(failServer);
     const addr = failServer.address() as AddressInfo;
     try {
       liveClient = new KchatClient({
@@ -686,9 +750,7 @@ describe("kchat:shareArtifact — end-to-end evidence-pack upload (integration)"
       expect(bridgeMock.bridgeLogKchatArtifactShared).not.toHaveBeenCalled();
       expect(bridgeMock.bridgeEvidencePackBytes).not.toHaveBeenCalled();
     } finally {
-      await new Promise<void>((resolve, reject) =>
-        failServer.close((err) => (err ? reject(err) : resolve())),
-      );
+      await closeServerQuiet(failServer);
     }
   });
 });
