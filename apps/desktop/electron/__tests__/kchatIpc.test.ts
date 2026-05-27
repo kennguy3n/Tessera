@@ -341,20 +341,23 @@ describe("kchat IPC registration", () => {
   // exercise behaviour, but the master list is what catches a future
   // refactor that accidentally drops a registration entirely.
   //
-  // The Phase 13 Theme 1 (Task 7) extension-bridge channels
+  // Phase 14 replaces the Phase 13 extension-bridge channels
   // (`kchat:extensionStatus`, `kchat:extensionConnect`,
-  // `kchat:extensionDisconnect`) and the Phase 13 Theme 2 (Task 10)
-  // backfill-progress channel (`kchat:backfillProgress`) were
-  // missing from the original list — added here so the master-list
-  // contract matches reality.
+  // `kchat:extensionDisconnect`) with the three deeplink / local-
+  // API affordances the Settings card + sidebar invoke:
+  // `kchat:openInDesktop` (renderer → main → `shell.openExternal`),
+  // `kchat:openDesktopExtensions` (zero-arg shortcut to the
+  // `kchat://app/settings/extensions` deeplink), and
+  // `kchat:desktopBridgeStatus` (renderer-facing projection of the
+  // localhost API server's last-heartbeat snapshot).
   const EXPECTED_KCHAT_CHANNELS: readonly string[] = [
     "kchat:isAvailable",
     "kchat:status",
     "kchat:connect",
     "kchat:disconnect",
-    "kchat:extensionStatus",
-    "kchat:extensionConnect",
-    "kchat:extensionDisconnect",
+    "kchat:openInDesktop",
+    "kchat:openDesktopExtensions",
+    "kchat:desktopBridgeStatus",
     "kchat:listTeams",
     "kchat:listChannels",
     "kchat:listMembers",
@@ -391,17 +394,15 @@ describe("kchat IPC registration", () => {
     expect(unexpected).toEqual([]);
   });
 
-  it("every registered kchat:* / sources:* channel has a matching ipcRenderer.invoke in preload.ts", () => {
+  it("every registered kchat:* / sources:* channel has a matching ipcRenderer.invoke in preload.ts", async () => {
     // Source-text regression: the preload is the only surface through
     // which the renderer can reach these channels. A handler that's
     // registered in `registerKchatHandlers` but missing from
     // `preload.ts` is silently unreachable from the renderer.
     // Reading source text avoids needing to spin up a real Electron
     // `contextBridge` (same pattern as sandboxPreloadContract.test.ts).
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require("fs");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require("path");
+    const fs = await import("fs");
+    const path = await import("path");
     const preloadSource: string = fs.readFileSync(
       path.resolve(__dirname, "..", "preload.ts"),
       "utf-8",

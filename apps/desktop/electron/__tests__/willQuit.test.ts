@@ -58,6 +58,13 @@ vi.mock("electron", () => ({
     getLocale: () => "en-US",
     setAppUserModelId: vi.fn(),
     requestSingleInstanceLock: vi.fn().mockReturnValue(true),
+    // Phase 14 — `main.ts` registers the `tessera://` deeplink
+    // scheme before `whenReady` resolves. The will-quit tests
+    // never exercise the deeplink path (they hold `whenReady`
+    // pending), but the scheme registration runs during module
+    // evaluation, so the mock has to expose this method.
+    setAsDefaultProtocolClient: vi.fn().mockReturnValue(true),
+    off: vi.fn(),
   },
   BrowserWindow: class {
     static getAllWindows() {

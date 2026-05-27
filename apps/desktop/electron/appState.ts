@@ -5,6 +5,22 @@ import { ModelSidecar } from "./sidecar";
 import { DiffusionSidecar, resolveDiffusionBinary } from "./diffusionSidecar";
 import { KchatAuthService } from "./kchat/kchatAuth";
 import { KchatEventForwarder } from "./kchat/kchatEventForwarder";
+import {
+  KchatLocalApiServer,
+  type LocalApiHandlers,
+  type LocalApiStatus,
+  type TesseraKchatSourceRow,
+  type IngestChannelRequest,
+  type IngestChannelResponse,
+  type ShareArtifactRequest,
+  type ShareArtifactResponse,
+  LOCAL_API_CAPABILITIES,
+  LocalApiError,
+} from "./kchat/kchatLocalApi";
+import {
+  DeeplinkBridge,
+  attachAppEvents as attachDeeplinkEvents,
+} from "./kchat/kchatDeeplinkBridge";
 import { getOrCreateDbKeyAsync, EncryptionUnavailableError } from "./dbKey";
 import type {
   AddCitationRequest,
@@ -730,6 +746,17 @@ let kchatAuthService: KchatAuthService | null = null;
 // design). Reset alongside the auth service in tests via
 // `resetKchatAuthService`.
 let kchatEventForwarder: KchatEventForwarder | null = null;
+// Phase 14 Task 2: localhost HTTP server the Tessera `.kcz`
+// extension (running inside KChat Desktop) talks to. Lazily
+// started by `startKchatLocalApiServer()` from the main-process
+// `whenReady` chain; reset alongside the auth service in tests.
+let kchatLocalApiServer: KchatLocalApiServer | null = null;
+// Phase 14 Task 3: `tessera://` deeplink router. Constructed
+// eagerly at module load so a pre-ready `open-url` event from
+// macOS can be parked before `whenReady` fires. The renderer
+// installs the consumer once it boots.
+const kchatDeeplinkBridge = new DeeplinkBridge();
+let kchatDeeplinkTeardown: (() => void) | null = null;
 // Block B Task 4 (Phase 11) second-pass Devin Review ANALYSIS_0002:
 // the IPC handler populates this slot with the full-channel-sync
 // closure that `runAddKchatChannel` powers, so the forwarder can
@@ -1083,6 +1110,190 @@ export function getKchatAuthService(): KchatAuthService {
  */
 export function getKchatEventForwarder(): KchatEventForwarder | null {
   return kchatEventForwarder;
+}
+
+/**
+ * Accessor for the singleton localhost API server used by the
+ * Tessera `.kcz` extension installed in KChat Desktop (Phase 14
+ * Task 2). Returns `null` until {@link startKchatLocalApiServer}
+ * has been called from the main-process `whenReady` chain.
+ */
+export function getKchatLocalApiServer(): KchatLocalApiServer | null {
+  return kchatLocalApiServer;
+}
+
+/**
+ * Start the localhost API server. Idempotent: subsequent calls
+ * return the existing instance. Called once from the main-process
+ * `whenReady` chain in `main.ts`.
+ *
+ * The `handlers` argument is supplied by the caller (the IPC
+ * registration layer) so this module stays decoupled from the
+ * Tessera source / artifact subsystems. The default-handlers
+ * factory below is a thin glue layer over `getKchatAuthService`
+ * plus the Rust bridge.
+ */
+export async function startKchatLocalApiServer(
+  userDataDir: string,
+  handlers: LocalApiHandlers,
+): Promise<KchatLocalApiServer> {
+  if (kchatLocalApiServer !== null) return kchatLocalApiServer;
+  const server = new KchatLocalApiServer(handlers, {
+    userDataDir,
+  });
+  await server.start();
+  kchatLocalApiServer = server;
+  return server;
+}
+
+/**
+ * Stop the localhost API server and remove the port-file. Called
+ * from `app.on("will-quit", ...)` in `main.ts`.
+ */
+export async function stopKchatLocalApiServer(): Promise<void> {
+  if (kchatLocalApiServer === null) return;
+  const server = kchatLocalApiServer;
+  kchatLocalApiServer = null;
+  await server.stop();
+}
+
+/**
+ * Accessor for the singleton `tessera://` deeplink router.
+ * Always returns a live bridge — instantiated at module load so
+ * a pre-ready `open-url` event can be parked.
+ */
+export function getKchatDeeplinkBridge(): DeeplinkBridge {
+  return kchatDeeplinkBridge;
+}
+
+/**
+ * Attach the deeplink bridge to Electron app events. Idempotent;
+ * called from the main-process boot sequence after IPC
+ * registration so the consumer is already wired.
+ */
+export function attachKchatDeeplinkBridge(): void {
+  if (kchatDeeplinkTeardown !== null) return;
+  kchatDeeplinkTeardown = attachDeeplinkEvents(kchatDeeplinkBridge, app);
+}
+
+/**
+ * Detach the deeplink bridge listeners. Used by tests + by the
+ * `will-quit` handler so a re-launched main process does not
+ * stack listeners.
+ */
+export function detachKchatDeeplinkBridge(): void {
+  if (kchatDeeplinkTeardown === null) return;
+  const fn = kchatDeeplinkTeardown;
+  kchatDeeplinkTeardown = null;
+  fn();
+}
+
+/**
+ * Build a `LocalApiHandlers` adapter wired into the live KChat
+ * auth service. This is the production glue between the
+ * localhost API server and the rest of Tessera's main process.
+ * The artifact-share and ingest paths surface typed `LocalApiError`
+ * envelopes so failures are mapped to the right HTTP status.
+ *
+ * The handlers intentionally do NOT mint new tokens or write to
+ * the vault — they reuse the existing PAT session managed by
+ * {@link KchatAuthService}. If the user is disconnected, every
+ * call returns `tessera_unavailable` until the user reconnects.
+ */
+export function buildLocalApiHandlers(): LocalApiHandlers {
+  const tesseraVersion = app.getVersion();
+  return {
+    async status(): Promise<LocalApiStatus> {
+      const svc = getKchatAuthService();
+      const state = svc.getState();
+      return {
+        tesseraVersion,
+        connected: state.state === "connected",
+        serverUrl: state.serverUrl ?? null,
+        // The localhost API surface intentionally does not enumerate
+        // sources here; `listSources` does that. Surface a 0 / null
+        // so the wire-format stays stable when sources are wired in
+        // later phases.
+        indexedChannelCount: 0,
+        lastEventAt: state.lastHealthyAt ?? null,
+        capabilities: LOCAL_API_CAPABILITIES,
+      };
+    },
+    async listSources(): Promise<readonly TesseraKchatSourceRow[]> {
+      const fn = localApiSourcesProvider;
+      if (fn === null) {
+        throw new LocalApiError(
+          503,
+          "tessera_unavailable",
+          "Tessera sources provider not registered yet",
+        );
+      }
+      return fn();
+    },
+    async ingestChannel(
+      req: IngestChannelRequest,
+    ): Promise<IngestChannelResponse> {
+      const fn = localApiIngestChannelHandler;
+      if (fn === null) {
+        throw new LocalApiError(
+          503,
+          "tessera_unavailable",
+          "Tessera ingest handler not registered yet",
+        );
+      }
+      return fn(req);
+    },
+    async shareArtifact(
+      req: ShareArtifactRequest,
+    ): Promise<ShareArtifactResponse> {
+      const fn = localApiShareArtifactHandler;
+      if (fn === null) {
+        throw new LocalApiError(
+          503,
+          "tessera_unavailable",
+          "Tessera share-artifact handler not registered yet",
+        );
+      }
+      return fn(req);
+    },
+  };
+}
+
+// Provider slots populated by the IPC registration layer so the
+// local API server doesn't import the source / artifact modules
+// directly (avoiding a layering cycle).
+let localApiSourcesProvider:
+  | (() => Promise<readonly TesseraKchatSourceRow[]>)
+  | null = null;
+let localApiIngestChannelHandler:
+  | ((req: IngestChannelRequest) => Promise<IngestChannelResponse>)
+  | null = null;
+let localApiShareArtifactHandler:
+  | ((req: ShareArtifactRequest) => Promise<ShareArtifactResponse>)
+  | null = null;
+
+export function setLocalApiSourcesProvider(
+  fn:
+    | (() => Promise<readonly TesseraKchatSourceRow[]>)
+    | null,
+): void {
+  localApiSourcesProvider = fn;
+}
+
+export function setLocalApiIngestChannelHandler(
+  fn:
+    | ((req: IngestChannelRequest) => Promise<IngestChannelResponse>)
+    | null,
+): void {
+  localApiIngestChannelHandler = fn;
+}
+
+export function setLocalApiShareArtifactHandler(
+  fn:
+    | ((req: ShareArtifactRequest) => Promise<ShareArtifactResponse>)
+    | null,
+): void {
+  localApiShareArtifactHandler = fn;
 }
 
 /**

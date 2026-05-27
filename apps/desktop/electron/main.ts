@@ -20,6 +20,14 @@ import {
   passwordVaultSaltExists,
   VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE,
 } from "./passwordVault";
+import {
+  attachKchatDeeplinkBridge,
+  buildLocalApiHandlers,
+  detachKchatDeeplinkBridge,
+  startKchatLocalApiServer,
+  stopKchatLocalApiServer,
+} from "./appState";
+import { registerProtocolClient } from "./kchat/kchatDeeplinkBridge";
 
 // `tessera-asset://` must be registered as a privileged scheme
 // BEFORE `app.whenReady` fires — Electron's
@@ -30,6 +38,41 @@ import {
 // is registered later inside the `whenReady` callback, after the
 // user-data directory is known.
 registerAssetProtocolScheme();
+
+// Phase 14 Task 3: register `tessera://` as the default protocol
+// handler for this app binary at module load — Electron requires
+// `setAsDefaultProtocolClient` to run before `app.whenReady`. The
+// listeners that actually dispatch incoming deeplinks
+// (`open-url`, `second-instance`) are attached inside the
+// `whenReady` callback after the IPC layer is up.
+//
+// Dev mode (no Electron installer) needs an extra `args` hint so
+// the OS knows how to invoke the dev binary; in packaged builds
+// `process.argv[1]` is the resource path and is ignored.
+if (process.defaultApp && process.argv.length >= 2) {
+  registerProtocolClient(app, {
+    execPath: process.execPath,
+    args: [path.resolve(process.argv[1])],
+  });
+} else {
+  registerProtocolClient(app);
+}
+
+// Phase 14 Task 3: claim the single-instance lock so the
+// Windows/Linux `second-instance` path can pluck `tessera://`
+// URLs out of the spawned process's argv. Without this, a
+// second launch would silently start a new Electron process
+// instead of forwarding the deeplink to the already-running
+// primary. macOS uses `open-url` instead and is unaffected by
+// this lock.
+const acquiredSingleInstanceLock = app.requestSingleInstanceLock();
+if (!acquiredSingleInstanceLock) {
+  // A primary instance is already running; let it pick up the
+  // argv (the OS will fire `second-instance` on the primary).
+  // Calling `app.quit()` here is the documented Electron
+  // pattern — `whenReady` never resolves in this process.
+  app.quit();
+}
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -541,6 +584,31 @@ app.whenReady().then(async () => {
   // strengthens the "handlers are registered before any renderer
   // can call them" invariant.
   registerIpcHandlers();
+  // Phase 14 Task 3: attach the `tessera://` deeplink listeners
+  // (`open-url`, `second-instance`) now that the IPC layer is up,
+  // so a pre-ready route parked at module load is replayed
+  // through the consumer once a window registers it. Idempotent;
+  // detached in `will-quit`.
+  attachKchatDeeplinkBridge();
+  // Phase 14 Task 2: start the localhost API server the .kcz
+  // extension installed in KChat Desktop talks to. Runs AFTER
+  // `registerIpcHandlers()` because the handlers populate the
+  // sources / ingest / share-artifact slots inside `appState.ts`
+  // — starting the server earlier would expose an HTTP surface
+  // that returns 503 for every state-changing route.
+  try {
+    await startKchatLocalApiServer(
+      app.getPath("userData"),
+      buildLocalApiHandlers(),
+    );
+  } catch (err) {
+    // Treat a bind failure as soft: the .kcz extension surface is
+    // a convenience, not a correctness requirement. Tessera still
+    // runs against KChat via PAT.
+    getLogger().error("kchatLocalApiServer.start failed", {
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
   // Run the vault prompt BEFORE `initAppState()` so that when
   // `getOrCreateDbKeyAsync()` checks `passwordVaultActive()`, the
   // vault key (if any) is already cached. On non-keyringless
@@ -767,6 +835,22 @@ export async function handleWillQuit(
       await deps.stopAllSidecars();
     } catch (e) {
       console.error("[tessera] sidecar shutdown failed:", e);
+    }
+    try {
+      // Phase 14 Task 2: stop the localhost API server and remove
+      // the port-file so a future Tessera launch on a different
+      // port doesn't have to race a stale discovery file.
+      await stopKchatLocalApiServer();
+    } catch (e) {
+      console.error("[tessera] kchatLocalApi shutdown failed:", e);
+    }
+    try {
+      // Phase 14 Task 3: detach the deeplink listeners so a
+      // re-launched main process (test harness) does not stack
+      // duplicates.
+      detachKchatDeeplinkBridge();
+    } catch (e) {
+      console.error("[tessera] kchatDeeplink detach failed:", e);
     }
   } finally {
     deps.quit();

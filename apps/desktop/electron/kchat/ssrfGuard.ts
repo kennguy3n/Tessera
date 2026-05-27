@@ -1,11 +1,12 @@
 /**
  * Shared KChat server-URL SSRF guard.
  *
- * Both the PAT path (`ipc/kchat.ts` → `enforceKchatServerUrl`) and
- * the extension-bridge path (`kchatExtensionSession.ts`) accept a
- * KChat server URL — the PAT path from the operator-typed text
- * input, the extension path from the `uney-chat-desktop` handshake
- * response. Both need to apply the same SSRF policy:
+ * Both the connect-by-PAT path (`ipc/kchat.ts` →
+ * `enforceKchatServerUrl`) and the localhost API server's
+ * status endpoint (`kchatLocalApi.ts`) read a KChat server URL
+ * sourced from the operator-typed Settings card. The same SSRF
+ * policy applies wherever Tessera turns a user-supplied URL
+ * into an outgoing fetch:
  *
  *   - Reject literal private / loopback / link-local IP addresses
  *     in any IPv4 form `getaddrinfo` accepts (dotted, dotted-hex,
@@ -154,9 +155,10 @@ export function isPrivateOrLoopbackHost(hostname: string): boolean {
  * Returns the parsed `URL` on success; throws an `Error` whose
  * message is safe to surface to the renderer (no token data).
  *
- * Used by both the PAT-path `kchat:connect` IPC handler and the
- * extension-bridge handshake to validate the `serverUrl` we receive
- * from `uney-chat-desktop`. Same code path, same SSRF policy.
+ * Used by the PAT-path `kchat:connect` IPC handler to validate
+ * the operator-typed server URL before any outbound request. The
+ * single source of truth keeps the policy consistent if the
+ * KChat client gains a second caller in the future.
  */
 export async function enforceKchatServerUrl(rawUrl: string): Promise<URL> {
   let parsed: URL;

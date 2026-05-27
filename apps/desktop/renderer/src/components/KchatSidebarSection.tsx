@@ -28,12 +28,29 @@
  * status emitter at mount.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getStoredDefaultTeamId } from "./KchatSettingsCard";
+import {
+  getStoredDefaultTeamId,
+  isExtensionDetected,
+} from "./KchatSettingsCard";
 import type {
   KchatChannelView,
   KchatConnectionStateView,
+  KchatDesktopBridgeStatusView,
   KchatWebSocketEventPayload,
 } from "../../../shared/types";
+
+/**
+ * Cap the number of KChat channels rendered as individual rows
+ * (each with an "Open in KChat Desktop" affordance) so the
+ * sidebar doesn't grow without bound. Channels beyond this cap
+ * are still represented by the count line. Ten matches the
+ * `MAX_POLL_CHANNELS` cap below so the rendered set and the
+ * polled set converge.
+ */
+const MAX_SIDEBAR_CHANNELS = 10;
+
+/** Cadence at which the bridge-health dot rechecks. */
+const BRIDGE_STATUS_POLL_MS = 15_000;
 
 /**
  * Reconciliation poll cadence in milliseconds.
@@ -106,6 +123,15 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   const [channels, setChannels] = useState<KchatChannelView[]>([]);
   const [unread, setUnread] = useState(0);
   const [available, setAvailable] = useState<boolean | null>(null);
+  // Phase 14: passive snapshot of Tessera's localhost API server +
+  // last extension heartbeat. Used to render the bridge-health
+  // dot and to decide whether to show per-channel "Open in
+  // Desktop" buttons. `null` until the first probe lands.
+  const [bridgeStatus, setBridgeStatus] =
+    useState<KchatDesktopBridgeStatusView | null>(null);
+  // Wall clock ticked on every bridge poll so the freshness
+  // calculation rerenders without a separate clock useEffect.
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   // Status probe + push subscription. Block B Task 1 moves
   // status transitions to a push channel (`kchat:status`); the
@@ -452,10 +478,64 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
     };
   }, [pollUnread, available, state.state, channels.length]);
 
+  // Phase 14: poll the bridge-status snapshot so the per-channel
+  // "Open in KChat Desktop" affordance picks up a desktop-app
+  // launch / extension install without a remount. The poll is
+  // gated on `available && connected` so a disabled-by-feature
+  // session or a disconnected session never fires the IPC.
+  useEffect(() => {
+    if (!kchat || available !== true || state.state !== "connected") {
+      setBridgeStatus(null);
+      return;
+    }
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const next = await kchat.desktopBridgeStatus();
+        if (!cancelled) {
+          setBridgeStatus(next);
+          setNowMs(Date.now());
+        }
+      } catch {
+        if (!cancelled) {
+          setBridgeStatus(null);
+          setNowMs(Date.now());
+        }
+      }
+    };
+    void pull();
+    const handle = window.setInterval(pull, BRIDGE_STATUS_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(handle);
+    };
+  }, [kchat, available, state.state]);
+
   const handleMarkSeen = useCallback(() => {
     setLastSeen(Date.now());
     setUnread(0);
   }, []);
+
+  const handleOpenChannelInDesktop = useCallback(
+    async (channelId: string) => {
+      if (!kchat) return;
+      try {
+        await kchat.openInDesktop(channelId);
+      } catch (err) {
+        // The handler is best-effort: a failed `shell.openExternal`
+        // means KChat Desktop isn't installed (the OS rejects the
+        // `kchat://` scheme) — surface a soft console warning
+        // rather than a toast because the sidebar widget has no
+        // toast context wired in. The user already sees the dot
+        // is grey when the integration isn't reachable.
+        console.warn(
+          "[Tessera] Failed to open channel in KChat Desktop:",
+          err,
+        );
+      }
+    },
+    [kchat],
+  );
 
   const userLabel = useMemo(() => {
     if (state.state !== "connected" || !state.user) return null;
@@ -465,39 +545,20 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   if (available !== true) return null;
   if (state.state !== "connected") return null;
 
-  // Phase 13 Task 6 — desktop-app connectivity dot. Green when
-  // the active mode is `extension` AND the cached probe is
-  // `available: true`; amber when we connected via extension
-  // earlier but the desktop app has since disconnected
-  // (`extensionAvailable === false` while `authMode` still says
-  // "extension"); the dot is hidden in PAT mode so the existing
-  // PAT-only UX stays unchanged.
-  //
-  // Phase 13 Theme 1 Devin Review ANALYSIS_0005 (sidebar) note:
-  // the amber "extension still set, probe says unavailable" state
-  // is intentionally narrow in lifecycle. `KchatAuthService`'s
-  // disconnect-side handlers (`handleExtensionDisconnect`,
-  // `handleExtensionRefreshFailure`) tear down the connection
-  // AND flip `authMode` back to `"none"` atomically inside the
-  // same callback, so once the desktop app actually goes away the
-  // status push the renderer sees carries `authMode: "none"` and
-  // the dot is hidden, not amber. The amber path only renders if
-  // a status push leaks through with `authMode: "extension"` but
-  // `extensionAvailable: false` — e.g. if a probe re-run between
-  // status pushes flips `extensionAvailable` to `false` while the
-  // extension session is still active and refreshable. We keep
-  // the amber rendering as defense-in-depth + as a clear
-  // operator-visible signal in that narrow window; if the
-  // desktop app is genuinely gone, the disconnect handler will
-  // transition the dot to hidden on the next push.
-  const showExtensionDot = state.authMode === "extension";
-  const extensionHealthy = state.extensionAvailable === true;
+  // Phase 14: KChat Desktop integration health dot. Green when
+  // the Tessera .kcz extension installed in KChat Desktop has
+  // checked in recently (i.e. the user has both apps running and
+  // the extension is wired up); grey otherwise. Detection is
+  // passive: Tessera's localhost API records a heartbeat on
+  // every authenticated extension call and `desktopBridgeStatus`
+  // reads the most recent timestamp.
+  const extensionHealthy = isExtensionDetected(bridgeStatus, nowMs);
   const extensionDotColor = extensionHealthy
     ? "var(--color-success, #2da44e)"
-    : "var(--color-warning, #d4a017)";
+    : "var(--color-text-tertiary, #999)";
   const extensionDotLabel = extensionHealthy
-    ? "Connected via KChat Desktop"
-    : "KChat Desktop disconnected — falling back to cached session";
+    ? "KChat Desktop detected — channel actions enabled"
+    : "KChat Desktop not detected — install the Tessera extension and launch KChat Desktop to enable channel actions";
 
   return (
     <div
@@ -518,24 +579,30 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
           justifyContent: "space-between",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-xs)" }}>
-          {showExtensionDot && (
-            <span
-              data-testid="kchat-extension-dot"
-              data-extension-state={extensionHealthy ? "healthy" : "stale"}
-              title={extensionDotLabel}
-              aria-label={extensionDotLabel}
-              role="img"
-              style={{
-                display: "inline-block",
-                width: "8px",
-                height: "8px",
-                borderRadius: "50%",
-                backgroundColor: extensionDotColor,
-              }}
-            />
-          )}
-          <strong style={{ color: "var(--color-text-headline)" }}>KChat</strong>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--spacing-xs)",
+          }}
+        >
+          <span
+            data-testid="kchat-extension-dot"
+            data-extension-state={extensionHealthy ? "healthy" : "stale"}
+            title={extensionDotLabel}
+            aria-label={extensionDotLabel}
+            role="img"
+            style={{
+              display: "inline-block",
+              width: "8px",
+              height: "8px",
+              borderRadius: "50%",
+              backgroundColor: extensionDotColor,
+            }}
+          />
+          <strong style={{ color: "var(--color-text-headline)" }}>
+            KChat
+          </strong>
         </div>
         {unread > 0 && (
           <button
@@ -552,7 +619,9 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
               cursor: "pointer",
             }}
             title="Mark all as seen"
-            aria-label={`${unread} unread file${unread === 1 ? "" : "s"} in KChat — click to mark as seen`}
+            aria-label={`${unread} unread file${
+              unread === 1 ? "" : "s"
+            } in KChat — click to mark as seen`}
           >
             {unread}
           </button>
@@ -562,6 +631,80 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
       <div data-testid="kchat-sidebar-channels">
         {channels.length} channel{channels.length === 1 ? "" : "s"}
       </div>
+      {channels.length > 0 && (
+        <ul
+          data-testid="kchat-sidebar-channel-list"
+          style={{
+            listStyle: "none",
+            padding: 0,
+            margin: "var(--spacing-xs) 0 0",
+            display: "flex",
+            flexDirection: "column",
+            gap: "2px",
+          }}
+        >
+          {channels.slice(0, MAX_SIDEBAR_CHANNELS).map((c) => (
+            <li
+              key={c.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "var(--spacing-xs)",
+                fontSize: "var(--font-size-xs)",
+              }}
+            >
+              <span
+                title={c.display_name || c.name}
+                style={{
+                  flex: "1 1 auto",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  color: "var(--color-text-secondary)",
+                }}
+              >
+                #{c.name || c.display_name}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleOpenChannelInDesktop(c.id);
+                }}
+                disabled={!extensionHealthy}
+                aria-label={
+                  extensionHealthy
+                    ? `Open #${c.name || c.display_name} in KChat Desktop`
+                    : `KChat Desktop not detected (open is disabled)`
+                }
+                title={
+                  extensionHealthy
+                    ? "Open in KChat Desktop"
+                    : "KChat Desktop not detected"
+                }
+                data-testid={`kchat-open-channel-${c.id}`}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: extensionHealthy ? "pointer" : "not-allowed",
+                  padding: "2px 4px",
+                  color: extensionHealthy
+                    ? "var(--color-text-link, #06f)"
+                    : "var(--color-text-tertiary, #999)",
+                  fontSize: "var(--font-size-xs)",
+                  lineHeight: 1,
+                }}
+              >
+                {/* External-link unicode glyph (↗) — chosen over a
+                    raster icon so the sidebar stays icon-font-free
+                    and the affordance scales with the user's
+                    chosen UI scale.  */}
+                <span aria-hidden="true">↗</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

@@ -1,0 +1,54 @@
+{
+  "manifestVersion": 1,
+  "identity": {
+    "id": "com.tessera.kchat-bridge",
+    "name": "Tessera",
+    "version": "0.1.0",
+    "description": "Surfaces Tessera-indexed KChat channels and lets you push artifacts back into KChat without leaving the chat client.",
+    "publisher": {
+      "name": "Tessera",
+      "homepage": "https://github.com/kennguy3n/Tessera"
+    }
+  },
+  "permissions": {
+    "procedures": [
+      {
+        "id": "kchat.query_messages",
+        "category": "read",
+        "rationale": "Read recent messages from channels the user has chosen to index so Tessera can ingest them as sources."
+      },
+      {
+        "id": "kchat.query_conversations",
+        "category": "read",
+        "rationale": "Enumerate conversations so the sources panel can show which channels are indexed and which are not."
+      },
+      {
+        "id": "kchat.send_message",
+        "category": "write",
+        "rationale": "Post an artifact share message (link + optional evidence-pack reference) back into the conversation the user selected."
+      }
+    ]
+  },
+  "views": [
+    {
+      "slotId": "rightbar",
+      "viewId": "tessera.sources-panel",
+      "title": "Tessera Sources",
+      "icon": "puzzle",
+      "description": "Shows the KChat channels currently indexed by Tessera, with quick links to source detail and a button to ingest the current channel."
+    }
+  ],
+  "commands": [],
+  "host": {
+    "tesseraLocalApi": {
+      "portFile": "tessera-kchat-port.json",
+      "minTesseraVersion": "0.14.0"
+    }
+  },
+  "entryPoints": {
+    "main": "dist/index.js",
+    "views": {
+      "tessera.sources-panel": "dist/views/sources-panel.js"
+    }
+  }
+}

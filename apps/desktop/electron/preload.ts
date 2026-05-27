@@ -486,20 +486,30 @@ const api: TesseraApi = {
     fetchThreadContext: (sourceId: string, postId: string) =>
       ipcRenderer.invoke("kchat:fetchThreadContext", sourceId, postId),
     /**
-     * Phase 13 Task 7: extension-bridge surface. The renderer
-     * calls `extensionStatus()` from the Settings card to decide
-     * which CTA to render ("Connect via KChat Desktop" vs the
-     * fallback PAT input); `extensionConnect()` runs the
-     * handshake; `extensionDisconnect()` tears down only the
-     * extension session without touching the PAT vault entry.
-     * The three are mounted as a separate sub-namespace so the
-     * renderer code that branches on extension availability is
-     * trivially auditable.
+     * Phase 14 Task 6: open a KChat conversation in KChat Desktop
+     * via the OS-registered `kchat://` URL handler. The renderer
+     * invokes this from the "Open in KChat Desktop" action button
+     * next to each KChat channel source in the sidebar. Resolves
+     * with `{ opened: true, url }` after Electron's
+     * `shell.openExternal()` hands the URL to the OS shell.
      */
-    extensionStatus: () => ipcRenderer.invoke("kchat:extensionStatus"),
-    extensionConnect: () => ipcRenderer.invoke("kchat:extensionConnect"),
-    extensionDisconnect: () =>
-      ipcRenderer.invoke("kchat:extensionDisconnect"),
+    openInDesktop: (channelId: string) =>
+      ipcRenderer.invoke("kchat:openInDesktop", channelId),
+    /**
+     * Phase 14 Task 4: open the KChat Desktop extension-management
+     * settings page (`kchat://app/settings/extensions`). The IPC
+     * handler is a typed no-arg call so the renderer cannot
+     * smuggle arbitrary deeplinks into `shell.openExternal`.
+     */
+    openDesktopExtensions: () =>
+      ipcRenderer.invoke("kchat:openDesktopExtensions"),
+    /**
+     * Phase 14 Task 4: read Tessera's snapshot of the .kcz
+     * extension bridge state. Used by the Settings card to render
+     * the "KChat Desktop detected" affordance.
+     */
+    desktopBridgeStatus: () =>
+      ipcRenderer.invoke("kchat:desktopBridgeStatus"),
     /**
      * Phase 13 Task 10: KChat channel backfill progress. The
      * SourceDetailPage subscribes to this while a backfill is

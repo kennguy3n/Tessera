@@ -242,28 +242,18 @@ export const RATE_LIMIT_PROFILES = {
     intervalMs: 1_000,
     burst: 20,
   },
-  // Phase 13 Task 7: extension-bridge surface. The discovery
-  // probe is cheap (no token mint, no network) but the renderer
-  // can still hammer the channel — typically once per Settings
-  // page open is the legitimate cadence; 1 per second sustained
-  // with a burst of 3 is generous for the legitimate case and
-  // tight enough to detect a runaway re-render. The handshake
-  // and disconnect channels are intentionally tighter (1 per
-  // 5 s) because each handshake mints a fresh delegation token
-  // and the disconnect tears down a live socket — neither has a
-  // legitimate high-frequency caller.
-  "kchat:extensionStatus": {
-    tokensPerInterval: 1,
+  // Phase 14 Task 6: "Open in KChat Desktop" deeplink fan-out.
+  // The handler calls `shell.openExternal()` to invoke a
+  // `kchat://app/conversation/<id>` URL the user clicked on in
+  // the Tessera sidebar. A single user click should fire the
+  // channel exactly once; we cap at 4 per second sustained with
+  // a burst of 8 so a multi-channel batch action ("open every
+  // selected channel in Desktop") still runs without rate-limit
+  // pain, but a runaway re-render cannot spam the OS shell.
+  "kchat:openInDesktop": {
+    tokensPerInterval: 4,
     intervalMs: 1_000,
-    burst: 3,
-  },
-  "kchat:extensionConnect": {
-    tokensPerInterval: 1,
-    intervalMs: 5_000,
-  },
-  "kchat:extensionDisconnect": {
-    tokensPerInterval: 1,
-    intervalMs: 5_000,
+    burst: 8,
   },
   // Phase 13 Task 10: backfill progress polling. The
   // SourceDetailPage subscribes via this channel while a backfill

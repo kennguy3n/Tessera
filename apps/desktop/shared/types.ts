@@ -1946,47 +1946,49 @@ export interface KchatConnectionStateView {
   serverUrl?: string;
   error?: string;
   lastHealthyAt?: string;
-  /** Phase 13 Task 4 — auth backend powering this connection. */
-  authMode?: "none" | "pat" | "extension";
-  /** Phase 13 Task 4 — last cached extension-bridge probe result. */
-  extensionAvailable?: boolean;
+  /** Auth backend powering this connection. */
+  authMode?: "none" | "pat";
 }
 
 /**
  * Alias used by the renderer code for the sanitised user shape
- * returned by both `kchat:connect` (PAT mode) and
- * `kchat:extensionConnect` (extension mode). The two return the
- * same fields so the renderer's reconciliation logic can ignore
- * the auth-mode distinction; the type alias keeps the call-site
- * intent explicit ("we got a user view back from a connect call")
- * without forcing a second declaration.
+ * returned by `kchat:connect`. Kept as a type alias rather than a
+ * direct reference at every call site so the intent ("we got a
+ * user view back from a connect call") stays explicit.
  */
 export type KchatConnectedUserView = KchatConnectionUserView;
 
 /**
- * Phase 13 Task 7 — renderer-facing projection of the
- * extension-bridge probe. Mirrors the `ExtensionProbeResult` from
- * `electron/kchat/kchatExtensionBridge.ts` but drops fields the
- * renderer doesn't render (the audit row in `audit:listRecent`
- * gets the richer shape).
+ * Phase 14 — renderer-facing detection result for the Tessera
+ * .kcz extension installed in KChat Desktop. The Settings card
+ * uses this to decide whether to show the "KChat Desktop
+ * detected" affordance. Detection is purely passive: Tessera's
+ * main process notes whether its own localhost API server is
+ * bound (and therefore whether the extension installed in KChat
+ * Desktop can reach it). It does NOT probe the desktop app over
+ * any IPC channel — the two apps are independent KChat clients.
  */
-export interface KchatExtensionStatusView {
-  /** True when the desktop app is reachable on the well-known socket. */
-  available: boolean;
-  /** Current auth backend (read off `KchatAuthService.getAuthMode()`). */
-  authMode: "none" | "pat" | "extension";
-  /** Protocol version reported by the desktop app, when reachable. */
-  protocolVersion?: number;
-  /** Build version reported by the desktop app, when reachable. */
-  desktopVersion?: string;
+export interface KchatDesktopBridgeStatusView {
   /**
-   * Capability strings the desktop app supports — used by the
-   * Settings card to gate per-capability UX (e.g. only show
-   * "Share via Desktop" when `share_artifact` is reported).
+   * True when Tessera's localhost API server is up and the
+   * port-file is on disk where the extension would discover it.
+   * False during the brief window between app start and server
+   * bind, or when the user-data dir is read-only.
    */
-  capabilities?: string[];
-  /** When `available === false`, the reason the probe failed. */
-  reason?: string;
+  apiServerRunning: boolean;
+  /**
+   * Loopback port the extension would talk to. Surfaced to the
+   * renderer for diagnostics only; the renderer never connects.
+   */
+  apiServerPort: number | null;
+  /** Absolute path of the discovery file the extension reads. */
+  portFilePath: string | null;
+  /**
+   * ISO-8601 timestamp of the most recent successful request from
+   * the .kcz extension (a heartbeat the local API server records).
+   * `null` until the extension makes its first authenticated call.
+   */
+  lastExtensionContactAt: string | null;
 }
 
 /**
@@ -2157,29 +2159,34 @@ export interface KchatApi {
     postId: string,
   ) => Promise<KchatThreadContextMessage[]>;
   /**
-   * Phase 13 Task 7: probe the `uney-chat-desktop` extension
-   * bridge. Returns whether the desktop app is reachable on its
-   * well-known per-platform socket plus the currently-active
-   * auth mode (so the Settings card can render the correct CTA).
+   * Phase 14 Task 6: open a KChat conversation in KChat Desktop
+   * via the OS-level `kchat://` URL scheme. The renderer calls
+   * this from the per-channel "Open in KChat Desktop" action;
+   * Tessera's main process invokes `shell.openExternal()` so the
+   * OS shell routes the URL to whichever binary owns the
+   * `kchat://` scheme registration (KChat Desktop in the
+   * cooperating-apps case, the browser as a graceful fallback).
    */
-  extensionStatus: () => Promise<KchatExtensionStatusView>;
+  openInDesktop: (
+    channelId: string,
+  ) => Promise<{ opened: boolean; url: string }>;
   /**
-   * Phase 13 Task 7: initiate the extension-bridge session
-   * handoff. The desktop app mints a scoped, time-limited
-   * delegation token; Tessera persists it under provider
-   * `kchat-extension` and surfaces the connected user. Resolves
-   * with the same sanitised user shape as `kchat:connect` so the
-   * renderer's reconciliation logic can ignore the auth-mode
-   * distinction once the connection is up.
+   * Phase 14 Task 4: open the KChat Desktop extension-management
+   * settings page (`kchat://app/settings/extensions`) via the OS
+   * URL handler. No-arg by design: the deeplink is fixed so the
+   * renderer cannot smuggle arbitrary URLs across the IPC
+   * boundary.
    */
-  extensionConnect: () => Promise<KchatConnectedUserView>;
+  openDesktopExtensions: () => Promise<{ opened: boolean; url: string }>;
   /**
-   * Phase 13 Task 7: tear down only the extension session. The
-   * PAT vault entry (if any) survives; renderers that mix the
-   * two modes should not lose a saved PAT just because the
-   * extension session ended.
+   * Phase 14 Task 4: read Tessera's own snapshot of whether the
+   * KChat Desktop side of the integration is currently reachable.
+   * The renderer polls this from the Settings card to render the
+   * "KChat Desktop detected" indicator. Returns `null` when the
+   * underlying detection isn't ready yet (e.g. during the very
+   * first paint after app launch).
    */
-  extensionDisconnect: () => Promise<{ disconnected: boolean }>;
+  desktopBridgeStatus: () => Promise<KchatDesktopBridgeStatusView | null>;
   /**
    * Phase 13 Task 10: KChat channel backfill progress. Polled by
    * `SourceDetailPage` while a backfill is active; the IPC
