@@ -44,10 +44,11 @@ import * as path from "path";
  *
  * `denyRoots` (optional) is a list of absolute directory paths that are
  * NEVER allowed as export targets, even if they fall inside a `safeRoot`.
- * The deny-list is checked after the allow-list match — a path that lands
- * inside both an allow-root and a deny-root is rejected. This lets
- * callers carve out sensitive subtrees (e.g. the KChat channel cache
- * under `~/.tessera/kchat-channels/`) from a broad allow-root like HOME.
+ * Deny-list takes precedence: it is checked BEFORE the allow-list, and a
+ * path inside any deny-root is rejected immediately regardless of whether
+ * it would also have matched an allow-root. This lets callers carve out
+ * sensitive subtrees (e.g. the KChat channel cache under
+ * `~/.tessera/kchat-channels/`) from a broad allow-root like HOME.
  */
 export function isSafeExportPath(
   requestedPath: string,

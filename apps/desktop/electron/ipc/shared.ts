@@ -96,9 +96,19 @@ export function getSafeExportRoots(): string[] {
  *
  * The list uses the same `~/.tessera/kchat-channels` canonical prefix
  * from `kchatPaths.ts`.
+ *
+ * Defensive symmetry with `getSafeExportRoots`: wrap path resolution in
+ * try/catch so a misconfigured environment (theoretical `os.homedir()`
+ * failure on a severely broken system) does not throw out of the IPC
+ * handler. A failed deny-root lookup is the safe direction — the
+ * allow-list will still gate writes; we just lose one defence layer.
  */
 export function getDenyExportRoots(): string[] {
-  return [
-    path.join(os.homedir(), ".tessera", "kchat-channels"),
-  ];
+  const roots: string[] = [];
+  try {
+    roots.push(path.join(os.homedir(), ".tessera", "kchat-channels"));
+  } catch {
+    // skip if homedir is unavailable; allow-list still gates writes
+  }
+  return roots;
 }
