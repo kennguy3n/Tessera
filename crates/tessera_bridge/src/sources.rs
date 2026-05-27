@@ -4,7 +4,9 @@ use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tessera_core::SourceId;
 use tessera_sources::hybrid::{HybridSearchConfig, HybridSearchConfigInput};
-use tessera_sources::manager::{KchatPostSearchHit, SourceManager};
+use tessera_sources::manager::{
+    KchatPostSearchHit, KchatThreadContextMessage, SourceManager,
+};
 use tessera_sources::progress::{EmbeddingProgressTracker, EmbeddingStatus};
 use tessera_sources::search::SearchResult;
 use tessera_sources::source::Source;
@@ -160,6 +162,45 @@ impl From<&KchatPostSearchHit> for KchatPostSearchHitInfo {
             sender_user_id: h.sender_user_id.clone(),
             created_at_ms: h.created_at_ms,
             edited_at_ms: h.edited_at_ms,
+        }
+    }
+}
+
+/// Phase 13 Theme 2 Task 13: napi-shaped pass-through of
+/// [`tessera_sources::manager::KchatThreadContextMessage`].
+///
+/// Returned by `bridge_fetch_kchat_thread_context`. Each element
+/// is one AEAD-verified parent message of the post the renderer
+/// asked about. The vec is ordered chronologically (oldest first)
+/// so the renderer can render the thread top-down as a
+/// conversation transcript.
+///
+/// Fields mirror the substrate type one-for-one; `is_root`
+/// distinguishes the thread-root message (the post the threaded
+/// reply hangs off of) from the earlier-sibling replies that
+/// frame the conversation context.
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct KchatThreadContextMessageInfo {
+    pub post_id: String,
+    pub channel_id: String,
+    pub sender_user_id: String,
+    pub created_at_ms: i64,
+    pub edited_at_ms: i64,
+    pub content: String,
+    pub is_root: bool,
+}
+
+impl From<&KchatThreadContextMessage> for KchatThreadContextMessageInfo {
+    fn from(m: &KchatThreadContextMessage) -> Self {
+        Self {
+            post_id: m.post_id.clone(),
+            channel_id: m.channel_id.clone(),
+            sender_user_id: m.sender_user_id.clone(),
+            created_at_ms: m.created_at_ms,
+            edited_at_ms: m.edited_at_ms,
+            content: m.content.clone(),
+            is_root: m.is_root,
         }
     }
 }
@@ -580,6 +621,43 @@ pub fn search_kchat_posts(
         .search_kchat_posts(query, limit)
         .map_err(BridgeError::Core)?;
     Ok(results.iter().map(KchatPostSearchHitInfo::from).collect())
+}
+
+/// Phase 13 Theme 2 Task 13: bridge counterpart of
+/// [`SourceManager::fetch_kchat_thread_context`]. Returns the
+/// AEAD-verified parent messages of `post_id` (up to 3: the
+/// thread root + up to 2 most-recent earlier-replies) ordered
+/// chronologically.
+///
+/// The renderer wires this to a hit's expand-thread affordance:
+/// after `search_kchat_posts` surfaces a row whose `root_id` is
+/// non-null, the user can click "show thread" to expand the row
+/// into a transcript. Calling this on a non-threaded hit (or on
+/// an unknown post id) returns an empty vec — the manager swallows
+/// the "not found / not threaded" cases as benign empty results
+/// rather than errors, so the renderer can render an "expand"
+/// affordance unconditionally and degrade gracefully when the
+/// substrate has no context to show.
+///
+/// `source_id` is the renderer-facing UUID string (
+/// `KchatPostSearchHitInfo::source_id`); invalid UUIDs surface
+/// as `BridgeError::InvalidArgs` so the IPC layer can scrub the
+/// raw input out of the error message before it reaches the
+/// renderer.
+pub fn fetch_kchat_thread_context(
+    manager: &SourceManager,
+    source_id: &str,
+    post_id: &str,
+) -> BridgeResult<Vec<KchatThreadContextMessageInfo>> {
+    let uuid = uuid::Uuid::parse_str(source_id)
+        .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    let results = manager
+        .fetch_kchat_thread_context(&SourceId(uuid), post_id)
+        .map_err(BridgeError::Core)?;
+    Ok(results
+        .iter()
+        .map(KchatThreadContextMessageInfo::from)
+        .collect())
 }
 
 pub fn get_source_detail(

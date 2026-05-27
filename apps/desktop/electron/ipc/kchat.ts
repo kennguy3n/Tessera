@@ -35,6 +35,7 @@ import type {
   KchatBackfillRunOutcome,
   KchatPostIngestInputInfo,
   KchatPostSearchHit,
+  KchatThreadContextMessage,
 } from "../../shared/types";
 import { idempotentHandle } from "./register";
 import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
@@ -636,6 +637,77 @@ async function enrichKchatPostHits(
     }
     if (h.channelDisplayName === null) {
       h.channelDisplayName = KCHAT_CHANNEL_NAME_CACHE.get(h.channelId);
+    }
+  }
+}
+
+/**
+ * Phase 13 Theme 2 Task 13: enrich thread-context messages with
+ * sender username and channel display name. Structurally identical
+ * to {@link enrichKchatPostHits} but operates on the
+ * `KchatThreadContextMessage[]` shape. Reuses the same
+ * `KCHAT_USERNAME_CACHE` / `KCHAT_CHANNEL_NAME_CACHE` and the
+ * shared `populateKchatUsernameCache` helper so the two paths stay
+ * cache-coherent — a username resolved during a search enrichment
+ * is immediately available for thread-context enrichment without
+ * a redundant network round-trip, and vice versa.
+ */
+async function enrichKchatThreadContextMessages(
+  messages: KchatThreadContextMessage[],
+  client: ReturnType<ReturnType<typeof getKchatAuthService>["getClient"]>,
+): Promise<void> {
+  const missingUserIds = new Set<string>();
+  const missingChannelIds = new Set<string>();
+  for (const m of messages) {
+    const cachedUser = KCHAT_USERNAME_CACHE.get(m.senderUserId);
+    if (cachedUser !== null) {
+      m.senderUsername = cachedUser;
+    } else if (isKchatObjectId(m.senderUserId)) {
+      missingUserIds.add(m.senderUserId);
+    }
+    const cachedChan = KCHAT_CHANNEL_NAME_CACHE.get(m.channelId);
+    if (cachedChan !== null) {
+      m.channelDisplayName = cachedChan;
+    } else if (isKchatObjectId(m.channelId)) {
+      missingChannelIds.add(m.channelId);
+    }
+  }
+
+  const userTask: Promise<void> = populateKchatUsernameCache(
+    client,
+    missingUserIds,
+  );
+  const channelTask: Promise<void> =
+    missingChannelIds.size > 0
+      ? (async () => {
+          try {
+            const results = await Promise.allSettled(
+              Array.from(missingChannelIds).map((id) =>
+                client.getChannel(id),
+              ),
+            );
+            for (const r of results) {
+              if (r.status === "fulfilled") {
+                KCHAT_CHANNEL_NAME_CACHE.set(
+                  r.value.id,
+                  r.value.display_name,
+                );
+              }
+            }
+          } catch {
+            // Best-effort: leave un-resolved ids as `null`.
+          }
+        })()
+      : Promise.resolve();
+
+  await Promise.all([userTask, channelTask]);
+
+  for (const m of messages) {
+    if (m.senderUsername === null) {
+      m.senderUsername = KCHAT_USERNAME_CACHE.get(m.senderUserId);
+    }
+    if (m.channelDisplayName === null) {
+      m.channelDisplayName = KCHAT_CHANNEL_NAME_CACHE.get(m.channelId);
     }
   }
 }
@@ -2277,6 +2349,73 @@ export function registerKchatHandlers(): void {
       }
 
       return hits;
+    },
+  );
+
+  /**
+   * Phase 13 Theme 2 Task 13: fetch thread-context messages for a
+   * KChat search hit. The substrate returns up to 3
+   * AEAD-verified messages: the thread root + up to 2 most-recent
+   * earlier-replies, ordered chronologically. The IPC handler:
+   *
+   *   1. Rate-limits via `kchat:fetchThreadContext` (5/s sustained,
+   *      10 burst) — the legitimate caller fires this once per
+   *      expand-click.
+   *   2. Validates `sourceId` (Mattermost 26-char object id shape)
+   *      and `postId` (same shape) at the deserialisation boundary.
+   *   3. Calls `bridgeFetchKchatThreadContext` for the AEAD-verified
+   *      row set.
+   *   4. Enriches each row with `senderUsername` / `channelDisplayName`
+   *      through the same LRU cache the search path uses (best-effort;
+   *      `null` ⇒ renderer falls back to raw ids).
+   */
+  idempotentHandle(
+    "kchat:fetchThreadContext",
+    async (
+      _event,
+      sourceId: unknown,
+      postId: unknown,
+    ): Promise<KchatThreadContextMessage[]> => {
+      defaultRateLimiter.consume(
+        "kchat:fetchThreadContext",
+        RATE_LIMIT_PROFILES["kchat:fetchThreadContext"],
+      );
+      const sid = assertString(sourceId, "sourceId", { maxLen: 256 });
+      const pid = assertString(postId, "postId", { maxLen: 256 });
+      const bridge = getBridge();
+      if (!bridge) return [];
+
+      const raw = bridge.bridgeFetchKchatThreadContext(sid, pid);
+
+      const messages: KchatThreadContextMessage[] = raw.map((m) => ({
+        postId: m.postId,
+        channelId: m.channelId,
+        senderUserId: m.senderUserId,
+        createdAtMs: m.createdAtMs,
+        editedAtMs: m.editedAtMs,
+        content: m.content,
+        isRoot: m.isRoot,
+        senderUsername: null,
+        channelDisplayName: null,
+      }));
+
+      // Best-effort enrichment: reuse the same cache + enrichment
+      // path the search handler uses. The thread-context messages
+      // carry the same `senderUserId` / `channelId` fields.
+      const svc = getKchatAuthService();
+      const connState = svc.getState();
+      if (messages.length > 0 && connState.state === "connected") {
+        try {
+          await enrichKchatThreadContextMessages(
+            messages,
+            svc.getClient(),
+          );
+        } catch {
+          // Same best-effort posture as search enrichment.
+        }
+      }
+
+      return messages;
     },
   );
 }

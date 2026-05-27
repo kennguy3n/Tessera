@@ -435,6 +435,53 @@ pub struct KchatPostSearchHit {
     pub relevance: f64,
 }
 
+/// Phase 13 Theme 2 Task 13: one renderer-facing AEAD-verified
+/// message of thread context surrounding a search hit.
+///
+/// Returned by
+/// [`SourceManager::fetch_kchat_thread_context`] in chronological
+/// order (oldest first) — the renderer can render the messages
+/// top-down as the conversation transcript leading up to the hit.
+///
+/// **Single-chunk preview.** `content` is the AEAD-verified
+/// plaintext of the leading chunk (`chunks.chunk_index = 0`) of
+/// the post body. In the typical case a KChat post fits in one
+/// chunk so this is the entire body; for unusually-long parent
+/// messages the renderer can render a "…" affordance and (in a
+/// future iteration) request the full body via a dedicated
+/// "fetch full post" handler. The trade-off here is keeping the
+/// thread-context payload bounded so the IPC round-trip is fast
+/// — a 10-thread × full-post payload would otherwise dwarf the
+/// search result itself.
+///
+/// **Field discriminators.**
+///
+/// - `is_root` is `true` for the message whose `post_id` equals
+///   the root id the lookup was anchored on (i.e. the original
+///   parent the threaded reply hangs off of). The renderer
+///   surfaces a distinct "Thread root" badge for this row.
+/// - The other messages (`is_root == false`) are earlier-replies
+///   in the same thread, with `created_at_ms < hit.created_at_ms`.
+///
+/// **Privacy.** The store's `source_id` filter + the manager's
+/// per-source DEK gate guarantee that messages from a different
+/// principal's KChat indexing of the same channel never surface
+/// here, even when post ids happen to collide across sources
+/// (e.g. two principals indexing the same KChat channel under
+/// distinct `Source` rows). See
+/// [`crate::store::SourceStore::fetch_kchat_thread_context_rows`]
+/// for the substrate-side rationale.
+#[derive(Debug, Clone)]
+pub struct KchatThreadContextMessage {
+    pub post_id: String,
+    pub channel_id: String,
+    pub sender_user_id: String,
+    pub created_at_ms: i64,
+    pub edited_at_ms: i64,
+    pub content: String,
+    pub is_root: bool,
+}
+
 pub struct SourceManager {
     store: SourceStore,
     indexer: Indexer,
@@ -1831,6 +1878,136 @@ impl SourceManager {
             }
         }
         Ok(verified)
+    }
+
+    /// Phase 13 Theme 2 Task 13: fetch up to 3 thread-context
+    /// messages surrounding the post identified by `post_id`.
+    ///
+    /// Returns an empty vec — never an error — for any of the
+    /// following non-error cases:
+    ///
+    /// 1. `post_id` is not known to this manager's store (e.g.
+    ///    the post was cryptoshredded between the search and
+    ///    this call, or the renderer is calling with a stale id).
+    /// 2. `post_id` is a top-level post (`root_id IS NULL`);
+    ///    there is no thread to surface. The renderer can
+    ///    short-circuit further UI on an empty result.
+    /// 3. The source's DEK is not loadable (cryptoshred-then-
+    ///    re-grant happened mid-call, or the DB was tampered).
+    ///    Same posture as [`Self::search_kchat_posts`] —
+    ///    load-only, never generate; never re-key a revoked
+    ///    source.
+    ///
+    /// The returned vec is ordered chronologically (oldest first)
+    /// and capped at 3 messages: the thread root + up to 2
+    /// most-recent earlier-replies. The cap mirrors the task spec
+    /// ("up to 3 parent messages") and bounds the IPC payload —
+    /// a longer transcript would dwarf the search hit itself.
+    ///
+    /// **Fail-quiet AEAD verification.** Each row is re-opened
+    /// under the per-source DEK and the opened bytes are compared
+    /// to the indexed `chunks.content` column. Any row whose
+    /// ciphertext fails to open, or whose opened bytes diverge
+    /// from the plaintext column, is dropped from the result. The
+    /// renderer surfaces "partial thread context" by virtue of
+    /// the vec being shorter than 3; it does not see a hard
+    /// error. This mirrors the search-path posture so the user's
+    /// experience is consistent across surfaces.
+    ///
+    /// **Why not error on tampered rows?** A tampered DB should
+    /// not be detectable from the renderer's surface — the
+    /// audit-log surface (which IS authenticated) is the
+    /// recovery path. Surfacing a hard error here would let an
+    /// attacker who tampered a single row block the user from
+    /// seeing the honest siblings of that row.
+    pub fn fetch_kchat_thread_context(
+        &self,
+        source_id: &SourceId,
+        post_id: &str,
+    ) -> Result<Vec<KchatThreadContextMessage>> {
+        // 1. Look up the hit's `(channel_id, root_id,
+        // created_at_ms)`. A row absent from the store is a
+        // benign "stale renderer state" case — return empty.
+        let Some((_channel_id, root_id_opt, hit_created_at_ms)) =
+            self.store.find_kchat_post_metadata(source_id, post_id)?
+        else {
+            return Ok(Vec::new());
+        };
+        // 2. Top-level post — no parents to surface. The renderer
+        // is expected to gate on `hit.root_id != null` before
+        // calling this method, but the substrate validates
+        // defence-in-depth so a buggy caller cannot drive a
+        // self-referential lookup.
+        let Some(root_post_id) = root_id_opt else {
+            return Ok(Vec::new());
+        };
+
+        // 3. DEK gate — load-only, never generate (same posture
+        // as `search_kchat_posts`). Cryptoshred-then-re-grant
+        // between the search and this call is correctly
+        // classified as "no thread context" rather than
+        // "thread context with a fresh-DEK row that can't open
+        // historical ciphertext".
+        let dek_ready = matches!(
+            self.store.load_wrapped_dek_for_source(source_id),
+            Ok(Some(ref wrapped)) if self.kchat_crypto.unwrap_dek(source_id, wrapped).is_ok()
+        );
+        if !dek_ready {
+            return Ok(Vec::new());
+        }
+
+        // 4. Fetch the raw rows. The substrate-side query caps
+        // the result at 3 rows (root + ≤ 2 most-recent earlier
+        // siblings) and orders chronologically.
+        let rows = self.store.fetch_kchat_thread_context_rows(
+            source_id,
+            &root_post_id,
+            hit_created_at_ms,
+            3,
+        )?;
+
+        // 5. AEAD-verify each row; drop those that fail.
+        let mut messages: Vec<KchatThreadContextMessage> = Vec::with_capacity(rows.len());
+        for row in rows {
+            // Same drop-rule as the search path: a row missing
+            // either AEAD column is a corrupted DB (the ingest
+            // path always pairs ciphertext + nonce). Drop rather
+            // than surfacing un-authenticated plaintext.
+            let (Some(ciphertext), Some(nonce)) =
+                (row.content_aead.as_ref(), row.content_aead_nonce.as_ref())
+            else {
+                continue;
+            };
+            let sealed = crate::kchat_crypto::SealedChunk {
+                nonce: nonce.clone(),
+                ciphertext: ciphertext.clone(),
+            };
+            let Ok(opened) = self.kchat_crypto.open_chunk(source_id, &sealed) else {
+                continue;
+            };
+            let Ok(opened_str) = String::from_utf8(opened) else {
+                continue;
+            };
+            // Plaintext-divergence check — see search path
+            // rationale (the FTS5 index would otherwise return a
+            // chunk whose `content` was tampered to read one
+            // thing while the AEAD authenticates as another).
+            if opened_str != row.content {
+                continue;
+            }
+            let is_root = row.post_id == root_post_id;
+            messages.push(KchatThreadContextMessage {
+                post_id: row.post_id,
+                channel_id: row.channel_id,
+                sender_user_id: row.sender_user_id,
+                created_at_ms: row.created_at_ms,
+                edited_at_ms: row.edited_at_ms,
+                content: opened_str,
+                is_root,
+            });
+        }
+
+        Ok(messages)
     }
 
     pub fn list_indexed_files(&self, source_id: &SourceId) -> Result<Vec<IndexedFile>> {
@@ -4129,5 +4306,466 @@ mod tests {
         // Strictly decreasing.
         assert!(hits[0].relevance > hits[1].relevance);
         assert!(hits[1].relevance > hits[2].relevance);
+    }
+
+    // ----------------------------------------------------------------
+    // Phase 13 Theme 2 Task 13: KChat thread context retrieval
+    // ----------------------------------------------------------------
+
+    /// Convenience: build a `KchatPostIngestInput` for a thread
+    /// reply at a specific timestamp. The default `make_post_input`
+    /// pins everything at `1_700_000_000_000` which prevents
+    /// thread-ordering tests from distinguishing replies.
+    fn make_threaded_post_input(
+        cache_dir: &str,
+        post_id: &str,
+        channel_id: &str,
+        root_id: Option<&str>,
+        sender: &str,
+        body: &str,
+        created_at_ms: i64,
+    ) -> KchatPostIngestInput {
+        KchatPostIngestInput {
+            cache_dir: cache_dir.to_string(),
+            post_id: post_id.to_string(),
+            channel_id: channel_id.to_string(),
+            root_id: root_id.map(str::to_string),
+            sender_user_id: sender.to_string(),
+            body: body.to_string(),
+            created_at_ms,
+            edited_at_ms: 0,
+        }
+    }
+
+    /// Happy path: a thread with a root + 2 earlier replies, the
+    /// caller looks up context for the latest reply. Expect the
+    /// chronological transcript `[root, reply_1, reply_2]` with the
+    /// `is_root` flag distinguishing the first row.
+    #[test]
+    fn fetch_kchat_thread_context_returns_root_and_earlier_replies() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let source_id = added.source.id.clone();
+
+        let t0 = 1_700_000_000_000_i64;
+        let root = make_threaded_post_input(
+            cache_dir,
+            "root-1",
+            "channel-X",
+            None,
+            "alice",
+            "we should ship the launch plan by friday",
+            t0,
+        );
+        let reply_1 = make_threaded_post_input(
+            cache_dir,
+            "reply-1",
+            "channel-X",
+            Some("root-1"),
+            "bob",
+            "+1, lets also include the migration runbook",
+            t0 + 60_000,
+        );
+        let reply_2 = make_threaded_post_input(
+            cache_dir,
+            "reply-2",
+            "channel-X",
+            Some("root-1"),
+            "carol",
+            "i can draft the runbook by wednesday",
+            t0 + 120_000,
+        );
+        let reply_3 = make_threaded_post_input(
+            cache_dir,
+            "reply-3",
+            "channel-X",
+            Some("root-1"),
+            "alice",
+            "great, lets do a review on thursday",
+            t0 + 180_000,
+        );
+        manager.ingest_kchat_post(&root).unwrap();
+        manager.ingest_kchat_post(&reply_1).unwrap();
+        manager.ingest_kchat_post(&reply_2).unwrap();
+        manager.ingest_kchat_post(&reply_3).unwrap();
+
+        let ctx = manager
+            .fetch_kchat_thread_context(&source_id, "reply-3")
+            .unwrap();
+
+        assert_eq!(
+            ctx.len(),
+            3,
+            "expected root + 2 most-recent earlier-replies (got {:?})",
+            ctx.iter().map(|m| m.post_id.as_str()).collect::<Vec<_>>()
+        );
+        assert_eq!(ctx[0].post_id, "root-1", "root must come first chronologically");
+        assert!(ctx[0].is_root, "first row must carry is_root=true");
+        assert_eq!(ctx[1].post_id, "reply-1");
+        assert!(!ctx[1].is_root, "sibling rows must carry is_root=false");
+        assert_eq!(ctx[2].post_id, "reply-2");
+        assert!(!ctx[2].is_root);
+
+        // Content is AEAD-verified plaintext — substrate must
+        // never surface unverified bytes.
+        assert!(ctx[0].content.contains("launch plan"));
+        assert!(ctx[1].content.contains("migration runbook"));
+        assert!(ctx[2].content.contains("draft the runbook"));
+
+        // Timestamps strictly increasing (chronological order).
+        assert!(ctx[0].created_at_ms < ctx[1].created_at_ms);
+        assert!(ctx[1].created_at_ms < ctx[2].created_at_ms);
+        assert!(ctx[2].created_at_ms < t0 + 180_000, "hit's own row must be excluded");
+
+        // Channel id surfaces for renderer permalink composition.
+        for m in &ctx {
+            assert_eq!(m.channel_id, "channel-X");
+        }
+    }
+
+    /// Top-level post (root_id IS NULL) has no thread to surface
+    /// — must return an empty vec, never an error.
+    #[test]
+    fn fetch_kchat_thread_context_for_top_level_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let source_id = added.source.id.clone();
+
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "solo-1",
+                "channel-Y",
+                "alice",
+                "standalone top-level announcement",
+            ))
+            .unwrap();
+
+        let ctx = manager
+            .fetch_kchat_thread_context(&source_id, "solo-1")
+            .unwrap();
+        assert!(
+            ctx.is_empty(),
+            "top-level post must surface no thread context (got {:?})",
+            ctx.iter().map(|m| m.post_id.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    /// Unknown post id — renderer might be holding a stale id
+    /// after a cryptoshred + re-ingest. Must surface as an empty
+    /// vec (no panic, no error) so the UI degrades to "no thread".
+    #[test]
+    fn fetch_kchat_thread_context_for_unknown_post_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let source_id = added.source.id.clone();
+
+        let ctx = manager
+            .fetch_kchat_thread_context(&source_id, "nonexistent-post-id")
+            .unwrap();
+        assert!(ctx.is_empty(), "unknown post must surface no thread context");
+    }
+
+    /// `(source_id, post_id)` is the lookup key — a post in a
+    /// DIFFERENT source must not surface even if a same-named
+    /// post id exists. The DEK gate at the manager would also
+    /// drop the wrong source's rows, but the SQL filter is the
+    /// first line of defence.
+    #[test]
+    fn fetch_kchat_thread_context_for_unknown_source_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let _ = manager.add_kchat_channel(cache_dir).unwrap();
+        manager
+            .ingest_kchat_post(&make_threaded_post_input(
+                cache_dir,
+                "reply",
+                "c",
+                Some("root"),
+                "u",
+                "body",
+                1_700_000_000_000,
+            ))
+            .unwrap();
+
+        let bogus = SourceId(uuid::Uuid::new_v4());
+        let ctx = manager
+            .fetch_kchat_thread_context(&bogus, "reply")
+            .unwrap();
+        assert!(
+            ctx.is_empty(),
+            "unknown source must surface no thread context"
+        );
+    }
+
+    /// Cap-at-3 semantics: a thread with the root + 6 earlier
+    /// replies, the caller looks up context for the latest reply.
+    /// Expect exactly 3 rows: the root + the 2 most-recent earlier
+    /// siblings (the others, chronologically further from the hit,
+    /// are excluded).
+    #[test]
+    fn fetch_kchat_thread_context_caps_at_three_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let source_id = added.source.id.clone();
+
+        let t0 = 1_700_000_000_000_i64;
+        manager
+            .ingest_kchat_post(&make_threaded_post_input(
+                cache_dir, "root", "c", None, "u0", "thread starts here", t0,
+            ))
+            .unwrap();
+        for i in 1..=6 {
+            manager
+                .ingest_kchat_post(&make_threaded_post_input(
+                    cache_dir,
+                    &format!("r{i}"),
+                    "c",
+                    Some("root"),
+                    &format!("u{i}"),
+                    &format!("reply body {i}"),
+                    t0 + (i as i64) * 60_000,
+                ))
+                .unwrap();
+        }
+        // r7 is the hit — its context window should be root + r5 + r6
+        // (the 2 most-recent earlier-replies before r7).
+        manager
+            .ingest_kchat_post(&make_threaded_post_input(
+                cache_dir,
+                "r7",
+                "c",
+                Some("root"),
+                "u7",
+                "hit body 7",
+                t0 + 7 * 60_000,
+            ))
+            .unwrap();
+
+        let ctx = manager
+            .fetch_kchat_thread_context(&source_id, "r7")
+            .unwrap();
+        assert_eq!(ctx.len(), 3, "must cap at 3 rows");
+        let ids: Vec<&str> = ctx.iter().map(|m| m.post_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["root", "r5", "r6"],
+            "expected root + 2 most-recent earlier siblings (got {ids:?})"
+        );
+        assert!(ctx[0].is_root, "root must be flagged");
+        assert!(!ctx[1].is_root);
+        assert!(!ctx[2].is_root);
+    }
+
+    /// If the thread root itself was never indexed (e.g. backfill
+    /// hasn't reached that far back, or the root was deleted),
+    /// the lookup falls back to surfacing the most-recent
+    /// earlier-replies alone. No is_root row in the result.
+    #[test]
+    fn fetch_kchat_thread_context_omits_unindexed_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let source_id = added.source.id.clone();
+
+        let t0 = 1_700_000_000_000_i64;
+        // NO ingest of "root" — only the replies.
+        manager
+            .ingest_kchat_post(&make_threaded_post_input(
+                cache_dir, "r1", "c", Some("root"), "u1", "first orphan reply", t0,
+            ))
+            .unwrap();
+        manager
+            .ingest_kchat_post(&make_threaded_post_input(
+                cache_dir,
+                "r2",
+                "c",
+                Some("root"),
+                "u2",
+                "second orphan reply",
+                t0 + 60_000,
+            ))
+            .unwrap();
+
+        let ctx = manager
+            .fetch_kchat_thread_context(&source_id, "r2")
+            .unwrap();
+        assert_eq!(ctx.len(), 1, "should surface only the indexed earlier sibling");
+        assert_eq!(ctx[0].post_id, "r1");
+        assert!(!ctx[0].is_root, "no row should claim is_root when root absent");
+    }
+
+    /// Revoked source: the DEK is cryptoshredded so no thread
+    /// context can be AEAD-verified — must surface as empty.
+    #[test]
+    fn fetch_kchat_thread_context_excludes_revoked_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.set_kchat_principal("self-user").unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let source_id = added.source.id.clone();
+
+        let t0 = 1_700_000_000_000_i64;
+        manager
+            .ingest_kchat_post(&make_threaded_post_input(
+                cache_dir,
+                "rev-root",
+                "rev-c",
+                None,
+                "u0",
+                "revoke-test root body",
+                t0,
+            ))
+            .unwrap();
+        manager
+            .ingest_kchat_post(&make_threaded_post_input(
+                cache_dir,
+                "rev-reply",
+                "rev-c",
+                Some("rev-root"),
+                "u1",
+                "revoke-test reply body",
+                t0 + 60_000,
+            ))
+            .unwrap();
+
+        // Confirm pre-revoke the context is non-empty.
+        let pre = manager
+            .fetch_kchat_thread_context(&source_id, "rev-reply")
+            .unwrap();
+        assert!(!pre.is_empty(), "pre-revoke must surface context");
+
+        let _ = manager.revoke_kchat_source(cache_dir).unwrap();
+        let post = manager
+            .fetch_kchat_thread_context(&source_id, "rev-reply")
+            .unwrap();
+        assert!(
+            post.is_empty(),
+            "post-revoke must surface no context (got {:?})",
+            post.iter().map(|m| m.post_id.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    /// AEAD-divergence: tamper with the `chunks.content` column of
+    /// one context message so the indexed plaintext no longer
+    /// matches the AEAD-opened bytes. That row must be dropped
+    /// from the result; the honest siblings must still surface.
+    #[test]
+    fn fetch_kchat_thread_context_drops_aead_tampered_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let source_id = added.source.id.clone();
+
+        let t0 = 1_700_000_000_000_i64;
+        manager
+            .ingest_kchat_post(&make_threaded_post_input(
+                cache_dir,
+                "tamper-root",
+                "tc",
+                None,
+                "u0",
+                "honest root body",
+                t0,
+            ))
+            .unwrap();
+        manager
+            .ingest_kchat_post(&make_threaded_post_input(
+                cache_dir,
+                "tamper-r1",
+                "tc",
+                Some("tamper-root"),
+                "u1",
+                "honest sibling body",
+                t0 + 60_000,
+            ))
+            .unwrap();
+        manager
+            .ingest_kchat_post(&make_threaded_post_input(
+                cache_dir,
+                "tamper-r2",
+                "tc",
+                Some("tamper-root"),
+                "u2",
+                "the-hit body",
+                t0 + 120_000,
+            ))
+            .unwrap();
+
+        // Tamper the root's plaintext column out-of-band. The AEAD
+        // ciphertext still authenticates as "honest root body"
+        // but the indexed `content` now reads something else;
+        // the manager's plaintext-divergence check must drop it.
+        let n = manager
+            .store
+            .tamper_chunk_content_for_post_test(&source_id, "tamper-root", "TAMPERED BODY")
+            .unwrap();
+        assert_eq!(n, 1, "exactly one chunk row should have been tampered");
+
+        let ctx = manager
+            .fetch_kchat_thread_context(&source_id, "tamper-r2")
+            .unwrap();
+        let ids: Vec<&str> = ctx.iter().map(|m| m.post_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["tamper-r1"],
+            "tampered root must be dropped; honest sibling must remain (got {ids:?})"
+        );
+    }
+
+    /// The lookup's `before_created_at_ms` filter excludes the
+    /// hit's own row from the result — defence against a
+    /// self-referential lookup that would otherwise return the
+    /// hit as its own parent.
+    #[test]
+    fn fetch_kchat_thread_context_excludes_the_hit_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        let source_id = added.source.id.clone();
+
+        let t0 = 1_700_000_000_000_i64;
+        manager
+            .ingest_kchat_post(&make_threaded_post_input(
+                cache_dir, "rt", "c", None, "u0", "root body", t0,
+            ))
+            .unwrap();
+        // The hit IS the only reply; its created_at_ms is the
+        // lookup's exclusive upper bound, so the hit's own row is
+        // not eligible.
+        manager
+            .ingest_kchat_post(&make_threaded_post_input(
+                cache_dir,
+                "rh",
+                "c",
+                Some("rt"),
+                "u1",
+                "the-only-reply body",
+                t0 + 60_000,
+            ))
+            .unwrap();
+
+        let ctx = manager
+            .fetch_kchat_thread_context(&source_id, "rh")
+            .unwrap();
+        let ids: Vec<&str> = ctx.iter().map(|m| m.post_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["rt"],
+            "self-exclusion must keep the hit out of its own context (got {ids:?})"
+        );
     }
 }

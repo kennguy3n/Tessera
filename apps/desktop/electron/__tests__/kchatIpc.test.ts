@@ -362,6 +362,7 @@ describe("kchat IPC registration", () => {
     "sources:backfillKchatChannel",
     "kchat:backfillProgress",
     "kchat:searchPosts",
+    "kchat:fetchThreadContext",
   ];
 
   it("registers every kchat:* / sources:* channel from the master list", () => {

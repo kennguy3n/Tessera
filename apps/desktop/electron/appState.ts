@@ -33,6 +33,8 @@ import type {
   KchatPostSearchHit,
   KchatPostSearchHitInfo,
   KchatRevokeOutcomeInfo,
+  KchatThreadContextMessage,
+  KchatThreadContextMessageInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
   SearchHitInfo,
@@ -73,6 +75,8 @@ export type {
   KchatPostSearchHit,
   KchatPostSearchHitInfo,
   KchatRevokeOutcomeInfo,
+  KchatThreadContextMessage,
+  KchatThreadContextMessageInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
   SearchHit,
@@ -609,6 +613,16 @@ export interface NativeBridge {
     query: string,
     limit: number,
   ): KchatPostSearchHitInfo[];
+  /** Phase 13 Theme 2 Task 13: AEAD-verified thread-context
+   *  retrieval. Returns up to 3 chronologically-ordered messages
+   *  (thread root + up to 2 most-recent earlier-replies) or an
+   *  empty array if the post is top-level / unknown / revoked.
+   *  See `tessera_sources::manager::fetch_kchat_thread_context`
+   *  for the full taxonomy of empty-vs-populated semantics. */
+  bridgeFetchKchatThreadContext(
+    sourceId: string,
+    postId: string,
+  ): KchatThreadContextMessageInfo[];
   // --- Audit query ---
   //
   // Renderer-facing read API over the audit store. The renderer

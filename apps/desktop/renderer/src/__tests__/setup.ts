@@ -493,6 +493,11 @@ const mockApi = {
     // per-case (e.g. the citation panel + replace dialog
     // rendering tests in `citationPanelKchat.test.tsx`).
     searchPosts: vi.fn().mockResolvedValue([]),
+    // Phase 13 Theme 2 Task 13: thread-context retrieval. Default
+    // returns an empty array so components that call this during
+    // rendering (e.g. an auto-expand-thread affordance) don't
+    // throw. Tests that exercise the expand-thread path override.
+    fetchThreadContext: vi.fn().mockResolvedValue([]),
     // Phase 13 Task 7: extension-bridge surface. Default returns
     // `available: false` so the Settings card renders the manual
     // PAT entry path; tests that exercise the extension branch

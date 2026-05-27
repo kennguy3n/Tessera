@@ -440,6 +440,30 @@ pub fn bridge_search_kchat_posts(
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+/// Phase 13 Theme 2 Task 13: fetch thread context for a search
+/// hit whose `root_id` is non-null. The Node-side
+/// `kchat:fetchThreadContext` IPC handler calls this after a
+/// `kchat:searchPosts` row was selected by the user; the result
+/// is a chronologically-ordered transcript of up to 3 parent
+/// messages (the thread root + up to 2 most-recent earlier
+/// replies). Returns an empty vec for top-level posts, unknown
+/// post ids, and revoked sources (see
+/// [`tessera_sources::manager::SourceManager::fetch_kchat_thread_context`]
+/// for the full taxonomy).
+#[napi]
+pub fn bridge_fetch_kchat_thread_context(
+    source_id: String,
+    post_id: String,
+) -> napi::Result<Vec<sources::KchatThreadContextMessageInfo>> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::fetch_kchat_thread_context(&mgr, &source_id, &post_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 #[napi]
 pub fn bridge_get_source_detail(source_id: String) -> napi::Result<sources::SourceDetailInfo> {
     let s = state()?;

@@ -476,6 +476,16 @@ const api: TesseraApi = {
     searchPosts: (query: string, limit: number) =>
       ipcRenderer.invoke("kchat:searchPosts", query, limit),
     /**
+     * Phase 13 Theme 2 Task 13: thread-context retrieval. The
+     * renderer calls this when the user expands a threaded search
+     * hit to see the root + earlier-replies as a conversation
+     * transcript. Returns a chronologically-ordered array of up
+     * to 3 AEAD-verified messages (or [] for top-level /
+     * unknown / revoked posts).
+     */
+    fetchThreadContext: (sourceId: string, postId: string) =>
+      ipcRenderer.invoke("kchat:fetchThreadContext", sourceId, postId),
+    /**
      * Phase 13 Task 7: extension-bridge surface. The renderer
      * calls `extensionStatus()` from the Settings card to decide
      * which CTA to render ("Connect via KChat Desktop" vs the
