@@ -154,10 +154,17 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
     // future commit decides to .trim() the value, this test
     // will fail loudly and the commit message should document
     // the intentional behaviour change.
+    //
+    // The expected value is built via `path.join` rather than a
+    // hardcoded forward slash because `path.join` uses the HOST
+    // OS separator (not the mocked `process.platform`), so a
+    // hardcoded `/` would fail on a Windows CI runner that still
+    // exercises this Linux-mocked branch. Per Devin Review PR
+    // #55 ANALYSIS_pr-review-job-6ef624e58fa8479f8ed64e27537debce_0001.
     setPlatform("linux");
     process.env.XDG_RUNTIME_DIR = " ";
     const p = extensionSocketPath();
-    expect(p).toBe(" /tessera-kchat-extension.sock");
+    expect(p).toBe(path.join(" ", "tessera-kchat-extension.sock"));
   });
 
   it("Other Unix-y platforms (freebsd) take the same Linux discovery path", () => {

@@ -480,10 +480,18 @@ describe("dark-mode CSS variable enforcement", () => {
       ...REQUIRED_DARK_OVERRIDES,
       ...THEME_AGNOSTIC_ACCENT_TOKENS,
     ]);
+    // Use the same lookahead-anchored regex as sub-test (ii) above
+    // — a bare `.citation-source-badge` should NOT pick up the body
+    // of `.citation-source-badge-kchat` when collecting token
+    // references, or a non-safe token added to the modifier rule
+    // would be misattributed to the base class. Per Devin Review
+    // PR #55 BUG_pr-review-job-6ef624e58fa8479f8ed64e27537debce_0001
+    // (a follow-up to Pass-3 ANALYSIS_0001 which fixed the (ii)
+    // sub-test regex but missed this one).
     const unknownTokens: string[] = [];
     for (const cls of KCHAT_SURFACE_CLASSES) {
       const ruleRe = new RegExp(
-        `\\.${cls}[^{]*\\{([^}]*)\\}`,
+        `\\.${cls}(?=[\\s,:{])[^{]*\\{([^}]*)\\}`,
         "g",
       );
       let m: RegExpExecArray | null;
