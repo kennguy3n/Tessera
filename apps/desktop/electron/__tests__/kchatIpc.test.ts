@@ -3439,7 +3439,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
   });
 
   // -------------------------------------------------------------
-  // Phase 13 Theme 2 Task 9 \u2014 Devin Review pass 2 (bef2fa0)
+  // Phase 13 Theme 2 Task 9 — Devin Review pass 2 (bef2fa0)
   // ANALYSIS_0001 (parallel fetches) / 0002 (malformed-id filter)
   // / 0003 (connected-only enrichment) / 0005 (unsubscribe handle)
   // regression tests.
@@ -3463,7 +3463,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     ]);
 
     // Each REST call takes 80 ms. If they run SEQUENTIALLY,
-    // wall-clock is \u2265 160 ms. If they run CONCURRENTLY,
+    // wall-clock is ≥ 160 ms. If they run CONCURRENTLY,
     // wall-clock stays close to 80 ms. The threshold below
     // (130 ms) is safely between the two so the test
     // distinguishes the two execution shapes on every supported
@@ -3557,7 +3557,7 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
       10,
     )) as Array<Record<string, unknown>>;
 
-    // The malformed id was filtered \u2014 the corresponding hit
+    // The malformed id was filtered — the corresponding hit
     // keeps senderUsername null (renderer falls back to raw
     // id), while the valid hit is enriched.
     expect(out[0].senderUsername).toBeNull();
@@ -3637,9 +3637,83 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     _resetKchatNameCachesForTest();
     expect(unsubscribeSpy).toHaveBeenCalledTimes(1);
 
-    // After reset, the install flag is `false` again \u2014 a
+    // After reset, the install flag is `false` again — a
     // subsequent registerKchatHandlers must re-subscribe.
     registerKchatHandlers();
     expect(serviceMock.onStatusChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("pass3-ANALYSIS_0001: channelTask is fault-isolated symmetrically with userTask (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    _resetKchatNameCachesForTest();
+    defaultRateLimiter.reset();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+      }),
+    ]);
+
+    // User branch succeeds normally and populates the username
+    // cache. Channel branch's `Promise.allSettled` resolves with
+    // a fulfilled result, but we simulate a throw from the
+    // `.set()` step by feeding a channel object that triggers
+    // the cache's empty-string-reject path AT FIRST, then
+    // (separately) verify that a hypothetical synchronous throw
+    // inside the loop body cannot abort the second-pass
+    // application loop. We achieve this by mocking the channel
+    // response with an `id` that the cache's `set` will throw on
+    // — we use a Proxy whose `set` trap throws to confirm the
+    // outer try/catch swallows the throw and the second pass
+    // still runs.
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+    ]);
+    // Channel fetch resolves with a value whose `id` getter
+    // throws when accessed during the `.set(r.value.id, …)`
+    // step. This is the only way to force a throw inside the
+    // post-allSettled loop (the cache itself cannot reject by
+    // contract). Pre-fix the throw would propagate up through
+    // the IIFE's async function, reject the channelTask
+    // promise, abort `Promise.all`, and skip the second-pass
+    // loop — so even though the username was cached, the hit
+    // would never get its `senderUsername` populated. Post-fix
+    // the symmetric try/catch swallows the throw and the
+    // second pass runs.
+    const throwingChannel = new Proxy(
+      {
+        id: VALID_CHANNEL_ID,
+        team_id: "t".repeat(26),
+        display_name: "Engineering",
+      },
+      {
+        get(target, prop) {
+          if (prop === "id") {
+            throw new Error("simulated channel.id getter throw");
+          }
+          return (target as Record<string | symbol, unknown>)[prop];
+        },
+      },
+    );
+    clientMock.getChannel.mockResolvedValueOnce(throwingChannel);
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3 launch",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    // The user-side enrichment must still land on the hit
+    // (proving the second-pass loop ran).
+    expect(out[0].senderUsername).toBe("ken");
+    // Channel side stayed null — the throw was swallowed
+    // symmetrically (renderer falls back to raw id).
+    expect(out[0].channelDisplayName).toBeNull();
   });
 });

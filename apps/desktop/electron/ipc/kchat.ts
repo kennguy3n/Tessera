@@ -436,16 +436,42 @@ async function enrichKchatPostHits(
   const channelTask: Promise<void> =
     missingChannelIds.size > 0
       ? (async () => {
-          const results = await Promise.allSettled(
-            Array.from(missingChannelIds).map((id) => client.getChannel(id)),
-          );
-          for (const r of results) {
-            if (r.status === "fulfilled") {
-              KCHAT_CHANNEL_NAME_CACHE.set(
-                r.value.id,
-                r.value.display_name,
-              );
+          // ANALYSIS_0001 (Devin Review pass 3 on e3d9562): wrap
+          // the entire branch body in a try/catch so it is
+          // *symmetric* with `userTask`. `Promise.allSettled`
+          // itself never rejects per spec and `KchatNameCache.set`
+          // cannot throw today, but a future change to either side
+          // (e.g. instrumentation that throws on a contract
+          // violation, a stateful cache implementation that wants
+          // to validate inputs) would otherwise turn this branch
+          // into an unhandled-rejection path that aborts
+          // `Promise.all` BEFORE the second pass at the end of
+          // `enrichKchatPostHits` runs — dropping any user-side
+          // enrichments that already landed in the cache for the
+          // current hit batch. The cost of the wrapping catch is
+          // a single `try` block; the benefit is invariant
+          // preservation of the documented best-effort contract.
+          try {
+            const results = await Promise.allSettled(
+              Array.from(missingChannelIds).map((id) =>
+                client.getChannel(id),
+              ),
+            );
+            for (const r of results) {
+              if (r.status === "fulfilled") {
+                KCHAT_CHANNEL_NAME_CACHE.set(
+                  r.value.id,
+                  r.value.display_name,
+                );
+              }
             }
+          } catch {
+            // Same rationale as userTask: leave un-resolved
+            // ids as `null`; the renderer falls back to the raw
+            // id. We intentionally swallow rather than rethrow
+            // so the second-pass cache-application loop still
+            // runs even if a future change introduces a throw
+            // here.
           }
         })()
       : Promise.resolve();
