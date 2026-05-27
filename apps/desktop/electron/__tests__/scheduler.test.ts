@@ -17,9 +17,11 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 vi.mock("../appState", () => ({
   getBridge: vi.fn(),
+  getKchatBackfillImpl: vi.fn(),
 }));
 
 import type { NativeBridge, AutomationInfo } from "../appState";
+import { getKchatBackfillImpl } from "../appState";
 import {
   tick,
   runNow,
@@ -28,6 +30,8 @@ import {
   getSchedulerStatus,
   __testing__,
 } from "../scheduler";
+
+const mockedGetKchatBackfillImpl = vi.mocked(getKchatBackfillImpl);
 
 function fakeAutomation(
   id: string,
@@ -393,5 +397,127 @@ describe("scheduler.getSchedulerStatus", () => {
     expect(status.running).toBe(false);
     expect(status.lastTickAt).toBeNull();
     expect(status.lastTickError).toBeNull();
+  });
+});
+
+// ----------------------------------------------------------------
+// Phase 13 Theme 3 Task 17: Scheduler + KChat backfill interaction
+// ----------------------------------------------------------------
+
+describe("scheduler.tick — backfill_kchat_channel action", () => {
+  it("dispatches a KChat backfill and records ok", async () => {
+    const bridge = newBridge();
+    const backfillSpy = vi.fn().mockResolvedValue({
+      outcome: "completed",
+      pagesWalked: 1,
+      totalPostsIngested: 5,
+      totalPostsUnchanged: 0,
+      totalPostsSkippedRevoked: 0,
+    });
+    mockedGetKchatBackfillImpl.mockReturnValue(backfillSpy);
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "bf1",
+        '{"kind":"backfill_kchat_channel","channel_id":"chidschedbackfillaaaaaaaa"}',
+      ),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    expect(backfillSpy).toHaveBeenCalledWith("chidschedbackfillaaaaaaaa");
+    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith("bf1", "ok");
+    expect(getSchedulerStatus().lastTickError).toBeNull();
+  });
+
+  it("records failed when backfill impl is not available", async () => {
+    const bridge = newBridge();
+    mockedGetKchatBackfillImpl.mockReturnValue(null);
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "bf-noimpl",
+        '{"kind":"backfill_kchat_channel","channel_id":"chidschedbackfillaaaaaaaa"}',
+      ),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    const recorded = bridge.bridgeRecordAutomationRun.mock.calls[0];
+    expect(recorded[0]).toBe("bf-noimpl");
+    expect(recorded[1]).toMatch(/^failed:.*not available/i);
+  });
+
+  it("records failed when channel_id is missing", async () => {
+    const bridge = newBridge();
+    const backfillSpy = vi.fn();
+    mockedGetKchatBackfillImpl.mockReturnValue(backfillSpy);
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "bf-noid",
+        '{"kind":"backfill_kchat_channel"}',
+      ),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    const recorded = bridge.bridgeRecordAutomationRun.mock.calls[0];
+    expect(recorded[0]).toBe("bf-noid");
+    expect(recorded[1]).toMatch(/^failed:.*missing channel_id/i);
+    expect(backfillSpy).not.toHaveBeenCalled();
+  });
+
+  it("records failed when backfill impl throws", async () => {
+    const bridge = newBridge();
+    const backfillSpy = vi.fn().mockRejectedValue(
+      new Error("REST 403: user removed from channel"),
+    );
+    mockedGetKchatBackfillImpl.mockReturnValue(backfillSpy);
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "bf-err",
+        '{"kind":"backfill_kchat_channel","channel_id":"chidschedbackfillaaaaaaaa"}',
+      ),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    const recorded = bridge.bridgeRecordAutomationRun.mock.calls[0];
+    expect(recorded[0]).toBe("bf-err");
+    expect(recorded[1]).toMatch(/^failed:.*403/);
+    expect(getSchedulerStatus().lastTickError).toBeNull();
+  });
+
+  it("mixes backfill + reindex actions in one tick without interference", async () => {
+    const bridge = newBridge();
+    const backfillSpy = vi.fn().mockResolvedValue({
+      outcome: "completed",
+      pagesWalked: 1,
+      totalPostsIngested: 3,
+      totalPostsUnchanged: 0,
+      totalPostsSkippedRevoked: 0,
+    });
+    mockedGetKchatBackfillImpl.mockReturnValue(backfillSpy);
+    bridge.bridgeDueScheduledAutomations.mockReturnValue([
+      fakeAutomation(
+        "a-reindex",
+        '{"kind":"reindex_source","source_id":"src-mixed"}',
+      ),
+      fakeAutomation(
+        "a-backfill",
+        '{"kind":"backfill_kchat_channel","channel_id":"chidmixedtickaaaaaaaaaaa"}',
+      ),
+    ]);
+
+    await tick(bridge as unknown as NativeBridge);
+
+    expect(bridge.bridgeReindexSource).toHaveBeenCalledWith("src-mixed");
+    expect(backfillSpy).toHaveBeenCalledWith("chidmixedtickaaaaaaaaaaa");
+    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith(
+      "a-reindex",
+      "ok",
+    );
+    expect(bridge.bridgeRecordAutomationRun).toHaveBeenCalledWith(
+      "a-backfill",
+      "ok",
+    );
   });
 });

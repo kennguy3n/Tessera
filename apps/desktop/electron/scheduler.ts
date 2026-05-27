@@ -29,7 +29,7 @@
  * OnGenerate is reserved for *user-initiated* generations going through
  * `artifacts:generateFromTemplate`.
  */
-import { getBridge, type NativeBridge, type AutomationInfo } from "./appState";
+import { getBridge, getKchatBackfillImpl, type NativeBridge, type AutomationInfo } from "./appState";
 
 const DEFAULT_TICK_MS = 30_000;
 
@@ -40,10 +40,11 @@ interface AutomationTrigger {
 }
 
 interface AutomationAction {
-  kind: "reindex_source" | "generate_from_template";
+  kind: "reindex_source" | "generate_from_template" | "backfill_kchat_channel";
   source_id?: string;
   template_id?: string;
   source_ids?: string[];
+  channel_id?: string;
 }
 
 // Module-level state — there's exactly one scheduler per Electron main
@@ -270,6 +271,19 @@ async function runAutomation(
         }
         const sourceIds = action.source_ids ?? [];
         bridge.bridgeGenerateFromTemplate(action.template_id, sourceIds);
+        break;
+      }
+      case "backfill_kchat_channel": {
+        if (!action.channel_id) {
+          throw new Error("backfill_kchat_channel missing channel_id");
+        }
+        const impl = getKchatBackfillImpl();
+        if (!impl) {
+          throw new Error(
+            "backfill_kchat_channel: KChat backfill not available (auth service not initialised)",
+          );
+        }
+        await impl(action.channel_id);
         break;
       }
       default: {
