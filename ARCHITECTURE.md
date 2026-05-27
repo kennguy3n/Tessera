@@ -657,44 +657,66 @@ the renderer needing to poll the bridge.
 
 ### Key invariants
 
+Each invariant below lists the regression test that pins it, so if the
+invariant ever drifts from the code the pointer immediately breaks under
+code review.
+
 - **Cryptoshred on revoke.** Disconnecting a KChat source destroys the
   per-source DEK (`tessera_sources::kchat_crypto`), deletes the post rows
   and indexed files, and zeroises the in-memory DEK. AEAD-sealed chunks
   on disk are unrecoverable thereafter — even if an attacker later
-  recovers the SQLCipher DB file.
+  recovers the SQLCipher DB file. *(Pinned by
+  `tessera_sources::manager::tests::revoke_kchat_source_cryptoshreds_evidence_idempotently`,
+  `refresh_kchat_acl_revoke_cryptoshreds_indexed_evidence`, and
+  `cryptoshred_clears_kchat_backfill_state`.)*
 - **Column-level AEAD on posts.** Every encrypted field on `kchat_posts`
   (body, sender display name, channel name) is sealed with a per-source
   256-bit DEK + per-row nonce. The plaintext FTS5 `content` column
   carries only the queryable text; the canonical body lives in
   `content_aead` and is verified on every search hit before the chunk is
-  surfaced to the renderer.
+  surfaced to the renderer. *(Pinned by
+  `tessera_sources::manager::tests::search_kchat_posts_drops_aead_mismatched_rows`,
+  `fetch_kchat_thread_context_drops_aead_tampered_rows`,
+  `kchat_aead_full_lifecycle_ingest_search_cryptoshred_regrant`, and
+  `kchat_aead_thread_context_survives_cryptoshred_cycle`.)*
 - **RRF scoring-axis consistency.** File search and post search both
   emit ranks through the same `1.0 / (rank + 1.0)` reciprocal-rank
   formula so the renderer can merge file and post hits without
-  type-aware re-scoring. *(Pinned by Phase 13 Theme 3 Task 15.)*
+  type-aware re-scoring. *(Pinned by Phase 13 Theme 3 Task 15
+  `tessera_sources::manager::tests` hybrid-search battery.)*
 - **Export-path deny-list.** `~/.tessera/kchat-channels/` is on
   `getDenyExportRoots()` so a compromised renderer cannot overwrite
   the KChat cache via `artifacts:exportToFile` and inject
   attacker-controlled content the connector would later ingest.
   Deny-list is checked BEFORE the allow-list in `isSafeExportPath`.
-  *(Pinned by Phase 13 Theme 3 Task 18.)*
+  *(Pinned by `apps/desktop/electron/__tests__/exportPathSafety.test.ts`
+  — 9 containment cases covering prefix-overlap, escape-via-`..`,
+  deny-covers-allow, empty-deny passthrough.)*
 - **SSRF guard on the extension surface.** `enforceKchatServerUrl`
   applies to the handshake `serverUrl` returned by the desktop app and
   is re-validated when restoring an extension session from the vault
   (defence-in-depth against SSRF policy tightening between sessions
-  and against tampered vault entries).
+  and against tampered vault entries). *(Pinned by
+  `apps/desktop/electron/__tests__/kchatExtension.test.ts` test 7
+  "SSRF re-validation on vault-restored serverUrl rejects loopback"
+  and test 9 "SSRF on extension handshake serverUrl is rejected".)*
 - **Symmetric teardown across all four shutdown sites.**
   `handleExtensionRefreshFailure`, `handleExtensionDisconnect`,
   `teardownExtension`, and `disconnect` all flip `authMode = "none"`
   BEFORE calling `client.shutdown()`, so no `disconnected` status push
-  ever carries a stale `authMode: "extension"`.
+  ever carries a stale `authMode: "extension"`. *(Pinned by
+  `apps/desktop/electron/__tests__/kchatExtension.test.ts` test 8
+  "shutdown push during extension-disconnect carries authMode=none,
+  not stale 'extension'" — fails pre-fix, passes post-fix.)*
 - **Preload contract.** Every channel in the
   `EXPECTED_KCHAT_CHANNELS` master list (17 entries) has a matching
   `ipcRenderer.invoke("<channel>")` string in `preload.ts`. A handler
   registered in `registerKchatHandlers` but missing from the preload
-  bridge would be silently unreachable from the renderer; the
-  regression test in `kchatIpc.test.ts` reads the preload source text
-  and catches that drift.
+  bridge would be silently unreachable from the renderer. *(Pinned by
+  `apps/desktop/electron/__tests__/kchatIpc.test.ts` preload contract
+  test — reads `preload.ts` source text and asserts every entry of
+  `EXPECTED_KCHAT_CHANNELS` has a matching
+  `ipcRenderer.invoke("<channel>")` call.)*
 
 ### IPC channels
 
