@@ -5136,4 +5136,269 @@ mod tests {
             "post-regrant context must carry AEAD-verified new-DEK plaintext"
         );
     }
+
+    // ----------------------------------------------------------------
+    // Phase 13 Theme 3 Task 15: Hybrid search ordering + revocation
+    // ----------------------------------------------------------------
+
+    /// The reciprocal-rank scoring contract between file-search and
+    /// KChat-post-search is that both produce scores in (0, 1]:
+    /// `1.0 / (rank + 1.0)` where rank is 0-based position within
+    /// the returned vec. A renderer that interleaves file hits and
+    /// post hits can sort by `relevance` desc to produce a single
+    /// merged ranking without distinguishing hit types. This test
+    /// verifies both search methods produce scores on the same axis.
+    #[test]
+    fn search_scoring_axis_is_consistent_between_files_and_kchat_posts() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        // Create a doc file so the folder source has content.
+        std::fs::write(
+            dir.path().join("doc.txt"),
+            "beryllium magnesium calcium strontium barium radium",
+        )
+        .unwrap();
+
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        // Add a file source (index the folder).
+        manager
+            .add_local_folder(dir.path().to_str().unwrap())
+            .unwrap();
+        // Add a KChat source and ingest posts.
+        let _added = manager.add_kchat_channel(cache_dir).unwrap();
+        for i in 0..3 {
+            manager
+                .ingest_kchat_post(&make_post_input(
+                    cache_dir,
+                    &format!("p-axis-{i}"),
+                    "c-axis",
+                    "u-axis",
+                    &format!("beryllium strontium element-{i} alkaline earth metal"),
+                ))
+                .unwrap();
+        }
+
+        // File search (hybrid engine).
+        let file_hits = manager.search("beryllium", 10).unwrap();
+        assert!(
+            !file_hits.is_empty(),
+            "file search must find the indexed txt"
+        );
+        // KChat post search.
+        let post_hits = manager.search_kchat_posts("beryllium", 10).unwrap();
+        assert_eq!(
+            post_hits.len(),
+            3,
+            "post search must find all 3 ingested posts"
+        );
+
+        // Both use the same reciprocal rank formula.
+        assert!(
+            (file_hits[0].relevance - 1.0).abs() < 1e-9,
+            "first file hit must be 1.0 (got {})",
+            file_hits[0].relevance
+        );
+        assert!(
+            (post_hits[0].relevance - 1.0).abs() < 1e-9,
+            "first post hit must be 1.0 (got {})",
+            post_hits[0].relevance
+        );
+        assert!(
+            (post_hits[1].relevance - 0.5).abs() < 1e-9,
+            "second post hit must be 0.5 (got {})",
+            post_hits[1].relevance
+        );
+        assert!(
+            (post_hits[2].relevance - (1.0 / 3.0)).abs() < 1e-9,
+            "third post hit must be 1/3 (got {})",
+            post_hits[2].relevance
+        );
+
+        // All scores are in (0, 1].
+        for hit in &file_hits {
+            assert!(
+                hit.relevance > 0.0 && hit.relevance <= 1.0,
+                "file hit score must be in (0, 1] (got {})",
+                hit.relevance
+            );
+        }
+        for hit in &post_hits {
+            assert!(
+                hit.relevance > 0.0 && hit.relevance <= 1.0,
+                "post hit score must be in (0, 1] (got {})",
+                hit.relevance
+            );
+        }
+    }
+
+    /// Revocation mid-session: the same `search_kchat_posts` call
+    /// returns hits from a source, then that source is revoked, then
+    /// the SAME call (no manager re-creation) returns no hits. This
+    /// proves the runtime revocation is visible to subsequent queries
+    /// without a process restart.
+    #[test]
+    fn search_kchat_posts_revocation_takes_effect_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.set_kchat_principal("self-user").unwrap();
+        manager.add_kchat_channel(cache_dir).unwrap();
+
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "p-rev-1",
+                "c-rev",
+                "u-rev",
+                "tungsten wolfram transition metal element",
+            ))
+            .unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "p-rev-2",
+                "c-rev",
+                "u-rev",
+                "tungsten filament incandescent bulb",
+            ))
+            .unwrap();
+
+        // Pre-revoke: both posts surface.
+        let pre = manager.search_kchat_posts("tungsten", 10).unwrap();
+        assert_eq!(pre.len(), 2, "pre-revoke must surface both hits");
+
+        // Revoke the source (cryptoshred + status flip).
+        let outcome = manager.revoke_kchat_source(cache_dir).unwrap();
+        assert!(
+            matches!(outcome, KchatRevokeOutcome::Revoked { .. }),
+            "revoke must succeed"
+        );
+
+        // Post-revoke: zero hits from the SAME manager instance.
+        let post = manager.search_kchat_posts("tungsten", 10).unwrap();
+        assert!(
+            post.is_empty(),
+            "post-revoke must surface zero hits (got {} hits: {:?})",
+            post.len(),
+            post.iter().map(|h| h.post_id.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    /// BM25 relevance ordering is preserved through AEAD verification:
+    /// if two posts have different BM25 scores (one is a closer lexical
+    /// match to the query), the BM25-ranked order must survive the
+    /// verification pipeline — the AEAD check must not re-order or
+    /// drop verified hits that are correctly sealed.
+    #[test]
+    fn search_kchat_posts_bm25_ordering_preserved_through_verification() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.add_kchat_channel(cache_dir).unwrap();
+
+        // Post A: high relevance (query terms repeated, exact phrase).
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "p-hi",
+                "c-ord",
+                "u-ord",
+                "xenon krypton xenon krypton noble gas element xenon",
+            ))
+            .unwrap();
+        // Post B: lower relevance (query term once, more diluted).
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "p-lo",
+                "c-ord",
+                "u-ord",
+                "the atmospheric composition contains traces of xenon alongside nitrogen oxygen argon",
+            ))
+            .unwrap();
+
+        let hits = manager.search_kchat_posts("xenon krypton", 10).unwrap();
+        assert!(
+            hits.len() >= 2,
+            "both posts must surface (got {})",
+            hits.len()
+        );
+        // The post with repeated query terms should rank higher.
+        let pos_hi = hits.iter().position(|h| h.post_id == "p-hi");
+        let pos_lo = hits.iter().position(|h| h.post_id == "p-lo");
+        assert!(
+            pos_hi.is_some() && pos_lo.is_some(),
+            "both posts must be present in results"
+        );
+        assert!(
+            pos_hi.unwrap() < pos_lo.unwrap(),
+            "higher-BM25-score post must rank before lower-score post \
+             (high={:?}, low={:?})",
+            pos_hi,
+            pos_lo
+        );
+        // The first hit should have relevance 1.0 (reciprocal rank).
+        assert!(
+            (hits[0].relevance - 1.0).abs() < 1e-9,
+            "top hit must have relevance 1.0"
+        );
+    }
+
+    /// Cross-source revocation isolation: revoking source A must not
+    /// affect posts from source B. After revocation, only source B's
+    /// posts surface.
+    #[test]
+    fn search_kchat_posts_cross_source_revocation_isolation() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let cd_a = dir_a.path().to_str().unwrap();
+        let cd_b = dir_b.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        manager.set_kchat_principal("self-user").unwrap();
+        let added_a = manager.add_kchat_channel(cd_a).unwrap();
+        let added_b = manager.add_kchat_channel(cd_b).unwrap();
+
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cd_a,
+                "p-src-a",
+                "ch-a",
+                "u-a",
+                "promethium samarium europium gadolinium",
+            ))
+            .unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cd_b,
+                "p-src-b",
+                "ch-b",
+                "u-b",
+                "promethium terbium dysprosium holmium",
+            ))
+            .unwrap();
+
+        // Both surface before any revoke.
+        let pre = manager.search_kchat_posts("promethium", 10).unwrap();
+        assert_eq!(pre.len(), 2, "both sources must surface pre-revoke");
+
+        // Revoke source A only.
+        manager.revoke_kchat_source(cd_a).unwrap();
+
+        // Only source B's post survives.
+        let post = manager.search_kchat_posts("promethium", 10).unwrap();
+        assert_eq!(
+            post.len(),
+            1,
+            "only source B must survive (got {:?})",
+            post.iter().map(|h| h.post_id.as_str()).collect::<Vec<_>>()
+        );
+        assert_eq!(post[0].post_id, "p-src-b");
+        assert_eq!(post[0].source_id, added_b.source.id);
+
+        // Source A's post is gone.
+        assert!(
+            !post.iter().any(|h| h.source_id == added_a.source.id),
+            "revoked source A must not appear in results"
+        );
+    }
 }
