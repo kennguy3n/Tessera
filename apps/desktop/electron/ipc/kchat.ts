@@ -2380,8 +2380,20 @@ export function registerKchatHandlers(): void {
         "kchat:fetchThreadContext",
         RATE_LIMIT_PROFILES["kchat:fetchThreadContext"],
       );
-      const sid = assertString(sourceId, "sourceId", { maxLen: 256 });
-      const pid = assertString(postId, "postId", { maxLen: 256 });
+      // BUG_0001 (Devin Review pass 1 on 5860a94): use the same
+      // shape-strict validators every other KChat handler uses.
+      // `assertId` enforces the Tessera source UUID shape (the
+      // bridge layer parses this with `uuid::Uuid::parse_str` and
+      // would otherwise return a bridge-level error for a string
+      // that the IPC boundary should have rejected). `assertKchatId`
+      // enforces the Mattermost 26-char object-id shape — see
+      // `kchat:searchPosts` (line 2022), `kchat:listChannelPosts`
+      // (line 2084), `kchat:shareArtifact` (line 1112) for the
+      // same posture. Generic `assertString` here would consume a
+      // rate-limit token + mutex lock for any request that can't
+      // possibly succeed downstream.
+      const sid = assertId(sourceId, "sourceId");
+      const pid = assertKchatId(postId, "postId");
       const bridge = getBridge();
       if (!bridge) return [];
 

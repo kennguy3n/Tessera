@@ -184,6 +184,8 @@ const bridgeMock = {
   // Block D Task 1 (Phase 14): retrieval bridge mocks.
   bridgeSearchKchatPosts: vi.fn(() => [] as Array<unknown>),
   bridgeLogKchatPostSearchExecuted: vi.fn(),
+  // Phase 13 Theme 2 Task 13: thread-context retrieval mock.
+  bridgeFetchKchatThreadContext: vi.fn(() => [] as Array<unknown>),
 };
 
 // `KchatAuthService` stub. `getClient()` returns an object with the
@@ -4404,5 +4406,143 @@ describe("kchat:listChannelFiles — uploader enrichment (Phase 13 Theme 2 Task 
     // additions.
     expect(out[0]).toHaveProperty("user_id");
     expect(out[0]).toHaveProperty("uploaderUsername");
+  });
+});
+
+// ------------------------------------------------------------------
+// kchat:fetchThreadContext — Phase 13 Theme 2 Task 13
+// ------------------------------------------------------------------
+describe("kchat:fetchThreadContext (Phase 13 Theme 2 Task 13)", () => {
+  // Valid Tessera source UUID shape (assertId allows alphanumerics +
+  // _ - : . up to 128 chars).
+  const VALID_SOURCE_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+  // Valid KChat 26-char object id (lowercase a-z + 0-9).
+  const VALID_POST_ID = "abcdefghij1234567890abcdef";
+
+  function makeBridgeContextRow(
+    overrides: Partial<Record<string, unknown>> = {},
+  ) {
+    return {
+      postId: VALID_POST_ID,
+      channelId: "ch" + "a".repeat(24),
+      senderUserId: "u" + "b".repeat(25),
+      createdAtMs: 1_700_000_000_000,
+      editedAtMs: 0,
+      content: "thread root message",
+      isRoot: true,
+      ...overrides,
+    };
+  }
+
+  it("rejects malformed sourceId (shell metachar) without touching the bridge", async () => {
+    await expect(
+      handler("kchat:fetchThreadContext")(EVENT, "../../etc/passwd", VALID_POST_ID),
+    ).rejects.toThrow(/sourceId/);
+    expect(bridgeMock.bridgeFetchKchatThreadContext).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed postId (uppercase / special chars) without touching the bridge", async () => {
+    await expect(
+      handler("kchat:fetchThreadContext")(EVENT, VALID_SOURCE_ID, "INVALID-POST-ID!!"),
+    ).rejects.toThrow(/postId/);
+    expect(bridgeMock.bridgeFetchKchatThreadContext).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-string sourceId", async () => {
+    await expect(
+      handler("kchat:fetchThreadContext")(EVENT, 42, VALID_POST_ID),
+    ).rejects.toThrow(/sourceId/);
+    expect(bridgeMock.bridgeFetchKchatThreadContext).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-string postId", async () => {
+    await expect(
+      handler("kchat:fetchThreadContext")(EVENT, VALID_SOURCE_ID, null),
+    ).rejects.toThrow(/postId/);
+    expect(bridgeMock.bridgeFetchKchatThreadContext).not.toHaveBeenCalled();
+  });
+
+  it("returns enriched messages with username and channelDisplayName when connected", async () => {
+    const senderId = "u" + "b".repeat(25);
+    const channelId = "ch" + "a".repeat(24);
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+      user: { username: "ken" },
+    });
+    bridgeMock.bridgeFetchKchatThreadContext.mockReturnValueOnce([
+      makeBridgeContextRow({
+        senderUserId: senderId,
+        channelId,
+        isRoot: true,
+      }),
+      makeBridgeContextRow({
+        postId: "reply" + "0".repeat(21),
+        senderUserId: senderId,
+        channelId,
+        isRoot: false,
+        content: "thread reply",
+      }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: senderId, username: "alice" },
+    ]);
+    clientMock.getChannel.mockResolvedValueOnce({
+      id: channelId,
+      display_name: "General",
+    });
+
+    const out = (await handler("kchat:fetchThreadContext")(
+      EVENT,
+      VALID_SOURCE_ID,
+      VALID_POST_ID,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({
+      isRoot: true,
+      senderUsername: "alice",
+      channelDisplayName: "General",
+    });
+    expect(out[1]).toMatchObject({
+      isRoot: false,
+      senderUsername: "alice",
+      channelDisplayName: "General",
+      content: "thread reply",
+    });
+  });
+
+  it("returns messages with null enrichment when disconnected", async () => {
+    serviceMock.getState.mockReturnValue({ state: "disconnected" });
+    bridgeMock.bridgeFetchKchatThreadContext.mockReturnValueOnce([
+      makeBridgeContextRow(),
+    ]);
+
+    const out = (await handler("kchat:fetchThreadContext")(
+      EVENT,
+      VALID_SOURCE_ID,
+      VALID_POST_ID,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      senderUsername: null,
+      channelDisplayName: null,
+    });
+    // No enrichment calls when disconnected.
+    expect(clientMock.getUsersByIds).not.toHaveBeenCalled();
+    expect(clientMock.getChannel).not.toHaveBeenCalled();
+  });
+
+  it("returns empty array when bridge returns empty (top-level / unknown post)", async () => {
+    bridgeMock.bridgeFetchKchatThreadContext.mockReturnValueOnce([]);
+
+    const out = await handler("kchat:fetchThreadContext")(
+      EVENT,
+      VALID_SOURCE_ID,
+      VALID_POST_ID,
+    );
+
+    expect(out).toEqual([]);
   });
 });
