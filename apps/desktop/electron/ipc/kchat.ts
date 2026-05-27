@@ -651,6 +651,16 @@ async function enrichKchatPostHits(
  * cache-coherent — a username resolved during a search enrichment
  * is immediately available for thread-context enrichment without
  * a redundant network round-trip, and vice versa.
+ *
+ * **Maintenance contract** (Phase 13 Theme 2 Task 13 — Devin Review
+ * pass 1 ANALYSIS_0002): the body of this function intentionally
+ * mirrors `enrichKchatPostHits` (lines 530-642). Any change to the
+ * enrichment posture — circuit breaker, retry policy, `isKchatObjectId`
+ * filter, cache write semantics — MUST land in BOTH functions. The
+ * abstraction wasn't extracted to a generic helper because the
+ * 2-call-site overhead would exceed the DRY benefit, but a third
+ * caller (e.g. Theme 3's evidence-pack expand-from-citation) is the
+ * right point to refactor.
  */
 async function enrichKchatThreadContextMessages(
   messages: KchatThreadContextMessage[],
