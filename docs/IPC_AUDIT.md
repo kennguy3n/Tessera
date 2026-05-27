@@ -46,7 +46,13 @@ extra scrutiny.
 | `sources:getDetail`                   | scalar-helper   |      |
 | `sources:reindex`                     | scalar-helper   |      |
 | `sources:getIndexingProgress`         | scalar-helper   |      |
-| `sources:addKchatChannel`             | scalar-helper (KChat-id + name) | ✓ — uses KChat token from vault to download channel files |
+
+The KChat-specific `sources:*` channels —
+`sources:addKchatChannel` and `sources:backfillKchatChannel` —
+are documented in the [KChat section](#kchat) below alongside the
+rest of the 17-channel KChat surface, to keep the consolidated KChat
+master list authoritative (it matches `EXPECTED_KCHAT_CHANNELS` in
+`kchatIpc.test.ts`).
 
 ## Artifacts
 
@@ -67,6 +73,19 @@ extra scrutiny.
 | `artifacts:extractTasksDecisions`     | scalar-helper   |      |
 | `artifacts:compareSources`            | scalar-helper   |      |
 | `artifacts:exportEvidencePack`        | scalar-helper   |      |
+
+The four file-emitting channels — `artifacts:exportToFile`,
+`artifacts:exportTypst`, `artifacts:exportMarp`,
+`artifacts:exportEvidencePack` — gate every renderer-supplied
+target path through `isSafeExportPath(target, getSafeExportRoots(),
+getDenyExportRoots())`. The allow-list comes from
+`app.getPath("downloads" | "documents" | "desktop" | "home" |
+"userData")` plus `os.tmpdir()`; the deny-list carves out
+`~/.tessera/kchat-channels/` so a compromised renderer cannot
+overwrite the KChat channel cache and inject attacker-controlled
+content that the connector would later ingest. Deny-list is
+checked BEFORE the allow-list; symlinks and `..` traversal are
+rejected through `path.resolve` normalisation.
 
 ## Templates
 
@@ -181,12 +200,13 @@ the entire KChat UI when `kchat:isAvailable` returns `false`.
 | `kchat:listChannelFiles`              | scalar-helper (KChat-id + paging ints)                    |      |
 | `kchat:shareArtifact`                 | scalar-helper (artifact-id + KChat-id + format + bool×2)  | ✓ — uploads bytes via KChat token |
 | `kchat:searchPosts`                   | scalar-helper (query + limit)                             | ✓ — AEAD-verifies post bodies; rate-limited 10/s burst 20 |
+| `kchat:fetchThreadContext`            | scalar-helper (source UUID + KChat post-id)               | ✓ — returns the thread root + up to 2 earlier replies (chronological); AEAD-verifies parent bodies; name enrichment reuses the shared LRU caches; rate-limited 5/s burst 10 (legitimate caller fires this once per expand-click) |
 | `kchat:extensionStatus`               | no-input                                                  | ✓ — probes `uney-chat-desktop` Unix-socket / named-pipe; rate-limited 1/s burst 3 |
 | `kchat:extensionConnect`              | no-input                                                  | ✓ — runs handshake over the extension socket, persists scoped delegation under `kchat-extension` vault provider, applies SSRF guard to handshake `serverUrl`; rate-limited 1 per 5 s |
 | `kchat:extensionDisconnect`           | no-input                                                  | ✓ — tears down only the extension session; PAT vault entry survives; rate-limited 1 per 5 s |
 | `kchat:backfillProgress`              | scalar-helper (KChat-id)                                  | ✓ — pure read of substrate state; rate-limited 2/s burst 5 |
 | `sources:backfillKchatChannel`        | scalar-helper (KChat-id)                                  | ✓ — historical-walk over `kchat:posts` REST surface |
-| `sources:addKchatChannel`             | scalar-helper (KChat-id + display-name)                   | ✓ — fan-out channel file download into the source vault |
+| `sources:addKchatChannel`             | scalar-helper (KChat-id + display-name)                   | ✓ — uses the KChat token from the vault to fan-out channel-file downloads into the source vault |
 
 ### Phase 13 trust model for the extension surface
 

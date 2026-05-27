@@ -10,6 +10,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **KChat extension bridge.** Tessera now connects to a locally-running
+  [`uney-chat-desktop`](https://github.com/uneycom/uney-chat-desktop)
+  instance over a per-platform handshake socket (Linux
+  `$XDG_RUNTIME_DIR`, macOS Application Support, Windows named pipe)
+  and runs as an *extension* of the user's authenticated KChat session.
+  The desktop app's master credentials never enter Tessera's vault —
+  only a scoped, short-lived delegated token that auto-refreshes
+  before expiry via `KchatExtensionSession.onRefreshSuccess`,
+  rotating the in-memory `KchatClient.token` so downstream REST
+  calls always carry a fresh bearer. PAT mode remains available as a
+  manual fallback. `kchat:status` exposes `authMode`
+  (`"none" | "pat" | "extension"`) so the UI lights up the right
+  surfaces without polling.
+- **KChat post citation rendering.** KChat post hits in `CitationPanel`
+  render with chat semantics — chat icon, `#channel @sender`, threaded
+  indicator. Two module-scoped `KchatNameCache` LRUs (500-entry user-id
+  cache, 200-entry channel-id cache; both empty-string-rejecting and
+  reconnect-safe) resolve display names from server ids via a
+  dedupe-then-bulk-fetch enrichment pass.
+- **KChat backfill progress UI.** `kchat:backfillProgress` IPC surfaces
+  live `postsIngested` / `oldestFetched` counters maintained by the
+  orchestrator during a historical-backfill walk. The
+  `useKchatBackfillProgress` hook (2 s poll, cancel-safe,
+  transport-failure self-heal at 3 consecutive failures) drives a
+  progress card on `SourceDetailPage` with idle / active / complete /
+  error states.
+- **KChat channel file preview.** File-row metadata enrichment in
+  `KchatChannelSourcePicker` — type-family icon + filename + TYPE +
+  SIZE + "Uploaded by @username on date".
+- **KChat evidence-pack share-to-channel.** `kchat:shareArtifact`
+  uploads the artifact as Markdown to a channel, optionally with a
+  SHA-256-verified evidence-pack ZIP. Audit rows are emitted for
+  successful and pack-only-failure paths; primary-upload failures
+  are not audited (no phantom records for an unchanged channel).
+- **KChat thread context.** `fetch_kchat_thread_context(post_id)` on
+  `SourceStore` surfaces the thread root plus up to 2 earlier replies
+  (3 rows total, chronologically ordered) on threaded hits.
+  The retrieval pipeline is plumbed end to end:
+  `SourceStore` → `SourceManager` → N-API bridge →
+  `kchat:fetchThreadContext` IPC → `CitationPanel`.
+- **Scheduler `backfill_kchat_channel` action.** The automation
+  scheduler can now drive periodic KChat backfill sweeps without a
+  renderer-side trigger. New `AutomationAction` action kind validates
+  `channel_id`, reads `getKchatBackfillImpl()` from `appState`,
+  invokes the impl with the channel id, and records the run via
+  `bridgeRecordAutomationRun(status: "ok" | "failed")`.
 - **HomePage breakdown.** The dashboard now renders real recent
   artifacts (sorted by modified time) and a source-status breakdown
   card driven by the canonical Rust `SourceStatus` ordering, with
@@ -27,6 +73,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Export-path containment now supports a deny-list.** `isSafeExportPath`
+  accepts an optional `denyRoots` parameter that is checked BEFORE
+  the allow-list. `getDenyExportRoots()` returns
+  `~/.tessera/kchat-channels` so a compromised renderer cannot
+  overwrite the KChat channel cache via `artifacts:exportToFile` and
+  inject attacker-controlled content the connector would later
+  ingest. Wired into all four export-path call sites in
+  `ipc/artifacts.ts`.
+- **`KchatAuthService` symmetric teardown.** All four shutdown sites
+  (`handleExtensionRefreshFailure`, `handleExtensionDisconnect`,
+  `teardownExtension`, `disconnect`) flip `authMode = "none"` BEFORE
+  calling `client.shutdown()`, so no `disconnected` status push ever
+  carries a stale `authMode: "extension"`.
+- **SSRF guard re-validated on extension vault restore.**
+  `enforceKchatServerUrl` is re-run when restoring an extension
+  session from the vault — defence-in-depth against SSRF policy
+  tightening between sessions and against tampered vault entries.
 - **Custom-provider `/v1/models` 404s.** `externalProvider:listModels`
   now returns a typed `endpoint_not_found` result on HTTP 404 from a
   custom provider; the renderer surfaces a clear hint pointing at the
@@ -35,6 +98,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   limits.** Both channels share token-bucket gates (1 req / s, burst
   5 and 3 respectively) on separate buckets, matching the protection
   posture of the sibling generation channels.
+
+### Tests
+
+- **AEAD full-lifecycle round-trip.** Integration tests on
+  `tessera_sources::manager` exercise the full ingest → DEK wrap →
+  ciphertext → decrypt → cryptoshred → regrant → re-ingest → search
+  chain, plus thread-context retrieval across a cryptoshred
+  boundary.
+- **Hybrid search regression battery.** Scoring-axis consistency
+  between file and post search (RRF `1.0 / (rank + 1.0)`),
+  revocation-takes-effect-immediately on the same manager instance,
+  BM25 ordering preserved through AEAD verification, cross-source
+  revocation isolation.
+- **Extension bridge token expiry + refresh.** Fake-timer-driven
+  auto-refresh at `REFRESH_MARGIN_MS`, refresh failure invalidates
+  the session, already-expired tokens classified as
+  `protocol-error`, multi-refresh chain (1 → 2 → 3 → 4 token
+  rotations).
+- **Preload contract regression.** Source-text assertion that every
+  channel in the 17-entry `EXPECTED_KCHAT_CHANNELS` master list has
+  a matching `ipcRenderer.invoke("<channel>")` string in
+  `preload.ts` — catches the failure mode where a handler is
+  registered but the preload bridge entry is missing, rendering the
+  channel silently unreachable from the renderer.
 
 ---
 

@@ -492,9 +492,9 @@ tessera/
 │       │   │   ├── rateLimiter.ts       # Token-bucket rate limiter on expensive channels
 │       │   │   ├── validate.ts          # `assertId` / `assertString` / `assertNumber` / `assertStringArray`
 │       │   │   ├── schemas.ts           # zod schemas for object-arg channels
-│       │   │   ├── shared.ts            # cross-domain helpers
+│       │   │   ├── shared.ts            # cross-domain helpers (`getSafeExportRoots`, `getDenyExportRoots`)
 │       │   │   ├── sources.ts           # `sources:*` handlers
-│       │   │   ├── artifacts.ts         # `artifacts:*` handlers
+│       │   │   ├── artifacts.ts         # `artifacts:*` handlers (export-path safety wired through `denyRoots`)
 │       │   │   ├── citations.ts         # `citations:*` handlers
 │       │   │   ├── settings.ts          # `settings:*` + `externalProvider:*` handlers
 │       │   │   ├── templates.ts         # `templates:*` handlers
@@ -502,10 +502,25 @@ tessera/
 │       │   │   ├── runtime.ts           # `runtime:*` handlers
 │       │   │   ├── tasks.ts             # `tasks:*` handlers
 │       │   │   ├── automations.ts       # `automations:*` handlers
+│       │   │   ├── audit.ts             # `audit:*` handlers
+│       │   │   ├── vision.ts            # `vision:*` handlers (Phase 11 vision capability)
+│       │   │   ├── imagegen.ts          # `imagegen:*` handlers (Phase 11 image generation)
+│       │   │   ├── kchat.ts             # `kchat:*` + `sources:addKchatChannel` + `sources:backfillKchatChannel` handlers; LRU caches for name enrichment; backfill orchestrator + live counters for `kchat:backfillProgress`
 │       │   │   ├── dialog.ts            # `dialog:showSaveDialog`
 │       │   │   ├── context.ts           # shared context object passed into every handler
 │       │   │   ├── connectors/          # per-provider OAuth + sync handlers (gdrive / onedrive / notion / jira / confluence / figma)
 │       │   │   └── index.ts             # `registerAllIpcHandlers()`
+│       │   ├── kchat/                   # KChat (Mattermost v4) integration — see "KChat integration" section below
+│       │   │   ├── kchatAuth.ts             # `KchatAuthService`: dual-mode (`pat` / `extension`) auth, vault wiring, WebSocket lifecycle, refresh handlers, symmetric teardown
+│       │   │   ├── kchatClient.ts           # REST client (channels / posts / files / users); deserialisation-boundary validation of every server-id field
+│       │   │   ├── kchatExtensionBridge.ts  # Localhost socket discovery (Linux `$XDG_RUNTIME_DIR`, macOS Application Support, Windows named pipe); per-platform handshake protocol; PAT fallback
+│       │   │   ├── kchatExtensionSession.ts # Scoped delegated token lifecycle: `current` slot, auto-refresh timer at `REFRESH_MARGIN_MS` before expiry, `onRefreshSuccess` listener, `cancelRefresh()`, failure-nulls-session invariant
+│       │   │   ├── kchatExtensionEvents.ts  # Translates desktop-app events to `KchatWebSocketEventView` so `KchatEventForwarder` is shape-compatible across PAT and extension modes
+│       │   │   ├── kchatEventForwarder.ts   # Bridges WebSocket events to bridge-side handlers (`file_added` targeted sync, `user_added/removed/member_updated` ACL projection, `channel_archived/deleted` cryptoshred)
+│       │   │   ├── kchatChannelSyncer.ts    # Channel-files sync + historical-backfill watermark loop with drain-on-quit
+│       │   │   ├── kchatPaths.ts            # Canonical filesystem layout (`~/.tessera/kchat-channels/<channel-id>/`)
+│       │   │   ├── kchatTypes.ts            # Shared types (`KchatAuthMode`, `KchatExtensionStatus`, …)
+│       │   │   └── ssrfGuard.ts             # `enforceKchatServerUrl` — scheme / host / port allow-list; re-validated on vault restore
 │       │   ├── appState.ts          # Bridge initialization, async DB-key path, password-vault hand-off
 │       │   ├── preload.ts           # Typed preload API exposed to renderer
 │       │   ├── sidecar.ts           # Model sidecar supervision
@@ -543,7 +558,7 @@ tessera/
 ├── crates/                          # Rust core engine
 │   ├── tessera_core/                # Core types, config, lifecycle (ArtifactType: Document/Slides/Sheet/Base/Infographic/LandingPage)
 │   ├── tessera_bridge/              # N-API bindings for Electron
-│   ├── tessera_sources/             # Source management, file indexing, `.gitignore`-style ignore patterns, EXIF/XMP/IPTC image metadata extraction, incremental re-index progress tracker, `embedding.rs` (EmbeddingProvider trait + HashTrickEmbedding), `hybrid.rs` (BM25 + vector + RRF + recency), `search.rs` (engine entry point), `progress.rs`
+│   ├── tessera_sources/             # Source management, file indexing, `.gitignore`-style ignore patterns, EXIF/XMP/IPTC image metadata extraction, incremental re-index progress tracker, `embedding.rs` (EmbeddingProvider trait + HashTrickEmbedding), `hybrid.rs` (BM25 + vector + RRF + recency), `search.rs` (engine entry point), `progress.rs`, `kchat_crypto.rs` (per-source DEK + column-level AES-256-GCM for `kchat_posts`), `vision_extractor.rs` / `pdf_extractor.rs` (Phase 11 VLM-powered indexing), `fetch_kchat_thread_context` on `SourceStore` (parent-thread retrieval up to 3 levels)
 │   ├── tessera_templates/           # Template parsing and validation (Create / Analyze / Plan / Approve categories)
 │   ├── tessera_artifacts/           # Artifact creation, version history, storage, tasks model
 │   ├── tessera_export/              # csv.rs, markdown.rs, html.rs, pdf.rs, typst.rs, docx.rs, xlsx.rs, mermaid.rs, evidence_pack.rs
@@ -578,6 +593,147 @@ tessera/
 ├── ARCHITECTURE.md
 └── CHANGELOG.md
 ```
+
+---
+
+## KChat integration
+
+Tessera integrates with KChat (a [Mattermost v4](https://api.mattermost.com/)-compatible
+chat server) as a first-class collaboration surface — both as a *source*
+(channels, posts, and files are indexed and become retrievable evidence)
+and as a *destination* (artifacts can be shared into a channel, optionally
+with an evidence pack).
+
+### Auth modes
+
+| Mode | When it applies | Where credentials live |
+|---|---|---|
+| **`extension`** | A running `uney-chat-desktop` instance is reachable on the local handshake socket (Linux `$XDG_RUNTIME_DIR/tessera-kchat-extension.sock`, macOS Application Support, Windows named pipe). | Scoped, short-lived delegated token in the vault under provider `kchat-extension`. The desktop app's master credentials never enter Tessera's vault. The token auto-refreshes `REFRESH_MARGIN_MS` before expiry; `KchatExtensionSession.onRefreshSuccess` rotates the in-memory `KchatClient.token` so downstream REST calls always carry a fresh bearer. |
+| **`pat`** | Manual fallback when the extension is unavailable or the user prefers a personal access token. | Vault under provider `kchat` (the canonical `kchat:connect` flow). |
+| **`none`** | No active KChat connection. | — |
+
+`kchat:status` surfaces the current mode; `kchat:extensionStatus` surfaces
+extension availability. `KchatSettingsCard` lights up the right UX without
+the renderer needing to poll the bridge.
+
+### Data flow
+
+```
+[ uney-chat-desktop instance ]              [ Tessera Electron main process ]
+            │                                            │
+   IPC handshake (scoped token)  ◀─── kchatExtensionBridge.ts ─────────────────────┐
+            │                                            │                        │
+            ▼                                            ▼                        │
+   WS frames (events) ───────▶  kchatExtensionEvents.ts  ───▶  KchatEventForwarder │
+                                            │                          │          │
+                                            ▼                          ▼          │
+                                  KchatExtensionSession   (file_added → targeted   │
+                                  ┌──────────────────┐    sync; user_added /       │
+                                  │ current: { token,│    user_removed → ACL       │
+                                  │   expiresAt, … } │    projection;              │
+                                  │ refresh timer    │    channel_deleted →        │
+                                  │ onRefreshSuccess │    cryptoshred)             │
+                                  └──────────────────┘                             │
+                                            │                                      │
+                                            ▼                                      │
+                                       KchatClient                                 │
+                                  (REST: channels / posts / files / users)         │
+                                            │                                      │
+                                            ▼                                      │
+                                  Channel-files + posts sync                       │
+                                            │                                      │
+                                            ▼                                      │
+                          tessera_sources::manager + kchat_crypto                  │
+                  (per-source DEK; AES-256-GCM column AEAD on `kchat_posts`;       │
+                   FTS5 for BM25; HashTrickEmbedding for vector; RRF fusion)       │
+                                            │                                      │
+                                            ▼                                      │
+                            kchat:searchPosts / kchat:fetchThreadContext            │
+                                            │                                      │
+                                            ▼                                      │
+                                React renderer: CitationPanel (chat icon,           │
+                                #channel @sender, threaded indicator) <─────────────┘
+```
+
+### Key invariants
+
+Each invariant below lists the regression test that pins it, so if the
+invariant ever drifts from the code the pointer immediately breaks under
+code review.
+
+- **Cryptoshred on revoke.** Disconnecting a KChat source destroys the
+  per-source DEK (`tessera_sources::kchat_crypto`), deletes the post rows
+  and indexed files, and zeroises the in-memory DEK. AEAD-sealed chunks
+  on disk are unrecoverable thereafter — even if an attacker later
+  recovers the SQLCipher DB file. *(Pinned by
+  `tessera_sources::manager::tests::revoke_kchat_source_cryptoshreds_evidence_idempotently`,
+  `refresh_kchat_acl_revoke_cryptoshreds_indexed_evidence`, and
+  `cryptoshred_clears_kchat_backfill_state`.)*
+- **Column-level AEAD on posts.** Every encrypted field on `kchat_posts`
+  (body, sender display name, channel name) is sealed with a per-source
+  256-bit DEK + per-row nonce. The plaintext FTS5 `content` column
+  carries only the queryable text; the canonical body lives in
+  `content_aead` and is verified on every search hit before the chunk is
+  surfaced to the renderer. *(Pinned by
+  `tessera_sources::manager::tests::search_kchat_posts_drops_aead_mismatched_rows`,
+  `fetch_kchat_thread_context_drops_aead_tampered_rows`,
+  `kchat_aead_full_lifecycle_ingest_search_cryptoshred_regrant`, and
+  `kchat_aead_thread_context_survives_cryptoshred_cycle`.)*
+- **RRF scoring-axis consistency.** File search and post search both
+  emit ranks through the same `1.0 / (rank + 1.0)` reciprocal-rank
+  formula so the renderer can merge file and post hits without
+  type-aware re-scoring. *(Pinned by Phase 13 Theme 3 Task 15
+  `tessera_sources::manager::tests` hybrid-search battery.)*
+- **Export-path deny-list.** `~/.tessera/kchat-channels/` is on
+  `getDenyExportRoots()` so a compromised renderer cannot overwrite
+  the KChat cache via `artifacts:exportToFile` and inject
+  attacker-controlled content the connector would later ingest.
+  Deny-list is checked BEFORE the allow-list in `isSafeExportPath`.
+  *(Pinned by `apps/desktop/electron/__tests__/exportPathSafety.test.ts`
+  — 9 containment cases covering prefix-overlap, escape-via-`..`,
+  deny-covers-allow, empty-deny passthrough.)*
+- **SSRF guard on the extension surface.** `enforceKchatServerUrl`
+  applies to the handshake `serverUrl` returned by the desktop app and
+  is re-validated when restoring an extension session from the vault
+  (defence-in-depth against SSRF policy tightening between sessions
+  and against tampered vault entries). *(Pinned by
+  `apps/desktop/electron/__tests__/kchatExtension.test.ts` test 7
+  "SSRF re-validation on vault-restored serverUrl rejects loopback"
+  and test 9 "SSRF on extension handshake serverUrl is rejected".)*
+- **Symmetric teardown across all four shutdown sites.**
+  `handleExtensionRefreshFailure`, `handleExtensionDisconnect`,
+  `teardownExtension`, and `disconnect` all flip `authMode = "none"`
+  BEFORE calling `client.shutdown()`, so no `disconnected` status push
+  ever carries a stale `authMode: "extension"`. *(Pinned by
+  `apps/desktop/electron/__tests__/kchatExtension.test.ts` test 8
+  "shutdown push during extension-disconnect carries authMode=none,
+  not stale 'extension'" — fails pre-fix, passes post-fix.)*
+- **Preload contract.** Every channel in the
+  `EXPECTED_KCHAT_CHANNELS` master list (17 entries) has a matching
+  `ipcRenderer.invoke("<channel>")` string in `preload.ts`. A handler
+  registered in `registerKchatHandlers` but missing from the preload
+  bridge would be silently unreachable from the renderer. *(Pinned by
+  `apps/desktop/electron/__tests__/kchatIpc.test.ts` preload contract
+  test — reads `preload.ts` source text and asserts every entry of
+  `EXPECTED_KCHAT_CHANNELS` has a matching
+  `ipcRenderer.invoke("<channel>")` call.)*
+
+### IPC channels
+
+The 17 KChat-related channels are enumerated with rate-limit and validation
+notes in [`docs/IPC_AUDIT.md`](docs/IPC_AUDIT.md). A summary:
+
+| Channel | Purpose |
+|---|---|
+| `kchat:isAvailable` / `kchat:status` | Capability probe + current `authMode` |
+| `kchat:connect` / `kchat:disconnect` | PAT-mode lifecycle |
+| `kchat:extensionStatus` / `kchat:extensionConnect` / `kchat:extensionDisconnect` | Extension-mode lifecycle |
+| `kchat:listTeams` / `kchat:listChannels` / `kchat:listMembers` / `kchat:listChannelFiles` | Read-only browse surface |
+| `kchat:shareArtifact` | Share an artifact (optionally with evidence pack) to a channel |
+| `kchat:searchPosts` | AEAD-verified post search (rate-limited) |
+| `kchat:fetchThreadContext` | Thread root + up to 2 earlier replies (3 rows total) for a threaded hit |
+| `kchat:backfillProgress` | Live counters during historical backfill |
+| `sources:addKchatChannel` / `sources:backfillKchatChannel` | Add a channel as a source + manual backfill trigger |
 
 ---
 

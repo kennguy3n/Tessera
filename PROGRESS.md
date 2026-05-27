@@ -400,35 +400,35 @@ Theme 1 — uney-chat-desktop extension bridge
 
 | # | Item | Status |
 |---|---|---|
-| 1 | `kchatExtensionBridge.ts` — IPC-based discovery protocol, per-platform handshake socket, PAT fallback | `DONE` |
-| 2 | `kchatExtensionSession.ts` — scoped delegated token, vault tagging (`extension-delegated`), expiry / refresh | `DONE` |
-| 3 | `kchatExtensionEvents.ts` — desktop-app → `KchatWebSocketEventView` event translation | `DONE` |
-| 4 | Extension-aware `KchatAuthService` — `authMode: "pat" \| "extension"` surfaced through `kchat:status` | `DONE` |
-| 5 | `KchatSettingsCard` "Connect via KChat Desktop" primary + PAT fallback under "Manual connection" disclosure | `DONE` |
-| 6 | `KchatSidebarSection` desktop-app connectivity indicator + amber-on-disconnect transition | `DONE` |
-| 7 | Extension IPC audit + SSRF guard on the extension socket; `kchat:extensionStatus` / `extensionConnect` / `extensionDisconnect` channels | `DONE` |
-| 8 | Extension integration test suite — discovery, handoff, event forwarding, disconnect, PAT fallback, concurrent attempts, SSRF | `DONE` |
+| 1 | `kchatExtensionBridge.ts` — IPC-based discovery protocol, per-platform handshake socket, PAT fallback | `DONE` (PR #51) |
+| 2 | `kchatExtensionSession.ts` — scoped delegated token, vault tagging (`extension-delegated`), expiry / refresh (auto-refresh timer fires `REFRESH_MARGIN_MS` before expiry; `onRefreshSuccess` listener rotates the in-memory `KchatClient.token`) | `DONE` (PR #51) |
+| 3 | `kchatExtensionEvents.ts` — desktop-app → `KchatWebSocketEventView` event translation | `DONE` (PR #51) |
+| 4 | Extension-aware `KchatAuthService` — `authMode: "pat" \| "extension"` surfaced through `kchat:status`; symmetric teardown ordering (`authMode = "none"` before `client.shutdown()`) across all four shutdown sites | `DONE` (PR #51) |
+| 5 | `KchatSettingsCard` "Connect via KChat Desktop" primary + PAT fallback under "Manual connection" disclosure | `DONE` (PR #51) |
+| 6 | `KchatSidebarSection` desktop-app connectivity indicator + amber-on-disconnect transition | `DONE` (PR #51) |
+| 7 | Extension IPC audit + SSRF guard on the extension socket (re-validated on vault restore); `kchat:extensionStatus` / `extensionConnect` / `extensionDisconnect` channels with per-channel rate limits | `DONE` (PR #51) |
+| 8 | Extension integration test suite — discovery, handoff, event forwarding, disconnect, PAT fallback, concurrent attempts, SSRF, refresh-failure invalidation, stale-authMode push regression | `DONE` (PR #51) |
 
 Theme 2 — KChat content retrieval completion
 
 | # | Item | Status |
 |---|---|---|
-| 9 | KChat post search results render in `CitationPanel` with chat icon, sender, channel | `IN PROGRESS` |
-| 10 | KChat backfill progress UI — `kchat:backfillProgress` IPC + progress bar on `SourceDetailPage` | `IN PROGRESS` |
-| 11 | KChat channel file preview — thumbnails + metadata in `KchatChannelSourcePicker` | `IN PROGRESS` |
-| 12 | KChat share-to-channel evidence pack end-to-end path | `IN PROGRESS` |
-| 13 | KChat post threading support — `fetch_kchat_thread_context(post_id)` surfacing parent thread on a hit | `IN PROGRESS` |
+| 9 | KChat post search results render in `CitationPanel` with chat icon, sender, channel | `DONE` (PR #52) |
+| 10 | KChat backfill progress UI — `kchat:backfillProgress` IPC + progress bar on `SourceDetailPage` | `DONE` (PR #52) |
+| 11 | KChat channel file preview — thumbnails + metadata in `KchatChannelSourcePicker` | `DONE` (PR #52) |
+| 12 | KChat share-to-channel evidence pack end-to-end path | `DONE` (PR #52) |
+| 13 | KChat post threading support — `fetch_kchat_thread_context(post_id)` surfacing parent thread on a hit | `DONE` (PR #52) |
 
 Theme 3 — Testing hardening
 
 | # | Item | Status |
 |---|---|---|
-| 14 | KChat post ingest AEAD round-trip test (post → DEK → ciphertext → decrypt → cryptoshred) | `IN PROGRESS` |
-| 15 | Hybrid search with KChat posts test (RRF ordering, revocation excludes posts) | `IN PROGRESS` |
-| 16 | Extension bridge unit tests for token expiry + refresh | `IN PROGRESS` |
-| 17 | Scheduler + KChat backfill interaction test | `IN PROGRESS` |
-| 18 | Export-path containment rejects writes into KChat cache dirs | `IN PROGRESS` |
-| 19 | Preload contract test covers `kchat:extension*` channels | `IN PROGRESS` |
+| 14 | KChat post ingest AEAD round-trip test (post → DEK → ciphertext → decrypt → cryptoshred) | `DONE` (PR #53) |
+| 15 | Hybrid search with KChat posts test (RRF ordering, revocation excludes posts) | `DONE` (PR #53) |
+| 16 | Extension bridge unit tests for token expiry + refresh | `DONE` (PR #53) |
+| 17 | Scheduler + KChat backfill interaction test (production code: new `backfill_kchat_channel` action kind on `AutomationAction`) | `DONE` (PR #53) |
+| 18 | Export-path containment rejects writes into KChat cache dirs (production fix: new `denyRoots` parameter on `isSafeExportPath`; wired into all four export-path call sites) | `DONE` (PR #53) |
+| 19 | Preload contract test covers `kchat:extension*` channels (and full 17-channel master list) | `DONE` (PR #53) |
 
 Theme 4 — Documentation
 
@@ -436,11 +436,11 @@ Theme 4 — Documentation
 |---|---|---|
 | 20 | `PHASES.md` recreated | `DONE` |
 | 21 | `PROGRESS.md` recreated | `DONE` |
-| 22 | `ARCHITECTURE.md` updated — KChat directory listing, vision/imagegen/audit IPC, VisionPage, asset protocol, kchat_crypto/vision_extractor/pdf_extractor crates, ARM/ROCm/RPM/AppImage/.deb, extension bridge diagram | `IN PROGRESS` |
-| 23 | `README.md` updated — KChat Integration section, uney-chat-desktop link, repo layout, `.rpm` packaging, vision + imagegen capabilities, Linux arm64 prerequisites | `IN PROGRESS` |
-| 24 | `CHANGELOG.md` updated | `IN PROGRESS` |
-| 25 | `docs/IPC_AUDIT.md` updated for KChat + vision + imagegen channels | `DONE` (Theme 1 portion: extension surface) |
-| 26 | `PHASES.md` / `PROGRESS.md` consistency audit | `IN PROGRESS` |
+| 22 | `ARCHITECTURE.md` updated — KChat directory listing under repo layout, `kchat.ts` / `audit.ts` / `vision.ts` / `imagegen.ts` in IPC tree, `kchat_crypto.rs` / `vision_extractor.rs` / `pdf_extractor.rs` mentioned in `tessera_sources` blurb, dedicated "KChat integration" section with extension-bridge data flow diagram and seven key invariants | `DONE` (Theme 4 / PR #54) |
+| 23 | `README.md` updated — KChat row in Source connectors table; new "KChat integration" subsection covering dual-mode auth, what gets indexed (AEAD, watermarked backfill, cryptoshred), retrieval surfaces (RRF, thread context), evidence-pack share, scheduler action | `DONE` (Theme 4 / PR #54) |
+| 24 | `CHANGELOG.md` updated — 7 Added + 3 Changed + 4 Tests entries under `[Unreleased]` covering Phase 13 Themes 1–3 | `DONE` (Theme 4 / PR #54) |
+| 25 | `docs/IPC_AUDIT.md` updated — added missing `kchat:fetchThreadContext` row with real rate-limit profile (5/s burst 10) and input shape; documented export-path deny-list invariant below `artifacts:*` table | `DONE` (Theme 4 / PR #54) |
+| 26 | `PHASES.md` / `PROGRESS.md` consistency audit — Tasks 1–19 flipped to `DONE` with PR-link attribution, exit criteria checkboxes updated, three new dated changelog entries (#51 / #52 / #53) | `DONE` (Theme 4 / PR #54) |
 
 Theme 5 — Remaining polish
 
@@ -453,29 +453,154 @@ Theme 5 — Remaining polish
 
 ### Exit criteria
 
-- [ ] `kchat:isAvailable` reports `authMode` and `extensionAvailable` so the
-      renderer can light up the right UX without polling the bridge.
-- [ ] Handshake / refresh / disconnect over the extension socket carries a
+- [x] `kchat:status` reports `authMode` (`"none" | "pat" | "extension"`) and
+      `kchat:extensionStatus` reports `available` so the renderer can light
+      up the right UX without polling the bridge. *(Theme 1 / PR #51)*
+- [x] Handshake / refresh / disconnect over the extension socket carries a
       scoped, time-limited token; the desktop app's master credentials never
-      enter Tessera's vault.
-- [ ] Event bridge translates desktop-app events to the existing
+      enter Tessera's vault. Auto-refresh rotates `KchatClient.token` via
+      `onRefreshSuccess` before expiry; refresh-failure nulls the session
+      so subsequent `refresh()` calls throw "no active session".
+      *(Theme 1 / PR #51)*
+- [x] Event bridge translates desktop-app events to the existing
       `KchatWebSocketEventView` shape so `KchatEventForwarder` /
       `KchatSidebarSection` stay unchanged in their downstream logic.
-- [ ] Citations from KChat posts render with chat semantics in
-      `CitationPanel`; backfill progress is observable from
-      `SourceDetailPage`.
-- [ ] Thread context (up to 3 parents) surfaces on threaded hits.
-- [ ] AEAD round-trip + revocation-excludes-posts + concurrent-PAT-rejection
-      + SSRF tests pass.
-- [ ] Documentation matches reality: every `ipcMain.handle(` / typed
+      *(Theme 1 / PR #51)*
+- [x] Citations from KChat posts render with chat semantics in
+      `CitationPanel` (chat icon, `#channel @sender`, threaded indicator);
+      backfill progress is observable from `SourceDetailPage` via the
+      `useKchatBackfillProgress` hook (2 s poll, transport-failure
+      self-heal at 3 consecutive failures). *(Theme 2 / PR #52)*
+- [x] Thread context (thread root + up to 2 earlier replies, 3 rows
+      total) surfaces on threaded hits via `fetch_kchat_thread_context`
+      (Rust `SourceStore` → `SourceManager` → N-API bridge →
+      `kchat:fetchThreadContext` IPC). *(Theme 2 / PR #52)*
+- [x] AEAD round-trip, revocation-excludes-posts (cross-source isolation),
+      RRF scoring-axis consistency, BM25-through-AEAD ordering, scheduler
+      `backfill_kchat_channel` action, export-path deny-list, token
+      expiry + refresh + invalidation, and preload contract tests all
+      pass locally. *(Theme 3 / PR #53)*
+- [x] Documentation matches reality: every `ipcMain.handle(` / typed
       preload entry / surface mentioned in PROPOSAL appears in
-      ARCHITECTURE / README / IPC_AUDIT.
+      ARCHITECTURE / README / IPC_AUDIT. *(Theme 4 / PR #54: added
+      `kchat:fetchThreadContext` to IPC_AUDIT, full KChat directory
+      listing in ARCHITECTURE repo layout, dedicated "KChat
+      integration" sections in both ARCHITECTURE and README.)*
+- [ ] Remaining polish: KChat source-type icon, dark-theme audit,
+      Linux extension discovery hardening (Theme 5).
 
 ---
 
 ## Phase changelog
 
-### 2026-05-27 — Phase 13 opens
+### 2026-05-27 — Phase 13 Theme 3 (PR #53, merged 19:32 UTC+7)
+
+- **Task 14** — AEAD full-lifecycle round-trip integration tests on
+  `tessera_sources::manager`: ingest → DEK wrap → ciphertext → decrypt →
+  cryptoshred → regrant → re-ingest → search; plus thread-context
+  retrieval across a cryptoshred boundary.
+- **Task 15** — Hybrid search regression battery: scoring-axis
+  consistency between file and post search (RRF `1.0 / (rank + 1.0)`),
+  revocation-takes-effect-immediately on the same manager instance,
+  BM25 ordering preserved through AEAD verification, cross-source
+  revocation isolation.
+- **Task 16** — `KchatExtensionSession` token expiry + refresh tests:
+  fake-timer-driven auto-refresh at `REFRESH_MARGIN_MS`, refresh
+  failure invalidates the session (subsequent `refresh()` throws
+  "no active session"), already-expired tokens classified as
+  `protocol-error`, multi-refresh chain (1 → 2 → 3 → 4 token rotations).
+- **Task 17** — Scheduler interaction with KChat backfill: new
+  `backfill_kchat_channel` action kind on `AutomationAction`; `runAutomation`
+  reads the `getKchatBackfillImpl()` slot from `appState` and invokes
+  it with `channel_id`; errors are recorded via
+  `bridgeRecordAutomationRun(status: "failed")` so the next tick
+  respects `interval_seconds`. Five tests: dispatch ok, impl null,
+  missing channel_id, impl throws, mixed reindex + backfill in one
+  tick.
+- **Task 18** — Export-path deny-list (production fix): `isSafeExportPath`
+  accepts an optional `denyRoots` parameter that is checked BEFORE the
+  allow-list. `getDenyExportRoots()` returns
+  `~/.tessera/kchat-channels` so a compromised renderer cannot
+  overwrite the KChat channel cache via an export IPC and inject
+  attacker-controlled content the connector would later ingest. Wired
+  into all four export-path call sites in `ipc/artifacts.ts`. Nine
+  containment tests cover prefix-overlap, escape-via-`..`, deny
+  covering allow, empty deny-list passthrough.
+- **Task 19** — Preload contract test: reads `preload.ts` source text
+  and asserts every entry of `EXPECTED_KCHAT_CHANNELS` (the 17-channel
+  master list) has a matching `ipcRenderer.invoke("<channel>")`
+  string. Catches the "handler registered but missing from preload →
+  silently unreachable from renderer" failure mode that the
+  bidirectional master-list assertion alone cannot detect.
+
+### 2026-05-27 — Phase 13 Theme 2 (PR #52, merged 17:12 UTC+7)
+
+- **Task 9** — KChat post citation name enrichment: `CitationPanel`
+  resolves `#channel @sender` for every post hit via two module-scoped
+  `KchatNameCache` LRUs (500-entry user-id cache, 200-entry channel-id
+  cache; both empty-string-rejecting and reconnect-safe).
+- **Task 10** — Backfill progress UI: new `kchat:backfillProgress` IPC
+  with live counters (`postsIngested`, `oldestFetched`) maintained by
+  the orchestrator; `useKchatBackfillProgress` hook (2 s poll,
+  cancel-safe, transport-failure self-heal at 3 consecutive failures)
+  drives a progress card on `SourceDetailPage` with idle / active /
+  complete / error states.
+- **Task 11** — Channel file preview: file-row metadata enrichment
+  (type-family icon + filename + TYPE + SIZE + "Uploaded by @user on
+  date"); `KchatClient.listChannelFiles` / `getFileInfo` validate
+  `user_id` at the deserialisation boundary; shared
+  `populateKchatUsernameCache()` between citation and file-preview
+  enrichment.
+- **Task 12** — Evidence-pack share-to-channel end-to-end: stands up a
+  localhost HTTP server imitating KChat's `/api/v4/files` endpoint
+  and exercises a REAL `KchatClient` over the wire (no mocks below
+  `KchatClient.uploadFile`); validates multipart format, byte-exact
+  markdown body, SHA-256 evidence-pack hash, `Authorization: Bearer`
+  plumbing, audit-row emission on success and on pack-only failure
+  (no phantom audit on primary failure).
+- **Task 13** — Thread context: `fetch_kchat_thread_context(post_id)`
+  on `SourceStore` (Rust); `SourceManager::fetch_kchat_thread_context`
+  → N-API bridge → `kchat:fetchThreadContext` IPC (rate-limited, name
+  enrichment reuses the shared LRUs); thread root + up to 2 earlier
+  replies (3 rows total, chronologically ordered) surface on threaded
+  hits.
+
+### 2026-05-27 — Phase 13 Theme 1 (PR #51, merged 11:48 UTC+7)
+
+- **Task 1** — `kchatExtensionBridge.ts`: IPC-based discovery
+  protocol, per-platform handshake socket (Linux `$XDG_RUNTIME_DIR`,
+  macOS Application Support, Windows named pipe), PAT fallback.
+- **Task 2** — `kchatExtensionSession.ts`: scoped delegated token,
+  vault tagging (`extension-delegated`), expiry + refresh lifecycle
+  with auto-refresh scheduled `REFRESH_MARGIN_MS` before expiry; the
+  `onRefreshSuccess` listener rotates the in-memory
+  `KchatClient.token` so downstream REST calls always carry a fresh
+  bearer.
+- **Task 3** — `kchatExtensionEvents.ts`: translates desktop-app
+  events to the existing `KchatWebSocketEventView` shape so
+  `KchatEventForwarder` / `KchatSidebarSection` stay unchanged in
+  their downstream logic.
+- **Task 4** — Extension-aware `KchatAuthService`: `authMode: "none" |
+  "pat" | "extension"` surfaced through `kchat:status`; symmetric
+  teardown ordering (`authMode = "none"` BEFORE `client.shutdown()`)
+  across all four shutdown sites (`handleExtensionRefreshFailure`,
+  `handleExtensionDisconnect`, `teardownExtension`, `disconnect`).
+- **Task 5** — `KchatSettingsCard`: "Connect via KChat Desktop"
+  primary CTA, PAT under "Manual connection" disclosure; re-probes
+  extension state on every `onStatusChange` push.
+- **Task 6** — `KchatSidebarSection`: desktop-app connectivity
+  indicator with amber-on-disconnect transition.
+- **Task 7** — Extension IPC audit + SSRF guard on the extension
+  socket, re-validated on vault restore (defence-in-depth against
+  SSRF policy tightening and tampered vault entries);
+  `kchat:extensionStatus` / `extensionConnect` / `extensionDisconnect`
+  channels with per-channel rate limits.
+- **Task 8** — Extension integration test suite: discovery, handoff,
+  event forwarding, disconnect, PAT fallback, concurrent attempts,
+  SSRF, refresh-failure invalidation, stale-authMode push regression
+  (4 shutdown sites covered).
+
+### 2026-05-27 — Phase 13 opens (start of session)
 
 - Recovered `PROGRESS.md` and `PHASES.md` from `phase10-final-docs-close`
   baseline (Phase 10 → DONE) and brought them forward with the actual

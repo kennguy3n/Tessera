@@ -69,6 +69,7 @@ Local optimization:
 | Jira | Remote | Available |
 | Confluence | Remote | Available |
 | Figma | Remote | Available |
+| KChat (Mattermost v4) | Remote (chat) | Available |
 
 Every remote connector follows the same shape as `tessera_connectors::gdrive`: OAuth 2.0
 flow, OS-keychain token storage, file/folder (or page/issue/file) picker, incremental
@@ -76,6 +77,79 @@ sync via the provider's native delta / `updated` / `last_modified` filter, metad
 sync, local indexing through the existing extraction → chunking → FTS5 pipeline,
 clean disconnect that revokes tokens and removes indexed content, and audit events
 for connect/sync/disconnect.
+
+KChat is the exception to the OAuth shape because it doesn't model chat
+as "files" — see the [KChat integration](#kchat-integration) section
+below for its dual-mode auth (extension vs. personal access token),
+WebSocket-driven event pipe, and post-level AEAD.
+
+### KChat integration
+
+KChat (a Mattermost-v4-compatible chat server) is supported as both a
+**source** (channels, posts, and files are indexed and become
+retrievable evidence) and a **destination** (artifacts can be shared
+into a channel, optionally with an evidence-pack ZIP). It's the only
+connector that ships with its own dedicated UI surfaces.
+
+**Two auth modes:**
+
+- **Extension mode** — if a [`uney-chat-desktop`](https://github.com/uneycom/uney-chat-desktop)
+  instance is running locally, Tessera connects to it over a
+  per-platform handshake socket (Linux `$XDG_RUNTIME_DIR/tessera-kchat-extension.sock`,
+  macOS Application Support, Windows named pipe) and receives a
+  scoped, short-lived delegated token. The desktop app's master
+  credentials never enter Tessera's vault. The token auto-refreshes
+  before expiry; the in-memory `KchatClient.token` rotates via an
+  `onRefreshSuccess` listener so downstream REST calls always carry a
+  fresh bearer.
+- **PAT mode** — manual fallback when the extension isn't available
+  (or the user prefers a personal access token). Standard `kchat:connect`
+  flow with the token stored in the vault under provider `kchat`.
+
+**What gets indexed:**
+
+- Channel files (PDF, DOCX, PPTX, XLSX, MD, TXT, images, etc.) flow
+  through the same extraction → chunking → FTS5 + vector pipeline as
+  every other connector.
+- Channel posts are indexed with **column-level AEAD**: a per-source
+  DEK encrypts post body / sender display name / channel name on
+  `kchat_posts` with AES-256-GCM. The plaintext FTS5 column carries
+  only the queryable text; the canonical body is verified on every
+  search hit before being surfaced to the renderer.
+- Historical backfill is **watermarked and resumable** — the
+  orchestrator drains on `will-quit` and resumes from the last
+  watermark on the next launch. Progress is observable from
+  `SourceDetailPage` via the `useKchatBackfillProgress` hook (2 s
+  poll, transport-failure self-heal).
+- **Cryptoshred on revoke** — disconnecting a KChat source destroys
+  the per-source DEK and deletes the post rows; AEAD-sealed chunks on
+  disk are unrecoverable thereafter.
+
+**Retrieval surfaces:**
+
+- `kchat:searchPosts` — AEAD-verified post search; results render in
+  `CitationPanel` as `#channel @sender` with chat semantics.
+- `kchat:fetchThreadContext` — thread root + up to 2 earlier replies
+  (3 rows total, chronologically ordered) surface on threaded hits so
+  retrieval includes the conversational context
+  that motivated the matched post.
+- File hits coexist with post hits under a single Reciprocal Rank
+  Fusion (RRF) scoring axis, so the renderer can merge them without
+  type-aware re-scoring.
+
+**Sharing artifacts back to KChat:**
+
+- `kchat:shareArtifact` uploads the artifact as Markdown to a
+  channel, optionally with a SHA-256-verified evidence-pack ZIP.
+  Audit rows are emitted for both successful and pack-only-failure
+  paths; primary-upload failures are *not* audited (no phantom
+  records for an unchanged channel).
+
+**Automation:**
+
+- The scheduler supports a `backfill_kchat_channel` action kind, so a
+  user can configure periodic backfill sweeps on a channel without a
+  manual button-press.
 
 ### Google Drive connector
 
