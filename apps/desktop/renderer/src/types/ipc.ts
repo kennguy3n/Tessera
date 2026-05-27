@@ -65,6 +65,7 @@ export type {
   HybridSearchConfigUpdate,
   IndexedFileInfo,
   IndexingProgressInfo,
+  KchatBackfillProgressView,
   InstalledModelRecord,
   MarpExportRequest,
   ModelApi,

@@ -7,7 +7,36 @@ import StatusBadge from "../components/StatusBadge";
 import { useSourceDetail, useReindexSource } from "../hooks/useSources";
 import { useIndexingProgress } from "../hooks/useIndexingProgress";
 import { useEmbeddingProgress } from "../hooks/useEmbeddingProgress";
-import type { ExtractedItem } from "../types/ipc";
+import { useKchatBackfillProgress } from "../hooks/useKchatBackfillProgress";
+import type { ExtractedItem, SourceInfo } from "../types/ipc";
+
+/**
+ * Extract the KChat channel id from a `SourceType::Kchat` source's
+ * `path`. The Node-side `kchatChannelCacheDir(channelId)` always
+ * produces `<home>/.tessera/kchat-channels/<channelId>`, so the
+ * last path segment is the canonical channel id.
+ *
+ * Returns `null` for non-KChat sources OR when the basename is
+ * empty (defensive guard against a malformed `source.path`). The
+ * renderer treats `null` as "don't poll backfill state" — the
+ * `useKchatBackfillProgress` hook is quiescent for `null`.
+ *
+ * We intentionally do NOT re-validate the 26-char object-id shape
+ * here. The IPC handler at `kchat:backfillProgress` re-validates
+ * via `assertKchatId(channelId, "channelId")` so any malformed
+ * input rejects at the boundary with a clear error message. The
+ * renderer-side strict regex would just produce a silent UI no-op,
+ * which is harder to debug than an IPC-level rejection that the
+ * polling hook surfaces back as a transport error.
+ */
+export function extractKchatChannelIdFromSource(
+  source: SourceInfo,
+): string | null {
+  if (source.sourceType !== "kchat") return null;
+  const segments = source.path.split("/").filter((s) => s.length > 0);
+  const id = segments[segments.length - 1];
+  return id && id.length > 0 ? id : null;
+}
 
 export default function SourceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -35,6 +64,58 @@ export default function SourceDetailPage() {
   // won't trigger multiple overlapping passes; the button is also
   // disabled while `reembedding === true`.
   const embeddingProgress = useEmbeddingProgress(reembedGeneration);
+  // Phase 13 Task 10: when this source is a KChat channel,
+  // subscribe to the substrate-side backfill watermark. The
+  // helper returns `null` for non-KChat sources so the hook stays
+  // quiescent — there's no per-page polling cost for the common
+  // local_folder / local_file case. Computing the channel id is
+  // safe before the `detail` guard below because `detail` is
+  // null-checked at the top of the render branch; we still want
+  // the hook reference stable across renders so we always call
+  // it. When `detail` is null we pass `null` explicitly so the
+  // hook drops to its quiescent path.
+  const kchatChannelId = detail
+    ? extractKchatChannelIdFromSource(detail.source)
+    : null;
+  const kchatBackfill = useKchatBackfillProgress(kchatChannelId);
+  // The "Backfill posts" button is a manual trigger that calls
+  // `sources:backfillKchatChannel`. We track the in-flight state
+  // separately from `kchatBackfill.status === "active"` because
+  // the IPC handler may not have observed our trigger yet (the
+  // poll runs at 2 s cadence; the click should disable the button
+  // immediately). On the IPC promise settling we drop the local
+  // flag — by then the poll has either picked up the active state
+  // OR the walk finished synchronously (e.g. already-completed
+  // short-circuit).
+  const [kchatBackfilling, setKchatBackfilling] = useState(false);
+  const [kchatBackfillError, setKchatBackfillError] = useState<string | null>(
+    null,
+  );
+
+  const handleBackfillKchat = async () => {
+    if (!kchatChannelId) return;
+    const api = typeof window !== "undefined" ? window.tessera : undefined;
+    if (!api) {
+      setKchatBackfillError("Tessera bridge not available");
+      return;
+    }
+    setKchatBackfillError(null);
+    setKchatBackfilling(true);
+    try {
+      await api.kchat.backfillChannel(kchatChannelId);
+    } catch (err) {
+      // Surface the IPC-layer failure (rate-limit, validation,
+      // bridge error) in the same card the poll renders into.
+      // The substrate-level outcomes (`access_revoked`, etc.)
+      // come back through `kchatBackfill` rather than as a
+      // rejection.
+      setKchatBackfillError(
+        err instanceof Error ? err.message : String(err),
+      );
+    } finally {
+      setKchatBackfilling(false);
+    }
+  };
 
   const handleReindex = async () => {
     if (!id) return;
@@ -193,6 +274,34 @@ export default function SourceDetailPage() {
             >
               {reembedding ? "Re-embedding…" : "Re-embed"}
             </Button>
+            {kchatChannelId && (
+              // Phase 13 Task 10: manual trigger for the KChat
+              // post-history backfill walk. The substrate-side
+              // orchestrator is idempotent on `cacheDir` (an
+              // already-completed walk short-circuits at the state
+              // read with `outcome: "skipped"`), so a re-click is
+              // safe; we still disable the button while a walk is
+              // in flight or while the poller observes the
+              // `active` state to give the user clear feedback
+              // that their click was registered.
+              <Button
+                variant="secondary"
+                onClick={handleBackfillKchat}
+                disabled={
+                  kchatBackfilling || kchatBackfill?.status === "active"
+                }
+                aria-label={
+                  kchatBackfilling || kchatBackfill?.status === "active"
+                    ? "KChat post backfill in progress"
+                    : "Backfill KChat post history for this channel"
+                }
+                data-testid="kchat-backfill-button"
+              >
+                {kchatBackfilling || kchatBackfill?.status === "active"
+                  ? "Backfilling…"
+                  : "Backfill posts"}
+              </Button>
+            )}
             <Button variant="secondary" onClick={() => navigate("/sources")}>
               Back
             </Button>
@@ -320,6 +429,105 @@ export default function SourceDetailPage() {
             >
               {reembedError}
             </p>
+          </Card>
+        )}
+        {/*
+          Phase 13 Task 10 — KChat backfill progress card.
+
+          Rendered ONLY for KChat-channel sources. The card has four
+          discriminated states the poll surfaces via
+          `kchatBackfill.status`:
+
+            - `"idle"`     → no walk has run yet; the card explains
+                              the action and points to the
+                              "Backfill posts" button in the header.
+            - `"active"`   → walk in flight; shows an indeterminate
+                              progress indicator and the running
+                              `postsIngested` counter. The substrate
+                              does NOT always surface `totalPosts`,
+                              so the HTML5 `<progress>` element
+                              renders without `max=` when the total
+                              is unknown — the browser shows an
+                              indeterminate spinner in that case.
+            - `"complete"` → walk reached the head of the channel.
+                              Shows a "Backfill complete" pill plus
+                              the most-recent `oldestFetched`
+                              timestamp if available.
+            - `"error"`    → substrate-level failure; shows the
+                              error message and lets the user
+                              re-trigger via the header button.
+
+          We deliberately hide the card while `kchatBackfill === null`
+          (the very first poll hasn't returned yet) to avoid a flash
+          of "idle" before the substrate-state read completes.
+        */}
+        {kchatChannelId && kchatBackfillError && (
+          <Card>
+            <p
+              role="alert"
+              style={{ color: "var(--color-error)" }}
+              data-testid="kchat-backfill-error"
+            >
+              KChat backfill failed: {kchatBackfillError}
+            </p>
+          </Card>
+        )}
+        {kchatChannelId && kchatBackfill && (
+          <Card data-testid="kchat-backfill-card">
+            <h3 className="card-title">
+              {kchatBackfill.status === "complete"
+                ? "KChat backfill complete"
+                : kchatBackfill.status === "active"
+                  ? "KChat backfill in progress"
+                  : kchatBackfill.status === "error"
+                    ? "KChat backfill error"
+                    : "KChat post backfill"}
+            </h3>
+            <p
+              role="status"
+              aria-live="polite"
+              style={{ color: "var(--color-text-secondary)" }}
+              data-testid="kchat-backfill-status"
+              data-status={kchatBackfill.status}
+            >
+              {kchatBackfill.status === "idle" &&
+                'No walk has run yet. Click "Backfill posts" to fetch the channel\u2019s post history.'}
+              {kchatBackfill.status === "active" &&
+                `${kchatBackfill.postsIngested} posts ingested\u2026`}
+              {kchatBackfill.status === "complete" &&
+                (kchatBackfill.oldestFetched !== null
+                  ? `History fetched back to ${new Date(
+                      kchatBackfill.oldestFetched,
+                    ).toLocaleString()}.`
+                  : "Channel history fully fetched.")}
+              {kchatBackfill.status === "error" &&
+                (kchatBackfill.error ??
+                  "Last walk failed; click Backfill posts to retry.")}
+            </p>
+            {kchatBackfill.status === "active" && (
+              <progress
+                aria-label="KChat backfill progress"
+                /*
+                  The substrate does not always surface `totalPosts`
+                  (the KChat REST API exposes a per-page count but no
+                  channel-level total in the same call). When
+                  `totalPosts === null` we omit `value` AND `max` so
+                  the HTML5 `<progress>` element renders in its
+                  indeterminate mode, which is the correct UX cue for
+                  "work is happening but the end is unknown". When a
+                  `totalPosts` value IS available we render a
+                  determinate bar capped at 1 so an over-shoot from a
+                  stale total doesn't clip negatively.
+                */
+                {...(kchatBackfill.totalPosts !== null
+                  ? {
+                      value: kchatBackfill.postsIngested,
+                      max: Math.max(kchatBackfill.totalPosts, 1),
+                    }
+                  : {})}
+                style={{ width: "100%", marginTop: "var(--spacing-xs)" }}
+              />
+            )}
           </Card>
         )}
         {(extractError || extracted) && (

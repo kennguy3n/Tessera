@@ -3717,3 +3717,170 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(out[0].channelDisplayName).toBeNull();
   });
 });
+
+// =====================================================================
+// Phase 13 Task 10 — kchat:backfillProgress (progress projection IPC)
+// ---------------------------------------------------------------------
+// The handler is a pure read of two pieces of state:
+//
+//   1. `inFlightBackfillKchatChannel.has(id)` — is a walk currently
+//      running? Drives the `active` vs `idle/complete` discriminator.
+//   2. `bridgeGetKchatBackfillState(cacheDir)` — substrate-persisted
+//      state. Surfaces `oldestPostId`, `completedAt`, revocation
+//      outcome.
+//
+// These tests pin every branch the renderer projection depends on:
+// - `idle` when no walk has run AND substrate state is idle/unlinked/
+//    access_revoked
+// - `complete` when substrate state has a `completedAt` (regardless of
+//    `inFlight`, because a re-trigger after completion is a no-op)
+// - `active` when a walk is in flight AND substrate state has not
+//    completed yet
+// - `error` with the underlying message when:
+//    (a) the native bridge is unavailable, OR
+//    (b) the substrate state read throws
+// - The handler rejects malformed channelIds at the boundary
+// =====================================================================
+describe("kchat:backfillProgress — progress projection IPC", () => {
+  // 26-char channel id reused across cases. Doesn't share the
+  // CHANNEL_ID constant used by the backfill orchestrator
+  // describe block above so a future change to that fixture
+  // doesn't accidentally couple the two suites.
+  const PROGRESS_CHANNEL_ID = "chidprogresstttttttttttttta";
+
+  beforeEach(async () => {
+    // Reset the rate-limiter so a previous test in this suite
+    // that exhausts the bucket doesn't bleed into the next case.
+    // `kchat:backfillProgress` is gated at 2 tokens / 1 s sustained
+    // (see RATE_LIMIT_PROFILES["kchat:backfillProgress"]) — too
+    // tight to share across cases.
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    defaultRateLimiter.reset();
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValue({
+      outcome: "idle",
+      sourceId: "src-uuid",
+      oldestPostId: undefined,
+      completedAt: undefined,
+    });
+  });
+
+  it("registers the `kchat:backfillProgress` channel", () => {
+    const channels = handleMock.mock.calls.map((c) => c[0] as string);
+    expect(channels).toContain("kchat:backfillProgress");
+  });
+
+  it("returns `status: idle` when no walk has run and state is idle", async () => {
+    const out = (await handler("kchat:backfillProgress")(
+      EVENT,
+      PROGRESS_CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(out.status).toBe("idle");
+    expect(out.channelId).toBe(PROGRESS_CHANNEL_ID);
+    expect(out.oldestFetched).toBeNull();
+    expect(out.totalPosts).toBeNull();
+    expect(out.postsIngested).toBe(0);
+  });
+
+  it("returns `status: idle` when substrate state is `unlinked` (race against unlink)", async () => {
+    // The renderer must NOT show an error for an unlinked
+    // channel — that's a normal state during the gap between
+    // the user clicking "Remove KChat source" and the substrate
+    // GC. The handler projects it to `idle` so the UI shows
+    // "no walk has run" rather than a scary error banner.
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValueOnce({
+      outcome: "unlinked",
+      sourceId: undefined,
+      oldestPostId: undefined,
+      completedAt: undefined,
+    });
+    const out = (await handler("kchat:backfillProgress")(
+      EVENT,
+      PROGRESS_CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(out.status).toBe("idle");
+  });
+
+  it("returns `status: idle` when substrate state is `access_revoked`", async () => {
+    // Same UX rationale as `unlinked`: revoked sources are still
+    // listed in the UI (the user can re-link), and the backfill
+    // card shouldn't show an error for a state the user
+    // explicitly chose. The substrate-side cryptoshred already
+    // removed the data; the renderer just sees `idle`.
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValueOnce({
+      outcome: "access_revoked",
+      sourceId: "src-uuid",
+      oldestPostId: undefined,
+      completedAt: undefined,
+    });
+    const out = (await handler("kchat:backfillProgress")(
+      EVENT,
+      PROGRESS_CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(out.status).toBe("idle");
+  });
+
+  it("returns `status: complete` when substrate state has a `completedAt`", async () => {
+    bridgeMock.bridgeGetKchatBackfillState.mockReturnValueOnce({
+      outcome: "idle",
+      sourceId: "src-uuid",
+      oldestPostId: "postnewa00000000000000000a",
+      completedAt: "2024-01-01T00:00:00Z",
+    });
+    const out = (await handler("kchat:backfillProgress")(
+      EVENT,
+      PROGRESS_CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(out.status).toBe("complete");
+    expect(out.channelId).toBe(PROGRESS_CHANNEL_ID);
+  });
+
+  it("returns `status: error` when the bridge state read throws", async () => {
+    bridgeMock.bridgeGetKchatBackfillState.mockImplementationOnce(() => {
+      throw new Error("substrate corruption: dek missing");
+    });
+    const out = (await handler("kchat:backfillProgress")(
+      EVENT,
+      PROGRESS_CHANNEL_ID,
+    )) as Record<string, unknown>;
+    expect(out.status).toBe("error");
+    // The substrate error message must reach the renderer so
+    // the user has a chance to act on it (e.g. cryptoshred and
+    // re-link). The handler scrubs nothing here because the
+    // path is internal — there is no token/header to leak.
+    expect(out.error).toMatch(/substrate corruption/);
+  });
+
+  it("rejects malformed channelIds at the boundary", async () => {
+    await expect(
+      handler("kchat:backfillProgress")(EVENT, "!!!notvalid!!!"),
+    ).rejects.toThrow(/channelId/);
+    expect(bridgeMock.bridgeGetKchatBackfillState).not.toHaveBeenCalled();
+  });
+
+  it("passes the per-channel cache directory to the bridge state read", async () => {
+    // Regression guard: a future refactor that changes the
+    // cacheDir derivation must not accidentally start passing
+    // the raw channelId or the workspace root. The substrate
+    // keys state on the cacheDir, so a regression here would
+    // silently make every renderer poll think the walk is
+    // `idle` even after a successful completion.
+    await handler("kchat:backfillProgress")(EVENT, PROGRESS_CHANNEL_ID);
+    expect(bridgeMock.bridgeGetKchatBackfillState).toHaveBeenCalledTimes(1);
+    const arg = bridgeMock.bridgeGetKchatBackfillState.mock.calls[0][0] as string;
+    expect(arg).toContain(PROGRESS_CHANNEL_ID);
+    expect(arg).toMatch(/kchat-channels/);
+  });
+
+  it("rate-limits repeated calls per the `kchat:backfillProgress` profile", async () => {
+    // The handler is rate-limited at 2 tokens / 1 s sustained
+    // with 5 burst — see RATE_LIMIT_PROFILES. We drive enough
+    // calls to drain the bucket and assert the next call
+    // rejects with the limiter's diagnostic.
+    for (let i = 0; i < 5; i++) {
+      await handler("kchat:backfillProgress")(EVENT, PROGRESS_CHANNEL_ID);
+    }
+    await expect(
+      handler("kchat:backfillProgress")(EVENT, PROGRESS_CHANNEL_ID),
+    ).rejects.toThrow(/Rate limit/i);
+  });
+});
