@@ -385,7 +385,7 @@ the connector framework.
 
 ## Phase 13 — KChat extension bridge & polish
 
-**Status:** `IN PROGRESS`
+**Status:** `DONE` (Themes 1–5 / PRs #51, #52, #53, #54, #55)
 
 **Goal:** Re-architect the KChat integration so Tessera can run as an
 *extension* of a locally-running `uney-chat-desktop` instance. When the
@@ -446,10 +446,10 @@ Theme 5 — Remaining polish
 
 | # | Item | Status |
 |---|---|---|
-| 27 | KChat source-type icon in `SourcesPage` | `IN PROGRESS` |
-| 28 | KChat disconnect cleanup for extension mode | `DONE` (in `kchatAuth.ts.disconnect()`) |
-| 29 | Dark-theme KChat components audit | `IN PROGRESS` |
-| 30 | Linux-specific KChat extension discovery (`$XDG_RUNTIME_DIR/tessera-kchat-extension.sock`) | `DONE` (in `extensionSocketPath()`) |
+| 27 | KChat source-type icon in `SourcesPage` + `SourceDetailPage` (new `sourceTypeIcon()` helper, 📁 / 📄 / 💬 glyphs with humanised aria-labels) | `DONE` (Theme 5 / PR #55) |
+| 28 | KChat disconnect cleanup for extension mode — full extension-mode `disconnect()` teardown regression test pins six invariants (extension vault wiped, PAT entry preserved, authMode flips to none, no stale-authMode push, idempotency) | `DONE` (Theme 5 / PR #55) |
+| 29 | Dark-theme KChat components audit — CitationPanel KChat surface classes (`citation-source-badge-kchat`, `citation-item-kchat`, `citation-search-hit-kchat`, `citation-hit-kchat-*` family) now styled with theme tokens (chip-style badge + brand left-accent + muted secondary + theme-aware link); regression test pins token-only contract | `DONE` (Theme 5 / PR #55) |
+| 30 | Linux-specific KChat extension discovery (`$XDG_RUNTIME_DIR/tessera-kchat-extension.sock`) — per-platform regression test pins all four discovery branches (Linux + XDG, Linux + fallback with uid-suffix collision safety, macOS, Windows named pipe) plus edge cases (empty XDG, missing getuid, freebsd parity, named-pipe namespace integrity) | `DONE` (Theme 5 / PR #55) |
 
 ### Exit criteria
 
@@ -486,12 +486,72 @@ Theme 5 — Remaining polish
       `kchat:fetchThreadContext` to IPC_AUDIT, full KChat directory
       listing in ARCHITECTURE repo layout, dedicated "KChat
       integration" sections in both ARCHITECTURE and README.)*
-- [ ] Remaining polish: KChat source-type icon, dark-theme audit,
-      Linux extension discovery hardening (Theme 5).
+- [x] Remaining polish: KChat source-type icon on Sources +
+      SourceDetailPage, dark-theme audit landing token-driven CSS for
+      every KChat-specific class in CitationPanel, full-teardown
+      regression test on `disconnect()` extension-mode path, and
+      per-platform `extensionSocketPath()` regression test pinning the
+      Linux `XDG_RUNTIME_DIR` discovery + multi-user collision-safe
+      fallback. *(Theme 5 / PR #55)*
 
 ---
 
 ## Phase changelog
+
+### 2026-05-27 — Phase 13 Theme 5 (PR #55)
+
+- **Task 27** — KChat source-type icon on `SourcesPage` +
+  `SourceDetailPage`. New `sourceTypeIcon(sourceType)` helper in
+  `utils/sourceLabels.ts` returns `{ glyph, ariaLabel }` for every
+  known kind (📁 local_folder, 📄 local_file, 💬 kchat) with a
+  graceful fallback (empty glyph, humanised aria-label) for unknown
+  discriminators. Emoji glyphs match the existing
+  `KchatChannelSourcePicker` `fileTypeIcon` convention so visual
+  vocabulary is consistent across all surfaces. Rendered with
+  `role="img"` + `aria-label` for screen readers. 9 new tests
+  (6 unit + 2 SourceDetailPage integration + 1 SourcesPage
+  integration).
+- **Task 28** — Full extension-mode `disconnect()` teardown
+  regression test. Existing test 5 covered the `teardownExtension()`
+  PAT-switch path; test 8 covered the desktop-driven
+  `handleExtensionDisconnect`. Neither pinned the user-initiated
+  explicit `disconnect()` call (the most common cleanup path). New
+  test 14 pins six invariants in a single end-to-end flow:
+  precondition vault state, audit-userid return contract, post-
+  disconnect authMode/vault state with PAT-entry preservation
+  (deliberate UX guarantee at `kchatAuth.ts:535-541`), no
+  stale-authMode `disconnected` push, idempotency on second call.
+- **Task 29** — Dark-theme audit for KChat citation surfaces.
+  Audit found that `KchatSidebarSection` / `KchatChannelSourcePicker`
+  / `KchatSettingsCard` / `ShareToKchatModal` all already use theme
+  tokens correctly. Real gap: `CitationPanel.tsx` references seven
+  KChat-specific CSS class names (`citation-source-badge-kchat`,
+  `citation-item-kchat`, `citation-search-hit-kchat`, the
+  `citation-hit-kchat-*` family) that had NO CSS rules in either
+  light or dark themes — the surface rendered as undecorated inline
+  text. Theme 5 adds token-driven CSS: chip-style badge using
+  `--color-primary-light`, 3px brand left-accent for KChat-derived
+  rows, muted secondary text for metadata fragments, theme-aware
+  link styling with `:focus-visible` outline. New regression test
+  pins three invariants: every class has a rule, every rule uses
+  only `var(--color-…)` references (no bare color literals), every
+  token referenced is in the dark-mode-safe allow list.
+- **Task 30** — Per-platform `extensionSocketPath()` regression
+  test. The helper had no direct test coverage in
+  `kchatExtension.test.ts` (every test passes an explicit
+  `socketPath: server.socketPath`, bypassing production discovery).
+  11 new cases pin all four discovery branches: Linux + `XDG_RUNTIME_DIR`
+  set (freedesktop.org base-dir spec compliant per-user tmpfs path),
+  Linux fallback with uid-suffix multi-user collision safety, macOS
+  `~/Library/Application Support/Tessera/...`, Windows
+  `\\.\pipe\tessera-kchat-extension` named pipe. Plus edge-case
+  defences: empty `XDG_RUNTIME_DIR` treated as unset, missing
+  `process.getuid` defaults to 0, freebsd takes the Linux path,
+  Windows path has no tmpdir fragments (kernel-managed namespace),
+  whitespace-only XDG documents `length > 0` semantics.
+
+Phase 13 closes here. Local: vitest 1835/1835, tsc clean on both
+configs, cargo workspace clean.
 
 ### 2026-05-27 — Phase 13 Theme 3 (PR #53, merged 19:32 UTC+7)
 

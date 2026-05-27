@@ -70,6 +70,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   through a dedicated modal with download-as-markdown, open-artifact,
   and parent-qualified labels for sources that share the same last
   path segment.
+- **Source-type glyphs on Sources surfaces.** `SourcesPage` and
+  `SourceDetailPage` now render a per-source-kind glyph (📁 local
+  folder, 📄 local file, 💬 KChat channel) next to the source title.
+  New `sourceTypeIcon()` helper in `utils/sourceLabels.ts` returns
+  `{ glyph, ariaLabel }` for every known kind with a graceful
+  fallback (empty glyph, humanised aria-label) for unknown
+  discriminators. Glyphs are emoji to match the existing
+  `fileTypeIcon` convention in `KchatChannelSourcePicker`; rendered
+  with `role="img"` + `aria-label` for screen reader support.
 
 ### Changed
 
@@ -98,6 +107,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   limits.** Both channels share token-bucket gates (1 req / s, burst
   5 and 3 respectively) on separate buckets, matching the protection
   posture of the sibling generation channels.
+- **KChat citation surfaces are styled for dark mode.**
+  `CitationPanel`'s KChat-specific class names
+  (`citation-source-badge-kchat`, `citation-item-kchat`,
+  `citation-search-hit-kchat`, the `citation-hit-kchat-*` family)
+  shipped without any CSS rules in either light or dark themes —
+  the surface rendered as undecorated inline text. They now render
+  as a chip-style badge with a primary-tinted background, KChat-
+  derived rows carry a 3px brand left-accent, metadata fragments
+  use the muted secondary text token, and the permalink uses the
+  theme-aware link token. Every color value is a `var(--color-…)`
+  reference so dark-mode overrides apply automatically.
 
 ### Tests
 
@@ -122,6 +142,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `preload.ts` — catches the failure mode where a handler is
   registered but the preload bridge entry is missing, rendering the
   channel silently unreachable from the renderer.
+- **Explicit `disconnect()` extension-mode teardown.** Test 14 in
+  `kchatExtension.test.ts` pins six invariants of the
+  user-initiated `disconnect()` path while extension mode is
+  active: extension vault entry deleted, saved PAT entry preserved
+  (deliberate UX guarantee), authMode flips to `"none"`, no
+  stale-authMode `disconnected` push reaches subscribers,
+  audit-userid return contract, idempotency on second call.
+- **`extensionSocketPath()` per-platform discovery.** 11 cases in
+  `extensionSocketPath.test.ts` pin all four discovery branches
+  (Linux + `XDG_RUNTIME_DIR`, Linux fallback with uid-suffix
+  collision safety, macOS Application Support, Windows named
+  pipe) plus edge defences (empty XDG treated as unset, missing
+  `process.getuid`, freebsd parity with Linux, named-pipe namespace
+  integrity on Windows).
+- **KChat citation surface dark-mode contract.** Regression test in
+  `darkModeTokens.test.ts` pins that every KChat-specific CSS class
+  CitationPanel references has a rule in `components.css`, that
+  every rule uses only `var(--color-…)` token references (no bare
+  hex / rgb / hsl), and that every token referenced is in the
+  dark-mode-safe allow list.
 
 ---
 
