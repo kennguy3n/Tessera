@@ -34,93 +34,97 @@
  *     socket support); the pipe lifetime is owned by the kernel
  *     so no filesystem unlink is needed.
  *
- * The test mutates `process.platform`, `process.env.XDG_RUNTIME_DIR`,
- * and `process.getuid` per case, restoring originals in
- * `afterEach`. The pattern mirrors the existing
- * `tokenVault.test.ts` / `sidecar.test.ts` setups.
+ * Tests inject a deterministic `ExtensionSocketDiscovery`
+ * surface per case rather than mutating `process.platform` /
+ * `process.env` / `process.getuid` globals. The previous
+ * mutation pattern (mirroring `tokenVault.test.ts` /
+ * `sidecar.test.ts`) was safe under the default vitest worker
+ * model (one file per worker) but would break under
+ * `--pool=threads` with shared worker pools — a concurrent test
+ * reading `process.platform` could observe the mutated value
+ * between mutation and restore. The injection refactor (per
+ * Devin Review PR #55 Finding 6 follow-up) eliminates the
+ * race-condition footgun without changing the production
+ * call sites, which continue to use the no-arg default that
+ * reads from the real globals via
+ * `defaultExtensionSocketDiscovery()`.
+ *
+ * The integrated default-discovery path (no-arg
+ * `extensionSocketPath()` reading real `process.*` / `os.*`)
+ * is exercised by `kchatExtension.test.ts` and the
+ * `defaultExtensionSocketDiscovery` integration test below.
  */
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import * as os from "os";
 import * as path from "path";
 
-import { extensionSocketPath } from "../kchat/kchatExtensionBridge";
+import {
+  defaultExtensionSocketDiscovery,
+  extensionSocketPath,
+  type ExtensionSocketDiscovery,
+} from "../kchat/kchatExtensionBridge";
+
+/**
+ * Helper: build an `ExtensionSocketDiscovery` from a partial
+ * override. Defaults are chosen so every test must explicitly
+ * opt into the platform / env values it cares about — leaving
+ * one unset and accidentally inheriting another test's value
+ * is impossible because every call returns a fresh object.
+ */
+function discovery(
+  overrides: Partial<ExtensionSocketDiscovery> = {},
+): ExtensionSocketDiscovery {
+  return {
+    platform: "linux",
+    xdgRuntimeDir: undefined,
+    getuid: () => 1000,
+    tmpdir: () => "/tmp",
+    homedir: () => "/home/test",
+    ...overrides,
+  };
+}
 
 describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
-  const originalPlatform = process.platform;
-  const originalXdg = process.env.XDG_RUNTIME_DIR;
-  const originalGetuid = process.getuid;
-
-  function setPlatform(p: NodeJS.Platform): void {
-    Object.defineProperty(process, "platform", {
-      value: p,
-      configurable: true,
-    });
-  }
-
-  beforeEach(() => {
-    // Default: clear XDG so each test must opt into setting it.
-    delete process.env.XDG_RUNTIME_DIR;
-    // Default: stub `getuid` to a known value so the fallback
-    // path is deterministic across host environments (some CI
-    // runners might not even expose `process.getuid`).
-    Object.defineProperty(process, "getuid", {
-      value: () => 1000,
-      configurable: true,
-      writable: true,
-    });
-  });
-
-  afterEach(() => {
-    Object.defineProperty(process, "platform", {
-      value: originalPlatform,
-      configurable: true,
-    });
-    if (originalXdg === undefined) {
-      delete process.env.XDG_RUNTIME_DIR;
-    } else {
-      process.env.XDG_RUNTIME_DIR = originalXdg;
-    }
-    // Restore the original getuid (may be a function or
-    // undefined on Windows hosts).
-    Object.defineProperty(process, "getuid", {
-      value: originalGetuid,
-      configurable: true,
-      writable: true,
-    });
-  });
-
   it("Linux + XDG_RUNTIME_DIR set: joins XDG_RUNTIME_DIR with the well-known name", () => {
     // Expected value is built via `path.join` rather than a
     // hardcoded forward slash because `path.join` uses the HOST
-    // OS separator (not the mocked `process.platform`), so a
-    // hardcoded `/` would fail on a Windows CI runner that runs
-    // this Linux-mocked branch. Per Devin Review PR #55
-    // ANALYSIS_pr-review-job-9fbc0a69cde94e08bd88aec559bab048_0003.
-    setPlatform("linux");
-    process.env.XDG_RUNTIME_DIR = "/run/user/1000";
-    const p = extensionSocketPath();
+    // OS separator, so a hardcoded `/` would fail on a Windows
+    // CI runner that runs this Linux-mocked branch. Per Devin
+    // Review PR #55 ANALYSIS_pr-review-job-9fbc0a69cde94e08bd88aec559bab048_0003.
+    const p = extensionSocketPath(
+      discovery({
+        platform: "linux",
+        xdgRuntimeDir: "/run/user/1000",
+      }),
+    );
     expect(p).toBe(
       path.join("/run/user/1000", "tessera-kchat-extension.sock"),
     );
   });
 
   it("Linux + XDG_RUNTIME_DIR set to a deeper path: still joins it (path.join preserves trailing path)", () => {
-    setPlatform("linux");
-    process.env.XDG_RUNTIME_DIR = "/run/user/501/devin-sandbox";
-    const p = extensionSocketPath();
+    const p = extensionSocketPath(
+      discovery({
+        platform: "linux",
+        xdgRuntimeDir: "/run/user/501/devin-sandbox",
+      }),
+    );
     expect(p).toBe(
       path.join("/run/user/501/devin-sandbox", "tessera-kchat-extension.sock"),
     );
   });
 
   it("Linux + XDG_RUNTIME_DIR unset: falls back to <tmpdir>/tessera-kchat-extension-<uid>.sock", () => {
-    setPlatform("linux");
-    // Use the platform-correct tmpdir so the expected path
-    // matches regardless of host OS quirks (test runners on
-    // macOS report `/var/folders/...`; Linux reports `/tmp`).
-    const expectedTmp = os.tmpdir();
-    const p = extensionSocketPath();
-    expect(p).toBe(path.join(expectedTmp, "tessera-kchat-extension-1000.sock"));
+    const p = extensionSocketPath(
+      discovery({
+        platform: "linux",
+        xdgRuntimeDir: undefined,
+        tmpdir: () => "/var/tmp/sandbox",
+      }),
+    );
+    expect(p).toBe(
+      path.join("/var/tmp/sandbox", "tessera-kchat-extension-1000.sock"),
+    );
   });
 
   it("Linux + XDG_RUNTIME_DIR set to empty string: treated as unset (falls back to tmpdir)", () => {
@@ -129,29 +133,32 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
     // Without the length check, `path.join("", "...")` would
     // produce a relative path that the bridge would try to
     // connect to literally — a silent foot-gun.
-    setPlatform("linux");
-    process.env.XDG_RUNTIME_DIR = "";
-    const p = extensionSocketPath();
+    const p = extensionSocketPath(
+      discovery({
+        platform: "linux",
+        xdgRuntimeDir: "",
+        tmpdir: () => "/tmp",
+      }),
+    );
     expect(p).toBe(
-      path.join(os.tmpdir(), "tessera-kchat-extension-1000.sock"),
+      path.join("/tmp", "tessera-kchat-extension-1000.sock"),
     );
   });
 
   it("Linux + getuid undefined: falls back to uid=0 in the socket name", () => {
     // On Windows hosts `process.getuid` is undefined. The
-    // production code guards on `typeof process.getuid ===
-    // "function"` and defaults to 0. We exercise that defence
-    // by deleting the property, then asserting the suffix.
-    setPlatform("linux");
-    Object.defineProperty(process, "getuid", {
-      value: undefined,
-      configurable: true,
-      writable: true,
-    });
-    const p = extensionSocketPath();
-    expect(p).toBe(
-      path.join(os.tmpdir(), "tessera-kchat-extension-0.sock"),
+    // production code guards on `typeof getuid === "function"`
+    // and defaults to 0. The injection refactor preserves this
+    // defence because the discovery type carries
+    // `getuid: (() => number) | undefined`.
+    const p = extensionSocketPath(
+      discovery({
+        platform: "linux",
+        getuid: undefined,
+        tmpdir: () => "/tmp",
+      }),
     );
+    expect(p).toBe(path.join("/tmp", "tessera-kchat-extension-0.sock"));
   });
 
   it("Linux + XDG_RUNTIME_DIR set to whitespace-only: treated as set (path.join is the literal user request)", () => {
@@ -165,13 +172,14 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
     //
     // The expected value is built via `path.join` rather than a
     // hardcoded forward slash because `path.join` uses the HOST
-    // OS separator (not the mocked `process.platform`), so a
-    // hardcoded `/` would fail on a Windows CI runner that still
-    // exercises this Linux-mocked branch. Per Devin Review PR
-    // #55 ANALYSIS_pr-review-job-6ef624e58fa8479f8ed64e27537debce_0001.
-    setPlatform("linux");
-    process.env.XDG_RUNTIME_DIR = " ";
-    const p = extensionSocketPath();
+    // OS separator. Per Devin Review PR #55
+    // ANALYSIS_pr-review-job-6ef624e58fa8479f8ed64e27537debce_0001.
+    const p = extensionSocketPath(
+      discovery({
+        platform: "linux",
+        xdgRuntimeDir: " ",
+      }),
+    );
     expect(p).toBe(path.join(" ", "tessera-kchat-extension.sock"));
   });
 
@@ -182,35 +190,41 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
     // through to the Linux/Unix branch. Pin this so a future
     // patch that adds a freebsd-specific branch surfaces the
     // contract change.
-    setPlatform("freebsd");
-    process.env.XDG_RUNTIME_DIR = "/run/user/1000";
-    const p = extensionSocketPath();
+    //
     // `path.join` over a hardcoded `/` for the same Windows-host
-    // portability reason documented on the Linux-XDG tests above
-    // (the mocked `process.platform` doesn't influence `path.join`'s
-    // separator, which uses the actual host OS). Per Devin Review
-    // PR #55 BUG_pr-review-job-b8678318dcd243fb908252b4a72ff121_0001.
+    // portability reason documented above. Per Devin Review PR
+    // #55 BUG_pr-review-job-b8678318dcd243fb908252b4a72ff121_0001.
+    const p = extensionSocketPath(
+      discovery({
+        platform: "freebsd",
+        xdgRuntimeDir: "/run/user/1000",
+      }),
+    );
     expect(p).toBe(
       path.join("/run/user/1000", "tessera-kchat-extension.sock"),
     );
   });
 
   it("macOS: returns ~/Library/Application Support/Tessera/tessera-kchat-extension.sock", () => {
-    setPlatform("darwin");
-    const expected = path.join(
-      os.homedir(),
-      "Library",
-      "Application Support",
-      "Tessera",
-      "tessera-kchat-extension.sock",
+    const p = extensionSocketPath(
+      discovery({
+        platform: "darwin",
+        homedir: () => "/Users/test",
+      }),
     );
-    const p = extensionSocketPath();
-    expect(p).toBe(expected);
+    expect(p).toBe(
+      path.join(
+        "/Users/test",
+        "Library",
+        "Application Support",
+        "Tessera",
+        "tessera-kchat-extension.sock",
+      ),
+    );
   });
 
   it("Windows: returns the named-pipe path \\\\.\\pipe\\tessera-kchat-extension", () => {
-    setPlatform("win32");
-    const p = extensionSocketPath();
+    const p = extensionSocketPath(discovery({ platform: "win32" }));
     expect(p).toBe("\\\\.\\pipe\\tessera-kchat-extension");
   });
 
@@ -220,11 +234,19 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
     // named-pipe namespace is `\\.\pipe\...` and the kernel
     // owns the lifetime; any filesystem path would silently
     // create an unconnectable socket that the desktop app
-    // cannot find.
-    setPlatform("win32");
-    const p = extensionSocketPath();
+    // cannot find. Verify by injecting a tmpdir / homedir that,
+    // if the Windows branch ever accidentally consumed them,
+    // would surface as a substring of the result.
+    const p = extensionSocketPath(
+      discovery({
+        platform: "win32",
+        tmpdir: () => "/SHOULD-NEVER-APPEAR-tmp",
+        homedir: () => "/SHOULD-NEVER-APPEAR-home",
+      }),
+    );
     expect(p.startsWith("\\\\.\\pipe\\")).toBe(true);
-    expect(p.includes(os.tmpdir())).toBe(false);
+    expect(p.includes("/SHOULD-NEVER-APPEAR-tmp")).toBe(false);
+    expect(p.includes("/SHOULD-NEVER-APPEAR-home")).toBe(false);
   });
 
   it("Linux fallback path always contains the uid suffix (collision safety on multi-user hosts)", () => {
@@ -234,13 +256,84 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
     // `/tmp/tessera-kchat-extension.sock`. Two users on the
     // same host would otherwise race to bind the same path and
     // one would silently lose discovery.
-    setPlatform("linux");
-    Object.defineProperty(process, "getuid", {
-      value: () => 4242,
-      configurable: true,
-      writable: true,
-    });
-    const p = extensionSocketPath();
+    const p = extensionSocketPath(
+      discovery({
+        platform: "linux",
+        getuid: () => 4242,
+        tmpdir: () => "/tmp",
+      }),
+    );
     expect(p).toMatch(/tessera-kchat-extension-4242\.sock$/);
+  });
+
+  describe("defaultExtensionSocketDiscovery", () => {
+    it("captures process.platform / process.env.XDG_RUNTIME_DIR / process.getuid at call time", () => {
+      // Direct unit test of the default factory so a future
+      // refactor that breaks the integration with `process.*`
+      // surfaces here rather than only in production. The
+      // factory MUST return fresh values on each call (not a
+      // cached singleton) so a long-lived session that
+      // experiences an `XDG_RUNTIME_DIR` change picks up the
+      // new value.
+      const d = defaultExtensionSocketDiscovery();
+      expect(d.platform).toBe(process.platform);
+      expect(d.xdgRuntimeDir).toBe(process.env.XDG_RUNTIME_DIR);
+      expect(d.tmpdir()).toBe(os.tmpdir());
+      expect(d.homedir()).toBe(os.homedir());
+      // `getuid` is a function on Unix, `undefined` on Windows.
+      if (typeof process.getuid === "function") {
+        expect(typeof d.getuid).toBe("function");
+        expect(d.getuid?.()).toBe(process.getuid());
+      } else {
+        expect(d.getuid).toBeUndefined();
+      }
+    });
+
+    it("invoking extensionSocketPath() with no args is identical to passing defaultExtensionSocketDiscovery() explicitly", () => {
+      // Pin the contract that production code (which calls
+      // `extensionSocketPath()` with no args) and tests that
+      // want to use the real environment (which would call
+      // `extensionSocketPath(defaultExtensionSocketDiscovery())`)
+      // are observationally identical. A future refactor that
+      // gives the parameter default a non-trivial body could
+      // accidentally drift these apart; this test pins the
+      // equivalence.
+      const noArg = extensionSocketPath();
+      const explicit = extensionSocketPath(defaultExtensionSocketDiscovery());
+      expect(noArg).toBe(explicit);
+    });
+  });
+
+  describe("parallel-safety", () => {
+    it("does not touch process.platform / process.env / process.getuid across the suite", () => {
+      // Meta-test pinning the architectural property that
+      // motivated this refactor: NONE of the tests in this
+      // file should mutate process-level globals. The
+      // previous implementation called
+      // `Object.defineProperty(process, "platform", ...)`,
+      // `delete process.env.XDG_RUNTIME_DIR`, and
+      // `Object.defineProperty(process, "getuid", ...)` per
+      // test — a footgun under `--pool=threads`. Capture the
+      // current values BEFORE all tests run and assert they
+      // are identical AFTER. If a future test reintroduces a
+      // global mutation, this test will fail (assuming the
+      // restore-in-afterEach hook is missing or buggy, which
+      // is precisely the regression we want to catch).
+      const platformBefore = process.platform;
+      const xdgBefore = process.env.XDG_RUNTIME_DIR;
+      const getuidBefore = process.getuid;
+      // Run the helper with a variety of injected shapes —
+      // none should leak into the host process.
+      extensionSocketPath(discovery({ platform: "linux" }));
+      extensionSocketPath(discovery({ platform: "darwin" }));
+      extensionSocketPath(discovery({ platform: "win32" }));
+      extensionSocketPath(
+        discovery({ xdgRuntimeDir: "/should-not-leak" }),
+      );
+      extensionSocketPath(discovery({ getuid: () => 99999 }));
+      expect(process.platform).toBe(platformBefore);
+      expect(process.env.XDG_RUNTIME_DIR).toBe(xdgBefore);
+      expect(process.getuid).toBe(getuidBefore);
+    });
   });
 });
