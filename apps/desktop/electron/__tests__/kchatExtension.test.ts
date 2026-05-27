@@ -1227,4 +1227,210 @@ describe("uney-chat-desktop extension bridge integration", () => {
       await server.close();
     }
   });
+
+  it("14. explicit disconnect() in extension mode is a complete symmetric teardown (Phase 13 Theme 5 Task 28)", async () => {
+    // Theme 5 Task 28 — PROGRESS.md describes `disconnect()`'s
+    // extension-mode teardown as DONE in `kchatAuth.ts.disconnect()`.
+    // This test pins the **full** set of invariants of that
+    // teardown so the path can't silently regress when future
+    // refactors land. Existing test 5 covers the
+    // `teardownExtension()` path that fires during a PAT-switch;
+    // test 8 covers the desktop-driven `handleExtensionDisconnect`
+    // path. Neither covers the user-initiated explicit
+    // `disconnect()` call while extension mode is active, which is
+    // the most common cleanup path (user clicks Disconnect in the
+    // Settings card).
+    //
+    // The invariants pinned here are:
+    //   (a) Before disconnect: vault holds `kchat-extension`
+    //       (delegation entry), `authMode === "extension"`.
+    //   (b) Tessera ALSO has a saved PAT under `kchat` from a
+    //       previous PAT session — explicit disconnect must NOT
+    //       wipe it. The comment at `kchatAuth.ts:535-541`
+    //       documents the deliberate preservation of saved PAT
+    //       across an extension-mode disconnect so the user
+    //       doesn't lose a credential they've already vaulted.
+    //   (c) `disconnect()` returns the disconnected user id.
+    //   (d) After disconnect: `authMode === "none"`,
+    //       `kchat-extension` vault entry deleted (extension
+    //       delegation revoked), `kchat` PAT vault entry still
+    //       intact (NOT wiped — see (b)).
+    //   (e) Status push during disconnect carries
+    //       `authMode: "none"` — never the stale `"extension"`.
+    //       Same authMode-before-shutdown ordering invariant as
+    //       test 8, but for the user-initiated path. This pins
+    //       the comment at `kchatAuth.ts:520-532`.
+    //   (f) Calling `disconnect()` a second time is idempotent
+    //       (no throw, returns null userId, no further vault
+    //       mutations).
+    const server = await startMockServer((frame) => {
+      if (frame.type === "discover") {
+        return {
+          type: "discover_response",
+          requestId: frame.requestId,
+          ok: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake"],
+        };
+      }
+      if (frame.type === "handshake") {
+        return {
+          type: "handshake_response",
+          requestId: frame.requestId,
+          ok: true,
+          user: {
+            id: "user1234567890abcdefgh",
+            username: "ken",
+            email: "k@e.com",
+            firstName: "K",
+            lastName: "N",
+          },
+          token: "delegation-token-1",
+          expiresAtMs: Date.now() + 5 * 60_000,
+          serverUrl: "https://kchat.example.com",
+          scopesGranted: ["kchat:posts.read"],
+        };
+      }
+      return null;
+    });
+    try {
+      const fetchFn = vi.fn(
+        async (_input: RequestInfo | URL): Promise<Response> => {
+          return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            text: async () => "",
+            json: async () => ({
+              id: "user1234567890abcdefgh",
+              username: "ken",
+              email: "k@e.com",
+              first_name: "K",
+              last_name: "N",
+              roles: "system_user",
+            }),
+            arrayBuffer: async () => new ArrayBuffer(0),
+          } as unknown as Response;
+        },
+      );
+      const client = new KchatClient({ fetchFn });
+      const svc = new KchatAuthService(client, {
+        extensionFactory: () =>
+          new ExtensionConnection({ socketPath: server.socketPath }),
+        probeFn: async () => ({
+          available: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake"],
+        }),
+      });
+
+      // (b) Seed a saved PAT under the kchat provider so we can
+      // verify it survives the extension-mode disconnect. We
+      // write directly to the mocked vault store rather than
+      // running a full PAT connect → disconnect → extension
+      // connect cycle, which would add unrelated wire setup; the
+      // mock vault is the single source of truth for vault state
+      // in this test file.
+      vaultStore.set("kchat", {
+        accessToken: "saved-pat-token-from-prior-session",
+        scopes: [],
+      });
+
+      await svc.connectViaExtension();
+      // (a) precondition
+      expect(svc.getAuthMode()).toBe("extension");
+      expect(vaultStore.has("kchat-extension")).toBe(true);
+      expect(vaultStore.has("kchat")).toBe(true);
+
+      // Subscribe AFTER connect so we capture only post-connect
+      // pushes (the disconnected push under test).
+      const pushes: Array<{
+        state: string;
+        authMode: "none" | "pat" | "extension";
+      }> = [];
+      const unsubscribe = svc.onStatusChange((state) => {
+        pushes.push({ state: state.state, authMode: state.authMode });
+      });
+      try {
+        // (c) explicit disconnect returns the disconnected user id
+        const disconnectedUserId = svc.disconnect();
+        expect(disconnectedUserId).toBe("user1234567890abcdefgh");
+
+        // Give synchronous status pushes a tick to land.
+        await new Promise((r) => setTimeout(r, 50));
+
+        // (d) post-disconnect state
+        expect(svc.getAuthMode()).toBe("none");
+        expect(vaultStore.has("kchat-extension")).toBe(false);
+        // CRITICAL: saved PAT entry MUST survive — this is the
+        // explicit guarantee at kchatAuth.ts:535-541.
+        expect(vaultStore.has("kchat")).toBe(true);
+        expect(vaultStore.get("kchat")?.accessToken).toBe(
+          "saved-pat-token-from-prior-session",
+        );
+
+        // (e) no stale-authMode push — every disconnected push
+        // must carry authMode "none", not "extension". This
+        // matches the test-8 invariant on the desktop-driven
+        // path; the explicit-disconnect path was deliberately
+        // patched in the same Theme 1 review pass (kchatAuth.ts
+        // comment block at lines 520-532).
+        const staleDisconnectedPushes = pushes.filter(
+          (p) => p.state === "disconnected" && p.authMode === "extension",
+        );
+        expect(staleDisconnectedPushes).toHaveLength(0);
+        // And the final transition surfaced AT LEAST one
+        // disconnected push with the correct authMode (so we
+        // know subscribers actually saw a clean teardown
+        // notification, not just absence of a wrong one).
+        const cleanDisconnectedPushes = pushes.filter(
+          (p) => p.state === "disconnected" && p.authMode === "none",
+        );
+        expect(cleanDisconnectedPushes.length).toBeGreaterThanOrEqual(1);
+
+        // (f) second disconnect is a strict no-op. The
+        // `kchatAuth.ts.disconnect()` early-return guard (added
+        // per Devin Review PR #55 ANALYSIS_0005) detects
+        // `authMode === "none"` and short-circuits before touching
+        // any vault, status, or audit state. Returns null because
+        // there is no userId to disconnect.
+        //
+        // CRITICAL: the saved PAT under `kchat` MUST remain
+        // present after a redundant disconnect — that's the
+        // whole point of the guard. Without it, the second call
+        // would have fallen through to the PAT branch (since
+        // authMode is "none", not "extension") and called
+        // `deleteTokens(KCHAT_VAULT_PROVIDER)` unconditionally,
+        // silently wiping a credential the user had deliberately
+        // saved across mode toggles.
+        const pushesBeforeSecondCall = pushes.length;
+        const secondCall = svc.disconnect();
+        expect(secondCall).toBeNull();
+        expect(svc.getAuthMode()).toBe("none");
+        expect(vaultStore.has("kchat")).toBe(true);
+        expect(vaultStore.get("kchat")?.accessToken).toBe(
+          "saved-pat-token-from-prior-session",
+        );
+        // And no extra status push was fired — the guard returns
+        // before `client.shutdown()` can synchronously emit one.
+        // Give the event loop a tick to confirm nothing fires
+        // asynchronously either.
+        await new Promise((r) => setTimeout(r, 50));
+        expect(pushes.length).toBe(pushesBeforeSecondCall);
+
+        // (g) Nth disconnect is also a no-op (the guard isn't a
+        // one-shot — it should fire on every call when authMode
+        // is "none", including the third, fourth, ... etc).
+        const thirdCall = svc.disconnect();
+        expect(thirdCall).toBeNull();
+        expect(vaultStore.has("kchat")).toBe(true);
+      } finally {
+        unsubscribe();
+      }
+    } finally {
+      await server.close();
+    }
+  });
 });

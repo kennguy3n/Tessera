@@ -116,19 +116,30 @@
   border-radius: var(--radius-button);
 }
 
+/*
+ * Pre-PR-55 these three badge classes used bare hex literals
+ * (#d1fae5/#065f46, #fef3c7/#92400e, #fee2e2/#991b1b) and would
+ * persist into dark mode unchanged — the light-on-light pairing
+ * is unreadable on a dark page surface. Theme 5 fixed this by
+ * pointing each surface at the corresponding tokens.css
+ * `--color-*-{bg,fg}` token pair, which has explicit dark
+ * overrides. Per Devin Review PR #55 ANALYSIS_0003. The token
+ * light values match the historic bare-hex so visual continuity
+ * is preserved on the light surface.
+ */
 .badge-success {
-  background-color: #d1fae5;
-  color: #065f46;
+  background-color: var(--color-success-bg);
+  color: var(--color-success-fg);
 }
 
 .badge-warning {
-  background-color: #fef3c7;
-  color: #92400e;
+  background-color: var(--color-warning-bg);
+  color: var(--color-warning-fg);
 }
 
 .badge-error {
-  background-color: #fee2e2;
-  color: #991b1b;
+  background-color: var(--color-danger-bg);
+  color: var(--color-danger-fg);
 }
 
 .badge-info {
@@ -209,19 +220,142 @@
   outline-offset: 2px;
 }
 
+/*
+ * Same fix as `.badge-success` / `.badge-error` above — bare hex
+ * literals replaced with the token pair so the toast surface
+ * flips correctly in dark mode. Per Devin Review PR #55
+ * ANALYSIS_0003.
+ */
 .toast-success {
-  background-color: #d1fae5;
-  color: #065f46;
+  background-color: var(--color-success-bg);
+  color: var(--color-success-fg);
 }
 
 .toast-error {
-  background-color: #fee2e2;
-  color: #991b1b;
+  background-color: var(--color-danger-bg);
+  color: var(--color-danger-fg);
 }
 
 .toast-info {
   background-color: var(--color-primary-light);
   color: var(--color-primary);
+}
+
+/*
+ * Phase 13 Theme 5 Task 29 — Dark-theme audit for KChat citation
+ * surfaces in `CitationPanel`.
+ *
+ * The KChat-specific class names below were introduced incrementally
+ * across Phase 13 Themes 1–4 (`citation-source-badge-kchat`,
+ * `citation-item-kchat`, `citation-search-hit-kchat`, and the
+ * `citation-hit-kchat-*` family). All of them shipped without CSS
+ * rules — they served as test selectors and semantic markers only,
+ * which meant the surface rendered as undecorated inline text in
+ * BOTH light and dark themes. Theme 5 lands the styling so:
+ *
+ *   1. The KChat badge actually looks like a badge (rounded chip
+ *      with a primary-tinted background) and reads as a distinct
+ *      KChat marker, matching the source-type icon work in Task 27.
+ *   2. KChat-derived citation items + search hits carry a left-side
+ *      accent in the primary colour so a scan down a mixed list
+ *      gives an immediate visual fix on the KChat-derived rows.
+ *   3. KChat metadata fragments (channel / sender / timestamp /
+ *      permalink) use the existing text-secondary + text-link
+ *      tokens so they inherit the dark-mode overrides in
+ *      `tokens.css` automatically.
+ *
+ * Every colour value in this block is a theme token reference
+ * (no bare `#hex`) so the dark theme picks up the override scope
+ * for free.
+ */
+.citation-source-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  border-radius: var(--radius-button);
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-body);
+  line-height: 1.4;
+}
+
+.citation-source-badge-kchat {
+  /* Tinted with the primary-light token so it picks up
+   * the dark-mode override (`#312e81`) and stays visually
+   * distinct from generic source badges in both themes. */
+  background-color: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.citation-item-kchat {
+  /* Subtle left accent in the brand colour to mark
+   * KChat-derived citations at a glance. The padding-left
+   * pushes content past the accent stripe so the layout
+   * doesn't shift relative to non-KChat items in a mixed
+   * list (the list-level padding compensates for the
+   * border-width below). */
+  border-left: 3px solid var(--color-primary);
+  padding-left: calc(var(--spacing-sm) - 3px);
+}
+
+.citation-search-hit-kchat {
+  /* Same left accent for KChat search hits — consistency
+   * with the saved-citation item style above. */
+  border-left: 3px solid var(--color-primary);
+  padding-left: calc(var(--spacing-sm) - 3px);
+}
+
+/*
+ * Sender + timestamp use the muted-secondary text token.
+ * Channel name is intentionally NOT grouped here — see the
+ * dedicated `.citation-hit-kchat-channel` rule below for why.
+ * `text-secondary` IS overridden in the dark-theme scope so
+ * this carries over cleanly.
+ */
+.citation-hit-kchat-sender,
+.citation-hit-kchat-timestamp {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+/*
+ * Channel name carries the highest semantic weight among the
+ * three KChat metadata fragments (sender / timestamp / channel),
+ * so it gets a self-contained rule with ALL three properties
+ * declared explicitly (color, font-weight, font-size) — NOT a
+ * partial override that depends on appearing later than a
+ * grouped selector with the same specificity. A previous shape
+ * grouped `.citation-hit-kchat-channel` with sender + timestamp
+ * and then overrode color/font-weight in a sibling rule;
+ * Devin Review (PR #55, ANALYSIS_0002) flagged that as
+ * source-order fragile — a `prettier`/`stylelint` reformat or
+ * a refactor could silently flip the order and break the
+ * channel name's visual distinction. The standalone rule below
+ * is order-independent.
+ */
+.citation-hit-kchat-channel {
+  color: var(--color-text-body);
+  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-xs);
+}
+
+.citation-hit-kchat-permalink {
+  /* Link styling driven by the theme link token so
+   * dark mode picks up the lighter `#a5b4fc` shade. */
+  color: var(--color-text-link);
+  text-decoration: underline;
+  font-size: var(--font-size-xs);
+}
+
+.citation-hit-kchat-permalink:hover {
+  text-decoration: none;
+}
+
+.citation-hit-kchat-permalink:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-input);
 }
 
 @keyframes toast-in {

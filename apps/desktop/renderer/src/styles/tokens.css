@@ -72,6 +72,29 @@
   --color-danger-subtle: #fef2f2;
   --color-success-bg: #d1fae5;
   --color-success-subtle: #ecfdf5;
+  /* Warning surface tokens (background tint + readable foreground)
+   * round out the success/danger/warning trio so the badge family
+   * in `components.css` can use tokens uniformly instead of bare
+   * hex literals that don't flip in dark mode. The light values
+   * match the historic `.badge-warning` bare hex (#fef3c7 bg /
+   * #92400e fg) for visual continuity; the dark overrides below
+   * pick amber values calibrated for `--color-bg-page` (#111827).
+   * Per Devin Review PR #55 ANALYSIS_0003. (Pass 5 ANALYSIS_0002:
+   * dropped a speculative `--color-warning-subtle` variant that
+   * had no consumer — we add `-subtle` tokens only when a
+   * component actually references them, matching how
+   * `--color-success-subtle` is consumed by
+   * `AutomationsPage.tsx:679` and `--color-danger-subtle` by
+   * `TasksPage.tsx:672`.) */
+  --color-warning-bg: #fef3c7;
+  --color-warning-fg: #92400e;
+  /* Foregrounds for the badge/toast family. Both pair with
+   * `--color-(success|danger)-bg` to give a token-only badge that
+   * flips correctly in dark mode. Light values match the historic
+   * bare-hex foregrounds (#065f46 / #991b1b) for visual continuity
+   * with pre-PR-55 surfaces. */
+  --color-success-fg: #065f46;
+  --color-danger-fg: #991b1b;
   --color-relevance-high-fg: #15803d;
   --color-relevance-high-bg: rgba(34, 197, 94, 0.16);
   --color-relevance-medium-fg: #b45309;
@@ -131,6 +154,10 @@
   --color-danger-subtle: #450a0a;
   --color-success-bg: #064e3b;
   --color-success-subtle: #022c22;
+  --color-warning-bg: #78350f;
+  --color-warning-fg: #fde68a;
+  --color-success-fg: #6ee7b7;
+  --color-danger-fg: #fca5a5;
   --color-relevance-high-fg: #4ade80;
   --color-relevance-high-bg: rgba(34, 197, 94, 0.24);
   --color-relevance-medium-fg: #fbbf24;
@@ -165,6 +192,10 @@
     --color-danger-subtle: #450a0a;
     --color-success-bg: #064e3b;
     --color-success-subtle: #022c22;
+    --color-warning-bg: #78350f;
+    --color-warning-fg: #fde68a;
+    --color-success-fg: #6ee7b7;
+    --color-danger-fg: #fca5a5;
     --color-relevance-high-fg: #4ade80;
     --color-relevance-high-bg: rgba(34, 197, 94, 0.24);
     --color-relevance-medium-fg: #fbbf24;

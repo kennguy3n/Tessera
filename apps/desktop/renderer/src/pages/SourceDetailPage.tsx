@@ -11,6 +11,7 @@ import { useKchatBackfillProgress } from "../hooks/useKchatBackfillProgress";
 import {
   extractKchatChannelIdFromSource,
   formatSourceTypeLabel,
+  sourceTypeIcon,
 } from "../utils/sourceLabels";
 import type { ExtractedItem } from "../types/ipc";
 
@@ -22,7 +23,11 @@ import type { ExtractedItem } from "../types/ipc";
 // `utils/sourceLabels.ts`. Direct consumers (e.g. `SourcesPage`)
 // import from the utils module directly so they don't pick up the
 // detail-page component tree.
-export { extractKchatChannelIdFromSource, formatSourceTypeLabel };
+export {
+  extractKchatChannelIdFromSource,
+  formatSourceTypeLabel,
+  sourceTypeIcon,
+};
 
 export default function SourceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -224,6 +229,13 @@ export default function SourceDetailPage() {
   }
 
   const { source, files } = detail;
+  // Extract the source-type icon descriptor once, matching the
+  // pattern in `SourcesPage.tsx:387`. Both pages render the same
+  // {glyph + ariaLabel} pair, so the call-site shape should be
+  // identical — an IIFE inside JSX (the pre-PR-55 shape) is
+  // harder to read and diverges from the sibling page. Per
+  // Devin Review PR #55 ANALYSIS_0004.
+  const sourceDetailTypeIcon = sourceTypeIcon(source.sourceType);
 
   return (
     <div>
@@ -555,7 +567,25 @@ export default function SourceDetailPage() {
             }}
           >
             <span style={{ fontWeight: 600 }}>Type</span>
-            <span>{formatSourceTypeLabel(source.sourceType)}</span>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "var(--spacing-xs)",
+              }}
+            >
+              {sourceDetailTypeIcon.glyph ? (
+                <span
+                  role="img"
+                  aria-label={sourceDetailTypeIcon.ariaLabel}
+                  data-testid="source-detail-type-icon"
+                  data-source-type={source.sourceType}
+                >
+                  {sourceDetailTypeIcon.glyph}
+                </span>
+              ) : null}
+              {formatSourceTypeLabel(source.sourceType)}
+            </span>
 
             <span style={{ fontWeight: 600 }}>Status</span>
             <span>

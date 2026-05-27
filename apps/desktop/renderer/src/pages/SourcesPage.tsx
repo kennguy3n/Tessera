@@ -18,7 +18,7 @@ import { useSourceList, useAddSource, useRemoveSource } from "../hooks/useSource
 // pages through detail-page imports creates a structurally
 // unjustified coupling and pulls the SourceDetailPage component
 // tree into SourcesPage's module graph.
-import { formatSourceTypeLabel } from "../utils/sourceLabels";
+import { formatSourceTypeLabel, sourceTypeIcon } from "../utils/sourceLabels";
 import type {
   CompareSourcesResult,
   ConnectorFileInfo,
@@ -383,7 +383,9 @@ export default function SourcesPage() {
             gap: "var(--spacing-md)",
           }}
         >
-          {sources.map((source) => (
+          {sources.map((source) => {
+            const typeIcon = sourceTypeIcon(source.sourceType);
+            return (
             <Card key={source.id}>
               <div
                 style={{
@@ -409,6 +411,21 @@ export default function SourcesPage() {
                       marginBottom: "var(--spacing-xs)",
                     }}
                   >
+                    {typeIcon.glyph && (
+                      <span
+                        role="img"
+                        aria-label={typeIcon.ariaLabel}
+                        data-testid={`source-icon-${source.id}`}
+                        data-source-type={source.sourceType}
+                        style={{
+                          fontSize: "1.1em",
+                          lineHeight: 1,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {typeIcon.glyph}
+                      </span>
+                    )}
                     <span
                       className="card-title"
                       style={{ margin: 0, cursor: "pointer" }}
@@ -439,7 +456,8 @@ export default function SourcesPage() {
                 </Button>
               </div>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
 

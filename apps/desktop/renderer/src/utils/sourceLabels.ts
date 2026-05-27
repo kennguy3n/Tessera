@@ -85,14 +85,107 @@ export function formatSourceTypeLabel(sourceType: string): string {
       return "Local File";
     case "kchat":
       return "KChat Channel";
-    default:
+    default: {
       // Humanise an unknown discriminator (`some_new_kind` →
       // `Some New Kind`) so a future variant looks reasonable
       // in the UI even before we land an explicit case here.
-      return sourceType
+      //
+      // Guard against empty / whitespace-only input: the raw
+      // `_`-split produces no non-empty segments which would
+      // bubble up as `""` and cascade into malformed downstream
+      // surfaces (e.g. `sourceTypeIcon("")` previously returned
+      // `ariaLabel: " source"` with a leading space — see
+      // ANALYSIS_0005 on PR #55). Returning a stable "Unknown"
+      // sentinel keeps every consumer well-formed and matches
+      // the convention used for KChat sender/channel raw-id
+      // fallback in `CitationPanel`.
+      const humanised = sourceType
         .split("_")
         .filter((s) => s.length > 0)
         .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
         .join(" ");
+      return humanised.length > 0 ? humanised : "Unknown";
+    }
+  }
+}
+
+/**
+ * Visual + accessibility metadata for a `SourceInfo.sourceType` so
+ * the source-list and source-detail surfaces can mark each row with
+ * a recognisable glyph at a glance (folder for filesystem trees,
+ * page for individual files, chat bubble for KChat channels) without
+ * polluting every consumer with the switch.
+ *
+ * Returns:
+ *   - `glyph`: a short Unicode/emoji marker to render in the UI.
+ *     Empty string for unknown kinds so callers can choose between
+ *     "render no marker" (default) and "render a generic fallback"
+ *     without re-implementing the policy.
+ *   - `ariaLabel`: a short, screen-reader-friendly description of
+ *     what the glyph represents (e.g. "Local folder source"). The
+ *     glyph itself is decorative once the label is read aloud, so
+ *     callers should wrap the glyph in a `<span role="img"
+ *     aria-label={ariaLabel}>` and pair it with `aria-hidden="true"`
+ *     on any inner glyph nodes if the structure demands it.
+ *
+ * Phase 13 Theme 5 Task 27: previously `SourcesPage` rendered every
+ * source row with the same plain text title regardless of kind, so
+ * a user scanning a long list could not distinguish a `local_folder`
+ * source from a `kchat` channel without reading the description
+ * line. The pre-Theme-5 `CitationPanel` already established the
+ * convention that KChat-derived rows carry a visible chat-bubble
+ * marker (`citation-source-badge-kchat`); this helper extends that
+ * convention to the source-list and source-detail pages so the
+ * KChat surface looks consistent across all three places.
+ *
+ * Glyphs are intentionally Unicode/emoji rather than SVG icons:
+ *   1. The existing `fileTypeIcon` in `KchatChannelSourcePicker`
+ *      already uses emoji glyphs (📄, 🖼️, etc.) so the visual
+ *      vocabulary is consistent.
+ *   2. Emoji glyphs render correctly on every platform without
+ *      shipping additional icon assets or accessibility plumbing.
+ *   3. Unknown kinds can fall through to an empty glyph without a
+ *      broken-icon placeholder.
+ */
+export function sourceTypeIcon(sourceType: string): {
+  glyph: string;
+  ariaLabel: string;
+} {
+  switch (sourceType) {
+    case "local_folder":
+      return { glyph: "📁", ariaLabel: "Local folder source" };
+    case "local_file":
+      return { glyph: "📄", ariaLabel: "Local file source" };
+    case "kchat":
+      return { glyph: "💬", ariaLabel: "KChat channel source" };
+    default: {
+      // Empty glyph — caller renders the row without a marker
+      // rather than picking an arbitrary stand-in. The
+      // `ariaLabel` still describes the kind so a future
+      // consumer that DOES want a fallback glyph has a
+      // human-readable string to attach.
+      //
+      // The hardcoded ariaLabels above follow a sentence-case
+      // convention — first word capitalized (preserving the
+      // original casing of proper nouns like "KChat"), every
+      // subsequent word lowercase ("Local folder source", not
+      // "Local Folder Source"). `formatSourceTypeLabel` returns
+      // a title-cased label ("Some New Kind") for unknown
+      // discriminators, which would produce "Some New Kind
+      // source" — visually inconsistent with the hardcoded
+      // siblings. Normalise to sentence case here so a future
+      // variant ariaLabel matches the convention without us
+      // having to remember to land a new case branch above.
+      // Per Devin Review PR #55 ANALYSIS_0006.
+      const label = formatSourceTypeLabel(sourceType);
+      const sentenceCase = label
+        .split(" ")
+        .map((word, i) => (i === 0 ? word : word.toLowerCase()))
+        .join(" ");
+      return {
+        glyph: "",
+        ariaLabel: `${sentenceCase} source`,
+      };
+    }
   }
 }

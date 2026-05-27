@@ -127,6 +127,88 @@ function collectDeclaredTokenValues(
   return declared;
 }
 
+// Tokens whose light value would be wrong in dark mode and that
+// MUST be overridden in the dark scope. Declared at describe-level
+// so the must-override test (below) and the KChat-surface
+// dark-mode-safe-tokens test (further below) can share the same
+// single source of truth — Devin Review (PR #55, ANALYSIS_0004)
+// flagged that duplicating this list inside the KChat test would
+// silently diverge if a future patch added a token to one list
+// but not the other.
+const REQUIRED_DARK_OVERRIDES: readonly string[] = [
+  "--color-primary",
+  "--color-primary-hover",
+  "--color-primary-light",
+  "--color-bg-page",
+  "--color-bg-surface",
+  "--color-bg-sidebar",
+  "--color-bg-secondary",
+  "--color-text-headline",
+  "--color-text-body",
+  "--color-text-secondary",
+  "--color-text-on-primary",
+  "--color-border",
+  "--color-border-light",
+  // Tinted backgrounds where the light value mixes white with
+  // the brand; left at light values they would clash on dark.
+  "--color-danger-bg",
+  "--color-danger-light",
+  "--color-danger-subtle",
+  "--color-success-bg",
+  "--color-success-subtle",
+  "--color-relevance-high-fg",
+  "--color-relevance-high-bg",
+  "--color-relevance-medium-fg",
+  "--color-relevance-medium-bg",
+  "--color-relevance-low-fg",
+  "--color-relevance-low-bg",
+  // --color-priority-high was added to give the "high" priority
+  // badge a dedicated dark value (#fb923c orange-400) for
+  // contrast on dark surfaces. If a future patch drops the dark
+  // override, the badge silently reverts to orange-700 which is
+  // unreadable on dark grey.
+  "--color-priority-high",
+  // Warning surface tokens (Phase 13 Theme 5 Task 29 / Devin
+  // Review PR #55 ANALYSIS_0003). The pre-existing `.badge-warning`
+  // surface used bare hex literals that didn't flip; we point
+  // it at these tokens now and pin the dark override here.
+  // Pass-5 ANALYSIS_0002 dropped a speculative `-subtle` variant
+  // that had no consumer — we only pin tokens that actually
+  // ship a consumer, so a future patch that adds an unused
+  // token fails the must-override test at the same time as the
+  // unused-token reviewer surfaces the gap.
+  "--color-warning-bg",
+  "--color-warning-fg",
+  // success/danger badge & toast foregrounds. Without dark
+  // overrides the historic light-on-light pairing (#065f46 on
+  // #d1fae5, #991b1b on #fee2e2) would persist into dark mode.
+  "--color-success-fg",
+  "--color-danger-fg",
+  // --color-text-link DOES have a dark override in both the
+  // `[data-theme="dark"]` scope (tokens.css:138) and the
+  // `@media (prefers-color-scheme: dark)` scope (tokens.css:175).
+  // Per Devin Review PR #55 ANALYSIS_0002 it belongs in the
+  // must-override list — earlier shape mistakenly classified it
+  // as "theme-agnostic". Moving it here keeps the test name
+  // accurate (token IS overridden in dark, so it MUST stay
+  // overridden).
+  "--color-text-link",
+];
+
+// Theme-agnostic accent tokens whose light values remain
+// readable on both light and dark surfaces (success / warning /
+// error). They are intentionally NOT in
+// REQUIRED_DARK_OVERRIDES because forcing a dark override would
+// reduce contrast — the light values are calibrated to work on
+// both palettes. Centralising them here lets the KChat-surface
+// dark-mode-safe test extend the must-override allow list
+// without duplicating either list.
+const THEME_AGNOSTIC_ACCENT_TOKENS: readonly string[] = [
+  "--color-success",
+  "--color-warning",
+  "--color-error",
+];
+
 describe("dark-mode CSS variable enforcement", () => {
   it("every var(--color-…) reference in the renderer maps to a declared token", () => {
     const refs = collectTokenRefs();
@@ -201,43 +283,10 @@ describe("dark-mode CSS variable enforcement", () => {
   it("every primary palette / surface / text token is overridden in [data-theme=\"dark\"]", () => {
     // The contract: the dark scope must override every token
     // whose light-mode value would be wrong in dark mode. We pin
-    // an explicit list rather than computing it because some
-    // tokens (radii, font sizes) are theme-agnostic by design and
+    // an explicit list (`REQUIRED_DARK_OVERRIDES`, declared at
+    // module scope) rather than computing it because some tokens
+    // (radii, font sizes) are theme-agnostic by design and
     // SHOULDN'T be in the dark scope.
-    const REQUIRED_DARK_OVERRIDES = [
-      "--color-primary",
-      "--color-primary-hover",
-      "--color-primary-light",
-      "--color-bg-page",
-      "--color-bg-surface",
-      "--color-bg-sidebar",
-      "--color-bg-secondary",
-      "--color-text-headline",
-      "--color-text-body",
-      "--color-text-secondary",
-      "--color-text-on-primary",
-      "--color-border",
-      "--color-border-light",
-      // Tinted backgrounds where the light value mixes white with
-      // the brand; left at light values they would clash on dark.
-      "--color-danger-bg",
-      "--color-danger-light",
-      "--color-danger-subtle",
-      "--color-success-bg",
-      "--color-success-subtle",
-      "--color-relevance-high-fg",
-      "--color-relevance-high-bg",
-      "--color-relevance-medium-fg",
-      "--color-relevance-medium-bg",
-      "--color-relevance-low-fg",
-      "--color-relevance-low-bg",
-      // --color-priority-high was added to give the "high" priority
-      // badge a dedicated dark value (#fb923c orange-400) for
-      // contrast on dark surfaces. If a
-      // future patch drops the dark override, the badge silently
-      // reverts to orange-700 which is unreadable on dark grey.
-      "--color-priority-high",
-    ];
     const dark = collectDeclaredTokens("dark");
     const missing = REQUIRED_DARK_OVERRIDES.filter((t) => !dark.has(t));
     expect(
@@ -295,6 +344,176 @@ describe("dark-mode CSS variable enforcement", () => {
         `var(--color-text-on-primary, #fff) (text on a colored bg) ` +
         `or var(--color-bg-page, #fff) (page surface) so dark mode ` +
         `can flip them:\n${violations.map((v) => `  ${v}`).join("\n")}`,
+    ).toEqual([]);
+  });
+
+  it("KChat citation surface classes are styled with theme tokens (Phase 13 Theme 5 Task 29)", () => {
+    // The KChat-specific class names below ship with markup in
+    // `CitationPanel.tsx` (Phase 13 Themes 1–4) but lived without
+    // any CSS rules until Theme 5 — meaning the surface rendered
+    // as undecorated inline text in BOTH light and dark themes.
+    // This test pins three invariants of the Theme 5 patch:
+    //
+    //   (i)  Every class in the list below has a rule in
+    //        `components.css` (no silent drop of styling).
+    //   (ii) Every rule uses ONLY `var(--color-…)` token
+    //        references for color-bearing properties (no bare
+    //        `#hex` / `rgb(...)` / `hsl(...)`). Token references
+    //        re-evaluate per scope, so dark mode picks up the
+    //        override scope in `tokens.css` automatically — a
+    //        bare hex would silently persist into dark mode and
+    //        break the visual contract.
+    //   (iii) Every token referenced is one that IS overridden in
+    //        the dark scope (per the REQUIRED_DARK_OVERRIDES list
+    //        above) OR is one of the "intentionally theme-agnostic
+    //        but visually-safe in both" tokens
+    //        (--color-success / --color-warning / --color-error /
+    //        --color-text-link, all of which have colorimetric
+    //        readability on both light and dark surfaces — pinned
+    //        independently by the must-override test below).
+    const COMPONENTS_CSS = resolve(__dirname, "../styles/components.css");
+    const text = readFileSync(COMPONENTS_CSS, "utf8");
+
+    const KCHAT_SURFACE_CLASSES = [
+      "citation-source-badge",
+      "citation-source-badge-kchat",
+      "citation-item-kchat",
+      "citation-search-hit-kchat",
+      "citation-hit-kchat-channel",
+      "citation-hit-kchat-sender",
+      "citation-hit-kchat-timestamp",
+      "citation-hit-kchat-permalink",
+    ];
+
+    // (i) every class has a rule (selector appears in the
+    // stylesheet, anchored as a class selector — `.foo` followed
+    // by `{`, `,`, ` `, or `:` so we don't match a substring
+    // of a longer class).
+    const missing: string[] = [];
+    for (const cls of KCHAT_SURFACE_CLASSES) {
+      const re = new RegExp(`\\.${cls}(?=[\\s,:{])`);
+      if (!re.test(text)) missing.push(cls);
+    }
+    expect(
+      missing,
+      `KChat citation surface classes missing from components.css. ` +
+        `CitationPanel.tsx references these classes but they have ` +
+        `no CSS rules — surface renders as undecorated text in ` +
+        `both light and dark mode:\n${missing.map((c) => `  .${c}`).join("\n")}`,
+    ).toEqual([]);
+
+    // (ii) collect every rule body for these class selectors and
+    // assert no bare hex / rgb / hsl color values. Match the
+    // selector group up to the next `{`, then the body up to the
+    // matching `}`.
+    //
+    // The selector regex anchors the class name with a
+    // lookahead (`(?=[\s,:{])`) so a bare `.citation-source-badge`
+    // does NOT also match `.citation-source-badge-kchat` (the
+    // `[^{]*` segment would otherwise consume the `-kchat ` suffix
+    // and the rule body would be misattributed to the base class).
+    // Per Devin Review PR #55 ANALYSIS_0001. The lookahead also
+    // tolerates pseudo-classes (`.citation-hit-kchat-permalink:hover`)
+    // because the `[^{]*` after the lookahead happily consumes
+    // them.
+    const bareColorViolations: string[] = [];
+    for (const cls of KCHAT_SURFACE_CLASSES) {
+      const ruleRe = new RegExp(
+        `\\.${cls}(?=[\\s,:{])[^{]*\\{([^}]*)\\}`,
+        "g",
+      );
+      let m: RegExpExecArray | null;
+      while ((m = ruleRe.exec(text)) !== null) {
+        const body = m[1];
+        // Look for any color-bearing property whose value is a bare
+        // color literal. The first capture group is the offending
+        // value; we surface both class + value for easy fixing.
+        //
+        // Include the directional border shorthands (border-left /
+        // border-right / border-top / border-bottom) explicitly —
+        // the bare `border` alternative does NOT match
+        // `border-left:` because the `\s*:\s*` segment fails on
+        // `-left:`. Without these alternatives, a future regression
+        // that replaces `border-left: 3px solid var(--color-primary)`
+        // with `border-left: 3px solid #7c3aed` would silently pass
+        // this check. Per Devin Review PR #55 ANALYSIS_0001.
+        const bareRe =
+          /(?:background-color|background|color|border-left|border-right|border-top|border-bottom|border-color|border|outline-color|outline|fill|stroke)\s*:\s*([^;}]*)/g;
+        let mm: RegExpExecArray | null;
+        while ((mm = bareRe.exec(body)) !== null) {
+          const value = mm[1].trim();
+          // Allow `none`, theme-token references, calc(), and
+          // composite border shorthand whose color component is a
+          // token (caught by the inner var() check). Reject any
+          // literal hex / rgb / hsl / named-color value.
+          if (/#[0-9a-fA-F]{3,8}\b/.test(value)) {
+            bareColorViolations.push(`.${cls} → ${mm[0].trim()}`);
+            continue;
+          }
+          if (/\brgba?\s*\(/.test(value)) {
+            bareColorViolations.push(`.${cls} → ${mm[0].trim()}`);
+            continue;
+          }
+          if (/\bhsla?\s*\(/.test(value)) {
+            bareColorViolations.push(`.${cls} → ${mm[0].trim()}`);
+            continue;
+          }
+        }
+      }
+    }
+    expect(
+      bareColorViolations,
+      `KChat surface CSS rules use bare color literals instead of ` +
+        `theme tokens. Use var(--color-…) so dark mode picks up ` +
+        `the override:\n${bareColorViolations.map((v) => `  ${v}`).join("\n")}`,
+    ).toEqual([]);
+
+    // (iii) every token referenced inside one of these rules must
+    // either be in the must-override-dark list OR a theme-agnostic
+    // accent whose light value remains readable in dark
+    // (success / warning / error / text-link). Derived from the
+    // describe-level `REQUIRED_DARK_OVERRIDES` and
+    // `THEME_AGNOSTIC_ACCENT_TOKENS` constants so there is exactly
+    // one source of truth: a future patch that adds a token to
+    // either list automatically extends the dark-mode-safe surface
+    // here, with no manual sync. Per Devin Review (PR #55,
+    // ANALYSIS_0004).
+    const SAFE_TOKENS = new Set<string>([
+      ...REQUIRED_DARK_OVERRIDES,
+      ...THEME_AGNOSTIC_ACCENT_TOKENS,
+    ]);
+    // Use the same lookahead-anchored regex as sub-test (ii) above
+    // — a bare `.citation-source-badge` should NOT pick up the body
+    // of `.citation-source-badge-kchat` when collecting token
+    // references, or a non-safe token added to the modifier rule
+    // would be misattributed to the base class. Per Devin Review
+    // PR #55 BUG_pr-review-job-6ef624e58fa8479f8ed64e27537debce_0001
+    // (a follow-up to Pass-3 ANALYSIS_0001 which fixed the (ii)
+    // sub-test regex but missed this one).
+    const unknownTokens: string[] = [];
+    for (const cls of KCHAT_SURFACE_CLASSES) {
+      const ruleRe = new RegExp(
+        `\\.${cls}(?=[\\s,:{])[^{]*\\{([^}]*)\\}`,
+        "g",
+      );
+      let m: RegExpExecArray | null;
+      while ((m = ruleRe.exec(text)) !== null) {
+        const body = m[1];
+        const tokenRe = /var\((--color-[a-z0-9-]+)/g;
+        let tm: RegExpExecArray | null;
+        while ((tm = tokenRe.exec(body)) !== null) {
+          if (!SAFE_TOKENS.has(tm[1])) {
+            unknownTokens.push(`.${cls} → var(${tm[1]})`);
+          }
+        }
+      }
+    }
+    expect(
+      unknownTokens,
+      `KChat surface CSS rules reference color tokens that are NOT ` +
+        `in the dark-mode-safe allow list. Either pick a token from ` +
+        `the safe set or document why this one is dark-safe and ` +
+        `add it to SAFE_TOKENS:\n${unknownTokens.map((v) => `  ${v}`).join("\n")}`,
     ).toEqual([]);
   });
 });

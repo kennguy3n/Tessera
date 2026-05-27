@@ -10,6 +10,7 @@ import { MemoryRouter, Routes, Route } from "react-router-dom";
 import SourceDetailPage, {
   extractKchatChannelIdFromSource,
   formatSourceTypeLabel,
+  sourceTypeIcon,
 } from "../pages/SourceDetailPage";
 import type { SourceInfo } from "../types/ipc";
 
@@ -189,10 +190,100 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       expect(formatSourceTypeLabel("widget")).toBe("Widget");
     });
 
-    it("tolerates an empty discriminator without throwing", () => {
-      // Defence-in-depth — should never happen in production but the
-      // helper must not crash the entire page render path.
-      expect(formatSourceTypeLabel("")).toBe("");
+    it("returns the 'Unknown' sentinel for an empty discriminator", () => {
+      // Per Devin Review on PR #55 (ANALYSIS_0005), an empty
+      // discriminator used to fall through to `""` (the humanised
+      // form of an empty input), which then cascaded into
+      // malformed downstream surfaces — most visibly
+      // `sourceTypeIcon("")` returning `ariaLabel: " source"`
+      // with a leading space. The fix at the
+      // `formatSourceTypeLabel` boundary returns a stable
+      // "Unknown" sentinel for any input that humanises to empty,
+      // keeping every consumer well-formed.
+      expect(formatSourceTypeLabel("")).toBe("Unknown");
+    });
+
+    it("returns the 'Unknown' sentinel for an underscore-only discriminator (humanises to empty)", () => {
+      // `"___"` splits to `["", "", "", ""]`, filtered to `[]`,
+      // joined to `""` — i.e. humanises to empty. Same fallback.
+      expect(formatSourceTypeLabel("___")).toBe("Unknown");
+    });
+  });
+
+  describe("sourceTypeIcon", () => {
+    // Phase 13 Theme 5 Task 27: every known source kind must map to
+    // a glyph + ariaLabel pair so SourcesPage / SourceDetailPage can
+    // render a recognisable marker at a glance. The mapping must
+    // stay in lockstep with `formatSourceTypeLabel` — if a future
+    // kind is added there, this helper must be extended too (the
+    // unknown-kind fall through is a graceful default, NOT a
+    // licence to skip the explicit case).
+
+    it("returns a folder glyph for local_folder", () => {
+      const t = sourceTypeIcon("local_folder");
+      expect(t.glyph).toBe("📁");
+      expect(t.ariaLabel).toBe("Local folder source");
+    });
+
+    it("returns a document glyph for local_file", () => {
+      const t = sourceTypeIcon("local_file");
+      expect(t.glyph).toBe("📄");
+      expect(t.ariaLabel).toBe("Local file source");
+    });
+
+    it("returns a chat-bubble glyph for kchat", () => {
+      const t = sourceTypeIcon("kchat");
+      expect(t.glyph).toBe("💬");
+      expect(t.ariaLabel).toBe("KChat channel source");
+    });
+
+    it("returns an empty glyph for an unknown kind so the row renders without a broken-icon placeholder", () => {
+      const t = sourceTypeIcon("some_new_kind");
+      expect(t.glyph).toBe("");
+      // ariaLabel still carries the humanised label so a future
+      // consumer that DOES want a fallback glyph has something to
+      // attach.
+      //
+      // The fallback is normalised to sentence case — first word
+      // capitalised, every subsequent word lowercase — to match
+      // the convention used by the hardcoded ariaLabels above
+      // ("Local folder source", "KChat channel source"). Without
+      // the normalisation, `formatSourceTypeLabel` would title-case
+      // each word and produce "Some New Kind source", visually
+      // inconsistent with the hardcoded siblings. Per Devin Review
+      // PR #55 ANALYSIS_0006.
+      expect(t.ariaLabel).toBe("Some new kind source");
+    });
+
+    it("ariaLabel for an unknown kind preserves the first-word casing (proper-noun-safe) and lowercases the rest", () => {
+      // Pin the sentence-case normalisation against a discriminator
+      // whose humanised first word is a recognisable proper noun
+      // ("XKCD" stays uppercase, "comic" becomes lowercase) so a
+      // future refactor cannot accidentally toLowerCase() the
+      // whole label and lose the proper-noun signal.
+      expect(sourceTypeIcon("XKCD_comic_archive").ariaLabel).toBe(
+        "XKCD comic archive source",
+      );
+    });
+
+    it("returns an empty glyph and a well-formed 'Unknown source' ariaLabel for an empty discriminator", () => {
+      // Per Devin Review on PR #55 (ANALYSIS_0005), an empty
+      // input previously fell through to `" source"` with a
+      // leading space because `formatSourceTypeLabel("")` returned
+      // an empty string. The fix lives in `formatSourceTypeLabel`:
+      // any input that humanises to "" returns "Unknown", which
+      // propagates here as a stable, well-formed ariaLabel.
+      const t = sourceTypeIcon("");
+      expect(t.glyph).toBe("");
+      expect(t.ariaLabel).toBe("Unknown source");
+    });
+
+    it("ariaLabel for every known kind ends with the word 'source' so screen readers announce the cell purpose", () => {
+      // Pin the suffix convention so a future contributor changing
+      // one case doesn't accidentally diverge.
+      for (const kind of ["local_folder", "local_file", "kchat"]) {
+        expect(sourceTypeIcon(kind).ariaLabel).toMatch(/ source$/);
+      }
     });
   });
 
@@ -343,7 +434,16 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       const typeRow = screen.getByText("Type", { selector: "span" });
       const valueCell = typeRow.nextElementSibling as HTMLElement | null;
       expect(valueCell).not.toBeNull();
-      expect(valueCell!.textContent).toBe("KChat Channel");
+      // The cell composes the Phase 13 Theme 5 Task 27 icon
+      // (💬) with the formatted type label. Asserting on
+      // `toContain` keeps this test focused on the
+      // ANALYSIS_0003 invariant (the cell SAYS "KChat Channel"
+      // somewhere) without coupling it to the visual marker
+      // layout — the icon itself is independently pinned by the
+      // `source-detail-type-icon` test in the
+      // `source-type icon (Phase 13 Theme 5 Task 27)` describe
+      // block below.
+      expect(valueCell!.textContent).toContain("KChat Channel");
     });
 
     it("does NOT render the KChat card for a non-KChat (local_folder) source", async () => {
@@ -536,6 +636,60 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       // stay at 1.
       await new Promise((r) => setTimeout(r, 50));
       expect(spy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("source-type icon (Phase 13 Theme 5 Task 27)", () => {
+    // Integration-level pin for the SourceDetailPage Source
+    // Information card. The unit-level `sourceTypeIcon` tests
+    // (above) verify the helper returns the right glyph / aria
+    // label; these tests verify that the page actually renders
+    // them next to the formatted type label so the visual
+    // signal reaches the user.
+    it("renders the chat-bubble glyph next to 'KChat Channel' for a kchat source", async () => {
+      window.tessera.kchat.backfillProgress = vi.fn().mockResolvedValue({
+        channelId: KCHAT_CHANNEL_ID,
+        oldestFetched: null,
+        totalPosts: null,
+        postsIngested: 0,
+        status: "idle",
+      });
+      renderWithRoute();
+      const icon = await screen.findByTestId("source-detail-type-icon");
+      expect(icon).toHaveAttribute("data-source-type", "kchat");
+      expect(icon).toHaveAttribute("aria-label", "KChat channel source");
+      expect(icon).toHaveAttribute("role", "img");
+      expect(icon.textContent).toBe("💬");
+    });
+
+    it("renders the folder glyph next to 'Local Folder' for a local_folder source", async () => {
+      // Override the default KChat detail with a local_folder
+      // detail so this test exercises the non-KChat branch of
+      // the icon switch without colliding with the KChat
+      // backfill-card rendering.
+      window.tessera.sources.getDetail = vi.fn().mockResolvedValue({
+        source: {
+          id: "src-folder-1",
+          sourceType: "local_folder",
+          path: "/Users/me/Documents",
+          status: "indexed",
+          createdAt: new Date().toISOString(),
+          lastIndexed: new Date().toISOString(),
+          fileCount: 0,
+        },
+        files: [],
+      });
+      render(
+        <MemoryRouter initialEntries={["/sources/src-folder-1"]}>
+          <Routes>
+            <Route path="/sources/:id" element={<SourceDetailPage />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      const icon = await screen.findByTestId("source-detail-type-icon");
+      expect(icon).toHaveAttribute("data-source-type", "local_folder");
+      expect(icon).toHaveAttribute("aria-label", "Local folder source");
+      expect(icon.textContent).toBe("📁");
     });
   });
 });
