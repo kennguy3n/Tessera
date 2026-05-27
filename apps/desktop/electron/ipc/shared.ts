@@ -13,6 +13,7 @@
  */
 import { app } from "electron";
 import * as os from "os";
+import * as path from "path";
 import { getLogger } from "../logger";
 import { createDefaultContext } from "./context";
 import { defaultRateLimiter } from "./rateLimiter";
@@ -84,4 +85,20 @@ export function getSafeExportRoots(): string[] {
     // skip
   }
   return roots;
+}
+
+/**
+ * Directories that are NEVER valid export targets, even when they
+ * fall inside a safe root. A compromised renderer must not be able to
+ * overwrite the KChat channel cache (which lives under HOME) via an
+ * export IPC and thereby inject attacker-controlled content that the
+ * KChat connector would later ingest.
+ *
+ * The list uses the same `~/.tessera/kchat-channels` canonical prefix
+ * from `kchatPaths.ts`.
+ */
+export function getDenyExportRoots(): string[] {
+  return [
+    path.join(os.homedir(), ".tessera", "kchat-channels"),
+  ];
 }

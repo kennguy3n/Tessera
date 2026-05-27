@@ -27,7 +27,7 @@ import { dispatchOnGenerate } from "../scheduler";
 import { validateExtractedItems } from "../extractedItemValidation";
 import { assertId, assertNumber, assertString } from "./validate";
 import { MarpExportSchema, TypstExportSchema } from "./schemas";
-import { getSafeExportRoots } from "./shared";
+import { getSafeExportRoots, getDenyExportRoots } from "./shared";
 
 export function registerArtifactsHandlers(): void {
   idempotentHandle(
@@ -167,7 +167,7 @@ export function registerArtifactsHandlers(): void {
       //      save-dialog UX.
       let resolvedPath: string;
       if (path.isAbsolute(fp)) {
-        if (!isSafeExportPath(fp, getSafeExportRoots())) {
+        if (!isSafeExportPath(fp, getSafeExportRoots(), getDenyExportRoots())) {
           // Refuse the request outright instead of silently
           // rewriting the path or showing the user a dialog with a
           // dangerous suggestion. This is the security boundary;
@@ -214,7 +214,7 @@ export function registerArtifactsHandlers(): void {
     // `runTypstExport`'s temp-file default (which uses `os.tmpdir()`,
     // itself in the allowlist).
     if (parsed.outputPath && path.isAbsolute(parsed.outputPath)) {
-      if (!isSafeExportPath(parsed.outputPath, getSafeExportRoots())) {
+      if (!isSafeExportPath(parsed.outputPath, getSafeExportRoots(), getDenyExportRoots())) {
         throw new Error(
           `Export path is outside the allowed locations (Downloads, Documents, Desktop, Home, App data, system temp): ${parsed.outputPath}`,
         );
@@ -232,7 +232,7 @@ export function registerArtifactsHandlers(): void {
     const parsed = MarpExportSchema.parse(req);
     let resolvedPath: string;
     if (path.isAbsolute(parsed.outputPath)) {
-      if (!isSafeExportPath(parsed.outputPath, getSafeExportRoots())) {
+      if (!isSafeExportPath(parsed.outputPath, getSafeExportRoots(), getDenyExportRoots())) {
         throw new Error(
           `Export path is outside the allowed locations (Downloads, Documents, Desktop, Home, App data, system temp): ${parsed.outputPath}`,
         );
@@ -379,7 +379,7 @@ export function registerArtifactsHandlers(): void {
       // export channels. Relative paths fall through to the bridge,
       // which writes alongside the artifact's own export directory.
       if (path.isAbsolute(op)) {
-        if (!isSafeExportPath(op, getSafeExportRoots())) {
+        if (!isSafeExportPath(op, getSafeExportRoots(), getDenyExportRoots())) {
           throw new Error(
             `Export path is outside the allowed locations (Downloads, Documents, Desktop, Home, App data, system temp): ${op}`,
           );
