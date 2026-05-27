@@ -3298,4 +3298,143 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
     expect(clientMock.getChannel).toHaveBeenCalledTimes(2);
     expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
   });
+
+  // -------------------------------------------------------------
+  // Phase 13 Theme 2 Task 9 — Devin Review pass 1 (fafc5f6)
+  // ANALYSIS_0001 / 0004 / 0005 regression tests.
+  // -------------------------------------------------------------
+
+  it("ANALYSIS_0001: audit latencyMs measures only the bridge call, NOT the enrichment network time (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    _resetKchatNameCachesForTest();
+    defaultRateLimiter.reset();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+      }),
+    ]);
+
+    // Make the enrichment take ≥ 50 ms (well above scheduler
+    // jitter on every supported runner) by delaying the bulk
+    // lookups. If the audit metric included this wait, the
+    // assertion below would observe ≥ 50 ms and fail. The fix
+    // captures `latencyMs = Date.now() - start` BEFORE calling
+    // `enrichKchatPostHits`, so the audit metric stays bounded
+    // by the synchronous bridge call (well under 10 ms).
+    clientMock.getUsersByIds.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(
+            () => resolve([{ id: VALID_USER_ID, username: "ken" }]),
+            60,
+          );
+        }),
+    );
+    clientMock.getChannel.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(
+            () =>
+              resolve({
+                id: VALID_CHANNEL_ID,
+                team_id: "t".repeat(26),
+                display_name: "Engineering",
+              }),
+            60,
+          );
+        }),
+    );
+
+    await handler("kchat:searchPosts")(EVENT, "Q3 launch", 10);
+
+    expect(bridgeMock.bridgeLogKchatPostSearchExecuted).toHaveBeenCalledTimes(
+      1,
+    );
+    const [, , , latencyMs] =
+      bridgeMock.bridgeLogKchatPostSearchExecuted.mock.calls[0];
+    // The substrate-side bridge is a synchronous mock (it
+    // returns immediately). 25 ms gives generous headroom for
+    // scheduler jitter on slow CI runners while still being far
+    // below the artificial 60 ms enrichment delay. If the metric
+    // accidentally folds in enrichment, this assertion fails.
+    expect(latencyMs).toBeLessThan(25);
+  });
+
+  it("ANALYSIS_0004: empty-string display_name / username is NOT cached (defence-in-depth against protocol drift) (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    const { defaultRateLimiter } = await import("../ipc/rateLimiter");
+    _resetKchatNameCachesForTest();
+    defaultRateLimiter.reset();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValue([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+    ]);
+    // Server returns empty-string display strings (simulates
+    // protocol drift or a maliciously crafted response). The
+    // cache must reject these so the renderer falls back to the
+    // raw ids, preserving the row.
+    clientMock.getUsersByIds.mockResolvedValue([
+      { id: VALID_USER_ID, username: "" },
+    ]);
+    clientMock.getChannel.mockResolvedValue({
+      id: VALID_CHANNEL_ID,
+      team_id: "t".repeat(26),
+      display_name: "",
+    });
+
+    // First call: enrichment runs, but the empty strings must
+    // NOT be cached as positive values. The hit's enriched
+    // fields stay `null` (so the renderer falls back to ids).
+    const out1 = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3 launch",
+      10,
+    )) as Array<Record<string, unknown>>;
+    expect(out1[0].senderUsername).toBeNull();
+    expect(out1[0].channelDisplayName).toBeNull();
+
+    // Second call: because the empty values were NOT cached,
+    // the bulk endpoints are re-invoked. (Were the empty strings
+    // cached, the second pass would short-circuit and the
+    // call counts below would stay at 1.) The retry semantics
+    // are correct: a future well-formed response IS allowed to
+    // populate the cache without us having to invalidate first.
+    await handler("kchat:searchPosts")(EVENT, "Q3 launch", 10);
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(2);
+    expect(clientMock.getChannel).toHaveBeenCalledTimes(2);
+  });
+
+  it("ANALYSIS_0005: onStatusChange subscriber is registered exactly once across re-mounts (idempotency guard) (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest, registerKchatHandlers } =
+      await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+    serviceMock.onStatusChange.mockClear();
+
+    // Re-invoke the handler-registration entrypoint three
+    // times. Without the guard, every call would stack another
+    // listener on top of `KchatAuthService.onStatusChange` —
+    // which would then over-clear the caches on every status
+    // push (effectively disabling the cache after the first
+    // re-mount).
+    registerKchatHandlers();
+    registerKchatHandlers();
+    registerKchatHandlers();
+
+    expect(serviceMock.onStatusChange).toHaveBeenCalledTimes(1);
+  });
 });

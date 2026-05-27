@@ -242,6 +242,20 @@ class KchatNameCache {
   }
 
   set(id: string, name: string): void {
+    // ANALYSIS_0004 (Devin Review pass 1 on fafc5f6): reject
+    // empty-string display names at the boundary. The renderer
+    // uses nullish coalescing (`?? rawId`) for fallback; an
+    // empty string would be cached as a positive value and
+    // surface as `#` / `@` with no text. Mattermost
+    // server-side validation already requires a non-empty
+    // `display_name` / `username` for the channel + user kinds
+    // we cache, so this is defence-in-depth against a future
+    // protocol drift or a maliciously crafted response. The
+    // caller side already trims to a single field per id; we
+    // do not need to trim whitespace here.
+    if (name === "") {
+      return;
+    }
     // If already present, refresh and move to end.
     if (this.entries.has(id)) {
       this.entries.delete(id);
@@ -287,7 +301,28 @@ const KCHAT_CHANNEL_NAME_CACHE = new KchatNameCache(200);
 export function _resetKchatNameCachesForTest(): void {
   KCHAT_USERNAME_CACHE.clear();
   KCHAT_CHANNEL_NAME_CACHE.clear();
+  KCHAT_STATUS_LISTENER_INSTALLED = false;
 }
+
+/**
+ * ANALYSIS_0005 (Devin Review pass 1 on fafc5f6): one-shot
+ * idempotency guard for the `KchatAuthService.onStatusChange`
+ * subscriber that clears the name caches on disconnect.
+ *
+ * In production `registerKchatHandlers` runs exactly once at
+ * app start, so the subscriber count is naturally 1. The
+ * vitest harness mounts the IPC layer multiple times during a
+ * run (once per `describe` block in some files), and Electron
+ * forge dev-mode HMR can re-invoke the IPC entrypoint without
+ * tearing down the long-lived `KchatAuthService`. Without this
+ * guard, every re-mount stacks another listener that would
+ * `.clear()` the caches on every status push — effectively
+ * disabling the cache after the first re-mount.
+ *
+ * Reset by `_resetKchatNameCachesForTest` so the unit test for
+ * the registration path remains deterministic.
+ */
+let KCHAT_STATUS_LISTENER_INSTALLED = false;
 
 /**
  * Phase 13 Theme 2 Task 9: enrich a list of post-hits with the
@@ -379,19 +414,34 @@ export function registerKchatHandlers(): void {
   // changed channel membership) must not return stale names.
   // The subscription survives the handler lifetime; the IPC
   // layer is mounted once per process and never torn down.
-  try {
-    getKchatAuthService().onStatusChange((state) => {
-      if (state.state !== "connected") {
-        KCHAT_USERNAME_CACHE.clear();
-        KCHAT_CHANNEL_NAME_CACHE.clear();
-      }
-    });
-  } catch {
-    // The auth service may be uninitialised in test contexts that
-    // mount the IPC layer ahead of `appState`. The caches start
-    // empty, and the first search after a real handshake will
-    // populate them; missing the cleanup hook there is a benign
-    // no-op (the test harness uses fresh state per test anyway).
+  //
+  // ANALYSIS_0005 (Devin Review pass 1 on fafc5f6): the
+  // module-level `KCHAT_STATUS_LISTENER_INSTALLED` flag guards
+  // against listener-stacking if `registerKchatHandlers` is
+  // re-invoked (vitest harness re-mounting between describe
+  // blocks, Electron forge dev-mode HMR). The `idempotentHandle`
+  // pattern below already protects the IPC channel registrations
+  // from re-registration; this is the equivalent guard for the
+  // status-subscriber, since `onStatusChange` does not return an
+  // unsubscribe handle that survives the IPC re-mount.
+  if (!KCHAT_STATUS_LISTENER_INSTALLED) {
+    try {
+      getKchatAuthService().onStatusChange((state) => {
+        if (state.state !== "connected") {
+          KCHAT_USERNAME_CACHE.clear();
+          KCHAT_CHANNEL_NAME_CACHE.clear();
+        }
+      });
+      KCHAT_STATUS_LISTENER_INSTALLED = true;
+    } catch {
+      // The auth service may be uninitialised in test contexts
+      // that mount the IPC layer ahead of `appState`. The caches
+      // start empty, and the first search after a real handshake
+      // will populate them; missing the cleanup hook there is a
+      // benign no-op (the test harness uses fresh state per test
+      // anyway). Leave the flag false so a later well-formed
+      // mount can install the listener correctly.
+    }
   }
 
   // --- Feature gate ---
@@ -1786,6 +1836,19 @@ export function registerKchatHandlers(): void {
         };
       });
 
+      // Phase 13 Theme 2 Task 9 — ANALYSIS_0001 (Devin Review pass
+      // 1 on fafc5f6): the audit `latencyMs` metric must continue
+      // to measure ONLY the synchronous bridge work (the part of
+      // the search that lands on the substrate). Enrichment is a
+      // pure-IPC-layer concern that fires network calls to KChat
+      // for username/channel-name resolution; folding that into
+      // the same metric would alias substrate-side regressions
+      // against transient KChat REST latency and break any SLO
+      // alert that was previously calibrated on the pre-PR meaning
+      // of this field. Capture the substrate latency NOW, then
+      // enrich.
+      const latencyMs = Date.now() - start;
+
       // Phase 13 Theme 2 Task 9: enrich hits with sender username
       // and channel display name. Only attempt enrichment when
       // there's an active connection — when offline, the REST
@@ -1805,8 +1868,6 @@ export function registerKchatHandlers(): void {
           // falls back to raw ids in that case.
         }
       }
-
-      const latencyMs = Date.now() - start;
       const sourcesTouched = new Set(hits.map((h) => h.sourceId)).size;
       try {
         bridge.bridgeLogKchatPostSearchExecuted(
