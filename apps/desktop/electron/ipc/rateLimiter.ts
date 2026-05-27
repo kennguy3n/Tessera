@@ -242,6 +242,15 @@ export const RATE_LIMIT_PROFILES = {
     intervalMs: 1_000,
     burst: 20,
   },
+  // Block D Task 2 (Phase 15): thread expansion. Lower rate than
+  // search because each call does N AEAD-verify round trips (one
+  // per post in the thread) and the renderer only fires it on
+  // explicit "View thread" clicks, not on typing.
+  "kchat:fetchPostThread": {
+    tokensPerInterval: 5,
+    intervalMs: 1_000,
+    burst: 10,
+  },
 } satisfies Record<string, RateLimitConfig>;
 
 /** Shared default limiter instance used by the IPC layer. */

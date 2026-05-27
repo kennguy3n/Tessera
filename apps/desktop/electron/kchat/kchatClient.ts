@@ -943,6 +943,38 @@ export class KchatClient {
   }
 
   /**
+   * Block D Task 2 (Phase 15): fetch the full reply thread for
+   * `postId`. KChat's `GET /posts/{id}/thread` returns the same
+   * `{ order, posts, prev_post_id, next_post_id }` envelope as
+   * `getPostsForChannel` but scoped to a single thread (the root
+   * post whose `id == postId` plus every reply whose `root_id ==
+   * postId`). The returned array is in the server's canonical
+   * newest-first `order` — the caller (substrate
+   * `fetch_kchat_post_thread` or the electron IPC handler)
+   * reverses to chronological order for the renderer.
+   */
+  async getPostThread(postId: string): Promise<KchatPostInfo[]> {
+    assertKchatServerObjectId(postId, "postId");
+    const raw = await this.request<{
+      order?: unknown;
+      posts?: unknown;
+    }>("GET", `/api/v4/posts/${postId}/thread`);
+    const postsMap =
+      raw.posts !== null && typeof raw.posts === "object"
+        ? (raw.posts as Record<string, unknown>)
+        : {};
+    const order = Array.isArray(raw.order) ? raw.order : [];
+    const posts: KchatPostInfo[] = [];
+    for (const id of order) {
+      if (typeof id !== "string") continue;
+      const envelope = postsMap[id];
+      if (envelope === null || typeof envelope !== "object") continue;
+      posts.push(normalisePost(envelope as Record<string, unknown>));
+    }
+    return posts;
+  }
+
+  /**
    * Upload `bytes` as `filename` into `channelId`.
    *
    * Uses the KChat `/files` endpoint with a multipart body. The

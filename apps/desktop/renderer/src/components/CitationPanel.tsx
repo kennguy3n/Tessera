@@ -370,6 +370,22 @@ function EvidenceRowButton({
       </span>
       <span className="citation-hit-excerpt">{hit.excerpt}</span>
       <span className="citation-hit-trailing">
+        {hit.reactionCount > 0 && (
+          <span
+            className="citation-hit-kchat-reactions"
+            aria-label={`${hit.reactionCount} reaction${hit.reactionCount === 1 ? "" : "s"}`}
+          >
+            👍 {hit.reactionCount}
+          </span>
+        )}
+        {hit.rootId && (
+          <span
+            className="citation-hit-kchat-thread-indicator"
+            aria-label="Part of a thread"
+          >
+            🧵
+          </span>
+        )}
         {hit.permalink && (
           <a
             href={hit.permalink}

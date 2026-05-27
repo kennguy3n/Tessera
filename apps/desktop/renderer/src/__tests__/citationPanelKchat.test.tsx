@@ -70,6 +70,7 @@ function kchatHit(over: Partial<KchatPostSearchHit> = {}): KchatPostSearchHit {
     editedAtMs: 0,
     permalink:
       "https://kchat.example.com/_redirect/pl/post-abc",
+    reactionCount: 0,
     ...over,
   };
 }
@@ -256,5 +257,102 @@ describe("CitationPanel + KChat post retrieval", () => {
     // File hit still renders even though KChat branch threw.
     await within(dialog).findByText("/repo/docs/q3-launch.md");
     expect(within(dialog).queryByText("KChat")).not.toBeInTheDocument();
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Block D Task 2 (Phase 15) — reactions + thread indicators
+  // ─────────────────────────────────────────────────────────────
+
+  it("renders a reaction-count badge on KChat hits with reactionCount > 0", async () => {
+    (
+      window.tessera.kchat.searchPosts as ReturnType<typeof vi.fn>
+    ).mockResolvedValue([kchatHit({ reactionCount: 7 })]);
+
+    const dialog = await openAddDialog();
+    fireEvent.change(
+      within(dialog).getByLabelText(/search sources for new citation/i),
+      { target: { value: "launch" } },
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: /search/i }));
+
+    await screen.findByText("KChat");
+    // The badge surfaces an a11y-accessible label so screen
+    // readers say "7 reactions" rather than reading the emoji.
+    const badge = within(dialog).getByLabelText(/7 reactions/i);
+    expect(badge).toBeInTheDocument();
+    expect(badge.textContent).toContain("7");
+  });
+
+  it("uses singular phrasing for reactionCount === 1", async () => {
+    (
+      window.tessera.kchat.searchPosts as ReturnType<typeof vi.fn>
+    ).mockResolvedValue([kchatHit({ reactionCount: 1 })]);
+
+    const dialog = await openAddDialog();
+    fireEvent.change(
+      within(dialog).getByLabelText(/search sources for new citation/i),
+      { target: { value: "launch" } },
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: /search/i }));
+
+    await screen.findByText("KChat");
+    // "1 reaction" (singular), NOT "1 reactions".
+    expect(
+      within(dialog).getByLabelText(/^1 reaction$/i),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the reaction badge when reactionCount is zero", async () => {
+    (
+      window.tessera.kchat.searchPosts as ReturnType<typeof vi.fn>
+    ).mockResolvedValue([kchatHit({ reactionCount: 0 })]);
+
+    const dialog = await openAddDialog();
+    fireEvent.change(
+      within(dialog).getByLabelText(/search sources for new citation/i),
+      { target: { value: "launch" } },
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: /search/i }));
+
+    await screen.findByText("KChat");
+    expect(
+      within(dialog).queryByLabelText(/\d+ reaction/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the thread indicator when rootId is non-null (post is a reply)", async () => {
+    (
+      window.tessera.kchat.searchPosts as ReturnType<typeof vi.fn>
+    ).mockResolvedValue([kchatHit({ rootId: "post-root-123" })]);
+
+    const dialog = await openAddDialog();
+    fireEvent.change(
+      within(dialog).getByLabelText(/search sources for new citation/i),
+      { target: { value: "launch" } },
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: /search/i }));
+
+    await screen.findByText("KChat");
+    expect(
+      within(dialog).getByLabelText(/part of a thread/i),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the thread indicator when rootId is null (top-level post)", async () => {
+    (
+      window.tessera.kchat.searchPosts as ReturnType<typeof vi.fn>
+    ).mockResolvedValue([kchatHit({ rootId: null })]);
+
+    const dialog = await openAddDialog();
+    fireEvent.change(
+      within(dialog).getByLabelText(/search sources for new citation/i),
+      { target: { value: "launch" } },
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: /search/i }));
+
+    await screen.findByText("KChat");
+    expect(
+      within(dialog).queryByLabelText(/part of a thread/i),
+    ).not.toBeInTheDocument();
   });
 });

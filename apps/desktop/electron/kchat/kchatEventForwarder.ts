@@ -237,6 +237,7 @@ interface KchatRevokeOutcomeView {
   // surface threaded through bridge → forwarder → audit logger
   // alongside the existing chunks/files counts.
   postsDropped: number;
+  reactionsDropped: number;
   dekDropped: boolean;
   // Fifth-pass Devin Review fix
   // (ANALYSIS_pr-review-job-ef3c7d6c..._0001): VACUUM observability
@@ -257,6 +258,7 @@ interface KchatAclRefreshOutcomeView {
   filesDropped: number;
   // Block C Task 2 (Phase 12): see `KchatRevokeOutcomeView` above.
   postsDropped: number;
+  reactionsDropped: number;
   dekDropped: boolean;
   // Fifth-pass Devin Review fix
   // (ANALYSIS_pr-review-job-ef3c7d6c..._0001): see
@@ -807,6 +809,25 @@ export class KchatEventForwarder {
           err,
         );
       });
+    } else if (view.event === "reaction_added") {
+      // Block D Task 2 (Phase 15): a reaction was added to a
+      // post. Ingest into the substrate so the retrieval ranking
+      // path can apply the sub-linear reaction boost.
+      this.handleReactionEvent(view, "added").catch((err) => {
+        console.error(
+          "[KchatEventForwarder] reaction_added side-effect failed:",
+          err,
+        );
+      });
+    } else if (view.event === "reaction_removed") {
+      // Block D Task 2 (Phase 15): a reaction was removed from
+      // a post. Mirror of `reaction_added`.
+      this.handleReactionEvent(view, "removed").catch((err) => {
+        console.error(
+          "[KchatEventForwarder] reaction_removed side-effect failed:",
+          err,
+        );
+      });
     }
   }
 
@@ -1305,6 +1326,7 @@ export class KchatEventForwarder {
     // false so non-revoke + unlinked paths still emit a
     // well-formed (zero-count) shred row when applicable.
     let postsDropped = 0;
+    let reactionsDropped = 0;
     let dekDropped = false;
     // Block B Task 4 (Phase 11) third-pass Devin Review fix:
     // filesystem-scrub outcome captured from
@@ -1340,6 +1362,7 @@ export class KchatEventForwarder {
             chunksDropped: 0,
             filesDropped: 0,
             postsDropped: 0,
+            reactionsDropped: 0,
             dekDropped: false,
             fsScrubSucceeded: true,
             fsScrubError: undefined as string | undefined,
@@ -1420,6 +1443,7 @@ export class KchatEventForwarder {
           chunksDropped: r.chunksDropped,
           filesDropped: r.filesDropped,
           postsDropped: r.postsDropped,
+          reactionsDropped: r.reactionsDropped,
           dekDropped: r.dekDropped,
           fsScrubSucceeded: scrubSucceeded,
           fsScrubError: scrubError,
@@ -1433,6 +1457,7 @@ export class KchatEventForwarder {
       chunksDropped = result.chunksDropped;
       filesDropped = result.filesDropped;
       postsDropped = result.postsDropped;
+      reactionsDropped = result.reactionsDropped;
       dekDropped = result.dekDropped;
       fsScrubSucceeded = result.fsScrubSucceeded;
       fsScrubError = result.fsScrubError;
@@ -1473,6 +1498,7 @@ export class KchatEventForwarder {
         chunksDropped,
         filesDropped,
         postsDropped,
+        reactionsDropped,
         dekDropped,
         fsScrubSucceeded,
         fsScrubError,
@@ -1579,6 +1605,7 @@ export class KchatEventForwarder {
       chunksDropped: 0,
       filesDropped: 0,
       postsDropped: 0,
+      reactionsDropped: 0,
       dekDropped: false,
       fsScrubSucceeded: true,
       fsScrubError: undefined,
@@ -1616,6 +1643,7 @@ export class KchatEventForwarder {
     const chunksDropped = result.chunksDropped;
     const filesDropped = result.filesDropped;
     const postsDropped = result.postsDropped;
+    const reactionsDropped = result.reactionsDropped;
     const dekDropped = result.dekDropped;
     const fsScrubSucceeded = result.fsScrubSucceeded;
     const fsScrubError = result.fsScrubError;
@@ -1649,12 +1677,105 @@ export class KchatEventForwarder {
         chunksDropped,
         filesDropped,
         postsDropped,
+        reactionsDropped,
         dekDropped,
         fsScrubSucceeded,
         fsScrubError,
         vacuumSucceeded,
         vacuumError,
       );
+    }
+  }
+
+  /**
+   * Block D Task 2 (Phase 15): side-effect path for
+   * `reaction_added` / `reaction_removed` WS events. Ingests or
+   * removes the (post, user, emoji) tuple in the substrate.
+   * Emits `KchatPostReactionIngested` audit row. Tolerant of
+   * unknown posts and revoked sources — neither is an error.
+   */
+  private async handleReactionEvent(
+    view: KchatWebSocketEventView,
+    action: "added" | "removed",
+  ): Promise<void> {
+    const bridge = this.getBridgeFn();
+    if (!bridge) return;
+
+    // The reaction payload lives inside `view.data.reaction`.
+    const reactionRaw = view.data?.reaction;
+    if (
+      reactionRaw === null ||
+      reactionRaw === undefined ||
+      typeof reactionRaw !== "object"
+    )
+      return;
+    const reaction = reactionRaw as Record<string, unknown>;
+    const postId =
+      typeof reaction.post_id === "string" ? reaction.post_id : null;
+    const userId =
+      typeof reaction.user_id === "string" ? reaction.user_id : null;
+    const emojiName =
+      typeof reaction.emoji_name === "string" ? reaction.emoji_name : null;
+    if (!postId || !userId || !emojiName) return;
+
+    // `view.channelId` is populated from the WS broadcast
+    // envelope. Reaction events may also carry `channel_id` on
+    // the reaction struct itself — fall back to that if the
+    // broadcast didn't tag one.
+    const channelId =
+      view.channelId ??
+      (typeof reaction.channel_id === "string"
+        ? reaction.channel_id
+        : null);
+    if (!channelId) return;
+    const cacheDir = kchatChannelCacheDir(channelId);
+    if (!bridge.bridgeIsKchatChannelLinked(cacheDir)) return;
+
+    const createdAtMs =
+      action === "added" && typeof reaction.create_at === "number"
+        ? (reaction.create_at as number)
+        : 0;
+
+    let outcome = "error";
+    try {
+      if (action === "added") {
+        const r = bridge.bridgeIngestKchatPostReaction(
+          cacheDir,
+          postId,
+          userId,
+          emojiName,
+          createdAtMs,
+        );
+        outcome = r.outcome;
+      } else {
+        const r = bridge.bridgeRemoveKchatPostReaction(
+          cacheDir,
+          postId,
+          userId,
+          emojiName,
+        );
+        outcome = r.outcome;
+      }
+    } catch (err) {
+      console.error(
+        `[KchatEventForwarder] reaction ${action} bridge call failed:`,
+        err,
+      );
+    }
+    // Best-effort audit — gate on non-redundant outcomes to avoid
+    // flooding the audit log during reconnect replays.
+    if (outcome !== "error") {
+      try {
+        bridge.bridgeLogKchatPostReactionIngested(
+          channelId,
+          postId,
+          emojiName,
+          action,
+          outcome,
+        );
+      } catch {
+        // audit is best-effort
+      }
     }
   }
 
@@ -1983,6 +2104,7 @@ export class KchatEventForwarder {
     chunksDropped: number,
     filesDropped: number,
     postsDropped: number,
+    reactionsDropped: number,
     dekDropped: boolean,
     fsScrubSucceeded: boolean,
     fsScrubError: string | undefined,
@@ -1996,6 +2118,7 @@ export class KchatEventForwarder {
         chunksDropped,
         filesDropped,
         postsDropped,
+        reactionsDropped,
         dekDropped,
         fsScrubSucceeded,
         fsScrubError,

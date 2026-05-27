@@ -475,6 +475,8 @@ const api: TesseraApi = {
      */
     searchPosts: (query: string, limit: number) =>
       ipcRenderer.invoke("kchat:searchPosts", query, limit),
+    fetchPostThread: (channelId: string, postId: string) =>
+      ipcRenderer.invoke("kchat:fetchPostThread", channelId, postId),
     // Block B Task 1: push-based delivery of KChat connection
     // state + WebSocket events. The status channel mirrors
     // `updates.onStatus` so the connection card / sidebar no

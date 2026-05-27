@@ -36,6 +36,9 @@ import type {
   KchatBackfillRunOutcome,
   KchatPostIngestInputInfo,
   KchatPostSearchHit,
+  KchatPostThreadEntry,
+  KchatPostThreadResult,
+  KchatPostThreadResultInfo,
 } from "../../shared/types";
 import { idempotentHandle } from "./register";
 import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
@@ -1619,6 +1622,7 @@ export function registerKchatHandlers(): void {
           createdAtMs: h.createdAtMs,
           editedAtMs: h.editedAtMs,
           permalink,
+          reactionCount: h.reactionCount ?? 0,
         };
       });
 
@@ -1644,6 +1648,57 @@ export function registerKchatHandlers(): void {
       }
 
       return hits;
+    },
+  );
+
+  // -----------------------------------------------------------------
+  // Block D Task 2 (Phase 15): thread expansion IPC handler
+  // -----------------------------------------------------------------
+  idempotentHandle(
+    "kchat:fetchPostThread",
+    async (
+      _event,
+      channelId: unknown,
+      postId: unknown,
+    ): Promise<KchatPostThreadResult> => {
+      defaultRateLimiter.consume(
+        "kchat:fetchPostThread",
+        RATE_LIMIT_PROFILES["kchat:fetchPostThread"],
+      );
+      const cid = assertString(channelId, "channelId", { maxLen: 100 });
+      const pid = assertString(postId, "postId", { maxLen: 100 });
+      const bridge = getBridge();
+      if (!bridge) {
+        return { outcome: "unlinked", posts: [], postsDropped: 0 };
+      }
+      const cacheDir = kchatChannelCacheDir(cid);
+      const raw = bridge.bridgeFetchKchatPostThread(cacheDir, pid);
+      const outcome = raw.outcome as KchatPostThreadResult["outcome"];
+      const posts: KchatPostThreadEntry[] = (raw.posts ?? []).map(
+        (p: KchatPostThreadResultInfo["posts"][number]) => ({
+          postId: p.postId,
+          channelId: p.channelId,
+          rootId: p.rootId ?? null,
+          senderUserId: p.senderUserId,
+          createdAtMs: p.createdAtMs,
+          editedAtMs: p.editedAtMs,
+          body: p.body,
+          hash: p.hash,
+          reactionCount: p.reactionCount ?? 0,
+        }),
+      );
+      // Best-effort audit
+      try {
+        bridge.bridgeLogKchatPostThreadFetched(
+          cid,
+          pid,
+          posts.length,
+          raw.postsDropped ?? 0,
+        );
+      } catch {
+        // audit is best-effort
+      }
+      return { outcome, posts, postsDropped: raw.postsDropped ?? 0 };
     },
   );
 }

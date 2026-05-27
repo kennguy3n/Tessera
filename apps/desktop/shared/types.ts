@@ -261,6 +261,11 @@ export interface KchatAclRefreshOutcomeInfo {
    *  every non-revoke outcome AND on file-only sources where no
    *  chat-post evidence ever existed. */
   postsDropped: number;
+  /** Block D Task 2 (Phase 15): count of `kchat_post_reactions`
+   *  rows scrubbed by the inline cryptoshred on the revoke path;
+   *  0 on every non-revoke outcome AND on sources where no
+   *  reactions were ever ingested. */
+  reactionsDropped: number;
   /** Block C Task 2 (Phase 12): `true` when the per-source DEK
    *  row was dropped on the revoke path. `false` on every
    *  non-revoke outcome AND on revokes where the source never
@@ -315,6 +320,10 @@ export interface KchatRevokeOutcomeInfo {
    *  scrubbed by the inline cryptoshred. Same semantics as
    *  `chunksDropped`. `unlinked` outcomes are always zero. */
   postsDropped: number;
+  /** Block D Task 2 (Phase 15): count of `kchat_post_reactions`
+   *  rows scrubbed by the inline cryptoshred. Same semantics as
+   *  `chunksDropped`. */
+  reactionsDropped: number;
   /** Block C Task 2 (Phase 12): `true` when the per-source DEK
    *  row was dropped on this revoke. `false` when no DEK ever
    *  existed for this source (file-only ingest) OR on `unlinked`
@@ -585,6 +594,10 @@ export interface KchatPostSearchHit {
   /** Composed `kchat://<server>/channel/<channel_id>/post/<post_id>`
    * permalink, or `null` when the user is disconnected from KChat. */
   permalink: string | null;
+  /** Block D Task 2 (Phase 15): distinct (user, emoji) reaction
+   *  count for this post. 0 when no reactions exist. Surfaced
+   *  as a badge next to the citation excerpt. */
+  reactionCount: number;
 }
 
 /**
@@ -614,6 +627,74 @@ export interface KchatPostSearchHitInfo {
   senderUserId: string;
   createdAtMs: number;
   editedAtMs: number;
+  /** Block D Task 2 (Phase 15): distinct (user, emoji) reaction
+   *  count for this post. */
+  reactionCount: number;
+}
+
+// -----------------------------------------------------------------
+// Block D Task 2 (Phase 15): Thread expansion types
+// -----------------------------------------------------------------
+
+/**
+ * A single post entry in a thread expansion response. Returned
+ * by the `kchat:fetchPostThread` IPC handler in chronological
+ * order (root first, then replies in `createdAtMs` order).
+ */
+export interface KchatPostThreadEntry {
+  postId: string;
+  channelId: string;
+  rootId: string | null;
+  senderUserId: string;
+  createdAtMs: number;
+  editedAtMs: number;
+  body: string;
+  hash: string;
+  reactionCount: number;
+}
+
+/**
+ * Outcome of a `kchat:fetchPostThread` IPC call. The `outcome`
+ * field drives the renderer's error surface: `fetched` shows the
+ * thread, `unknown_post` / `unlinked` / `access_revoked` show a
+ * non-fatal explanation.
+ */
+export interface KchatPostThreadResult {
+  outcome: "fetched" | "unknown_post" | "unlinked" | "access_revoked";
+  posts: KchatPostThreadEntry[];
+  postsDropped: number;
+}
+
+/**
+ * Block D Task 2 (Phase 15): bridge-side (napi) outcome of a
+ * `bridge_fetch_kchat_post_thread` call. The IPC handler maps
+ * this to {@link KchatPostThreadResult} for the renderer.
+ */
+export interface KchatPostThreadResultInfo {
+  outcome: string;
+  posts: Array<{
+    postId: string;
+    channelId: string;
+    rootId: string | null;
+    senderUserId: string;
+    createdAtMs: number;
+    editedAtMs: number;
+    body: string;
+    hash: string;
+    reactionCount: number;
+  }>;
+  postsDropped: number;
+}
+
+/**
+ * Block D Task 2 (Phase 15): bridge-side (napi) outcome of a
+ * `bridge_ingest_kchat_post_reaction` /
+ * `bridge_remove_kchat_post_reaction` call.
+ */
+export interface KchatPostReactionOutcomeInfo {
+  outcome: string;
+  inserted: boolean;
+  knownPost: boolean;
 }
 
 // -----------------------------------------------------------------
@@ -1967,6 +2048,14 @@ export interface KchatApi {
    * 16-hex SHA-256 of the query — never the raw query.
    */
   searchPosts: (query: string, limit: number) => Promise<KchatPostSearchHit[]>;
+  /** Block D Task 2 (Phase 15): fetch the full thread (root +
+   *  replies) surrounding a KChat post. Returns AEAD-verified
+   *  plaintext bodies; posts that fail verification are dropped
+   *  and counted on `postsDropped`. */
+  fetchPostThread: (
+    channelId: string,
+    postId: string,
+  ) => Promise<KchatPostThreadResult>;
   /**
    * Subscribe to KChat connection-state changes surfaced by the
    * main process. The callback fires once on every successful

@@ -103,6 +103,11 @@ pub enum KchatAclRefreshOutcome {
         /// Block C Task 2 (Phase 12): count of `kchat_posts` rows
         /// scrubbed alongside the file/chunk rows.
         posts_dropped: u32,
+        /// Block D Task 2 (Phase 15): count of `kchat_post_reactions`
+        /// rows scrubbed alongside the file/chunk/post rows. See
+        /// [`crate::store::KchatSourceCryptoshredOutcome::reactions_dropped`]
+        /// for the operator semantics.
+        reactions_dropped: u32,
         /// Block C Task 2 (Phase 12): `true` when the per-source
         /// wrapped DEK row existed and was deleted as part of the
         /// shred. `false` when the source never ingested a chat
@@ -158,6 +163,9 @@ pub enum KchatRevokeOutcome {
         /// Block C Task 2 (Phase 12): see
         /// [`KchatAclRefreshOutcome::Revoked::posts_dropped`].
         posts_dropped: u32,
+        /// Block D Task 2 (Phase 15): see
+        /// [`KchatAclRefreshOutcome::Revoked::reactions_dropped`].
+        reactions_dropped: u32,
         /// Block C Task 2 (Phase 12): see
         /// [`KchatAclRefreshOutcome::Revoked::dek_dropped`].
         dek_dropped: bool,
@@ -190,6 +198,11 @@ pub enum KchatRevokeOutcome {
         /// Typically zero on this path because the previous shred
         /// already dropped the kchat_posts rows.
         posts_dropped: u32,
+        /// Block D Task 2 (Phase 15): see
+        /// [`KchatAclRefreshOutcome::Revoked::reactions_dropped`].
+        /// Typically zero on this path because the previous shred
+        /// already dropped the reaction rows.
+        reactions_dropped: u32,
         /// Block C Task 2 (Phase 12): see
         /// [`KchatAclRefreshOutcome::Revoked::dek_dropped`].
         /// Typically `false` on this path because the previous
@@ -432,7 +445,142 @@ pub struct KchatPostSearchHit {
     /// hit list. Same scheme as
     /// [`crate::search::SearchResult::relevance`] for consistent
     /// surfacing across file-source and KChat-post citations.
+    ///
+    /// Block D Task 2 (Phase 15): this is the reaction-boosted
+    /// score — the manager multiplies the raw reciprocal-rank
+    /// by `1 + ln(1 + reaction_count)` before sorting, so
+    /// high-engagement posts surface ahead of tied-relevance
+    /// neighbours. The boost is sub-linear (ln) so a single
+    /// reaction nudges the ranking but the 50th reaction does
+    /// not dominate.
     pub relevance: f64,
+    /// Block D Task 2 (Phase 15): distinct (user_id, emoji_name)
+    /// reaction count for this post. Surfaced verbatim to the
+    /// renderer so the citation can show a "5 reactions" badge
+    /// next to the excerpt. Zero when the post has no
+    /// reactions (the common case for non-trending posts).
+    pub reaction_count: u32,
+}
+
+/// Block D Task 2 (Phase 15): a single post bundled into a thread
+/// expansion response. Returned by
+/// [`SourceManager::fetch_kchat_post_thread`] in chronological
+/// order (root first, then replies in `created_at_ms` order).
+///
+/// Carries the AEAD-verified body plaintext + the citation
+/// metadata so the renderer can paint the full conversational
+/// context around a search hit without a second IPC round trip.
+#[derive(Debug, Clone)]
+pub struct KchatPostThreadEntry {
+    pub source_id: SourceId,
+    pub post_id: String,
+    pub channel_id: String,
+    /// `None` for the thread root, the root post id for every
+    /// reply. The renderer uses this to indent / group replies
+    /// under the root.
+    pub root_id: Option<String>,
+    pub sender_user_id: String,
+    pub created_at_ms: i64,
+    pub edited_at_ms: i64,
+    /// AEAD-verified plaintext body of the post (joined across
+    /// chunks if the chunker split a long message). The manager
+    /// AEAD-verifies each chunk and drops any post whose
+    /// ciphertext fails to authenticate — so a thread fetch
+    /// over a tampered substrate returns a subset of the
+    /// posts, not a tampered body.
+    pub body: String,
+    /// BLAKE3 hex of the post-body plaintext (see
+    /// [`KchatPostSearchHit::hash`] for rationale).
+    pub hash: String,
+    /// Distinct (user_id, emoji_name) reaction count for this
+    /// post. Same semantic as
+    /// [`KchatPostSearchHit::reaction_count`].
+    pub reaction_count: u32,
+}
+
+/// Block D Task 2 (Phase 15): outcome of
+/// [`SourceManager::fetch_kchat_post_thread`]. A separate type
+/// (rather than just `Vec<KchatPostThreadEntry>`) so the
+/// substrate can distinguish "thread is empty because the post
+/// id is unknown" from "thread is empty because every reply
+/// failed AEAD verify and was dropped" — the renderer needs to
+/// surface those two cases differently. `posts_dropped` carries
+/// the count of tampered-AEAD drops; the audit row records this
+/// so an operator can grep for non-zero values.
+#[derive(Debug, Clone)]
+pub struct KchatPostThreadResult {
+    pub posts: Vec<KchatPostThreadEntry>,
+    /// Count of posts that failed AEAD verification and were
+    /// dropped from the result. Always zero in the happy path;
+    /// non-zero only when the substrate's on-disk ciphertext
+    /// was tampered. The audit row surfaces this as
+    /// `tamper_dropped=N`.
+    pub posts_dropped: u32,
+}
+
+/// Block D Task 2 (Phase 15): outcome of
+/// [`SourceManager::ingest_kchat_post_reaction`] /
+/// [`SourceManager::remove_kchat_post_reaction`]. Used by the
+/// Node-side forwarder to route audit rows + dedupe redundant
+/// WS deliveries.
+#[derive(Debug, Clone)]
+pub enum KchatPostReactionOutcome {
+    /// Reaction row was inserted or already existed. `inserted`
+    /// distinguishes the two so the forwarder can drop the
+    /// audit row on a redundant delivery (which would otherwise
+    /// flood the audit log during a reconnect-replay burst).
+    /// `known_post` flags whether the `kchat_posts` row for
+    /// this `post_id` already exists — `false` means the
+    /// reaction landed on a post the backfill hasn't reached
+    /// yet (operationally fine, the reaction is preserved and
+    /// will join with the post on ingest).
+    Recorded {
+        source_id: SourceId,
+        inserted: bool,
+        known_post: bool,
+    },
+    /// Reaction row was removed (or was never present). Mirror
+    /// of `Recorded` — `removed=false` means the reaction was
+    /// never recorded by the substrate (e.g. WS reconnect
+    /// missed the `reaction_added` so we never knew it
+    /// existed; the desired end state is still "row is gone").
+    Removed {
+        source_id: SourceId,
+        removed: bool,
+        known_post: bool,
+    },
+    /// No `SourceType::Kchat` row exists for `cache_dir`. The
+    /// reaction is dropped on the floor — there is no source to
+    /// attach it to.
+    Unlinked,
+    /// The source row is `AccessRevoked`. The reaction is
+    /// dropped on the floor — the cryptoshred scrubbed every
+    /// other piece of evidence for this source, and reaction
+    /// metadata MUST follow the same fate.
+    AccessRevoked,
+}
+
+/// Block D Task 2 (Phase 15): outcome of
+/// [`SourceManager::fetch_kchat_post_thread`].
+#[derive(Debug, Clone)]
+pub enum KchatPostThreadFetchOutcome {
+    /// Thread was reconstructed. `posts` carries the root + every
+    /// reply in chronological order; `posts_dropped` is the count
+    /// of AEAD-failure drops (zero in the happy path). An empty
+    /// `posts` with `posts_dropped == 0` is impossible — the
+    /// store path returns `UnknownPost` instead.
+    Fetched(KchatPostThreadResult),
+    /// No `kchat_posts` row exists for `post_id` on this source.
+    /// Could be a deleted post, a pre-link post that the
+    /// backfill hasn't reached yet, or a malformed post id.
+    UnknownPost,
+    /// No `SourceType::Kchat` row exists for `cache_dir`.
+    Unlinked,
+    /// The source row is `AccessRevoked` (or the DEK is missing /
+    /// corrupted, which has the same end-user semantic: no
+    /// evidence to surface). The renderer shows the citation
+    /// without thread expansion.
+    AccessRevoked,
 }
 
 pub struct SourceManager {
@@ -1079,6 +1227,7 @@ impl SourceManager {
                 chunks_dropped: shred.chunks_dropped,
                 files_dropped: shred.files_dropped,
                 posts_dropped: shred.posts_dropped,
+                reactions_dropped: shred.reactions_dropped,
                 dek_dropped: shred.dek_dropped,
                 vacuum_succeeded: shred.vacuum_succeeded,
                 vacuum_error: shred.vacuum_error,
@@ -1161,6 +1310,7 @@ impl SourceManager {
         let chunks_dropped = shred.chunks_dropped;
         let files_dropped = shred.files_dropped;
         let posts_dropped = shred.posts_dropped;
+        let reactions_dropped = shred.reactions_dropped;
         let dek_dropped = shred.dek_dropped;
         let vacuum_succeeded = shred.vacuum_succeeded;
         let vacuum_error = shred.vacuum_error;
@@ -1170,6 +1320,7 @@ impl SourceManager {
                 chunks_dropped,
                 files_dropped,
                 posts_dropped,
+                reactions_dropped,
                 dek_dropped,
                 vacuum_succeeded,
                 vacuum_error,
@@ -1179,6 +1330,7 @@ impl SourceManager {
                 chunks_dropped,
                 files_dropped,
                 posts_dropped,
+                reactions_dropped,
                 dek_dropped,
                 vacuum_succeeded,
                 vacuum_error,
@@ -1809,7 +1961,22 @@ impl SourceManager {
             let excerpt = crate::search::build_excerpt(&opened_str, query, 200);
             // 1-based reciprocal rank — `verified.len()` is the
             // 0-based index of the hit that's about to be pushed.
-            let relevance = 1.0 / (verified.len() as f64 + 1.0);
+            //
+            // Block D Task 2 (Phase 15): apply a sub-linear
+            // reaction boost. The shape `1 + ln(1 + N)` is
+            // monotonic, anchored at 1.0 for N=0 (so a no-
+            // reaction post is unchanged), and grows slowly: at
+            // N=1 the boost is ≈1.69, at N=10 ≈3.40, at N=100
+            // ≈5.62. This means a single reaction nudges the
+            // ranking but the 50th reaction does not dominate
+            // the corpus. Reaction count is clamped to non-
+            // negative in case the SQL returns an unexpected
+            // value (defensive — the COUNT(*) cannot legally
+            // be negative).
+            let reaction_count_i64 = row.reaction_count.max(0);
+            let boost = 1.0 + (1.0 + reaction_count_i64 as f64).ln();
+            let raw_relevance = 1.0 / (verified.len() as f64 + 1.0);
+            let relevance = raw_relevance * boost;
             verified.push(KchatPostSearchHit {
                 source_id,
                 source_path: row.source_path,
@@ -1825,12 +1992,229 @@ impl SourceManager {
                 excerpt,
                 hash: row.hash,
                 relevance,
+                reaction_count: u32::try_from(reaction_count_i64).unwrap_or(u32::MAX),
             });
             if verified.len() >= limit {
                 break;
             }
         }
+        // Block D Task 2 (Phase 15): re-sort by the boosted
+        // relevance so a low-BM25 post with many reactions can
+        // surface above a high-BM25 post with none. The
+        // store-layer query returned rows in BM25 order, but the
+        // reaction boost can re-order them — without this
+        // re-sort, the boost would only affect the score field
+        // and not the actual surfacing order.
+        verified.sort_by(|a, b| {
+            b.relevance
+                .partial_cmp(&a.relevance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         Ok(verified)
+    }
+
+    /// Block D Task 2 (Phase 15): record a single
+    /// (post, reactor, emoji) reaction on a KChat post.
+    ///
+    /// Idempotent — re-delivery of the same WS `reaction_added`
+    /// event is a silent no-op. Returns `true` when a new row
+    /// was inserted, `false` when the reaction was already
+    /// known. The Node-side forwarder uses this to gate audit
+    /// logging.
+    ///
+    /// Refuses to ingest into an `AccessRevoked` source: the
+    /// retrieval-side filter already excludes revoked sources,
+    /// but appending reaction rows after a cryptoshred would
+    /// (a) waste storage on data that will never surface, and
+    /// (b) reintroduce a per-user side channel into the
+    /// otherwise-scrubbed source. Returns `KchatPostReactionOutcome::AccessRevoked`
+    /// without touching the row.
+    ///
+    /// Returns `KchatPostReactionOutcome::Unlinked` when the
+    /// cache_dir has no source row (the user revoked the link
+    /// while a reaction event was in flight).
+    ///
+    /// Returns `KchatPostReactionOutcome::UnknownPost` when the
+    /// `kchat_posts` row is unknown — possible when a
+    /// `reaction_added` event arrives for a post that predates
+    /// the channel link (the backfill loop has not reached it
+    /// yet) or that was just deleted by another WS event. The
+    /// substrate persists the reaction anyway so a later
+    /// post-ingest finds it, but the audit row distinguishes
+    /// the two cases for operators.
+    pub fn ingest_kchat_post_reaction(
+        &self,
+        cache_dir: &str,
+        post_id: &str,
+        user_id: &str,
+        emoji_name: &str,
+        created_at_ms: i64,
+    ) -> Result<KchatPostReactionOutcome> {
+        let Some(source) = self
+            .store
+            .find_source_by_type_and_path(&tessera_core::SourceType::Kchat, cache_dir)?
+        else {
+            return Ok(KchatPostReactionOutcome::Unlinked);
+        };
+        if source.status == SourceStatus::AccessRevoked {
+            return Ok(KchatPostReactionOutcome::AccessRevoked);
+        }
+        let known_post = self.store.find_kchat_post(&source.id, post_id)?.is_some();
+        let inserted = self.store.upsert_kchat_post_reaction(
+            &source.id,
+            post_id,
+            user_id,
+            emoji_name,
+            created_at_ms,
+        )?;
+        Ok(KchatPostReactionOutcome::Recorded {
+            source_id: source.id,
+            inserted,
+            known_post,
+        })
+    }
+
+    /// Block D Task 2 (Phase 15): remove a single
+    /// (post, reactor, emoji) reaction on a KChat post.
+    ///
+    /// Tolerant of unknown rows: `reaction_removed` events that
+    /// arrive for reactions the substrate never saw added
+    /// (e.g. after a missed reconnect window) are no-ops, not
+    /// errors. The desired end state — the row is gone — is
+    /// achieved either way.
+    pub fn remove_kchat_post_reaction(
+        &self,
+        cache_dir: &str,
+        post_id: &str,
+        user_id: &str,
+        emoji_name: &str,
+    ) -> Result<KchatPostReactionOutcome> {
+        let Some(source) = self
+            .store
+            .find_source_by_type_and_path(&tessera_core::SourceType::Kchat, cache_dir)?
+        else {
+            return Ok(KchatPostReactionOutcome::Unlinked);
+        };
+        if source.status == SourceStatus::AccessRevoked {
+            return Ok(KchatPostReactionOutcome::AccessRevoked);
+        }
+        let known_post = self.store.find_kchat_post(&source.id, post_id)?.is_some();
+        let removed = self
+            .store
+            .delete_kchat_post_reaction(&source.id, post_id, user_id, emoji_name)?;
+        Ok(KchatPostReactionOutcome::Removed {
+            source_id: source.id,
+            removed,
+            known_post,
+        })
+    }
+
+    /// Block D Task 2 (Phase 15): fetch the full thread (root +
+    /// every reply) surrounding a KChat post.
+    ///
+    /// AEAD-verifies each post body the same way
+    /// [`SourceManager::search_kchat_posts`] does — the on-disk
+    /// `chunks.content` plaintext column must match the
+    /// AEAD-opened ciphertext. Posts that fail this check are
+    /// dropped from the result and counted on
+    /// `posts_dropped`; the result's `posts` vec is the
+    /// surviving conversational context the renderer can paint.
+    ///
+    /// Returns `posts.is_empty() && posts_dropped == 0` for
+    /// unknown / revoked / unlinked sources — the renderer
+    /// surfaces those the same way (no thread to show), and
+    /// the audit row distinguishes them via the `outcome` enum
+    /// the bridge layer reports.
+    pub fn fetch_kchat_post_thread(
+        &self,
+        cache_dir: &str,
+        post_id: &str,
+    ) -> Result<KchatPostThreadFetchOutcome> {
+        let Some(source) = self
+            .store
+            .find_source_by_type_and_path(&tessera_core::SourceType::Kchat, cache_dir)?
+        else {
+            return Ok(KchatPostThreadFetchOutcome::Unlinked);
+        };
+        if source.status == SourceStatus::AccessRevoked {
+            return Ok(KchatPostThreadFetchOutcome::AccessRevoked);
+        }
+        let rows = self.store.fetch_kchat_post_thread(&source.id, post_id)?;
+        if rows.is_empty() {
+            return Ok(KchatPostThreadFetchOutcome::UnknownPost);
+        }
+        // Ensure the DEK is unwrappable for this source — same
+        // load-only path that `search_kchat_posts` uses. A
+        // missing / corrupted DEK means no posts in the thread
+        // can be AEAD-verified, so report it explicitly rather
+        // than silently returning an empty thread.
+        let Some(wrapped) = self.store.load_wrapped_dek_for_source(&source.id)? else {
+            return Ok(KchatPostThreadFetchOutcome::AccessRevoked);
+        };
+        if self.kchat_crypto.unwrap_dek(&source.id, &wrapped).is_err() {
+            return Ok(KchatPostThreadFetchOutcome::AccessRevoked);
+        }
+
+        let mut entries: Vec<KchatPostThreadEntry> = Vec::with_capacity(rows.len());
+        let mut posts_dropped: u32 = 0;
+        for row in rows {
+            let chunks = self.store.load_kchat_post_chunks(row.indexed_file_id)?;
+            if chunks.is_empty() {
+                posts_dropped = posts_dropped.saturating_add(1);
+                continue;
+            }
+            let mut body = String::new();
+            let mut all_ok = true;
+            for chunk in &chunks {
+                let (Some(ciphertext), Some(nonce)) = (
+                    chunk.content_aead.as_ref(),
+                    chunk.content_aead_nonce.as_ref(),
+                ) else {
+                    all_ok = false;
+                    break;
+                };
+                let sealed = crate::kchat_crypto::SealedChunk {
+                    nonce: nonce.clone(),
+                    ciphertext: ciphertext.clone(),
+                };
+                let Ok(opened) = self.kchat_crypto.open_chunk(&source.id, &sealed) else {
+                    all_ok = false;
+                    break;
+                };
+                let Ok(opened_str) = String::from_utf8(opened) else {
+                    all_ok = false;
+                    break;
+                };
+                if opened_str != chunk.content {
+                    all_ok = false;
+                    break;
+                }
+                body.push_str(&opened_str);
+            }
+            if !all_ok {
+                posts_dropped = posts_dropped.saturating_add(1);
+                continue;
+            }
+            entries.push(KchatPostThreadEntry {
+                source_id: source.id,
+                post_id: row.post_id,
+                channel_id: row.channel_id,
+                root_id: row.root_id,
+                sender_user_id: row.sender_user_id,
+                created_at_ms: row.created_at_ms,
+                edited_at_ms: row.edited_at_ms,
+                body,
+                hash: row.message_hash,
+                reaction_count: u32::try_from(row.reaction_count.max(0)).unwrap_or(u32::MAX),
+            });
+        }
+
+        Ok(KchatPostThreadFetchOutcome::Fetched(
+            KchatPostThreadResult {
+                posts: entries,
+                posts_dropped,
+            },
+        ))
     }
 
     pub fn list_indexed_files(&self, source_id: &SourceId) -> Result<Vec<IndexedFile>> {
@@ -2420,6 +2804,8 @@ mod tests {
                 // both new counters report zero on the file-only
                 // shred path.
                 posts_dropped: 0,
+                // Block D Task 2 (Phase 15): no reactions either.
+                reactions_dropped: 0,
                 dek_dropped: false,
                 vacuum_succeeded: true,
                 vacuum_error: None,
@@ -2507,6 +2893,8 @@ mod tests {
                 // Block C Task 2 (Phase 12): file-only ingest —
                 // no post / DEK rows were ever created.
                 posts_dropped: 0,
+                // Block D Task 2 (Phase 15): no reactions either.
+                reactions_dropped: 0,
                 dek_dropped: false,
                 vacuum_succeeded: true,
                 vacuum_error: None,
@@ -2529,6 +2917,7 @@ mod tests {
                 chunks_dropped: 0,
                 files_dropped: 0,
                 posts_dropped: 0,
+                reactions_dropped: 0,
                 dek_dropped: false,
                 vacuum_succeeded: true,
                 vacuum_error: None,
@@ -2578,6 +2967,7 @@ mod tests {
                 chunks_dropped,
                 files_dropped,
                 posts_dropped: _,
+                reactions_dropped: _,
                 dek_dropped: _,
                 vacuum_succeeded,
                 vacuum_error,
@@ -2627,6 +3017,7 @@ mod tests {
                 chunks_dropped: 0,
                 files_dropped: 0,
                 posts_dropped: 0,
+                reactions_dropped: 0,
                 dek_dropped: false,
                 vacuum_succeeded: true,
                 vacuum_error: None,
@@ -2665,6 +3056,7 @@ mod tests {
                 chunks_dropped,
                 files_dropped,
                 posts_dropped: _,
+                reactions_dropped: _,
                 dek_dropped: _,
                 vacuum_succeeded,
                 vacuum_error,
@@ -4129,5 +4521,425 @@ mod tests {
         // Strictly decreasing.
         assert!(hits[0].relevance > hits[1].relevance);
         assert!(hits[1].relevance > hits[2].relevance);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Block D Task 2 (Phase 15) — reactions + thread expansion
+    // ─────────────────────────────────────────────────────────────
+
+    fn make_thread_post_input(
+        cache_dir: &str,
+        post_id: &str,
+        channel_id: &str,
+        sender: &str,
+        body: &str,
+        root_id: Option<&str>,
+        created_at_ms: i64,
+    ) -> KchatPostIngestInput {
+        KchatPostIngestInput {
+            cache_dir: cache_dir.to_string(),
+            post_id: post_id.to_string(),
+            channel_id: channel_id.to_string(),
+            root_id: root_id.map(|s| s.to_string()),
+            sender_user_id: sender.to_string(),
+            body: body.to_string(),
+            created_at_ms,
+            edited_at_ms: 0,
+        }
+    }
+
+    /// Reaction ingest happy path: fresh reaction is recorded as
+    /// `inserted=true`; the count helper sees it; a redundant
+    /// re-delivery lands as `inserted=false`; the count is
+    /// unchanged (the table PK collapses duplicates).
+    #[test]
+    fn ingest_kchat_post_reaction_records_distinct_pairs() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(cache_dir, "p1", "c1", "u1", "hello world"))
+            .unwrap();
+
+        // First reaction.
+        let outcome = manager
+            .ingest_kchat_post_reaction(cache_dir, "p1", "user-A", "thumbsup", 1_700_000_000_001)
+            .unwrap();
+        match outcome {
+            KchatPostReactionOutcome::Recorded {
+                inserted,
+                known_post,
+                ..
+            } => {
+                assert!(inserted, "first delivery must insert");
+                assert!(known_post, "post-row exists from ingest above");
+            }
+            other => panic!("expected Recorded, got {other:?}"),
+        }
+
+        // Idempotent re-delivery — same tuple.
+        let outcome = manager
+            .ingest_kchat_post_reaction(cache_dir, "p1", "user-A", "thumbsup", 1_700_000_000_001)
+            .unwrap();
+        match outcome {
+            KchatPostReactionOutcome::Recorded { inserted, .. } => {
+                assert!(!inserted, "redundant re-delivery must not re-insert");
+            }
+            other => panic!("expected Recorded, got {other:?}"),
+        }
+
+        // Different emoji from same user — distinct row.
+        manager
+            .ingest_kchat_post_reaction(cache_dir, "p1", "user-A", "heart", 1_700_000_000_002)
+            .unwrap();
+        // Different user, same emoji — distinct row.
+        manager
+            .ingest_kchat_post_reaction(cache_dir, "p1", "user-B", "thumbsup", 1_700_000_000_003)
+            .unwrap();
+
+        let count = manager
+            .store
+            .count_kchat_post_reactions(&added.source.id, "p1")
+            .unwrap();
+        assert_eq!(count, 3, "three distinct (user, emoji) pairs");
+    }
+
+    /// Remove path is symmetric: known reactions report
+    /// `removed=true`; unknown ones report `removed=false` (no
+    /// error — desired end state is "row is gone" either way).
+    #[test]
+    fn remove_kchat_post_reaction_handles_known_and_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let _added = manager.add_kchat_channel(cache_dir).unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "p1",
+                "c1",
+                "u1",
+                "body content",
+            ))
+            .unwrap();
+        manager
+            .ingest_kchat_post_reaction(cache_dir, "p1", "user-A", "thumbsup", 0)
+            .unwrap();
+
+        // Known reaction removed.
+        let outcome = manager
+            .remove_kchat_post_reaction(cache_dir, "p1", "user-A", "thumbsup")
+            .unwrap();
+        match outcome {
+            KchatPostReactionOutcome::Removed {
+                removed,
+                known_post,
+                ..
+            } => {
+                assert!(removed, "known reaction must report removed=true");
+                assert!(known_post);
+            }
+            other => panic!("expected Removed, got {other:?}"),
+        }
+
+        // Removing it again — no-op, removed=false.
+        let outcome = manager
+            .remove_kchat_post_reaction(cache_dir, "p1", "user-A", "thumbsup")
+            .unwrap();
+        match outcome {
+            KchatPostReactionOutcome::Removed { removed, .. } => {
+                assert!(!removed, "idempotent remove must report removed=false");
+            }
+            other => panic!("expected Removed, got {other:?}"),
+        }
+    }
+
+    /// Unknown source / revoked source: both return enum variants
+    /// the forwarder uses to short-circuit before audit.
+    #[test]
+    fn reaction_outcome_distinguishes_unlinked_and_revoked() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+
+        // No source row yet — Unlinked.
+        let outcome = manager
+            .ingest_kchat_post_reaction(cache_dir, "p", "u", "e", 0)
+            .unwrap();
+        assert!(matches!(outcome, KchatPostReactionOutcome::Unlinked));
+
+        // Linked + revoked — AccessRevoked.
+        manager.add_kchat_channel(cache_dir).unwrap();
+        let _ = manager.revoke_kchat_source(cache_dir).unwrap();
+        let outcome = manager
+            .ingest_kchat_post_reaction(cache_dir, "p", "u", "e", 0)
+            .unwrap();
+        assert!(matches!(outcome, KchatPostReactionOutcome::AccessRevoked));
+
+        // Same for remove.
+        let outcome = manager
+            .remove_kchat_post_reaction(cache_dir, "p", "u", "e")
+            .unwrap();
+        assert!(matches!(outcome, KchatPostReactionOutcome::AccessRevoked));
+    }
+
+    /// Cryptoshred cascade: a revoke on a source with ingested
+    /// reactions must scrub the `kchat_post_reactions` rows AND
+    /// report `reactions_dropped` so the audit row reflects the
+    /// scrub.
+    #[test]
+    fn revoke_kchat_source_scrubs_reactions_and_reports_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let added = manager.add_kchat_channel(cache_dir).unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(cache_dir, "p1", "c1", "u1", "alpha bravo"))
+            .unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "p2",
+                "c1",
+                "u2",
+                "charlie delta",
+            ))
+            .unwrap();
+        // 4 reactions across 2 posts.
+        for (post, user, emoji) in [
+            ("p1", "u-a", "thumbsup"),
+            ("p1", "u-b", "heart"),
+            ("p2", "u-a", "thumbsup"),
+            ("p2", "u-c", "rocket"),
+        ] {
+            manager
+                .ingest_kchat_post_reaction(cache_dir, post, user, emoji, 0)
+                .unwrap();
+        }
+
+        let pre = manager
+            .store
+            .count_kchat_post_reactions(&added.source.id, "p1")
+            .unwrap()
+            + manager
+                .store
+                .count_kchat_post_reactions(&added.source.id, "p2")
+                .unwrap();
+        assert_eq!(pre, 4, "reactions land before revoke");
+
+        let outcome = manager.revoke_kchat_source(cache_dir).unwrap();
+        let reactions_dropped = match outcome {
+            crate::manager::KchatRevokeOutcome::Revoked {
+                reactions_dropped, ..
+            } => reactions_dropped,
+            other => panic!("expected Revoked, got {other:?}"),
+        };
+        assert_eq!(
+            reactions_dropped, 4,
+            "audit row must reflect all 4 reactions scrubbed"
+        );
+
+        // The rows are gone too.
+        let post1 = manager
+            .store
+            .count_kchat_post_reactions(&added.source.id, "p1")
+            .unwrap();
+        let post2 = manager
+            .store
+            .count_kchat_post_reactions(&added.source.id, "p2")
+            .unwrap();
+        assert_eq!(post1, 0);
+        assert_eq!(post2, 0);
+    }
+
+    /// Thread fetch happy path: root + 2 replies in chronological
+    /// order, AEAD-verified, posts_dropped=0.
+    #[test]
+    fn fetch_kchat_post_thread_returns_root_and_replies_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let _added = manager.add_kchat_channel(cache_dir).unwrap();
+
+        manager
+            .ingest_kchat_post(&make_thread_post_input(
+                cache_dir,
+                "root-1",
+                "ch-1",
+                "u-author",
+                "the root message about the launch",
+                None,
+                1_700_000_000_000,
+            ))
+            .unwrap();
+        manager
+            .ingest_kchat_post(&make_thread_post_input(
+                cache_dir,
+                "reply-1",
+                "ch-1",
+                "u-replier-a",
+                "first reply pushing back on date",
+                Some("root-1"),
+                1_700_000_000_100,
+            ))
+            .unwrap();
+        manager
+            .ingest_kchat_post(&make_thread_post_input(
+                cache_dir,
+                "reply-2",
+                "ch-1",
+                "u-replier-b",
+                "second reply agreeing with reply-1",
+                Some("root-1"),
+                1_700_000_000_200,
+            ))
+            .unwrap();
+
+        // Fetching by either the root id OR a reply id must
+        // return the same bundle.
+        for query_post in ["root-1", "reply-1", "reply-2"] {
+            let outcome = manager
+                .fetch_kchat_post_thread(cache_dir, query_post)
+                .unwrap();
+            let result = match outcome {
+                KchatPostThreadFetchOutcome::Fetched(r) => r,
+                other => panic!("expected Fetched, got {other:?}"),
+            };
+            assert_eq!(result.posts_dropped, 0);
+            assert_eq!(result.posts.len(), 3, "thread bundle = root + 2 replies");
+            assert_eq!(result.posts[0].post_id, "root-1");
+            assert_eq!(result.posts[1].post_id, "reply-1");
+            assert_eq!(result.posts[2].post_id, "reply-2");
+            assert!(result.posts[0].body.contains("root message"));
+            assert!(result.posts[1].body.contains("pushing back"));
+        }
+    }
+
+    /// Thread fetch against an unknown post id reports
+    /// `UnknownPost` (not Fetched with empty `posts`). The
+    /// renderer surfaces this differently from a tamper-drop case.
+    #[test]
+    fn fetch_kchat_post_thread_unknown_post_reports_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let _added = manager.add_kchat_channel(cache_dir).unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_dir,
+                "exists-1",
+                "ch-1",
+                "u",
+                "some body content here",
+            ))
+            .unwrap();
+
+        let outcome = manager
+            .fetch_kchat_post_thread(cache_dir, "never-existed")
+            .unwrap();
+        assert!(matches!(outcome, KchatPostThreadFetchOutcome::UnknownPost));
+    }
+
+    /// Thread fetch against an unlinked / revoked source returns
+    /// the matching variants without panicking.
+    #[test]
+    fn fetch_kchat_post_thread_unlinked_and_revoked_variants() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().to_str().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+
+        let outcome = manager.fetch_kchat_post_thread(cache_dir, "p").unwrap();
+        assert!(matches!(outcome, KchatPostThreadFetchOutcome::Unlinked));
+
+        manager.add_kchat_channel(cache_dir).unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(cache_dir, "p", "c", "u", "body here"))
+            .unwrap();
+        let _ = manager.revoke_kchat_source(cache_dir).unwrap();
+
+        let outcome = manager.fetch_kchat_post_thread(cache_dir, "p").unwrap();
+        assert!(matches!(
+            outcome,
+            KchatPostThreadFetchOutcome::AccessRevoked
+        ));
+    }
+
+    /// Reaction boost in search ranking: a post with reactions
+    /// must rank higher than an identical-relevance post without
+    /// reactions. The boost is sub-linear (`1 + ln(1 + n)`) so we
+    /// only assert the ordering, not the exact magnitude.
+    #[test]
+    fn search_kchat_posts_boosts_reacted_posts_above_unreacted() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let manager = SourceManager::new_in_memory(&[]).unwrap();
+        let cache_a = dir_a.path().to_str().unwrap();
+        let cache_b = dir_b.path().to_str().unwrap();
+        manager.add_kchat_channel(cache_a).unwrap();
+        manager.add_kchat_channel(cache_b).unwrap();
+
+        // Both posts have identical bodies so the FTS bm25 score
+        // matches; only the reaction count differs.
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_a,
+                "post-reacted",
+                "c-a",
+                "u-author",
+                "team agreed launch deadline shifts to september",
+            ))
+            .unwrap();
+        manager
+            .ingest_kchat_post(&make_post_input(
+                cache_b,
+                "post-bare",
+                "c-b",
+                "u-author",
+                "team agreed launch deadline shifts to september",
+            ))
+            .unwrap();
+
+        // 5 distinct reactions on the first post.
+        for (user, emoji) in [
+            ("u1", "thumbsup"),
+            ("u2", "thumbsup"),
+            ("u3", "heart"),
+            ("u4", "rocket"),
+            ("u5", "tada"),
+        ] {
+            manager
+                .ingest_kchat_post_reaction(cache_a, "post-reacted", user, emoji, 0)
+                .unwrap();
+        }
+
+        let hits = manager
+            .search_kchat_posts("launch deadline september", 10)
+            .unwrap();
+        assert!(hits.len() >= 2, "expected both posts to surface");
+        // Find both by id and assert reacted > bare.
+        let reacted = hits
+            .iter()
+            .find(|h| h.post_id == "post-reacted")
+            .expect("reacted hit");
+        let bare = hits
+            .iter()
+            .find(|h| h.post_id == "post-bare")
+            .expect("bare hit");
+        assert_eq!(reacted.reaction_count, 5);
+        assert_eq!(bare.reaction_count, 0);
+        assert!(
+            reacted.relevance > bare.relevance,
+            "reacted post must rank higher: reacted={} bare={}",
+            reacted.relevance,
+            bare.relevance
+        );
+        // And the boost is sub-linear: not 6x.
+        assert!(
+            reacted.relevance < bare.relevance * 6.0,
+            "boost must be sub-linear (got {:.3} vs {:.3})",
+            reacted.relevance,
+            bare.relevance
+        );
     }
 }

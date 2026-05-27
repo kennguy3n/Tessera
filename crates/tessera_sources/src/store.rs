@@ -241,6 +241,42 @@ impl SourceStore {
                 ON kchat_posts(channel_id, post_id);
             CREATE INDEX IF NOT EXISTS idx_kchat_posts_indexed_file
                 ON kchat_posts(indexed_file_id);
+
+            -- Block D Task 2 (Phase 15): one row per
+            -- (post, reactor, emoji) tuple. The full
+            -- (user_id, emoji_name) shape (rather than a
+            -- denormalised reaction_count column on
+            -- kchat_posts) lets the substrate distinguish
+            -- 10 people picking the same emoji from 1 person
+            -- picking 10 different emoji, which matters for
+            -- both retrieval ranking and the team-consensus
+            -- UX signal the renderer surfaces.
+            --
+            -- The PK shape (source_id, post_id, user_id,
+            -- emoji_name) makes WS reaction_added /
+            -- reaction_removed events naturally idempotent:
+            -- a redelivery via INSERT OR IGNORE is a no-op,
+            -- a removal of a never-applied reaction is a
+            -- silent zero-row DELETE.
+            --
+            -- ON DELETE CASCADE through sources(id) is the
+            -- cryptoshred cascade: when Block B Task 4 deletes
+            -- a sources row, every reaction row for that
+            -- source is dropped in the same transaction so a
+            -- revoked channel cannot leave behind a stale
+            -- per-user emoji-attribution side channel.
+            CREATE TABLE IF NOT EXISTS kchat_post_reactions (
+                source_id TEXT NOT NULL,
+                post_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                emoji_name TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (source_id, post_id, user_id, emoji_name),
+                FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_kchat_post_reactions_post
+                ON kchat_post_reactions(source_id, post_id);
             ",
             )
             .map_err(|e| Error::Database(e.to_string()))?;
@@ -929,6 +965,23 @@ impl SourceStore {
             )
             .map_err(|e| Error::Database(e.to_string()))?;
 
+        // Block D Task 2 (Phase 15): count the reaction rows
+        // about to be dropped. The schema declares ON DELETE
+        // CASCADE from `sources(id)`, but cryptoshred-on-revoke
+        // does NOT delete the source row (the source flips to
+        // `AccessRevoked` and stays in `sources` so the UI can
+        // surface the disabled connection); the CASCADE
+        // therefore does NOT fire and we must scrub reaction
+        // rows explicitly inside the same transaction. Counting
+        // here makes the scrub observable in the audit row.
+        let reactions_to_drop: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kchat_post_reactions WHERE source_id = ?1",
+                params![id_str],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
         // Phase 2 — enable secure_delete BEFORE the DELETEs so the
         // freed pages are zero-filled at delete time. This is what
         // makes the scrub resilient to a later VACUUM failure: even
@@ -1002,6 +1055,20 @@ impl SourceStore {
 
             txn.execute(
                 "DELETE FROM indexed_files WHERE source_id = ?1",
+                params![id_str],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+            // Block D Task 2 (Phase 15): drop reaction rows in the
+            // same transaction. The schema's ON DELETE CASCADE from
+            // `sources(id)` does not fire here because the source
+            // row is kept (status flipped to AccessRevoked). The
+            // scrub must therefore delete reaction rows explicitly,
+            // alongside the chunk + kchat_posts + DEK deletes, so a
+            // re-grant cannot resurrect "@user reacted with
+            // :thumbsup:" metadata that survived the revoke.
+            txn.execute(
+                "DELETE FROM kchat_post_reactions WHERE source_id = ?1",
                 params![id_str],
             )
             .map_err(|e| Error::Database(e.to_string()))?;
@@ -1151,6 +1218,7 @@ impl SourceStore {
             chunks_dropped: u32::try_from(chunks_to_drop).unwrap_or(u32::MAX),
             files_dropped: u32::try_from(files_to_drop).unwrap_or(u32::MAX),
             posts_dropped: u32::try_from(posts_to_drop).unwrap_or(u32::MAX),
+            reactions_dropped: u32::try_from(reactions_to_drop).unwrap_or(u32::MAX),
             dek_dropped: dek_to_drop > 0,
             vacuum_succeeded,
             vacuum_error,
@@ -1547,6 +1615,227 @@ impl SourceStore {
         )
         .map_err(|e| Error::Database(e.to_string()))?;
         Ok(())
+    }
+
+    /// Block D Task 2 (Phase 15): record a single
+    /// (post, reactor, emoji) reaction. Idempotent via the table's
+    /// composite primary key — re-delivery of the same WS
+    /// `reaction_added` event (which can happen on reconnect /
+    /// server replay) is a silent no-op rather than a duplicate
+    /// row or an error.
+    ///
+    /// Returns `true` when a new row was actually inserted
+    /// (i.e. this reaction was previously unknown), `false` when
+    /// it already existed. Callers can use this to gate audit
+    /// logging — emitting an audit row per redundant insert would
+    /// drown out the meaningful signal.
+    ///
+    /// `created_at_ms` is the KChat-server-issued reaction
+    /// timestamp. Used by neither ranking nor retrieval today,
+    /// but persisted so a future "reactions in the last 24h
+    /// weighted higher than older ones" tuning can ship without
+    /// a schema migration.
+    pub fn upsert_kchat_post_reaction(
+        &self,
+        source_id: &SourceId,
+        post_id: &str,
+        user_id: &str,
+        emoji_name: &str,
+        created_at_ms: i64,
+    ) -> Result<bool> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let changed = conn
+            .execute(
+                "INSERT INTO kchat_post_reactions
+                    (source_id, post_id, user_id, emoji_name, created_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(source_id, post_id, user_id, emoji_name) DO NOTHING",
+                params![id_str, post_id, user_id, emoji_name, created_at_ms],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(changed > 0)
+    }
+
+    /// Block D Task 2 (Phase 15): remove a single
+    /// (post, reactor, emoji) reaction. Returns `true` when a row
+    /// was actually deleted, `false` when no matching row existed
+    /// (e.g. WS `reaction_removed` arriving for a reaction the
+    /// substrate never saw added — possible after a missed
+    /// reconnect-window event).
+    ///
+    /// Like the insert path, this is intentionally tolerant: a
+    /// no-op delete logs an "unknown" outcome rather than an
+    /// error, because the desired end state (the row is gone) is
+    /// achieved either way.
+    pub fn delete_kchat_post_reaction(
+        &self,
+        source_id: &SourceId,
+        post_id: &str,
+        user_id: &str,
+        emoji_name: &str,
+    ) -> Result<bool> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let changed = conn
+            .execute(
+                "DELETE FROM kchat_post_reactions
+                 WHERE source_id = ?1
+                   AND post_id   = ?2
+                   AND user_id   = ?3
+                   AND emoji_name = ?4",
+                params![id_str, post_id, user_id, emoji_name],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(changed > 0)
+    }
+
+    /// Block D Task 2 (Phase 15): count reactions for a single
+    /// post. Used by tests and by the retrieval-side ranking path
+    /// (which actually joins on COUNT(*) at the FTS query — this
+    /// method exists for unit tests + the audit observability
+    /// hook). The "count of distinct (user_id, emoji) pairs"
+    /// semantic matches the table's PK shape — each pair is a
+    /// distinct reaction signal.
+    pub fn count_kchat_post_reactions(&self, source_id: &SourceId, post_id: &str) -> Result<u32> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM kchat_post_reactions
+                 WHERE source_id = ?1 AND post_id = ?2",
+                params![id_str, post_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+
+    /// Block D Task 2 (Phase 15): fetch every `kchat_posts`-backed
+    /// post that belongs to the thread containing `post_id`. The
+    /// "thread" is the post whose `post_id` equals `root_id`
+    /// (i.e. the root) plus every post whose `root_id` equals
+    /// that root. When `post_id` is itself a root, the returned
+    /// vector starts with the root and walks the replies.
+    ///
+    /// Each row carries the per-post bookkeeping the retrieval
+    /// path needs to re-hydrate the body via the column-AEAD
+    /// chunk (the manager AEAD-verifies + decrypts at the call
+    /// site — this method intentionally does not touch the
+    /// `chunks` table directly). Rows are returned in ascending
+    /// `created_at_ms` order so the renderer can paint a natural
+    /// conversational sequence without an extra sort.
+    ///
+    /// Returns an empty vector when `post_id` is unknown for this
+    /// source (e.g. the post was deleted, or was never ingested
+    /// because it predates the channel link). Callers must NOT
+    /// treat empty as an error.
+    pub fn fetch_kchat_post_thread(
+        &self,
+        source_id: &SourceId,
+        post_id: &str,
+    ) -> Result<Vec<KchatPostThreadRow>> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+
+        // Resolve the thread root in a single SQL hop. If the
+        // anchor post is itself a top-level post, `root_id` is
+        // NULL and we coalesce to its own post_id; if it is a
+        // reply, `root_id` already points at the root.
+        let root: Option<String> = conn
+            .query_row(
+                "SELECT COALESCE(root_id, post_id)
+                 FROM kchat_posts
+                 WHERE source_id = ?1 AND post_id = ?2",
+                params![id_str, post_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    Error::Database("kchat_posts row not found".to_string())
+                }
+                other => Error::Database(other.to_string()),
+            })
+            .ok();
+        let Some(root_id) = root else {
+            return Ok(Vec::new());
+        };
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT p.post_id, p.channel_id, p.root_id, p.sender_user_id,
+                        p.indexed_file_id, p.message_hash,
+                        p.created_at_ms, p.edited_at_ms,
+                        (SELECT COUNT(*) FROM kchat_post_reactions r
+                         WHERE r.source_id = p.source_id AND r.post_id = p.post_id)
+                            AS reaction_count
+                 FROM kchat_posts p
+                 WHERE p.source_id = ?1
+                   AND (p.post_id = ?2 OR p.root_id = ?2)
+                 ORDER BY p.created_at_ms ASC, p.post_id ASC",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let rows: Vec<KchatPostThreadRow> = stmt
+            .query_map(params![id_str, root_id], |row| {
+                Ok(KchatPostThreadRow {
+                    post_id: row.get(0)?,
+                    channel_id: row.get(1)?,
+                    root_id: row.get(2)?,
+                    sender_user_id: row.get(3)?,
+                    indexed_file_id: row.get::<_, i64>(4)?,
+                    message_hash: row.get(5)?,
+                    created_at_ms: row.get::<_, i64>(6)?,
+                    edited_at_ms: row.get::<_, i64>(7)?,
+                    reaction_count: row.get::<_, i64>(8)?,
+                })
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+
+        Ok(rows)
+    }
+
+    /// Block D Task 2 (Phase 15): fetch the AEAD-sealed
+    /// chunk bytes for a single `kchat_posts` row, keyed by
+    /// `indexed_file_id`. Used by
+    /// [`crate::manager::SourceManager::fetch_kchat_post_thread`]
+    /// to re-hydrate each post body under the per-source DEK.
+    ///
+    /// Returns the chunks in the substrate's stored order
+    /// (typically a single row per post body — the chunker only
+    /// splits long messages — but the API is shaped as a Vec so
+    /// long-message threads behave identically). When no chunks
+    /// match (e.g. a `kchat_posts` row whose `indexed_files`
+    /// neighbour was scrubbed mid-revoke), the vector is empty.
+    pub fn load_kchat_post_chunks(&self, indexed_file_id: i64) -> Result<Vec<KchatPostChunkRow>> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, content, content_aead, content_aead_nonce,
+                        hash, chunk_index, byte_offset
+                 FROM chunks
+                 WHERE indexed_file_id = ?1 AND kind = 'chat_post'
+                 ORDER BY chunk_index ASC",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let rows: Vec<KchatPostChunkRow> = stmt
+            .query_map(params![indexed_file_id], |row| {
+                Ok(KchatPostChunkRow {
+                    chunk_id: row.get::<_, i64>(0)?,
+                    content: row.get(1)?,
+                    content_aead: row.get(2)?,
+                    content_aead_nonce: row.get(3)?,
+                    hash: row.get(4)?,
+                    chunk_index: row.get::<_, i64>(5)? as usize,
+                    byte_offset: row.get::<_, i64>(6)? as usize,
+                })
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(std::result::Result::ok)
+            .collect();
+        Ok(rows)
     }
 
     /// Count the number of chunks currently indexed for a
@@ -2007,7 +2296,21 @@ impl SourceStore {
                         f.source_id, s.path,
                         p.post_id, p.channel_id, p.root_id, p.sender_user_id,
                         p.created_at_ms, p.edited_at_ms,
-                        rank
+                        rank,
+                        -- Block D Task 2 (Phase 15): correlated
+                        -- subquery to surface the per-post reaction
+                        -- count alongside the BM25 hit. Doing the
+                        -- COUNT(*) inline (rather than as a separate
+                        -- query per hit at the manager layer) keeps
+                        -- the search path single-query so an N-hit
+                        -- result set still issues exactly one SQL
+                        -- round trip. The subquery filters by both
+                        -- source_id AND post_id so multi-source
+                        -- corpora cannot leak reaction counts
+                        -- across sources.
+                        (SELECT COUNT(*) FROM kchat_post_reactions r
+                         WHERE r.source_id = p.source_id AND r.post_id = p.post_id)
+                            AS reaction_count
                  FROM chunks_fts fts
                  JOIN chunks c        ON c.id = fts.rowid
                  JOIN indexed_files f ON f.id = c.indexed_file_id
@@ -2050,6 +2353,7 @@ impl SourceStore {
                         created_at_ms: row.get::<_, i64>(13)?,
                         edited_at_ms: row.get::<_, i64>(14)?,
                         bm25_score: -row.get::<_, f64>(15)?,
+                        reaction_count: row.get::<_, i64>(16)?,
                     })
                 },
             )
@@ -2454,6 +2758,53 @@ pub struct KchatPostSearchHitRow {
     /// layer to order hits before reciprocal-rank scoring;
     /// never surfaced to the renderer.
     pub bm25_score: f64,
+    /// Block D Task 2 (Phase 15): number of distinct
+    /// (user_id, emoji_name) reactions recorded against this
+    /// post. Used by the manager-layer ranking step to multiply
+    /// the BM25 score by a sub-linear boost (`1 + ln(1 + n)`),
+    /// so a single thumbs-up nudges the post above a tied no-
+    /// reaction sibling but the 50th thumbs-up doesn't dominate
+    /// the corpus. The value passes through to
+    /// [`crate::manager::KchatPostSearchHit::reaction_count`] for
+    /// the renderer to badge alongside the citation.
+    pub reaction_count: i64,
+}
+
+/// Block D Task 2 (Phase 15): per-post bookkeeping row returned
+/// by [`SourceStore::fetch_kchat_post_thread`]. Carries every
+/// `kchat_posts` column the manager layer needs to AEAD-verify
+/// + decrypt the post body (via [`SourceStore::load_kchat_post_chunks`])
+///   without a second join.
+#[derive(Debug, Clone)]
+pub struct KchatPostThreadRow {
+    pub post_id: String,
+    pub channel_id: String,
+    pub root_id: Option<String>,
+    pub sender_user_id: String,
+    pub indexed_file_id: i64,
+    pub message_hash: String,
+    pub created_at_ms: i64,
+    pub edited_at_ms: i64,
+    /// Distinct (user_id, emoji_name) reaction count for this
+    /// post. Surfaces directly to the renderer so the thread
+    /// view can show a reaction badge next to each message.
+    pub reaction_count: i64,
+}
+
+/// Block D Task 2 (Phase 15): one AEAD-sealed chunk row returned
+/// by [`SourceStore::load_kchat_post_chunks`]. Matches the shape
+/// the column-AEAD code path consumes (plaintext column +
+/// ciphertext + nonce); the manager AEAD-verifies + decrypts at
+/// the call site.
+#[derive(Debug, Clone)]
+pub struct KchatPostChunkRow {
+    pub chunk_id: i64,
+    pub content: String,
+    pub content_aead: Option<Vec<u8>>,
+    pub content_aead_nonce: Option<Vec<u8>>,
+    pub hash: String,
+    pub chunk_index: usize,
+    pub byte_offset: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -2538,6 +2889,15 @@ pub struct KchatSourceCryptoshredOutcome {
     /// chunks); the reverse means a misconfigured source somehow
     /// had post bookkeeping without chunks (would indicate bug).
     pub posts_dropped: u32,
+    /// Block D Task 2 (Phase 15): number of rows deleted from
+    /// `kchat_post_reactions`. Surfaced to the audit row so an
+    /// operator inspecting a revoke event can confirm that
+    /// reaction metadata (which carries per-user "@user reacted
+    /// with :emoji:" attribution) was scrubbed in lockstep with
+    /// the post bodies. A non-zero `posts_dropped` with
+    /// `reactions_dropped == 0` is benign (the source had posts
+    /// but nobody reacted); the reverse would be a substrate bug.
+    pub reactions_dropped: u32,
     /// Block C Task 2 (Phase 12): `true` when the wrapped-DEK row
     /// existed and was deleted (i.e. the per-source AEAD key was
     /// destroyed). `false` when the source never ingested a chat
@@ -2934,6 +3294,8 @@ mod tests {
                 // existed for this source, so no posts/DEK rows
                 // were dropped.
                 posts_dropped: 0,
+                // Block D Task 2 (Phase 15): same — no reactions.
+                reactions_dropped: 0,
                 dek_dropped: false,
                 vacuum_succeeded: true,
                 vacuum_error: None,

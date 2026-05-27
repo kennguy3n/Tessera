@@ -30,8 +30,10 @@ import type {
   KchatPostDeleteOutcomeInfo,
   KchatPostIngestInputInfo,
   KchatPostIngestOutcomeInfo,
+  KchatPostReactionOutcomeInfo,
   KchatPostSearchHit,
   KchatPostSearchHitInfo,
+  KchatPostThreadResultInfo,
   KchatRevokeOutcomeInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
@@ -71,7 +73,11 @@ export type {
   KchatPostIngestInputInfo,
   KchatPostIngestOutcomeInfo,
   KchatPostSearchHit,
+  KchatPostReactionOutcomeInfo,
   KchatPostSearchHitInfo,
+  KchatPostThreadEntry,
+  KchatPostThreadResult,
+  KchatPostThreadResultInfo,
   KchatRevokeOutcomeInfo,
   ReplaceCitationRequest,
   ReplaceCitationResult,
@@ -451,6 +457,9 @@ export interface NativeBridge {
      *  scrubbed by the cryptoshred. Logged on the audit row so
      *  operators can grep `posts_dropped=N`. */
     postsDropped: number,
+    /** Block D Task 2 (Phase 15): `kchat_post_reactions` row count
+     *  scrubbed by the cryptoshred. */
+    reactionsDropped: number,
     /** Block C Task 2 (Phase 12): `true` when the per-source DEK
      *  row was actually dropped. `false` indicates no DEK ever
      *  existed for this source (file-only ingest) — NOT a
@@ -609,6 +618,45 @@ export interface NativeBridge {
     query: string,
     limit: number,
   ): KchatPostSearchHitInfo[];
+
+  // --- Block D Task 2 (Phase 15): Reaction + thread bridge ---
+
+  /** Ingest a single (post, user, emoji) reaction. Idempotent. */
+  bridgeIngestKchatPostReaction(
+    cacheDir: string,
+    postId: string,
+    userId: string,
+    emojiName: string,
+    createdAtMs: number,
+  ): KchatPostReactionOutcomeInfo;
+  /** Remove a single (post, user, emoji) reaction. Tolerant. */
+  bridgeRemoveKchatPostReaction(
+    cacheDir: string,
+    postId: string,
+    userId: string,
+    emojiName: string,
+  ): KchatPostReactionOutcomeInfo;
+  /** Fetch the full thread (root + replies) around a post. */
+  bridgeFetchKchatPostThread(
+    cacheDir: string,
+    postId: string,
+  ): KchatPostThreadResultInfo;
+  /** Audit row for a reaction add/remove event. */
+  bridgeLogKchatPostReactionIngested(
+    channelId: string,
+    postId: string,
+    emojiName: string,
+    action: string,
+    outcome: string,
+  ): void;
+  /** Audit row for a thread expansion. */
+  bridgeLogKchatPostThreadFetched(
+    channelId: string,
+    postId: string,
+    postsReturned: number,
+    tamperDropped: number,
+  ): void;
+
   // --- Audit query ---
   //
   // Renderer-facing read API over the audit store. The renderer

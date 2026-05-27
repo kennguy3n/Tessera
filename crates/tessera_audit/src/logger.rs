@@ -362,6 +362,7 @@ impl AuditLogger {
         chunks_dropped: u32,
         files_dropped: u32,
         posts_dropped: u32,
+        reactions_dropped: u32,
         dek_dropped: bool,
         fs_scrub_succeeded: bool,
         fs_scrub_error: Option<&str>,
@@ -381,7 +382,8 @@ impl AuditLogger {
             format!(
                 "KChat source cryptoshredded: channel={channel_id} reason={reason} \
                  chunks_dropped={chunks_dropped} files_dropped={files_dropped} \
-                 posts_dropped={posts_dropped} dek_dropped={dek_dropped} \
+                 posts_dropped={posts_dropped} reactions_dropped={reactions_dropped} \
+                 dek_dropped={dek_dropped} \
                  fs_scrub_succeeded={fs_scrub_succeeded}{fs_error_segment} \
                  vacuum_succeeded={vacuum_succeeded}{vacuum_error_segment}"
             ),
@@ -585,6 +587,44 @@ impl AuditLogger {
                 "KChat post search executed: query_hash={query_hash} \
                  hits={hits} sources_touched={sources_touched} \
                  latency_ms={latency_ms}"
+            ),
+        )
+    }
+
+    /// Block D Task 2 (Phase 15): record a reaction add/remove
+    /// event. `action` is `"added"` or `"removed"`.
+    pub fn log_kchat_post_reaction_ingested(
+        &self,
+        channel_id: &str,
+        post_id: &str,
+        emoji_name: &str,
+        action: &str,
+        outcome: &str,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::KchatPostReactionIngested,
+            format!(
+                "KChat post reaction ingested: channel={channel_id} \
+                 post={post_id} emoji={emoji_name} \
+                 action={action} outcome={outcome}"
+            ),
+        )
+    }
+
+    /// Block D Task 2 (Phase 15): record a thread expansion.
+    pub fn log_kchat_post_thread_fetched(
+        &self,
+        channel_id: &str,
+        post_id: &str,
+        posts_returned: u32,
+        tamper_dropped: u32,
+    ) -> Result<()> {
+        self.log(
+            AuditEventType::KchatPostThreadFetched,
+            format!(
+                "KChat post thread fetched: channel={channel_id} \
+                 post={post_id} posts_returned={posts_returned} \
+                 tamper_dropped={tamper_dropped}"
             ),
         )
     }
@@ -887,6 +927,7 @@ mod tests {
                 42,
                 7,
                 15,   // posts_dropped
+                3,    // reactions_dropped
                 true, // dek_dropped
                 true,
                 None,
@@ -901,6 +942,7 @@ mod tests {
                 0,
                 0,
                 0,     // posts_dropped
+                0,     // reactions_dropped
                 false, // dek_dropped (idempotent re-shred)
                 true,
                 None,
@@ -918,6 +960,7 @@ mod tests {
                 17,
                 3,
                 5,    // posts_dropped
+                2,    // reactions_dropped
                 true, // dek_dropped
                 false,
                 Some("cacheDir(/tmp/k/c-003): EBUSY: resource busy"),
@@ -939,6 +982,7 @@ mod tests {
                 23,
                 4,
                 8,    // posts_dropped
+                1,    // reactions_dropped
                 true, // dek_dropped
                 true,
                 None,
@@ -962,6 +1006,7 @@ mod tests {
         assert!(real.details.contains("chunks_dropped=42"));
         assert!(real.details.contains("files_dropped=7"));
         assert!(real.details.contains("posts_dropped=15"));
+        assert!(real.details.contains("reactions_dropped=3"));
         assert!(real.details.contains("dek_dropped=true"));
         assert!(real.details.contains("fs_scrub_succeeded=true"));
         assert!(!real.details.contains("fs_scrub_error="));
@@ -976,6 +1021,7 @@ mod tests {
         assert!(idempotent.details.contains("chunks_dropped=0"));
         assert!(idempotent.details.contains("files_dropped=0"));
         assert!(idempotent.details.contains("posts_dropped=0"));
+        assert!(idempotent.details.contains("reactions_dropped=0"));
         assert!(idempotent.details.contains("dek_dropped=false"));
         assert!(idempotent.details.contains("fs_scrub_succeeded=true"));
         assert!(idempotent.details.contains("vacuum_succeeded=true"));
@@ -988,6 +1034,7 @@ mod tests {
         assert!(fs_failed.details.contains("chunks_dropped=17"));
         assert!(fs_failed.details.contains("files_dropped=3"));
         assert!(fs_failed.details.contains("posts_dropped=5"));
+        assert!(fs_failed.details.contains("reactions_dropped=2"));
         assert!(fs_failed.details.contains("dek_dropped=true"));
         assert!(fs_failed.details.contains("fs_scrub_succeeded=false"));
         assert!(fs_failed
@@ -1006,6 +1053,7 @@ mod tests {
         assert!(vacuum_failed.details.contains("chunks_dropped=23"));
         assert!(vacuum_failed.details.contains("files_dropped=4"));
         assert!(vacuum_failed.details.contains("posts_dropped=8"));
+        assert!(vacuum_failed.details.contains("reactions_dropped=1"));
         assert!(vacuum_failed.details.contains("dek_dropped=true"));
         // The row-level scrub committed (`fs_scrub` is independent
         // and trivially true on this row's input).

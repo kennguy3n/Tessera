@@ -152,6 +152,33 @@ export interface KchatPostDeletedEvent {
 }
 
 /**
+ * Block D Task 2 (Phase 15): WS `reaction_added` event payload.
+ * The `reaction` object carries the per-user emoji tuple; the
+ * forwarder feeds it to `bridge_ingest_kchat_post_reaction`.
+ */
+export interface KchatReactionAddedEvent {
+  reaction: {
+    user_id: string;
+    post_id: string;
+    emoji_name: string;
+    create_at: number;
+  };
+}
+
+/**
+ * Block D Task 2 (Phase 15): WS `reaction_removed` event payload.
+ * Same shape as `reaction_added` — the forwarder feeds it to
+ * `bridge_remove_kchat_post_reaction`.
+ */
+export interface KchatReactionRemovedEvent {
+  reaction: {
+    user_id: string;
+    post_id: string;
+    emoji_name: string;
+  };
+}
+
+/**
  * Sanitised view of a single KChat post body. Returned by
  * [`KchatClient.getPost`] and as the array element of
  * [`KchatPostListPage`]. Mirrors the small subset of fields the

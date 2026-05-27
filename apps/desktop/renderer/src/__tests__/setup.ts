@@ -493,6 +493,10 @@ const mockApi = {
     // per-case (e.g. the citation panel + replace dialog
     // rendering tests in `citationPanelKchat.test.tsx`).
     searchPosts: vi.fn().mockResolvedValue([]),
+    // Block D Task 2 (Phase 15): thread expansion IPC. Default
+    // returns an empty/unknown result so tests that don't exercise
+    // thread expansion see no side effects.
+    fetchPostThread: vi.fn().mockResolvedValue({ outcome: "unknown_post", posts: [], postsDropped: 0 }),
     // Block B Task 1: push-based subscriptions. Defaults return
     // a no-op unsubscribe so components that subscribe-on-mount
     // can render and unmount cleanly in tests without standing

@@ -440,6 +440,66 @@ pub fn bridge_search_kchat_posts(
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+/// Block D Task 2 (Phase 15): record a single (post, reactor,
+/// emoji) reaction. Idempotent — WS re-delivery is a no-op.
+#[napi]
+pub fn bridge_ingest_kchat_post_reaction(
+    cache_dir: String,
+    post_id: String,
+    user_id: String,
+    emoji_name: String,
+    created_at_ms: i64,
+) -> napi::Result<sources::KchatPostReactionOutcomeInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::ingest_kchat_post_reaction(
+        &mgr,
+        &cache_dir,
+        &post_id,
+        &user_id,
+        &emoji_name,
+        created_at_ms,
+    )
+    .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Block D Task 2 (Phase 15): remove a single (post, reactor,
+/// emoji) reaction. Tolerant of unknown rows.
+#[napi]
+pub fn bridge_remove_kchat_post_reaction(
+    cache_dir: String,
+    post_id: String,
+    user_id: String,
+    emoji_name: String,
+) -> napi::Result<sources::KchatPostReactionOutcomeInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::remove_kchat_post_reaction(&mgr, &cache_dir, &post_id, &user_id, &emoji_name)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Block D Task 2 (Phase 15): fetch the full thread (root +
+/// replies) surrounding a KChat post, with AEAD verification.
+#[napi]
+pub fn bridge_fetch_kchat_post_thread(
+    cache_dir: String,
+    post_id: String,
+) -> napi::Result<sources::KchatPostThreadResultInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::fetch_kchat_post_thread(&mgr, &cache_dir, &post_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 #[napi]
 pub fn bridge_get_source_detail(source_id: String) -> napi::Result<sources::SourceDetailInfo> {
     let s = state()?;
@@ -2070,6 +2130,7 @@ pub fn bridge_log_kchat_source_cryptoshredded(
     chunks_dropped: u32,
     files_dropped: u32,
     posts_dropped: u32,
+    reactions_dropped: u32,
     dek_dropped: bool,
     fs_scrub_succeeded: bool,
     fs_scrub_error: Option<String>,
@@ -2084,11 +2145,56 @@ pub fn bridge_log_kchat_source_cryptoshredded(
             chunks_dropped,
             files_dropped,
             posts_dropped,
+            reactions_dropped,
             dek_dropped,
             fs_scrub_succeeded,
             fs_scrub_error.as_deref(),
             vacuum_succeeded,
             vacuum_error.as_deref(),
+        );
+    }
+    Ok(())
+}
+
+/// Block D Task 2 (Phase 15): record a reaction add/remove
+/// event in the audit log.
+#[napi]
+pub fn bridge_log_kchat_post_reaction_ingested(
+    channel_id: String,
+    post_id: String,
+    emoji_name: String,
+    action: String,
+    outcome: String,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_post_reaction_ingested(
+            &channel_id,
+            &post_id,
+            &emoji_name,
+            &action,
+            &outcome,
+        );
+    }
+    Ok(())
+}
+
+/// Block D Task 2 (Phase 15): record a thread expansion in
+/// the audit log.
+#[napi]
+pub fn bridge_log_kchat_post_thread_fetched(
+    channel_id: String,
+    post_id: String,
+    posts_returned: u32,
+    tamper_dropped: u32,
+) -> napi::Result<()> {
+    let s = state()?;
+    if let Ok(logger) = s.audit_logger.lock() {
+        let _ = logger.log_kchat_post_thread_fetched(
+            &channel_id,
+            &post_id,
+            posts_returned,
+            tamper_dropped,
         );
     }
     Ok(())

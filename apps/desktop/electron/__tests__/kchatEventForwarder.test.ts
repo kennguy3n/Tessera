@@ -124,6 +124,10 @@ interface BridgeMockShape {
   bridgeLogKchatPostIngested: ReturnType<typeof vi.fn>;
   bridgeLogKchatPostEdited: ReturnType<typeof vi.fn>;
   bridgeLogKchatPostDeleted: ReturnType<typeof vi.fn>;
+  // Block D Task 2 (Phase 15) — reaction event dispatch.
+  bridgeIngestKchatPostReaction: ReturnType<typeof vi.fn>;
+  bridgeRemoveKchatPostReaction: ReturnType<typeof vi.fn>;
+  bridgeLogKchatPostReactionIngested: ReturnType<typeof vi.fn>;
 }
 
 let bridgeMock: BridgeMockShape | null = null;
@@ -342,6 +346,7 @@ beforeEach(() => {
       // Block C Task 2 (Phase 12): post + DEK counts. Mirror
       // the chunks/files zero-on-non-revoke contract.
       postsDropped: 0,
+      reactionsDropped: 0,
       dekDropped: false,
       // Fifth-pass Devin Review fix
       // (ANALYSIS_pr-review-job-ef3c7d6c..._0001): substrate's
@@ -366,6 +371,7 @@ beforeEach(() => {
       // zero/false for the file-only happy-path; the dedicated
       // chat-post coverage overrides these.
       postsDropped: 0,
+      reactionsDropped: 0,
       dekDropped: false,
       // Fifth-pass Devin Review fix
       // (ANALYSIS_pr-review-job-ef3c7d6c..._0001): default-true
@@ -398,6 +404,20 @@ beforeEach(() => {
     bridgeLogKchatPostIngested: vi.fn(),
     bridgeLogKchatPostEdited: vi.fn(),
     bridgeLogKchatPostDeleted: vi.fn(),
+    // Block D Task 2 (Phase 15): reaction ingestion / removal.
+    // Default to a non-error outcome so the happy-path tests
+    // expect the audit row to land.
+    bridgeIngestKchatPostReaction: vi.fn(() => ({
+      outcome: "recorded",
+      inserted: true,
+      knownPost: true,
+    })),
+    bridgeRemoveKchatPostReaction: vi.fn(() => ({
+      outcome: "removed",
+      inserted: false,
+      knownPost: true,
+    })),
+    bridgeLogKchatPostReactionIngested: vi.fn(),
   };
 });
 
@@ -1232,6 +1252,7 @@ describe("KchatEventForwarder", () => {
       chunksDropped: 5,
       filesDropped: 2,
       postsDropped: 0,
+      reactionsDropped: 0,
       dekDropped: false,
       vacuumSucceeded: true,
       vacuumError: undefined,
@@ -1286,6 +1307,7 @@ describe("KchatEventForwarder", () => {
       5,
       2,
       0,
+      0,
       false,
       true,
       undefined,
@@ -1313,6 +1335,7 @@ describe("KchatEventForwarder", () => {
       chunksDropped: 0,
       filesDropped: 0,
       postsDropped: 0,
+      reactionsDropped: 0,
       dekDropped: false,
       vacuumSucceeded: true,
       vacuumError: undefined,
@@ -1503,6 +1526,7 @@ describe("KchatEventForwarder", () => {
         1,
         1,
         0,
+        0,
         false,
         true,
         undefined,
@@ -1559,6 +1583,7 @@ describe("KchatEventForwarder", () => {
       chunksDropped: 0,
       filesDropped: 0,
       postsDropped: 0,
+      reactionsDropped: 0,
       dekDropped: false,
       vacuumSucceeded: true,
       vacuumError: undefined,
@@ -1605,6 +1630,7 @@ describe("KchatEventForwarder", () => {
       0,
       0,
       0,
+      0,
       false,
       true,
       undefined,
@@ -1629,6 +1655,7 @@ describe("KchatEventForwarder", () => {
       chunksDropped: 0,
       filesDropped: 0,
       postsDropped: 0,
+      reactionsDropped: 0,
       dekDropped: false,
       vacuumSucceeded: true,
       vacuumError: undefined,
@@ -1807,7 +1834,7 @@ describe("KchatEventForwarder", () => {
       const call =
         bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls[0];
       // Args: (channelId, reason, chunksDropped, filesDropped,
-      //        postsDropped, dekDropped,
+      //        postsDropped, reactionsDropped, dekDropped,
       //        fsScrubSucceeded, fsScrubError,
       //        vacuumSucceeded, vacuumError)
       expect(call[0]).toBe(channelId);
@@ -1815,10 +1842,13 @@ describe("KchatEventForwarder", () => {
       // Block C Task 2 (Phase 12): post + DEK counts default to
       // zero/false on a file-only revoke (no chat-post evidence).
       expect(call[4]).toBe(0);
-      expect(call[5]).toBe(false);
-      // Filesystem scrub failure surfaces at positions [6]+[7].
+      // Block D Task 2 (Phase 15): reactionsDropped follows
+      // postsDropped — also zero on the file-only path.
+      expect(call[5]).toBe(0);
       expect(call[6]).toBe(false);
-      expect(call[7]).toContain("cacheDir");
+      // Filesystem scrub failure surfaces at positions [7]+[8].
+      expect(call[7]).toBe(false);
+      expect(call[8]).toContain("cacheDir");
       // The error message mentions an EACCES / permission-denied
       // shape (Linux maps an unwritable parent to EACCES on
       // unlink). We don't pin the exact code string because
@@ -1829,8 +1859,8 @@ describe("KchatEventForwarder", () => {
       // surface is independent of the filesystem scrub, so the
       // default-true fixture from the top-of-file mock flows
       // through unchanged.
-      expect(call[8]).toBe(true);
-      expect(call[9]).toBe(undefined);
+      expect(call[9]).toBe(true);
+      expect(call[10]).toBe(undefined);
 
       fwd.dispose();
     } finally {
@@ -1865,6 +1895,7 @@ describe("KchatEventForwarder", () => {
       chunksDropped: 9,
       filesDropped: 3,
       postsDropped: 0,
+      reactionsDropped: 0,
       dekDropped: false,
       vacuumSucceeded: false,
       vacuumError: "database or disk is full",
@@ -1914,6 +1945,9 @@ describe("KchatEventForwarder", () => {
       3,
       // Block C Task 2 (Phase 12): file-only happy path → zero
       // posts + DEK never dropped.
+      0,
+      // Block D Task 2 (Phase 15): no reactions ever ingested
+      // on this file-only revoke.
       0,
       false,
       // Filesystem scrub still ran cleanly — it's independent
@@ -2162,6 +2196,137 @@ describe("KchatEventForwarder", () => {
       "no_post",
       0,
     );
+    fwd.dispose();
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Block D Task 2 (Phase 15) — reaction event dispatch
+  // ─────────────────────────────────────────────────────────────
+
+  it("dispatches reaction_added into bridgeIngestKchatPostReaction and audits", async () => {
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "reaction_added",
+        data: {
+          reaction: {
+            post_id: "post-rx-1",
+            user_id: "user-rx-a",
+            emoji_name: "thumbsup",
+            create_at: 1_700_000_000_000,
+          },
+        },
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-A",
+          team_id: "team-1",
+          user_id: "user-rx-a",
+        },
+        seq: 600,
+      }),
+    );
+    await waitForCondition(
+      () => bridgeMock!.bridgeLogKchatPostReactionIngested.mock.calls.length > 0,
+    );
+    expect(bridgeMock!.bridgeIngestKchatPostReaction).toHaveBeenCalledTimes(1);
+    const args = bridgeMock!.bridgeIngestKchatPostReaction.mock.calls[0];
+    expect(args[0]).toMatch(/chan-A/); // cacheDir contains channel id
+    expect(args[1]).toBe("post-rx-1");
+    expect(args[2]).toBe("user-rx-a");
+    expect(args[3]).toBe("thumbsup");
+    expect(args[4]).toBe(1_700_000_000_000);
+    expect(bridgeMock!.bridgeLogKchatPostReactionIngested).toHaveBeenCalledWith(
+      "chan-A",
+      "post-rx-1",
+      "thumbsup",
+      "added",
+      "recorded",
+    );
+    fwd.dispose();
+  });
+
+  it("dispatches reaction_removed into bridgeRemoveKchatPostReaction and audits", async () => {
+    bridgeMock!.bridgeIsKchatChannelLinked.mockReturnValue(true);
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "reaction_removed",
+        data: {
+          reaction: {
+            post_id: "post-rx-2",
+            user_id: "user-rx-b",
+            emoji_name: "heart",
+          },
+        },
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-A",
+          team_id: "team-1",
+          user_id: "user-rx-b",
+        },
+        seq: 601,
+      }),
+    );
+    await waitForCondition(
+      () => bridgeMock!.bridgeLogKchatPostReactionIngested.mock.calls.length > 0,
+    );
+    expect(bridgeMock!.bridgeRemoveKchatPostReaction).toHaveBeenCalledTimes(1);
+    expect(bridgeMock!.bridgeLogKchatPostReactionIngested).toHaveBeenCalledWith(
+      "chan-A",
+      "post-rx-2",
+      "heart",
+      "removed",
+      "removed",
+    );
+    fwd.dispose();
+  });
+
+  it("skips reaction_added for unlinked channels without calling bridge", async () => {
+    // Default bridgeIsKchatChannelLinked → false.
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [new FakeWindow()] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "reaction_added",
+        data: {
+          reaction: {
+            post_id: "post-rx-skip",
+            user_id: "u",
+            emoji_name: "rocket",
+            create_at: 0,
+          },
+        },
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-unlinked",
+          team_id: "team-1",
+          user_id: "u",
+        },
+        seq: 602,
+      }),
+    );
+    // Let microtasks settle.
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(bridgeMock!.bridgeIngestKchatPostReaction).not.toHaveBeenCalled();
+    expect(bridgeMock!.bridgeLogKchatPostReactionIngested).not.toHaveBeenCalled();
     fwd.dispose();
   });
 

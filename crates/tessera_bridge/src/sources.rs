@@ -91,6 +91,47 @@ pub struct KchatPostSearchHitInfo {
     pub sender_user_id: String,
     pub created_at_ms: i64,
     pub edited_at_ms: i64,
+    pub reaction_count: u32,
+}
+
+/// Block D Task 2 (Phase 15): single entry in a thread expansion
+/// response. Mirrors
+/// [`tessera_sources::manager::KchatPostThreadEntry`].
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct KchatPostThreadEntryInfo {
+    pub post_id: String,
+    pub channel_id: String,
+    pub root_id: Option<String>,
+    pub sender_user_id: String,
+    pub created_at_ms: i64,
+    pub edited_at_ms: i64,
+    pub body: String,
+    pub hash: String,
+    pub reaction_count: u32,
+}
+
+/// Block D Task 2 (Phase 15): JS-facing outcome of a
+/// `bridge_fetch_kchat_post_thread` call. The `outcome` field is
+/// one of `"fetched"` | `"unknown_post"` | `"unlinked"` |
+/// `"access_revoked"`.
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct KchatPostThreadResultInfo {
+    pub outcome: String,
+    pub posts: Vec<KchatPostThreadEntryInfo>,
+    pub posts_dropped: u32,
+}
+
+/// Block D Task 2 (Phase 15): JS-facing outcome of a
+/// `bridge_ingest_kchat_post_reaction` /
+/// `bridge_remove_kchat_post_reaction` call.
+#[derive(Debug, Serialize, Deserialize)]
+#[napi(object)]
+pub struct KchatPostReactionOutcomeInfo {
+    pub outcome: String,
+    pub inserted: bool,
+    pub known_post: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -160,6 +201,7 @@ impl From<&KchatPostSearchHit> for KchatPostSearchHitInfo {
             sender_user_id: h.sender_user_id.clone(),
             created_at_ms: h.created_at_ms,
             edited_at_ms: h.edited_at_ms,
+            reaction_count: h.reaction_count,
         }
     }
 }
@@ -321,6 +363,12 @@ pub struct KchatAclRefreshOutcomeInfo {
     /// scrubbed alongside the file/chunk rows. Zero on all
     /// non-revoke outcomes.
     pub posts_dropped: u32,
+    /// Block D Task 2 (Phase 15): count of `kchat_post_reactions`
+    /// rows scrubbed alongside the file/chunk/post rows. Zero on
+    /// all non-revoke outcomes. Surfaced to the audit row so an
+    /// operator can confirm reaction metadata (per-user
+    /// emoji-attribution) was scrubbed alongside the post bodies.
+    pub reactions_dropped: u32,
     /// Block C Task 2 (Phase 12): `true` when the per-source
     /// wrapped-DEK row existed and was deleted as part of the
     /// shred. Paired with the in-memory `forget_dek` call the
@@ -364,6 +412,9 @@ pub struct KchatRevokeOutcomeInfo {
     /// Block C Task 2 (Phase 12): see
     /// [`KchatAclRefreshOutcomeInfo::posts_dropped`].
     pub posts_dropped: u32,
+    /// Block D Task 2 (Phase 15): see
+    /// [`KchatAclRefreshOutcomeInfo::reactions_dropped`].
+    pub reactions_dropped: u32,
     /// Block C Task 2 (Phase 12): see
     /// [`KchatAclRefreshOutcomeInfo::dek_dropped`].
     pub dek_dropped: bool,
@@ -401,20 +452,30 @@ pub fn refresh_kchat_acl(
         chunks_dropped,
         files_dropped,
         posts_dropped,
+        reactions_dropped,
         dek_dropped,
         vacuum_succeeded,
         vacuum_error,
     ) = match outcome {
-        KchatAclRefreshOutcome::Granted => {
-            ("granted", true, 0_u32, 0_u32, 0_u32, false, true, None)
-        }
-        KchatAclRefreshOutcome::Regranted => {
-            ("regranted", true, 0_u32, 0_u32, 0_u32, false, true, None)
-        }
+        KchatAclRefreshOutcome::Granted => (
+            "granted", true, 0_u32, 0_u32, 0_u32, 0_u32, false, true, None,
+        ),
+        KchatAclRefreshOutcome::Regranted => (
+            "regranted",
+            true,
+            0_u32,
+            0_u32,
+            0_u32,
+            0_u32,
+            false,
+            true,
+            None,
+        ),
         KchatAclRefreshOutcome::Revoked {
             chunks_dropped,
             files_dropped,
             posts_dropped,
+            reactions_dropped,
             dek_dropped,
             vacuum_succeeded,
             vacuum_error,
@@ -424,16 +485,18 @@ pub fn refresh_kchat_acl(
             chunks_dropped,
             files_dropped,
             posts_dropped,
+            reactions_dropped,
             dek_dropped,
             vacuum_succeeded,
             vacuum_error,
         ),
-        KchatAclRefreshOutcome::Unlinked => {
-            ("unlinked", false, 0_u32, 0_u32, 0_u32, false, true, None)
-        }
+        KchatAclRefreshOutcome::Unlinked => (
+            "unlinked", false, 0_u32, 0_u32, 0_u32, 0_u32, false, true, None,
+        ),
         KchatAclRefreshOutcome::NoPrincipal => (
             "no_principal",
             false,
+            0_u32,
             0_u32,
             0_u32,
             0_u32,
@@ -449,6 +512,7 @@ pub fn refresh_kchat_acl(
         chunks_dropped,
         files_dropped,
         posts_dropped,
+        reactions_dropped,
         dek_dropped,
         vacuum_succeeded,
         vacuum_error,
@@ -471,6 +535,7 @@ pub fn revoke_kchat_source(
         chunks_dropped,
         files_dropped,
         posts_dropped,
+        reactions_dropped,
         dek_dropped,
         vacuum_succeeded,
         vacuum_error,
@@ -479,6 +544,7 @@ pub fn revoke_kchat_source(
             chunks_dropped,
             files_dropped,
             posts_dropped,
+            reactions_dropped,
             dek_dropped,
             vacuum_succeeded,
             vacuum_error,
@@ -487,6 +553,7 @@ pub fn revoke_kchat_source(
             chunks_dropped,
             files_dropped,
             posts_dropped,
+            reactions_dropped,
             dek_dropped,
             vacuum_succeeded,
             vacuum_error,
@@ -495,6 +562,7 @@ pub fn revoke_kchat_source(
             chunks_dropped,
             files_dropped,
             posts_dropped,
+            reactions_dropped,
             dek_dropped,
             vacuum_succeeded,
             vacuum_error,
@@ -503,17 +571,19 @@ pub fn revoke_kchat_source(
             chunks_dropped,
             files_dropped,
             posts_dropped,
+            reactions_dropped,
             dek_dropped,
             vacuum_succeeded,
             vacuum_error,
         ),
-        KchatRevokeOutcome::Unlinked => ("unlinked", 0, 0, 0, false, true, None),
+        KchatRevokeOutcome::Unlinked => ("unlinked", 0, 0, 0, 0, false, true, None),
     };
     Ok(KchatRevokeOutcomeInfo {
         outcome: outcome_str.to_string(),
         chunks_dropped,
         files_dropped,
         posts_dropped,
+        reactions_dropped,
         dek_dropped,
         vacuum_succeeded,
         vacuum_error,
@@ -580,6 +650,138 @@ pub fn search_kchat_posts(
         .search_kchat_posts(query, limit)
         .map_err(BridgeError::Core)?;
     Ok(results.iter().map(KchatPostSearchHitInfo::from).collect())
+}
+
+/// Block D Task 2 (Phase 15): bridge facade for
+/// [`SourceManager::ingest_kchat_post_reaction`].
+pub fn ingest_kchat_post_reaction(
+    manager: &SourceManager,
+    cache_dir: &str,
+    post_id: &str,
+    user_id: &str,
+    emoji_name: &str,
+    created_at_ms: i64,
+) -> BridgeResult<KchatPostReactionOutcomeInfo> {
+    use tessera_sources::manager::KchatPostReactionOutcome;
+    let outcome = manager
+        .ingest_kchat_post_reaction(cache_dir, post_id, user_id, emoji_name, created_at_ms)
+        .map_err(BridgeError::Core)?;
+    Ok(match outcome {
+        KchatPostReactionOutcome::Recorded {
+            inserted,
+            known_post,
+            ..
+        } => KchatPostReactionOutcomeInfo {
+            outcome: "recorded".to_string(),
+            inserted,
+            known_post,
+        },
+        KchatPostReactionOutcome::Removed { .. } => KchatPostReactionOutcomeInfo {
+            outcome: "removed".to_string(),
+            inserted: false,
+            known_post: false,
+        },
+        KchatPostReactionOutcome::Unlinked => KchatPostReactionOutcomeInfo {
+            outcome: "unlinked".to_string(),
+            inserted: false,
+            known_post: false,
+        },
+        KchatPostReactionOutcome::AccessRevoked => KchatPostReactionOutcomeInfo {
+            outcome: "access_revoked".to_string(),
+            inserted: false,
+            known_post: false,
+        },
+    })
+}
+
+/// Block D Task 2 (Phase 15): bridge facade for
+/// [`SourceManager::remove_kchat_post_reaction`].
+pub fn remove_kchat_post_reaction(
+    manager: &SourceManager,
+    cache_dir: &str,
+    post_id: &str,
+    user_id: &str,
+    emoji_name: &str,
+) -> BridgeResult<KchatPostReactionOutcomeInfo> {
+    use tessera_sources::manager::KchatPostReactionOutcome;
+    let outcome = manager
+        .remove_kchat_post_reaction(cache_dir, post_id, user_id, emoji_name)
+        .map_err(BridgeError::Core)?;
+    Ok(match outcome {
+        KchatPostReactionOutcome::Recorded { .. } => KchatPostReactionOutcomeInfo {
+            outcome: "recorded".to_string(),
+            inserted: false,
+            known_post: false,
+        },
+        KchatPostReactionOutcome::Removed {
+            removed,
+            known_post,
+            ..
+        } => KchatPostReactionOutcomeInfo {
+            outcome: "removed".to_string(),
+            inserted: removed,
+            known_post,
+        },
+        KchatPostReactionOutcome::Unlinked => KchatPostReactionOutcomeInfo {
+            outcome: "unlinked".to_string(),
+            inserted: false,
+            known_post: false,
+        },
+        KchatPostReactionOutcome::AccessRevoked => KchatPostReactionOutcomeInfo {
+            outcome: "access_revoked".to_string(),
+            inserted: false,
+            known_post: false,
+        },
+    })
+}
+
+/// Block D Task 2 (Phase 15): bridge facade for
+/// [`SourceManager::fetch_kchat_post_thread`].
+pub fn fetch_kchat_post_thread(
+    manager: &SourceManager,
+    cache_dir: &str,
+    post_id: &str,
+) -> BridgeResult<KchatPostThreadResultInfo> {
+    use tessera_sources::manager::KchatPostThreadFetchOutcome;
+    let outcome = manager
+        .fetch_kchat_post_thread(cache_dir, post_id)
+        .map_err(BridgeError::Core)?;
+    Ok(match outcome {
+        KchatPostThreadFetchOutcome::Fetched(result) => KchatPostThreadResultInfo {
+            outcome: "fetched".to_string(),
+            posts: result
+                .posts
+                .into_iter()
+                .map(|e| KchatPostThreadEntryInfo {
+                    post_id: e.post_id,
+                    channel_id: e.channel_id,
+                    root_id: e.root_id,
+                    sender_user_id: e.sender_user_id,
+                    created_at_ms: e.created_at_ms,
+                    edited_at_ms: e.edited_at_ms,
+                    body: e.body,
+                    hash: e.hash,
+                    reaction_count: e.reaction_count,
+                })
+                .collect(),
+            posts_dropped: result.posts_dropped,
+        },
+        KchatPostThreadFetchOutcome::UnknownPost => KchatPostThreadResultInfo {
+            outcome: "unknown_post".to_string(),
+            posts: Vec::new(),
+            posts_dropped: 0,
+        },
+        KchatPostThreadFetchOutcome::Unlinked => KchatPostThreadResultInfo {
+            outcome: "unlinked".to_string(),
+            posts: Vec::new(),
+            posts_dropped: 0,
+        },
+        KchatPostThreadFetchOutcome::AccessRevoked => KchatPostThreadResultInfo {
+            outcome: "access_revoked".to_string(),
+            posts: Vec::new(),
+            posts_dropped: 0,
+        },
+    })
 }
 
 pub fn get_source_detail(

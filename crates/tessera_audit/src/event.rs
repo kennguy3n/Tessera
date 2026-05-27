@@ -189,6 +189,21 @@ pub enum AuditEventType {
     ///   to-end latency in milliseconds. Long-tail spikes
     ///   correlate with DEK unwrap on cold sources.
     KchatPostSearchExecuted,
+    /// Block D Task 2 (Phase 15): a reaction was recorded or
+    /// removed on a KChat post. Details carry `channel_id`,
+    /// `post_id`, `emoji_name`, the `action` (`added` /
+    /// `removed`), and the substrate outcome (`recorded` /
+    /// `removed` / `unlinked` / `access_revoked`). User ids
+    /// are NOT logged to keep the audit trail from becoming a
+    /// per-user activity log.
+    KchatPostReactionIngested,
+    /// Block D Task 2 (Phase 15): a thread expansion was
+    /// performed on a KChat post. Details carry `channel_id`,
+    /// `post_id`, the `posts_returned` count, and the
+    /// `tamper_dropped` count (AEAD failures, zero in the happy
+    /// path). The thread body is NOT logged — the audit row
+    /// only records the structural metadata.
+    KchatPostThreadFetched,
 }
 
 impl AuditEventType {
@@ -236,6 +251,8 @@ impl AuditEventType {
             Self::KchatBackfillCompleted => "kchat_backfill_completed",
             Self::KchatBackfillAborted => "kchat_backfill_aborted",
             Self::KchatPostSearchExecuted => "kchat_post_search_executed",
+            Self::KchatPostReactionIngested => "kchat_post_reaction_ingested",
+            Self::KchatPostThreadFetched => "kchat_post_thread_fetched",
         }
     }
 }
@@ -300,6 +317,8 @@ mod tests {
             AuditEventType::KchatBackfillCompleted,
             AuditEventType::KchatBackfillAborted,
             AuditEventType::KchatPostSearchExecuted,
+            AuditEventType::KchatPostReactionIngested,
+            AuditEventType::KchatPostThreadFetched,
         ];
         for ev in all.iter() {
             let serde_form = serde_json::to_string(ev).unwrap();
