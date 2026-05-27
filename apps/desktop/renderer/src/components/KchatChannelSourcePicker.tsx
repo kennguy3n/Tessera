@@ -426,6 +426,15 @@ function fileTypeIcon(f: {
     return "🎵";
   }
   if (mime === "application/pdf" || ext === "pdf") return "📕";
+  // Note: `csv` and `tsv` are intentionally classified as the
+  // text family rather than the spreadsheet family. They are
+  // plain-text formats by definition and can be opened in any
+  // text editor; tabbing them as "📊 spreadsheet" would surprise
+  // users who treat them as data dumps. The classification is
+  // load-bearing: the spreadsheet regex below must NOT include
+  // `csv`/`tsv` (Devin Review pass 1 on f7c8dd1 ANALYSIS_0001
+  // flagged the previous duplicate `csv` entry as dead code; the
+  // duplicate is now removed).
   if (mime.startsWith("text/") || /^(md|txt|log|json|yaml|yml|xml|csv|tsv|html|css|js|ts|tsx|jsx|rs|py|go|rb|java|c|h|cpp|hpp|sh|toml)$/.test(ext)) {
     return "📄";
   }
@@ -433,7 +442,7 @@ function fileTypeIcon(f: {
     return "🗜️";
   }
   if (mime.includes("word") || /^(doc|docx|odt|rtf)$/.test(ext)) return "📝";
-  if (mime.includes("sheet") || mime.includes("excel") || /^(xls|xlsx|ods|csv)$/.test(ext)) return "📊";
+  if (mime.includes("sheet") || mime.includes("excel") || /^(xls|xlsx|ods)$/.test(ext)) return "📊";
   if (mime.includes("presentation") || mime.includes("powerpoint") || /^(ppt|pptx|odp|key)$/.test(ext)) return "💽";
   return "📎";
 }
