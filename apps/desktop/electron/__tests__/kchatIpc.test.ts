@@ -311,23 +311,80 @@ beforeEach(() => {
 });
 
 describe("kchat IPC registration", () => {
-  it("registers every kchat:* channel exactly once", () => {
+  // Devin Review pass 2 on f686e5c (ANALYSIS_0004): the master list
+  // is the canonical registration contract — any new `kchat:*` /
+  // `sources:*` channel added to `registerKchatHandlers` must be
+  // listed here. The dedicated per-channel tests further down still
+  // exercise behaviour, but the master list is what catches a future
+  // refactor that accidentally drops a registration entirely.
+  //
+  // The Phase 13 Theme 1 (Task 7) extension-bridge channels
+  // (`kchat:extensionStatus`, `kchat:extensionConnect`,
+  // `kchat:extensionDisconnect`) and the Phase 13 Theme 2 (Task 10)
+  // backfill-progress channel (`kchat:backfillProgress`) were
+  // missing from the original list — added here so the master-list
+  // contract matches reality.
+  const EXPECTED_KCHAT_CHANNELS: readonly string[] = [
+    "kchat:isAvailable",
+    "kchat:status",
+    "kchat:connect",
+    "kchat:disconnect",
+    "kchat:extensionStatus",
+    "kchat:extensionConnect",
+    "kchat:extensionDisconnect",
+    "kchat:listTeams",
+    "kchat:listChannels",
+    "kchat:listMembers",
+    "kchat:listChannelFiles",
+    "kchat:shareArtifact",
+    "sources:addKchatChannel",
+    "sources:backfillKchatChannel",
+    "kchat:backfillProgress",
+    "kchat:searchPosts",
+  ];
+
+  it("registers every kchat:* / sources:* channel from the master list", () => {
     const channels = handleMock.mock.calls.map((c) => c[0] as string);
-    for (const want of [
-      "kchat:isAvailable",
-      "kchat:status",
-      "kchat:connect",
-      "kchat:disconnect",
-      "kchat:listTeams",
-      "kchat:listChannels",
-      "kchat:listMembers",
-      "kchat:listChannelFiles",
-      "kchat:shareArtifact",
-      "sources:addKchatChannel",
-      "sources:backfillKchatChannel",
-      "kchat:searchPosts",
-    ]) {
+    for (const want of EXPECTED_KCHAT_CHANNELS) {
       expect(channels).toContain(want);
+    }
+  });
+
+  it("does not register any unexpected `kchat:*` / `sources:addKchatChannel` / `sources:backfillKchatChannel` channels", () => {
+    // Counter-assertion that makes the master list authoritative in
+    // BOTH directions: adding a channel to `registerKchatHandlers`
+    // without listing it in `EXPECTED_KCHAT_CHANNELS` also fails the
+    // suite, so the contract can't silently drift.
+    const channels = handleMock.mock.calls.map((c) => c[0] as string);
+    const kchatChannels = channels.filter(
+      (c) =>
+        c.startsWith("kchat:") ||
+        c === "sources:addKchatChannel" ||
+        c === "sources:backfillKchatChannel",
+    );
+    const expectedSet = new Set(EXPECTED_KCHAT_CHANNELS);
+    const unexpected = kchatChannels.filter((c) => !expectedSet.has(c));
+    expect(unexpected).toEqual([]);
+  });
+
+  it("registers each `kchat:*` / `sources:*` channel exactly once (no double-registration)", () => {
+    // Defence-in-depth against a refactor that calls
+    // `registerKchatHandlers` twice (e.g. hot-reload regression).
+    // `idempotentHandle` is supposed to guard this at runtime, but
+    // the test makes the invariant a contract.
+    const channels = handleMock.mock.calls.map((c) => c[0] as string);
+    const counts = new Map<string, number>();
+    for (const c of channels) {
+      if (
+        c.startsWith("kchat:") ||
+        c === "sources:addKchatChannel" ||
+        c === "sources:backfillKchatChannel"
+      ) {
+        counts.set(c, (counts.get(c) ?? 0) + 1);
+      }
+    }
+    for (const [channel, count] of counts) {
+      expect(count, `${channel} registered ${count} times`).toBe(1);
     }
   });
 });
