@@ -3,19 +3,38 @@
  *
  * Encapsulates token persistence (OS keychain / encrypted file
  * fallback through `tokenVault.ts`), server-URL configuration, and
- * `KchatClient` lifecycle.
+ * `KchatClient` lifecycle. Phase 13 Task 4: now dual-mode —
+ * supports BOTH a raw personal-access-token (PAT) connection AND
+ * an extension-delegated connection bridged through a locally-
+ * running `uney-chat-desktop` instance.
  *
- * **Security contract**:
- *   - The personal access token is stored encrypted in
- *     `tokenVault` keyed as the synthetic provider `"kchat"`.
- *   - The plaintext token NEVER returns to the renderer over IPC;
- *     IPC handlers receive only sanitized state through
- *     {@link KchatAuthService.getState} (which excludes the token).
- *   - Token mutation requires explicit calls (`connect`, `disconnect`)
- *     — there is no "expose token" API.
+ * **Auth modes**:
+ *   - `pat` (existing): operator pastes a PAT in the Settings
+ *     card. `connect(token, serverUrl)` verifies it against
+ *     `/users/me` and persists it under provider `"kchat"` in
+ *     `tokenVault`.
+ *   - `extension` (Phase 13): Tessera asks the desktop app to
+ *     mint a scoped delegation token via the extension bridge
+ *     (see `kchatExtensionBridge.ts` /
+ *     `kchatExtensionSession.ts`). The delegation lives under
+ *     provider `"kchat-extension"` so a `disconnect()` in one
+ *     mode leaves the other mode's vault entry intact, and the
+ *     `kchat:status` IPC always reports the active mode via
+ *     `authMode: "pat" | "extension"`.
  *
- * **Single-instance**: callers (the IPC layer) construct one service
- * for the app lifetime; it owns the underlying `KchatClient`.
+ * **Single-instance**: callers (the IPC layer) construct one
+ * service for the app lifetime; it owns the underlying
+ * `KchatClient` plus the optional extension session.
+ *
+ * **Security contract** (unchanged from PAT-only era):
+ *   - Tokens (PAT or delegated) NEVER cross the IPC boundary out
+ *     of the main process; IPC handlers receive only sanitised
+ *     state through {@link KchatAuthService.getState}.
+ *   - The delegation token's master credentials remain in the
+ *     desktop app; Tessera holds only the derived token.
+ *   - Concurrent attempts to connect in both modes are rejected
+ *     — `connect()` and `connectViaExtension()` clear the other
+ *     mode's state on entry so only one is active at a time.
  */
 
 import {
@@ -27,6 +46,20 @@ import {
 } from "../tokenVault";
 import { KchatClient, DEFAULT_KCHAT_SERVER } from "./kchatClient";
 import { KchatConnectionState, KchatUser } from "./kchatTypes";
+import {
+  ExtensionConnection,
+  ExtensionProbeResult,
+  probeExtension,
+} from "./kchatExtensionBridge";
+import {
+  KchatExtensionSession,
+  KCHAT_EXTENSION_VAULT_PROVIDER,
+  ExtensionSessionInfo,
+  RefreshFailureReason,
+} from "./kchatExtensionSession";
+import {
+  attachExtensionEvents,
+} from "./kchatExtensionEvents";
 
 /** Synthetic provider key under which the KChat PAT is stored. */
 export const KCHAT_VAULT_PROVIDER = "kchat";
@@ -47,16 +80,46 @@ interface KchatStoredAuth {
   verifiedAt: string;
 }
 
+/** Auth backend currently powering the connection. */
+export type KchatAuthMode = "none" | "pat" | "extension";
+
+/**
+ * Factory used to build an `ExtensionConnection`. Injected so
+ * tests can stub the transport without monkey-patching the
+ * underlying `net.createConnection`.
+ */
+export type ExtensionConnectionFactory = () => ExtensionConnection;
+
 /**
  * Container holding the `KchatClient` and persisting auth via the
- * shared `tokenVault`. Exposes a small surface (connect, disconnect,
- * state) that the IPC layer mounts directly.
+ * shared `tokenVault`. Exposes a small surface (connect,
+ * disconnect, state) that the IPC layer mounts directly.
  */
 export class KchatAuthService {
   private readonly client: KchatClient;
+  private readonly extensionFactory: ExtensionConnectionFactory;
+  private readonly probeFn: (
+    timeoutMs?: number,
+  ) => Promise<ExtensionProbeResult>;
+  private authMode: KchatAuthMode = "none";
+  private extensionConnection: ExtensionConnection | null = null;
+  private extensionSession: KchatExtensionSession | null = null;
+  private extensionEventTeardown: (() => void) | null = null;
+  private extensionRefreshFailureTeardown: (() => void) | null = null;
+  private extensionDisconnectTeardown: (() => void) | null = null;
+  private lastProbeResult: ExtensionProbeResult | null = null;
 
-  constructor(client: KchatClient = new KchatClient()) {
+  constructor(
+    client: KchatClient = new KchatClient(),
+    opts: {
+      extensionFactory?: ExtensionConnectionFactory;
+      probeFn?: (timeoutMs?: number) => Promise<ExtensionProbeResult>;
+    } = {},
+  ) {
     this.client = client;
+    this.extensionFactory =
+      opts.extensionFactory ?? (() => new ExtensionConnection());
+    this.probeFn = opts.probeFn ?? ((timeoutMs) => probeExtension({ timeoutMs }));
   }
 
   /** Underlying client (used by IPC handlers that need REST methods). */
@@ -64,14 +127,45 @@ export class KchatAuthService {
     return this.client;
   }
 
-  /** Returns sanitized connection state (no token). */
-  getState(): KchatConnectionState {
-    return this.client.getState();
+  /** Currently-active auth backend (`"none"` while disconnected). */
+  getAuthMode(): KchatAuthMode {
+    return this.authMode;
   }
 
-  /** Subscribe to connection-state transitions. */
+  /** Cached extension-availability state (last probe result). */
+  isExtensionAvailable(): boolean {
+    return this.lastProbeResult?.available === true;
+  }
+
+  /**
+   * Returns sanitised connection state (no token). Phase 13 Task 4:
+   * decorated with `authMode` and `extensionAvailable` so the
+   * `kchat:status` IPC handler can hand the state straight to the
+   * renderer.
+   */
+  getState(): KchatConnectionState {
+    const base = this.client.getState();
+    return {
+      ...base,
+      authMode: this.authMode,
+      extensionAvailable: this.isExtensionAvailable(),
+    };
+  }
+
+  /**
+   * Subscribe to connection-state transitions. Wraps the
+   * underlying client listener so subscribers see the same
+   * `authMode` + `extensionAvailable` decoration that
+   * `getState()` returns.
+   */
   onStatusChange(listener: (state: KchatConnectionState) => void): () => void {
-    return this.client.onStatusChange(listener);
+    return this.client.onStatusChange((state) => {
+      listener({
+        ...state,
+        authMode: this.authMode,
+        extensionAvailable: this.isExtensionAvailable(),
+      });
+    });
   }
 
   /** Returns true if a KChat PAT has been persisted in the vault. */
@@ -80,32 +174,56 @@ export class KchatAuthService {
   }
 
   /**
-   * Restore the persisted connection on app start. Decrypts the
-   * stored token, hands it to the client, and re-verifies against
-   * the configured server. Returns the verified user, or `null` if
-   * no token is stored.
-   *
-   * Verification failures (revoked token, server unreachable) leave
-   * the connection state as `error` and propagate the underlying
-   * error to the caller; the stored token is NOT deleted — the user
-   * may simply be offline and will reconnect later.
+   * Returns true if an extension-delegated token is persisted in
+   * the vault. Phase 13 Task 4.
+   */
+  hasStoredExtensionToken(): boolean {
+    return hasTokens(KCHAT_EXTENSION_VAULT_PROVIDER);
+  }
+
+  /**
+   * Probe the extension surface and update the cached
+   * availability state. Returns the probe result so the IPC
+   * layer can surface it to the renderer (`kchat:extensionStatus`).
+   */
+  async probeExtension(timeoutMs?: number): Promise<ExtensionProbeResult> {
+    const result = await this.probeFn(timeoutMs);
+    this.lastProbeResult = result;
+    return result;
+  }
+
+  /**
+   * Restore the persisted connection on app start. Phase 13 Task 4:
+   * prefers an extension-delegated entry when both are present —
+   * the desktop app is the more recent UX, and a stale PAT entry
+   * left over from a previous session shouldn't shadow the
+   * delegation. Returns the verified user, or `null` if no
+   * connection is restorable.
    */
   async restoreFromVault(): Promise<KchatUser | null> {
+    // Try extension restore first — it's the preferred mode when
+    // both vault entries exist.
+    if (hasTokens(KCHAT_EXTENSION_VAULT_PROVIDER)) {
+      try {
+        const user = await this.restoreExtensionFromVault();
+        if (user) return user;
+      } catch {
+        // Extension restore failed (desktop app no longer running,
+        // delegation expired, network blip). Fall through to the
+        // PAT path so the user is not stranded.
+      }
+    }
+    return await this.restorePatFromVault();
+  }
+
+  private async restorePatFromVault(): Promise<KchatUser | null> {
     const stored = readStoredAuth();
     if (!stored) return null;
-    // `restoreFromVault` runs at startup, but it may also be
-    // called manually after a long offline gap. In either case the
-    // client may carry an active WS pinned to a previous server
-    // URL or a previous token. `setServerUrl` and `setToken` both
-    // now tear down the stale WS internally when the value changes
-    // (see their docstrings), so we get a clean state here without
-    // having to call `disconnectWebSocket()` explicitly.
     this.client.setServerUrl(stored.serverUrl);
     this.client.setToken(stored.token);
     const user = await this.client.verifyConnection();
     this.client.startHealthCheck();
-    // Re-persist with refreshed verifiedAt so a `restore` after a
-    // long offline gap accurately reflects "last known good".
+    this.authMode = "pat";
     writeStoredAuth({
       token: stored.token,
       serverUrl: stored.serverUrl,
@@ -116,28 +234,82 @@ export class KchatAuthService {
   }
 
   /**
+   * Restore an extension-delegated connection on app start. Opens
+   * the extension socket, re-attaches the event bridge, runs a
+   * verifyConnection() to confirm the delegation token is still
+   * accepted server-side, and arms the refresh timer. Returns
+   * `null` if the stored delegation cannot be restored (e.g.
+   * expired, desktop app not running, vault entry corrupt).
+   */
+  private async restoreExtensionFromVault(): Promise<KchatUser | null> {
+    const conn = this.extensionFactory();
+    let opened = false;
+    try {
+      await conn.open();
+      opened = true;
+    } catch {
+      try {
+        conn.close();
+      } catch {
+        // intentional — close is best-effort
+      }
+      return null;
+    }
+    const session = new KchatExtensionSession(conn);
+    const restored = session.restoreFromVault();
+    if (!restored) {
+      if (opened) {
+        try {
+          conn.close();
+        } catch {
+          // intentional
+        }
+      }
+      return null;
+    }
+    this.client.setServerUrl(restored.serverUrl);
+    this.client.setToken(restored.token);
+    let user: KchatUser;
+    try {
+      user = await this.client.verifyConnection();
+    } catch (err) {
+      // Delegation no longer accepted server-side. Clean up the
+      // half-open socket + in-memory client; leave the vault
+      // entry in place so the user can manually re-handshake from
+      // Settings rather than silently losing the saved session.
+      try {
+        conn.close();
+      } catch {
+        // intentional
+      }
+      this.client.setToken(null);
+      throw err;
+    }
+    this.attachExtensionConnection(conn, session);
+    this.client.startHealthCheck();
+    this.authMode = "extension";
+    return user;
+  }
+
+  /**
    * Verify `token` against `serverUrl` and, ONLY on success, persist
-   * it to the vault and start the periodic health check.
+   * it to the vault and start the periodic health check. PAT mode.
+   *
+   * Phase 13 Task 4: if an extension-delegated connection is
+   * currently active, it is torn down BEFORE the PAT attempt so
+   * the two modes never overlap (the IPC handler also gates this,
+   * but we keep the invariant inside the service for tests + any
+   * future caller).
    *
    * Security ordering: the token is verified BEFORE it touches the
    * vault. On any verification failure (network error, 401, bad
    * server URL, etc.) the in-memory token is cleared and the error
-   * propagates with no vault write — so a known-bad token can never
-   * cause `restore()` to loop on an unauthenticated server. The
-   * caller is responsible for prompting the user to retry; a
-   * transient network blip costs a re-paste of the PAT, which is
-   * the right trade-off because PATs are revocable and the failure
-   * is loud.
+   * propagates with no vault write.
    */
   async connect(token: string, serverUrl: string): Promise<KchatUser> {
-    // Normalise at the boundary: trim once here so every downstream
-    // path (in-memory `client.setToken`, vault persistence, future
-    // callers that bypass the renderer) sees the canonical token
-    // shape. Without this, a caller that pastes a PAT with stray
-    // whitespace would land that whitespace in the keychain and the
-    // Authorization header — KChat tolerates the leading space in
-    // some builds but not all, producing intermittent 401s that are
-    // hard to diagnose.
+    if (this.authMode === "extension") {
+      this.teardownExtension();
+    }
     const trimmedToken =
       typeof token === "string" ? token.trim() : "";
     if (trimmedToken.length === 0) {
@@ -145,25 +317,6 @@ export class KchatAuthService {
     }
     const url = (serverUrl || DEFAULT_KCHAT_SERVER).trim();
 
-    // `setServerUrl` and `setToken` both now tear down any active
-    // WebSocket internally when the value actually changes. That
-    // means a re-`connect()` to a different KChat instance (e.g.
-    // user switches from self-hosted to kchat.com in Settings)
-    // cannot leave a stale WebSocket pointing at the old server
-    // while REST calls move to the new one. The previous
-    // implementation relied on the caller invoking `disconnect()`
-    // first; the WS-teardown invariants make that implicit
-    // requirement explicit at the client layer.
-    //
-    // We also explicitly stop the health check up-front, before
-    // the URL/token mutations. This handles the corner case where
-    // a user re-connects with the SAME url+token after a previous
-    // connection degraded to `error` state: `setServerUrl(sameUrl)`
-    // is a no-op (and does not stop the timer); `setToken(sameToken)`
-    // is also a no-op for the same reason; and the previous health
-    // check timer would still be running. Stopping it here ensures
-    // exactly one timer ever exists — the one armed after the
-    // verification below succeeds.
     this.client.stopHealthCheck();
     this.client.setServerUrl(url);
     this.client.setToken(trimmedToken);
@@ -172,30 +325,6 @@ export class KchatAuthService {
     try {
       user = await this.client.verifyConnection();
     } catch (err) {
-      // Defence-in-depth ordering (sixth-pass Devin Review
-      // ANALYSIS_0001): scrub the error message IN PLACE before
-      // clearing the token in the client. `KchatClient.scrubMessage`
-      // performs two redactions — (a) a literal-substring replace of
-      // `this.token` with `[REDACTED]`, and (b) a generic
-      // `Bearer \s+...` regex. Branch (a) is strictly stronger
-      // because it catches the live PAT regardless of context
-      // (URL-encoded, base64-fragmented, embedded inside a logged
-      // header buffer, …), but it depends on `this.token` still
-      // being non-null. If we cleared the token first and let the
-      // error bubble through to the IPC layer's `toIpcError(err)`,
-      // by the time the scrub ran branch (a) would be a no-op and
-      // only the weaker generic regex would catch leakage — for any
-      // future error path that embeds the PAT in a non-Bearer
-      // shape (a URL query param, a JSON value, etc.) the redaction
-      // would silently miss. By scrubbing here, with the live
-      // token, the IPC-layer re-scrub (which still runs as
-      // belt-and-braces) operates on an already-clean string.
-      //
-      // Today's `KchatRequestError` messages are built from
-      // response metadata that doesn't contain the PAT, so this is
-      // forward-looking insurance against a future code path that
-      // does embed it (e.g. a server that echoes the auth header
-      // in a 5xx body, a fetch error that includes a logged URL).
       if (err instanceof Error) {
         err.message = this.client.scrubMessage(err.message);
       }
@@ -210,32 +339,209 @@ export class KchatAuthService {
       verifiedAt: new Date().toISOString(),
     });
     this.client.startHealthCheck();
+    this.authMode = "pat";
     return user;
   }
 
   /**
-   * Disconnect the KChat session. Stops the WebSocket + health
-   * check, removes the token from the vault, and clears in-memory
-   * state. Returns the KChat user id that was disconnected (for
-   * audit logging).
+   * Phase 13 Task 4 — connect through the `uney-chat-desktop`
+   * extension bridge. Opens the extension socket, runs the
+   * handshake, configures `KchatClient` with the delegated token
+   * + server URL, verifies the delegation against `/users/me`,
+   * and attaches the event bridge.
+   *
+   * If a PAT connection is currently active, it is torn down
+   * first (mirroring `connect()`'s teardown of an active
+   * extension session) so only one mode is ever live at a time.
+   */
+  async connectViaExtension(
+    opts: {
+      tesseraVersion?: string;
+      scopesRequested?: readonly string[];
+    } = {},
+  ): Promise<KchatUser> {
+    if (this.authMode === "pat") {
+      // Tear down the PAT connection without deleting its vault
+      // entry — operator may want to reconnect later with the
+      // saved PAT.
+      this.client.shutdown();
+    }
+    if (this.authMode === "extension") {
+      this.teardownExtension();
+    }
+    const conn = this.extensionFactory();
+    try {
+      await conn.open();
+    } catch (err) {
+      try {
+        conn.close();
+      } catch {
+        // intentional
+      }
+      throw err;
+    }
+    const session = new KchatExtensionSession(conn);
+    let info: ExtensionSessionInfo;
+    try {
+      info = await session.handshake({
+        tesseraVersion: opts.tesseraVersion,
+        scopesRequested: opts.scopesRequested,
+      });
+    } catch (err) {
+      try {
+        conn.close();
+      } catch {
+        // intentional
+      }
+      throw err;
+    }
+    this.client.stopHealthCheck();
+    this.client.setServerUrl(info.serverUrl);
+    this.client.setToken(info.token);
+    let user: KchatUser;
+    try {
+      user = await this.client.verifyConnection();
+    } catch (err) {
+      if (err instanceof Error) {
+        err.message = this.client.scrubMessage(err.message);
+      }
+      this.client.setToken(null);
+      // Roll back the delegation so we don't leave a half-set-up
+      // vault entry — the desktop-app session is unaffected.
+      try {
+        session.disconnect();
+      } catch {
+        // intentional
+      }
+      try {
+        conn.close();
+      } catch {
+        // intentional
+      }
+      throw err;
+    }
+    this.attachExtensionConnection(conn, session);
+    this.client.startHealthCheck();
+    this.authMode = "extension";
+    return user;
+  }
+
+  /**
+   * Disconnect the KChat session. Phase 13 Tasks 4 + 28: handles
+   * both auth modes — PAT teardown deletes the PAT vault entry,
+   * extension teardown deletes the delegation vault entry AND
+   * closes the extension socket. Returns the KChat user id that
+   * was disconnected (for audit logging).
    */
   disconnect(): string | null {
-    const stored = readStoredAuth();
-    const userId = stored?.userId ?? null;
-    this.client.shutdown();
-    deleteTokens(KCHAT_VAULT_PROVIDER);
+    let userId: string | null = null;
+    if (this.authMode === "extension") {
+      userId = this.extensionSession?.disconnect() ?? null;
+      this.teardownExtensionConnection();
+      this.client.shutdown();
+      // Phase 13 Task 28: also wipe a PAT entry left over from a
+      // previous PAT session that the user explicitly disconnected
+      // from. The vault entry under `kchat` is NOT touched here —
+      // a user toggling between modes shouldn't lose their saved
+      // PAT just because they're disconnecting the extension. The
+      // extension provider entry is wiped by
+      // `KchatExtensionSession.disconnect()` above.
+    } else {
+      const stored = readStoredAuth();
+      userId = stored?.userId ?? null;
+      this.client.shutdown();
+      deleteTokens(KCHAT_VAULT_PROVIDER);
+    }
+    this.authMode = "none";
     return userId;
+  }
+
+  /**
+   * Phase 13 Task 28: tear down only the extension-mode state
+   * without touching the PAT vault entry. Used internally when
+   * switching from extension → PAT, and when the desktop app
+   * notifies that it's shutting down mid-session.
+   */
+  private teardownExtension(): void {
+    if (this.authMode !== "extension") return;
+    this.extensionSession?.disconnect();
+    this.teardownExtensionConnection();
+    this.client.shutdown();
+    this.authMode = "none";
+  }
+
+  private attachExtensionConnection(
+    conn: ExtensionConnection,
+    session: KchatExtensionSession,
+  ): void {
+    this.extensionConnection = conn;
+    this.extensionSession = session;
+    // Wire desktop-app events into the existing
+    // `KchatClient.emitWebSocketEvent` fan-out (see
+    // `kchatExtensionEvents.ts`). The forwarder + sidebar continue
+    // to work unchanged.
+    this.extensionEventTeardown = attachExtensionEvents(conn, (event) =>
+      this.client.emitWebSocketEvent(event),
+    );
+    this.extensionRefreshFailureTeardown = session.onRefreshFailure(
+      (reason: RefreshFailureReason, err: Error) => {
+        this.handleExtensionRefreshFailure(reason, err);
+      },
+    );
+    this.extensionDisconnectTeardown = conn.onDisconnect((reason) => {
+      this.handleExtensionDisconnect(reason);
+    });
+  }
+
+  private teardownExtensionConnection(): void {
+    this.extensionEventTeardown?.();
+    this.extensionRefreshFailureTeardown?.();
+    this.extensionDisconnectTeardown?.();
+    this.extensionEventTeardown = null;
+    this.extensionRefreshFailureTeardown = null;
+    this.extensionDisconnectTeardown = null;
+    try {
+      this.extensionConnection?.close();
+    } catch {
+      // intentional — close is best-effort
+    }
+    this.extensionConnection = null;
+    this.extensionSession = null;
+  }
+
+  private handleExtensionRefreshFailure(
+    _reason: RefreshFailureReason,
+    err: Error,
+  ): void {
+    // Refresh failure → transition the client to `error` state so
+    // the renderer's sidebar / Settings card shows the disconnect.
+    // The vault entry survives so the user can manually
+    // reconnect (the saved delegation may simply need a fresh
+    // handshake).
+    this.client.shutdown();
+    this.teardownExtensionConnection();
+    this.authMode = "none";
+    // Re-surface the underlying message through the client so the
+    // status push has the same error shape as PAT-side failures.
+    this.client.emitExtensionAuthError(
+      `KChat Desktop session refresh failed: ${err.message}`,
+    );
+  }
+
+  private handleExtensionDisconnect(reason: string): void {
+    if (this.authMode !== "extension") return;
+    this.teardownExtensionConnection();
+    this.client.shutdown();
+    this.authMode = "none";
+    this.client.emitExtensionAuthError(
+      `KChat Desktop disconnected (${reason})`,
+    );
   }
 }
 
 function readStoredAuth(): KchatStoredAuth | null {
   const raw = getTokens(KCHAT_VAULT_PROVIDER);
   if (!raw) return null;
-  // Encoded shape: `accessToken` carries the PAT, `scopes` carries
-  // a single-element JSON string holding `{ serverUrl, userId,
-  // verifiedAt }`. We use this rather than a separate file so the
-  // tokenVault recovery path (clear-on-keyring-loss) wipes the
-  // KChat auth atomically with the rest of the vault.
   if (!raw.accessToken) return null;
   const meta = raw.scopes[0];
   if (!meta) {

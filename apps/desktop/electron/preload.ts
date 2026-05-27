@@ -475,6 +475,30 @@ const api: TesseraApi = {
      */
     searchPosts: (query: string, limit: number) =>
       ipcRenderer.invoke("kchat:searchPosts", query, limit),
+    /**
+     * Phase 13 Task 7: extension-bridge surface. The renderer
+     * calls `extensionStatus()` from the Settings card to decide
+     * which CTA to render ("Connect via KChat Desktop" vs the
+     * fallback PAT input); `extensionConnect()` runs the
+     * handshake; `extensionDisconnect()` tears down only the
+     * extension session without touching the PAT vault entry.
+     * The three are mounted as a separate sub-namespace so the
+     * renderer code that branches on extension availability is
+     * trivially auditable.
+     */
+    extensionStatus: () => ipcRenderer.invoke("kchat:extensionStatus"),
+    extensionConnect: () => ipcRenderer.invoke("kchat:extensionConnect"),
+    extensionDisconnect: () =>
+      ipcRenderer.invoke("kchat:extensionDisconnect"),
+    /**
+     * Phase 13 Task 10: KChat channel backfill progress. The
+     * SourceDetailPage subscribes to this while a backfill is
+     * active; the IPC handler returns the current watermark and
+     * a status discriminator the renderer maps to a progress
+     * bar / "complete" / "idle" state.
+     */
+    backfillProgress: (channelId: string) =>
+      ipcRenderer.invoke("kchat:backfillProgress", channelId),
     // Block B Task 1: push-based delivery of KChat connection
     // state + WebSocket events. The status channel mirrors
     // `updates.onStatus` so the connection card / sidebar no

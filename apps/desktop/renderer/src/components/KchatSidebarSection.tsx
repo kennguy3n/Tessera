@@ -465,6 +465,22 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   if (available !== true) return null;
   if (state.state !== "connected") return null;
 
+  // Phase 13 Task 6 — desktop-app connectivity dot. Green when
+  // the active mode is `extension` AND the cached probe is
+  // `available: true`; amber when we connected via extension
+  // earlier but the desktop app has since disconnected
+  // (`extensionAvailable === false` while `authMode` still says
+  // "extension"); the dot is hidden in PAT mode so the existing
+  // PAT-only UX stays unchanged.
+  const showExtensionDot = state.authMode === "extension";
+  const extensionHealthy = state.extensionAvailable === true;
+  const extensionDotColor = extensionHealthy
+    ? "var(--color-success, #2da44e)"
+    : "var(--color-warning, #d4a017)";
+  const extensionDotLabel = extensionHealthy
+    ? "Connected via KChat Desktop"
+    : "KChat Desktop disconnected — falling back to cached session";
+
   return (
     <div
       className="sidebar-kchat"
@@ -484,7 +500,25 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
           justifyContent: "space-between",
         }}
       >
-        <strong style={{ color: "var(--color-text-headline)" }}>KChat</strong>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-xs)" }}>
+          {showExtensionDot && (
+            <span
+              data-testid="kchat-extension-dot"
+              data-extension-state={extensionHealthy ? "healthy" : "stale"}
+              title={extensionDotLabel}
+              aria-label={extensionDotLabel}
+              role="img"
+              style={{
+                display: "inline-block",
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                backgroundColor: extensionDotColor,
+              }}
+            />
+          )}
+          <strong style={{ color: "var(--color-text-headline)" }}>KChat</strong>
+        </div>
         {unread > 0 && (
           <button
             type="button"
