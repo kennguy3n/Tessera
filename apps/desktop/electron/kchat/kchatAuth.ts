@@ -159,6 +159,22 @@ export class KchatAuthService {
       if (err instanceof Error) {
         err.message = this.client.scrubMessage(err.message);
       }
+      // Phase 14 Round 5 Devin Review ANALYSIS_0002: when a caller
+      // re-runs `connect()` from an already-connected `authMode === "pat"`
+      // session and the new token fails `verifyConnection()`,
+      // `getState()` would otherwise report
+      // `{ state: "error", authMode: "pat" }` — a misleading projection
+      // because no PAT is in memory and the health check was stopped at
+      // the top of this function. Resetting `authMode` BEFORE
+      // `setToken(null)` is load-bearing: `onStatusChange` wraps every
+      // client state-push with `{ ...state, authMode: this.authMode }`,
+      // so reordering would emit a push carrying the stale
+      // `authMode: "pat"` to the renderer. Same ordering rationale as
+      // `disconnect()` below. The vault entry is intentionally NOT
+      // cleared here — a failed re-connect should not wipe the
+      // previously-good stored credential; the user can re-run
+      // `restoreFromVault()` to recover the prior session.
+      this.authMode = "none";
       this.client.setToken(null);
       throw err;
     }

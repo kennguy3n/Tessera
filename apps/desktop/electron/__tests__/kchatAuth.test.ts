@@ -159,6 +159,57 @@ describe("KchatAuthService.connect", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  // Phase 14 Round 5 Devin Review ANALYSIS_0002: the catch path in
+  // `connect()` previously cleared the in-memory token but did NOT
+  // reset `authMode` back to `"none"`. So a PAT→bad-PAT re-connect
+  // would leave the service in `{ state: "error", authMode: "pat" }`
+  // — semantically misleading because no live PAT exists in memory.
+  // The fix resets `authMode` to `"none"` in the catch block (vault
+  // entry untouched, so `restoreFromVault()` can still recover the
+  // prior session).
+  it("resets authMode to 'none' when a re-connect from authMode==='pat' fails verifyConnection", async () => {
+    // First a successful PAT connect to put the service in
+    // `authMode === "pat"`.
+    let nextResponse: () => Promise<Response> = async () => userResponse();
+    const fetchFn = vi.fn(
+      async () => nextResponse(),
+    ) as unknown as typeof globalThis.fetch;
+    const client = new KchatClient({ fetchFn, sleep: async () => {} });
+    const svc = new KchatAuthService(client);
+    await svc.connect("PAT-good", "https://kchat.example.com");
+    // Pin the precondition: after a successful connect, authMode is
+    // "pat" (the bug only manifests in this re-connect path).
+    expect(svc.getAuthMode()).toBe("pat");
+    // Fail the next verifyConnection by returning a 401.
+    nextResponse = async () =>
+      ({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: async () => "invalid_token",
+        json: async () => ({ error: "invalid_token" }),
+        arrayBuffer: async () => new ArrayBuffer(0),
+      }) as unknown as Response;
+    // Re-connect with a different token (simulating the user pasting
+    // a new but-now-bad token into Settings).
+    await expect(
+      svc.connect("PAT-bad-replacement", "https://kchat.example.com"),
+    ).rejects.toBeTruthy();
+    // The fix: getState() / getAuthMode() must report
+    // `authMode: "none"`, matching the in-memory truth that no live
+    // PAT remains. The ordering inside the catch block
+    // (`authMode = "none"` BEFORE `setToken(null)`) is what makes any
+    // subsequent client-emitted status push carry the post-failure
+    // authMode rather than the stale `"pat"` value.
+    expect(svc.getAuthMode()).toBe("none");
+    expect(svc.getState().authMode).toBe("none");
+    // The vault entry from the previous successful connect is
+    // intentionally preserved — a failed re-connect must not wipe a
+    // previously-good stored credential. The user can still call
+    // `restoreFromVault()` to recover the prior session.
+    expect(vaultStore.has("kchat")).toBe(true);
+  });
+
   // Boundary normalisation: a PAT pasted with stray whitespace must
   // be trimmed once at the entry point so the in-memory `setToken`,
   // the vault, and the Authorization header all see the canonical
