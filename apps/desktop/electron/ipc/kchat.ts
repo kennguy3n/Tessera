@@ -871,6 +871,14 @@ export function registerKchatHandlers(): void {
   idempotentHandle(
     "kchat:openDesktopExtensions",
     async (): Promise<{ opened: boolean; url: string }> => {
+      // Intentionally shares the `kchat:openInDesktop` token bucket
+      // (rather than getting its own key). Both handlers terminate
+      // in a single `shell.openExternal()` call to a `kchat://…`
+      // URL, so the underlying OS-shell budget is what we need to
+      // bound — a runaway renderer alternating between the two
+      // channels would otherwise spam the shell at 2x the intended
+      // rate. The shared key collapses both code paths onto one
+      // bucket so the cap is honoured globally.
       defaultRateLimiter.consume(
         "kchat:openInDesktop",
         RATE_LIMIT_PROFILES["kchat:openInDesktop"],

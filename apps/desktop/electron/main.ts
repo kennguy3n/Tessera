@@ -58,6 +58,26 @@ if (process.defaultApp && process.argv.length >= 2) {
   registerProtocolClient(app);
 }
 
+// Phase 14 Task 3: attach the `tessera://` deeplink listeners at
+// module top-level — BEFORE `app.whenReady()` resolves. macOS Cocoa
+// fires `open-url` very early on cold-start launches triggered by
+// a `tessera://` click (the OS launches Tessera *because of* the
+// URL), and that event can land before `whenReady` runs the callback
+// at the bottom of this file. If the listener is only attached inside
+// `whenReady`, Electron's default `open-url` handling runs and the
+// URL is silently dropped — the `DeeplinkBridge`'s pre-ready parking
+// queue (constructed at `appState.ts` module load) never sees it.
+//
+// Attaching here mirrors the `setAsDefaultProtocolClient` call above,
+// which has the same "must run before whenReady" constraint. The
+// `second-instance` listener that `attachKchatDeeplinkBridge` also
+// wires is harmless to register early: it only fires on the primary
+// instance, which by definition has already passed module-load. The
+// bridge consumer is registered later by the renderer; parsed routes
+// are parked in the bridge's queue and flushed in FIFO order on
+// consumer registration.
+attachKchatDeeplinkBridge();
+
 // Phase 14 Task 3: claim the single-instance lock so the
 // Windows/Linux `second-instance` path can pluck `tessera://`
 // URLs out of the spawned process's argv. Without this, a
@@ -584,12 +604,6 @@ app.whenReady().then(async () => {
   // strengthens the "handlers are registered before any renderer
   // can call them" invariant.
   registerIpcHandlers();
-  // Phase 14 Task 3: attach the `tessera://` deeplink listeners
-  // (`open-url`, `second-instance`) now that the IPC layer is up,
-  // so a pre-ready route parked at module load is replayed
-  // through the consumer once a window registers it. Idempotent;
-  // detached in `will-quit`.
-  attachKchatDeeplinkBridge();
   // Phase 14 Task 2: start the localhost API server the .kcz
   // extension installed in KChat Desktop talks to. Runs AFTER
   // `registerIpcHandlers()` because the handlers populate the

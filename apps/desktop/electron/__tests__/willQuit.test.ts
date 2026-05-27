@@ -148,6 +148,22 @@ vi.mock("../config", () => ({
 vi.mock("../appState", () => ({
   initAppState: vi.fn(),
   stopAllSidecars: vi.fn().mockResolvedValue(undefined),
+  // Phase 14 Task 3 fix — `main.ts` now calls
+  // `attachKchatDeeplinkBridge()` at module top-level (so macOS
+  // cold-start `open-url` events aren't lost). The stub must be a
+  // callable vi.fn so module load completes; the will-quit tests
+  // never reach the deeplink path themselves.
+  attachKchatDeeplinkBridge: vi.fn(),
+  // Defense in depth: stub the other `appState` exports that
+  // `main.ts` imports. They currently live inside the `whenReady`
+  // callback (which the test stubs to never resolve), so they are
+  // not invoked at module-load today. Stubbing them costs nothing
+  // and prevents a future top-level call from silently breaking
+  // this test.
+  detachKchatDeeplinkBridge: vi.fn(),
+  startKchatLocalApiServer: vi.fn().mockResolvedValue(undefined),
+  stopKchatLocalApiServer: vi.fn().mockResolvedValue(undefined),
+  buildLocalApiHandlers: vi.fn().mockReturnValue({}),
 }));
 vi.mock("../modelManagement", () => ({
   detectComputeBackends: vi.fn().mockReturnValue([]),

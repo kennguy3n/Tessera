@@ -17,11 +17,19 @@
  *     (`crypto.randomBytes(32)` → base64url), persisted only into
  *     `{userData}/tessera-kchat-port.json` (mode 0600), and never
  *     leaves the local machine. Token comparison is timing-safe.
- *   - Authenticated routes are gated by `requireBearer()` which
- *     additionally validates the `Origin` / `Host` headers — the
- *     server refuses any cross-site fetch attempt that smuggled the
- *     token via XHR (defence in depth; the loopback bind is
- *     already the primary barrier).
+ *   - Every request first runs through `validateHostHeader()`,
+ *     which accepts only `127.0.0.1[:<port>]` — a DNS-rebinding
+ *     defence so an attacker who smuggled a `Host: evil.example`
+ *     header onto loopback (e.g. through a misconfigured proxy)
+ *     gets a 403 instead of a route. The bound port is not
+ *     enforced because multiple bound ports across restarts share
+ *     the same security posture.
+ *   - Authenticated routes additionally call `requireBearer()`,
+ *     which performs a timing-safe comparison against the
+ *     `Authorization: Bearer <token>` header. Failed comparisons
+ *     never update the `lastExtensionContactMs` heartbeat, so a
+ *     spamming attacker cannot keep the Settings card's "KChat
+ *     Desktop detected" affordance pinned green.
  *   - Every state-changing route requires `Content-Type:
  *     application/json` and rejects payloads larger than 64 KiB,
  *     matching the rate-limiter profile in `ipc/rateLimiter.ts`.
