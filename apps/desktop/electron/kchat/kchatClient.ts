@@ -805,6 +805,71 @@ export class KchatClient {
   }
 
   /**
+   * Bulk-resolve KChat user records by id (Phase 13 Theme 2 Task 9).
+   *
+   * Uses the Mattermost-compatible `POST /api/v4/users/ids`
+   * endpoint, which accepts a JSON array of user ids and returns
+   * the corresponding `KchatUser[]`. The endpoint silently omits
+   * ids that are not visible to the authenticated principal, so
+   * the returned list may be shorter than the input.
+   *
+   * Each caller-supplied id is validated at the boundary via
+   * {@link assertCallerObjectId} so a future internal caller that
+   * bypasses IPC can't smuggle a `/`, `?`, or `#` into the
+   * downstream URL path the way `listChannels` / `listTeams` are
+   * already protected. Server-returned ids are re-validated with
+   * {@link assertKchatServerObjectId} so a compromised server
+   * can't echo back a malicious id that downstream consumers
+   * (e.g. URL interpolation, log strings) would trust.
+   *
+   * Used by `kchat:searchPosts` to enrich each post hit with the
+   * sender's username before returning the row to the renderer,
+   * so the CitationPanel can render "@<username>" instead of the
+   * raw user object id.
+   */
+  async getUsersByIds(ids: string[]): Promise<KchatUser[]> {
+    if (ids.length === 0) return [];
+    for (const id of ids) {
+      assertCallerObjectId(id, "userId");
+    }
+    const users = await this.request<KchatUser[]>(
+      "POST",
+      "/api/v4/users/ids",
+      ids,
+    );
+    for (const u of users) {
+      assertKchatServerObjectId(u.id, "user.id");
+    }
+    return users;
+  }
+
+  /**
+   * Fetch a single channel by id (Phase 13 Theme 2 Task 9).
+   *
+   * Uses `GET /api/v4/channels/{id}`. Unlike `listChannels`, this
+   * works across teams — the auth check is "is the authenticated
+   * user a member of this channel?", not "is the channel on this
+   * team?" — which is exactly what the search-result enrichment
+   * needs: a hit can come from any channel the user has access to,
+   * and we don't know the team at the IPC enrichment site.
+   *
+   * Used by `kchat:searchPosts` to enrich each post hit with the
+   * channel's `display_name` before returning it to the renderer,
+   * so the CitationPanel can render "#general" instead of the raw
+   * channel object id.
+   */
+  async getChannel(channelId: string): Promise<KchatChannel> {
+    assertCallerObjectId(channelId, "channelId");
+    const channel = await this.request<KchatChannel>(
+      "GET",
+      `/api/v4/channels/${channelId}`,
+    );
+    assertKchatServerObjectId(channel.id, "channel.id");
+    assertKchatServerObjectId(channel.team_id, "channel.team_id");
+    return channel;
+  }
+
+  /**
    * List files attached to `channelId`.
    *
    * Validates each `file.id` at the deserialisation boundary.

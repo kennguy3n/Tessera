@@ -200,6 +200,13 @@ interface StubClient {
   // Block C Task 4 (Phase 13): the historical-backfill
   // orchestrator drives this REST method page-by-page.
   getPostsForChannel: ReturnType<typeof vi.fn>;
+  // Phase 13 Theme 2 Task 9: name-enrichment helpers wired into
+  // `kchat:searchPosts` to render `@username` + `#channel` in
+  // citation rows. Default: reject — tests that exercise the
+  // enrichment path set explicit implementations; other tests
+  // verify the catch-and-degrade posture via the rejection.
+  getUsersByIds: ReturnType<typeof vi.fn>;
+  getChannel: ReturnType<typeof vi.fn>;
   scrubMessage: ReturnType<typeof vi.fn>;
 }
 const clientMock: StubClient = {
@@ -210,6 +217,8 @@ const clientMock: StubClient = {
   uploadFile: vi.fn(),
   downloadFile: vi.fn(),
   getPostsForChannel: vi.fn(),
+  getUsersByIds: vi.fn(),
+  getChannel: vi.fn(),
   // Default: pass-through. Tests that need to assert scrub
   // behaviour replace this implementation in their own `beforeEach`.
   scrubMessage: vi.fn((msg: string) => msg),
@@ -217,6 +226,11 @@ const clientMock: StubClient = {
 const serviceMock = {
   getClient: () => clientMock,
   getState: vi.fn(),
+  // Phase 13 Theme 2 Task 9: the IPC layer subscribes to status
+  // transitions to clear the name caches on disconnect. Tests
+  // don't drive this subscriber, so we return a no-op
+  // unsubscribe so the registration path completes cleanly.
+  onStatusChange: vi.fn(() => () => {}),
   connect: vi.fn(),
   disconnect: vi.fn(),
 };
@@ -2903,5 +2917,385 @@ describe("kchat:searchPosts (Block D Task 1)", () => {
       handler("kchat:searchPosts")(EVENT, "Q3", 1_000_000),
     ).rejects.toThrow(/limit/);
     expect(bridgeMock.bridgeSearchKchatPosts).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------
+  // Phase 13 Theme 2 Task 9: KChat name-enrichment tests.
+  //
+  // These tests use VALID KChat object-id format (26 lowercase
+  // alphanumeric chars) so the per-id `assertCallerObjectId`
+  // check inside `getUsersByIds` / `getChannel` lets the bulk
+  // lookup proceed. The legacy tests above use unvalidated test
+  // ids ("user-ken" / "channel-xyz") which fail the per-id
+  // validator; that exercises the catch-and-degrade branch where
+  // each hit's `senderUsername` / `channelDisplayName` stays
+  // `null`. Both branches are part of the contract.
+  // -------------------------------------------------------------
+  const VALID_USER_ID = "u".repeat(26);
+  const VALID_USER_ID_2 = "v".repeat(26);
+  const VALID_CHANNEL_ID = "c".repeat(26);
+  const VALID_CHANNEL_ID_2 = "d".repeat(26);
+
+  it("enriches hits with sender username + channel display name via bulk lookup (Phase 13 Theme 2 Task 9)", async () => {
+    // Lazy import: the reset helper lives in the IPC module
+    // alongside the cache itself, exported only for tests so we
+    // start from a known-empty state regardless of test order.
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+    ]);
+    clientMock.getChannel.mockResolvedValueOnce({
+      id: VALID_CHANNEL_ID,
+      team_id: "t".repeat(26),
+      display_name: "Engineering",
+    });
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3 launch",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      senderUserId: VALID_USER_ID,
+      senderUsername: "ken",
+      channelId: VALID_CHANNEL_ID,
+      channelDisplayName: "Engineering",
+    });
+    // Bulk-user lookup is called once with the deduped id array.
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+    expect(clientMock.getUsersByIds).toHaveBeenCalledWith([VALID_USER_ID]);
+    // Per-channel lookup runs once for the unique channel id.
+    expect(clientMock.getChannel).toHaveBeenCalledTimes(1);
+    expect(clientMock.getChannel).toHaveBeenCalledWith(VALID_CHANNEL_ID);
+  });
+
+  it("deduplicates lookups across multiple hits referencing the same sender/channel (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    // Three hits, only two distinct senders / one distinct channel.
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        postId: "post-a",
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+      makeBridgeRow({
+        postId: "post-b",
+        senderUserId: VALID_USER_ID, // same sender
+        channelId: VALID_CHANNEL_ID, // same channel
+        sourceId: "src-b",
+      }),
+      makeBridgeRow({
+        postId: "post-c",
+        senderUserId: VALID_USER_ID_2,
+        channelId: VALID_CHANNEL_ID, // same channel as #1, #2
+        sourceId: "src-c",
+      }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+      { id: VALID_USER_ID_2, username: "alex" },
+    ]);
+    clientMock.getChannel.mockResolvedValueOnce({
+      id: VALID_CHANNEL_ID,
+      team_id: "t".repeat(26),
+      display_name: "Engineering",
+    });
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(3);
+    expect(out[0].senderUsername).toBe("ken");
+    expect(out[1].senderUsername).toBe("ken");
+    expect(out[2].senderUsername).toBe("alex");
+    expect(out[0].channelDisplayName).toBe("Engineering");
+    expect(out[1].channelDisplayName).toBe("Engineering");
+    expect(out[2].channelDisplayName).toBe("Engineering");
+
+    // Bulk-lookup is called with deduplicated ids — 2 users
+    // (not 3), 1 channel (not 3).
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+    const passedUserIds = clientMock.getUsersByIds.mock.calls[0][0] as string[];
+    expect(new Set(passedUserIds)).toEqual(
+      new Set([VALID_USER_ID, VALID_USER_ID_2]),
+    );
+    expect(clientMock.getChannel).toHaveBeenCalledTimes(1);
+    expect(clientMock.getChannel).toHaveBeenCalledWith(VALID_CHANNEL_ID);
+  });
+
+  it("caches names across calls so a repeated search does NOT re-hit the bulk endpoints (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValue([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+    ]);
+    clientMock.getChannel.mockResolvedValueOnce({
+      id: VALID_CHANNEL_ID,
+      team_id: "t".repeat(26),
+      display_name: "Engineering",
+    });
+
+    // Two consecutive searches against the same workspace.
+    await handler("kchat:searchPosts")(EVENT, "Q3", 10);
+    await handler("kchat:searchPosts")(EVENT, "Q3", 10);
+
+    // Bulk lookups still ran only once — the second search was
+    // served entirely from the IPC-layer LRU cache.
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
+    expect(clientMock.getChannel).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves enriched fields null when bulk lookup throws (best-effort posture) (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+    ]);
+    // Both lookups fail. The IPC handler MUST still return the
+    // hit — the renderer falls back to displaying raw ids.
+    clientMock.getUsersByIds.mockRejectedValueOnce(
+      new Error("transient 503"),
+    );
+    clientMock.getChannel.mockRejectedValueOnce(
+      new Error("network unreachable"),
+    );
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(1);
+    expect(out[0].senderUsername).toBeNull();
+    expect(out[0].channelDisplayName).toBeNull();
+    // The raw ids round-trip so the renderer can render a
+    // fallback row.
+    expect(out[0].senderUserId).toBe(VALID_USER_ID);
+    expect(out[0].channelId).toBe(VALID_CHANNEL_ID);
+  });
+
+  it("does not call the bulk endpoints when there are zero hits (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([]);
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "needle that finds nothing",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toEqual([]);
+    expect(clientMock.getUsersByIds).not.toHaveBeenCalled();
+    expect(clientMock.getChannel).not.toHaveBeenCalled();
+  });
+
+  it("does not call the bulk endpoints when the user is disconnected (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({ state: "disconnected" });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+    ]);
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(1);
+    // Disconnected: permalink is null and enrichment is skipped
+    // (the bulk REST calls would fail synchronously anyway). The
+    // renderer renders the row with raw-id fallbacks.
+    expect(out[0].permalink).toBeNull();
+    expect(out[0].senderUsername).toBeNull();
+    expect(out[0].channelDisplayName).toBeNull();
+    expect(clientMock.getUsersByIds).not.toHaveBeenCalled();
+    expect(clientMock.getChannel).not.toHaveBeenCalled();
+  });
+
+  it("recovers gracefully when only one of the two lookups fails (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+    ]);
+    // Users resolve OK, channels fail. The username should be
+    // populated; the channel display name should be null.
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+    ]);
+    clientMock.getChannel.mockRejectedValueOnce(
+      new Error("403 forbidden"),
+    );
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out[0].senderUsername).toBe("ken");
+    expect(out[0].channelDisplayName).toBeNull();
+  });
+
+  it("partial-result resilience: an unresolved user id leaves only that hit's senderUsername null (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        postId: "post-a",
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+      makeBridgeRow({
+        postId: "post-b",
+        senderUserId: VALID_USER_ID_2, // intentionally NOT in lookup response
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-b",
+      }),
+    ]);
+    // KChat's `POST /users/ids` omits ids not visible to the
+    // authenticated principal. The handler treats the missing
+    // id as a graceful null, not an error.
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+    ]);
+    clientMock.getChannel.mockResolvedValueOnce({
+      id: VALID_CHANNEL_ID,
+      team_id: "t".repeat(26),
+      display_name: "Engineering",
+    });
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out).toHaveLength(2);
+    expect(out[0].senderUsername).toBe("ken");
+    expect(out[1].senderUsername).toBeNull();
+    // Channel lookup succeeded so both hits carry the same name.
+    expect(out[0].channelDisplayName).toBe("Engineering");
+    expect(out[1].channelDisplayName).toBe("Engineering");
+  });
+
+  it("uses one parallel batch of getChannel calls across multiple channels (Phase 13 Theme 2 Task 9)", async () => {
+    const { _resetKchatNameCachesForTest } = await import("../ipc/kchat");
+    _resetKchatNameCachesForTest();
+
+    serviceMock.getState.mockReturnValue({
+      state: "connected",
+      serverUrl: "https://kchat.example.com",
+    });
+    bridgeMock.bridgeSearchKchatPosts.mockReturnValueOnce([
+      makeBridgeRow({
+        postId: "post-a",
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID,
+        sourceId: "src-a",
+      }),
+      makeBridgeRow({
+        postId: "post-b",
+        senderUserId: VALID_USER_ID,
+        channelId: VALID_CHANNEL_ID_2,
+        sourceId: "src-b",
+      }),
+    ]);
+    clientMock.getUsersByIds.mockResolvedValueOnce([
+      { id: VALID_USER_ID, username: "ken" },
+    ]);
+    clientMock.getChannel.mockImplementation(async (id: string) => ({
+      id,
+      team_id: "t".repeat(26),
+      display_name: id === VALID_CHANNEL_ID ? "Engineering" : "Product",
+    }));
+
+    const out = (await handler("kchat:searchPosts")(
+      EVENT,
+      "Q3",
+      10,
+    )) as Array<Record<string, unknown>>;
+
+    expect(out[0].channelDisplayName).toBe("Engineering");
+    expect(out[1].channelDisplayName).toBe("Product");
+    // Two distinct channels => two getChannel calls, ONE bulk
+    // user lookup.
+    expect(clientMock.getChannel).toHaveBeenCalledTimes(2);
+    expect(clientMock.getUsersByIds).toHaveBeenCalledTimes(1);
   });
 });

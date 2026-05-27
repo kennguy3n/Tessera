@@ -585,6 +585,30 @@ export interface KchatPostSearchHit {
   /** Composed `kchat://<server>/channel/<channel_id>/post/<post_id>`
    * permalink, or `null` when the user is disconnected from KChat. */
   permalink: string | null;
+  /**
+   * Phase 13 Theme 2 Task 9: human-readable sender username,
+   * resolved by the IPC handler from `senderUserId` via the KChat
+   * `POST /users/ids` bulk endpoint and cached at the IPC layer.
+   *
+   * `null` when the user is disconnected from KChat OR when the
+   * referenced user is no longer visible to the authenticated
+   * principal (e.g. account deleted, lost cross-team visibility).
+   * The renderer falls back to the raw `senderUserId` for display
+   * in that case so the citation row still renders.
+   */
+  senderUsername: string | null;
+  /**
+   * Phase 13 Theme 2 Task 9: human-readable channel display name,
+   * resolved by the IPC handler from `channelId` via the KChat
+   * `GET /channels/{id}` endpoint and cached at the IPC layer.
+   *
+   * `null` when disconnected OR the channel is no longer visible
+   * (e.g. user was removed from the channel). The renderer falls
+   * back to the raw `channelId` for display, and the underlying
+   * citation is still stored against the channel id so the
+   * indexed post remains retrievable.
+   */
+  channelDisplayName: string | null;
 }
 
 /**

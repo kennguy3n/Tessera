@@ -202,7 +202,198 @@ function toIpcError(err: unknown): Error {
   return new Error(scrub(String(err)));
 }
 
+/**
+ * Phase 13 Theme 2 Task 9: bounded LRU cache that resolves
+ * KChat object ids (user / channel) to their human-readable
+ * display strings (username / channel display name).
+ *
+ * The cache is populated lazily by `kchat:searchPosts` as a
+ * side-effect of building citation rows — `Map` iteration order
+ * is insertion order, so deleting + re-inserting a key on every
+ * read gives us LRU semantics with `O(1)` operations.
+ *
+ * Bound is per-cache; the user cache and channel cache each get
+ * their own quota so a long session with many channels doesn't
+ * starve user-name lookups (or vice versa). A miss returns
+ * `null`; the renderer falls back to displaying the raw object
+ * id in that case so the row still renders.
+ *
+ * The cache is cleared on every connection-state transition
+ * away from `connected` so a re-handshake to a different server
+ * (or the same server after the user is removed from a channel)
+ * cannot return stale names. The clear is wired in
+ * `registerKchatHandlers` via `KchatAuthService.onStatusChange`.
+ */
+class KchatNameCache {
+  private readonly entries = new Map<string, string>();
+  constructor(private readonly maxEntries: number) {
+    if (maxEntries <= 0) {
+      throw new Error("KchatNameCache: maxEntries must be > 0");
+    }
+  }
+
+  get(id: string): string | null {
+    const v = this.entries.get(id);
+    if (v === undefined) return null;
+    // LRU touch: move to end of insertion order.
+    this.entries.delete(id);
+    this.entries.set(id, v);
+    return v;
+  }
+
+  set(id: string, name: string): void {
+    // If already present, refresh and move to end.
+    if (this.entries.has(id)) {
+      this.entries.delete(id);
+    } else if (this.entries.size >= this.maxEntries) {
+      // Evict the least-recently-used (first inserted).
+      const oldest = this.entries.keys().next().value;
+      if (oldest !== undefined) {
+        this.entries.delete(oldest);
+      }
+    }
+    this.entries.set(id, name);
+  }
+
+  clear(): void {
+    this.entries.clear();
+  }
+
+  /** Test-only accessor. */
+  size(): number {
+    return this.entries.size;
+  }
+}
+
+/**
+ * Bounds chosen to fit the citation-search hot path:
+ *   - Users: each search hit references one sender; a typical
+ *     workspace has ≤ 200 active senders within retrieval scope,
+ *     so 500 leaves comfortable headroom.
+ *   - Channels: 100 channels would cover most teams; 200 leaves
+ *     room for cross-team browsing within a single session.
+ *
+ * Both caches are bounded at the IPC layer (NOT the bridge) so a
+ * memory-pressure scenario can't pin them through a process restart.
+ */
+const KCHAT_USERNAME_CACHE = new KchatNameCache(500);
+const KCHAT_CHANNEL_NAME_CACHE = new KchatNameCache(200);
+
+/**
+ * Reset the IPC-layer KChat name caches. Exported only for the
+ * test suite so a test that exercises name-cache eviction
+ * boundaries can start from a known state.
+ */
+export function _resetKchatNameCachesForTest(): void {
+  KCHAT_USERNAME_CACHE.clear();
+  KCHAT_CHANNEL_NAME_CACHE.clear();
+}
+
+/**
+ * Phase 13 Theme 2 Task 9: enrich a list of post-hits with the
+ * sender username and channel display name. Mutates the input
+ * array's elements in-place.
+ *
+ * Performance shape: a single search returns ≤ 1000 hits (the
+ * `kchat:searchPosts` IPC enforces this upper bound); within a
+ * single search the number of UNIQUE sender / channel ids is
+ * typically much smaller (≤ N senders per channel). We
+ * deduplicate before issuing network calls.
+ *
+ * Failure mode: any failure to resolve a name leaves the hit's
+ * `senderUsername` / `channelDisplayName` as `null`. The renderer
+ * falls back to the raw id in that case, so a transient failure
+ * never hides a citation candidate from the user.
+ */
+async function enrichKchatPostHits(
+  hits: KchatPostSearchHit[],
+  client: ReturnType<ReturnType<typeof getKchatAuthService>["getClient"]>,
+): Promise<void> {
+  // 1. Collect unique missing ids per cache.
+  const missingUserIds = new Set<string>();
+  const missingChannelIds = new Set<string>();
+  for (const h of hits) {
+    const cachedUser = KCHAT_USERNAME_CACHE.get(h.senderUserId);
+    if (cachedUser !== null) {
+      h.senderUsername = cachedUser;
+    } else {
+      missingUserIds.add(h.senderUserId);
+    }
+    const cachedChan = KCHAT_CHANNEL_NAME_CACHE.get(h.channelId);
+    if (cachedChan !== null) {
+      h.channelDisplayName = cachedChan;
+    } else {
+      missingChannelIds.add(h.channelId);
+    }
+  }
+
+  // 2. Bulk-resolve missing users via `POST /users/ids`. We catch
+  //    here so a user-resolution failure does NOT block the
+  //    channel-resolution branch (defence-in-depth: the two REST
+  //    calls are unrelated and a transient 5xx on one should not
+  //    suppress the other).
+  if (missingUserIds.size > 0) {
+    try {
+      const users = await client.getUsersByIds(Array.from(missingUserIds));
+      for (const u of users) {
+        KCHAT_USERNAME_CACHE.set(u.id, u.username);
+      }
+    } catch {
+      // Intentional: leave un-resolved ids as `null`; the
+      // renderer falls back to displaying the raw id.
+    }
+  }
+
+  // 3. Resolve missing channels via `GET /channels/{id}` in
+  //    parallel. Bounded by `missingChannelIds.size` which is
+  //    naturally small (a search seldom spans more than a handful
+  //    of channels). Each call is independently caught so one
+  //    unreachable channel doesn't suppress the rest.
+  if (missingChannelIds.size > 0) {
+    const results = await Promise.allSettled(
+      Array.from(missingChannelIds).map((id) => client.getChannel(id)),
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled") {
+        KCHAT_CHANNEL_NAME_CACHE.set(r.value.id, r.value.display_name);
+      }
+    }
+  }
+
+  // 4. Second pass: apply newly-cached values to hits that were
+  //    missing in the first pass.
+  for (const h of hits) {
+    if (h.senderUsername === null) {
+      h.senderUsername = KCHAT_USERNAME_CACHE.get(h.senderUserId);
+    }
+    if (h.channelDisplayName === null) {
+      h.channelDisplayName = KCHAT_CHANNEL_NAME_CACHE.get(h.channelId);
+    }
+  }
+}
+
 export function registerKchatHandlers(): void {
+  // Phase 13 Theme 2 Task 9: clear the IPC-layer KChat name
+  // caches on every transition away from `connected`. A
+  // re-handshake to a different server (or the same server with
+  // changed channel membership) must not return stale names.
+  // The subscription survives the handler lifetime; the IPC
+  // layer is mounted once per process and never torn down.
+  try {
+    getKchatAuthService().onStatusChange((state) => {
+      if (state.state !== "connected") {
+        KCHAT_USERNAME_CACHE.clear();
+        KCHAT_CHANNEL_NAME_CACHE.clear();
+      }
+    });
+  } catch {
+    // The auth service may be uninitialised in test contexts that
+    // mount the IPC layer ahead of `appState`. The caches start
+    // empty, and the first search after a real handshake will
+    // populate them; missing the cleanup hook there is a benign
+    // no-op (the test harness uses fresh state per test anyway).
+  }
+
   // --- Feature gate ---
   idempotentHandle("kchat:isAvailable", async () => {
     // Always true for now — KChat is shipping with this phase. The
@@ -1585,8 +1776,35 @@ export function registerKchatHandlers(): void {
           createdAtMs: h.createdAtMs,
           editedAtMs: h.editedAtMs,
           permalink,
+          // Phase 13 Theme 2 Task 9: filled in by
+          // `enrichKchatPostHits` below. We initialise to `null`
+          // so a code path that returns early (e.g. zero raw
+          // hits) emits a wire-shape-correct value the renderer
+          // can render without an `undefined` check.
+          senderUsername: null,
+          channelDisplayName: null,
         };
       });
+
+      // Phase 13 Theme 2 Task 9: enrich hits with sender username
+      // and channel display name. Only attempt enrichment when
+      // there's an active connection — when offline, the REST
+      // calls would fail synchronously with "KChat token is not
+      // configured" and the renderer would already be rendering
+      // a "disconnected" banner. The empty-hits short-circuit
+      // avoids the network roundtrip when there's nothing to do.
+      if (hits.length > 0 && serverUrl) {
+        try {
+          await enrichKchatPostHits(hits, svc.getClient());
+        } catch {
+          // Defence-in-depth: enrichment is best-effort. Any
+          // unexpected throw (e.g. an error inside the LRU cache
+          // implementation itself) must NOT hide search results
+          // from the user. The hits already have `senderUsername`
+          // and `channelDisplayName` set to `null` — the renderer
+          // falls back to raw ids in that case.
+        }
+      }
 
       const latencyMs = Date.now() - start;
       const sourcesTouched = new Set(hits.map((h) => h.sourceId)).size;
