@@ -47,11 +47,12 @@ extra scrutiny.
 | `sources:reindex`                     | scalar-helper   |      |
 | `sources:getIndexingProgress`         | scalar-helper   |      |
 
-KChat-specific `sources:*` channels (`sources:addKchatChannel`,
-`sources:backfillKchatChannel`) are listed in the
-[KChat section](#kchat) below alongside the rest of the 17-channel
-KChat surface, to keep the consolidated KChat master list authoritative
-(it matches `EXPECTED_KCHAT_CHANNELS` in `kchatIpc.test.ts`).
+The KChat-specific `sources:*` channels —
+`sources:addKchatChannel` and `sources:backfillKchatChannel` —
+are documented in the [KChat section](#kchat) below alongside the
+rest of the 17-channel KChat surface, to keep the consolidated KChat
+master list authoritative (it matches `EXPECTED_KCHAT_CHANNELS` in
+`kchatIpc.test.ts`).
 
 ## Artifacts
 
