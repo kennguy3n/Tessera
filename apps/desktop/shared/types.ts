@@ -1856,6 +1856,80 @@ export interface KchatConnectionStateView {
   serverUrl?: string;
   error?: string;
   lastHealthyAt?: string;
+  /** Phase 13 Task 4 — auth backend powering this connection. */
+  authMode?: "none" | "pat" | "extension";
+  /** Phase 13 Task 4 — last cached extension-bridge probe result. */
+  extensionAvailable?: boolean;
+}
+
+/**
+ * Alias used by the renderer code for the sanitised user shape
+ * returned by both `kchat:connect` (PAT mode) and
+ * `kchat:extensionConnect` (extension mode). The two return the
+ * same fields so the renderer's reconciliation logic can ignore
+ * the auth-mode distinction; the type alias keeps the call-site
+ * intent explicit ("we got a user view back from a connect call")
+ * without forcing a second declaration.
+ */
+export type KchatConnectedUserView = KchatConnectionUserView;
+
+/**
+ * Phase 13 Task 7 — renderer-facing projection of the
+ * extension-bridge probe. Mirrors the `ExtensionProbeResult` from
+ * `electron/kchat/kchatExtensionBridge.ts` but drops fields the
+ * renderer doesn't render (the audit row in `audit:listRecent`
+ * gets the richer shape).
+ */
+export interface KchatExtensionStatusView {
+  /** True when the desktop app is reachable on the well-known socket. */
+  available: boolean;
+  /** Current auth backend (read off `KchatAuthService.getAuthMode()`). */
+  authMode: "none" | "pat" | "extension";
+  /** Protocol version reported by the desktop app, when reachable. */
+  protocolVersion?: number;
+  /** Build version reported by the desktop app, when reachable. */
+  desktopVersion?: string;
+  /**
+   * Capability strings the desktop app supports — used by the
+   * Settings card to gate per-capability UX (e.g. only show
+   * "Share via Desktop" when `share_artifact` is reported).
+   */
+  capabilities?: string[];
+  /** When `available === false`, the reason the probe failed. */
+  reason?: string;
+}
+
+/**
+ * Phase 13 Task 10 — renderer-facing projection of an in-flight
+ * channel backfill. The `SourceDetailPage` polls
+ * `kchat:backfillProgress` for the linked channel id and renders
+ * a progress bar derived from `postsIngested` / `totalPosts`. The
+ * `status` discriminator tells the renderer whether to show the
+ * bar (`active`), a "complete" badge (`complete`), or hide the
+ * row entirely (`idle`).
+ */
+export interface KchatBackfillProgressView {
+  channelId: string;
+  /**
+   * Oldest post create_at timestamp (ms since epoch) the walker
+   * has fetched. `null` when no walk has run yet.
+   */
+  oldestFetched: number | null;
+  /**
+   * Total post count reported by the channel head — `null` when
+   * unknown (KChat doesn't always surface this).
+   */
+  totalPosts: number | null;
+  /** Posts ingested via dedupe-aware ingest on this walk. */
+  postsIngested: number;
+  /**
+   * `idle` → no walk has ever run; `active` → walk in flight;
+   * `complete` → walk reached the head of the channel; `error`
+   * → last walk attempt failed (UI shows a retry button).
+   */
+  status: "idle" | "active" | "complete" | "error";
+  /** Last-error message when `status === "error"`. */
+  error?: string;
 }
 
 /**
@@ -1967,6 +2041,39 @@ export interface KchatApi {
    * 16-hex SHA-256 of the query — never the raw query.
    */
   searchPosts: (query: string, limit: number) => Promise<KchatPostSearchHit[]>;
+  /**
+   * Phase 13 Task 7: probe the `uney-chat-desktop` extension
+   * bridge. Returns whether the desktop app is reachable on its
+   * well-known per-platform socket plus the currently-active
+   * auth mode (so the Settings card can render the correct CTA).
+   */
+  extensionStatus: () => Promise<KchatExtensionStatusView>;
+  /**
+   * Phase 13 Task 7: initiate the extension-bridge session
+   * handoff. The desktop app mints a scoped, time-limited
+   * delegation token; Tessera persists it under provider
+   * `kchat-extension` and surfaces the connected user. Resolves
+   * with the same sanitised user shape as `kchat:connect` so the
+   * renderer's reconciliation logic can ignore the auth-mode
+   * distinction once the connection is up.
+   */
+  extensionConnect: () => Promise<KchatConnectedUserView>;
+  /**
+   * Phase 13 Task 7: tear down only the extension session. The
+   * PAT vault entry (if any) survives; renderers that mix the
+   * two modes should not lose a saved PAT just because the
+   * extension session ended.
+   */
+  extensionDisconnect: () => Promise<{ disconnected: boolean }>;
+  /**
+   * Phase 13 Task 10: KChat channel backfill progress. Polled by
+   * `SourceDetailPage` while a backfill is active; the IPC
+   * handler returns the current watermark and a status
+   * discriminator the renderer maps to a progress bar.
+   */
+  backfillProgress: (
+    channelId: string,
+  ) => Promise<KchatBackfillProgressView>;
   /**
    * Subscribe to KChat connection-state changes surfaced by the
    * main process. The callback fires once on every successful

@@ -24,7 +24,6 @@
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
-import { promises as dnsPromises } from "dns";
 import { createHash } from "crypto";
 import {
   getBridge,
@@ -47,6 +46,7 @@ import {
 } from "./validate";
 import { KchatRequestError } from "../kchat/kchatClient";
 import { kchatChannelCacheDir } from "../kchat/kchatPaths";
+import { enforceKchatServerUrl } from "../kchat/ssrfGuard";
 import {
   downloadKchatFileToCache,
   readManifest,
@@ -101,298 +101,6 @@ const VALID_FORMATS = new Set([
   "docx",
   "json",
 ]);
-
-/**
- * Parse a numeric token in any of the forms `getaddrinfo` accepts
- * for IPv4 octets / 32-bit dword arguments and return the parsed
- * value, or `null` if the token does not match any accepted form.
- *
- * Accepted:
- *   - `"0"` or any non-zero decimal that does NOT start with `0`
- *   - `"0o…"` / leading-zero decimal interpreted as octal (`017` → 15)
- *   - `"0x…"` / `"0X…"` hex
- *
- * Rejected: empty string, signed values, anything containing `_`
- * or whitespace, scientific notation. We deliberately do not accept
- * BigInt-style suffixes because Node's URL parser strips them.
- *
- * Used by `isPrivateOrLoopbackHost` to recognise the non-dotted-
- * decimal IPv4 forms that `getaddrinfo` will happily resolve but
- * the dotted-decimal regex misses (eleventh-pass Devin Review
- * ANALYSIS_0002):
- *   - hex single-integer: `http://0x7f000001/`
- *   - octal dotted: `http://0177.0.0.1/`
- *   - decimal single-integer: `http://2130706433/`
- *   - 2-part / 3-part forms (`http://127.1/`, `http://10.0.65535/`)
- *
- * The DNS layer at `enforceKchatServerUrl` already covers most of
- * these because `dns.lookup` calls `getaddrinfo` which canonicalises
- * them to dotted-decimal — but the literal check is the first line
- * of defence and should not lean on the DNS layer alone.
- */
-function parseIpv4Token(tok: string): number | null {
-  if (tok.length === 0) return null;
-  if (/[^0-9a-fA-FxX]/.test(tok)) return null;
-  let n: number;
-  if (/^0[xX]/.test(tok)) {
-    if (!/^0[xX][0-9a-fA-F]+$/.test(tok)) return null;
-    n = Number.parseInt(tok.slice(2), 16);
-  } else if (tok.length > 1 && tok.startsWith("0")) {
-    if (!/^0[0-7]+$/.test(tok)) return null;
-    n = Number.parseInt(tok.slice(1), 8);
-  } else {
-    if (!/^[0-9]+$/.test(tok)) return null;
-    n = Number.parseInt(tok, 10);
-  }
-  return Number.isFinite(n) && n >= 0 ? n : null;
-}
-
-/**
- * Canonicalise any of the IPv4 forms `getaddrinfo` accepts to
- * `[a, b, c, d]` (each 0–255), or `null` if `s` is not a valid IPv4
- * literal under those rules. Handles:
- *   - 4-part dotted (`127.0.0.1`)        → [127, 0, 0, 1]
- *   - 3-part (`127.0.1`)                 → [127, 0, 0, 1]   (last token is a 16-bit dword)
- *   - 2-part (`127.1`)                   → [127, 0, 0, 1]   (last token is a 24-bit dword)
- *   - 1-part single integer (`2130706433` or `0x7f000001`) → [127, 0, 0, 1]
- *   - hex/octal tokens within any of the above
- *
- * Anything else returns `null` (caller falls through to the IPv6 /
- * DNS-name path).
- */
-function parseIpv4(s: string): [number, number, number, number] | null {
-  if (s.length === 0) return null;
-  const parts = s.split(".");
-  if (parts.length > 4) return null;
-  const nums: number[] = [];
-  for (const p of parts) {
-    const v = parseIpv4Token(p);
-    if (v === null) return null;
-    nums.push(v);
-  }
-  // Per-token width limits. For the dotted forms, all but the last
-  // token must fit in a byte; the last token holds the remaining
-  // bits (8 / 16 / 24 / 32 depending on `nums.length`).
-  for (let i = 0; i < nums.length - 1; i++) {
-    if (nums[i] > 0xff) return null;
-  }
-  const last = nums[nums.length - 1];
-  const lastMaxBits = (5 - nums.length) * 8; // 4-part:8, 3-part:16, 2-part:24, 1-part:32
-  if (last < 0 || last > 2 ** lastMaxBits - 1) return null;
-  // Each octet comes from an explicit token when one is available
-  // (`nums[i]`) and otherwise falls back to the corresponding byte of
-  // `last`. The 1-part case (single integer) takes all four bytes
-  // from `last`; the 2-part case takes byte 0 from `nums[0]` and
-  // bytes 1–3 from `last`; the 3-part case takes bytes 0–1 from
-  // `nums[0..1]` and bytes 2–3 from `last`; the 4-part case takes
-  // bytes 0–2 from `nums[0..2]` and byte 3 from `last`. The
-  // unified shape avoids the redundant `(last >>> N) & 0xff` ternary
-  // branches the older form had (twelfth-pass Devin Review
-  // ANALYSIS_0001).
-  const a = nums.length >= 2 ? nums[0] : (last >>> 24) & 0xff;
-  const b = nums.length >= 3 ? nums[1] : (last >>> 16) & 0xff;
-  const c = nums.length >= 4 ? nums[2] : (last >>> 8) & 0xff;
-  const d = last & 0xff;
-  return [a, b, c, d];
-}
-
-/**
- * Return `true` when `hostname` is a literal IP in private,
- * loopback, link-local, or otherwise reserved RFC-1918-style space
- * — or one of the reserved hostnames (`localhost`,
- * `*.localhost`). These targets are never legitimate KChat servers
- * (KChat is a hosted multi-tenant service) so refusing to direct
- * an authenticated `Authorization: Bearer <PAT>` request at them
- * is safe; the goal is to prevent the renderer (or a user pasting
- * a crafted URL) from using the KChat connection to probe internal
- * services on the operator's network (SSRF — eighth-pass Devin
- * Review ANALYSIS_0006).
- *
- * Coverage:
- *   - IPv4 loopback (127.0.0.0/8), 0.0.0.0/8
- *   - RFC1918 private space (10/8, 172.16/12, 192.168/16)
- *   - RFC6598 CGNAT (100.64/10)
- *   - Link-local (169.254/16)
- *   - All of the above in their non-dotted-decimal encodings (hex,
- *     octal, single-integer, 2-/3-part dotted) — eleventh-pass
- *     Devin Review ANALYSIS_0002.
- *   - IPv6 loopback (::1, ::) and unspecified
- *   - IPv6 unique-local (fc00::/7 → `fc*`, `fd*`)
- *   - IPv6 link-local (fe80::/10 → `fe80:`)
- *   - IPv4-mapped IPv6 (`::ffff:<ipv4>`) recurses into the v4 check
- *
- * Not covered: DNS rebinding. We check the hostname literal (here)
- * and the DNS-resolved A/AAAA records at connect time
- * (`enforceKchatServerUrl`), but a malicious DNS server could
- * return different IPs on subsequent requests. Mitigation: KChat
- * uses HTTPS in production, so a rebinding to an internal HTTP
- * service fails the TLS handshake. A defense-in-depth pinned-IP
- * dispatcher would close this gap; out of scope for this PR.
- */
-function isPrivateOrLoopbackHost(hostname: string): boolean {
-  // Strip surrounding brackets from IPv6 literals (`new URL` keeps
-  // them in `hostname` for bracketed v6, depending on Node version).
-  const h = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  if (h === "localhost" || h.endsWith(".localhost")) return true;
-  // IPv4 (any form: dotted-decimal, dotted-hex, dotted-octal, 1-/
-  // 2-/3-part dotted, single integer). `parseIpv4` returns the
-  // canonicalised [a, b, c, d] octets so the prefix tests below
-  // work uniformly regardless of how the address was typed.
-  const v4 = parseIpv4(h);
-  if (v4) {
-    const [a, b] = v4;
-    if (a === 0) return true; // 0.0.0.0/8 (current network / unspecified)
-    if (a === 127) return true; // 127.0.0.0/8 loopback
-    if (a === 10) return true; // 10.0.0.0/8 private
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 private
-    if (a === 192 && b === 168) return true; // 192.168.0.0/16 private
-    if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local
-    if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT
-    return false;
-  }
-  if (h === "::1" || h === "::") return true;
-  // IPv6 prefix checks are gated on `h.includes(":")` so they cannot
-  // misfire on regular DNS hostnames that happen to begin with the
-  // same two letters (`fcc.example.com`, `fdic.gov`, `fe80-corp.io`,
-  // …). Hostnames in DNS-name form never contain `:`, while every
-  // IPv6 literal contains at least one. ninth-pass Devin Review
-  // BUG_0001 caught this when the `fc`/`fd` prefix match was
-  // unconditional and rejected `fchat.example.com`-style domains.
-  const isV6Literal = h.includes(":");
-  if (isV6Literal) {
-    if (h.startsWith("fe80:")) return true; // IPv6 link-local
-    if (h.startsWith("fc") || h.startsWith("fd")) return true; // ULA fc00::/7
-  }
-  // IPv4-mapped IPv6 (RFC 4291 §2.5.5.2) covers BOTH textual forms:
-  //   * `::ffff:127.0.0.1`  — dotted-decimal tail (legacy form most
-  //     humans type and what `inet_pton` emits)
-  //   * `::ffff:7f00:1`     — two-hextet tail (compact hex form, the
-  //     canonical IPv6-text encoding when the tool isn't aware of the
-  //     mapped-IPv4 special case; e.g. some browsers and resolvers
-  //     produce this). Twelfth-pass Devin Review ANALYSIS_0002 caught
-  //     that the previous regex only matched the dotted-decimal form,
-  //     so `http://[::ffff:7f00:1]/` (loopback) silently fell through
-  //     the literal-check and relied on the DNS layer alone.
-  //
-  // We accept any IPv6 literal whose final two hextets canonicalise
-  // into a 32-bit IPv4 address (e.g. `::ffff:7f00:1` → 0x7f000001 →
-  // 127.0.0.1) and recurse the IPv4 check on the canonicalised dotted
-  // form. The first match (decimal-tail) keeps the existing fast path
-  // for the human-typed form; the second match (hex-tail) covers the
-  // tool-emitted form. Other compressed `::` forms with embedded
-  // private/loopback IPv4 don't exist because the v4 octets only
-  // round-trip through the `::ffff:` prefix.
-  const mappedDec = h.match(
-    /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/,
-  );
-  if (mappedDec) return isPrivateOrLoopbackHost(mappedDec[1]);
-  const mappedHex = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (mappedHex) {
-    const hi = Number.parseInt(mappedHex[1], 16);
-    const lo = Number.parseInt(mappedHex[2], 16);
-    if (
-      Number.isFinite(hi) &&
-      Number.isFinite(lo) &&
-      hi <= 0xffff &&
-      lo <= 0xffff
-    ) {
-      const a = (hi >>> 8) & 0xff;
-      const b = hi & 0xff;
-      const c = (lo >>> 8) & 0xff;
-      const d = lo & 0xff;
-      return isPrivateOrLoopbackHost(`${a}.${b}.${c}.${d}`);
-    }
-  }
-  return false;
-}
-
-/**
- * Validate a renderer-supplied `serverUrl` before opening a KChat
- * connection. Throws if the URL is malformed, uses a non-http(s)
- * scheme, points at a literal private/loopback IP, or DNS-resolves
- * to one. Operators can opt out of the SSRF guard (e.g. to point
- * at a dev KChat instance on `127.0.0.1`) by setting the env var
- * `TESSERA_KCHAT_ALLOW_INTERNAL=1` before launching the desktop
- * app; the guard is on by default in production builds.
- */
-async function enforceKchatServerUrl(rawUrl: string): Promise<URL> {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error("serverUrl is not a valid URL");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("serverUrl must use http:// or https://");
-  }
-  const allowInternal = process.env.TESSERA_KCHAT_ALLOW_INTERNAL === "1";
-  if (allowInternal) {
-    return parsed;
-  }
-  if (isPrivateOrLoopbackHost(parsed.hostname)) {
-    throw new Error(
-      "serverUrl points at a private, loopback, or link-local address; refusing to connect to internal targets. Set TESSERA_KCHAT_ALLOW_INTERNAL=1 to override (dev only).",
-    );
-  }
-  // Resolve the hostname and reject if any A/AAAA record lands in
-  // private/loopback space. This catches the case of a public-
-  // looking hostname (e.g. `kchat.example.com`) that resolves to
-  // `10.0.0.5` via DNS (intranet split-horizon or a malicious DNS
-  // server pointed at internal infrastructure).
-  //
-  // Fail-closed on DNS errors (ninth-pass Devin Review
-  // ANALYSIS_0002): a previous version of this guard swallowed
-  // *all* `dns.lookup` failures — the rationale was that the
-  // subsequent `fetch` would surface a clearer ENOTFOUND. The bot
-  // pointed out that a malicious/slow DNS server could time out
-  // *our* lookup but still respond to `fetch`'s lookup with a
-  // private IP, bypassing the rebinding mitigation entirely. We
-  // now distinguish:
-  //   * `ENOTFOUND` / `EAI_NONAME` — the host genuinely does not
-  //     exist; the network layer would fail too, so allow the
-  //     attempt through so the user sees the network-layer error
-  //     (and to avoid a confusing "refusing to connect" message
-  //     for typos and offline cases).
-  //   * any other DNS error (timeout, refused, server-side error,
-  //     unexpected throw) — fail-closed and require the user to
-  //     retry or opt out via `TESSERA_KCHAT_ALLOW_INTERNAL=1`.
-  //     This is the correct posture for an SSRF guard: "if we
-  //     can't verify the destination, refuse to send the PAT."
-  try {
-    const addrs = await dnsPromises.lookup(parsed.hostname, { all: true });
-    for (const a of addrs) {
-      if (isPrivateOrLoopbackHost(a.address)) {
-        throw new Error(
-          `serverUrl resolves to a private/loopback address (${a.address}); refusing to connect to internal targets. Set TESSERA_KCHAT_ALLOW_INTERNAL=1 to override (dev only).`,
-        );
-      }
-    }
-  } catch (err) {
-    // Re-throw our own "private/loopback" error untouched.
-    if (
-      err instanceof Error &&
-      err.message.startsWith("serverUrl resolves to a private")
-    ) {
-      throw err;
-    }
-    // Allow ENOTFOUND through — host doesn't exist, the network
-    // layer will report it. Fail-closed on any other DNS error so
-    // a slow/hostile DNS resolver cannot bypass the rebinding
-    // mitigation.
-    const code =
-      err && typeof err === "object" && "code" in err
-        ? String((err as { code: unknown }).code)
-        : "";
-    if (code === "ENOTFOUND" || code === "EAI_NONAME") {
-      // Host doesn't exist — let `fetch` surface the network error.
-      return parsed;
-    }
-    throw new Error(
-      `serverUrl could not be validated against the SSRF guard (DNS error: ${code || "unknown"}); refusing to connect. Retry once the DNS resolver is reachable, or set TESSERA_KCHAT_ALLOW_INTERNAL=1 to override (dev only).`,
-    );
-  }
-  return parsed;
-}
 
 function sanitizeTeam(t: KchatTeam): RendererTeam {
   return {
@@ -587,6 +295,145 @@ export function registerKchatHandlers(): void {
         // against a stale id. Swallowing the error matches the
         // connect path — the audit row above is the
         // operator-visible signal of the disconnect.
+        try {
+          bridge.bridgeClearKchatPrincipal();
+        } catch (err) {
+          console.error(
+            "[kchat] bridgeClearKchatPrincipal failed:",
+            err,
+          );
+        }
+      }
+    }
+    return { disconnected: true };
+  });
+
+  // --- Phase 13 Task 7: extension-bridge surface ---
+  //
+  // Three channels mount the `uney-chat-desktop` extension bridge
+  // into the renderer:
+  //
+  //   * `kchat:extensionStatus` — cheap probe. Returns whether the
+  //     desktop app is reachable on the well-known socket path
+  //     (see `kchatExtensionBridge.extensionSocketPath`), plus the
+  //     currently-active `authMode` ("none" | "pat" | "extension")
+  //     so the Settings card knows which CTA to render without a
+  //     separate `kchat:status` round-trip.
+  //
+  //   * `kchat:extensionConnect` — initiate the session handoff.
+  //     Rejects with `extension-not-available` when the probe
+  //     returns `available: false`; rejects with
+  //     `concurrent-pat-attempt` when a PAT connection is already
+  //     active and the renderer race-condition'd through the
+  //     UI gate. (The auth service tears down the PAT
+  //     connection on `connectViaExtension`, so this rejection is
+  //     advisory — the renderer surfaces the disconnect dialog
+  //     before it would proceed.)
+  //
+  //   * `kchat:extensionDisconnect` — tear down only the
+  //     extension session. The PAT vault entry (if any) is left
+  //     intact so the user can reconnect via PAT after.
+  //
+  // Trust model: every frame across the extension socket is
+  // validated by the session module (shape, expiry, embedded
+  // `serverUrl` SSRF check via `enforceKchatServerUrl`). The
+  // extension socket itself is a Unix domain socket / named pipe
+  // — no TCP surface, no remote access — so the SSRF risk is
+  // limited to the `serverUrl` field, which we treat exactly as
+  // the PAT-path `kchat:connect` handler does.
+  idempotentHandle(
+    "kchat:extensionStatus",
+    async (): Promise<{
+      available: boolean;
+      authMode: "none" | "pat" | "extension";
+      protocolVersion?: number;
+      desktopVersion?: string;
+      capabilities?: string[];
+      reason?: string;
+    }> => {
+      defaultRateLimiter.consume(
+        "kchat:extensionStatus",
+        RATE_LIMIT_PROFILES["kchat:extensionStatus"],
+      );
+      const svc = getKchatAuthService();
+      try {
+        const probe = await svc.probeExtension();
+        return {
+          available: probe.available,
+          authMode: svc.getAuthMode(),
+          protocolVersion: probe.protocolVersion,
+          desktopVersion: probe.desktopVersion,
+          capabilities: probe.capabilities,
+          reason: probe.reason,
+        };
+      } catch (err) {
+        throw toIpcError(err);
+      }
+    },
+  );
+
+  idempotentHandle(
+    "kchat:extensionConnect",
+    async () => {
+      defaultRateLimiter.consume(
+        "kchat:extensionConnect",
+        RATE_LIMIT_PROFILES["kchat:extensionConnect"],
+      );
+      const svc = getKchatAuthService();
+      const probe = await svc.probeExtension();
+      if (!probe.available) {
+        throw new Error(
+          `KChat Desktop extension is not available (${probe.reason ?? "no-socket"}); install or launch the desktop app, or fall back to the PAT connection.`,
+        );
+      }
+      try {
+        const user = await svc.connectViaExtension();
+        const bridge = getBridge();
+        if (bridge) {
+          const state = svc.getState();
+          bridge.bridgeLogKchatConnected(
+            state.serverUrl ?? "",
+            user.id,
+          );
+          try {
+            bridge.bridgeSetKchatPrincipal(user.id);
+          } catch (err) {
+            console.error(
+              "[kchat] bridgeSetKchatPrincipal failed:",
+              err,
+            );
+          }
+        }
+        return {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          firstName: user.first_name,
+          lastName: user.last_name,
+        };
+      } catch (err) {
+        throw toIpcError(err);
+      }
+    },
+  );
+
+  idempotentHandle("kchat:extensionDisconnect", async () => {
+    defaultRateLimiter.consume(
+      "kchat:extensionDisconnect",
+      RATE_LIMIT_PROFILES["kchat:extensionDisconnect"],
+    );
+    const svc = getKchatAuthService();
+    if (svc.getAuthMode() !== "extension") {
+      // No-op disconnect when the active mode isn't `extension`
+      // — same shape as `kchat:disconnect` so the renderer can
+      // call it unconditionally on a settings teardown.
+      return { disconnected: false };
+    }
+    const userId = svc.disconnect();
+    if (userId) {
+      const bridge = getBridge();
+      if (bridge) {
+        bridge.bridgeLogKchatDisconnected(userId);
         try {
           bridge.bridgeClearKchatPrincipal();
         } catch (err) {
@@ -1515,6 +1362,125 @@ export function registerKchatHandlers(): void {
       });
       inFlightBackfillKchatChannel.set(id, work);
       return work;
+    },
+  );
+
+  /**
+   * Phase 13 Task 10: per-channel backfill progress projection.
+   *
+   * The renderer (`SourceDetailPage`) polls this while a backfill
+   * is in flight (or just to render the post-completion badge)
+   * and projects the result onto a progress bar / status pill.
+   * The handler is a pure read of two pieces of state:
+   *
+   *   1. `inFlightBackfillKchatChannel.has(id)` — is a walk
+   *      currently running? Drives the `active` vs `idle/complete`
+   *      branch.
+   *   2. `bridgeGetKchatBackfillState(cacheDir)` — substrate-
+   *      persisted state. Surfaces `oldestPostId`, `completedAt`,
+   *      revocation outcome.
+   *
+   * The handler does NOT trigger a fresh walk; it's a passive
+   * progress projection. We deliberately keep `totalPosts: null`
+   * — KChat does not always surface a channel-level post count,
+   * and the UX renders an indeterminate progress indicator in
+   * that case. When the substrate-level state read fails (e.g.
+   * the cacheDir disappeared mid-poll), the handler returns an
+   * `error` discriminator with the underlying message so the
+   * renderer can show a retry button rather than silently fall
+   * back to `idle`.
+   */
+  idempotentHandle(
+    "kchat:backfillProgress",
+    async (
+      _event,
+      channelId: unknown,
+    ): Promise<{
+      channelId: string;
+      oldestFetched: number | null;
+      totalPosts: number | null;
+      postsIngested: number;
+      status: "idle" | "active" | "complete" | "error";
+      error?: string;
+    }> => {
+      defaultRateLimiter.consume(
+        "kchat:backfillProgress",
+        RATE_LIMIT_PROFILES["kchat:backfillProgress"],
+      );
+      const id = assertKchatId(channelId, "channelId");
+      const bridge = getBridge();
+      if (!bridge) {
+        return {
+          channelId: id,
+          oldestFetched: null,
+          totalPosts: null,
+          postsIngested: 0,
+          status: "error",
+          error: "Native bridge not available",
+        };
+      }
+      const inFlight = inFlightBackfillKchatChannel.has(id);
+      let state;
+      try {
+        state = bridge.bridgeGetKchatBackfillState(kchatChannelCacheDir(id));
+      } catch (err) {
+        return {
+          channelId: id,
+          oldestFetched: null,
+          totalPosts: null,
+          postsIngested: 0,
+          status: "error",
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+      if (state.outcome === "unlinked") {
+        return {
+          channelId: id,
+          oldestFetched: null,
+          totalPosts: null,
+          postsIngested: 0,
+          status: "idle",
+        };
+      }
+      if (state.outcome === "access_revoked") {
+        return {
+          channelId: id,
+          oldestFetched: null,
+          totalPosts: null,
+          postsIngested: 0,
+          status: "idle",
+        };
+      }
+      // Substrate stores `oldestPostId` as the cursor used to
+      // advance the walk; the renderer's "X posts ingested"
+      // counter is not surfaced by the state read (the substrate
+      // doesn't keep a running counter because the value is
+      // re-derivable from the audit log). We expose 0 here when
+      // no walk has run yet and let the renderer subscribe to
+      // audit-row tail-follow if it wants live counters. The
+      // important UX is the discriminator (active vs
+      // complete vs idle), which the renderer renders as a
+      // progress *indicator* rather than a precise %-bar — the
+      // protocol-evolution comment block in
+      // `bridgeGetKchatBackfillState` (substrate side) explains
+      // why an exact post count is not always available.
+      const completedAt = state.completedAt ?? null;
+      if (completedAt !== null) {
+        return {
+          channelId: id,
+          oldestFetched: null,
+          totalPosts: null,
+          postsIngested: 0,
+          status: "complete",
+        };
+      }
+      return {
+        channelId: id,
+        oldestFetched: null,
+        totalPosts: null,
+        postsIngested: 0,
+        status: inFlight ? "active" : "idle",
+      };
     },
   );
 

@@ -465,6 +465,40 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   if (available !== true) return null;
   if (state.state !== "connected") return null;
 
+  // Phase 13 Task 6 — desktop-app connectivity dot. Green when
+  // the active mode is `extension` AND the cached probe is
+  // `available: true`; amber when we connected via extension
+  // earlier but the desktop app has since disconnected
+  // (`extensionAvailable === false` while `authMode` still says
+  // "extension"); the dot is hidden in PAT mode so the existing
+  // PAT-only UX stays unchanged.
+  //
+  // Phase 13 Theme 1 Devin Review ANALYSIS_0005 (sidebar) note:
+  // the amber "extension still set, probe says unavailable" state
+  // is intentionally narrow in lifecycle. `KchatAuthService`'s
+  // disconnect-side handlers (`handleExtensionDisconnect`,
+  // `handleExtensionRefreshFailure`) tear down the connection
+  // AND flip `authMode` back to `"none"` atomically inside the
+  // same callback, so once the desktop app actually goes away the
+  // status push the renderer sees carries `authMode: "none"` and
+  // the dot is hidden, not amber. The amber path only renders if
+  // a status push leaks through with `authMode: "extension"` but
+  // `extensionAvailable: false` — e.g. if a probe re-run between
+  // status pushes flips `extensionAvailable` to `false` while the
+  // extension session is still active and refreshable. We keep
+  // the amber rendering as defense-in-depth + as a clear
+  // operator-visible signal in that narrow window; if the
+  // desktop app is genuinely gone, the disconnect handler will
+  // transition the dot to hidden on the next push.
+  const showExtensionDot = state.authMode === "extension";
+  const extensionHealthy = state.extensionAvailable === true;
+  const extensionDotColor = extensionHealthy
+    ? "var(--color-success, #2da44e)"
+    : "var(--color-warning, #d4a017)";
+  const extensionDotLabel = extensionHealthy
+    ? "Connected via KChat Desktop"
+    : "KChat Desktop disconnected — falling back to cached session";
+
   return (
     <div
       className="sidebar-kchat"
@@ -484,7 +518,25 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
           justifyContent: "space-between",
         }}
       >
-        <strong style={{ color: "var(--color-text-headline)" }}>KChat</strong>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--spacing-xs)" }}>
+          {showExtensionDot && (
+            <span
+              data-testid="kchat-extension-dot"
+              data-extension-state={extensionHealthy ? "healthy" : "stale"}
+              title={extensionDotLabel}
+              aria-label={extensionDotLabel}
+              role="img"
+              style={{
+                display: "inline-block",
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                backgroundColor: extensionDotColor,
+              }}
+            />
+          )}
+          <strong style={{ color: "var(--color-text-headline)" }}>KChat</strong>
+        </div>
         {unread > 0 && (
           <button
             type="button"

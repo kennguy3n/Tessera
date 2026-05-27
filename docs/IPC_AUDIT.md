@@ -180,6 +180,49 @@ the entire KChat UI when `kchat:isAvailable` returns `false`.
 | `kchat:listMembers`                   | scalar-helper (KChat-id)                                  |      |
 | `kchat:listChannelFiles`              | scalar-helper (KChat-id + paging ints)                    |      |
 | `kchat:shareArtifact`                 | scalar-helper (artifact-id + KChat-id + format + bool×2)  | ✓ — uploads bytes via KChat token |
+| `kchat:searchPosts`                   | scalar-helper (query + limit)                             | ✓ — AEAD-verifies post bodies; rate-limited 10/s burst 20 |
+| `kchat:extensionStatus`               | no-input                                                  | ✓ — probes `uney-chat-desktop` Unix-socket / named-pipe; rate-limited 1/s burst 3 |
+| `kchat:extensionConnect`              | no-input                                                  | ✓ — runs handshake over the extension socket, persists scoped delegation under `kchat-extension` vault provider, applies SSRF guard to handshake `serverUrl`; rate-limited 1 per 5 s |
+| `kchat:extensionDisconnect`           | no-input                                                  | ✓ — tears down only the extension session; PAT vault entry survives; rate-limited 1 per 5 s |
+| `kchat:backfillProgress`              | scalar-helper (KChat-id)                                  | ✓ — pure read of substrate state; rate-limited 2/s burst 5 |
+| `sources:backfillKchatChannel`        | scalar-helper (KChat-id)                                  | ✓ — historical-walk over `kchat:posts` REST surface |
+| `sources:addKchatChannel`             | scalar-helper (KChat-id + display-name)                   | ✓ — fan-out channel file download into the source vault |
+
+### Phase 13 trust model for the extension surface
+
+The three `kchat:extension*` channels mount a new trust boundary
+beyond the existing PAT path. The salient policies:
+
+1. **Transport is local-only**. The extension socket is a Unix
+   domain socket on Linux / macOS (`$XDG_RUNTIME_DIR/...` on
+   Linux, `~/Library/Application Support/Tessera/...` on macOS)
+   and a named pipe on Windows. There is **no TCP surface** — a
+   remote attacker cannot reach the bridge.
+
+2. **Token never leaves the main process**. The delegation token
+   minted by `uney-chat-desktop` is stored under the
+   `kchat-extension` vault provider and surfaces to the renderer
+   only through the sanitised `KchatConnectionStateView` (no
+   token field).
+
+3. **SSRF guard applies to the extension surface**. The
+   `serverUrl` carried in the handshake response is run through
+   the same `enforceKchatServerUrl` guard as the PAT-path
+   `kchat:connect`, so a malicious or compromised desktop app
+   cannot redirect Tessera's authenticated KChat traffic to a
+   private/loopback/link-local address.
+
+4. **Rate-limited**. Discovery probe is 1/s burst 3 (cheap
+   read); handshake + disconnect are 1 per 5 s (each handshake
+   mints a fresh delegation, each disconnect tears down a live
+   socket — neither has a legitimate high-frequency caller).
+
+5. **Concurrent PAT + extension is rejected at the service
+   layer**. `KchatAuthService.connect()` tears down an active
+   extension session before the PAT attempt;
+   `KchatAuthService.connectViaExtension()` tears down an active
+   PAT connection before the handshake. Only one mode is ever
+   live at a time.
 
 ## Audit
 
