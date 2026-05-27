@@ -658,4 +658,71 @@ describe("SourcesPage", () => {
       screen.getByTestId("comparison-modal-similarity"),
     ).toHaveTextContent("62%");
   });
+
+  it("renders a source-type glyph on every row (Phase 13 Theme 5 Task 27)", async () => {
+    // Integration pin for the new `sourceTypeIcon` helper applied
+    // at the SourcesPage row level: each source kind must surface
+    // its glyph + aria-label so a user scanning the list can tell
+    // local folders, files, and KChat channels apart without
+    // reading the description line.
+    const folder = {
+      id: "src-folder",
+      sourceType: "local_folder" as const,
+      path: "/docs/folder",
+      status: "connected" as const,
+      createdAt: new Date().toISOString(),
+      lastIndexed: null,
+      fileCount: 1,
+    };
+    const file = {
+      id: "src-file",
+      sourceType: "local_file" as const,
+      path: "/docs/file.md",
+      status: "connected" as const,
+      createdAt: new Date().toISOString(),
+      lastIndexed: null,
+      fileCount: 1,
+    };
+    const kchat = {
+      id: "src-kchat",
+      sourceType: "kchat" as const,
+      path: "/home/u/.tessera/kchat-channels/chid26charactersaaaaaaaaaa",
+      status: "connected" as const,
+      createdAt: new Date().toISOString(),
+      lastIndexed: null,
+      fileCount: 0,
+    };
+    window.tessera.sources.listSources = vi
+      .fn()
+      .mockResolvedValue([folder, file, kchat]);
+
+    render(
+      <MemoryRouter>
+        <SourcesPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("/docs/folder")).toBeInTheDocument();
+      expect(screen.getByText("/docs/file.md")).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "/home/u/.tessera/kchat-channels/chid26charactersaaaaaaaaaa",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    const folderIcon = screen.getByTestId("source-icon-src-folder");
+    expect(folderIcon).toHaveAttribute("aria-label", "Local folder source");
+    expect(folderIcon).toHaveAttribute("role", "img");
+    expect(folderIcon.textContent).toBe("📁");
+
+    const fileIcon = screen.getByTestId("source-icon-src-file");
+    expect(fileIcon).toHaveAttribute("aria-label", "Local file source");
+    expect(fileIcon.textContent).toBe("📄");
+
+    const kchatIcon = screen.getByTestId("source-icon-src-kchat");
+    expect(kchatIcon).toHaveAttribute("aria-label", "KChat channel source");
+    expect(kchatIcon.textContent).toBe("💬");
+  });
 });

@@ -96,3 +96,65 @@ export function formatSourceTypeLabel(sourceType: string): string {
         .join(" ");
   }
 }
+
+/**
+ * Visual + accessibility metadata for a `SourceInfo.sourceType` so
+ * the source-list and source-detail surfaces can mark each row with
+ * a recognisable glyph at a glance (folder for filesystem trees,
+ * page for individual files, chat bubble for KChat channels) without
+ * polluting every consumer with the switch.
+ *
+ * Returns:
+ *   - `glyph`: a short Unicode/emoji marker to render in the UI.
+ *     Empty string for unknown kinds so callers can choose between
+ *     "render no marker" (default) and "render a generic fallback"
+ *     without re-implementing the policy.
+ *   - `ariaLabel`: a short, screen-reader-friendly description of
+ *     what the glyph represents (e.g. "Local folder source"). The
+ *     glyph itself is decorative once the label is read aloud, so
+ *     callers should wrap the glyph in a `<span role="img"
+ *     aria-label={ariaLabel}>` and pair it with `aria-hidden="true"`
+ *     on any inner glyph nodes if the structure demands it.
+ *
+ * Phase 13 Theme 5 Task 27: previously `SourcesPage` rendered every
+ * source row with the same plain text title regardless of kind, so
+ * a user scanning a long list could not distinguish a `local_folder`
+ * source from a `kchat` channel without reading the description
+ * line. The pre-Theme-5 `CitationPanel` already established the
+ * convention that KChat-derived rows carry a visible chat-bubble
+ * marker (`citation-source-badge-kchat`); this helper extends that
+ * convention to the source-list and source-detail pages so the
+ * KChat surface looks consistent across all three places.
+ *
+ * Glyphs are intentionally Unicode/emoji rather than SVG icons:
+ *   1. The existing `fileTypeIcon` in `KchatChannelSourcePicker`
+ *      already uses emoji glyphs (📄, 🖼️, etc.) so the visual
+ *      vocabulary is consistent.
+ *   2. Emoji glyphs render correctly on every platform without
+ *      shipping additional icon assets or accessibility plumbing.
+ *   3. Unknown kinds can fall through to an empty glyph without a
+ *      broken-icon placeholder.
+ */
+export function sourceTypeIcon(sourceType: string): {
+  glyph: string;
+  ariaLabel: string;
+} {
+  switch (sourceType) {
+    case "local_folder":
+      return { glyph: "📁", ariaLabel: "Local folder source" };
+    case "local_file":
+      return { glyph: "📄", ariaLabel: "Local file source" };
+    case "kchat":
+      return { glyph: "💬", ariaLabel: "KChat channel source" };
+    default:
+      // Empty glyph — caller renders the row without a marker
+      // rather than picking an arbitrary stand-in. The
+      // `ariaLabel` still describes the kind so a future
+      // consumer that DOES want a fallback glyph has a
+      // human-readable string to attach.
+      return {
+        glyph: "",
+        ariaLabel: `${formatSourceTypeLabel(sourceType)} source`,
+      };
+  }
+}

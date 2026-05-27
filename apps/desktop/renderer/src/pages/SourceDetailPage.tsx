@@ -11,6 +11,7 @@ import { useKchatBackfillProgress } from "../hooks/useKchatBackfillProgress";
 import {
   extractKchatChannelIdFromSource,
   formatSourceTypeLabel,
+  sourceTypeIcon,
 } from "../utils/sourceLabels";
 import type { ExtractedItem } from "../types/ipc";
 
@@ -22,7 +23,11 @@ import type { ExtractedItem } from "../types/ipc";
 // `utils/sourceLabels.ts`. Direct consumers (e.g. `SourcesPage`)
 // import from the utils module directly so they don't pick up the
 // detail-page component tree.
-export { extractKchatChannelIdFromSource, formatSourceTypeLabel };
+export {
+  extractKchatChannelIdFromSource,
+  formatSourceTypeLabel,
+  sourceTypeIcon,
+};
 
 export default function SourceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -555,7 +560,28 @@ export default function SourceDetailPage() {
             }}
           >
             <span style={{ fontWeight: 600 }}>Type</span>
-            <span>{formatSourceTypeLabel(source.sourceType)}</span>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "var(--spacing-xs)",
+              }}
+            >
+              {(() => {
+                const t = sourceTypeIcon(source.sourceType);
+                return t.glyph ? (
+                  <span
+                    role="img"
+                    aria-label={t.ariaLabel}
+                    data-testid="source-detail-type-icon"
+                    data-source-type={source.sourceType}
+                  >
+                    {t.glyph}
+                  </span>
+                ) : null;
+              })()}
+              {formatSourceTypeLabel(source.sourceType)}
+            </span>
 
             <span style={{ fontWeight: 600 }}>Status</span>
             <span>

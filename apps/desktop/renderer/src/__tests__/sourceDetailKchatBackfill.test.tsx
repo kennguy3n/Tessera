@@ -10,6 +10,7 @@ import { MemoryRouter, Routes, Route } from "react-router-dom";
 import SourceDetailPage, {
   extractKchatChannelIdFromSource,
   formatSourceTypeLabel,
+  sourceTypeIcon,
 } from "../pages/SourceDetailPage";
 import type { SourceInfo } from "../types/ipc";
 
@@ -196,6 +197,57 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
     });
   });
 
+  describe("sourceTypeIcon", () => {
+    // Phase 13 Theme 5 Task 27: every known source kind must map to
+    // a glyph + ariaLabel pair so SourcesPage / SourceDetailPage can
+    // render a recognisable marker at a glance. The mapping must
+    // stay in lockstep with `formatSourceTypeLabel` — if a future
+    // kind is added there, this helper must be extended too (the
+    // unknown-kind fall through is a graceful default, NOT a
+    // licence to skip the explicit case).
+
+    it("returns a folder glyph for local_folder", () => {
+      const t = sourceTypeIcon("local_folder");
+      expect(t.glyph).toBe("📁");
+      expect(t.ariaLabel).toBe("Local folder source");
+    });
+
+    it("returns a document glyph for local_file", () => {
+      const t = sourceTypeIcon("local_file");
+      expect(t.glyph).toBe("📄");
+      expect(t.ariaLabel).toBe("Local file source");
+    });
+
+    it("returns a chat-bubble glyph for kchat", () => {
+      const t = sourceTypeIcon("kchat");
+      expect(t.glyph).toBe("💬");
+      expect(t.ariaLabel).toBe("KChat channel source");
+    });
+
+    it("returns an empty glyph for an unknown kind so the row renders without a broken-icon placeholder", () => {
+      const t = sourceTypeIcon("some_new_kind");
+      expect(t.glyph).toBe("");
+      // ariaLabel still carries the humanised label so a future
+      // consumer that DOES want a fallback glyph has something to
+      // attach.
+      expect(t.ariaLabel).toBe("Some New Kind source");
+    });
+
+    it("returns an empty glyph for an empty discriminator without throwing", () => {
+      const t = sourceTypeIcon("");
+      expect(t.glyph).toBe("");
+      expect(t.ariaLabel).toBe(" source");
+    });
+
+    it("ariaLabel for every known kind ends with the word 'source' so screen readers announce the cell purpose", () => {
+      // Pin the suffix convention so a future contributor changing
+      // one case doesn't accidentally diverge.
+      for (const kind of ["local_folder", "local_file", "kchat"]) {
+        expect(sourceTypeIcon(kind).ariaLabel).toMatch(/ source$/);
+      }
+    });
+  });
+
   describe("rendering", () => {
     it("renders the idle card with the placeholder copy", async () => {
       window.tessera.kchat.backfillProgress = vi.fn().mockResolvedValue({
@@ -343,7 +395,16 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       const typeRow = screen.getByText("Type", { selector: "span" });
       const valueCell = typeRow.nextElementSibling as HTMLElement | null;
       expect(valueCell).not.toBeNull();
-      expect(valueCell!.textContent).toBe("KChat Channel");
+      // The cell composes the Phase 13 Theme 5 Task 27 icon
+      // (💬) with the formatted type label. Asserting on
+      // `toContain` keeps this test focused on the
+      // ANALYSIS_0003 invariant (the cell SAYS "KChat Channel"
+      // somewhere) without coupling it to the visual marker
+      // layout — the icon itself is independently pinned by the
+      // `source-detail-type-icon` test in the
+      // `source-type icon (Phase 13 Theme 5 Task 27)` describe
+      // block below.
+      expect(valueCell!.textContent).toContain("KChat Channel");
     });
 
     it("does NOT render the KChat card for a non-KChat (local_folder) source", async () => {
@@ -536,6 +597,60 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       // stay at 1.
       await new Promise((r) => setTimeout(r, 50));
       expect(spy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("source-type icon (Phase 13 Theme 5 Task 27)", () => {
+    // Integration-level pin for the SourceDetailPage Source
+    // Information card. The unit-level `sourceTypeIcon` tests
+    // (above) verify the helper returns the right glyph / aria
+    // label; these tests verify that the page actually renders
+    // them next to the formatted type label so the visual
+    // signal reaches the user.
+    it("renders the chat-bubble glyph next to 'KChat Channel' for a kchat source", async () => {
+      window.tessera.kchat.backfillProgress = vi.fn().mockResolvedValue({
+        channelId: KCHAT_CHANNEL_ID,
+        oldestFetched: null,
+        totalPosts: null,
+        postsIngested: 0,
+        status: "idle",
+      });
+      renderWithRoute();
+      const icon = await screen.findByTestId("source-detail-type-icon");
+      expect(icon).toHaveAttribute("data-source-type", "kchat");
+      expect(icon).toHaveAttribute("aria-label", "KChat channel source");
+      expect(icon).toHaveAttribute("role", "img");
+      expect(icon.textContent).toBe("💬");
+    });
+
+    it("renders the folder glyph next to 'Local Folder' for a local_folder source", async () => {
+      // Override the default KChat detail with a local_folder
+      // detail so this test exercises the non-KChat branch of
+      // the icon switch without colliding with the KChat
+      // backfill-card rendering.
+      window.tessera.sources.getDetail = vi.fn().mockResolvedValue({
+        source: {
+          id: "src-folder-1",
+          sourceType: "local_folder",
+          path: "/Users/me/Documents",
+          status: "indexed",
+          createdAt: new Date().toISOString(),
+          lastIndexed: new Date().toISOString(),
+          fileCount: 0,
+        },
+        files: [],
+      });
+      render(
+        <MemoryRouter initialEntries={["/sources/src-folder-1"]}>
+          <Routes>
+            <Route path="/sources/:id" element={<SourceDetailPage />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      const icon = await screen.findByTestId("source-detail-type-icon");
+      expect(icon).toHaveAttribute("data-source-type", "local_folder");
+      expect(icon).toHaveAttribute("aria-label", "Local folder source");
+      expect(icon.textContent).toBe("📁");
     });
   });
 });
