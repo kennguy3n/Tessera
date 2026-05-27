@@ -229,6 +229,13 @@ export default function SourceDetailPage() {
   }
 
   const { source, files } = detail;
+  // Extract the source-type icon descriptor once, matching the
+  // pattern in `SourcesPage.tsx:387`. Both pages render the same
+  // {glyph + ariaLabel} pair, so the call-site shape should be
+  // identical — an IIFE inside JSX (the pre-PR-55 shape) is
+  // harder to read and diverges from the sibling page. Per
+  // Devin Review PR #55 ANALYSIS_0004.
+  const sourceDetailTypeIcon = sourceTypeIcon(source.sourceType);
 
   return (
     <div>
@@ -567,19 +574,16 @@ export default function SourceDetailPage() {
                 gap: "var(--spacing-xs)",
               }}
             >
-              {(() => {
-                const t = sourceTypeIcon(source.sourceType);
-                return t.glyph ? (
-                  <span
-                    role="img"
-                    aria-label={t.ariaLabel}
-                    data-testid="source-detail-type-icon"
-                    data-source-type={source.sourceType}
-                  >
-                    {t.glyph}
-                  </span>
-                ) : null;
-              })()}
+              {sourceDetailTypeIcon.glyph ? (
+                <span
+                  role="img"
+                  aria-label={sourceDetailTypeIcon.ariaLabel}
+                  data-testid="source-detail-type-icon"
+                  data-source-type={source.sourceType}
+                >
+                  {sourceDetailTypeIcon.glyph}
+                </span>
+              ) : null}
               {formatSourceTypeLabel(source.sourceType)}
             </span>
 

@@ -168,11 +168,34 @@ const REQUIRED_DARK_OVERRIDES: readonly string[] = [
   // override, the badge silently reverts to orange-700 which is
   // unreadable on dark grey.
   "--color-priority-high",
+  // Warning surface tokens (Phase 13 Theme 5 Task 29 / Devin
+  // Review PR #55 ANALYSIS_0003) — bg/subtle/fg trio mirroring
+  // the success/danger family. The badge-warning / toast-warning
+  // pre-existing surfaces used bare hex literals that didn't
+  // flip; we point them at these tokens now and pin the dark
+  // override here.
+  "--color-warning-bg",
+  "--color-warning-subtle",
+  "--color-warning-fg",
+  // success/danger badge & toast foregrounds. Without dark
+  // overrides the historic light-on-light pairing (#065f46 on
+  // #d1fae5, #991b1b on #fee2e2) would persist into dark mode.
+  "--color-success-fg",
+  "--color-danger-fg",
+  // --color-text-link DOES have a dark override in both the
+  // `[data-theme="dark"]` scope (tokens.css:138) and the
+  // `@media (prefers-color-scheme: dark)` scope (tokens.css:175).
+  // Per Devin Review PR #55 ANALYSIS_0002 it belongs in the
+  // must-override list — earlier shape mistakenly classified it
+  // as "theme-agnostic". Moving it here keeps the test name
+  // accurate (token IS overridden in dark, so it MUST stay
+  // overridden).
+  "--color-text-link",
 ];
 
 // Theme-agnostic accent tokens whose light values remain
 // readable on both light and dark surfaces (success / warning /
-// error / link). They are intentionally NOT in
+// error). They are intentionally NOT in
 // REQUIRED_DARK_OVERRIDES because forcing a dark override would
 // reduce contrast — the light values are calibrated to work on
 // both palettes. Centralising them here lets the KChat-surface
@@ -182,7 +205,6 @@ const THEME_AGNOSTIC_ACCENT_TOKENS: readonly string[] = [
   "--color-success",
   "--color-warning",
   "--color-error",
-  "--color-text-link",
 ];
 
 describe("dark-mode CSS variable enforcement", () => {
@@ -382,13 +404,20 @@ describe("dark-mode CSS variable enforcement", () => {
     // assert no bare hex / rgb / hsl color values. Match the
     // selector group up to the next `{`, then the body up to the
     // matching `}`.
+    //
+    // The selector regex anchors the class name with a
+    // lookahead (`(?=[\s,:{])`) so a bare `.citation-source-badge`
+    // does NOT also match `.citation-source-badge-kchat` (the
+    // `[^{]*` segment would otherwise consume the `-kchat ` suffix
+    // and the rule body would be misattributed to the base class).
+    // Per Devin Review PR #55 ANALYSIS_0001. The lookahead also
+    // tolerates pseudo-classes (`.citation-hit-kchat-permalink:hover`)
+    // because the `[^{]*` after the lookahead happily consumes
+    // them.
     const bareColorViolations: string[] = [];
     for (const cls of KCHAT_SURFACE_CLASSES) {
-      // Match the rule body. Selectors can include the class plus
-      // optional pseudo (e.g. `.citation-hit-kchat-permalink:hover`)
-      // — allow non-`{` chars before the opening brace.
       const ruleRe = new RegExp(
-        `\\.${cls}[^{]*\\{([^}]*)\\}`,
+        `\\.${cls}(?=[\\s,:{])[^{]*\\{([^}]*)\\}`,
         "g",
       );
       let m: RegExpExecArray | null;

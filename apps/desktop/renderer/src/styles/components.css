@@ -116,19 +116,30 @@
   border-radius: var(--radius-button);
 }
 
+/*
+ * Pre-PR-55 these three badge classes used bare hex literals
+ * (#d1fae5/#065f46, #fef3c7/#92400e, #fee2e2/#991b1b) and would
+ * persist into dark mode unchanged — the light-on-light pairing
+ * is unreadable on a dark page surface. Theme 5 fixed this by
+ * pointing each surface at the corresponding tokens.css
+ * `--color-*-{bg,fg}` token pair, which has explicit dark
+ * overrides. Per Devin Review PR #55 ANALYSIS_0003. The token
+ * light values match the historic bare-hex so visual continuity
+ * is preserved on the light surface.
+ */
 .badge-success {
-  background-color: #d1fae5;
-  color: #065f46;
+  background-color: var(--color-success-bg);
+  color: var(--color-success-fg);
 }
 
 .badge-warning {
-  background-color: #fef3c7;
-  color: #92400e;
+  background-color: var(--color-warning-bg);
+  color: var(--color-warning-fg);
 }
 
 .badge-error {
-  background-color: #fee2e2;
-  color: #991b1b;
+  background-color: var(--color-danger-bg);
+  color: var(--color-danger-fg);
 }
 
 .badge-info {
@@ -209,14 +220,20 @@
   outline-offset: 2px;
 }
 
+/*
+ * Same fix as `.badge-success` / `.badge-error` above — bare hex
+ * literals replaced with the token pair so the toast surface
+ * flips correctly in dark mode. Per Devin Review PR #55
+ * ANALYSIS_0003.
+ */
 .toast-success {
-  background-color: #d1fae5;
-  color: #065f46;
+  background-color: var(--color-success-bg);
+  color: var(--color-success-fg);
 }
 
 .toast-error {
-  background-color: #fee2e2;
-  color: #991b1b;
+  background-color: var(--color-danger-bg);
+  color: var(--color-danger-fg);
 }
 
 .toast-info {
