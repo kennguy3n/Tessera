@@ -79,15 +79,26 @@ interface MockServer {
 async function startMockServer(
   responder: (frame: Record<string, unknown>) => Record<string, unknown> | null,
 ): Promise<MockServer> {
-  const tmp = path.join(
-    os.tmpdir(),
-    `tessera-kchat-ext-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.sock`,
-  );
-  // Best-effort cleanup if a stale file is present.
-  try {
-    fs.unlinkSync(tmp);
-  } catch {
-    // ignored — typical case is "file not found"
+  // On POSIX systems use a Unix-domain socket under `os.tmpdir()`.
+  // On Windows `net.createServer().listen(<path>)` rejects ordinary
+  // filesystem paths with EACCES — `net.Server` can only bind to
+  // named pipes there, which use the `\\.\pipe\<name>` namespace
+  // (no filesystem unlink needed; the kernel owns the lifetime). The
+  // production `extensionSocketPath()` in `kchatExtensionBridge.ts`
+  // follows the same per-platform shape, so this test mirrors it.
+  const unique = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const tmp =
+    process.platform === "win32"
+      ? `\\\\.\\pipe\\tessera-kchat-ext-test-${unique}`
+      : path.join(os.tmpdir(), `tessera-kchat-ext-test-${unique}.sock`);
+  if (process.platform !== "win32") {
+    // Best-effort cleanup if a stale file is present (POSIX only —
+    // named pipes have no filesystem entry to unlink).
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      // ignored — typical case is "file not found"
+    }
   }
   const sockets = new Set<net.Socket>();
   const server = net.createServer((sock) => {

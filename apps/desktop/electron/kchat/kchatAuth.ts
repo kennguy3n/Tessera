@@ -363,8 +363,17 @@ export class KchatAuthService {
     if (this.authMode === "pat") {
       // Tear down the PAT connection without deleting its vault
       // entry — operator may want to reconnect later with the
-      // saved PAT.
+      // saved PAT. We must reset `authMode` to "none" here (not
+      // just shut down the client) so that if any subsequent
+      // step in this method throws (`conn.open()`,
+      // `session.handshake()`, `verifyConnection()`), the auth
+      // service doesn't end up reporting `{ state: "disconnected",
+      // authMode: "pat" }` with a dead client — which is a
+      // misleading combination since no PAT connection exists.
+      // `authMode` will be re-set to "extension" at the end of
+      // this method on success.
       this.client.shutdown();
+      this.authMode = "none";
     }
     if (this.authMode === "extension") {
       this.teardownExtension();

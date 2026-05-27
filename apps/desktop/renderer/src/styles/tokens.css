@@ -79,6 +79,12 @@
   --color-relevance-low-fg: #b91c1c;
   --color-relevance-low-bg: rgba(239, 68, 68, 0.14);
   --color-priority-high: #c2410c;
+  /* Link colour. Used by the KChat Settings card's PAT-form
+   * disclosure toggle and other inline-link affordances. Light
+   * mode follows the brand violet; the dark override below picks
+   * a violet that still reads as a link against `--color-bg-page`
+   * (#111827) without blending into `--color-primary`. */
+  --color-text-link: #4f46e5;
 }
 
 /* Dark theme overrides.
@@ -110,6 +116,7 @@
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.6);
   --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.7);
   --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.8);
+  --color-text-link: #a5b4fc;
 
   /* Dark overrides for alias tokens whose
    * fallback colors would otherwise stay light. The plain
@@ -165,5 +172,6 @@
     --color-relevance-low-fg: #fca5a5;
     --color-relevance-low-bg: rgba(239, 68, 68, 0.22);
     --color-priority-high: #fb923c;
+    --color-text-link: #a5b4fc;
   }
 }
