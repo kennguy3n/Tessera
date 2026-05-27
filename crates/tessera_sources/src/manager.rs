@@ -4540,7 +4540,7 @@ mod tests {
             cache_dir: cache_dir.to_string(),
             post_id: post_id.to_string(),
             channel_id: channel_id.to_string(),
-            root_id: root_id.map(|s| s.to_string()),
+            root_id: root_id.map(std::string::ToString::to_string),
             sender_user_id: sender.to_string(),
             body: body.to_string(),
             created_at_ms,
