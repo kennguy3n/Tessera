@@ -653,14 +653,30 @@ async function enrichKchatPostHits(
  * a redundant network round-trip, and vice versa.
  *
  * **Maintenance contract** (Phase 13 Theme 2 Task 13 — Devin Review
- * pass 1 ANALYSIS_0002): the body of this function intentionally
- * mirrors `enrichKchatPostHits` (lines 530-642). Any change to the
- * enrichment posture — circuit breaker, retry policy, `isKchatObjectId`
- * filter, cache write semantics — MUST land in BOTH functions. The
- * abstraction wasn't extracted to a generic helper because the
- * 2-call-site overhead would exceed the DRY benefit, but a third
- * caller (e.g. Theme 3's evidence-pack expand-from-citation) is the
- * right point to refactor.
+ * pass 1 ANALYSIS_0002, pass 2 ANALYSIS_0002 edit): the body of this
+ * function shares its enrichment posture with two siblings:
+ *
+ *   - `enrichKchatPostHits` (lines 530-642): full two-cache shape
+ *     (user + channel) for search hits.
+ *   - `enrichKchatFileViews` (lines 477-528): single-cache shape
+ *     (user only) for channel-file previews; channel name is not
+ *     enriched at that layer because the file row already lives
+ *     inside a known-channel UI context.
+ *   - `enrichKchatThreadContextMessages` (this function): full
+ *     two-cache shape for thread-context rows.
+ *
+ * Any change to the shared enrichment posture — circuit breaker,
+ * retry policy, `isKchatObjectId` filter semantics, cache-write
+ * rules — MUST land in ALL three functions. The shared
+ * `populateKchatUsernameCache` helper (line 431) absorbs the
+ * user-cache half of the duplication; the channel-cache half is
+ * still copy-pasted across this function and `enrichKchatPostHits`
+ * because pulling it out behind a generic accessor would force the
+ * call sites through 4 closure parameters (field accessor + cache
+ * ref + write target + key for each side), which would land as a
+ * worse readability story than the duplication at 2 call sites. The
+ * file-view path is single-cache so it doesn't need that lift. A
+ * fourth caller is the right point to revisit the abstraction.
  */
 async function enrichKchatThreadContextMessages(
   messages: KchatThreadContextMessage[],
@@ -2371,8 +2387,12 @@ export function registerKchatHandlers(): void {
    *   1. Rate-limits via `kchat:fetchThreadContext` (5/s sustained,
    *      10 burst) — the legitimate caller fires this once per
    *      expand-click.
-   *   2. Validates `sourceId` (Mattermost 26-char object id shape)
-   *      and `postId` (same shape) at the deserialisation boundary.
+   *   2. Validates `sourceId` (Tessera source UUID shape via
+   *      `assertId`, which the Rust bridge parses with
+   *      `uuid::Uuid::parse_str`) and `postId` (Mattermost 26-char
+   *      object-id shape via `assertKchatId`) at the deserialisation
+   *      boundary. See the BUG_0001 comment below the rate-limit
+   *      call for the rationale.
    *   3. Calls `bridgeFetchKchatThreadContext` for the AEAD-verified
    *      row set.
    *   4. Enriches each row with `senderUsername` / `channelDisplayName`

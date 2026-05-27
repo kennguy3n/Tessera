@@ -268,7 +268,13 @@ async function startUploadServer(): Promise<UploadServer> {
  */
 function extractBoundary(contentType: string | undefined): string | null {
   if (!contentType) return null;
-  const m = /boundary=([^;]+)$/.exec(contentType);
+  // Phase 13 Theme 2 Task 13 — Devin Review pass 2 ANALYSIS_0005:
+  // position-independent so a future `KchatClient.uploadFile` that
+  // appends additional Content-Type parameters (e.g. `charset`)
+  // does not silently fail the test with a confusing "boundary is
+  // null" error. RFC 7231 §3.1.1.1 allows boundary to appear at any
+  // position within the parameter list.
+  const m = /(?:^|;\s*)boundary=([^;]+)/i.exec(contentType);
   return m ? m[1].trim() : null;
 }
 
@@ -412,8 +418,11 @@ describe("kchat:shareArtifact — end-to-end evidence-pack upload (integration)"
     // ---- 2. Multipart Content-Type + matching boundary ----
     const ct0 = server.uploads[0].contentType;
     const ct1 = server.uploads[1].contentType;
-    expect(ct0).toMatch(/^multipart\/form-data; boundary=/);
-    expect(ct1).toMatch(/^multipart\/form-data; boundary=/);
+    // Header starts with `multipart/form-data` + at least one
+    // `boundary=` parameter (any position). Matches `extractBoundary`
+    // semantics so the two assertions stay symmetric.
+    expect(ct0).toMatch(/^multipart\/form-data\s*;.*\bboundary=/i);
+    expect(ct1).toMatch(/^multipart\/form-data\s*;.*\bboundary=/i);
     const boundary0 = extractBoundary(ct0);
     const boundary1 = extractBoundary(ct1);
     expect(boundary0).not.toBeNull();
