@@ -22,10 +22,11 @@ import type { KchatBackfillProgressView } from "../types/ipc";
  * state we're already polling. The 2-second cadence below balances
  * "visible progress for the user during a multi-minute walk" with
  * the IPC rate-limit budget (`kchat:backfillProgress` is gated at
- * 2 tokens / 1 s sustained, 4 burst — see
- * `RATE_LIMIT_PROFILES["kchat:backfillProgress"]`). A 2 s tick
- * leaves headroom for a single retry burst without tripping the
- * limiter.
+ * 2 tokens / 1 s sustained, 5 burst — see
+ * `RATE_LIMIT_PROFILES["kchat:backfillProgress"]` in
+ * `apps/desktop/electron/ipc/rateLimiter.ts`). A 2 s tick consumes
+ * ~0.5 tokens/s and leaves comfortable headroom for a retry burst
+ * without tripping the limiter.
  *
  * **Mounting on every render.** The hook always schedules polling
  * when `channelId` is non-null — there is no `generation`
