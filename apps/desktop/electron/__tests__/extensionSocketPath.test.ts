@@ -185,7 +185,14 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
     setPlatform("freebsd");
     process.env.XDG_RUNTIME_DIR = "/run/user/1000";
     const p = extensionSocketPath();
-    expect(p).toBe("/run/user/1000/tessera-kchat-extension.sock");
+    // `path.join` over a hardcoded `/` for the same Windows-host
+    // portability reason documented on the Linux-XDG tests above
+    // (the mocked `process.platform` doesn't influence `path.join`'s
+    // separator, which uses the actual host OS). Per Devin Review
+    // PR #55 BUG_pr-review-job-b8678318dcd243fb908252b4a72ff121_0001.
+    expect(p).toBe(
+      path.join("/run/user/1000", "tessera-kchat-extension.sock"),
+    );
   });
 
   it("macOS: returns ~/Library/Application Support/Tessera/tessera-kchat-extension.sock", () => {
