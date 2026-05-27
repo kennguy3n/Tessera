@@ -472,6 +472,24 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
   // (`extensionAvailable === false` while `authMode` still says
   // "extension"); the dot is hidden in PAT mode so the existing
   // PAT-only UX stays unchanged.
+  //
+  // Phase 13 Theme 1 Devin Review ANALYSIS_0005 (sidebar) note:
+  // the amber "extension still set, probe says unavailable" state
+  // is intentionally narrow in lifecycle. `KchatAuthService`'s
+  // disconnect-side handlers (`handleExtensionDisconnect`,
+  // `handleExtensionRefreshFailure`) tear down the connection
+  // AND flip `authMode` back to `"none"` atomically inside the
+  // same callback, so once the desktop app actually goes away the
+  // status push the renderer sees carries `authMode: "none"` and
+  // the dot is hidden, not amber. The amber path only renders if
+  // a status push leaks through with `authMode: "extension"` but
+  // `extensionAvailable: false` — e.g. if a probe re-run between
+  // status pushes flips `extensionAvailable` to `false` while the
+  // extension session is still active and refreshable. We keep
+  // the amber rendering as defense-in-depth + as a clear
+  // operator-visible signal in that narrow window; if the
+  // desktop app is genuinely gone, the disconnect handler will
+  // transition the dot to hidden on the next push.
   const showExtensionDot = state.authMode === "extension";
   const extensionHealthy = state.extensionAvailable === true;
   const extensionDotColor = extensionHealthy

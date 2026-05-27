@@ -60,6 +60,7 @@ import {
 import {
   attachExtensionEvents,
 } from "./kchatExtensionEvents";
+import { enforceKchatServerUrl } from "./ssrfGuard";
 
 /** Synthetic provider key under which the KChat PAT is stored. */
 export const KCHAT_VAULT_PROVIDER = "kchat";
@@ -106,6 +107,7 @@ export class KchatAuthService {
   private extensionSession: KchatExtensionSession | null = null;
   private extensionEventTeardown: (() => void) | null = null;
   private extensionRefreshFailureTeardown: (() => void) | null = null;
+  private extensionRefreshSuccessTeardown: (() => void) | null = null;
   private extensionDisconnectTeardown: (() => void) | null = null;
   private lastProbeResult: ExtensionProbeResult | null = null;
 
@@ -266,6 +268,44 @@ export class KchatAuthService {
         }
       }
       return null;
+    }
+    // Phase 13 Theme 1 Devin Review ANALYSIS_0006 follow-up:
+    // re-run the same SSRF guard on the vault-restored `serverUrl`
+    // that the handshake path applied at write time. The URL was
+    // already validated when it was persisted (handshake →
+    // `validateHandshakeResponse` → `enforceKchatServerUrl`), so
+    // under steady state this is redundant. It defends against
+    // two scenarios:
+    //   1. The SSRF policy tightens between handshake and restore
+    //      (e.g. a future release narrows the IP-literal allow-list
+    //      or revokes the `TESSERA_KCHAT_ALLOW_INTERNAL` override
+    //      that was set when the vault entry was written). The
+    //      restore path should re-evaluate under the *current*
+    //      policy, not the policy at the time of handshake.
+    //   2. The vault entry was tampered with by an attacker with
+    //      filesystem write access (e.g. credential-rewriting
+    //      malware that swaps `serverUrl` to a private endpoint
+    //      to harvest the delegation). Keychain providers protect
+    //      against this, but the JSON file fallback on
+    //      Linux without a keychain does not. The guard catches
+    //      the substitution before the in-memory client points at
+    //      the malicious URL.
+    // If the URL fails the guard, treat the restore as a soft
+    // failure (close the socket, leave the vault entry in place
+    // so a future re-handshake can replace it; the user is not
+    // stranded because `restoreFromVault` already fell through to
+    // the PAT path on null/throw). `enforceKchatServerUrl` may
+    // perform DNS resolution; let any AbortError / DNS failure
+    // bubble so the outer `restoreFromVault` catch logs it.
+    try {
+      await enforceKchatServerUrl(restored.serverUrl);
+    } catch (err) {
+      try {
+        conn.close();
+      } catch {
+        // intentional — close is best-effort
+      }
+      throw err;
     }
     this.client.setServerUrl(restored.serverUrl);
     this.client.setToken(restored.token);
@@ -497,6 +537,37 @@ export class KchatAuthService {
         this.handleExtensionRefreshFailure(reason, err);
       },
     );
+    // Phase 13 Theme 1 fix (Devin Review BUG_0001): rotate the
+    // in-memory `KchatClient` auth surface whenever the extension
+    // session auto-refreshes its delegation token. Without this
+    // hook the vault holds the renewed token while `KchatClient`
+    // continues to hand the expiring one to every REST request,
+    // so the next health-check tick after `expiresAtMs` fails
+    // with 401 and the client transitions to `error` — even
+    // though a valid token is sitting in the vault. The order
+    // mirrors `connectViaExtension()`:
+    //   1. `setServerUrl` is a no-op when the URL is unchanged
+    //      (the desktop app shouldn't move servers mid-refresh,
+    //      but the wire format allows it, so we re-assert
+    //      defense-in-depth).
+    //   2. `setToken` swaps the token. In extension mode there
+    //      is no live `KchatClient` WebSocket to tear down (the
+    //      extension events bridge is the substitute), but
+    //      `setToken(newToken)` with a different previous value
+    //      stops the periodic health-check timer so the renewed
+    //      token wouldn't get exercised — we restart it
+    //      explicitly below.
+    //   3. `startHealthCheck` re-arms the periodic health-check
+    //      against the renewed token; no `verifyConnection()`
+    //      call is needed because the desktop app already
+    //      vouched for the new token in the refresh response,
+    //      and the next health-check tick will catch a
+    //      server-side rejection if any.
+    this.extensionRefreshSuccessTeardown = session.onRefreshSuccess((info) => {
+      this.client.setServerUrl(info.serverUrl);
+      this.client.setToken(info.token);
+      this.client.startHealthCheck();
+    });
     this.extensionDisconnectTeardown = conn.onDisconnect((reason) => {
       this.handleExtensionDisconnect(reason);
     });
@@ -505,9 +576,11 @@ export class KchatAuthService {
   private teardownExtensionConnection(): void {
     this.extensionEventTeardown?.();
     this.extensionRefreshFailureTeardown?.();
+    this.extensionRefreshSuccessTeardown?.();
     this.extensionDisconnectTeardown?.();
     this.extensionEventTeardown = null;
     this.extensionRefreshFailureTeardown = null;
+    this.extensionRefreshSuccessTeardown = null;
     this.extensionDisconnectTeardown = null;
     try {
       this.extensionConnection?.close();
@@ -522,6 +595,14 @@ export class KchatAuthService {
     _reason: RefreshFailureReason,
     err: Error,
   ): void {
+    // Defense-in-depth: an `onRefreshFailure` callback may fire
+    // after `teardownExtensionConnection()` has already
+    // unsubscribed the wrapper but before the GC reclaims the
+    // closure. Mirrors the early-return guard in
+    // `handleExtensionDisconnect` so a stale fire after a clean
+    // user-initiated disconnect does not synthesise a spurious
+    // `error` status push.
+    if (this.authMode !== "extension") return;
     // Refresh failure → transition the client to `error` state so
     // the renderer's sidebar / Settings card shows the disconnect.
     // The vault entry survives so the user can manually
@@ -548,8 +629,15 @@ export class KchatAuthService {
     const scrubbedMessage = this.client.scrubMessage(
       `KChat Desktop session refresh failed: ${err.message}`,
     );
-    this.client.shutdown();
+    // Symmetric ordering with `handleExtensionDisconnect`:
+    // teardown the extension connection FIRST so callbacks are
+    // detached before the client tears down. Reverse order
+    // (shutdown → teardown) was the previous shape and could let
+    // a still-attached `onDisconnect` re-enter this stack via a
+    // synchronous socket-close from `teardownExtensionConnection`,
+    // re-emitting a duplicate `error` push.
     this.teardownExtensionConnection();
+    this.client.shutdown();
     this.authMode = "none";
     // Re-surface the already-scrubbed message through the client
     // so the status push has the same error shape as PAT-side

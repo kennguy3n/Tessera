@@ -86,13 +86,65 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
   // so the only connection method is visible without a click.
   const [showManual, setShowManual] = useState<boolean>(false);
 
-  // Feature gate + initial status sync.
+  // Feature gate + initial status sync + extension probe.
+  //
+  // Phase 13 Theme 1 Devin Review ANALYSIS_0005 follow-up: this
+  // effect now ALSO subscribes to `kchat.onStatusChange` so the
+  // extension probe re-runs whenever the main-process pushes a
+  // status update. The original implementation only ran the
+  // probe on mount, which left a UX gap: if the user opened
+  // Settings while the desktop app was offline and then launched
+  // it later, the "Connect via KChat Desktop" CTA never
+  // appeared until the user navigated away and back. Re-probing
+  // on every status push closes that gap with no manual refresh.
+  //
+  // Cost analysis: the probe is a single Unix-domain-socket
+  // connect with a 1 s timeout (no token mint, no HTTP) so the
+  // per-push cost is bounded. Status pushes occur on auth-state
+  // transitions and on the periodic health check; under steady
+  // state that's at most one push every ~30 s, which is well
+  // below any rate that would matter.
+  //
+  // The probe ALSO still runs on mount — `kchat.status()` may
+  // not push during initial render if no transition occurred,
+  // and we want the CTA visible immediately when Settings opens.
   useEffect(() => {
     if (!kchat) {
       setAvailable(false);
       return;
     }
     let cancelled = false;
+    // The PAT-form disclosure should default to the inverse of
+    // extension-availability on the FIRST probe only. Subsequent
+    // re-probes (driven by `onStatusChange` pushes) must not
+    // stomp on a user-initiated toggle — e.g. if the user
+    // expanded the PAT form while the desktop app was offline
+    // and is mid-typing a token, a status push that flips the
+    // probe back to `available` should leave the form open.
+    let initialProbeDone = false;
+
+    // Inner helper so the probe logic is reusable between the
+    // initial-mount path and the `onStatusChange` callback below.
+    // Both call sites must respect the `cancelled` guard so a
+    // pending probe doesn't race a component unmount.
+    const reprobeExtension = async () => {
+      try {
+        const probe = await kchat.extensionStatus();
+        if (cancelled) return;
+        setExtensionStatus(probe);
+        if (!initialProbeDone) {
+          setShowManual(!probe.available);
+          initialProbeDone = true;
+        }
+      } catch {
+        if (cancelled) return;
+        if (!initialProbeDone) {
+          setShowManual(true);
+          initialProbeDone = true;
+        }
+      }
+    };
+
     (async () => {
       try {
         const ok = await kchat.isAvailable();
@@ -102,32 +154,28 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
         if (cancelled) return;
         setState(s);
         if (s.serverUrl) setServerUrl(s.serverUrl);
-        // Phase 13 Task 5 — extension bridge probe. Drives the
-        // "Connect via KChat Desktop" primary CTA. The probe is
-        // cheap (no token mint) so we run it on mount + every
-        // status push; the renderer NEVER waits on this to
-        // render the rest of the card (a failed probe is just
-        // `available: false` and the PAT form takes over).
-        try {
-          const probe = await kchat.extensionStatus();
-          if (!cancelled) {
-            setExtensionStatus(probe);
-            // If the extension is not available, default the
-            // manual form to expanded so the user sees one
-            // connection method, not zero.
-            setShowManual(!probe.available);
-          }
-        } catch {
-          if (!cancelled) setShowManual(true);
-        }
+        await reprobeExtension();
       } catch (err) {
         if (!cancelled) {
           setAvailable(false);
         }
       }
     })();
+
+    // Re-probe on every status push so a desktop-app launch
+    // *after* Settings is mounted is reflected without a
+    // navigate-away-and-back. Also update local state so the
+    // connected-user pill / inline error rerender immediately.
+    const unsubscribe = kchat.onStatusChange((s) => {
+      if (cancelled) return;
+      setState(s);
+      if (s.serverUrl) setServerUrl(s.serverUrl);
+      void reprobeExtension();
+    });
+
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [kchat]);
 

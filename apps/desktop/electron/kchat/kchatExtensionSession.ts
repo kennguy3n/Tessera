@@ -141,6 +141,25 @@ export class KchatExtensionSession {
   private refreshFailureListeners = new Set<
     (reason: RefreshFailureReason, err: Error) => void
   >();
+  /**
+   * Listeners notified after a successful auto-refresh. The
+   * vault entry has already been overwritten with the renewed
+   * `ExtensionSessionInfo` by the time the listener fires; the
+   * listener's job is to rotate any *in-memory* surface that
+   * tracks the live token (most importantly the `KchatClient` —
+   * see `KchatAuthService.attachExtensionConnection`).
+   *
+   * Without this hook the vault holds a valid refreshed token
+   * while `KchatClient.token` still points at the expiring one,
+   * so REST requests start failing with 401 the moment the
+   * original token's TTL elapses. The failure mode is silent
+   * until the next health-check tick, at which point the client
+   * transitions to `error` and the user sees "connection lost"
+   * with no obvious cause.
+   */
+  private refreshSuccessListeners = new Set<
+    (info: ExtensionSessionInfo) => void
+  >();
 
   constructor(private readonly connection: ExtensionConnection) {}
 
@@ -161,6 +180,28 @@ export class KchatExtensionSession {
     this.refreshFailureListeners.add(listener);
     return () => {
       this.refreshFailureListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Subscribe to successful-refresh notifications. The listener
+   * receives the renewed `ExtensionSessionInfo` (with the new
+   * `token` + `expiresAtMs`) AFTER the vault has been overwritten
+   * and the next refresh timer has been scheduled, so the
+   * listener can safely rotate any in-memory consumer of the
+   * token (e.g. `KchatClient.setToken`) without racing the
+   * vault persistence layer.
+   *
+   * Listener throws are isolated — a buggy listener cannot break
+   * the refresh pipeline for other listeners (or for the
+   * next-scheduled refresh).
+   */
+  onRefreshSuccess(
+    listener: (info: ExtensionSessionInfo) => void,
+  ): () => void {
+    this.refreshSuccessListeners.add(listener);
+    return () => {
+      this.refreshSuccessListeners.delete(listener);
     };
   }
 
@@ -274,6 +315,16 @@ export class KchatExtensionSession {
     if (hasTokens(KCHAT_EXTENSION_VAULT_PROVIDER)) {
       deleteTokens(KCHAT_EXTENSION_VAULT_PROVIDER);
     }
+    // Clear listener sets so a re-handshake on the same
+    // process-long session instance does not double-fire stale
+    // callbacks left behind by a previous `attachExtensionConnection`
+    // → `teardownExtensionConnection` cycle that forgot to
+    // unsubscribe. `attachExtensionConnection` always builds a
+    // fresh `KchatExtensionSession`, so in practice the
+    // long-lived case is hypothetical; the clear is
+    // defense-in-depth.
+    this.refreshFailureListeners.clear();
+    this.refreshSuccessListeners.clear();
     return userId;
   }
 
@@ -324,6 +375,18 @@ export class KchatExtensionSession {
     };
     this.persist(renewed);
     this.scheduleRefresh(renewed.expiresAtMs);
+    // Fire AFTER persist + scheduleRefresh so observers see the
+    // post-rotation steady state. Wrapped in try/catch per
+    // listener — a misbehaving subscriber must not break the
+    // refresh pipeline for siblings or pollute the unhandled-
+    // rejection log on the auto-refresh timer callback.
+    for (const l of this.refreshSuccessListeners) {
+      try {
+        l(renewed);
+      } catch {
+        // intentional — listeners must not throw
+      }
+    }
     return renewed;
   }
 

@@ -440,7 +440,231 @@ describe("uney-chat-desktop extension bridge integration", () => {
     }
   });
 
-  it("6. SSRF on extension handshake serverUrl is rejected", async () => {
+  it("6. successful refresh rotates the KchatClient in-memory token (Devin Review BUG_0001)", async () => {
+    // The fix for Devin Review BUG_0001 added an `onRefreshSuccess`
+    // listener mechanism on `KchatExtensionSession` and wired it
+    // from `KchatAuthService.attachExtensionConnection` to call
+    // `KchatClient.setToken(info.token)`. Without that listener
+    // the vault entry was renewed at refresh time but the
+    // in-memory `KchatClient.token` continued to point at the
+    // expiring delegation, so every REST request issued after
+    // expiry returned 401 even though the vault held a valid
+    // refreshed token.
+    //
+    // This test exercises the round-trip end-to-end:
+    //   1. Handshake mints `delegation-token-1`.
+    //   2. We manually call `session.refresh()` and the mock
+    //      server returns `delegation-token-2`.
+    //   3. We assert the auth service's `KchatClient` now holds
+    //      `delegation-token-2` (via the spy on `setToken`).
+    let tokenCounter = 1;
+    const expiresAtMs = () => Date.now() + 5 * 60_000;
+    const server = await startMockServer((frame) => {
+      if (frame.type === "discover") {
+        return {
+          type: "discover_response",
+          requestId: frame.requestId,
+          ok: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake", "token_refresh"],
+        };
+      }
+      if (frame.type === "handshake") {
+        return {
+          type: "handshake_response",
+          requestId: frame.requestId,
+          ok: true,
+          user: {
+            id: "user1234567890abcdefgh",
+            username: "ken",
+            email: "k@e.com",
+            firstName: "K",
+            lastName: "N",
+          },
+          token: `delegation-token-${tokenCounter}`,
+          expiresAtMs: expiresAtMs(),
+          serverUrl: "https://kchat.example.com",
+          scopesGranted: ["kchat:posts.read"],
+        };
+      }
+      if (frame.type === "token_refresh") {
+        tokenCounter += 1;
+        return {
+          type: "token_refresh_response",
+          requestId: frame.requestId,
+          ok: true,
+          token: `delegation-token-${tokenCounter}`,
+          expiresAtMs: expiresAtMs(),
+        };
+      }
+      return null;
+    });
+    try {
+      const fetchFn = vi.fn(
+        async (_input: RequestInfo | URL): Promise<Response> => {
+          return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            text: async () => "",
+            json: async () => ({
+              id: "user1234567890abcdefgh",
+              username: "ken",
+              email: "k@e.com",
+              first_name: "K",
+              last_name: "N",
+              roles: "system_user",
+            }),
+            arrayBuffer: async () => new ArrayBuffer(0),
+          } as unknown as Response;
+        },
+      );
+      const client = new KchatClient({ fetchFn });
+      const setTokenSpy = vi.spyOn(client, "setToken");
+      const setServerUrlSpy = vi.spyOn(client, "setServerUrl");
+      const startHealthCheckSpy = vi.spyOn(client, "startHealthCheck");
+      const svc = new KchatAuthService(client, {
+        extensionFactory: () =>
+          new ExtensionConnection({ socketPath: server.socketPath }),
+        probeFn: async () => ({
+          available: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake", "token_refresh"],
+        }),
+      });
+      await svc.connectViaExtension();
+      expect(svc.getAuthMode()).toBe("extension");
+      // The handshake should have set the token to
+      // `delegation-token-1`.
+      expect(setTokenSpy).toHaveBeenLastCalledWith("delegation-token-1");
+
+      // Clear the spies so we only see calls from the refresh.
+      setTokenSpy.mockClear();
+      setServerUrlSpy.mockClear();
+      startHealthCheckSpy.mockClear();
+
+      // Pull the live session and manually trigger a refresh.
+      // The internal auto-refresh timer is on a real
+      // `setTimeout` and would take several minutes — bypass it
+      // by calling `refresh()` directly so the test runs in
+      // milliseconds.
+      const session = (svc as unknown as {
+        extensionSession: KchatExtensionSession | null;
+      }).extensionSession;
+      expect(session).not.toBeNull();
+      const renewed = await session!.refresh();
+      expect(renewed.token).toBe("delegation-token-2");
+
+      // Critical assertion: the listener must have rotated the
+      // in-memory client's token. Without the BUG_0001 fix this
+      // spy stays uncalled and the assertion fails.
+      expect(setTokenSpy).toHaveBeenCalledWith("delegation-token-2");
+      // Server URL is re-asserted for defense-in-depth (no-op
+      // when unchanged, but the listener calls it
+      // unconditionally).
+      expect(setServerUrlSpy).toHaveBeenCalledWith(
+        "https://kchat.example.com",
+      );
+      // Health check must be restarted because `setToken` with a
+      // changed value stops the periodic timer.
+      expect(startHealthCheckSpy).toHaveBeenCalled();
+
+      svc.disconnect();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("7. SSRF re-validation on vault-restored serverUrl rejects loopback (Devin Review ANALYSIS_0006)", async () => {
+    // Devin Review ANALYSIS_0006: the original
+    // `restoreExtensionFromVault` did not re-run the
+    // `enforceKchatServerUrl` SSRF guard on the vault-restored
+    // `serverUrl`. The handshake path validates the URL at
+    // write time, but a vault entry written under a permissive
+    // policy (or by a tampered binary) could re-enter
+    // production code at restore time with a private/loopback
+    // URL. The fix re-runs the guard at restore time as
+    // defense-in-depth.
+    //
+    // This test bypasses the handshake path entirely by writing
+    // a vault entry with a loopback URL directly, then calls
+    // `restoreFromVault()` and asserts that the restore is
+    // refused (falls through to the PAT path, which also has no
+    // entry, so the final result is `null`).
+    const expiresAtMs = Date.now() + 5 * 60_000;
+    vaultStore.set("kchat-extension", {
+      accessToken: "vault-tampered-token",
+      scopes: [
+        JSON.stringify({
+          // Loopback URL — would have been rejected at write
+          // time, but pretend a tampered vault entry got
+          // through (or that the SSRF policy was tightened
+          // between handshake and restore).
+          serverUrl: "http://127.0.0.1:1234",
+          userId: "user1234567890abcdefgh",
+          username: "ken",
+          email: "k@e.com",
+          firstName: "K",
+          lastName: "N",
+          expiresAtMs,
+          scopesGranted: ["kchat:posts.read"],
+        }),
+      ],
+    });
+    // The probe must report `available` so the auth service
+    // attempts the extension restore (otherwise it short-circuits
+    // straight to the PAT path). The mock server is irrelevant —
+    // the SSRF guard fires before any extension-socket open
+    // attempt completes, because we synchronously open the conn
+    // then re-validate the URL on the in-memory restored info.
+    const server = await startMockServer((frame) => {
+      if (frame.type === "discover") {
+        return {
+          type: "discover_response",
+          requestId: frame.requestId,
+          ok: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake"],
+        };
+      }
+      return null;
+    });
+    try {
+      const fetchFn = vi.fn() as unknown as typeof globalThis.fetch;
+      const client = new KchatClient({ fetchFn });
+      const svc = new KchatAuthService(client, {
+        extensionFactory: () =>
+          new ExtensionConnection({ socketPath: server.socketPath }),
+        probeFn: async () => ({
+          available: true,
+          protocolVersion: 1,
+          desktopVersion: "1.2.3",
+          capabilities: ["handshake"],
+        }),
+      });
+      const restored = await svc.restoreFromVault();
+      // Restore must refuse the loopback URL. The outer
+      // `restoreFromVault` swallows the SSRF error and falls
+      // through to the PAT path; PAT has no vault entry; final
+      // result is `null`.
+      expect(restored).toBeNull();
+      // Critically the in-memory client must NOT have been
+      // configured with the loopback URL or the tampered token.
+      // `getState()` doesn't expose the token (by design — see
+      // the renderer-safety test) but `serverUrl` is renderable.
+      const state = svc.getState();
+      expect(state.serverUrl).not.toBe("http://127.0.0.1:1234");
+      // No `connect()` was attempted via fetch.
+      expect(fetchFn).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("8. SSRF on extension handshake serverUrl is rejected", async () => {
     const server = await startMockServer((frame) => {
       if (frame.type === "discover") {
         return {

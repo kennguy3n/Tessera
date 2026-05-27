@@ -4,6 +4,7 @@ import {
   screen,
   fireEvent,
   waitFor,
+  act,
 } from "@testing-library/react";
 import KchatSettingsCard, {
   getStoredDefaultTeamId,
@@ -184,5 +185,63 @@ describe("KchatSettingsCard", () => {
     wrap(<KchatSettingsCard api={api} />);
     const err = await screen.findByTestId("kchat-error");
     expect(err).toHaveTextContent("Connection refused");
+  });
+
+  it("re-probes the extension surface on every onStatusChange push (Devin Review ANALYSIS_0005)", async () => {
+    // The fix for Devin Review ANALYSIS_0005 wired
+    // `kchat.onStatusChange` into the same effect that performs
+    // the initial extension probe so a desktop-app launch that
+    // happens AFTER Settings is mounted is reflected in the
+    // UI without a manual refresh. Without the wire-up the
+    // probe ran exactly once on mount; once `available: false`
+    // landed, the "Connect via KChat Desktop" CTA never
+    // re-appeared even if the desktop app subsequently started.
+    let pushStatus: ((s: { state: "disconnected" }) => void) | null = null;
+    const api = makeApi({
+      onStatusChange: vi.fn((cb: (s: { state: "disconnected" }) => void) => {
+        pushStatus = cb;
+        return () => {
+          pushStatus = null;
+        };
+      }) as unknown as typeof window.tessera.kchat.onStatusChange,
+      // First call: desktop app is offline. Second call (after the
+      // status push): desktop app has launched.
+      extensionStatus: vi
+        .fn()
+        .mockResolvedValueOnce({
+          available: false,
+          desktopVersion: null,
+          protocolVersion: null,
+          capabilities: [],
+        })
+        .mockResolvedValue({
+          available: true,
+          desktopVersion: "1.2.3",
+          protocolVersion: 1,
+          capabilities: ["handshake", "events"],
+        }),
+    });
+
+    wrap(<KchatSettingsCard api={api} />);
+
+    // Initial probe should have been called exactly once.
+    await waitFor(() =>
+      expect(api.extensionStatus).toHaveBeenCalledTimes(1),
+    );
+    expect(pushStatus).not.toBeNull();
+
+    // Simulate a status push from the main process (e.g. the
+    // desktop app launched after Settings was mounted). The
+    // effect should call `extensionStatus` again. Wrapped in
+    // `act()` so React applies the state updates synchronously
+    // (and so we don't get an "update not wrapped in act"
+    // warning on stderr).
+    act(() => {
+      pushStatus!({ state: "disconnected" });
+    });
+
+    await waitFor(() =>
+      expect(api.extensionStatus).toHaveBeenCalledTimes(2),
+    );
   });
 });
