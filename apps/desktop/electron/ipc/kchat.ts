@@ -292,6 +292,32 @@ class KchatNameCache {
  *
  * Both caches are bounded at the IPC layer (NOT the bridge) so a
  * memory-pressure scenario can't pin them through a process restart.
+ *
+ * **Scope: module-level, intentionally asymmetric with
+ * `runningBackfillCounters` / `inFlightBackfillKchatChannel`.**
+ *
+ * ANALYSIS_0003 (Devin Review pass 4 on d0731ec): the
+ * backfill-related maps below live INSIDE the
+ * `registerKchatHandlers` closure, so every fresh call to that
+ * function (e.g. test `beforeEach`) gets a brand-new map and
+ * cross-test contamination is impossible by construction. The
+ * name caches MUST be module-scoped: the `KchatAuthService`
+ * status listener (installed by `registerKchatHandlers`) clears
+ * THESE specific instances on every disconnect, so they have to
+ * outlive any single `registerKchatHandlers` invocation for the
+ * production reconnect path to wipe the same cache the
+ * enrichment path reads from. Moving the caches inside the
+ * closure would silently disable the disconnect-clear path the
+ * first time the closure was rebuilt (test re-mount, HMR, etc.).
+ *
+ * The asymmetry is paid for in tests via the top-level
+ * `beforeEach` in `kchatIpc.test.ts`, which calls
+ * `_resetKchatNameCachesForTest()` before every
+ * `registerKchatHandlers()` so the module-scoped state is
+ * reset in lockstep with the closure-scoped state. Any future
+ * test author who adds a name-enrichment test does NOT need to
+ * remember to call the reset themselves — the suite-level
+ * `beforeEach` already handles it.
  */
 const KCHAT_USERNAME_CACHE = new KchatNameCache(500);
 const KCHAT_CHANNEL_NAME_CACHE = new KchatNameCache(200);

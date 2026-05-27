@@ -254,7 +254,10 @@ vi.mock("../appState", () => ({
   setKchatBackfillImpl: vi.fn(),
 }));
 
-import { registerKchatHandlers } from "../ipc/kchat";
+import {
+  registerKchatHandlers,
+  _resetKchatNameCachesForTest,
+} from "../ipc/kchat";
 import type { KchatBackfillRunOutcome } from "../../shared/types";
 
 function handler(channel: string) {
@@ -307,6 +310,24 @@ beforeEach(() => {
   serviceMock.getState.mockReset();
   serviceMock.connect.mockReset();
   serviceMock.disconnect.mockReset();
+  // ANALYSIS_0003 (Devin Review pass 4 on d0731ec): the
+  // `runningBackfillCounters` / `inFlightBackfillKchatChannel`
+  // maps are scoped inside the `registerKchatHandlers` closure
+  // and reset automatically on every `registerKchatHandlers()`
+  // call below. The `KCHAT_USERNAME_CACHE` /
+  // `KCHAT_CHANNEL_NAME_CACHE` are module-scoped (production-
+  // correct: a live `KchatAuthService` reconnect via the status
+  // listener must keep clearing the same cache instance the
+  // enrichment path reads), so they DO NOT reset automatically.
+  // Closing the footgun before it bites a future test author:
+  // reset the module-scoped caches AND tear down the status
+  // listener before re-installing the IPC layer, so every test
+  // starts from a clean module state regardless of whether the
+  // test itself remembers to call `_resetKchatNameCachesForTest`
+  // explicitly. The redundant per-test invocations elsewhere in
+  // the file are intentionally kept as documentation that the
+  // test exercises cache state.
+  _resetKchatNameCachesForTest();
   registerKchatHandlers();
 });
 
