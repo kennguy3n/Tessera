@@ -243,7 +243,27 @@ describe("SourceDetailPage \u2014 KChat backfill card", () => {
       // ariaLabel still carries the humanised label so a future
       // consumer that DOES want a fallback glyph has something to
       // attach.
-      expect(t.ariaLabel).toBe("Some New Kind source");
+      //
+      // The fallback is normalised to sentence case — first word
+      // capitalised, every subsequent word lowercase — to match
+      // the convention used by the hardcoded ariaLabels above
+      // ("Local folder source", "KChat channel source"). Without
+      // the normalisation, `formatSourceTypeLabel` would title-case
+      // each word and produce "Some New Kind source", visually
+      // inconsistent with the hardcoded siblings. Per Devin Review
+      // PR #55 ANALYSIS_0006.
+      expect(t.ariaLabel).toBe("Some new kind source");
+    });
+
+    it("ariaLabel for an unknown kind preserves the first-word casing (proper-noun-safe) and lowercases the rest", () => {
+      // Pin the sentence-case normalisation against a discriminator
+      // whose humanised first word is a recognisable proper noun
+      // ("XKCD" stays uppercase, "comic" becomes lowercase) so a
+      // future refactor cannot accidentally toLowerCase() the
+      // whole label and lose the proper-noun signal.
+      expect(sourceTypeIcon("XKCD_comic_archive").ariaLabel).toBe(
+        "XKCD comic archive source",
+      );
     });
 
     it("returns an empty glyph and a well-formed 'Unknown source' ariaLabel for an empty discriminator", () => {

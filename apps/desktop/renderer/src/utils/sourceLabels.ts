@@ -158,15 +158,34 @@ export function sourceTypeIcon(sourceType: string): {
       return { glyph: "📄", ariaLabel: "Local file source" };
     case "kchat":
       return { glyph: "💬", ariaLabel: "KChat channel source" };
-    default:
+    default: {
       // Empty glyph — caller renders the row without a marker
       // rather than picking an arbitrary stand-in. The
       // `ariaLabel` still describes the kind so a future
       // consumer that DOES want a fallback glyph has a
       // human-readable string to attach.
+      //
+      // The hardcoded ariaLabels above follow a sentence-case
+      // convention — first word capitalized (preserving the
+      // original casing of proper nouns like "KChat"), every
+      // subsequent word lowercase ("Local folder source", not
+      // "Local Folder Source"). `formatSourceTypeLabel` returns
+      // a title-cased label ("Some New Kind") for unknown
+      // discriminators, which would produce "Some New Kind
+      // source" — visually inconsistent with the hardcoded
+      // siblings. Normalise to sentence case here so a future
+      // variant ariaLabel matches the convention without us
+      // having to remember to land a new case branch above.
+      // Per Devin Review PR #55 ANALYSIS_0006.
+      const label = formatSourceTypeLabel(sourceType);
+      const sentenceCase = label
+        .split(" ")
+        .map((word, i) => (i === 0 ? word : word.toLowerCase()))
+        .join(" ");
       return {
         glyph: "",
-        ariaLabel: `${formatSourceTypeLabel(sourceType)} source`,
+        ariaLabel: `${sentenceCase} source`,
       };
+    }
   }
 }
