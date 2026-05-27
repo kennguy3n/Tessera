@@ -90,10 +90,18 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
   });
 
   it("Linux + XDG_RUNTIME_DIR set: joins XDG_RUNTIME_DIR with the well-known name", () => {
+    // Expected value is built via `path.join` rather than a
+    // hardcoded forward slash because `path.join` uses the HOST
+    // OS separator (not the mocked `process.platform`), so a
+    // hardcoded `/` would fail on a Windows CI runner that runs
+    // this Linux-mocked branch. Per Devin Review PR #55
+    // ANALYSIS_pr-review-job-9fbc0a69cde94e08bd88aec559bab048_0003.
     setPlatform("linux");
     process.env.XDG_RUNTIME_DIR = "/run/user/1000";
     const p = extensionSocketPath();
-    expect(p).toBe("/run/user/1000/tessera-kchat-extension.sock");
+    expect(p).toBe(
+      path.join("/run/user/1000", "tessera-kchat-extension.sock"),
+    );
   });
 
   it("Linux + XDG_RUNTIME_DIR set to a deeper path: still joins it (path.join preserves trailing path)", () => {
@@ -101,7 +109,7 @@ describe("extensionSocketPath (Phase 13 Theme 5 Task 30)", () => {
     process.env.XDG_RUNTIME_DIR = "/run/user/501/devin-sandbox";
     const p = extensionSocketPath();
     expect(p).toBe(
-      "/run/user/501/devin-sandbox/tessera-kchat-extension.sock",
+      path.join("/run/user/501/devin-sandbox", "tessera-kchat-extension.sock"),
     );
   });
 
