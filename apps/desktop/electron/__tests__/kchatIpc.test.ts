@@ -407,17 +407,28 @@ describe("kchat IPC registration", () => {
     expect(unexpected).toEqual([]);
   });
 
-  it("every registered kchat:* / sources:* channel has a matching ipcRenderer.invoke in preload.ts", async () => {
+  it("every registered kchat:* / sources:* channel has a matching ipcRenderer.invoke in preload.ts", () => {
     // Source-text regression: the preload is the only surface through
     // which the renderer can reach these channels. A handler that's
     // registered in `registerKchatHandlers` but missing from
     // `preload.ts` is silently unreachable from the renderer.
     // Reading source text avoids needing to spin up a real Electron
     // `contextBridge` (same pattern as sandboxPreloadContract.test.ts).
-    const fs = await import("fs");
-    const path = await import("path");
-    const preloadSource: string = fs.readFileSync(
-      path.resolve(__dirname, "..", "preload.ts"),
+    // Uses the top-of-file `nodeFs` / `nodePath` imports rather than
+    // inline `require()` / `await import()` calls so the file doesn't
+    // need `eslint-disable` directives that drift against
+    // `@typescript-eslint` rule renames between major versions (the
+    // prior `no-require-imports` directive name didn't match the
+    // project's active `no-var-requires` rule and broke CI lint), and
+    // so the test doesn't need to be marked `async` purely to
+    // satisfy the dynamic-import pattern when the underlying
+    // `readFileSync` is synchronous. Main resolved the original lint
+    // breakage with `const fs = await import("fs")`; this branch
+    // converged on reusing the existing top-of-file imports because
+    // the file already imports `nodeFs` / `nodePath` for the same
+    // purpose elsewhere, making the dynamic imports dead weight.
+    const preloadSource: string = nodeFs.readFileSync(
+      nodePath.resolve(__dirname, "..", "preload.ts"),
       "utf-8",
     );
     for (const channel of EXPECTED_KCHAT_CHANNELS) {
