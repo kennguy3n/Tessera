@@ -44,7 +44,6 @@ import {
   type ResolvedModel,
   type ModelManifest,
   type ManifestModel,
-  type ModelCapability,
 } from "../modelManagement";
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..", "..");

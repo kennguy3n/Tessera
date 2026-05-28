@@ -312,6 +312,14 @@ export default function ModelSlotPanel({
         error: err instanceof Error ? err.message : String(err),
       }));
     }
+    // `state` is the `useState` value object, not a `useRef` —
+    // `state.current` is the "installed model" field, and the
+    // narrow dep list is intentional. ESLint's exhaustive-deps
+    // rule heuristic-matches any `.current` access as a mutable
+    // ref and asks for the bare `state`; broadening would cause
+    // the callback to recreate on every poll-tick re-fetch of
+    // sibling fields (`busyModelId`, `error`).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tessera, capability, state.current]);
 
   if (!tessera) {

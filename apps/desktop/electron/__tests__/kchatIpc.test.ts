@@ -23,7 +23,7 @@
  *   7. Validation: malformed KChat ids and unknown formats throw
  *      before any service call.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as nodeOs from "os";
 import * as nodePath from "path";
 import * as nodeFs from "fs";
