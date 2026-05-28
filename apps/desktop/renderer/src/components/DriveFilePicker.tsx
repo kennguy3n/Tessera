@@ -85,6 +85,20 @@ export default function DriveFilePicker({ onSelect, onCancel }: DriveFilePickerP
     setSelected(new Set());
   };
 
+  /**
+   * Shared activation behaviour for a row, used by both onClick
+   * (mouse) and onKeyDown (Enter / Space) so the two input paths
+   * stay in lock-step. Folders open into themselves; files toggle
+   * the row's selection state.
+   */
+  const activateRow = (file: ConnectorFileInfo) => {
+    if (file.isFolder) {
+      handleFolderClick(file);
+    } else {
+      toggleSelect(file.id);
+    }
+  };
+
   const handleBreadcrumbClick = (index: number) => {
     setBreadcrumbs((prev) => prev.slice(0, index + 1));
     setSelected(new Set());
@@ -144,10 +158,11 @@ export default function DriveFilePicker({ onSelect, onCancel }: DriveFilePickerP
             <div
               key={file.id}
               className={`drive-picker-item ${selected.has(file.id) ? "selected" : ""}`}
-              onClick={() => (file.isFolder ? handleFolderClick(file) : toggleSelect(file.id))}
+              onClick={() => activateRow(file)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
-                  file.isFolder ? handleFolderClick(file) : toggleSelect(file.id);
+                  e.preventDefault();
+                  activateRow(file);
                 }
               }}
               role="button"

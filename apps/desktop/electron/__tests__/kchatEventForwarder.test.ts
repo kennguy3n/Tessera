@@ -290,7 +290,6 @@ async function waitForCondition(
   timeoutMs = 2000,
 ): Promise<void> {
   const startedAt = Date.now();
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     if (predicate()) return;
     if (Date.now() - startedAt > timeoutMs) {

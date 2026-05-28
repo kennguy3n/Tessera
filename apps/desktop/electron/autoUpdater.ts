@@ -102,7 +102,7 @@ function getUpdater(): AutoUpdaterModule | null {
   try {
     // require() (not dynamic import) — this module is CommonJS in the
     // Electron main process and we want the failure to be synchronous.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- see above comment
     const mod = require("electron-updater") as {
       autoUpdater: AutoUpdaterModule;
     };
