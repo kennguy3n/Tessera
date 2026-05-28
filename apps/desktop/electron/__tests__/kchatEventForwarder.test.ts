@@ -1077,7 +1077,15 @@ describe("KchatEventForwarder", () => {
     // sanitised, contained basename from the legitimate
     // server-supplied `fi.name`.
     const channelId = "chan-tampered-manifest";
-    const cacheDir = kchatChannelCacheDir(channelId);
+    // Inject `getCacheDir` so the path the test writes to is
+    // STRUCTURALLY bound to the path the forwarder resolves.
+    // Without injection, both sides happen to align via the
+    // file-level `os.homedir` mock + `kchatChannelCacheDir`
+    // default — but a future refactor that changes either
+    // could silently diverge. The injected resolver pins the
+    // wiring contract.
+    const getCacheDir = (id: string) => kchatChannelCacheDir(id);
+    const cacheDir = getCacheDir(channelId);
     await nodeFs.promises.mkdir(cacheDir, { recursive: true });
     // Pre-seed the manifest with an escaping path. The
     // manifest writer (under our control) would NEVER produce
@@ -1098,6 +1106,7 @@ describe("KchatEventForwarder", () => {
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
       getBridge: () => bridgeMock,
+      getCacheDir,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -1691,6 +1700,19 @@ describe("KchatEventForwarder", () => {
         seq: 101,
       }),
     );
+    // INTENTIONAL ASYMMETRY: this test polls on
+    // `bridgeLogKchatChannelAccessRevoked` rather than
+    // `bridgeLogKchatSourceCryptoshredded` (the signal used by
+    // every other channel-gone test in this file). The
+    // `unlinked` outcome SUPPRESSES the shred audit row
+    // (`handleChannelGoneEvent` skips `safeAuditSourceCryptoshredded`
+    // when `outcome !== "revoked" && outcome !== "already_revoked"`),
+    // so polling on the shred row would hang forever. The
+    // access-revoked audit row IS the final emission for the
+    // unlinked branch, so polling on it correctly signals
+    // handler completion. Do NOT "fix this for consistency" —
+    // the asymmetry is required by the production handler's
+    // outcome-gated audit emission.
     await waitForCondition(
       () =>
         bridgeMock!.bridgeLogKchatChannelAccessRevoked.mock.calls.length > 0,
@@ -1716,7 +1738,11 @@ describe("KchatEventForwarder", () => {
    */
   it("removes the cache directory and manifest sidecar on a revoke", async () => {
     const channelId = "chan-fs-shred";
-    const cacheDir = kchatChannelCacheDir(channelId);
+    // Inject `getCacheDir` (see tampered-manifest test above
+    // for rationale) — pins the test write path to the
+    // forwarder's resolved path through the same resolver.
+    const getCacheDir = (id: string) => kchatChannelCacheDir(id);
+    const cacheDir = getCacheDir(channelId);
     const manifestPath = manifestPathFor(cacheDir);
     await nodeFs.promises.mkdir(cacheDir, { recursive: true });
     await nodeFs.promises.writeFile(
@@ -1739,6 +1765,7 @@ describe("KchatEventForwarder", () => {
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
       getBridge: () => bridgeMock,
+      getCacheDir,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -1781,7 +1808,11 @@ describe("KchatEventForwarder", () => {
    */
   it("records fs_scrub_succeeded=false on audit row when filesystem scrub fails", async () => {
     const channelId = "chan-fs-failure";
-    const cacheDir = kchatChannelCacheDir(channelId);
+    // Inject `getCacheDir` (see tampered-manifest test above
+    // for rationale) — pins the test write path to the
+    // forwarder's resolved path through the same resolver.
+    const getCacheDir = (id: string) => kchatChannelCacheDir(id);
+    const cacheDir = getCacheDir(channelId);
     await nodeFsPromises.mkdir(cacheDir, { recursive: true });
     await nodeFsPromises.writeFile(
       nodePath.join(cacheDir, "evidence.txt"),
@@ -1819,6 +1850,7 @@ describe("KchatEventForwarder", () => {
       const fwd = new KchatEventForwarder({
         listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
         getBridge: () => bridgeMock,
+        getCacheDir,
       });
       const client = new FakeClient();
       fwd.start(client as unknown as KchatClient);
