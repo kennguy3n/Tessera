@@ -102,6 +102,23 @@ export default tseslint.config(
     files: ["**/*.{ts,tsx,cts,mts}"],
     languageOptions: {
       ecmaVersion: 2020,
+      // `sourceType: "module"` is correct for `.ts`, `.tsx`, and `.mts`
+      // (all ESM by convention). For `.cts` files (TypeScript's
+      // CommonJS-syntax counterpart of `.cjs`), the next block overrides
+      // this to `"script"` so the AST `sourceType` field reflects the
+      // file's actual module type. The override is deliberately
+      // placed as a separate config block (rather than narrowing this
+      // glob to exclude `.cts`) because every other field of this
+      // block — globals, plugins, rules — applies identically to `.cts`
+      // files and a narrowed glob would duplicate ~50 lines for one
+      // setting. The flat-config merge rule (later configs override
+      // earlier ones for matching files) means the override below
+      // only changes `sourceType`; everything else here cascades.
+      //
+      // Round 7 finding (`BUG_pr-review-job-...0001`): the previous
+      // revision set `sourceType: "module"` for ALL four extensions,
+      // which would force ESM parsing on any future `.cts` file. Caught
+      // as the asymmetric counterpart of the Round 6 JS-block fix.
       sourceType: "module",
       // Both renderer (browser) and electron (node) globals are needed
       // because the lint scope spans both processes. The `es2020` group
@@ -161,6 +178,38 @@ export default tseslint.config(
           destructuredArrayIgnorePattern: "^_",
         },
       ],
+    },
+  },
+  {
+    // `.cts` (TypeScript CommonJS) override. The block above sets
+    // `sourceType: "module"` for `**/*.{ts,tsx,cts,mts}` because the
+    // overwhelming majority of TS in the workspace is ESM and lives in
+    // `.ts`/`.tsx`. But `.cts` files are semantically CommonJS (the TS
+    // counterpart of `.cjs`) — top-level `require()` and `module.exports`
+    // are expected, top-level `import`/`export` is not. Forcing an ESM
+    // `sourceType` on these files would misrepresent their structure in
+    // the AST and could mis-trigger rules that inspect `sourceType`
+    // (e.g. `no-undef` for the CommonJS `module` / `exports` / `require`
+    // globals).
+    //
+    // The override only changes `sourceType`; every other field
+    // (ecmaVersion, globals, plugins, rules) cascades from the block
+    // above per flat-config's merge semantics. `"script"` is used
+    // because @typescript-eslint/parser only accepts `"module"` or
+    // `"script"` as valid `sourceType` values (it coerces anything else,
+    // including `"commonjs"`, to `"script"`) — see
+    // node_modules/.../parser/dist/parser.js line ~75.
+    //
+    // Round 7 finding (`BUG_pr-review-job-...0001`): the bot suggested
+    // simply omitting `sourceType` from the TS block to mirror the
+    // Round 6 JS-block fix. That would have broken every existing
+    // `.ts`/`.tsx` file in the workspace because typescript-eslint's
+    // parser defaults to `"script"` when `sourceType` is unset (unlike
+    // core ESLint v9, which infers from extension). The correct
+    // architectural fix is this per-extension override block.
+    files: ["**/*.cts"],
+    languageOptions: {
+      sourceType: "script",
     },
   },
   {
