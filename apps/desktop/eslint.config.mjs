@@ -12,10 +12,14 @@
  *   3. `reactHooks.configs["recommended-latest"]` — React hooks rules-of-hooks + exhaustive-deps
  *      (as a standalone config entry, not a `.rules` spread, so plugin
  *      registration and any future preset fields are picked up automatically)
- *   4. Project-specific overrides              — react-refresh + no-unused-vars convention,
+ *   4. Project-specific overrides (TS)         — react-refresh + no-unused-vars convention,
  *      applied to every .ts/.tsx file in the workspace (modulo `ignores`),
  *      so any future TS root inherits the conventions without needing a
  *      config change. See the inline comment on the `files` array below.
+ *   5. Project-specific overrides (JS)         — same `no-unused-vars` convention
+ *      mirrored onto .js/.mjs/.cjs/.jsx files. The workspace currently
+ *      authors only TS, but this block ensures the convention is truly
+ *      workspace-wide and a future JS script inherits the same expectations.
  *
  * The `typescript-eslint` package re-exports both the parser and plugin under
  * a single helper namespace (`tseslint.configs.*`, `tseslint.config(...)`) so
@@ -140,6 +144,50 @@ export default tseslint.config(
           // pattern in `schemas.test.ts` already follows the
           // underscore convention and is matched by
           // `varsIgnorePattern`.
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          destructuredArrayIgnorePattern: "^_",
+        },
+      ],
+    },
+  },
+  {
+    // JavaScript-file parallel of the project conventions above. The workspace
+    // currently authors only TypeScript (the only non-ignored `.js`/`.mjs`/
+    // `.cjs` file today is `eslint.config.mjs` itself, which is excluded by
+    // the `ignores` block), but this block ensures that if a future
+    // contributor adds a top-level `.js` script (e.g. a migration or build
+    // helper), it inherits the same underscore-prefix `no-unused-vars`
+    // convention as the TS code — not just the `js.configs.recommended`
+    // baseline with its default `no-unused-vars` configuration.
+    //
+    // Devin Review on PR #67 (`ANALYSIS_pr-review-job-...0001`, follow-up to
+    // the three-root → workspace-wide fix in commit 51b7e8e) flagged the
+    // remaining JS gap. The `@typescript-eslint/no-unused-vars` rule above
+    // doesn't cover non-TS files (typescript-eslint's `recommended` preset
+    // gates itself to `.ts/.tsx/.cts/.mts`), so the JS side needs the core
+    // `no-unused-vars` configured separately with the matching ignore
+    // patterns.
+    files: ["**/*.{js,mjs,cjs,jsx}"],
+    languageOptions: {
+      ecmaVersion: 2020,
+      sourceType: "module",
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        ...globals.es2020,
+      },
+    },
+    rules: {
+      "no-unused-vars": [
+        "warn",
+        {
+          // Mirrors the four ignore patterns on
+          // `@typescript-eslint/no-unused-vars` above. See that rule's
+          // block comment for the rationale on why all four patterns are
+          // required (and why `ignoreRestSiblings: true` is deliberately
+          // not set).
           argsIgnorePattern: "^_",
           varsIgnorePattern: "^_",
           caughtErrorsIgnorePattern: "^_",
