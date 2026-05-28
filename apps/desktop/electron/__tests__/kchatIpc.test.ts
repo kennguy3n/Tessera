@@ -44,6 +44,19 @@ vi.mock("electron", () => ({
   BrowserWindow: {
     fromWebContents: () => null,
   },
+  // `shell.openExternal` is the OS-deeplink surface used by the
+  // `kchat:openInDesktop` + `kchat:openDesktopExtensions` handlers
+  // (Phase 14 Task 6). The handlers wrap it in try/catch and
+  // resolve `{ opened: true, url }` on success, so a no-op stub
+  // here is sufficient to exercise the registration surface; the
+  // happy-path side-effect (the OS opening the deeplink in KChat
+  // Desktop) is end-to-end and asserted by the manual review
+  // checklist, not by this unit test. The stub returns a resolved
+  // promise so the handlers' `await shell.openExternal(...)`
+  // settles synchronously in tests.
+  shell: {
+    openExternal: vi.fn(() => Promise.resolve()),
+  },
 }));
 
 // Redirect `os.homedir()` to a per-suite tmpdir so the

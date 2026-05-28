@@ -36,6 +36,7 @@ import {
   type TesseraKchatSourceRow,
 } from "../kchat/kchatLocalApi";
 import { createConnection } from "node:net";
+import { createServer as createNodeHttpServer } from "node:http";
 import {
   buildDeeplink,
   DeeplinkBridge,
@@ -290,6 +291,92 @@ describe("KchatLocalApiServer — bind + discovery file", () => {
     // pointing it at a non-throwing implementation now.
     (server as unknown as { fsWriter: PortFileWriter }).fsWriter =
       noopWriter;
+    const second = await server.start();
+    expect(second.port).toBeGreaterThan(0);
+    await server.stop();
+    rmSync(userDataDir, { recursive: true, force: true });
+  });
+
+  // Phase 14 Round 13 Devin Review ANALYSIS_0007: when
+  // `server.address()` returns `null` or a string after a
+  // successful `listen()` callback (practically unreachable in
+  // production but a real edge case in `node:net`'s typedef),
+  // `start()` MUST close the bound socket before throwing — same
+  // teardown the wrong-address branch right below already performs.
+  // Without this, the throw orphans the listening socket for the
+  // process lifetime, exactly the failure mode Round 8's BUG_0001
+  // rollback set out to prevent.
+  //
+  // The test injects a `createServerFn` wrapper that delegates to
+  // the real `node:http.createServer` but replaces the inner
+  // server's `address()` with a stub that returns `null` AFTER
+  // capturing the real bound port. We then assert (a) `start()`
+  // rejects with the expected message, (b) the captured port no
+  // longer accepts TCP connections (proving the `server.close()`
+  // in the defensive branch fired), and (c) a second `start()` on
+  // the same instance — with an unwrapped `createServerFn` — still
+  // succeeds (proving no phantom state was left behind).
+  it("closes the bound socket when address() returns null after listen", async () => {
+    const { handlers } = makeHandlers();
+    const userDataDir = mkdtempSync(
+      join(tmpdir(), "tessera-localapi-null-addr-"),
+    );
+    let capturedPort = 0;
+    const wrappingCreateServer = ((requestHandler: Parameters<
+      typeof createNodeHttpServer
+    >[0]) => {
+      const real = createNodeHttpServer(requestHandler);
+      const realAddress = real.address.bind(real);
+      const realListen = real.listen.bind(real);
+      // Override `listen` so we can capture the real bound port
+      // BEFORE swapping `address()` to its null-returning stub.
+      // We cast through `unknown` because `Server.listen` is a
+      // heavily overloaded signature and we only need to wrap the
+      // one production callsite uses.
+      (real as unknown as { listen: typeof real.listen }).listen = ((
+        options: Parameters<typeof realListen>[0],
+        callback: () => void,
+      ) =>
+        realListen(options, () => {
+          const a = realAddress() as { port: number } | null;
+          if (a !== null && typeof a !== "string") capturedPort = a.port;
+          // Now force address() into the defensive branch.
+          (real as unknown as { address: () => null }).address = () => null;
+          callback();
+        })) as typeof real.listen;
+      return real;
+    }) as typeof createNodeHttpServer;
+    const server = new KchatLocalApiServer(handlers, {
+      userDataDir,
+      tokenForTesting: TEST_TOKEN,
+      createServerFn: wrappingCreateServer,
+    });
+    await expect(server.start()).rejects.toThrow(
+      /KchatLocalApiServer failed to bind/,
+    );
+    expect(capturedPort).toBeGreaterThan(0);
+    // The captured port should no longer accept TCP connections —
+    // we'd get ECONNREFUSED instead.
+    await new Promise<void>((resolveFn) => {
+      const probe = createConnection(
+        { host: "127.0.0.1", port: capturedPort },
+        () => {
+          // If we got `connect`, the defensive close failed and
+          // the socket is still listening.
+          probe.destroy();
+          resolveFn();
+        },
+      );
+      probe.once("error", () => {
+        resolveFn();
+      });
+    });
+    // A second start() with an unwrapped factory must succeed,
+    // proving the failed first start left no phantom internal
+    // state behind.
+    (
+      server as unknown as { createServerFn: typeof createNodeHttpServer }
+    ).createServerFn = createNodeHttpServer;
     const second = await server.start();
     expect(second.port).toBeGreaterThan(0);
     await server.stop();

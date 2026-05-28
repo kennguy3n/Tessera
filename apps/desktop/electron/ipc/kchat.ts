@@ -25,6 +25,7 @@ import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
 import { createHash } from "crypto";
+import { shell } from "electron";
 import {
   getBridge,
   getKchatAuthService,
@@ -856,7 +857,6 @@ export function registerKchatHandlers(): void {
       );
       const url = `kchat://app/conversation/${encodeURIComponent(id)}`;
       try {
-        const { shell } = await import("electron");
         await shell.openExternal(url);
         return { opened: true, url };
       } catch (err) {
@@ -885,7 +885,6 @@ export function registerKchatHandlers(): void {
       );
       const url = "kchat://app/settings/extensions";
       try {
-        const { shell } = await import("electron");
         await shell.openExternal(url);
         return { opened: true, url };
       } catch (err) {

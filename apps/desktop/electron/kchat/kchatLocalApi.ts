@@ -381,6 +381,18 @@ export class KchatLocalApiServer {
     });
     const address = server.address() as AddressInfo | null;
     if (!address || typeof address === "string") {
+      // Defence in depth — practically unreachable because the
+      // `listen()` callback above has already fired (so the server
+      // IS listening) and we requested a TCP bind not a pipe (so
+      // the address can't be a string). But if `node:net` ever
+      // surprises us with a null/string address after a successful
+      // listen, we still owe it the same teardown the wrong-address
+      // branch below performs: `server.close()` releases the kernel
+      // event-loop handle that `listen()` opened. Without this
+      // call, the throw would orphan the listening socket for the
+      // rest of the process lifetime (Phase 14 Round 13 Devin
+      // Review ANALYSIS_0007).
+      server.close();
       throw new Error("KchatLocalApiServer failed to bind");
     }
     if (address.address !== "127.0.0.1") {
