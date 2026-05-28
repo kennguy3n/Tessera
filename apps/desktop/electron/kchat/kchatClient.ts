@@ -624,22 +624,15 @@ export class KchatClient {
   }
 
   /**
-   * Fan a (synthetic or extension-bridged) `KchatWebSocketEvent`
-   * out to every registered `wsListeners`. Phase 13 Task 4:
-   * `KchatExtensionEvents` calls this so events translated from
-   * the `uney-chat-desktop` extension surface flow into the same
-   * downstream pipeline as native WebSocket events. The two
-   * sources are interchangeable from the forwarder's point of
-   * view; the only difference is `evt.data._extension_native_event`
-   * is set on extension-bridged events (see
-   * `kchatExtensionEvents.ts`).
+   * Fan a synthetic `KchatWebSocketEvent` out to every registered
+   * `wsListeners`. Currently only the native WebSocket dispatch
+   * path uses this hook; the Phase 13 extension-bridge path that
+   * fanned translated events through this method was removed in
+   * Phase 14 (KChat Desktop and Tessera are now independent KChat
+   * clients).
    *
-   * No trust-boundary validation runs here — the caller (only
-   * `KchatExtensionEvents`) is responsible for producing a
-   * well-formed envelope. Listener errors are swallowed
-   * individually so a faulty listener does not break the fan-out
-   * for the others (same posture as the native WebSocket
-   * dispatch site).
+   * Listener errors are swallowed individually so a faulty listener
+   * does not break the fan-out for the others.
    */
   emitWebSocketEvent(evt: KchatWebSocketEvent): void {
     for (const l of this.wsListeners) {
@@ -649,18 +642,6 @@ export class KchatClient {
         // Listener errors must not break the fan-out.
       }
     }
-  }
-
-  /**
-   * Phase 13 Task 4: transition into the `error` state with a
-   * caller-supplied message, used by `KchatAuthService` when the
-   * extension bridge surfaces a refresh failure or a
-   * desktop-app-initiated disconnect. Wraps the private
-   * `emitStatusError` so the auth service does not have to reach
-   * across the encapsulation boundary.
-   */
-  emitExtensionAuthError(message: string): void {
-    this.emitStatusError(message);
   }
 
   /**

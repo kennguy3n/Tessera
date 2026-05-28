@@ -44,6 +44,19 @@ vi.mock("electron", () => ({
   BrowserWindow: {
     fromWebContents: () => null,
   },
+  // `shell.openExternal` is the OS-deeplink surface used by the
+  // `kchat:openInDesktop` + `kchat:openDesktopExtensions` handlers
+  // (Phase 14 Task 6). The handlers wrap it in try/catch and
+  // resolve `{ opened: true, url }` on success, so a no-op stub
+  // here is sufficient to exercise the registration surface; the
+  // happy-path side-effect (the OS opening the deeplink in KChat
+  // Desktop) is end-to-end and asserted by the manual review
+  // checklist, not by this unit test. The stub returns a resolved
+  // promise so the handlers' `await shell.openExternal(...)`
+  // settles synchronously in tests.
+  shell: {
+    openExternal: vi.fn(() => Promise.resolve()),
+  },
 }));
 
 // Redirect `os.homedir()` to a per-suite tmpdir so the
@@ -341,20 +354,23 @@ describe("kchat IPC registration", () => {
   // exercise behaviour, but the master list is what catches a future
   // refactor that accidentally drops a registration entirely.
   //
-  // The Phase 13 Theme 1 (Task 7) extension-bridge channels
+  // Phase 14 replaces the Phase 13 extension-bridge channels
   // (`kchat:extensionStatus`, `kchat:extensionConnect`,
-  // `kchat:extensionDisconnect`) and the Phase 13 Theme 2 (Task 10)
-  // backfill-progress channel (`kchat:backfillProgress`) were
-  // missing from the original list — added here so the master-list
-  // contract matches reality.
+  // `kchat:extensionDisconnect`) with the three deeplink / local-
+  // API affordances the Settings card + sidebar invoke:
+  // `kchat:openInDesktop` (renderer → main → `shell.openExternal`),
+  // `kchat:openDesktopExtensions` (zero-arg shortcut to the
+  // `kchat://app/settings/extensions` deeplink), and
+  // `kchat:desktopBridgeStatus` (renderer-facing projection of the
+  // localhost API server's last-heartbeat snapshot).
   const EXPECTED_KCHAT_CHANNELS: readonly string[] = [
     "kchat:isAvailable",
     "kchat:status",
     "kchat:connect",
     "kchat:disconnect",
-    "kchat:extensionStatus",
-    "kchat:extensionConnect",
-    "kchat:extensionDisconnect",
+    "kchat:openInDesktop",
+    "kchat:openDesktopExtensions",
+    "kchat:desktopBridgeStatus",
     "kchat:listTeams",
     "kchat:listChannels",
     "kchat:listMembers",
@@ -399,11 +415,18 @@ describe("kchat IPC registration", () => {
     // Reading source text avoids needing to spin up a real Electron
     // `contextBridge` (same pattern as sandboxPreloadContract.test.ts).
     // Uses the top-of-file `nodeFs` / `nodePath` imports rather than
-    // inline `require()` calls so the file doesn't need
-    // `eslint-disable` directives that drift against `@typescript-
-    // eslint` rule renames between major versions (the prior
-    // `no-require-imports` directive name didn't match the project's
-    // active `no-var-requires` rule and broke CI lint).
+    // inline `require()` / `await import()` calls so the file doesn't
+    // need `eslint-disable` directives that drift against
+    // `@typescript-eslint` rule renames between major versions (the
+    // prior `no-require-imports` directive name didn't match the
+    // project's active `no-var-requires` rule and broke CI lint), and
+    // so the test doesn't need to be marked `async` purely to
+    // satisfy the dynamic-import pattern when the underlying
+    // `readFileSync` is synchronous. Main resolved the original lint
+    // breakage with `const fs = await import("fs")`; this branch
+    // converged on reusing the existing top-of-file imports because
+    // the file already imports `nodeFs` / `nodePath` for the same
+    // purpose elsewhere, making the dynamic imports dead weight.
     const preloadSource: string = nodeFs.readFileSync(
       nodePath.resolve(__dirname, "..", "preload.ts"),
       "utf-8",

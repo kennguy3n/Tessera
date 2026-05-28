@@ -498,13 +498,23 @@ const mockApi = {
     // rendering (e.g. an auto-expand-thread affordance) don't
     // throw. Tests that exercise the expand-thread path override.
     fetchThreadContext: vi.fn().mockResolvedValue([]),
-    // Phase 13 Task 7: extension-bridge surface. Default returns
-    // `available: false` so the Settings card renders the manual
-    // PAT entry path; tests that exercise the extension branch
-    // override this per-case.
-    extensionStatus: vi.fn().mockResolvedValue({ available: false }),
-    extensionConnect: vi.fn(),
-    extensionDisconnect: vi.fn(),
+    // Phase 14 Task 4: `.kcz`-extension localhost API surface.
+    // Default snapshot says the server is running but the
+    // extension has never checked in, so the Settings card +
+    // sidebar render the "not detected" state. Tests exercising
+    // the detected branch override this per-case.
+    desktopBridgeStatus: vi.fn().mockResolvedValue({
+      apiServerRunning: true,
+      apiServerPort: 51234,
+      portFilePath: "/tmp/test/tessera-kchat-port.json",
+      lastExtensionContactAt: null,
+    }),
+    openInDesktop: vi
+      .fn()
+      .mockResolvedValue({ opened: true, url: "kchat://" }),
+    openDesktopExtensions: vi
+      .fn()
+      .mockResolvedValue({ opened: true, url: "kchat://" }),
     // Phase 13 Task 10: KChat channel backfill progress IPC.
     // Default returns the `idle` discriminator so the
     // SourceDetailPage's KChat backfill card renders the

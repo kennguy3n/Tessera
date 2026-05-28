@@ -20,6 +20,18 @@ import {
   passwordVaultSaltExists,
   VAULT_INACTIVE_SAFE_STORAGE_AVAILABLE,
 } from "./passwordVault";
+import {
+  attachKchatDeeplinkBridge,
+  buildLocalApiHandlers,
+  detachKchatDeeplinkBridge,
+  getKchatDeeplinkBridge,
+  startKchatLocalApiServer,
+  stopKchatLocalApiServer,
+} from "./appState";
+import {
+  DeeplinkBridge,
+  registerProtocolClient,
+} from "./kchat/kchatDeeplinkBridge";
 
 // `tessera-asset://` must be registered as a privileged scheme
 // BEFORE `app.whenReady` fires — Electron's
@@ -30,6 +42,94 @@ import {
 // is registered later inside the `whenReady` callback, after the
 // user-data directory is known.
 registerAssetProtocolScheme();
+
+// Phase 14 Task 3: register `tessera://` as the default protocol
+// handler for this app binary at module load — Electron requires
+// `setAsDefaultProtocolClient` to run before `app.whenReady`.
+//
+// The companion `attachKchatDeeplinkBridge()` call (which wires the
+// `open-url` and `second-instance` listeners) is also at module
+// top-level, immediately after this block — see the comment on that
+// call below for the macOS cold-start rationale. Both calls share
+// the same "must run before whenReady" constraint, and they sit
+// together at module load so the registration and the dispatch
+// listeners can never end up on opposite sides of the ready boundary.
+//
+// Dev mode (no Electron installer) needs an extra `args` hint so
+// the OS knows how to invoke the dev binary; in packaged builds
+// `process.argv[1]` is the resource path and is ignored.
+if (process.defaultApp && process.argv.length >= 2) {
+  registerProtocolClient(app, {
+    execPath: process.execPath,
+    args: [path.resolve(process.argv[1])],
+  });
+} else {
+  registerProtocolClient(app);
+}
+
+// Phase 14 Task 3: attach the `tessera://` deeplink listeners at
+// module top-level — BEFORE `app.whenReady()` resolves. macOS Cocoa
+// fires `open-url` very early on cold-start launches triggered by
+// a `tessera://` click (the OS launches Tessera *because of* the
+// URL), and that event can land before `whenReady` runs the callback
+// at the bottom of this file. If the listener is only attached inside
+// `whenReady`, Electron's default `open-url` handling runs and the
+// URL is silently dropped — the `DeeplinkBridge`'s pre-ready parking
+// queue (constructed at `appState.ts` module load) never sees it.
+//
+// Attaching here mirrors the `setAsDefaultProtocolClient` call above,
+// which has the same "must run before whenReady" constraint. The
+// `second-instance` listener that `attachKchatDeeplinkBridge` also
+// wires is harmless to register early: it only fires on the primary
+// instance, which by definition has already passed module-load. The
+// bridge consumer is registered later by the renderer; parsed routes
+// are parked in the bridge's queue and flushed in FIFO order on
+// consumer registration.
+attachKchatDeeplinkBridge();
+
+// Phase 14 Task 3: claim the single-instance lock so the
+// Windows/Linux `second-instance` path can pluck `tessera://`
+// URLs out of the spawned process's argv. Without this, a
+// second launch would silently start a new Electron process
+// instead of forwarding the deeplink to the already-running
+// primary. macOS uses `open-url` instead and is unaffected by
+// this lock.
+const acquiredSingleInstanceLock = app.requestSingleInstanceLock();
+if (!acquiredSingleInstanceLock) {
+  // A primary instance is already running; let it pick up the
+  // argv (the OS will fire `second-instance` on the primary).
+  // Calling `app.quit()` here is the documented Electron
+  // pattern — `whenReady` never resolves in this process.
+  app.quit();
+} else {
+  // Phase 14 Round 14 Devin Review BUG_0001: scan THIS process's
+  // own argv for a `tessera://` URL. On Windows + Linux, when the
+  // user clicks a deeplink and Tessera is NOT already running, the
+  // OS launches Tessera with the URL appended to `process.argv` —
+  // there is no `open-url` event (that's macOS only) and there is
+  // no `second-instance` event (that fires on the PRIMARY when a
+  // SECOND instance starts later). The primary instance has to
+  // pluck the URL out of its own argv during cold-start or the
+  // deeplink is silently dropped: Tessera launches, but no
+  // navigation happens.
+  //
+  // macOS is unaffected: Cocoa delivers cold-start URLs via
+  // `open-url`, which `attachKchatDeeplinkBridge()` above already
+  // wires. Windows/Linux WARM-start is also unaffected: a second
+  // launch fires `second-instance` on the primary, which the same
+  // bridge handles.
+  //
+  // The bridge's parking queue (constructed at `appState.ts`
+  // module load) holds the parsed route until the renderer
+  // consumer registers later in the `whenReady` chain. Calling
+  // `ingestRawUrl` here is safe at module load — the bridge
+  // exists, and pre-ready routes are exactly what its queue is
+  // for.
+  const initialDeeplinkUrl = DeeplinkBridge.extractUrlFromArgv(process.argv);
+  if (initialDeeplinkUrl !== null) {
+    getKchatDeeplinkBridge().ingestRawUrl(initialDeeplinkUrl);
+  }
+}
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -541,6 +641,25 @@ app.whenReady().then(async () => {
   // strengthens the "handlers are registered before any renderer
   // can call them" invariant.
   registerIpcHandlers();
+  // Phase 14 Task 2: start the localhost API server the .kcz
+  // extension installed in KChat Desktop talks to. Runs AFTER
+  // `registerIpcHandlers()` because the handlers populate the
+  // sources / ingest / share-artifact slots inside `appState.ts`
+  // — starting the server earlier would expose an HTTP surface
+  // that returns 503 for every state-changing route.
+  try {
+    await startKchatLocalApiServer(
+      app.getPath("userData"),
+      buildLocalApiHandlers(),
+    );
+  } catch (err) {
+    // Treat a bind failure as soft: the .kcz extension surface is
+    // a convenience, not a correctness requirement. Tessera still
+    // runs against KChat via PAT.
+    getLogger().error("kchatLocalApiServer.start failed", {
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
   // Run the vault prompt BEFORE `initAppState()` so that when
   // `getOrCreateDbKeyAsync()` checks `passwordVaultActive()`, the
   // vault key (if any) is already cached. On non-keyringless
@@ -717,6 +836,15 @@ export async function handleWillQuit(
   deps: {
     stopScheduler: () => Promise<void>;
     stopAllSidecars: () => Promise<void>;
+    // Phase 14 Round 4 Devin Review polish: take the kchat
+    // localhost-API shutdown and the deeplink-bridge detach via
+    // dep-injection so this function follows the same testability
+    // pattern as the existing scheduler / sidecar drains. The
+    // production caller passes the real implementations; the
+    // will-quit tests can inject spies and verify ordering against
+    // the other shutdown steps.
+    stopKchatLocalApi: () => Promise<void>;
+    detachKchatDeeplinkBridge: () => void;
     quit: () => void;
   },
 ): Promise<void> {
@@ -768,6 +896,22 @@ export async function handleWillQuit(
     } catch (e) {
       console.error("[tessera] sidecar shutdown failed:", e);
     }
+    try {
+      // Phase 14 Task 2: stop the localhost API server and remove
+      // the port-file so a future Tessera launch on a different
+      // port doesn't have to race a stale discovery file.
+      await deps.stopKchatLocalApi();
+    } catch (e) {
+      console.error("[tessera] kchatLocalApi shutdown failed:", e);
+    }
+    try {
+      // Phase 14 Task 3: detach the deeplink listeners so a
+      // re-launched main process (test harness) does not stack
+      // duplicates.
+      deps.detachKchatDeeplinkBridge();
+    } catch (e) {
+      console.error("[tessera] kchatDeeplink detach failed:", e);
+    }
   } finally {
     deps.quit();
   }
@@ -790,6 +934,8 @@ app.on("will-quit", (event) => {
   handleWillQuit(event, {
     stopScheduler,
     stopAllSidecars,
+    stopKchatLocalApi: stopKchatLocalApiServer,
+    detachKchatDeeplinkBridge,
     quit: () => app.quit(),
   }).catch((e) => {
     console.error("[tessera] handleWillQuit rejected during quit:", e);

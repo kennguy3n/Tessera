@@ -25,9 +25,11 @@ import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
 import { createHash } from "crypto";
+import { shell } from "electron";
 import {
   getBridge,
   getKchatAuthService,
+  getKchatLocalApiServer,
   setKchatBackfillImpl,
   setKchatChannelResyncImpl,
 } from "../appState";
@@ -828,143 +830,87 @@ export function registerKchatHandlers(): void {
     return { disconnected: true };
   });
 
-  // --- Phase 13 Task 7: extension-bridge surface ---
+  // --- Phase 14 Task 6: KChat Desktop deeplink surface ---
   //
-  // Three channels mount the `uney-chat-desktop` extension bridge
-  // into the renderer:
+  // `kchat:openInDesktop` invokes a `kchat://app/conversation/<id>`
+  // deeplink via `shell.openExternal()` so the user can jump from
+  // a Tessera-indexed KChat source straight into the KChat Desktop
+  // conversation view. This replaces the Phase 13 extension-bridge
+  // "Open in Desktop" plumbing (which sent an IPC frame across a
+  // Unix socket) with a single OS-level URL handover — KChat
+  // Desktop owns the `kchat://` scheme registration; Tessera is
+  // just another caller.
   //
-  //   * `kchat:extensionStatus` — cheap probe. Returns whether the
-  //     desktop app is reachable on the well-known socket path
-  //     (see `kchatExtensionBridge.extensionSocketPath`), plus the
-  //     currently-active `authMode` ("none" | "pat" | "extension")
-  //     so the Settings card knows which CTA to render without a
-  //     separate `kchat:status` round-trip.
-  //
-  //   * `kchat:extensionConnect` — initiate the session handoff.
-  //     Rejects with `extension-not-available` when the probe
-  //     returns `available: false`; rejects with
-  //     `concurrent-pat-attempt` when a PAT connection is already
-  //     active and the renderer race-condition'd through the
-  //     UI gate. (The auth service tears down the PAT
-  //     connection on `connectViaExtension`, so this rejection is
-  //     advisory — the renderer surfaces the disconnect dialog
-  //     before it would proceed.)
-  //
-  //   * `kchat:extensionDisconnect` — tear down only the
-  //     extension session. The PAT vault entry (if any) is left
-  //     intact so the user can reconnect via PAT after.
-  //
-  // Trust model: every frame across the extension socket is
-  // validated by the session module (shape, expiry, embedded
-  // `serverUrl` SSRF check via `enforceKchatServerUrl`). The
-  // extension socket itself is a Unix domain socket / named pipe
-  // — no TCP surface, no remote access — so the SSRF risk is
-  // limited to the `serverUrl` field, which we treat exactly as
-  // the PAT-path `kchat:connect` handler does.
+  // The handler is rate-limited against a single GLOBAL token
+  // bucket (key: `"kchat:openInDesktop"`, NOT keyed by channel
+  // id) so a runaway renderer loop cannot spam the OS shell with
+  // deeplinks. The global bucket is intentional and stricter
+  // than a per-channel bucket would be: a per-channel scheme
+  // would let an attacker open N different channels at the full
+  // per-bucket rate, multiplying the effective OS-shell budget
+  // by N. The `kchat:openDesktopExtensions` sibling handler
+  // intentionally shares the same key so the cap is honoured
+  // across both deeplink paths (Phase 14 Round 16 Devin Review
+  // ANALYSIS_0001 — comment previously claimed "per-channel-id"
+  // which was the opposite of the truth).
   idempotentHandle(
-    "kchat:extensionStatus",
-    async (): Promise<{
-      available: boolean;
-      authMode: "none" | "pat" | "extension";
-      protocolVersion?: number;
-      desktopVersion?: string;
-      capabilities?: string[];
-      reason?: string;
-    }> => {
+    "kchat:openInDesktop",
+    async (
+      _event,
+      channelId: unknown,
+    ): Promise<{ opened: boolean; url: string }> => {
+      const id = assertKchatId(channelId, "channelId");
       defaultRateLimiter.consume(
-        "kchat:extensionStatus",
-        RATE_LIMIT_PROFILES["kchat:extensionStatus"],
+        "kchat:openInDesktop",
+        RATE_LIMIT_PROFILES["kchat:openInDesktop"],
       );
-      const svc = getKchatAuthService();
+      const url = `kchat://app/conversation/${encodeURIComponent(id)}`;
       try {
-        const probe = await svc.probeExtension();
-        return {
-          available: probe.available,
-          authMode: svc.getAuthMode(),
-          protocolVersion: probe.protocolVersion,
-          desktopVersion: probe.desktopVersion,
-          capabilities: probe.capabilities,
-          reason: probe.reason,
-        };
+        await shell.openExternal(url);
+        return { opened: true, url };
       } catch (err) {
         throw toIpcError(err);
       }
     },
   );
 
+  // Phase 14 Task 4: open KChat Desktop's "Extensions" settings
+  // page directly. The deeplink is a fixed literal so the
+  // renderer cannot smuggle arbitrary URLs across the IPC.
   idempotentHandle(
-    "kchat:extensionConnect",
-    async () => {
+    "kchat:openDesktopExtensions",
+    async (): Promise<{ opened: boolean; url: string }> => {
+      // Intentionally shares the `kchat:openInDesktop` token bucket
+      // (rather than getting its own key). Both handlers terminate
+      // in a single `shell.openExternal()` call to a `kchat://…`
+      // URL, so the underlying OS-shell budget is what we need to
+      // bound — a runaway renderer alternating between the two
+      // channels would otherwise spam the shell at 2x the intended
+      // rate. The shared key collapses both code paths onto one
+      // bucket so the cap is honoured globally.
       defaultRateLimiter.consume(
-        "kchat:extensionConnect",
-        RATE_LIMIT_PROFILES["kchat:extensionConnect"],
+        "kchat:openInDesktop",
+        RATE_LIMIT_PROFILES["kchat:openInDesktop"],
       );
-      const svc = getKchatAuthService();
-      const probe = await svc.probeExtension();
-      if (!probe.available) {
-        throw new Error(
-          `KChat Desktop extension is not available (${probe.reason ?? "no-socket"}); install or launch the desktop app, or fall back to the PAT connection.`,
-        );
-      }
+      const url = "kchat://app/settings/extensions";
       try {
-        const user = await svc.connectViaExtension();
-        const bridge = getBridge();
-        if (bridge) {
-          const state = svc.getState();
-          bridge.bridgeLogKchatConnected(
-            state.serverUrl ?? "",
-            user.id,
-          );
-          try {
-            bridge.bridgeSetKchatPrincipal(user.id);
-          } catch (err) {
-            console.error(
-              "[kchat] bridgeSetKchatPrincipal failed:",
-              err,
-            );
-          }
-        }
-        return {
-          id: user.id,
-          username: user.username,
-          email: user.email,
-          firstName: user.first_name,
-          lastName: user.last_name,
-        };
+        await shell.openExternal(url);
+        return { opened: true, url };
       } catch (err) {
         throw toIpcError(err);
       }
     },
   );
 
-  idempotentHandle("kchat:extensionDisconnect", async () => {
-    defaultRateLimiter.consume(
-      "kchat:extensionDisconnect",
-      RATE_LIMIT_PROFILES["kchat:extensionDisconnect"],
-    );
-    const svc = getKchatAuthService();
-    if (svc.getAuthMode() !== "extension") {
-      // No-op disconnect when the active mode isn't `extension`
-      // — same shape as `kchat:disconnect` so the renderer can
-      // call it unconditionally on a settings teardown.
-      return { disconnected: false };
-    }
-    const userId = svc.disconnect();
-    if (userId) {
-      const bridge = getBridge();
-      if (bridge) {
-        bridge.bridgeLogKchatDisconnected(userId);
-        try {
-          bridge.bridgeClearKchatPrincipal();
-        } catch (err) {
-          console.error(
-            "[kchat] bridgeClearKchatPrincipal failed:",
-            err,
-          );
-        }
-      }
-    }
-    return { disconnected: true };
+  // Phase 14 Task 4: passive snapshot of the local API server +
+  // last-heard-from extension heartbeat. The Settings card polls
+  // this to decide whether to render the "KChat Desktop
+  // detected" affordance. Returns `null` while the server is
+  // still booting (the very first paint after app launch).
+  idempotentHandle("kchat:desktopBridgeStatus", async () => {
+    const localApi = getKchatLocalApiServer();
+    if (localApi === null) return null;
+    return localApi.snapshotForRenderer();
   });
 
   // --- Listing ---
