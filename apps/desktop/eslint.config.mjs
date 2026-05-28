@@ -47,11 +47,13 @@ export default tseslint.config(
       // already excluded; but per-script test fixtures or generated mocks
       // could land here in the future.
       "coverage/**",
-      // Vite & test runner config files are JS/TS but don't follow the
-      // strict typing rules we apply to product code; let them through
-      // type-check but skip lint to avoid noise.
+      // Build / test runner / lint config files are JS/TS but don't follow
+      // the strict typing rules we apply to product code; let them through
+      // type-check but skip lint to avoid noise. Vitest doesn't have its
+      // own config file — its `test:` block lives inside `vite.config.ts`
+      // (the canonical Vite + Vitest setup), so the one Vite entry below
+      // covers both build and test-runner config.
       "vite.config.ts",
-      "vitest.config.ts",
       "eslint.config.mjs",
     ],
   },
