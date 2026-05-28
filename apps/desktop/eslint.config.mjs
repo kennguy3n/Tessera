@@ -89,8 +89,17 @@ export default tseslint.config(
     // Devin Review on PR #67 (`ANALYSIS_pr-review-job-...0001`) flagged the
     // earlier three-root `files` array as a footgun: any future TS file added
     // outside those roots would silently lose the project conventions and
-    // pick up only the typescript-eslint v8 baseline.
-    files: ["**/*.{ts,tsx}"],
+    // pick up only the typescript-eslint v8 baseline. Round 6
+    // (`ANALYSIS_pr-review-job-...0002`) followed up: extended the glob to
+    // include `.cts` and `.mts` so the override matches the exact set of
+    // extensions that `tseslint.configs.recommended` parses
+    // (`.ts/.tsx/.cts/.mts`). Without `.cts`/`.mts`, a future CommonJS-style
+    // TypeScript file (e.g. a build script using top-level `require()`) or
+    // an ESM-style one (e.g. a module that needs to opt out of the
+    // package-level `"type"` setting) would get the typescript-eslint
+    // baseline `no-unused-vars` but NOT the project's underscore-prefix
+    // convention.
+    files: ["**/*.{ts,tsx,cts,mts}"],
     languageOptions: {
       ecmaVersion: 2020,
       sourceType: "module",
@@ -174,7 +183,15 @@ export default tseslint.config(
     files: ["**/*.{js,mjs,cjs,jsx}"],
     languageOptions: {
       ecmaVersion: 2020,
-      sourceType: "module",
+      // Deliberately NOT setting `sourceType` — ESLint v9's flat config
+      // infers it from the file extension: `.cjs` → `"commonjs"`, `.mjs`
+      // and `.js`/`.jsx` (in a `"type": "module"` package) → `"module"`.
+      // Round 6 (`ANALYSIS_pr-review-job-...0001`) caught the earlier
+      // explicit `sourceType: "module"` override here: it would have
+      // forced ESM parsing on any future `.cjs` file, misparsing
+      // `require()` and `module.exports`. Letting ESLint's per-extension
+      // inference do the right thing automatically is both safer and
+      // matches the canonical flat-config pattern.
       globals: {
         ...globals.browser,
         ...globals.node,
