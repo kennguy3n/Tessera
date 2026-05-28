@@ -976,8 +976,10 @@ export class KchatEventForwarder {
    *      Drop the event if either is missing — a malformed WS
    *      payload should never be allowed to throw out of the
    *      forwarder.
-   *   2. Compute `cacheDir = kchatChannelCacheDir(channelId)`
-   *      and ask the substrate via
+   *   2. Compute `cacheDir = this.resolveCacheDir(channelId)`
+   *      (defaults to `kchatChannelCacheDir`; tests may inject
+   *      a custom resolver via the constructor's `getCacheDir`
+   *      option) and ask the substrate via
    *      `bridgeIsKchatChannelLinked(cacheDir)` whether a
    *      `SourceType::Kchat` source row exists for this
    *      channel. Unlinked channels short-circuit: audit

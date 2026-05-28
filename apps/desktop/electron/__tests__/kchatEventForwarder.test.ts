@@ -1607,9 +1607,23 @@ describe("KchatEventForwarder", () => {
         seq: 100,
       }),
     );
+    // Wait on the FINAL audit emission
+    // (`bridgeLogKchatSourceCryptoshredded`) for consistency
+    // with the `channel_archived`/`channel_deleted` parameterised
+    // block above. The `already_revoked` outcome still fires both
+    // audit rows (access-revoked + shred-with-zero-counts), so
+    // polling on the LATER of the two guarantees the entire
+    // handler chain has settled before assertions run — even
+    // though step 2 (`bridgeLogKchatChannelAccessRevoked`) would
+    // fire after `await withChannelSyncLock` resolves (the
+    // `secureDeleteChannelArtifacts` already-completed
+    // invariant). The consistency matters for future maintainers
+    // diagnosing parallel flakes: every channel-gone test in
+    // this file uses the same waitForCondition signal.
     await waitForCondition(
       () =>
-        bridgeMock!.bridgeLogKchatChannelAccessRevoked.mock.calls.length > 0,
+        bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length >
+        0,
     );
 
     // Access-revoked audit row still fires — operators want to
