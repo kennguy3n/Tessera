@@ -31,7 +31,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getStoredDefaultTeamId,
   isExtensionDetected,
-} from "./KchatSettingsCard";
+} from "./kchatSettingsHelpers";
 import type {
   KchatChannelView,
   KchatConnectionStateView,

@@ -7,11 +7,12 @@ import {
   cleanup,
 } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
-import SourceDetailPage, {
+import SourceDetailPage from "../pages/SourceDetailPage";
+import {
   extractKchatChannelIdFromSource,
   formatSourceTypeLabel,
   sourceTypeIcon,
-} from "../pages/SourceDetailPage";
+} from "../utils/sourceLabels";
 import type { SourceInfo } from "../types/ipc";
 
 /**

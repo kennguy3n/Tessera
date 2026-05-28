@@ -26,11 +26,11 @@ import {
 } from "react";
 import Modal from "./Modal";
 import Button from "./Button";
-import { useToast } from "./Toast";
+import { useToast } from "./toastContext";
 import {
   getStoredDefaultTeamId,
   setStoredDefaultTeamId,
-} from "./KchatSettingsCard";
+} from "./kchatSettingsHelpers";
 import type {
   KchatChannelView,
   KchatTeamView,

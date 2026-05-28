@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
-import ConnectorsList, { CONNECTOR_DESCRIPTORS } from "../components/ConnectorsList";
+import ConnectorsList from "../components/ConnectorsList";
+import { CONNECTOR_DESCRIPTORS } from "../components/connectorDescriptors";
 
 const mockApi = {
   connectors: {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyMarpToShadow } from "../editors/SlideEditor";
+import { applyMarpToShadow } from "../editors/slideEditorHelpers";
 
 function makeShadow(): ShadowRoot {
   const host = document.createElement("div");

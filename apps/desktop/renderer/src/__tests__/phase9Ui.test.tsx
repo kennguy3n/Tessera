@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { ToastProvider, useToast } from "../components/Toast";
+import { ToastProvider } from "../components/Toast";
+import { useToast } from "../components/toastContext";
 import ErrorBoundary from "../components/ErrorBoundary";
 import Sidebar from "../components/Sidebar";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";

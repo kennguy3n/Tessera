@@ -26,15 +26,15 @@
  */
 import { describe, it, expect } from "vitest";
 
-import { parseDocumentContent } from "../editors/DocumentEditor";
+import { parseDocumentContent } from "../editors/documentEditorHelpers";
 import {
   parseSheetContent,
   parseCSVLines,
   parseCellRef,
   evaluateFormula,
-  type SheetContent,
-} from "../editors/SheetEditor";
-import { parseBaseContent } from "../editors/BaseEditor";
+} from "../editors/sheetEditorHelpers";
+import type { SheetContent } from "../editors/SheetEditor";
+import { parseBaseContent } from "../editors/baseEditorHelpers";
 
 // ---------------------------------------------------------------------------
 // parseDocumentContent

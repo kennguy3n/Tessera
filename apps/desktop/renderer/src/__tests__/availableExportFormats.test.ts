@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { availableExportFormats } from "../pages/ArtifactEditorPage";
+import { availableExportFormats } from "../pages/artifactExportFormats";
 
 describe("availableExportFormats", () => {
   it("returns text-oriented formats for documents (no XLSX, no PPTX)", () => {

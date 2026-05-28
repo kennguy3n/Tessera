@@ -14,8 +14,12 @@
  * inline citation hover cards).
  */
 import type { CSSProperties } from "react";
+import {
+  classifyRelevance,
+  type RelevanceTier,
+} from "./relevanceBadgeHelpers";
 
-export type RelevanceTier = "high" | "medium" | "low";
+export type { RelevanceTier };
 
 export interface RelevanceBadgeProps {
   /** Score in `(0, 1]` as returned by hybrid search. */
@@ -29,16 +33,6 @@ export interface RelevanceBadgeProps {
   variant?: "pill" | "inline";
   /** Optional style passthrough for callers that need to position. */
   style?: CSSProperties;
-}
-
-const HIGH_THRESHOLD = 0.7;
-const MEDIUM_THRESHOLD = 0.3;
-
-export function classifyRelevance(score: number): RelevanceTier {
-  if (!Number.isFinite(score)) return "low";
-  if (score >= HIGH_THRESHOLD) return "high";
-  if (score >= MEDIUM_THRESHOLD) return "medium";
-  return "low";
 }
 
 const TIER_LABEL: Record<RelevanceTier, string> = {

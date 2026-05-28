@@ -5,8 +5,8 @@ import {
   escapeHtmlComment,
   extractFrontmatterTheme,
   setFrontmatterTheme,
-  type SlideContent,
-} from "../editors/SlideEditor";
+} from "../editors/slideEditorHelpers";
+import { type SlideContent } from "../editors/SlideEditor";
 
 describe("parseSlideContent", () => {
   it("returns the empty-default shape for empty input", () => {
