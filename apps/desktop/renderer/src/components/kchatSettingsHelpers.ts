@@ -22,7 +22,21 @@ const TEAM_LS_KEY = "tessera.kchat.defaultTeamId";
  */
 export const EXTENSION_HEARTBEAT_STALE_MS = 90_000;
 
-/** Cadence at which the renderer re-reads the bridge status. */
+/**
+ * Cadence at which the Settings card re-reads the bridge status.
+ *
+ * Note: the sidebar bridge-health dot uses a different cadence
+ * (`SIDEBAR_BRIDGE_DOT_POLL_MS = 15_000` in `KchatSidebarSection.tsx`).
+ * The Settings card polls more aggressively because it is the
+ * primary configuration surface — a user editing the Connect/
+ * Disconnect affordance expects bridge state to reflect their
+ * action within a fresh-looking interval. The sidebar dot is a
+ * passive always-mounted indicator and accepts a slower cadence
+ * to keep background HTTP-call volume low. Naming the two
+ * constants distinctly (rather than re-using `BRIDGE_STATUS_POLL_MS`
+ * in both modules with different values) protects future
+ * maintainers from accidentally assuming the cadences are linked.
+ */
 export const BRIDGE_STATUS_POLL_MS = 10_000;
 
 export function getStoredDefaultTeamId(): string | null {
