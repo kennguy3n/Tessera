@@ -25,7 +25,7 @@
  *   7. `disconnect`-by-user does NOT trigger reconnect (the
  *      `wsClosedByUser` flag is honoured).
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 import {
   DEFAULT_KCHAT_SERVER,

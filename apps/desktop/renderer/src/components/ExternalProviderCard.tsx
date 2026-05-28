@@ -212,6 +212,17 @@ export default function ExternalProviderCard() {
     // returns "External provider is disabled", defeating the
     // draft-form-override fix that lets List/Test run without a
     // prior Save.
+    // The deps are deliberately narrowed to the three fields the
+    // callback reads instead of the whole `provider` object — see
+    // the multi-paragraph rationale immediately above. ESLint's
+    // exhaustive-deps rule wants either the bare `provider`
+    // identifier OR every field; we choose the latter precisely to
+    // stabilise the callback identity against unrelated form
+    // edits. Suppress the warning here rather than broadening the
+    // dep list (which would defeat the optimisation) or splitting
+    // `provider` into separate `useState` cells (which would
+    // require touching every consumer of `provider`).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider?.apiUrl, provider?.providerType, provider?.enabled]);
 
   const onResetTokenUsage = useCallback(async () => {

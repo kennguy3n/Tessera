@@ -294,6 +294,16 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
         error: err instanceof Error ? err.message : String(err),
       }));
     }
+    // `state` here is the `useState` value object, not a `useRef`
+    // — so `state.current` is the "installed model" field, and
+    // `[tessera, state.current]` is the correct narrow dep list.
+    // ESLint's exhaustive-deps rule pattern-matches any `.current`
+    // access as if it were a mutable ref and warns "missing dep:
+    // 'state'". Broadening to `[tessera, state]` would cause the
+    // callback to recreate on every unrelated state field change
+    // (status updates from the 5s poll, error transitions,
+    // progress bursts) and is the wrong fix.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tessera, state.current]);
 
   const handleStop = useCallback(async () => {
@@ -396,6 +406,12 @@ export default function ModelRuntimeCard({ api }: ModelRuntimeCardProps) {
         error: err instanceof Error ? err.message : String(err),
       }));
     }
+    // See the narrow-deps rationale on `handleStart` above —
+    // ESLint's exhaustive-deps mistakes the `state.current` /
+    // `state.status` field reads on a `useState` value for a
+    // mutable `useRef` access and asks for the bare `state`.
+    // Listing the two read fields is the correct narrow form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tessera, state.current, state.status]);
 
   if (!tessera) {
