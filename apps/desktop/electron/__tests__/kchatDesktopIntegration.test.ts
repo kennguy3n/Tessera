@@ -921,6 +921,57 @@ describe("DeeplinkBridge — consumer lifecycle + parking", () => {
       DeeplinkBridge.extractUrlFromArgv(["/path/to/electron", "--flag=1"]),
     ).toBeNull();
   });
+
+  // Phase 14 Round 14 Devin Review BUG_0001: pins the
+  // Windows/Linux cold-start contract. The fix in `main.ts`
+  // calls `DeeplinkBridge.extractUrlFromArgv(process.argv)` once
+  // the single-instance lock is acquired and feeds the result
+  // (if any) into `getKchatDeeplinkBridge().ingestRawUrl(url)`.
+  // This unit test exercises the same data flow against a
+  // fresh `DeeplinkBridge` instance: a deeplink URL embedded in
+  // a representative cold-start argv vector should land in the
+  // bridge's parking queue, and the same setConsumer flush as
+  // the warm-start path should then dispatch it to the
+  // renderer. macOS cold-start (open-url) and Windows/Linux
+  // warm-start (second-instance argv) are covered by sibling
+  // tests above.
+  it("cold-start argv with a tessera URL parks then dispatches once a consumer registers", () => {
+    const bridge = new DeeplinkBridge();
+    const seen: DeeplinkRoute[] = [];
+    const coldStartArgv = [
+      "/Applications/Tessera.app/Contents/MacOS/Tessera",
+      "--enable-features=Foo",
+      "tessera://artifact/cold-start-art-1",
+    ];
+    const url = DeeplinkBridge.extractUrlFromArgv(coldStartArgv);
+    expect(url).toBe("tessera://artifact/cold-start-art-1");
+    if (url !== null) bridge.ingestRawUrl(url);
+    expect(bridge.pendingCount()).toBe(1);
+    bridge.setConsumer((r) => {
+      seen.push(r);
+    });
+    expect(bridge.pendingCount()).toBe(0);
+    expect(seen).toEqual([
+      { kind: "artifact", artifactId: "cold-start-art-1" },
+    ]);
+  });
+
+  it("cold-start argv with no tessera URL is a no-op (renderer sees empty queue)", () => {
+    const bridge = new DeeplinkBridge();
+    const seen: DeeplinkRoute[] = [];
+    const coldStartArgv = [
+      "C:\\Program Files\\Tessera\\Tessera.exe",
+      "--enable-features=Foo",
+    ];
+    const url = DeeplinkBridge.extractUrlFromArgv(coldStartArgv);
+    expect(url).toBeNull();
+    if (url !== null) bridge.ingestRawUrl(url);
+    expect(bridge.pendingCount()).toBe(0);
+    bridge.setConsumer((r) => {
+      seen.push(r);
+    });
+    expect(seen).toHaveLength(0);
+  });
 });
 
 describe("Cross-cutting integration — port file + bearer + handler", () => {

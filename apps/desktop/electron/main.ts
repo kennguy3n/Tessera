@@ -24,10 +24,14 @@ import {
   attachKchatDeeplinkBridge,
   buildLocalApiHandlers,
   detachKchatDeeplinkBridge,
+  getKchatDeeplinkBridge,
   startKchatLocalApiServer,
   stopKchatLocalApiServer,
 } from "./appState";
-import { registerProtocolClient } from "./kchat/kchatDeeplinkBridge";
+import {
+  DeeplinkBridge,
+  registerProtocolClient,
+} from "./kchat/kchatDeeplinkBridge";
 
 // `tessera-asset://` must be registered as a privileged scheme
 // BEFORE `app.whenReady` fires — Electron's
@@ -97,6 +101,34 @@ if (!acquiredSingleInstanceLock) {
   // Calling `app.quit()` here is the documented Electron
   // pattern — `whenReady` never resolves in this process.
   app.quit();
+} else {
+  // Phase 14 Round 14 Devin Review BUG_0001: scan THIS process's
+  // own argv for a `tessera://` URL. On Windows + Linux, when the
+  // user clicks a deeplink and Tessera is NOT already running, the
+  // OS launches Tessera with the URL appended to `process.argv` —
+  // there is no `open-url` event (that's macOS only) and there is
+  // no `second-instance` event (that fires on the PRIMARY when a
+  // SECOND instance starts later). The primary instance has to
+  // pluck the URL out of its own argv during cold-start or the
+  // deeplink is silently dropped: Tessera launches, but no
+  // navigation happens.
+  //
+  // macOS is unaffected: Cocoa delivers cold-start URLs via
+  // `open-url`, which `attachKchatDeeplinkBridge()` above already
+  // wires. Windows/Linux WARM-start is also unaffected: a second
+  // launch fires `second-instance` on the primary, which the same
+  // bridge handles.
+  //
+  // The bridge's parking queue (constructed at `appState.ts`
+  // module load) holds the parsed route until the renderer
+  // consumer registers later in the `whenReady` chain. Calling
+  // `ingestRawUrl` here is safe at module load — the bridge
+  // exists, and pre-ready routes are exactly what its queue is
+  // for.
+  const initialDeeplinkUrl = DeeplinkBridge.extractUrlFromArgv(process.argv);
+  if (initialDeeplinkUrl !== null) {
+    getKchatDeeplinkBridge().ingestRawUrl(initialDeeplinkUrl);
+  }
 }
 
 let mainWindow: BrowserWindow | null = null;
