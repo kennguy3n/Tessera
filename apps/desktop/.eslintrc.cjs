@@ -20,25 +20,29 @@ module.exports = {
         // The codebase uses an `_`-prefix convention to mark
         // intentionally-unused bindings. Apply that convention
         // uniformly across every binding kind (function args,
-        // top-level vars, destructured locals, caught errors), not
-        // just function args as the original config did. Without the
-        // four ignore patterns below, idioms like
+        // top-level vars, destructured locals, array-destructured
+        // elements, caught errors), not just function args as the
+        // original config did. Without the four ignore patterns
+        // below, idioms like
         // `const { x: _ignored, ...rest } = obj` (used in
         // `schemas.test.ts` to assert "this schema rejects when
         // `x` is missing") fired warnings even though the leading
         // underscore signalled deliberate non-use.
         //
-        // `ignoreRestSiblings: true` is a defence-in-depth pairing
-        // for the rest-spread pattern above: even if a future
-        // contributor forgets the `_` prefix, destructuring a key
-        // *adjacent* to a `...rest` is by construction "extract one
-        // field to discard it", and warning on the discarded sibling
-        // is noise that hides real unused-binding bugs.
+        // Deliberately NOT setting `ignoreRestSiblings: true`. That
+        // option silences every destructured sibling of a `...rest`
+        // spread regardless of name, which would also hide genuine
+        // unused bindings like `const { secret, ...rest } = obj`
+        // where the contributor forgot to consume `secret`. The
+        // four `^_` patterns above are sufficient to cover the
+        // deliberate "discard this field" idiom — the rest-spread
+        // pattern in `schemas.test.ts` already follows the
+        // underscore convention and is matched by
+        // `varsIgnorePattern`.
         argsIgnorePattern: "^_",
         varsIgnorePattern: "^_",
         caughtErrorsIgnorePattern: "^_",
         destructuredArrayIgnorePattern: "^_",
-        ignoreRestSiblings: true,
       },
     ],
   },
