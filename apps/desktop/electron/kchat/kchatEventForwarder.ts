@@ -571,12 +571,35 @@ export class KchatEventForwarder {
   private readonly scheduleChannelResync: (
     channelId: string,
   ) => Promise<void>;
+  /**
+   * Pluggable resolver for the on-disk cache directory of a
+   * given KChat channel id. Production wires this to the
+   * canonical `kchatChannelCacheDir` from `./kchatPaths` so it
+   * resolves to `~/.tessera/kchat-channels/<channelId>/` (the
+   * single source of truth used by the IPC handler too).
+   *
+   * Tests inject a tmpdir-based resolver so the
+   * `handleChannelGoneEvent` and `runSingleFileSync` paths
+   * never touch the real home directory — every `secureDeleteChannelArtifacts`
+   * call lands inside an isolated tmpdir that’s removed in
+   * `afterEach`. Same architectural pattern as PR #57
+   * (`ExtensionSocketDiscovery`), PR #59 (`vaultCrypto` /
+   * `sidecar` platform injection), PR #61 (`ssrfGuard`
+   * `allowInternal` / `readEnv`), and PR #63 (`modelManagement`
+   * `manifestPath` / `readEnv`). This eliminates the
+   * cross-suite parallel flake where two test files running
+   * in the same vitest worker could both `fs.rm` the same
+   * `~/.tessera/kchat-channels/<id>/` path and race on the
+   * real filesystem.
+   */
+  private readonly resolveCacheDir: (channelId: string) => string;
 
   constructor(
     options: {
       listWindows?: () => BrowserWindow[];
       getBridge?: () => NativeBridge | null;
       scheduleChannelResync?: (channelId: string) => Promise<void>;
+      getCacheDir?: (channelId: string) => string;
     } = {},
   ) {
     this.listWindows =
@@ -591,6 +614,7 @@ export class KchatEventForwarder {
     this.getBridgeFn = options.getBridge ?? (() => null);
     this.scheduleChannelResync =
       options.scheduleChannelResync ?? (() => Promise.resolve());
+    this.resolveCacheDir = options.getCacheDir ?? kchatChannelCacheDir;
   }
 
   /**
@@ -952,8 +976,10 @@ export class KchatEventForwarder {
    *      Drop the event if either is missing — a malformed WS
    *      payload should never be allowed to throw out of the
    *      forwarder.
-   *   2. Compute `cacheDir = kchatChannelCacheDir(channelId)`
-   *      and ask the substrate via
+   *   2. Compute `cacheDir = this.resolveCacheDir(channelId)`
+   *      (defaults to `kchatChannelCacheDir`; tests may inject
+   *      a custom resolver via the constructor's `getCacheDir`
+   *      option) and ask the substrate via
    *      `bridgeIsKchatChannelLinked(cacheDir)` whether a
    *      `SourceType::Kchat` source row exists for this
    *      channel. Unlinked channels short-circuit: audit
@@ -1021,7 +1047,7 @@ export class KchatEventForwarder {
     // unlinked-channel case (the majority of `file_added`
     // events: a user uploads to a channel they haven't linked
     // as a corpus source) costs ~one SQLite SELECT and no I/O.
-    const cacheDir = kchatChannelCacheDir(channelId);
+    const cacheDir = this.resolveCacheDir(channelId);
     let isLinked = false;
     try {
       isLinked = bridge.bridgeIsKchatChannelLinked(cacheDir);
@@ -1272,7 +1298,7 @@ export class KchatEventForwarder {
       return;
     }
 
-    const cacheDir = kchatChannelCacheDir(channelId);
+    const cacheDir = this.resolveCacheDir(channelId);
     let isLinked = false;
     try {
       isLinked = bridge.bridgeIsKchatChannelLinked(cacheDir);
@@ -1547,7 +1573,7 @@ export class KchatEventForwarder {
     const channelId = view.channelId;
     if (channelId === null) return;
 
-    const cacheDir = kchatChannelCacheDir(channelId);
+    const cacheDir = this.resolveCacheDir(channelId);
     const reason =
       view.event === "channel_archived"
         ? "channel_archived"
@@ -1722,7 +1748,7 @@ export class KchatEventForwarder {
       return;
     }
 
-    const cacheDir = kchatChannelCacheDir(channelId);
+    const cacheDir = this.resolveCacheDir(channelId);
 
     // Linked-channel fast path: skip the bridge call entirely
     // when no source row exists for `cacheDir`. Saves a JSON
@@ -1810,7 +1836,7 @@ export class KchatEventForwarder {
       return;
     }
 
-    const cacheDir = kchatChannelCacheDir(channelId);
+    const cacheDir = this.resolveCacheDir(channelId);
     let isLinked = false;
     try {
       isLinked = bridge.bridgeIsKchatChannelLinked(cacheDir);

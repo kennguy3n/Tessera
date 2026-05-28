@@ -1077,7 +1077,15 @@ describe("KchatEventForwarder", () => {
     // sanitised, contained basename from the legitimate
     // server-supplied `fi.name`.
     const channelId = "chan-tampered-manifest";
-    const cacheDir = kchatChannelCacheDir(channelId);
+    // Inject `getCacheDir` so the path the test writes to is
+    // STRUCTURALLY bound to the path the forwarder resolves.
+    // Without injection, both sides happen to align via the
+    // file-level `os.homedir` mock + `kchatChannelCacheDir`
+    // default — but a future refactor that changes either
+    // could silently diverge. The injected resolver pins the
+    // wiring contract.
+    const getCacheDir = (id: string) => kchatChannelCacheDir(id);
+    const cacheDir = getCacheDir(channelId);
     await nodeFs.promises.mkdir(cacheDir, { recursive: true });
     // Pre-seed the manifest with an escaping path. The
     // manifest writer (under our control) would NEVER produce
@@ -1098,6 +1106,7 @@ describe("KchatEventForwarder", () => {
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
       getBridge: () => bridgeMock,
+      getCacheDir,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -1475,8 +1484,31 @@ describe("KchatEventForwarder", () => {
           seq: 10,
         }),
       );
+      // Wait on the LAST audit call the handler emits
+      // (`bridgeLogKchatSourceCryptoshredded`), not the first
+      // bridge call (`bridgeRevokeKchatSource`).
+      //
+      // Why this matters: `handleChannelGoneEvent` runs as
+      //   1. (inside `withChannelSyncLock`)
+      //      a. `bridgeRevokeKchatSource(cacheDir)` (sync,
+      //         records call here).
+      //      b. `await secureDeleteChannelArtifacts(cacheDir)`
+      //         (async, hits the libuv thread pool).
+      //   2. `safeAuditAccessRevoked(...)` → `bridgeLogKchatChannelAccessRevoked`.
+      //   3. `safeAuditSourceCryptoshredded(...)` → `bridgeLogKchatSourceCryptoshredded`.
+      //
+      // Polling on step 1a returns as soon as the bridge call
+      // lands, BEFORE step 1b's `fs.rm` resolves. Under
+      // cross-suite parallel load (vitest `--pool=threads` with
+      // shared worker contention) the libuv pool can be slow
+      // enough that the subsequent `bridgeLogKchatChannelAccessRevoked`
+      // assertion fires before step 2 runs, producing a
+      // flake. Polling on step 3 (the final audit emission)
+      // guarantees the whole handler has run.
       await waitForCondition(
-        () => bridgeMock!.bridgeRevokeKchatSource.mock.calls.length > 0,
+        () =>
+          bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls
+            .length > 0,
       );
 
       expect(bridgeMock!.bridgeRevokeKchatSource).toHaveBeenCalledTimes(1);
@@ -1584,9 +1616,23 @@ describe("KchatEventForwarder", () => {
         seq: 100,
       }),
     );
+    // Wait on the FINAL audit emission
+    // (`bridgeLogKchatSourceCryptoshredded`) for consistency
+    // with the `channel_archived`/`channel_deleted` parameterised
+    // block above. The `already_revoked` outcome still fires both
+    // audit rows (access-revoked + shred-with-zero-counts), so
+    // polling on the LATER of the two guarantees the entire
+    // handler chain has settled before assertions run — even
+    // though step 2 (`bridgeLogKchatChannelAccessRevoked`) would
+    // fire after `await withChannelSyncLock` resolves (the
+    // `secureDeleteChannelArtifacts` already-completed
+    // invariant). The consistency matters for future maintainers
+    // diagnosing parallel flakes: every channel-gone test in
+    // this file uses the same waitForCondition signal.
     await waitForCondition(
       () =>
-        bridgeMock!.bridgeLogKchatChannelAccessRevoked.mock.calls.length > 0,
+        bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length >
+        0,
     );
 
     // Access-revoked audit row still fires — operators want to
@@ -1654,6 +1700,19 @@ describe("KchatEventForwarder", () => {
         seq: 101,
       }),
     );
+    // INTENTIONAL ASYMMETRY: this test polls on
+    // `bridgeLogKchatChannelAccessRevoked` rather than
+    // `bridgeLogKchatSourceCryptoshredded` (the signal used by
+    // every other channel-gone test in this file). The
+    // `unlinked` outcome SUPPRESSES the shred audit row
+    // (`handleChannelGoneEvent` skips `safeAuditSourceCryptoshredded`
+    // when `outcome !== "revoked" && outcome !== "already_revoked"`),
+    // so polling on the shred row would hang forever. The
+    // access-revoked audit row IS the final emission for the
+    // unlinked branch, so polling on it correctly signals
+    // handler completion. Do NOT "fix this for consistency" —
+    // the asymmetry is required by the production handler's
+    // outcome-gated audit emission.
     await waitForCondition(
       () =>
         bridgeMock!.bridgeLogKchatChannelAccessRevoked.mock.calls.length > 0,
@@ -1679,7 +1738,11 @@ describe("KchatEventForwarder", () => {
    */
   it("removes the cache directory and manifest sidecar on a revoke", async () => {
     const channelId = "chan-fs-shred";
-    const cacheDir = kchatChannelCacheDir(channelId);
+    // Inject `getCacheDir` (see tampered-manifest test above
+    // for rationale) — pins the test write path to the
+    // forwarder's resolved path through the same resolver.
+    const getCacheDir = (id: string) => kchatChannelCacheDir(id);
+    const cacheDir = getCacheDir(channelId);
     const manifestPath = manifestPathFor(cacheDir);
     await nodeFs.promises.mkdir(cacheDir, { recursive: true });
     await nodeFs.promises.writeFile(
@@ -1702,6 +1765,7 @@ describe("KchatEventForwarder", () => {
     const fwd = new KchatEventForwarder({
       listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
       getBridge: () => bridgeMock,
+      getCacheDir,
     });
     const client = new FakeClient();
     fwd.start(client as unknown as KchatClient);
@@ -1744,7 +1808,11 @@ describe("KchatEventForwarder", () => {
    */
   it("records fs_scrub_succeeded=false on audit row when filesystem scrub fails", async () => {
     const channelId = "chan-fs-failure";
-    const cacheDir = kchatChannelCacheDir(channelId);
+    // Inject `getCacheDir` (see tampered-manifest test above
+    // for rationale) — pins the test write path to the
+    // forwarder's resolved path through the same resolver.
+    const getCacheDir = (id: string) => kchatChannelCacheDir(id);
+    const cacheDir = getCacheDir(channelId);
     await nodeFsPromises.mkdir(cacheDir, { recursive: true });
     await nodeFsPromises.writeFile(
       nodePath.join(cacheDir, "evidence.txt"),
@@ -1782,6 +1850,7 @@ describe("KchatEventForwarder", () => {
       const fwd = new KchatEventForwarder({
         listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
         getBridge: () => bridgeMock,
+        getCacheDir,
       });
       const client = new FakeClient();
       fwd.start(client as unknown as KchatClient);
@@ -2161,6 +2230,145 @@ describe("KchatEventForwarder", () => {
       "",
       "no_post",
       0,
+    );
+    fwd.dispose();
+  });
+
+  /**
+   * `getCacheDir` injection contract tests.
+   *
+   * The forwarder accepts an optional `getCacheDir: (channelId)
+   * => string` so tests can route the on-disk paths
+   * (`bridgeIsKchatChannelLinked`, `bridgeRevokeKchatSource`,
+   * `secureDeleteChannelArtifacts`, etc.) to any path they
+   * want. Production uses the default which resolves to
+   * `~/.tessera/kchat-channels/<channelId>/` via
+   * `kchatChannelCacheDir` (the canonical path-helper shared
+   * with the IPC handler).
+   *
+   * Same architectural pattern as PR #57
+   * (`ExtensionSocketDiscovery`), PR #59 (`vaultCrypto` /
+   * `sidecar` platform injection), PR #61 (`ssrfGuard`
+   * `allowInternal` / `readEnv`), and PR #63 (`modelManagement`
+   * `manifestPath` / `readEnv`). The seam exists primarily so
+   * a future test that wants full filesystem isolation can
+   * pass an isolated tmpdir without relying on the file-level
+   * `os.homedir` mock at the top of this test file.
+   */
+  it("threads getCacheDir into bridgeRevokeKchatSource on channel_archived", async () => {
+    const customCacheRoot = nodeFs.mkdtempSync(
+      nodePath.join(nodeOs.tmpdir(), "tessera-fwd-cachedir-inject-"),
+    );
+    const seenChannelIds: string[] = [];
+    const customGetCacheDir = (channelId: string): string => {
+      seenChannelIds.push(channelId);
+      // Return a per-channel subdir of an isolated tmpdir.
+      // `fs.rm({ force: true, recursive: true })` on a
+      // non-existent path resolves immediately so this is
+      // cheaper than letting `secureDeleteChannelArtifacts`
+      // touch the default `os.homedir()`-rooted path.
+      return nodePath.join(customCacheRoot, "kchat-channels", channelId);
+    };
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+      getCacheDir: customGetCacheDir,
+    });
+    // try/finally guarantees the tmpdir is reclaimed even if
+    // an assertion below throws, matching the
+    // `records fs_scrub_succeeded=false on audit row when
+    // filesystem scrub fails` test's permission-restore pattern.
+    // Without this, a failing assertion would leak the
+    // `tessera-fwd-cachedir-inject-*` tmpdir under `os.tmpdir()`
+    // until the OS cleaned it up, which under high test churn
+    // could accumulate on dev machines.
+    try {
+      const client = new FakeClient();
+      fwd.start(client as unknown as KchatClient);
+
+      client.triggerWsEvent(
+        makeRawEvent({
+          event: "channel_archived",
+          data: {},
+          broadcast: {
+            omit_users: {},
+            channel_id: "chan-injected",
+            team_id: "team-1",
+            user_id: "principal",
+          },
+          seq: 200,
+        }),
+      );
+      await waitForCondition(
+        () =>
+          bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length >
+          0,
+      );
+
+      expect(seenChannelIds).toContain("chan-injected");
+      const [cacheDir] =
+        bridgeMock!.bridgeRevokeKchatSource.mock.calls[0];
+      expect(cacheDir).toBe(
+        nodePath.join(customCacheRoot, "kchat-channels", "chan-injected"),
+      );
+    } finally {
+      // Dispose BEFORE the tmpdir cleanup so the forwarder stops
+      // accepting new WS events first. If a future maintainer
+      // inserts more triggerWsEvent calls or assertions between
+      // the waitForCondition and cleanup, this ordering prevents
+      // a race where a freshly-dispatched handler would touch the
+      // tmpdir mid-rm.
+      fwd.dispose();
+      // Cleanup so we don't leave the tmpdir around after the test.
+      nodeFs.rmSync(customCacheRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults getCacheDir to kchatChannelCacheDir (os.homedir-rooted)", async () => {
+    // No `getCacheDir` injected — verifies the production
+    // default resolves through the canonical helper. We assert
+    // structural shape rather than the exact path because the
+    // file-level `os.homedir` mock at the top of this test
+    // file points homedir at `TEST_HOME`, so the path is
+    // `TEST_HOME/.tessera/kchat-channels/<channelId>/`. Future
+    // refactors that change the default would surface here.
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "channel_archived",
+        data: {},
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-default-cachedir",
+          team_id: "team-1",
+          user_id: "principal",
+        },
+        seq: 201,
+      }),
+    );
+    await waitForCondition(
+      () =>
+        bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length >
+        0,
+    );
+
+    const [cacheDir] =
+      bridgeMock!.bridgeRevokeKchatSource.mock.calls[0];
+    expect(cacheDir).toBe(
+      nodePath.join(
+        TEST_HOME,
+        ".tessera",
+        "kchat-channels",
+        "chan-default-cachedir",
+      ),
     );
     fwd.dispose();
   });
