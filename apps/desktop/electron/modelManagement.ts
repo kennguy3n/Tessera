@@ -486,14 +486,68 @@ export function detectPlatformInfo(): PlatformInfo {
 let cachedManifest: { path: string; manifest: ModelManifest } | null = null;
 
 /**
- * Locate the manifest. Order:
- *   1. TESSERA_MODELS_MANIFEST env var (tests, dev override).
- *   2. <resources>/sidecars/models.json (packaged app).
- *   3. <cwd>/sidecars/models.json (npm run dev).
+ * Optional injection point for {@link manifestPath} and
+ * {@link loadManifest}. Production code calls these with no `opts`
+ * and gets the documented env-driven precedence (which is preserved
+ * by the default `readEnv` closure that reads `process.env`
+ * directly). Tests pass an explicit `manifestPath` or `readEnv` so
+ * they don't have to mutate `process.env.TESSERA_MODELS_MANIFEST` —
+ * mutating a process-level global is sequential-only under shared
+ * vitest worker pools (race-prone under `--pool=threads`), and a
+ * crash between the mutate-and-restore window leaks the override
+ * into every subsequent test in the worker. Same architectural
+ * pattern as PR #57 (`ExtensionSocketDiscovery`), PR #59
+ * (`vaultCrypto` / `sidecar` platform injection), and PR #61
+ * (`ssrfGuard` `allowInternal` / `readEnv`).
  */
-export function manifestPath(): string {
-  if (process.env.TESSERA_MODELS_MANIFEST) {
-    return process.env.TESSERA_MODELS_MANIFEST;
+export interface ManifestPathOptions {
+  /**
+   * Optional explicit manifest path. When supplied, completely
+   * bypasses the env-var / resourcesPath / cwd fallback chain and
+   * returns this value verbatim. Tests set this to a fixture path
+   * (real `MANIFEST` constant or a tempdir-allocated path with a
+   * bad fixture) without mutating `process.env`. When `undefined`,
+   * the env-and-fallback chain runs as before.
+   */
+  manifestPath?: string;
+  /**
+   * Optional env-var reader. Defaults to `(name) => process.env[name]`
+   * so production callers stay unchanged. Tests pass an explicit
+   * reader to verify the env-var precedence branch without
+   * mutating `process.env` globally (parallel-safe under shared
+   * vitest worker pools). The reader is only invoked on the
+   * `manifestPath=undefined` branch — an explicit string
+   * short-circuits it.
+   */
+  readEnv?: (name: string) => string | undefined;
+}
+
+export interface LoadManifestOptions extends ManifestPathOptions {}
+
+/**
+ * Locate the manifest. Order:
+ *   1. `opts.manifestPath` (tests pass explicit paths here).
+ *   2. `TESSERA_MODELS_MANIFEST` via `opts.readEnv` (defaults to
+ *      reading `process.env` — tests, dev override).
+ *   3. <resources>/sidecars/models.json (packaged app).
+ *   4. <cwd>/sidecars/models.json (npm run dev).
+ *
+ * Production callers (no `opts`) get the documented env-driven
+ * precedence unchanged because `readEnv` defaults to a closure
+ * over `process.env`.
+ */
+export function manifestPath(opts?: ManifestPathOptions): string {
+  // Nullish coalescing semantics: an explicit `manifestPath` string
+  // short-circuits ahead of the env check, so a test fixture path
+  // is honoured even when the env var happens to be set in the
+  // ambient shell.
+  if (opts?.manifestPath !== undefined) {
+    return opts.manifestPath;
+  }
+  const readEnv = opts?.readEnv ?? ((name: string) => process.env[name]);
+  const envPath = readEnv("TESSERA_MODELS_MANIFEST");
+  if (envPath) {
+    return envPath;
   }
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
     .resourcesPath;
@@ -847,8 +901,22 @@ function validateManifest(manifest: ModelManifest): ModelManifest {
   return manifest;
 }
 
-export function loadManifest(forceReload = false): ModelManifest {
-  const p = manifestPath();
+/**
+ * Load and validate the manifest. See {@link ManifestPathOptions}
+ * for the parallel-safe test-injection contract; production callers
+ * pass no `opts` and get the env-driven default unchanged. The
+ * path-keyed cache works correctly across calls with different
+ * `opts.manifestPath` values (cache miss on path change, hit on
+ * repeat), so injection does not silently retain stale parses
+ * between fixtures — tests that *replace* a fixture file in place
+ * at the same path should still call {@link resetManifestCache}
+ * before re-loading.
+ */
+export function loadManifest(
+  forceReload = false,
+  opts?: LoadManifestOptions,
+): ModelManifest {
+  const p = manifestPath(opts);
   if (!forceReload && cachedManifest && cachedManifest.path === p) {
     return cachedManifest.manifest;
   }

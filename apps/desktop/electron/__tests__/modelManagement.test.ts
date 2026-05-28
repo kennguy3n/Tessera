@@ -74,25 +74,64 @@ function makeResolved(overrides: Partial<ResolvedModel> = {}): ResolvedModel {
 }
 
 describe("manifest loading", () => {
-  beforeEach(() => {
-    process.env.TESSERA_MODELS_MANIFEST = MANIFEST;
+  // Parallel-safety: no `process.env.TESSERA_MODELS_MANIFEST` mutation.
+  // Tests pass an explicit `{ manifestPath: MANIFEST }` to
+  // `loadManifest(true, ...)` so the path-keyed cache is bypassed
+  // deterministically (forceReload=true also bypasses) and no
+  // process-level global is touched. Same architectural pattern as
+  // PR #57 (`ExtensionSocketDiscovery`), PR #59 (`vaultCrypto` /
+  // `sidecar` platform injection), and PR #61 (`ssrfGuard`
+  // `allowInternal` / `readEnv`).
+  //
+  // Cleanup symmetry: clear the module-level `cachedManifest`
+  // between tests so the last-test’s parsed manifest can’t leak
+  // into the next test’s cache (every test here uses
+  // `forceReload=true` so the bypass would protect them anyway,
+  // but cleanup keeps the invariant that no test relies on
+  // another test’s residual state — a future test that calls
+  // `loadManifest(false, ...)` would otherwise pick up a stale
+  // entry).
+  afterEach(() => {
     resetManifestCache();
   });
 
   it("loads and parses sidecars/models.json", () => {
     expect(fs.existsSync(MANIFEST)).toBe(true);
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     expect(manifest.format_version).toBeGreaterThanOrEqual(1);
     expect(manifest.models.length).toBeGreaterThanOrEqual(6);
     expect(manifest.llama_server?.variants.length).toBeGreaterThan(0);
   });
 
-  it("manifestPath honors TESSERA_MODELS_MANIFEST override", () => {
-    expect(manifestPath()).toBe(MANIFEST);
+  it("manifestPath honors readEnv injection (env-var precedence preserved)", () => {
+    // Verify the env-driven branch still works when a caller passes
+    // a `readEnv` that returns the fixture path — no `process.env`
+    // mutation needed. Production behaviour is the default
+    // `readEnv` closure that reads `process.env` directly.
+    expect(manifestPath({ readEnv: () => MANIFEST })).toBe(MANIFEST);
+  });
+
+  it("manifestPath honors explicit manifestPath override (short-circuits readEnv)", () => {
+    // An explicit `manifestPath` short-circuits the env check, so a
+    // test fixture path is honoured even when the env var would
+    // otherwise resolve to something else.
+    expect(
+      manifestPath({
+        manifestPath: MANIFEST,
+        readEnv: () => "/should/not/be/used",
+      }),
+    ).toBe(MANIFEST);
+  });
+
+  it("does not mutate process.env when loadManifest is called (parallel-safety meta-test)", () => {
+    const snapshot = Object.assign({}, process.env);
+    loadManifest(true, { manifestPath: MANIFEST });
+    loadManifest(true, { readEnv: () => MANIFEST });
+    expect(process.env).toEqual(snapshot);
   });
 
   it("every manifest model has a valid format, size, filename, and tier", () => {
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     for (const m of manifest.models) {
       expect(["gguf", "mlx"]).toContain(m.format);
       expect(["low", "medium", "high"]).toContain(m.tier);
@@ -114,7 +153,7 @@ describe("manifest loading", () => {
     // (`Q1_0_g128` / `2-bit`) to fit on low-tier devices. Vision and
     // imagegen entries use different quants (Q4_K_M, 4-bit) and
     // are validated by their own block-specific tests.
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     const textModels = manifest.models.filter(
       (m) => (m.capability ?? "text") === "text",
     );
@@ -132,7 +171,7 @@ describe("manifest loading", () => {
   });
 
   it("no two models for the same (platform, tier, format) share an id", () => {
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     const keys = new Set<string>();
     for (const m of manifest.models) {
       const key = `${m.platform}|${m.tier}|${m.format}|${m.id}`;
@@ -154,7 +193,7 @@ describe("manifest loading", () => {
     // /`.tgz` MLX entry, diskSizeMb > downloadSizeMb; for non-archive
     // formats (GGUF single-file, or a future raw `.mlx` directory),
     // diskSizeMb >= downloadSizeMb.
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     for (const m of manifest.models) {
       if (m.format === "mlx" && /\.(tar\.gz|tgz)$/.test(m.filename)) {
         expect(m.diskSizeMb).toBeGreaterThan(m.downloadSizeMb);
@@ -171,7 +210,7 @@ describe("manifest loading", () => {
   });
 
   it("MLX models are exclusively for macOS Apple Silicon", () => {
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     const mlx = manifest.models.filter((m) => m.format === "mlx");
     // 3 text tiers (low/medium/high) + 2 vision (low+medium) + 1
     // imagegen (medium) — the bonsai-only world had 3.
@@ -199,7 +238,7 @@ describe("manifest loading", () => {
   });
 
   it("listModelsForPlatform returns only MLX on Apple Silicon", () => {
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     const models = listModelsForPlatform(manifest, "macos-apple-silicon");
     // 3 text + 2 vision + 1 imagegen = 6 MLX entries today, but we
     // assert lower-bounded since later blocks may add capabilities.
@@ -212,7 +251,7 @@ describe("manifest loading", () => {
   });
 
   it("listModelsForPlatform returns only GGUF on Windows/Linux", () => {
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     for (const target of ["windows-x64", "linux-x64", "linux-arm64", "macos-intel"] as const) {
       const models = listModelsForPlatform(manifest, target);
       expect(models.length).toBeGreaterThan(0);
@@ -233,7 +272,7 @@ describe("manifest loading", () => {
   });
 
   it("recommendModel returns the requested tier when present", () => {
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     const high = recommendModel(manifest, "linux-x64", "high");
     expect(high?.tier).toBe("high");
     expect(high?.parameters).toBe("8B");
@@ -241,7 +280,7 @@ describe("manifest loading", () => {
   });
 
   it("recommendModel returns MLX 8B for High on Apple Silicon", () => {
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     const r = recommendModel(manifest, "macos-apple-silicon", "high");
     expect(r?.format).toBe("mlx");
     expect(r?.parameters).toBe("8B");
@@ -249,7 +288,7 @@ describe("manifest loading", () => {
   });
 
   it("pickLlamaServerVariant prefers exact compute, falls back to platform", () => {
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     const cuda = pickLlamaServerVariant(manifest, "linux-x64", "cuda");
     expect(cuda?.compute).toBe("cuda");
     expect(cuda?.platform).toBe("linux-x64");
@@ -1325,19 +1364,17 @@ describe("single-model enforcement", () => {
 // --- Manifest <-> production model ---------------------------------------
 
 describe("recommendModel format-per-platform", () => {
-  beforeEach(() => {
-    process.env.TESSERA_MODELS_MANIFEST = MANIFEST;
-    resetManifestCache();
-  });
+  // Parallel-safety: no env mutation; tests pass an explicit
+  // `{ manifestPath: MANIFEST }` to `loadManifest`.
 
   it("returns MLX on macOS Apple Silicon", () => {
-    const m: ModelManifest = loadManifest(true);
+    const m: ModelManifest = loadManifest(true, { manifestPath: MANIFEST });
     const r = recommendModel(m, "macos-apple-silicon", "low");
     expect(r?.format).toBe("mlx");
   });
 
   it("returns GGUF Q1_0_g128 on every other platform", () => {
-    const m: ModelManifest = loadManifest(true);
+    const m: ModelManifest = loadManifest(true, { manifestPath: MANIFEST });
     for (const target of ["windows-x64", "linux-x64", "linux-arm64", "macos-intel"] as const) {
       const r = recommendModel(m, target, "low");
       expect(r?.format).toBe("gguf");
@@ -1605,30 +1642,25 @@ describe("manifest validation guard (parsePlatform + validateManifest)", () => {
   // load time with a precise diagnostic.
 
   let workdir: string;
-  let originalEnv: string | undefined;
+
+  // Parallel-safety: no `originalEnv` save/restore — tests pass an
+  // explicit `manifestPath` to `loadManifest` and never touch
+  // `process.env`.
 
   beforeEach(async () => {
-    originalEnv = process.env.TESSERA_MODELS_MANIFEST;
     workdir = await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-manifest-"));
   });
 
   afterEach(async () => {
-    if (originalEnv === undefined) {
-      delete process.env.TESSERA_MODELS_MANIFEST;
-    } else {
-      process.env.TESSERA_MODELS_MANIFEST = originalEnv;
-    }
     resetManifestCache();
     await fsp.rm(workdir, { recursive: true, force: true });
   });
 
   it("loads the real manifest without rejecting any variant", () => {
-    process.env.TESSERA_MODELS_MANIFEST = MANIFEST;
-    resetManifestCache();
     // If the validator is overzealous, it would reject the real
     // shipped manifest. This is a positive-control: every shipped
     // variant must pass.
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     expect(manifest.llama_server?.variants.length).toBeGreaterThan(0);
   });
 
@@ -1651,11 +1683,13 @@ describe("manifest validation guard (parsePlatform + validateManifest)", () => {
     };
     const badPath = path.join(workdir, "bad-platform.json");
     await fsp.writeFile(badPath, JSON.stringify(badManifest), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = badPath;
-    resetManifestCache();
 
-    expect(() => loadManifest(true)).toThrowError(/linux-riscv64/);
-    expect(() => loadManifest(true)).toThrowError(/not one of/);
+    expect(() =>
+      loadManifest(true, { manifestPath: badPath }),
+    ).toThrowError(/linux-riscv64/);
+    expect(() =>
+      loadManifest(true, { manifestPath: badPath }),
+    ).toThrowError(/not one of/);
   });
 
   it("rejects a manifest with an unknown llama_server.variants[].compute with a precise error", async () => {
@@ -1677,11 +1711,13 @@ describe("manifest validation guard (parsePlatform + validateManifest)", () => {
     };
     const badPath = path.join(workdir, "bad-compute.json");
     await fsp.writeFile(badPath, JSON.stringify(badManifest), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = badPath;
-    resetManifestCache();
 
-    expect(() => loadManifest(true)).toThrowError(/xpu/);
-    expect(() => loadManifest(true)).toThrowError(/not one of/);
+    expect(() =>
+      loadManifest(true, { manifestPath: badPath }),
+    ).toThrowError(/xpu/);
+    expect(() =>
+      loadManifest(true, { manifestPath: badPath }),
+    ).toThrowError(/not one of/);
   });
 
   it("does not cache a manifest that failed validation", async () => {
@@ -1702,11 +1738,9 @@ describe("manifest validation guard (parsePlatform + validateManifest)", () => {
     };
     const badPath = path.join(workdir, "uncached-bad.json");
     await fsp.writeFile(badPath, JSON.stringify(badManifest), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = badPath;
-    resetManifestCache();
 
     // First load throws.
-    expect(() => loadManifest(true)).toThrow();
+    expect(() => loadManifest(true, { manifestPath: badPath })).toThrow();
     // After fixing the file, a subsequent forced reload must succeed —
     // proving the failed manifest was not cached.
     const goodManifest: ModelManifest = {
@@ -1725,7 +1759,17 @@ describe("manifest validation guard (parsePlatform + validateManifest)", () => {
       },
     };
     await fsp.writeFile(badPath, JSON.stringify(goodManifest), "utf8");
-    const reloaded = loadManifest(true);
+    // Use `forceReload=false` on purpose so the cache-lookup path
+    // is exercised. The first `loadManifest(true, ...)` above
+    // threw — if the failed parse had been cached at `badPath`,
+    // this read would either return the bad-cached manifest or
+    // throw (no fs read happens on a cache hit). The fact that
+    // this re-read parses the now-good file from disk and
+    // succeeds proves the failed manifest was never written to
+    // the cache, which is the actual invariant the test name
+    // claims. (Don’t add a `resetManifestCache()` here — that
+    // would mask the bug the test is meant to detect.)
+    const reloaded = loadManifest(false, { manifestPath: badPath });
     expect(reloaded.llama_server?.variants[0].platform).toBe("linux-x64");
   });
 });
@@ -1739,21 +1783,18 @@ describe("manifest validation guard — models[] entries", () => {
   // in `models[]` too.
 
   let workdir: string;
-  let originalEnv: string | undefined;
+
+  // Parallel-safety: no `originalEnv` save/restore — tests pass an
+  // explicit `manifestPath` to `loadManifest` and never touch
+  // `process.env`.
 
   beforeEach(async () => {
-    originalEnv = process.env.TESSERA_MODELS_MANIFEST;
     workdir = await fsp.mkdtemp(
       path.join(os.tmpdir(), "tessera-manifest-models-"),
     );
   });
 
   afterEach(async () => {
-    if (originalEnv === undefined) {
-      delete process.env.TESSERA_MODELS_MANIFEST;
-    } else {
-      process.env.TESSERA_MODELS_MANIFEST = originalEnv;
-    }
     resetManifestCache();
     await fsp.rm(workdir, { recursive: true, force: true });
   });
@@ -1803,20 +1844,22 @@ describe("manifest validation guard — models[] entries", () => {
     });
     const p = path.join(workdir, "bad-format.json");
     await fsp.writeFile(p, JSON.stringify(bad), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = p;
-    resetManifestCache();
-    expect(() => loadManifest(true)).toThrowError(/tensorflow/);
-    expect(() => loadManifest(true)).toThrowError(/models\[0\]\.format/);
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
+      /tensorflow/,
+    );
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
+      /models\[0\]\.format/,
+    );
   });
 
   it("rejects an unknown models[].tier (the classic typo example) with a precise error", async () => {
     const bad = makeBadManifest({ tier: "hig" as unknown as "high" });
     const p = path.join(workdir, "bad-tier.json");
     await fsp.writeFile(p, JSON.stringify(bad), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = p;
-    resetManifestCache();
-    expect(() => loadManifest(true)).toThrowError(/models\[0\]\.tier="hig"/);
-    expect(() => loadManifest(true)).toThrowError(
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
+      /models\[0\]\.tier="hig"/,
+    );
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
       /not one of:.*low.*medium.*high/,
     );
   });
@@ -1825,21 +1868,21 @@ describe("manifest validation guard — models[] entries", () => {
     const bad = makeBadManifest({ platform: "any-non-applesilicon" });
     const p = path.join(workdir, "bad-platform.json");
     await fsp.writeFile(p, JSON.stringify(bad), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = p;
-    resetManifestCache();
-    expect(() => loadManifest(true)).toThrowError(/any-non-applesilicon/);
-    expect(() => loadManifest(true)).toThrowError(/models\[0\]\.platform/);
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
+      /any-non-applesilicon/,
+    );
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
+      /models\[0\]\.platform/,
+    );
   });
 
   it("accepts the 'any-non-apple-silicon' wildcard as a valid models[].platform", async () => {
     const good = makeBadManifest({ platform: "any-non-apple-silicon" });
     const p = path.join(workdir, "wildcard.json");
     await fsp.writeFile(p, JSON.stringify(good), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = p;
-    resetManifestCache();
     // Wildcard is a valid manifest platform; the loader must NOT
     // reject it (otherwise the shipped manifest would fail validation).
-    const m = loadManifest(true);
+    const m = loadManifest(true, { manifestPath: p });
     expect(m.models[0].platform).toBe("any-non-apple-silicon");
   });
 
@@ -1849,10 +1892,12 @@ describe("manifest validation guard — models[] entries", () => {
     });
     const p = path.join(workdir, "bad-compute.json");
     await fsp.writeFile(p, JSON.stringify(bad), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = p;
-    resetManifestCache();
-    expect(() => loadManifest(true)).toThrowError(/models\[0\]\.compute\[1\]/);
-    expect(() => loadManifest(true)).toThrowError(/xpu/);
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
+      /models\[0\]\.compute\[1\]/,
+    );
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
+      /xpu/,
+    );
   });
 
   it("rejects a non-array models[].compute field", async () => {
@@ -1861,9 +1906,7 @@ describe("manifest validation guard — models[] entries", () => {
     });
     const p = path.join(workdir, "compute-not-array.json");
     await fsp.writeFile(p, JSON.stringify(bad), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = p;
-    resetManifestCache();
-    expect(() => loadManifest(true)).toThrowError(
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
       /models\[0\]\.compute must be an array/,
     );
   });
@@ -1934,10 +1977,12 @@ describe("manifest validation guard — models[] entries", () => {
     );
     const p = path.join(workdir, "missing-mmproj-size.json");
     await fsp.writeFile(p, JSON.stringify(bad), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = p;
-    resetManifestCache();
-    expect(() => loadManifest(true)).toThrowError(/missing mmprojSizeMb/);
-    expect(() => loadManifest(true)).toThrowError(/smolvlm-256m-vision-gguf/);
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
+      /missing mmprojSizeMb/,
+    );
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
+      /smolvlm-256m-vision-gguf/,
+    );
   });
 
   it("rejects a vision-GGUF entry with mmprojSizeMb=0", async () => {
@@ -1947,18 +1992,18 @@ describe("manifest validation guard — models[] entries", () => {
     const bad = visionManifest(visionGgufEntry({ mmprojSizeMb: 0 }));
     const p = path.join(workdir, "zero-mmproj-size.json");
     await fsp.writeFile(p, JSON.stringify(bad), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = p;
-    resetManifestCache();
-    expect(() => loadManifest(true)).toThrowError(/mmprojSizeMb/);
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
+      /mmprojSizeMb/,
+    );
   });
 
   it("rejects a vision-GGUF entry with a negative mmprojSizeMb", async () => {
     const bad = visionManifest(visionGgufEntry({ mmprojSizeMb: -5 }));
     const p = path.join(workdir, "neg-mmproj-size.json");
     await fsp.writeFile(p, JSON.stringify(bad), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = p;
-    resetManifestCache();
-    expect(() => loadManifest(true)).toThrowError(/mmprojSizeMb/);
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
+      /mmprojSizeMb/,
+    );
   });
 
   it("rejects a vision-GGUF entry with NaN mmprojSizeMb", async () => {
@@ -1970,18 +2015,16 @@ describe("manifest validation guard — models[] entries", () => {
     );
     const p = path.join(workdir, "nan-mmproj-size.json");
     await fsp.writeFile(p, JSON.stringify(bad), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = p;
-    resetManifestCache();
-    expect(() => loadManifest(true)).toThrowError(/mmprojSizeMb/);
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
+      /mmprojSizeMb/,
+    );
   });
 
   it("accepts a complete vision-GGUF entry with positive mmprojSizeMb", async () => {
     const good = visionManifest(visionGgufEntry({}));
     const p = path.join(workdir, "complete-vision.json");
     await fsp.writeFile(p, JSON.stringify(good), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = p;
-    resetManifestCache();
-    const m = loadManifest(true);
+    const m = loadManifest(true, { manifestPath: p });
     expect(m.models[0].mmprojSizeMb).toBe(190);
   });
 
@@ -1994,19 +2037,18 @@ describe("manifest validation guard — models[] entries", () => {
     );
     const p1 = path.join(workdir, "only-url.json");
     await fsp.writeFile(p1, JSON.stringify(onlyUrl), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = p1;
-    resetManifestCache();
-    expect(() => loadManifest(true)).toThrowError(/mismatched mmproj descriptor/);
+    expect(() => loadManifest(true, { manifestPath: p1 })).toThrowError(
+      /mismatched mmproj descriptor/,
+    );
 
-    resetManifestCache();
     const onlyFilename = visionManifest(
       visionGgufEntry({ mmprojUrl: undefined as unknown as string }),
     );
     const p2 = path.join(workdir, "only-filename.json");
     await fsp.writeFile(p2, JSON.stringify(onlyFilename), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = p2;
-    resetManifestCache();
-    expect(() => loadManifest(true)).toThrowError(/mismatched mmproj descriptor/);
+    expect(() => loadManifest(true, { manifestPath: p2 })).toThrowError(
+      /mismatched mmproj descriptor/,
+    );
   });
 
   it("rejects a non-vision-GGUF entry that carries mmproj fields", async () => {
@@ -2023,9 +2065,7 @@ describe("manifest validation guard — models[] entries", () => {
     );
     const p = path.join(workdir, "text-with-mmproj.json");
     await fsp.writeFile(p, JSON.stringify(bad), "utf8");
-    process.env.TESSERA_MODELS_MANIFEST = p;
-    resetManifestCache();
-    expect(() => loadManifest(true)).toThrowError(
+    expect(() => loadManifest(true, { manifestPath: p })).toThrowError(
       /mmproj is only valid for vision-GGUF entries/,
     );
   });
@@ -2209,13 +2249,11 @@ describe("isCapabilityAvailable tier × backend gating", () => {
 });
 
 describe("listModelsForPlatform capability filter (Block A)", () => {
-  beforeEach(() => {
-    process.env.TESSERA_MODELS_MANIFEST = MANIFEST;
-    resetManifestCache();
-  });
+  // Parallel-safety: no env mutation; tests pass an explicit
+  // `{ manifestPath: MANIFEST }` to `loadManifest`.
 
   it("filters to vision entries on every non-Apple-Silicon platform", () => {
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     for (const target of [
       "windows-x64",
       "linux-x64",
@@ -2233,7 +2271,7 @@ describe("listModelsForPlatform capability filter (Block A)", () => {
   });
 
   it("filters to vision MLX entries on Apple Silicon", () => {
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     const vision = listModelsForPlatform(
       manifest,
       "macos-apple-silicon",
@@ -2248,7 +2286,7 @@ describe("listModelsForPlatform capability filter (Block A)", () => {
   });
 
   it("imagegen entries never include 'cpu' in compute backends (GPU-only product)", () => {
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     for (const target of [
       "windows-x64",
       "linux-x64",
@@ -2264,7 +2302,7 @@ describe("listModelsForPlatform capability filter (Block A)", () => {
   });
 
   it("recommendModel(capability) returns a model whose capability matches the request", () => {
-    const manifest = loadManifest(true);
+    const manifest = loadManifest(true, { manifestPath: MANIFEST });
     for (const cap of ALL_MODEL_CAPABILITIES) {
       // Use a permissive platform so vision/imagegen entries are
       // reachable. imagegen on macOS Apple Silicon at medium tier is
@@ -2309,10 +2347,13 @@ describe("multi-slot storage paths", () => {
 });
 
 describe("per-slot isolation", () => {
+  // Parallel-safety: no env mutation. None of the tests in this
+  // block call `loadManifest` directly — they exercise download /
+  // installed-model code paths that do not consult the manifest —
+  // so the prior `process.env.TESSERA_MODELS_MANIFEST = MANIFEST`
+  // mutation was defensive and unnecessary. Drop it.
   let workdir: string;
   beforeEach(async () => {
-    process.env.TESSERA_MODELS_MANIFEST = MANIFEST;
-    resetManifestCache();
     resetDownloadLocks();
     resetLegacyMigrationCache();
     workdir = await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-slot-"));
@@ -2527,10 +2568,13 @@ describe("per-slot isolation", () => {
 });
 
 describe("legacy flat-layout migration", () => {
+  // Parallel-safety: no env mutation. None of the tests in this
+  // block call `loadManifest` directly — they exercise the
+  // legacy-active-model migration code path — so the prior
+  // `process.env.TESSERA_MODELS_MANIFEST = MANIFEST` mutation was
+  // defensive and unnecessary. Drop it.
   let workdir: string;
   beforeEach(async () => {
-    process.env.TESSERA_MODELS_MANIFEST = MANIFEST;
-    resetManifestCache();
     resetDownloadLocks();
     resetLegacyMigrationCache();
     workdir = await fsp.mkdtemp(path.join(os.tmpdir(), "tessera-migrate-"));
