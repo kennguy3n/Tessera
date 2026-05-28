@@ -273,6 +273,8 @@ import {
   registerKchatHandlers,
   _resetKchatNameCachesForTest,
 } from "../ipc/kchat";
+import { enforceKchatServerUrl } from "../kchat/ssrfGuard";
+import * as ssrfGuardModule from "../kchat/ssrfGuard";
 import type { KchatBackfillRunOutcome } from "../../shared/types";
 
 function handler(channel: string) {
@@ -555,9 +557,43 @@ describe("kchat:connect — SSRF guard (eighth-pass invariant)", () => {
     expect(serviceMock.connect).not.toHaveBeenCalled();
   });
 
-  it("allows internal URLs when TESSERA_KCHAT_ALLOW_INTERNAL=1 is set (dev opt-out)", async () => {
-    const prev = process.env.TESSERA_KCHAT_ALLOW_INTERNAL;
-    process.env.TESSERA_KCHAT_ALLOW_INTERNAL = "1";
+  // The "allows internal URLs when TESSERA_KCHAT_ALLOW_INTERNAL=1 is
+  // set (dev opt-out)" test that previously lived here used
+  // `process.env.TESSERA_KCHAT_ALLOW_INTERNAL = "1"` + a `finally`
+  // restore to exercise the bypass branch. That pattern was
+  // sequential-only under shared vitest worker pools — if a
+  // parallel test read `TESSERA_KCHAT_ALLOW_INTERNAL` between this
+  // test's mutation and restoration, it would see the wrong value.
+  // Migrated to direct injection via
+  // `enforceKchatServerUrl(url, { allowInternal })` — see the
+  // `SSRF guard dev-opt-out (direct injection)` describe block
+  // below for the replacement coverage. Same architectural pattern
+  // as PR #57 (`ExtensionSocketDiscovery`) and PR #59
+  // (`vaultCrypto` / `sidecar` platform injection).
+  //
+  // The IPC-integration coverage for the bypass branch is preserved
+  // by the "IPC handler delegates to the SSRF guard …" test below,
+  // which uses `vi.spyOn(ssrfGuardModule, "enforceKchatServerUrl")`
+  // to stub the bypass + verify the wiring — no env mutation needed.
+
+  it("IPC handler delegates to enforceKchatServerUrl with the operator-typed url and no opts (env-driven default preserved)", async () => {
+    // Restores the IPC-integration coverage that the env-mutating
+    // bypass test used to provide, without mutating `process.env`.
+    // The Devin Review Pass 3 finding flagged that the new
+    // direct-injection tests cover the guard contract precisely
+    // but don't verify the IPC handler's wiring to the guard. Per
+    // standing directive (correct long-term fix, not the easy
+    // patch), this test pins the wiring contract via a module-
+    // namespace spy: the IPC handler MUST call
+    // `enforceKchatServerUrl(url)` with no second argument so the
+    // env-driven default `process.env.TESSERA_KCHAT_ALLOW_INTERNAL`
+    // remains the production opt-out mechanism. A future refactor
+    // that accidentally passes `{ allowInternal: false }` would
+    // silently break the documented dev opt-out and this test
+    // would catch it.
+    const spy = vi
+      .spyOn(ssrfGuardModule, "enforceKchatServerUrl")
+      .mockResolvedValue(new URL("http://127.0.0.1:8080/"));
     try {
       serviceMock.connect.mockResolvedValue({
         id: "user1234567890abcdefgh",
@@ -572,16 +608,180 @@ describe("kchat:connect — SSRF guard (eighth-pass invariant)", () => {
         "http://127.0.0.1:8080/",
       );
       expect(out).toMatchObject({ id: "user1234567890abcdefgh" });
+      // Verify the wiring: the IPC handler must call the guard
+      // with the raw URL and NO opts (so the env-driven default
+      // takes effect in production). Asserting on `spy.mock.calls`
+      // directly catches a future regression where someone wires
+      // `enforceKchatServerUrl(url, { allowInternal: false })` or
+      // `{ readEnv: () => undefined }` and accidentally bypasses
+      // the documented dev opt-out.
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]).toEqual(["http://127.0.0.1:8080/"]);
       expect(serviceMock.connect).toHaveBeenCalledWith(
         "PAT",
         "http://127.0.0.1:8080/",
       );
     } finally {
-      if (prev === undefined) {
-        delete process.env.TESSERA_KCHAT_ALLOW_INTERNAL;
-      } else {
-        process.env.TESSERA_KCHAT_ALLOW_INTERNAL = prev;
-      }
+      spy.mockRestore();
+    }
+  });
+});
+
+// Phase 14-followup: the dev-opt-out branch of `enforceKchatServerUrl`
+// is now tested directly with an injected `allowInternal` instead of
+// via `process.env` mutation through the `kchat:connect` IPC handler.
+// Direct tests are higher-leverage because:
+//   - They don't mutate `process.env` (parallel-safe under
+//     `--pool=threads`).
+//   - They pin the guard's contract precisely (return parsed URL on
+//     bypass, throw with a renderer-safe error otherwise).
+//   - They cover the explicit-`false`-overrides-env case that the
+//     prior IPC-level test couldn't reach (the IPC handler always
+//     reads from env, not from a caller-supplied flag).
+// Production behaviour is preserved by the nullish-coalescing
+// default in `enforceKchatServerUrl` (`opts?.allowInternal ??
+// process.env.TESSERA_KCHAT_ALLOW_INTERNAL === "1"`) — the
+// production caller in `ipc/kchat.ts` passes no `opts` and gets the
+// env-driven default unchanged.
+describe("SSRF guard dev-opt-out (direct injection)", () => {
+  it("returns the parsed URL when allowInternal=true (bypass enabled)", async () => {
+    const out = await enforceKchatServerUrl("http://127.0.0.1:8080/", {
+      allowInternal: true,
+    });
+    expect(out.hostname).toBe("127.0.0.1");
+    expect(out.port).toBe("8080");
+    expect(out.protocol).toBe("http:");
+  });
+
+  it("rejects internal URLs when allowInternal=false (bypass disabled)", async () => {
+    await expect(
+      enforceKchatServerUrl("http://127.0.0.1:8080/", {
+        allowInternal: false,
+      }),
+    ).rejects.toThrow(/private, loopback, or link-local/);
+  });
+
+  it("rejects internal URLs when no opts and readEnv returns undefined (env-unset)", async () => {
+    // Deterministic coverage of the env-unset production-default
+    // branch: no `opts.allowInternal`, `readEnv` simulates an
+    // unset env. The prior version of this test depended on the
+    // CI process env actually being undefined; the `readEnv`
+    // injection makes it independent of ambient env state.
+    await expect(
+      enforceKchatServerUrl("http://127.0.0.1:8080/", {
+        readEnv: () => undefined,
+      }),
+    ).rejects.toThrow(/private, loopback, or link-local/);
+  });
+
+  it("allows internal URLs when no opts and readEnv returns \"1\" (env-set)", async () => {
+    // Symmetric coverage of the env-set production-default branch:
+    // no `opts.allowInternal`, `readEnv` simulates the documented
+    // dev-opt-out `TESSERA_KCHAT_ALLOW_INTERNAL=1`. This is the
+    // path the production caller in `ipc/kchat.ts` takes when a
+    // developer sets the env locally; previously couldn't be
+    // tested without mutating `process.env`.
+    const out = await enforceKchatServerUrl("http://127.0.0.1:8080/", {
+      readEnv: () => "1",
+    });
+    expect(out.hostname).toBe("127.0.0.1");
+  });
+
+  it("treats readEnv values other than \"1\" as not-set (strict equality)", async () => {
+    // Pins the strict `=== "1"` comparison in the guard. A future
+    // refactor that loosens this (e.g. `=== "true"` or truthy
+    // coercion) would silently widen the bypass surface — e.g.
+    // setting `TESSERA_KCHAT_ALLOW_INTERNAL=0` to "explicitly
+    // disable" would unexpectedly enable the bypass under truthy
+    // coercion. Tests three off-spec strings that all map to
+    // "not the dev opt-out".
+    for (const v of ["0", "true", "yes"]) {
+      await expect(
+        enforceKchatServerUrl("http://127.0.0.1:8080/", {
+          readEnv: () => v,
+        }),
+      ).rejects.toThrow(/private, loopback, or link-local/);
+    }
+  });
+
+  it("explicit allowInternal=false overrides readEnv=\"1\" (nullish-coalescing precedence)", async () => {
+    // Pins the `??` (nullish-coalescing) precedence: when both
+    // `opts.allowInternal` and the env are set, the explicit
+    // caller-supplied value wins. The prior IPC-level test
+    // couldn't exercise this case (the IPC handler always
+    // forwards to `enforceKchatServerUrl(url)` with no opts).
+    // Without the `readEnv` injection point, this test would
+    // either have to mutate `process.env` (race-prone) or test a
+    // structurally-guaranteed-true case (`false ?? undefined ===
+    // false`) that wouldn't catch a regression from `??` to `||`.
+    // With `readEnv: () => "1"`, the test exercises the actual
+    // regression case: `false ?? <env-says-true>` must stay `false`.
+    // If the operator regresses to `||`, this test fires immediately
+    // because `false || true === true` → the call would resolve
+    // instead of throw.
+    await expect(
+      enforceKchatServerUrl("http://127.0.0.1:8080/", {
+        allowInternal: false,
+        readEnv: () => "1",
+      }),
+    ).rejects.toThrow(/private, loopback, or link-local/);
+  });
+
+  it("explicit allowInternal=true overrides readEnv=undefined (no false fallthrough)", async () => {
+    // Symmetric to the `false`-overrides-env-1 test above: an
+    // explicit `true` from a caller must NOT fall through to
+    // `readEnv` even when the env is unset. With `??`, this is
+    // guaranteed (`true ?? anything === true`). With `||`, it
+    // would also pass (`true || anything === true`) — so this
+    // test is less defensive than the `false`-overrides-env-1
+    // case, but it documents the symmetric direction and would
+    // catch a hypothetical regression that drops the
+    // caller-supplied value entirely (e.g.
+    // `readEnv("X") === "1"` instead of `opts?.allowInternal ??
+    // readEnv("X") === "1"`).
+    const out = await enforceKchatServerUrl("http://127.0.0.1:8080/", {
+      allowInternal: true,
+      readEnv: () => undefined,
+    });
+    expect(out.hostname).toBe("127.0.0.1");
+  });
+
+  it("does not mutate process.env when called (parallel-safety meta-test)", async () => {
+    // The whole point of the injection refactor: the function
+    // doesn't touch `process.env`. If a future refactor
+    // reintroduces env mutation (e.g. a cache line like
+    // `process.env.X = "1"`), this test catches it immediately.
+    // Same architectural pattern as the
+    // `extensionSocketPath.test.ts` parallel-safety meta-test
+    // added in PR #57. Runs both the explicit-`true` path and
+    // the env-driven path to cover both branches of the
+    // `??` evaluation.
+    const snapshot = Object.assign({}, process.env);
+    await enforceKchatServerUrl("http://127.0.0.1:8080/", {
+      allowInternal: true,
+    });
+    await enforceKchatServerUrl("http://127.0.0.1:8080/", {
+      readEnv: () => "1",
+    });
+    expect(process.env).toEqual(snapshot);
+  });
+
+  it("default readEnv reads from process.env (production wiring smoke test)", async () => {
+    // Verifies the no-opts production path actually wires through
+    // to `process.env` (not some hardcoded `undefined`). Reads
+    // `process.env.TESSERA_KCHAT_ALLOW_INTERNAL` (which is
+    // typically undefined in CI) and asserts the no-opts call
+    // behaves as if `readEnv` returned that same value. Does NOT
+    // mutate — pure read-only smoke test of the default wiring.
+    const envValue = process.env.TESSERA_KCHAT_ALLOW_INTERNAL;
+    const expectsBypass = envValue === "1";
+    if (expectsBypass) {
+      const out = await enforceKchatServerUrl("http://127.0.0.1:8080/");
+      expect(out.hostname).toBe("127.0.0.1");
+    } else {
+      await expect(
+        enforceKchatServerUrl("http://127.0.0.1:8080/"),
+      ).rejects.toThrow(/private, loopback, or link-local/);
     }
   });
 });

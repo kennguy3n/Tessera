@@ -146,11 +146,52 @@ export function isPrivateOrLoopbackHost(hostname: string): boolean {
 }
 
 /**
+ * Optional injection point for `enforceKchatServerUrl`. Production
+ * code calls the function with no `opts` and falls back to reading
+ * `process.env.TESSERA_KCHAT_ALLOW_INTERNAL` directly, preserving
+ * the documented dev-opt-out behaviour. Tests pass an explicit
+ * `allowInternal` so they don't have to mutate `process.env` —
+ * mutating a process-level global is sequential-only under shared
+ * vitest worker pools (race-prone under `--pool=threads`), and
+ * complicates failure forensics if a test crashes before its
+ * `finally` block restores the prior value. Same architectural
+ * pattern as PR #57 (`ExtensionSocketDiscovery`) and PR #59
+ * (`vaultCrypto` / `sidecar` platform injection).
+ */
+export interface SsrfGuardOptions {
+  /**
+   * When `true`, the guard returns the parsed URL without checking
+   * the hostname or running a DNS lookup. When `false`, the guard
+   * applies the full SSRF policy. When `undefined` (production
+   * default), the guard reads the dev-opt-out env var via
+   * `readEnv` (which defaults to `process.env`) — `"1"` enables
+   * the bypass, anything else applies the policy.
+   */
+  allowInternal?: boolean;
+  /**
+   * Optional env-var reader. Defaults to `(name) => process.env[name]`
+   * so production callers stay unchanged. Tests pass an explicit
+   * reader so they can exercise different env states (e.g.
+   * `() => "1"` for "as if `TESSERA_KCHAT_ALLOW_INTERNAL=1` were set")
+   * without mutating `process.env` globally — env mutation is
+   * sequential-only under shared vitest worker pools (race-prone
+   * under `--pool=threads`) and a crash between mutate-and-restore
+   * leaks the override into every subsequent test in the worker.
+   * The reader is only invoked on the `allowInternal=undefined`
+   * branch — an explicit `true`/`false` short-circuits it.
+   */
+  readEnv?: (name: string) => string | undefined;
+}
+
+/**
  * Validate `rawUrl` is a public-facing `http(s):` URL — reject
  * non-http schemes, reject hostnames that resolve to private /
  * loopback / link-local addresses, fail-closed on DNS errors other
  * than `ENOTFOUND`. Set `TESSERA_KCHAT_ALLOW_INTERNAL=1` to bypass
- * the guard for dev/local use.
+ * the guard for dev/local use, or pass `{ allowInternal: true }`
+ * for tests that need the bypass behaviour without mutating
+ * `process.env` (the production caller in `ipc/kchat.ts` passes no
+ * `opts` and gets the env-driven default).
  *
  * Returns the parsed `URL` on success; throws an `Error` whose
  * message is safe to surface to the renderer (no token data).
@@ -160,7 +201,10 @@ export function isPrivateOrLoopbackHost(hostname: string): boolean {
  * single source of truth keeps the policy consistent if the
  * KChat client gains a second caller in the future.
  */
-export async function enforceKchatServerUrl(rawUrl: string): Promise<URL> {
+export async function enforceKchatServerUrl(
+  rawUrl: string,
+  opts?: SsrfGuardOptions,
+): Promise<URL> {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -170,7 +214,27 @@ export async function enforceKchatServerUrl(rawUrl: string): Promise<URL> {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("serverUrl must use http:// or https://");
   }
-  const allowInternal = process.env.TESSERA_KCHAT_ALLOW_INTERNAL === "1";
+  // Nullish coalescing (not `||`) so an explicit `allowInternal: false`
+  // from a test overrides the env var, rather than falling through
+  // to it. Same defensive pattern as the PR #59 sidecar refactor's
+  // `Partial<>` guard. The `readEnv` injection point lets tests
+  // exercise different env states without mutating `process.env`
+  // globally — production callers (no `opts`) get the env-driven
+  // default unchanged because `readEnv` defaults to `process.env`.
+  const readEnv = opts?.readEnv ?? ((name: string) => process.env[name]);
+  // Parens around the RHS make the `===` -vs- `??` precedence
+  // explicit. JavaScript's operator precedence binds `===`
+  // (precedence 10) tighter than `??` (precedence 5), so the
+  // unparenthesised form `opts?.allowInternal ?? readEnv(...) === "1"`
+  // parses as `opts?.allowInternal ?? (readEnv(...) === "1")` — which
+  // is what we want, but reviewers reading the line have to remember
+  // that to be sure. The parens cost nothing and remove a class of
+  // future regressions where someone "tidies up" by wrapping the
+  // wrong sub-expression. Per Devin Review Pass 2 ANALYSIS_0001 on
+  // PR #61: `??` precedence relative to comparison operators is a
+  // common source of confusion, so make the grouping explicit.
+  const allowInternal =
+    opts?.allowInternal ?? (readEnv("TESSERA_KCHAT_ALLOW_INTERNAL") === "1");
   if (allowInternal) {
     return parsed;
   }
