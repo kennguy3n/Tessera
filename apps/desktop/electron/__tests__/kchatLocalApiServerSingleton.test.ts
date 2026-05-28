@@ -436,4 +436,174 @@ describe("startKchatLocalApiServer — singleton + concurrency", () => {
       await restartP;
     },
   );
+
+  // Phase 14 Round 15 Devin Review ANALYSIS_0001 regression: a
+  // `startKchatLocalApiServer()` call that lands while a
+  // `stopKchatLocalApiServer()` is in flight (specifically, while
+  // the stop's IIFE is parked on `await pending` waiting for the
+  // ORIGINAL start to settle) MUST wait for the stop to finish
+  // its slot writes before constructing a new server. Without
+  // this serialisation:
+  //   - The new start's IIFE writes `kchatLocalApiServer =
+  //     serverC` after the stop has cleared the slot, leaving
+  //     serverC running but orphaned from the module slot.
+  //   - Or worse, the original start's IIFE resolves AFTER
+  //     serverC's write, overwrites the slot with serverA, and
+  //     the stop then tears down serverA leaving serverC running.
+  //     The caller of C receives a reference to serverC, but
+  //     `getKchatLocalApiServer()` returns null \u2014 nobody can ever
+  //     stop serverC through the normal mechanism.
+  //
+  // The fix's stopping-promise slot serialises the two: the new
+  // start awaits the stopping slot before checking the pending
+  // slot, so by the time it constructs its own server, the stop
+  // is fully complete and the slot writes are uncontested.
+  it(
+    "start-during-in-flight-stop waits for the stop to complete before constructing a new server",
+    async () => {
+      const { startKchatLocalApiServer, stopKchatLocalApiServer } =
+        await import("../appState");
+      const handlers = {
+        status: vi.fn(),
+        listSources: vi.fn(),
+        ingestChannel: vi.fn(),
+        shareArtifact: vi.fn(),
+      };
+
+      // Kick off the FIRST start. Its IIFE parks on
+      // `await server.start()` until we invoke the resolver, so
+      // `kchatLocalApiServer` stays null in the slot.
+      const firstP = startKchatLocalApiServer(
+        "/tmp/tessera-test",
+        handlers,
+      );
+      await Promise.resolve();
+      expect(constructorCalls.length).toBe(1);
+      const fake1 = constructorCalls[0];
+      expect(fake1?.startCalled).toBe(true);
+
+      // Call stop WHILE the first start is in flight. The stop's
+      // IIFE captures the pending promise, clears the pending
+      // slot, and parks on `await pending`. The stopping slot is
+      // now populated with the stop's work promise.
+      const stopP = stopKchatLocalApiServer();
+      await Promise.resolve();
+
+      // Call a SECOND start WHILE the stop is still parked on
+      // its `await pending`. Without the fix, this would see
+      // `kchatLocalApiServer === null` and `pending === null`
+      // (stop cleared it), then go ahead and construct a NEW
+      // fake. With the fix, the new start sees the stopping
+      // slot, parks on it, and does NOT construct yet.
+      const secondP = startKchatLocalApiServer(
+        "/tmp/tessera-test",
+        handlers,
+      );
+      await Promise.resolve();
+      expect(constructorCalls.length).toBe(1);
+
+      // Unblock the first start. Now:
+      //   - The first IIFE resolves: `kchatLocalApiServer = fake1`.
+      //   - The first caller's `firstP` resolves with fake1.
+      //   - The stop's IIFE: `await pending` resolves, reads
+      //     `kchatLocalApiServer = fake1`, sets slot to null,
+      //     calls `fake1.stop()` (instant), IIFE returns.
+      //   - The stop's outer `kchatLocalApiServerStopping = work;
+      //     await work` resolves. The slot is cleared in finally.
+      //   - The second start's while-loop sees stopping = null,
+      //     re-reads `kchatLocalApiServer` (null), enters the
+      //     pending branch, constructs fake2, calls fake2.start().
+      fake1?.startResolver();
+      await firstP;
+      await stopP;
+
+      // The first server was constructed, started, and stopped.
+      expect(fake1?.startCalled).toBe(true);
+      expect(fake1?.stopCalled).toBe(true);
+
+      // After the stop fully completes, the second start
+      // proceeds. Yield once to let its IIFE run synchronously
+      // up to its own `await fake2.start()`.
+      await Promise.resolve();
+      expect(constructorCalls.length).toBe(2);
+      const fake2 = constructorCalls[1];
+      expect(fake2).toBeDefined();
+      expect(fake2?.startCalled).toBe(true);
+      expect(fake2).not.toBe(fake1);
+
+      // Unblock the second start and verify the caller receives
+      // the freshly-constructed fake2 \u2014 NOT fake1 (which is
+      // already stopped). We compare via `port()` because the
+      // `CountedFakeServer` wrapper instance is distinct from
+      // the inner `FakeServer` state object held in
+      // `constructorCalls`, and the wrapper's port maps 1:1 to
+      // its inner state's id.
+      fake2?.startResolver();
+      const second = await secondP;
+      expect(second.port()).toBe(50_000 + (fake2?.id ?? 0));
+      expect(second.port()).not.toBe(50_000 + (fake1?.id ?? 0));
+      expect(fake2?.stopCalled).toBe(false);
+    },
+  );
+
+  // Phase 14 Round 15 Devin Review ANALYSIS_0001 regression #2:
+  // two `stopKchatLocalApiServer()` calls landing on the same
+  // running server must serialise: the second stop waits for the
+  // first to complete and observes an already-stopped slot, so
+  // `server.stop()` is called exactly ONCE. Without the fix, both
+  // stops would race past the pending-slot capture (whichever ran
+  // second would observe pending=null because the first cleared
+  // it) and could both call `server.stop()` on the live server,
+  // raising `ERR_SERVER_NOT_RUNNING` on the second invocation.
+  it(
+    "concurrent stops serialise: server.stop() is called exactly once",
+    async () => {
+      const { startKchatLocalApiServer, stopKchatLocalApiServer } =
+        await import("../appState");
+      const handlers = {
+        status: vi.fn(),
+        listSources: vi.fn(),
+        ingestChannel: vi.fn(),
+        shareArtifact: vi.fn(),
+      };
+
+      // Park a start in flight, then fire two concurrent stops.
+      const startP = startKchatLocalApiServer(
+        "/tmp/tessera-test",
+        handlers,
+      );
+      await Promise.resolve();
+      const fake = constructorCalls[0];
+      expect(fake?.startCalled).toBe(true);
+
+      const stopAP = stopKchatLocalApiServer();
+      const stopBP = stopKchatLocalApiServer();
+      await Promise.resolve();
+      // Neither stop has reached its `server.stop()` yet \u2014 both
+      // are parked, one on `await pending` (inside its IIFE)
+      // and the other on the stopping slot's `await stopping`.
+      expect(fake?.stopCalled).toBe(false);
+
+      // Unblock the start. The first stop's `await pending`
+      // resolves, it reads the slot, calls `fake.stop()`, and
+      // its work IIFE returns. The second stop's `await stopping`
+      // then resolves; its while-loop exits; its IIFE observes
+      // pending=null and `kchatLocalApiServer === null` (cleared
+      // by stop A), and returns without touching fake.stop()
+      // again.
+      fake?.startResolver();
+      await startP;
+      await stopAP;
+      await stopBP;
+
+      // The bug this regression pins: without the stopping-slot
+      // serialisation, both stops would observe `fake` in the
+      // slot during their (race-condition) reads and call
+      // `fake.stop()` twice. The fake doesn't model the second
+      // call's `ERR_SERVER_NOT_RUNNING` rejection, so we assert
+      // the count directly. With the fix, exactly one
+      // `fake.stop()` call.
+      expect(fake?.stopCalled).toBe(true);
+    },
+  );
 });

@@ -764,6 +764,26 @@ let kchatLocalApiServer: KchatLocalApiServer | null = null;
 // through the `kchatLocalApiServer === null` check and binding two
 // HTTP ports (Phase 14 Round 11 Devin Review ANALYSIS_0002).
 let kchatLocalApiServerPending: Promise<KchatLocalApiServer> | null = null;
+// Stopping-promise slot so a `startKchatLocalApiServer()` call that
+// arrives while a `stopKchatLocalApiServer()` is in flight waits for
+// the stop to fully complete before constructing a new server. Without
+// this slot, the start's IIFE would race the stop's slot-clearing
+// writes: the stop captures the start's pending promise, awaits it,
+// reads `kchatLocalApiServer`, and clears the slot — but a concurrent
+// new start that arrived AFTER the stop cleared the pending slot and
+// BEFORE the stop cleared `kchatLocalApiServer` would observe an empty
+// pending slot, construct its own server, and its IIFE would later
+// write `kchatLocalApiServer = serverC`. The stop's subsequent slot
+// clear then either wipes serverC (orphaning it — server still
+// running, slot null, nobody can call `stop()` on it) or, depending
+// on ordering, the start's IIFE overwrites the stop's null write
+// (giving the caller back a server that the stop has already torn
+// down). Phase 14 Round 15 Devin Review ANALYSIS_0001.
+//
+// Symmetric with the start's pending slot: the start awaits the
+// stopping slot if non-null, and the stop publishes its work into
+// the stopping slot so concurrent stops also serialise.
+let kchatLocalApiServerStopping: Promise<void> | null = null;
 // Phase 14 Task 3: `tessera://` deeplink router. Constructed
 // eagerly at module load so a pre-ready `open-url` event from
 // macOS can be parked before `whenReady` fires. The renderer
@@ -1136,17 +1156,42 @@ export function getKchatLocalApiServer(): KchatLocalApiServer | null {
 }
 
 /**
- * Start the localhost API server. Idempotent and concurrency-safe:
- * the first caller drives `server.start()`, and any concurrent
- * callers that arrive while that `start()` is in-flight coalesce
- * onto the same promise instead of racing through the null-check
- * and binding a second port (Phase 14 Round 11 Devin Review
- * ANALYSIS_0002). Sequential calls after the first succeeds
- * return the cached instance synchronously.
+ * Start the localhost API server. Idempotent and concurrency-safe
+ * against:
+ *
+ *   1. **Concurrent starts** (Phase 14 Round 11 Devin Review
+ *      ANALYSIS_0002). The first caller drives `server.start()`, and
+ *      any concurrent callers that arrive while that `start()` is
+ *      in-flight coalesce onto the same promise instead of racing
+ *      through the null-check and binding a second port.
+ *
+ *   2. **Stop-during-in-flight-start** (Phase 14 Round 12 Devin
+ *      Review BUG_0001). Handled by `stopKchatLocalApiServer()`:
+ *      it captures and awaits the pending start before clearing
+ *      `kchatLocalApiServer`.
+ *
+ *   3. **Start-during-in-flight-stop** (Phase 14 Round 15 Devin
+ *      Review ANALYSIS_0001). Handled here: if a stop is in flight
+ *      we await `kchatLocalApiServerStopping` BEFORE entering the
+ *      pending-promise branch, so the stop fully tears down the
+ *      previous server (and clears `kchatLocalApiServer`) before
+ *      we construct a new one. Without this wait, a new start's
+ *      IIFE would race the in-flight stop's slot writes — the new
+ *      server could land in the slot mid-stop and be silently torn
+ *      down by the stop's `kchatLocalApiServer = null` write, or
+ *      worse, the start's IIFE could clobber the stop's null write
+ *      and hand the caller a server the stop has already closed.
+ *      Re-checking idempotency after the await is load-bearing:
+ *      the stop's predecessor start may have left a live server in
+ *      the slot.
+ *
+ * Sequential calls after the first succeeds return the cached
+ * instance synchronously.
  *
  * Called once from the main-process `whenReady` chain in
- * `main.ts`; the pending-promise slot is defence-in-depth so a
- * future second call site doesn't silently leak an HTTP server.
+ * `main.ts`; the pending-promise / stopping-promise slots are
+ * defence-in-depth so a future second call site doesn't silently
+ * leak an HTTP server.
  *
  * The `handlers` argument is supplied by the caller (the IPC
  * registration layer) so this module stays decoupled from the
@@ -1159,6 +1204,27 @@ export async function startKchatLocalApiServer(
   handlers: LocalApiHandlers,
 ): Promise<KchatLocalApiServer> {
   if (kchatLocalApiServer !== null) return kchatLocalApiServer;
+  // Drain any in-flight stop FIRST, so we never construct a new
+  // server whose slot-write races the stop's slot-clearing writes.
+  // The `while` (rather than `if`) tolerates a chain of overlapping
+  // stops: each iteration awaits the most recently published
+  // stopping promise, and we re-read the slot to pick up any newer
+  // stop that the previous await raced against. The catch swallows
+  // the stop's rejection because the stop's responsibility for
+  // teardown is complete by the time it rejects — we just need to
+  // know it has stopped writing to `kchatLocalApiServer`.
+  while (kchatLocalApiServerStopping !== null) {
+    const stopping = kchatLocalApiServerStopping;
+    try {
+      await stopping;
+    } catch {
+      // The stop's failure is the caller's problem to surface;
+      // here we only care that it has finished touching the slot.
+    }
+    // Re-check after the await: a stop's predecessor start may
+    // have left a live server in the slot that we should reuse.
+    if (kchatLocalApiServer !== null) return kchatLocalApiServer;
+  }
   if (kchatLocalApiServerPending !== null) return kchatLocalApiServerPending;
   kchatLocalApiServerPending = (async () => {
     const server = new KchatLocalApiServer(handlers, {
@@ -1178,43 +1244,83 @@ export async function startKchatLocalApiServer(
 /**
  * Stop the localhost API server and remove the port-file. Called
  * from `app.on("will-quit", ...)` in `main.ts`.
+ *
+ * The actual teardown work runs inside an IIFE published into
+ * `kchatLocalApiServerStopping` so a concurrent
+ * `startKchatLocalApiServer()` can await it before constructing a
+ * new server (Phase 14 Round 15 Devin Review ANALYSIS_0001).
+ * Concurrent stops also serialise via the same slot.
  */
 export async function stopKchatLocalApiServer(): Promise<void> {
-  // Capture and clear the pending-promise slot FIRST. If a
-  // `startKchatLocalApiServer()` IIFE is still in flight, we
-  // MUST wait for it to settle before checking
-  // `kchatLocalApiServer` — otherwise the IIFE will complete
-  // `await server.start()` and write `kchatLocalApiServer =
-  // server` AFTER this function returns, leaving an orphaned
-  // running HTTP server that nobody will ever call `stop()` on
-  // (it would hold an event-loop handle and a bound port for
-  // the rest of the process lifetime). Phase 14 Round 12 Devin
-  // Review BUG_0001.
-  //
-  // Clearing the slot before the await is intentional: a third
-  // concurrent caller arriving while we're inside this await
-  // must NOT join the same start (we're about to tear it down)
-  // — it should observe an empty slot and either construct a
-  // fresh server (if `startKchatLocalApiServer` is called again
-  // after `stopKchatLocalApiServer` returns) or simply find no
-  // server to act on.
-  const pending = kchatLocalApiServerPending;
-  kchatLocalApiServerPending = null;
-  if (pending !== null) {
+  // Serialise concurrent stops. The second stop must wait for the
+  // first to complete before checking the slot — otherwise the
+  // second stop could observe a still-running server that the
+  // first stop is about to tear down, double-call `stop()`, and
+  // double-unlink the port file (the port-file unlink is
+  // idempotent today via `rmSync({ force: true })`, but the
+  // server's `close()` is not — calling it twice raises
+  // ERR_SERVER_NOT_RUNNING on the second invocation).
+  while (kchatLocalApiServerStopping !== null) {
+    const stopping = kchatLocalApiServerStopping;
     try {
-      await pending;
+      await stopping;
     } catch {
-      // The in-flight start rejected. The IIFE's failure path
-      // is responsible for tearing down its own bound socket
-      // via the BUG_0001 rollback in `KchatLocalApiServer.start()`
-      // (Round 8). `kchatLocalApiServer` will be null when we
-      // fall through, so this branch is a no-op.
+      // A prior stop rejected; we don't propagate its failure
+      // because the caller asked us to stop, and the prior stop
+      // has done its part of the teardown.
     }
   }
-  if (kchatLocalApiServer === null) return;
-  const server = kchatLocalApiServer;
-  kchatLocalApiServer = null;
-  await server.stop();
+  const work = (async (): Promise<void> => {
+    // Capture and clear the pending-promise slot FIRST. If a
+    // `startKchatLocalApiServer()` IIFE is still in flight, we
+    // MUST wait for it to settle before checking
+    // `kchatLocalApiServer` — otherwise the IIFE will complete
+    // `await server.start()` and write `kchatLocalApiServer =
+    // server` AFTER this function returns, leaving an orphaned
+    // running HTTP server that nobody will ever call `stop()` on
+    // (it would hold an event-loop handle and a bound port for
+    // the rest of the process lifetime). Phase 14 Round 12 Devin
+    // Review BUG_0001.
+    //
+    // Clearing the slot before the await is intentional: a third
+    // concurrent caller arriving while we're inside this await
+    // must NOT join the same start (we're about to tear it down)
+    // — it observes an empty pending slot, observes the non-null
+    // stopping slot we publish below, and awaits the teardown
+    // before constructing a fresh server. Phase 14 Round 15
+    // ANALYSIS_0001.
+    const pending = kchatLocalApiServerPending;
+    kchatLocalApiServerPending = null;
+    if (pending !== null) {
+      try {
+        await pending;
+      } catch {
+        // The in-flight start rejected. The IIFE's failure path
+        // is responsible for tearing down its own bound socket
+        // via the BUG_0001 rollback in `KchatLocalApiServer.start()`
+        // (Round 8). `kchatLocalApiServer` will be null when we
+        // fall through, so this branch is a no-op.
+      }
+    }
+    if (kchatLocalApiServer === null) return;
+    const server = kchatLocalApiServer;
+    kchatLocalApiServer = null;
+    await server.stop();
+  })();
+  // Publish the work into the stopping slot BEFORE awaiting it
+  // so a concurrent start that's already past its idempotency
+  // check can see it. The slot is cleared in `finally` only if
+  // it still points at OUR work — a subsequent stop may have
+  // replaced it (its `while` loop awaited us first), and we
+  // must not stomp the newer slot value.
+  kchatLocalApiServerStopping = work;
+  try {
+    await work;
+  } finally {
+    if (kchatLocalApiServerStopping === work) {
+      kchatLocalApiServerStopping = null;
+    }
+  }
 }
 
 /**
