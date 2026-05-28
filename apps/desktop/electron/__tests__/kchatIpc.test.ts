@@ -605,50 +605,128 @@ describe("SSRF guard dev-opt-out (direct injection)", () => {
     ).rejects.toThrow(/private, loopback, or link-local/);
   });
 
-  it("rejects internal URLs when opts is omitted and env is undefined", async () => {
-    // Production-default coverage: the no-opts caller in
-    // `ipc/kchat.ts` falls through to the env var, which is
-    // undefined in CI. Asserts the no-opts path is functionally
-    // equivalent to `allowInternal: false` when the env is unset —
-    // pins the `??` (nullish-coalescing) semantics, so a future
-    // refactor flipping to `||` (which would inherit truthy-string
-    // coercion and silently break the explicit-false override) is
-    // caught immediately. Reads `process.env` but does NOT mutate.
-    expect(process.env.TESSERA_KCHAT_ALLOW_INTERNAL).toBeUndefined();
-    await expect(
-      enforceKchatServerUrl("http://127.0.0.1:8080/"),
-    ).rejects.toThrow(/private, loopback, or link-local/);
-  });
-
-  it("explicit allowInternal=false overrides the env-driven default", async () => {
-    // Pins the nullish-coalescing precedence: `opts?.allowInternal`
-    // is checked BEFORE the env var, so an explicit `false` from a
-    // caller wins over an env-set "1". The prior IPC-level test
-    // couldn't exercise this case because the IPC handler always
-    // forwards to `enforceKchatServerUrl(url)` (no opts). The check
-    // is purely structural — `false ?? anything === false` — so we
-    // don't need to mutate the env to verify it, just call with
-    // explicit-false and assert the rejection happens.
+  it("rejects internal URLs when no opts and readEnv returns undefined (env-unset)", async () => {
+    // Deterministic coverage of the env-unset production-default
+    // branch: no `opts.allowInternal`, `readEnv` simulates an
+    // unset env. The prior version of this test depended on the
+    // CI process env actually being undefined; the `readEnv`
+    // injection makes it independent of ambient env state.
     await expect(
       enforceKchatServerUrl("http://127.0.0.1:8080/", {
-        allowInternal: false,
+        readEnv: () => undefined,
       }),
     ).rejects.toThrow(/private, loopback, or link-local/);
   });
 
-  it("does not mutate process.env when called with allowInternal=true", async () => {
-    // Parallel-safety meta-test: the whole point of the injection
-    // refactor is that the function doesn't touch process.env. If
-    // a future refactor reintroduces env mutation (e.g. a cache
-    // line like `process.env.X = "1"`), this test catches it
-    // immediately. Same architectural pattern as the
+  it("allows internal URLs when no opts and readEnv returns \"1\" (env-set)", async () => {
+    // Symmetric coverage of the env-set production-default branch:
+    // no `opts.allowInternal`, `readEnv` simulates the documented
+    // dev-opt-out `TESSERA_KCHAT_ALLOW_INTERNAL=1`. This is the
+    // path the production caller in `ipc/kchat.ts` takes when a
+    // developer sets the env locally; previously couldn't be
+    // tested without mutating `process.env`.
+    const out = await enforceKchatServerUrl("http://127.0.0.1:8080/", {
+      readEnv: () => "1",
+    });
+    expect(out.hostname).toBe("127.0.0.1");
+  });
+
+  it("treats readEnv values other than \"1\" as not-set (strict equality)", async () => {
+    // Pins the strict `=== "1"` comparison in the guard. A future
+    // refactor that loosens this (e.g. `=== "true"` or truthy
+    // coercion) would silently widen the bypass surface — e.g.
+    // setting `TESSERA_KCHAT_ALLOW_INTERNAL=0` to "explicitly
+    // disable" would unexpectedly enable the bypass under truthy
+    // coercion. Tests three off-spec strings that all map to
+    // "not the dev opt-out".
+    for (const v of ["0", "true", "yes"]) {
+      await expect(
+        enforceKchatServerUrl("http://127.0.0.1:8080/", {
+          readEnv: () => v,
+        }),
+      ).rejects.toThrow(/private, loopback, or link-local/);
+    }
+  });
+
+  it("explicit allowInternal=false overrides readEnv=\"1\" (nullish-coalescing precedence)", async () => {
+    // Pins the `??` (nullish-coalescing) precedence: when both
+    // `opts.allowInternal` and the env are set, the explicit
+    // caller-supplied value wins. The prior IPC-level test
+    // couldn't exercise this case (the IPC handler always
+    // forwards to `enforceKchatServerUrl(url)` with no opts).
+    // Without the `readEnv` injection point, this test would
+    // either have to mutate `process.env` (race-prone) or test a
+    // structurally-guaranteed-true case (`false ?? undefined ===
+    // false`) that wouldn't catch a regression from `??` to `||`.
+    // With `readEnv: () => "1"`, the test exercises the actual
+    // regression case: `false ?? <env-says-true>` must stay `false`.
+    // If the operator regresses to `||`, this test fires immediately
+    // because `false || true === true` → the call would resolve
+    // instead of throw.
+    await expect(
+      enforceKchatServerUrl("http://127.0.0.1:8080/", {
+        allowInternal: false,
+        readEnv: () => "1",
+      }),
+    ).rejects.toThrow(/private, loopback, or link-local/);
+  });
+
+  it("explicit allowInternal=true overrides readEnv=undefined (no false fallthrough)", async () => {
+    // Symmetric to the `false`-overrides-env-1 test above: an
+    // explicit `true` from a caller must NOT fall through to
+    // `readEnv` even when the env is unset. With `??`, this is
+    // guaranteed (`true ?? anything === true`). With `||`, it
+    // would also pass (`true || anything === true`) — so this
+    // test is less defensive than the `false`-overrides-env-1
+    // case, but it documents the symmetric direction and would
+    // catch a hypothetical regression that drops the
+    // caller-supplied value entirely (e.g.
+    // `readEnv("X") === "1"` instead of `opts?.allowInternal ??
+    // readEnv("X") === "1"`).
+    const out = await enforceKchatServerUrl("http://127.0.0.1:8080/", {
+      allowInternal: true,
+      readEnv: () => undefined,
+    });
+    expect(out.hostname).toBe("127.0.0.1");
+  });
+
+  it("does not mutate process.env when called (parallel-safety meta-test)", async () => {
+    // The whole point of the injection refactor: the function
+    // doesn't touch `process.env`. If a future refactor
+    // reintroduces env mutation (e.g. a cache line like
+    // `process.env.X = "1"`), this test catches it immediately.
+    // Same architectural pattern as the
     // `extensionSocketPath.test.ts` parallel-safety meta-test
-    // added in PR #57.
+    // added in PR #57. Runs both the explicit-`true` path and
+    // the env-driven path to cover both branches of the
+    // `??` evaluation.
     const snapshot = Object.assign({}, process.env);
     await enforceKchatServerUrl("http://127.0.0.1:8080/", {
       allowInternal: true,
     });
+    await enforceKchatServerUrl("http://127.0.0.1:8080/", {
+      readEnv: () => "1",
+    });
     expect(process.env).toEqual(snapshot);
+  });
+
+  it("default readEnv reads from process.env (production wiring smoke test)", async () => {
+    // Verifies the no-opts production path actually wires through
+    // to `process.env` (not some hardcoded `undefined`). Reads
+    // `process.env.TESSERA_KCHAT_ALLOW_INTERNAL` (which is
+    // typically undefined in CI) and asserts the no-opts call
+    // behaves as if `readEnv` returned that same value. Does NOT
+    // mutate — pure read-only smoke test of the default wiring.
+    const envValue = process.env.TESSERA_KCHAT_ALLOW_INTERNAL;
+    const expectsBypass = envValue === "1";
+    if (expectsBypass) {
+      const out = await enforceKchatServerUrl("http://127.0.0.1:8080/");
+      expect(out.hostname).toBe("127.0.0.1");
+    } else {
+      await expect(
+        enforceKchatServerUrl("http://127.0.0.1:8080/"),
+      ).rejects.toThrow(/private, loopback, or link-local/);
+    }
   });
 });
 

@@ -163,10 +163,24 @@ export interface SsrfGuardOptions {
    * When `true`, the guard returns the parsed URL without checking
    * the hostname or running a DNS lookup. When `false`, the guard
    * applies the full SSRF policy. When `undefined` (production
-   * default), the guard reads `process.env.TESSERA_KCHAT_ALLOW_INTERNAL`
-   * — `"1"` enables the bypass, anything else applies the policy.
+   * default), the guard reads the dev-opt-out env var via
+   * `readEnv` (which defaults to `process.env`) — `"1"` enables
+   * the bypass, anything else applies the policy.
    */
   allowInternal?: boolean;
+  /**
+   * Optional env-var reader. Defaults to `(name) => process.env[name]`
+   * so production callers stay unchanged. Tests pass an explicit
+   * reader so they can exercise different env states (e.g.
+   * `() => "1"` for "as if `TESSERA_KCHAT_ALLOW_INTERNAL=1` were set")
+   * without mutating `process.env` globally — env mutation is
+   * sequential-only under shared vitest worker pools (race-prone
+   * under `--pool=threads`) and a crash between mutate-and-restore
+   * leaks the override into every subsequent test in the worker.
+   * The reader is only invoked on the `allowInternal=undefined`
+   * branch — an explicit `true`/`false` short-circuits it.
+   */
+  readEnv?: (name: string) => string | undefined;
 }
 
 /**
@@ -203,9 +217,13 @@ export async function enforceKchatServerUrl(
   // Nullish coalescing (not `||`) so an explicit `allowInternal: false`
   // from a test overrides the env var, rather than falling through
   // to it. Same defensive pattern as the PR #59 sidecar refactor's
-  // `Partial<>` guard.
+  // `Partial<>` guard. The `readEnv` injection point lets tests
+  // exercise different env states without mutating `process.env`
+  // globally — production callers (no `opts`) get the env-driven
+  // default unchanged because `readEnv` defaults to `process.env`.
+  const readEnv = opts?.readEnv ?? ((name: string) => process.env[name]);
   const allowInternal =
-    opts?.allowInternal ?? process.env.TESSERA_KCHAT_ALLOW_INTERNAL === "1";
+    opts?.allowInternal ?? readEnv("TESSERA_KCHAT_ALLOW_INTERNAL") === "1";
   if (allowInternal) {
     return parsed;
   }
