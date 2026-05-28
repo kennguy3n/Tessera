@@ -841,9 +841,18 @@ export function registerKchatHandlers(): void {
   // Desktop owns the `kchat://` scheme registration; Tessera is
   // just another caller.
   //
-  // The handler is rate-limited per-channel-id (see
-  // `RATE_LIMIT_PROFILES["kchat:openInDesktop"]`) so a runaway
-  // renderer loop cannot spam the OS shell with deeplinks.
+  // The handler is rate-limited against a single GLOBAL token
+  // bucket (key: `"kchat:openInDesktop"`, NOT keyed by channel
+  // id) so a runaway renderer loop cannot spam the OS shell with
+  // deeplinks. The global bucket is intentional and stricter
+  // than a per-channel bucket would be: a per-channel scheme
+  // would let an attacker open N different channels at the full
+  // per-bucket rate, multiplying the effective OS-shell budget
+  // by N. The `kchat:openDesktopExtensions` sibling handler
+  // intentionally shares the same key so the cap is honoured
+  // across both deeplink paths (Phase 14 Round 16 Devin Review
+  // ANALYSIS_0001 — comment previously claimed "per-channel-id"
+  // which was the opposite of the truth).
   idempotentHandle(
     "kchat:openInDesktop",
     async (
