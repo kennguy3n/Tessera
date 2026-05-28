@@ -146,18 +146,17 @@ import type {
  * DO NOT REMOVE these declarations as "dead code" — they have
  * no runtime cost (the const declarations are erased by tsc;
  * the `void` expressions emit no bytecode), and removing them
- * silently disables the compile-time drift check. Twelfth-pass
- * Devin Review on PR #43 (`ANALYSIS_pr-review-job-...0006`)
- * flagged that a future ESLint rule change marking these as
- * unused could lead a contributor to delete them. The
- * `eslint-disable-next-line` markers below pin the suppression
- * to this specific use rather than relying on a global rule.
+ * silently disables the compile-time drift check. The
+ * underscore-prefixed names match our project's
+ * `varsIgnorePattern: "^_"` rule, and the trailing `void`
+ * statements explicitly use them so the `no-unused-vars` rule
+ * sees them as referenced regardless of whether a future
+ * contributor changes the global ignore convention — belt-and-
+ * suspenders protection for the tripwire's continued existence.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
 const _assertViewIsPayload = (
   v: KchatWebSocketEventView,
 ): KchatWebSocketEventPayload => v;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
 const _assertPayloadIsView = (
   p: KchatWebSocketEventPayload,
 ): KchatWebSocketEventView => p;
@@ -180,14 +179,14 @@ void _assertPayloadIsView;
  * PR #43 (`ANALYSIS_pr-review-job-...0001`).
  *
  * DO NOT REMOVE — see the rationale on the WS event tripwire
- * above. Twelfth-pass Devin Review hardened the lint suppression
- * to be local rather than relying on a global rule.
+ * above. The trailing `void` statements explicitly use the
+ * declarations so the `no-unused-vars` rule sees them as
+ * referenced regardless of the global underscore-prefix ignore
+ * convention.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
 const _assertConnectionStateIsView = (
   s: KchatConnectionState,
 ): KchatConnectionStateView => s;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
 const _assertConnectionStateViewIsState = (
   v: KchatConnectionStateView,
 ): KchatConnectionState => v;
@@ -264,19 +263,15 @@ interface KchatAclRefreshOutcomeView {
   vacuumSucceeded: boolean;
   vacuumError?: string;
 }
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
 const _assertRevokeInfoIsView = (
   i: KchatRevokeOutcomeInfo,
 ): KchatRevokeOutcomeView => i;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
 const _assertRevokeViewIsInfo = (
   v: KchatRevokeOutcomeView,
 ): KchatRevokeOutcomeInfo => v;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
 const _assertAclRefreshInfoIsView = (
   i: KchatAclRefreshOutcomeInfo,
 ): KchatAclRefreshOutcomeView => i;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time IPC drift tripwire; DO NOT REMOVE
 const _assertAclRefreshViewIsInfo = (
   v: KchatAclRefreshOutcomeView,
 ): KchatAclRefreshOutcomeInfo => v;
@@ -1387,7 +1382,6 @@ export class KchatEventForwarder {
         const safetyCap = 50_000;
         const members: { userId: string; role: string }[] = [];
         let page = 0;
-        // eslint-disable-next-line no-constant-condition
         while (true) {
           const batch = await client.listChannelMembers(
             channelId,

@@ -56,11 +56,14 @@ function findRepoRoot(startDir: string): string {
   // The walk is bounded: each iteration steps one directory closer to
   // the filesystem root, and POSIX guarantees `dirname` is idempotent
   // at `/` (Windows: at the drive root). The explicit `parent === dir`
-  // termination check guarantees we never loop. We use `for (;;)`
-  // rather than `while (true)` to keep ESLint's `no-constant-condition`
-  // rule happy — both compile to identical bytecode.
+  // termination check below guarantees we never loop forever. Using
+  // `while (true)` as the canonical infinite-loop idiom (ESLint v9's
+  // `no-constant-condition` rule defaults to `checkLoops:
+  // "allExceptWhileTrue"`, so the explicit `while (true)` form is
+  // permitted without a suppression comment as of the v8 → v9 upgrade
+  // in PR #67).
   let dir = startDir;
-  for (;;) {
+  while (true) {
     const cargoToml = join(dir, "Cargo.toml");
     const templatesDir = join(dir, "templates");
     if (existsSync(cargoToml) && existsSync(templatesDir)) {

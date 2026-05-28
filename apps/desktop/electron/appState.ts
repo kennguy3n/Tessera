@@ -883,7 +883,7 @@ function resolveNativeAddon(): NativeBridge | null {
   for (const addonPath of possiblePaths) {
     if (fs.existsSync(addonPath)) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        // eslint-disable-next-line @typescript-eslint/no-require-imports -- sync require() is intentional: this addon is CommonJS and the existsSync probe above expects synchronous resolution of one of several candidate paths.
         return require(addonPath) as NativeBridge;
       } catch {
         continue;

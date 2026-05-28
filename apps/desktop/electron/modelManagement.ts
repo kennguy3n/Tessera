@@ -522,7 +522,16 @@ export interface ManifestPathOptions {
   readEnv?: (name: string) => string | undefined;
 }
 
-export interface LoadManifestOptions extends ManifestPathOptions {}
+/**
+ * `loadManifest` has the same dependency-injection surface as
+ * `resolveManifestPath` — no additional fields today. Declared as a
+ * type alias (not an empty extending interface) so the @typescript-eslint
+ * v8 `no-empty-object-type` rule isn't violated; if a future revision
+ * adds fields specific to the load step (e.g. a checksum-validation
+ * toggle), convert this back to an interface that extends
+ * `ManifestPathOptions` and adds them.
+ */
+export type LoadManifestOptions = ManifestPathOptions;
 
 /**
  * Locate the manifest. Order:

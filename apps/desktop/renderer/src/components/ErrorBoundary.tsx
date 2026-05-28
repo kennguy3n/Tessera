@@ -39,7 +39,6 @@ export default class ErrorBoundary extends Component<Props, State> {
     // renderer just logs to its own console for now. Including the
     // component stack here is essential for diagnosing crashes from
     // user bug reports.
-    // eslint-disable-next-line no-console
     console.error("Tessera renderer error:", error, info.componentStack);
   }
 
