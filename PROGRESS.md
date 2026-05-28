@@ -498,7 +498,7 @@ Theme 5 — Remaining polish
 
 ## Phase 14 — KChat Desktop integration via `.kcz` extension + loopback API + deeplinks
 
-**Status:** `DONE` (Tasks 1–8 / PR #58 merged; Tasks 9–30 / this PR — docs + polish sweep)
+**Status:** `DONE` (Tasks 1–19 / PR #58 merged; Tasks 20–30 / this PR — docs + polish sweep)
 
 **Goal:** Replace Phase 13's socket-bridge integration with the correct
 architecture. Tessera and KChat Desktop are *two independent Electron

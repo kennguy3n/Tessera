@@ -217,8 +217,9 @@ describe("resolveDiffusionBinary", () => {
 
   // Parallel-safety meta-test: exercising the resolver with various
   // injected platforms must not mutate `process.platform`. This
-  // mirrors the meta-tests in `sidecar.test.ts`, `tokenVault.test.ts`,
-  // and `extensionSocketPath.test.ts` (PR #57).
+  // mirrors the meta-tests in `sidecar.test.ts` and `tokenVault.test.ts`
+  // (originating pattern landed in PR #57; the originating test file
+  // was removed in PR #58 along with the socket-bridge surface).
   it("does not mutate process.platform when called with various platforms", () => {
     const before = process.platform;
     const appPath = path.join(tmpRoot, "no-app");
