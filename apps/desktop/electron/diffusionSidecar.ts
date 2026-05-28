@@ -63,9 +63,23 @@ export interface DiffusionSidecarOptions {
    * multi-sidecar deployments emit separable log lines.
    */
   label: string;
+  /**
+   * Platform the sidecar should target for spawn-options shape
+   * (`detached`, POSIX-vs-Windows process-group signalling, the
+   * synchronous `exit` SIGKILL fallback). Defaults to
+   * `process.platform` so production code is unchanged; exposed as
+   * an option so tests can pin per-platform behaviour
+   * deterministically WITHOUT mutating `process.platform` via
+   * `Object.defineProperty` (the mutation pattern is safe under the
+   * default vitest worker model but breaks under `--pool=threads`
+   * with shared worker pools). Mirrors `SidecarOptions.platform`
+   * in `./sidecar.ts` so the two parallel sidecar implementations
+   * keep matching architectural shapes.
+   */
+  platform: NodeJS.Platform;
 }
 
-const DEFAULT_OPTIONS: DiffusionSidecarOptions = {
+const DEFAULT_OPTIONS: Omit<DiffusionSidecarOptions, "platform"> = {
   binaryPath: "sd-server",
   modelPath: "",
   port: 8386,
@@ -105,9 +119,13 @@ const STARTUP_GRACE_MS = 60_000;
  *      legitimate runtime-policy difference.
  *
  * The detached-spawn + `unref()` + synchronous `process.on("exit")`
- * SIGKILL fallback are duplicated VERBATIM from `ModelSidecar` so the
+ * SIGKILL fallback are duplicated from `ModelSidecar` so the
  * lifecycle-orphan guarantees the text sidecar gets (PR #18's
- * lifecycle regression tests) also apply here.
+ * lifecycle regression tests) also apply here. The same
+ * platform-injection pattern (`options.platform` defaulting to
+ * `process.platform` so tests can pin per-platform behaviour
+ * without mutating globals) is applied for parallel-safety parity
+ * with `ModelSidecar`.
  */
 export class DiffusionSidecar {
   private process: ChildProcess | null = null;
@@ -124,7 +142,29 @@ export class DiffusionSidecar {
   private crashCleanupHandler: (() => void) | null = null;
 
   constructor(options: Partial<DiffusionSidecarOptions> = {}) {
-    this.options = { ...DEFAULT_OPTIONS, ...options };
+    // platform is captured at construction time (not at module load)
+    // so tests can override it per-instance via the options bag
+    // without touching the real `process.platform` global. The
+    // production behaviour is unchanged: callers that omit
+    // `platform` get the live platform recorded at the moment the
+    // sidecar is constructed, which matches the lazy semantics of
+    // the prior `process.platform` reads inside `start()` / `stop()`
+    // (the sidecar is constructed once at app startup, so the
+    // construction-time snapshot is observationally identical to a
+    // per-call read).
+    //
+    // Nullish coalescing instead of `{ ...DEFAULT, platform:
+    // process.platform, ...options }`: because `options` is
+    // `Partial<DiffusionSidecarOptions>`, a caller passing
+    // `{ platform: undefined }` would otherwise win the spread and
+    // clobber the default to `undefined`. Defensive guard: explicit-
+    // undefined collapses to the live platform. Matches
+    // `ModelSidecar.constructor` in `./sidecar.ts`.
+    this.options = {
+      ...DEFAULT_OPTIONS,
+      ...options,
+      platform: options.platform ?? process.platform,
+    };
   }
 
   get isRunning(): boolean {
@@ -188,10 +228,14 @@ export class DiffusionSidecar {
     }
 
     const spawnOpts: SpawnOptions = {
-      env: buildSpawnEnv(this.options.binaryPath),
+      env: buildSpawnEnv(
+        this.options.binaryPath,
+        process.env,
+        this.options.platform,
+      ),
       // Detach on POSIX for process-group signalling (mirrors
       // ModelSidecar — same rationale).
-      detached: process.platform !== "win32",
+      detached: this.options.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     };
     this.process = spawn(this.options.binaryPath, this.buildSpawnArgs(), spawnOpts);
@@ -202,7 +246,7 @@ export class DiffusionSidecar {
     //   2. Synchronous process.on("exit") fallback that SIGKILLs the
     //      child's process group so the diffusion process doesn't
     //      survive the parent as an orphan holding port 8386.
-    if (process.platform !== "win32" && typeof this.process.pid === "number") {
+    if (this.options.platform !== "win32" && typeof this.process.pid === "number") {
       this.process.unref();
       const pid = this.process.pid;
       const handler = () => {
@@ -266,10 +310,16 @@ export class DiffusionSidecar {
     this.stopIdleMonitor();
 
     if (this.process) {
-      sendSignal(this.process, process.platform === "win32" ? "SIGKILL" : "SIGTERM");
+      sendSignal(
+        this.process,
+        this.options.platform === "win32" ? "SIGKILL" : "SIGTERM",
+        this.options.platform,
+      );
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
-          if (this.process) sendSignal(this.process, "SIGKILL");
+          if (this.process) {
+            sendSignal(this.process, "SIGKILL", this.options.platform);
+          }
           resolve();
         }, 5000);
         if (this.process) {
@@ -404,8 +454,12 @@ export class DiffusionSidecar {
  * doesn't have to chase symbols across modules. Total cost: ~20
  * lines duplicated.
  */
-function sendSignal(child: ChildProcess, signal: NodeJS.Signals): void {
-  if (process.platform === "win32") {
+function sendSignal(
+  child: ChildProcess,
+  signal: NodeJS.Signals,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (platform === "win32") {
     try {
       child.kill();
     } catch {
@@ -441,8 +495,9 @@ export function resolveDiffusionBinary(
   appPath: string,
   scriptDirname: string,
   resourcesPath?: string,
+  platform: NodeJS.Platform = process.platform,
 ): string {
-  const ext = process.platform === "win32" ? ".exe" : "";
+  const ext = platform === "win32" ? ".exe" : "";
   const binaryName = `sd-server${ext}`;
   // electron-builder copies sidecars/sd-server/ into
   // resourcesPath/sidecars/sd-server for packaged builds; dev builds

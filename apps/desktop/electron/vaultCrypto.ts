@@ -45,9 +45,20 @@ import {
  *
  * On macOS this would mean Keychain is locked or sandboxed away (very rare);
  * on Windows it would mean DPAPI is unavailable (also very rare).
+ *
+ * Accepts an optional `platform` parameter so tests can pin each
+ * branch deterministically WITHOUT mutating `process.platform` via
+ * `Object.defineProperty` (the mutation pattern is safe under the
+ * default vitest worker model but breaks under `--pool=threads`).
+ * Production callers omit the argument and read from
+ * `process.platform`. Per Devin Review PR #55 Finding 6 follow-up,
+ * carried through to the keyring helpers by the
+ * `tokenVault` / `sidecar` parallel-safety refactor.
  */
-export function keyringRecoveryInstructions(): string {
-  switch (process.platform) {
+export function keyringRecoveryInstructions(
+  platform: NodeJS.Platform = process.platform,
+): string {
+  switch (platform) {
     case "linux":
       return (
         "Install and start one of: gnome-keyring-daemon (GNOME / Ubuntu), " +
@@ -69,9 +80,14 @@ export function keyringRecoveryInstructions(): string {
  * the recovery imperative. Used internally by
  * `keyringUnavailableSentence()`; exported in case a caller wants to
  * render diagnosis + custom recovery hint separately.
+ *
+ * Accepts an optional `platform` parameter for the same injection
+ * reason documented on `keyringRecoveryInstructions()`.
  */
-export function keyringDiagnosis(): string {
-  switch (process.platform) {
+export function keyringDiagnosis(
+  platform: NodeJS.Platform = process.platform,
+): string {
+  switch (platform) {
     case "linux":
       return "Encryption not available — no OS keyring daemon detected.";
     case "darwin":
@@ -99,9 +115,16 @@ export function keyringDiagnosis(): string {
  * already establish the keyring is unavailable (e.g. Case 5) use
  * `keyringRecoveryInstructions()` directly to avoid restating the
  * diagnosis.
+ *
+ * Accepts an optional `platform` parameter for the same injection
+ * reason documented on `keyringRecoveryInstructions()`. Threaded
+ * through to both composed helpers so a test that pins one branch
+ * sees a consistent platform across diagnosis + recovery imperative.
  */
-export function keyringUnavailableSentence(): string {
-  return `${keyringDiagnosis()} ${keyringRecoveryInstructions()}`;
+export function keyringUnavailableSentence(
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return `${keyringDiagnosis(platform)} ${keyringRecoveryInstructions(platform)}`;
 }
 
 /**
@@ -161,9 +184,17 @@ export const PASSWORD_VAULT_RECOVERY_HINT =
  *      key unlocks the same encrypt/decrypt operations safeStorage
  *      would have done. If the user dismissed the prompt this session,
  *      restarting gives them another shot.
+ *
+ * Accepts an optional `platform` parameter for the same injection
+ * reason documented on `keyringRecoveryInstructions()`. Production
+ * callers (`encryptForVault`, `decryptFromVault` Case 3, plus
+ * `tokenVault.ts` re-export) omit the argument so the function
+ * reads from the real `process.platform`.
  */
-export function encryptionUnavailableReason(): string {
-  return `${keyringUnavailableSentence()} ${PASSWORD_VAULT_RECOVERY_HINT}`;
+export function encryptionUnavailableReason(
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return `${keyringUnavailableSentence(platform)} ${PASSWORD_VAULT_RECOVERY_HINT}`;
 }
 
 /**

@@ -140,4 +140,94 @@ describe("resolveDiffusionBinary", () => {
 
     expect(resolved).toBe(expected);
   });
+
+  // Cross-platform `.exe`-suffix tests. These pin the per-platform
+  // branch of the resolver via the injected `platform` argument —
+  // the same parallel-safe pattern landed for `ModelSidecar` /
+  // `DiffusionSidecar` / `buildSpawnEnv()` in this PR. Without these
+  // tests, the new `platform: NodeJS.Platform = process.platform`
+  // parameter is declared but only exercised through the live-
+  // platform default — a future regression that swapped the ternary
+  // (e.g., `platform === "linux" ? ".exe" : ""`) would only surface
+  // on Windows CI, defeating the point of the injection surface.
+  // Per Devin Review PR #59 pass 3 ANALYSIS_0003.
+  it("appends .exe to the binary name when platform is injected as win32", () => {
+    // No binaries exist on disk, so the resolver falls through to
+    // the bare-binary-name fallback. That bare name MUST reflect the
+    // injected platform's extension policy, not the host's.
+    const appPath = path.join(tmpRoot, "no-app");
+    const scriptsPath = path.join(tmpRoot, "no-scripts");
+
+    const resolved = resolveDiffusionBinary(
+      appPath,
+      scriptsPath,
+      undefined,
+      "win32",
+    );
+
+    expect(resolved).toBe("sd-server.exe");
+  });
+
+  it("omits .exe on POSIX platforms when platform is injected as linux", () => {
+    const appPath = path.join(tmpRoot, "no-app");
+    const scriptsPath = path.join(tmpRoot, "no-scripts");
+
+    const resolved = resolveDiffusionBinary(
+      appPath,
+      scriptsPath,
+      undefined,
+      "linux",
+    );
+
+    expect(resolved).toBe("sd-server");
+  });
+
+  it("omits .exe on POSIX platforms when platform is injected as darwin", () => {
+    const appPath = path.join(tmpRoot, "no-app");
+    const scriptsPath = path.join(tmpRoot, "no-scripts");
+
+    const resolved = resolveDiffusionBinary(
+      appPath,
+      scriptsPath,
+      undefined,
+      "darwin",
+    );
+
+    expect(resolved).toBe("sd-server");
+  });
+
+  // Regression: the no-platform-arg call must produce the same
+  // result as the explicit-platform call for the host's live
+  // `process.platform`. Without this lock the no-arg-default path
+  // could drift silently from the explicit path.
+  it("no-platform call matches the explicit-platform call for the live platform", () => {
+    const appPath = path.join(tmpRoot, "no-app");
+    const scriptsPath = path.join(tmpRoot, "no-scripts");
+
+    const noArg = resolveDiffusionBinary(appPath, scriptsPath, undefined);
+    const explicit = resolveDiffusionBinary(
+      appPath,
+      scriptsPath,
+      undefined,
+      process.platform,
+    );
+
+    expect(noArg).toBe(explicit);
+  });
+
+  // Parallel-safety meta-test: exercising the resolver with various
+  // injected platforms must not mutate `process.platform`. This
+  // mirrors the meta-tests in `sidecar.test.ts`, `tokenVault.test.ts`,
+  // and `extensionSocketPath.test.ts` (PR #57).
+  it("does not mutate process.platform when called with various platforms", () => {
+    const before = process.platform;
+    const appPath = path.join(tmpRoot, "no-app");
+    const scriptsPath = path.join(tmpRoot, "no-scripts");
+
+    for (const platform of ["linux", "darwin", "win32", "freebsd"] as const) {
+      resolveDiffusionBinary(appPath, scriptsPath, undefined, platform);
+    }
+
+    expect(process.platform).toBe(before);
+  });
 });
