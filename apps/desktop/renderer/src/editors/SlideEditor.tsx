@@ -16,30 +16,20 @@ import {
   setFrontmatterTheme,
   type ParsedSlideContent,
 } from "./slideEditorHelpers";
+import type {
+  MarpModeState,
+  Slide,
+  SlideBlockType,
+  SlideContent,
+} from "./slideEditorTypes";
 
-export type SlideBlockType = "text" | "bullets" | "diagram";
-
-export interface SlideBlock {
-  type: SlideBlockType;
-  content: string;
-}
-
-export interface Slide {
-  title: string;
-  blocks: SlideBlock[];
-  notes: string;
-}
-
-export interface MarpModeState {
-  enabled: boolean;
-  source: string;
-  theme?: string;
-}
-
-export interface SlideContent {
-  slides: Slide[];
-  marp?: MarpModeState;
-}
+export type {
+  SlideBlockType,
+  SlideBlock,
+  Slide,
+  MarpModeState,
+  SlideContent,
+} from "./slideEditorTypes";
 
 interface SlideEditorProps {
   content: string;

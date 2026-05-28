@@ -13,7 +13,7 @@
  * config — only the durable picks).
  */
 import { useMemo, useState } from "react";
-import type { BaseField } from "../BaseEditor";
+import type { BaseField } from "../baseEditorTypes";
 import type { BaseViewProps } from "./types";
 
 export default function GalleryView({

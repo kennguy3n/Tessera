@@ -4,11 +4,9 @@ import {
   parseCSVLines,
   parseSheetContent,
 } from "./sheetEditorHelpers";
+import type { SheetContent } from "./sheetEditorTypes";
 
-export interface SheetContent {
-  columns: string[];
-  rows: string[][];
-}
+export type { SheetContent } from "./sheetEditorTypes";
 
 interface SheetEditorProps {
   content: string;

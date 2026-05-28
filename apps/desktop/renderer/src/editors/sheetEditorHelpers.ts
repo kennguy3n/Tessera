@@ -1,12 +1,13 @@
 /**
  * Pure parsers / formula evaluator for `SheetEditor`. Extracted out
  * of the component file so React Fast Refresh can preserve editor
- * state across HMR edits. `import type` is used to break the
- * runtime cycle with the component file (the `SheetContent` type
- * is erased at compile time, so the cycle exists only at the type
- * level).
+ * state across HMR edits. Types are imported from `./sheetEditorTypes`
+ * (a dedicated type-only module), so there is no runtime cycle
+ * with the component file: both this helpers module and the
+ * component module independently consume types from the third file,
+ * breaking the would-be A↔B dependency edge.
  */
-import type { SheetContent } from "./SheetEditor";
+import type { SheetContent } from "./sheetEditorTypes";
 
 /** Parse CSV text respecting RFC 4180 quoted fields (handles commas inside quotes). */
 export function parseCSVLines(text: string): string[][] {

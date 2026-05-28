@@ -5,13 +5,15 @@
  *
  * Extracted out of `SlideEditor.tsx` so the component file's exports
  * are all components — required for React Fast Refresh to preserve
- * editor state across HMR edits. `import type` is used to break the
- * runtime cycle with the component file (the slide types are erased
- * at compile time, so the cycle exists only at the type level).
+ * editor state across HMR edits. Types are imported from
+ * `./slideEditorTypes` (a dedicated type-only module), so there is
+ * no runtime cycle with the component file: both this helpers module
+ * and the component module independently consume types from the
+ * third file, breaking the would-be A↔B dependency edge.
  */
 import type { MarpRenderOptions } from "../services/marpRenderer";
 import { yamlSingleQuote } from "../utils/yaml";
-import type { Slide, SlideContent } from "./SlideEditor";
+import type { Slide, SlideContent } from "./slideEditorTypes";
 
 export interface ParsedSlideContent {
   slides: Slide[];

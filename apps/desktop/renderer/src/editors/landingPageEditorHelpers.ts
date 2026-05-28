@@ -5,10 +5,12 @@
  *
  * Extracted out of `LandingPageEditor.tsx` so the component file's
  * exports are all components — required for React Fast Refresh to
- * preserve editor state across HMR edits. `import type` is used to
- * break the runtime cycle with the component file (the
- * `LandingPageContent` type is erased at compile time, so the
- * cycle exists only at the type level).
+ * preserve editor state across HMR edits. Types are imported from
+ * `./landingPageEditorTypes` (a dedicated type-only module), so
+ * there is no runtime cycle with the component file: both this
+ * helpers module and the component module independently consume
+ * types from the third file, breaking the would-be A↔B dependency
+ * edge.
  */
 import { embedIcons } from "../services/iconResolver";
 import { sanitizeCssColor } from "../utils/cssColor";
@@ -16,7 +18,7 @@ import { sanitizeIconSpec } from "../utils/iconSpec";
 import { sanitizeUrl } from "../utils/safeUrl";
 import { sanitizeHeroImage } from "../utils/heroImage";
 import { escapeHtml } from "../utils/htmlEscape";
-import type { LandingPageContent } from "./LandingPageEditor";
+import type { LandingPageContent } from "./landingPageEditorTypes";
 
 const DEFAULT_LANDING_PRIMARY = "#7C3AED";
 const DEFAULT_LANDING_SECONDARY = "#0EA5E9";

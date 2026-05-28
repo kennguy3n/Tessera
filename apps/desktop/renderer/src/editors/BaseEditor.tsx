@@ -10,20 +10,9 @@ import {
   type BaseViewProps,
 } from "./baseviews/types";
 import { parseBaseContent } from "./baseEditorHelpers";
+import type { BaseField, BaseContent, FieldType } from "./baseEditorTypes";
 
-export type FieldType = "text" | "number" | "date" | "select" | "checkbox" | "url";
-
-export interface BaseField {
-  name: string;
-  type: FieldType;
-  options?: string[]; // for select type
-}
-
-export interface BaseContent {
-  fields: BaseField[];
-  records: Record<string, unknown>[];
-}
-
+export type { FieldType, BaseField, BaseContent } from "./baseEditorTypes";
 export type { BaseViewConfig, BaseViewKind } from "./baseviews/types";
 
 interface BaseEditorProps {

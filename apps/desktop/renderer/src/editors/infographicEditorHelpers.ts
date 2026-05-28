@@ -5,10 +5,12 @@
  *
  * Extracted out of `InfographicEditor.tsx` so the component file's
  * exports are all components — required for React Fast Refresh to
- * preserve editor state across HMR edits. `import type` is used to
- * break the runtime cycle with the component file (the
- * `InfographicContent` / `InfographicLayout` types are erased at
- * compile time, so the cycle exists only at the type level).
+ * preserve editor state across HMR edits. Types are imported from
+ * `./infographicEditorTypes` (a dedicated type-only module), so
+ * there is no runtime cycle with the component file: both this
+ * helpers module and the component module independently consume
+ * types from the third file, breaking the would-be A↔B dependency
+ * edge.
  */
 import { embedIcons } from "../services/iconResolver";
 import { sanitizeCssColor } from "../utils/cssColor";
@@ -18,7 +20,7 @@ import { escapeHtml } from "../utils/htmlEscape";
 import type {
   InfographicContent,
   InfographicLayout,
-} from "./InfographicEditor";
+} from "./infographicEditorTypes";
 
 const LAYOUT_ALLOWLIST: readonly InfographicLayout[] = [
   "vertical",

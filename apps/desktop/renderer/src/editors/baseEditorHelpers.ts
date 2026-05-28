@@ -3,11 +3,13 @@
  *
  * Extracted out of `BaseEditor.tsx` so the component file's exports
  * are all components — required for React Fast Refresh to preserve
- * editor state across HMR edits. `import type` is used to break the
- * runtime cycle with the component file (types are erased at
- * compile time, so the cycle exists only at the type level).
+ * editor state across HMR edits. Types are imported from
+ * `./baseEditorTypes` (a dedicated type-only module), so there is no
+ * runtime cycle with the component file: both this helpers module
+ * and the component module independently consume types from the
+ * third file, breaking the would-be A↔B dependency edge.
  */
-import type { BaseContent } from "./BaseEditor";
+import type { BaseContent } from "./baseEditorTypes";
 
 /**
  * Decode the artifact's serialized JSON body into the in-memory
