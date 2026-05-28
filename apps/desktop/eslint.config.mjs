@@ -7,10 +7,15 @@
  *
  * Composition (top to bottom, later configs override earlier ones for
  * matching files):
- *   1. `js.configs.recommended`              — ESLint core recommended ruleset
- *   2. `tseslint.configs.recommended`        — typescript-eslint v8 baseline (parser + rules)
- *   3. `reactHooks.configs.recommended-latest` — React hooks rules-of-hooks + exhaustive-deps
- *   4. Project-specific overrides           — react-refresh + no-unused-vars convention
+ *   1. `js.configs.recommended`                — ESLint core recommended ruleset
+ *   2. `tseslint.configs.recommended`          — typescript-eslint v8 baseline (parser + rules)
+ *   3. `reactHooks.configs["recommended-latest"]` — React hooks rules-of-hooks + exhaustive-deps
+ *      (as a standalone config entry, not a `.rules` spread, so plugin
+ *      registration and any future preset fields are picked up automatically)
+ *   4. Project-specific overrides              — react-refresh + no-unused-vars convention,
+ *      applied to every .ts/.tsx file in the workspace (modulo `ignores`),
+ *      so any future TS root inherits the conventions without needing a
+ *      config change. See the inline comment on the `files` array below.
  *
  * The `typescript-eslint` package re-exports both the parser and plugin under
  * a single helper namespace (`tseslint.configs.*`, `tseslint.config(...)`) so
@@ -57,18 +62,29 @@ export default tseslint.config(
   // add ~10x to lint runtime and would be better introduced as a separate
   // tech-debt PR once the migration is stable.
   ...tseslint.configs.recommended,
+  // react-hooks v5 flat-config — applied as a standalone config entry rather
+  // than spreading only `.rules` into our override block. The standalone form
+  // is the canonical pattern: it picks up the plugin registration AND any
+  // future fields the preset may add (e.g. `languageOptions`, `settings`) so
+  // we don't silently drop hooks-lint coverage on a plugin upgrade. The
+  // `rules-of-hooks` and `exhaustive-deps` rules don't fire on non-React code,
+  // so applying globally is safe.
+  reactHooks.configs["recommended-latest"],
   {
-    // Apply lint rules only to product TS/TSX files in the three roots
-    // (renderer source, electron main process, shared types). The original
-    // lint script in `package.json` enumerated these as CLI globs; moving
-    // them into `files` here lets `eslint .` find everything correctly
-    // and centralises the file scope so future scope changes touch this
-    // file rather than `package.json`.
-    files: [
-      "renderer/src/**/*.{ts,tsx}",
-      "electron/**/*.ts",
-      "shared/**/*.ts",
-    ],
+    // Project-specific overrides. Applied to ALL TS/TSX files (not just the
+    // three product roots in `renderer/src/`, `electron/`, `shared/`) so the
+    // project's underscore-prefix `no-unused-vars` convention and the
+    // `react-refresh/only-export-components` rule cover any new TS directory
+    // a future contributor adds — e.g. a top-level `scripts/`, `tools/`, or
+    // `tests-e2e/` folder. The build-artifact / generated-config exclusions
+    // are handled by the `ignores` block above; everything else under the
+    // workspace that we author should follow these conventions.
+    //
+    // Devin Review on PR #67 (`ANALYSIS_pr-review-job-...0001`) flagged the
+    // earlier three-root `files` array as a footgun: any future TS file added
+    // outside those roots would silently lose the project conventions and
+    // pick up only the typescript-eslint v8 baseline.
+    files: ["**/*.{ts,tsx}"],
     languageOptions: {
       ecmaVersion: 2020,
       sourceType: "module",
@@ -82,15 +98,15 @@ export default tseslint.config(
       },
     },
     plugins: {
-      // The react-hooks v5 plugin's flat-config export is the
-      // `recommended-latest` config; we apply it via the spread below.
-      // Keeping the plugin registered here in case future overrides need to
-      // address individual hook rules by name.
-      "react-hooks": reactHooks,
+      // `react-hooks` is already registered by the standalone
+      // `recommended-latest` config block above. `react-refresh` is the only
+      // plugin that needs to be wired up by this override block (the v0.4.x
+      // line of `eslint-plugin-react-refresh` doesn't export a flat-config
+      // preset, so the plugin is registered and the rule configured manually
+      // here).
       "react-refresh": reactRefresh,
     },
     rules: {
-      ...reactHooks.configs["recommended-latest"].rules,
       "react-refresh/only-export-components": [
         "warn",
         { allowConstantExport: true },
