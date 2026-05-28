@@ -6,7 +6,7 @@
  * so the underlying JSON shape is identical regardless of which view
  * the user is currently looking at.
  */
-import type { BaseContent, BaseField, FieldType } from "../BaseEditor";
+import type { BaseContent, BaseField, FieldType } from "../baseEditorTypes";
 
 export type BaseViewKind =
   | "grid"

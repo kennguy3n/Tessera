@@ -15,20 +15,6 @@ import {
 } from "../utils/sourceLabels";
 import type { ExtractedItem } from "../types/ipc";
 
-// Phase 13 Theme 2 (Task 11 review-pass fix, ANALYSIS_0005 on
-// f7c8dd1): re-export the helpers so existing imports that
-// referenced them via this module (notably the unit test at
-// `__tests__/sourceDetailKchatBackfill.test.tsx`) keep working
-// without churn while the canonical home moves to
-// `utils/sourceLabels.ts`. Direct consumers (e.g. `SourcesPage`)
-// import from the utils module directly so they don't pick up the
-// detail-page component tree.
-export {
-  extractKchatChannelIdFromSource,
-  formatSourceTypeLabel,
-  sourceTypeIcon,
-};
-
 export default function SourceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();

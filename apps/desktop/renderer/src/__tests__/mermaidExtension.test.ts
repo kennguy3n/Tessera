@@ -3,7 +3,8 @@ import { Editor } from "@tiptap/core";
 import Document from "@tiptap/extension-document";
 import Paragraph from "@tiptap/extension-paragraph";
 import Text from "@tiptap/extension-text";
-import { MermaidNode, __testing } from "../editors/extensions/MermaidExtension";
+import { MermaidNode } from "../editors/extensions/MermaidExtension";
+import { __testing } from "../editors/extensions/mermaidExtensionInternals";
 
 beforeAll(() => {
   // jsdom doesn't have DOMRect; mermaid is not invoked in these structural

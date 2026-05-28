@@ -1,35 +1,13 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-
-export type ToastType = "success" | "error" | "info";
-
-export interface Toast {
-  id: number;
-  message: string;
-  type: ToastType;
-}
-
-interface ToastContextValue {
-  addToast: (message: string, type?: ToastType) => void;
-  dismissToast: (id: number) => void;
-}
-
-const ToastContext = createContext<ToastContextValue>({
-  addToast: () => {},
-  dismissToast: () => {},
-});
-
-export function useToast(): ToastContextValue {
-  return useContext(ToastContext);
-}
+import { ToastContext } from "./toastContext";
+import type { Toast as ToastShape, ToastType } from "./toastContext";
 
 let toastCounter = 0;
 
@@ -44,7 +22,7 @@ const AUTO_DISMISS_MS: Record<ToastType, number> = {
 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [toasts, setToasts] = useState<ToastShape[]>([]);
   // Track timers so a manual dismiss cancels the pending auto-dismiss
   // and removing a toast doesn't leave a leaking setTimeout behind.
   const timersRef = useRef(new Map<number, ReturnType<typeof setTimeout>>());

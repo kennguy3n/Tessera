@@ -31,7 +31,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getStoredDefaultTeamId,
   isExtensionDetected,
-} from "./KchatSettingsCard";
+} from "./kchatSettingsHelpers";
 import type {
   KchatChannelView,
   KchatConnectionStateView,
@@ -49,8 +49,24 @@ import type {
  */
 const MAX_SIDEBAR_CHANNELS = 10;
 
-/** Cadence at which the bridge-health dot rechecks. */
-const BRIDGE_STATUS_POLL_MS = 15_000;
+/**
+ * Cadence at which the sidebar's bridge-health dot rechecks.
+ *
+ * Intentionally distinct from `BRIDGE_STATUS_POLL_MS` in
+ * `kchatSettingsHelpers.ts` (10 s): the Settings card is the
+ * primary configuration surface and polls more aggressively
+ * so the Connect/Disconnect affordance reacts quickly to bridge
+ * state changes the user just induced. The sidebar dot is a
+ * passive status indicator on an always-mounted surface — the
+ * relaxed 15 s cadence reduces background HTTP-call volume by
+ * a third without measurably degrading perceived freshness for
+ * what amounts to a single coloured dot. This constant lives
+ * locally (renamed from the colliding `BRIDGE_STATUS_POLL_MS`)
+ * specifically so a future maintainer reading
+ * `kchatSettingsHelpers.ts`'s export does not assume the
+ * sidebar shares that cadence.
+ */
+const SIDEBAR_BRIDGE_DOT_POLL_MS = 15_000;
 
 /**
  * Reconciliation poll cadence in milliseconds.
@@ -504,7 +520,7 @@ export default function KchatSidebarSection({ api }: KchatSidebarSectionProps = 
       }
     };
     void pull();
-    const handle = window.setInterval(pull, BRIDGE_STATUS_POLL_MS);
+    const handle = window.setInterval(pull, SIDEBAR_BRIDGE_DOT_POLL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(handle);

@@ -9,11 +9,12 @@ import {
 } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import ComparisonResultModal, {
+import ComparisonResultModal from "../components/ComparisonResultModal";
+import {
   downloadMarkdown,
   formatSimilarity,
   sanitizeForFilename,
-} from "../components/ComparisonResultModal";
+} from "../components/comparisonResultModalHelpers";
 import type { CompareSourcesResult } from "../types/ipc";
 
 // jsdom (the renderer test env) does NOT ship the URL.createObjectURL

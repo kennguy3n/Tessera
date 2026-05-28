@@ -6,10 +6,11 @@ import {
   act,
   waitFor,
 } from "@testing-library/react";
-import LandingPageEditor, {
+import LandingPageEditor from "../editors/LandingPageEditor";
+import {
   buildLandingPreviewHtml,
   parseLandingPageContent,
-} from "../editors/LandingPageEditor";
+} from "../editors/landingPageEditorHelpers";
 
 describe("parseLandingPageContent", () => {
   it("returns default content for empty input", () => {

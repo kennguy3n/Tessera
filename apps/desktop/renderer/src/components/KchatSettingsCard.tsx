@@ -30,70 +30,24 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import Card from "./Card";
 import Button from "./Button";
-import { useToast } from "./Toast";
+import { useToast } from "./toastContext";
 import type {
   KchatConnectionStateView,
   KchatDesktopBridgeStatusView,
   KchatTeamView,
 } from "../../../shared/types";
+import {
+  BRIDGE_STATUS_POLL_MS,
+  getStoredDefaultTeamId,
+  isExtensionDetected,
+  setStoredDefaultTeamId,
+} from "./kchatSettingsHelpers";
 
 const DEFAULT_SERVER = "https://kchat.com";
-const TEAM_LS_KEY = "tessera.kchat.defaultTeamId";
-
-/**
- * A heartbeat older than this is treated as "extension no longer
- * connected" — the .kcz extension is expected to make at least
- * one status call per minute when it's loaded inside a running
- * KChat Desktop.
- */
-const EXTENSION_HEARTBEAT_STALE_MS = 90_000;
-
-/** Cadence at which the renderer re-reads the bridge status. */
-const BRIDGE_STATUS_POLL_MS = 10_000;
 
 interface KchatSettingsCardProps {
   /** Optional override for `window.tessera.kchat` (used by tests). */
   api?: typeof window.tessera.kchat;
-}
-
-export function getStoredDefaultTeamId(): string | null {
-  try {
-    return window.localStorage.getItem(TEAM_LS_KEY);
-  } catch {
-    return null;
-  }
-}
-
-export function setStoredDefaultTeamId(id: string | null): void {
-  try {
-    if (id === null) {
-      window.localStorage.removeItem(TEAM_LS_KEY);
-    } else {
-      window.localStorage.setItem(TEAM_LS_KEY, id);
-    }
-  } catch {
-    /* localStorage disabled — silently no-op; the renderer can
-     * still operate, the next session just loses the default. */
-  }
-}
-
-/**
- * Treat the bridge status as "extension-detected" only when the
- * local API server is up AND the extension has been heard from
- * recently. Local API server up alone isn't sufficient: a
- * running Tessera with no .kcz installed in KChat Desktop also
- * exposes the server but the heartbeat never arrives.
- */
-export function isExtensionDetected(
-  status: KchatDesktopBridgeStatusView | null,
-  nowMs: number,
-): boolean {
-  if (status === null) return false;
-  if (!status.apiServerRunning) return false;
-  if (status.lastExtensionContactAt === null) return false;
-  const heartbeatMs = Date.parse(status.lastExtensionContactAt);
-  if (Number.isNaN(heartbeatMs)) return false;
-  return nowMs - heartbeatMs < EXTENSION_HEARTBEAT_STALE_MS;
 }
 
 export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) {

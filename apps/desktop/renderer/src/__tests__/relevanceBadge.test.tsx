@@ -1,8 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import RelevanceBadge, {
-  classifyRelevance,
-} from "../components/RelevanceBadge";
+import RelevanceBadge from "../components/RelevanceBadge";
+import { classifyRelevance } from "../components/relevanceBadgeHelpers";
 
 describe("classifyRelevance", () => {
   it("returns 'high' for scores >= 0.7", () => {

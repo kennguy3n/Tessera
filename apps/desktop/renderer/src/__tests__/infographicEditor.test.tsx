@@ -6,10 +6,11 @@ import {
   act,
   waitFor,
 } from "@testing-library/react";
-import InfographicEditor, {
+import InfographicEditor from "../editors/InfographicEditor";
+import {
   buildPreviewHtml,
   parseInfographicContent,
-} from "../editors/InfographicEditor";
+} from "../editors/infographicEditorHelpers";
 
 describe("parseInfographicContent", () => {
   it("returns default content for empty input", () => {

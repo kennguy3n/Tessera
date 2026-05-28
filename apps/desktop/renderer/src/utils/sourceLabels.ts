@@ -8,15 +8,19 @@
  *
  * Phase 13 Theme 2 (Task 11 review-pass fix, ANALYSIS_0005 on
  * f7c8dd1): the helpers below used to live in `SourceDetailPage.tsx`
- * and `SourcesPage.tsx` imported them with
- *   `import { formatSourceTypeLabel } from "./SourceDetailPage";`
+ * and `SourcesPage.tsx` imported them via `./SourceDetailPage`,
  * which (a) implicitly pulled the SourceDetailPage React component
  * tree into SourcesPage's module graph and (b) made the list page
  * structurally dependent on the detail page even though the two
  * surfaces are siblings. Extracting to `utils/sourceLabels.ts`
  * removes the cross-page coupling, makes the helpers trivially
  * unit-testable, and matches the pattern already used by
- * `utils/safeUrl.ts`, `utils/cssColor.ts`, etc.
+ * `utils/safeUrl.ts`, `utils/cssColor.ts`, etc. The post-merge
+ * backwards-compat re-export from `SourceDetailPage.tsx` was
+ * removed in PR #66 (tech-debt PR 2 of 3) when the last in-tree
+ * consumer (the unit test at
+ * `__tests__/sourceDetailKchatBackfill.test.tsx`) was switched to
+ * import this module directly.
  *
  * Both functions are pure: same input → same output, no side
  * effects, no dependencies on React or any IPC layer. Keep them

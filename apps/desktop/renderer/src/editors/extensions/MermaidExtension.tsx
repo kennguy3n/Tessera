@@ -21,6 +21,10 @@ import {
   MermaidEnvironmentError,
   detectDiagramType,
 } from "../../services/mermaidRenderer";
+import {
+  DEBOUNCE_MS,
+  DEFAULT_DSL,
+} from "./mermaidExtensionInternals";
 
 export interface MermaidNodeAttrs {
   dsl: string;
@@ -34,11 +38,6 @@ declare module "@tiptap/core" {
     };
   }
 }
-
-const DEFAULT_DSL = `flowchart TD
-  A[Start] --> B{Decision?}
-  B -- Yes --> C[OK]
-  B -- No  --> D[Stop]`;
 
 export const MermaidNode = Node.create({
   name: "mermaid",
@@ -101,8 +100,6 @@ export const MermaidNode = Node.create({
     };
   },
 });
-
-const DEBOUNCE_MS = 250;
 
 function MermaidNodeView({ node, updateAttributes, editor }: NodeViewProps) {
   const attrs = node.attrs as MermaidNodeAttrs;
@@ -198,7 +195,3 @@ function MermaidNodeView({ node, updateAttributes, editor }: NodeViewProps) {
   );
 }
 
-export const __testing = {
-  DEFAULT_DSL,
-  DEBOUNCE_MS,
-};

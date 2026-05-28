@@ -21,11 +21,12 @@ import {
   fireEvent,
   waitFor,
 } from "@testing-library/react";
-import KchatSettingsCard, {
+import KchatSettingsCard from "../components/KchatSettingsCard";
+import {
   getStoredDefaultTeamId,
   isExtensionDetected,
   setStoredDefaultTeamId,
-} from "../components/KchatSettingsCard";
+} from "../components/kchatSettingsHelpers";
 import { ToastProvider } from "../components/Toast";
 
 function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
