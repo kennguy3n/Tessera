@@ -131,7 +131,22 @@ export interface ShareArtifactResponse {
  *                              DNS-rebinding defence). RFC 9110
  *                              §15.5.4.
  *   - `invalid_request`     → 400. The request payload, headers, or
- *                              URL is malformed.
+ *                              URL is malformed (e.g. wrong
+ *                              Content-Type, empty body, schema
+ *                              failure). Distinct from
+ *                              `payload_too_large` — `invalid_request`
+ *                              describes a malformed body that *fit*
+ *                              in the size budget, while
+ *                              `payload_too_large` describes a body
+ *                              that exceeded the size budget *before*
+ *                              we could parse it.
+ *   - `payload_too_large`   → 413. The request body exceeded
+ *                              `MAX_BODY_BYTES` (64 KiB). RFC 9110
+ *                              §15.5.14. The .kcz extension should
+ *                              treat this as terminal — chunking the
+ *                              request would not help because the
+ *                              server has already torn down the read
+ *                              stream by the time the 413 lands.
  *   - `not_found`           → 404. The route does not exist or the
  *                              referenced resource is unknown.
  *   - `rate_limited`        → 429. (Reserved; not currently emitted.)
@@ -145,11 +160,23 @@ export interface ShareArtifactResponse {
  * load-bearing: the .kcz extension may legitimately treat a 401 as
  * "my token is stale, refresh the port file" but must treat a 403
  * as "the host rejected this request on policy grounds; do not retry".
+ *
+ * The split between `invalid_request` (400) and `payload_too_large`
+ * (413) is similarly load-bearing per Phase 14 Round 10 Devin Review
+ * ANALYSIS_0002: every code maps to exactly one HTTP status so the
+ * mapping in this jsdoc, the `TesseraLocalApiError` mirror in
+ * `extensions/tessera-kchat/src/types.ts`, and the actual `throw`
+ * sites all agree. A 413 paired with `invalid_request` (the previous
+ * shape) was a contract bug — extensions branching on `code` saw a
+ * payload-size failure indistinguishable from a malformed-body
+ * failure, which would have misled retry logic the moment any caller
+ * tried to use the code to decide whether to chunk a request.
  */
 export type LocalApiErrorCode =
   | "unauthorized"
   | "forbidden"
   | "invalid_request"
+  | "payload_too_large"
   | "not_found"
   | "rate_limited"
   | "internal_error"
@@ -584,9 +611,14 @@ async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
         : Buffer.from(chunk as Uint8Array);
     total += buf.length;
     if (total > MAX_BODY_BYTES) {
+      // Phase 14 Round 10 Devin Review ANALYSIS_0002: the code paired
+      // with the 413 status is `payload_too_large`, not
+      // `invalid_request`. See the `LocalApiErrorCode` jsdoc above
+      // for the canonical code↔status mapping and why this matters
+      // for the .kcz extension's retry logic.
       throw new LocalApiError(
         413,
-        "invalid_request",
+        "payload_too_large",
         "request body exceeds 64 KiB",
       );
     }

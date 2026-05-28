@@ -605,6 +605,15 @@ describe("KchatLocalApiServer — route surface", () => {
       body: huge,
     });
     expect(res.status).toBe(413);
+    // Phase 14 Round 10 Devin Review ANALYSIS_0002: the 413 must
+    // pair with `payload_too_large` (not `invalid_request`). The
+    // canonical code↔status mapping in `LocalApiErrorCode` requires
+    // exactly one code per HTTP status; an extension branching on
+    // `code` would otherwise mistake an oversized-body failure for a
+    // malformed-body failure and apply the wrong retry policy.
+    const body = (await res.json()) as { code: string; error: string };
+    expect(body.code).toBe("payload_too_large");
+    expect(body.error).toMatch(/64\s*KiB/);
   });
 
   it("forwards a LocalApiError thrown from a handler", async () => {

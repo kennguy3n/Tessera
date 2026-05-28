@@ -98,7 +98,17 @@ export interface ShareArtifactResponse {
  *                              A 401/`unauthorized`, in contrast, is
  *                              a "refresh the port file and retry"
  *                              signal.
- *   - `invalid_request`     → 400. Malformed payload, headers, URL.
+ *   - `invalid_request`     → 400. Malformed payload, headers, URL
+ *                              (e.g. wrong Content-Type, empty body,
+ *                              schema failure). The body fit in the
+ *                              size budget; what's inside is the
+ *                              problem.
+ *   - `payload_too_large`   → 413. The request body exceeded the
+ *                              server's `MAX_BODY_BYTES` (64 KiB).
+ *                              Treat as terminal — chunking the
+ *                              request will not help, because the
+ *                              server has already torn down the read
+ *                              stream by the time the 413 lands.
  *   - `not_found`           → 404. Unknown route or resource.
  *   - `rate_limited`        → 429. (Reserved; not currently emitted.)
  *   - `internal_error`      → 500. Uncaught handler exception.
@@ -111,6 +121,7 @@ export interface TesseraLocalApiError {
     | "unauthorized"
     | "forbidden"
     | "invalid_request"
+    | "payload_too_large"
     | "not_found"
     | "rate_limited"
     | "internal_error"
