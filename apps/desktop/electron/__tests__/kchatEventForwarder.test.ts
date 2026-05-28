@@ -1475,8 +1475,31 @@ describe("KchatEventForwarder", () => {
           seq: 10,
         }),
       );
+      // Wait on the LAST audit call the handler emits
+      // (`bridgeLogKchatSourceCryptoshredded`), not the first
+      // bridge call (`bridgeRevokeKchatSource`).
+      //
+      // Why this matters: `handleChannelGoneEvent` runs as
+      //   1. (inside `withChannelSyncLock`)
+      //      a. `bridgeRevokeKchatSource(cacheDir)` (sync,
+      //         records call here).
+      //      b. `await secureDeleteChannelArtifacts(cacheDir)`
+      //         (async, hits the libuv thread pool).
+      //   2. `safeAuditAccessRevoked(...)` → `bridgeLogKchatChannelAccessRevoked`.
+      //   3. `safeAuditSourceCryptoshredded(...)` → `bridgeLogKchatSourceCryptoshredded`.
+      //
+      // Polling on step 1a returns as soon as the bridge call
+      // lands, BEFORE step 1b's `fs.rm` resolves. Under
+      // cross-suite parallel load (vitest `--pool=threads` with
+      // shared worker contention) the libuv pool can be slow
+      // enough that the subsequent `bridgeLogKchatChannelAccessRevoked`
+      // assertion fires before step 2 runs, producing a
+      // flake. Polling on step 3 (the final audit emission)
+      // guarantees the whole handler has run.
       await waitForCondition(
-        () => bridgeMock!.bridgeRevokeKchatSource.mock.calls.length > 0,
+        () =>
+          bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls
+            .length > 0,
       );
 
       expect(bridgeMock!.bridgeRevokeKchatSource).toHaveBeenCalledTimes(1);
@@ -2161,6 +2184,128 @@ describe("KchatEventForwarder", () => {
       "",
       "no_post",
       0,
+    );
+    fwd.dispose();
+  });
+
+  /**
+   * `getCacheDir` injection contract tests.
+   *
+   * The forwarder accepts an optional `getCacheDir: (channelId)
+   * => string` so tests can route the on-disk paths
+   * (`bridgeIsKchatChannelLinked`, `bridgeRevokeKchatSource`,
+   * `secureDeleteChannelArtifacts`, etc.) to any path they
+   * want. Production uses the default which resolves to
+   * `~/.tessera/kchat-channels/<channelId>/` via
+   * `kchatChannelCacheDir` (the canonical path-helper shared
+   * with the IPC handler).
+   *
+   * Same architectural pattern as PR #57
+   * (`ExtensionSocketDiscovery`), PR #59 (`vaultCrypto` /
+   * `sidecar` platform injection), PR #61 (`ssrfGuard`
+   * `allowInternal` / `readEnv`), and PR #63 (`modelManagement`
+   * `manifestPath` / `readEnv`). The seam exists primarily so
+   * a future test that wants full filesystem isolation can
+   * pass an isolated tmpdir without relying on the file-level
+   * `os.homedir` mock at the top of this test file.
+   */
+  it("threads getCacheDir into bridgeRevokeKchatSource on channel_archived", async () => {
+    const customCacheRoot = nodeFs.mkdtempSync(
+      nodePath.join(nodeOs.tmpdir(), "tessera-fwd-cachedir-inject-"),
+    );
+    const seenChannelIds: string[] = [];
+    const customGetCacheDir = (channelId: string): string => {
+      seenChannelIds.push(channelId);
+      // Return a per-channel subdir of an isolated tmpdir.
+      // `fs.rm({ force: true, recursive: true })` on a
+      // non-existent path resolves immediately so this is
+      // cheaper than letting `secureDeleteChannelArtifacts`
+      // touch the default `os.homedir()`-rooted path.
+      return nodePath.join(customCacheRoot, "kchat-channels", channelId);
+    };
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+      getCacheDir: customGetCacheDir,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "channel_archived",
+        data: {},
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-injected",
+          team_id: "team-1",
+          user_id: "principal",
+        },
+        seq: 200,
+      }),
+    );
+    await waitForCondition(
+      () =>
+        bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length >
+        0,
+    );
+
+    expect(seenChannelIds).toContain("chan-injected");
+    const [cacheDir] =
+      bridgeMock!.bridgeRevokeKchatSource.mock.calls[0];
+    expect(cacheDir).toBe(
+      nodePath.join(customCacheRoot, "kchat-channels", "chan-injected"),
+    );
+    // Cleanup so we don't leave the tmpdir around after the test.
+    nodeFs.rmSync(customCacheRoot, { recursive: true, force: true });
+    fwd.dispose();
+  });
+
+  it("defaults getCacheDir to kchatChannelCacheDir (os.homedir-rooted)", async () => {
+    // No `getCacheDir` injected — verifies the production
+    // default resolves through the canonical helper. We assert
+    // structural shape rather than the exact path because the
+    // file-level `os.homedir` mock at the top of this test
+    // file points homedir at `TEST_HOME`, so the path is
+    // `TEST_HOME/.tessera/kchat-channels/<channelId>/`. Future
+    // refactors that change the default would surface here.
+    const w1 = new FakeWindow();
+    const fwd = new KchatEventForwarder({
+      listWindows: () => [w1] as unknown as Electron.BrowserWindow[],
+      getBridge: () => bridgeMock,
+    });
+    const client = new FakeClient();
+    fwd.start(client as unknown as KchatClient);
+
+    client.triggerWsEvent(
+      makeRawEvent({
+        event: "channel_archived",
+        data: {},
+        broadcast: {
+          omit_users: {},
+          channel_id: "chan-default-cachedir",
+          team_id: "team-1",
+          user_id: "principal",
+        },
+        seq: 201,
+      }),
+    );
+    await waitForCondition(
+      () =>
+        bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length >
+        0,
+    );
+
+    const [cacheDir] =
+      bridgeMock!.bridgeRevokeKchatSource.mock.calls[0];
+    expect(cacheDir).toBe(
+      nodePath.join(
+        TEST_HOME,
+        ".tessera",
+        "kchat-channels",
+        "chan-default-cachedir",
+      ),
     );
     fwd.dispose();
   });
