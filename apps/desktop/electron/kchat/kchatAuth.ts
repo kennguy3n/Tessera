@@ -116,10 +116,10 @@ export class KchatAuthService {
   /**
    * Restore the persisted PAT connection on app start.
    *
-   * On `verifyConnection()` failure, the in-memory token and
-   * serverUrl that were just pushed into the client are rolled
-   * back so the client's view matches the auth-service view
-   * (`authMode === "none"`, no live PAT). This mirrors the
+   * On `verifyConnection()` failure, the in-memory **token** that
+   * was just pushed into the client is rolled back via
+   * `setToken(null)` so the client's view matches the auth-service
+   * view (`authMode === "none"`, no live PAT). This mirrors the
    * symmetric cleanup in `connect()` and prevents a stale token
    * from lingering on the client across a failed restore — even
    * though the practical fallout is small (the health check is
@@ -128,6 +128,20 @@ export class KchatAuthService {
    * inspecting `client.getToken()` between a failed restore and
    * the next connect would see a token that no auth code thinks
    * is valid. Per Phase 14 Round 7 Devin Review ANALYSIS_0002.
+   *
+   * **Why the serverUrl is NOT rolled back.** `setServerUrl()`
+   * cannot accept an empty string — `KchatClient.setServerUrl()`
+   * falls back to `DEFAULT_KCHAT_SERVER` (`https://kchat.com`) on
+   * empty input, which would silently re-point the client at the
+   * hosted server. We also don't capture the prior `serverUrl`
+   * before overwriting it, so we have nothing meaningful to
+   * restore to. The stale `serverUrl` is harmless in practice
+   * because `KchatClient.request()` has a token-presence guard
+   * (it refuses to make any outbound request when the token is
+   * null), so no traffic can be sent to the stale URL between a
+   * failed restore and the next `connect()`/`restoreFromVault()`
+   * — both of which overwrite the URL again before any request
+   * is made. Per Phase 14 Round 9 Devin Review BUG_0001.
    *
    * Note: the vault entry is intentionally NOT deleted on failure
    * — a failed restore (e.g. transient network blip on startup)
@@ -169,6 +183,16 @@ export class KchatAuthService {
       // client's view matches the auth-service view. `authMode`
       // is already "none" here (we never advanced it), so no
       // status push needs to be emitted.
+      //
+      // NOTE: the `serverUrl` we pushed at line 161 is NOT rolled
+      // back here. See the docstring above for the full rationale
+      // — `setServerUrl("")` would silently fall back to the
+      // `DEFAULT_KCHAT_SERVER` constant rather than clearing the
+      // URL, which would be a worse failure mode than leaving the
+      // stale value, and the token-presence guard in
+      // `KchatClient.request()` prevents any outbound traffic to
+      // the stale URL anyway. Per Phase 14 Round 9 Devin Review
+      // BUG_0001.
       this.client.setToken(null);
       throw err;
     }
@@ -226,6 +250,16 @@ export class KchatAuthService {
       // cleared here — a failed re-connect should not wipe the
       // previously-good stored credential; the user can re-run
       // `restoreFromVault()` to recover the prior session.
+      //
+      // NOTE: the `serverUrl` pushed at line 204 is NOT rolled back
+      // here, mirroring the policy in `restoreFromVault()`.
+      // `setServerUrl("")` would silently fall back to
+      // `DEFAULT_KCHAT_SERVER` rather than clearing the URL — a
+      // worse failure mode than the stale value — and the
+      // token-presence guard in `KchatClient.request()` prevents
+      // any outbound traffic to the stale URL until the next
+      // successful `connect()`/`restoreFromVault()` overwrites it.
+      // Per Phase 14 Round 9 Devin Review BUG_0001.
       this.authMode = "none";
       this.client.setToken(null);
       throw err;
