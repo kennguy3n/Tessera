@@ -41,10 +41,15 @@ registerAssetProtocolScheme();
 
 // Phase 14 Task 3: register `tessera://` as the default protocol
 // handler for this app binary at module load — Electron requires
-// `setAsDefaultProtocolClient` to run before `app.whenReady`. The
-// listeners that actually dispatch incoming deeplinks
-// (`open-url`, `second-instance`) are attached inside the
-// `whenReady` callback after the IPC layer is up.
+// `setAsDefaultProtocolClient` to run before `app.whenReady`.
+//
+// The companion `attachKchatDeeplinkBridge()` call (which wires the
+// `open-url` and `second-instance` listeners) is also at module
+// top-level, immediately after this block — see the comment on that
+// call below for the macOS cold-start rationale. Both calls share
+// the same "must run before whenReady" constraint, and they sit
+// together at module load so the registration and the dispatch
+// listeners can never end up on opposite sides of the ready boundary.
 //
 // Dev mode (no Electron installer) needs an extra `args` hint so
 // the OS knows how to invoke the dev binary; in packaged builds

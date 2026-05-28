@@ -113,13 +113,45 @@ export class KchatAuthService {
     return hasTokens(KCHAT_VAULT_PROVIDER);
   }
 
-  /** Restore the persisted PAT connection on app start. */
+  /**
+   * Restore the persisted PAT connection on app start.
+   *
+   * On `verifyConnection()` failure, the in-memory token and
+   * serverUrl that were just pushed into the client are rolled
+   * back so the client's view matches the auth-service view
+   * (`authMode === "none"`, no live PAT). This mirrors the
+   * symmetric cleanup in `connect()` and prevents a stale token
+   * from lingering on the client across a failed restore — even
+   * though the practical fallout is small (the health check is
+   * never started, and any subsequent `connect()` overwrites the
+   * client state), the asymmetry was a footgun: a future caller
+   * inspecting `client.getToken()` between a failed restore and
+   * the next connect would see a token that no auth code thinks
+   * is valid. Per Phase 14 Round 7 Devin Review ANALYSIS_0002.
+   *
+   * Note: the vault entry is intentionally NOT deleted on failure
+   * — a failed restore (e.g. transient network blip on startup)
+   * should leave the stored credential intact so a later
+   * `restoreFromVault()` can recover the prior session. Only an
+   * explicit `disconnect()` clears the vault.
+   */
   async restoreFromVault(): Promise<KchatUser | null> {
     const stored = readStoredAuth();
     if (!stored) return null;
     this.client.setServerUrl(stored.serverUrl);
     this.client.setToken(stored.token);
-    const user = await this.client.verifyConnection();
+    let user: KchatUser;
+    try {
+      user = await this.client.verifyConnection();
+    } catch (err) {
+      // Symmetric with `connect()` (see below): on verification
+      // failure, drop the just-pushed in-memory token so the
+      // client's view matches the auth-service view. `authMode`
+      // is already "none" here (we never advanced it), so no
+      // status push needs to be emitted.
+      this.client.setToken(null);
+      throw err;
+    }
     this.client.startHealthCheck();
     this.authMode = "pat";
     writeStoredAuth({

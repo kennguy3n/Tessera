@@ -538,19 +538,56 @@ describe("KchatLocalApiServer — route surface", () => {
     expect(body.error).toBe("indexer down");
   });
 
-  it("maps a generic handler throw to a 500 internal_error", async () => {
-    const { handlers } = makeHandlers({
-      async status() {
-        throw new Error("boom");
-      },
-    });
-    running = await startServer(handlers);
-    const res = await fetch(`${running.baseUrl}/api/status`, {
-      headers: authHeaders(),
-    });
-    expect(res.status).toBe(500);
-    const body = (await res.json()) as { code: string };
-    expect(body.code).toBe("internal_error");
+  it("maps a generic handler throw to a 500 internal_error with sanitised body", async () => {
+    // Phase 14 Round 7 Devin Review ANALYSIS_0005: a non-
+    // `LocalApiError` thrown from a handler must NOT propagate
+    // the raw `Error.message` to the wire body — that path used
+    // to surface internal implementation details (file paths,
+    // stack fragments) to the .kcz extension caller. The fix
+    // sanitises the wire body to a generic "internal server
+    // error" string; the original error is logged to stderr for
+    // operator diagnosis but never reaches the response. This
+    // test pins both halves of the contract: the unique sentinel
+    // string ("boom-internal-detail-xyz123") must NOT appear in
+    // the body, and the body must instead carry the canonical
+    // generic message.
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const sentinel = "boom-internal-detail-xyz123";
+    try {
+      const { handlers } = makeHandlers({
+        async status() {
+          throw new Error(sentinel);
+        },
+      });
+      running = await startServer(handlers);
+      const res = await fetch(`${running.baseUrl}/api/status`, {
+        headers: authHeaders(),
+      });
+      expect(res.status).toBe(500);
+      const raw = await res.text();
+      const body = JSON.parse(raw) as { code: string; error: string };
+      expect(body.code).toBe("internal_error");
+      // The wire body must not leak the raw handler exception.
+      expect(raw).not.toContain(sentinel);
+      expect(body.error).not.toContain(sentinel);
+      // It must carry the canonical sanitised string instead.
+      expect(body.error).toBe("internal server error");
+      // The raw error is logged to stderr for operator diagnosis
+      // (the sentinel does appear here — that's the intent).
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      const loggedSentinel = consoleErrorSpy.mock.calls.some((call) =>
+        call.some((arg) => {
+          if (typeof arg === "string") return arg.includes(sentinel);
+          if (arg instanceof Error) return arg.message.includes(sentinel);
+          return false;
+        }),
+      );
+      expect(loggedSentinel).toBe(true);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 });
 

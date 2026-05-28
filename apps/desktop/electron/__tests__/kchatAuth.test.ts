@@ -404,6 +404,63 @@ describe("KchatAuthService.restoreFromVault", () => {
     expect(user?.id).toBe("user1234567890abcdefgh");
     expect(seen[0]).toBe("https://kchat.example.com/api/v4/users/me");
   });
+
+  // Phase 14 Round 7 Devin Review ANALYSIS_0002: on `verifyConnection`
+  // failure, `restoreFromVault()` previously left the client carrying
+  // the stale token and serverUrl that were pushed into it just
+  // before the failed verify. The fix matches the symmetric cleanup
+  // already present in `connect()` — call `client.setToken(null)` on
+  // the failure path so the client's in-memory view matches the
+  // auth-service view (no live PAT). This pins that contract via
+  // the only observable downstream effect: a subsequent
+  // `verifyConnection()` call against the client must fail at the
+  // token-presence guard in `KchatClient.request()` rather than
+  // proceeding into a fetch with a stale Bearer header.
+  it("clears the client's in-memory token on a failed verifyConnection during restore", async () => {
+    vaultStore.set("kchat", {
+      accessToken: "PAT-restored-but-stale",
+      scopes: [
+        JSON.stringify({
+          serverUrl: "https://kchat.example.com",
+          userId: "user1234567890abcdefgh",
+          verifiedAt: new Date(0).toISOString(),
+        }),
+      ],
+    });
+    // First fetch (called during restoreFromVault → verifyConnection)
+    // returns 401. The client should propagate the rejection.
+    let pending: () => Promise<Response> = async () =>
+      ({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: async () => "invalid_token",
+        json: async () => ({ error: "invalid_token" }),
+        arrayBuffer: async () => new ArrayBuffer(0),
+      }) as unknown as Response;
+    const fetchFn = vi.fn(async () => pending()) as unknown as
+      typeof globalThis.fetch;
+    const client = new KchatClient({ fetchFn, sleep: async () => {} });
+    const svc = new KchatAuthService(client);
+
+    await expect(svc.restoreFromVault()).rejects.toBeTruthy();
+
+    // After the rollback, the second fetch (if it ever runs) would
+    // succeed — but it must not run, because the token-presence
+    // guard in `KchatClient.request()` should now throw before any
+    // fetch is dispatched. If the rollback regressed, this fetch
+    // would receive an Authorization header carrying the
+    // "PAT-restored-but-stale" token instead.
+    pending = async () => userResponse();
+    await expect(client.verifyConnection()).rejects.toThrow(
+      /token is not configured/i,
+    );
+    // The pre-restore fetch + the rejected-verifyConnection-from-
+    // request guard = 1 fetch total. If the rollback regressed, the
+    // post-restore verifyConnection would have invoked fetch a
+    // second time.
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("KchatAuthService.getState renderer safety", () => {

@@ -311,13 +311,29 @@ export class KchatLocalApiServer {
     }
     const server = this.createServerFn((req, res) => {
       this.dispatch(req, res).catch((err) => {
+        // Defence-in-depth wrapper around `dispatch()` — its own
+        // outer try/catch is supposed to convert every thrown
+        // value into a `respondError()`, but if `dispatch()` ever
+        // throws *outside* its try/catch (e.g. a synchronous
+        // failure before the try opens) or `respondError()` itself
+        // throws (e.g. a `node:http` edge case), this catch is the
+        // last line of defence. `respondError()` is internally
+        // idempotent via the `res.headersSent` guard, so a second
+        // call here when `dispatch()` already responded is a
+        // no-op. The error message is sanitised so a non-
+        // `LocalApiError` can never leak implementation details
+        // (file paths, stack fragments) over the wire — see
+        // ANALYSIS_0005 + the `respondError()` sanitiser below.
         respondError(
           res,
-          new LocalApiError(
-            500,
-            "internal_error",
-            err instanceof Error ? err.message : String(err),
-          ),
+          err instanceof LocalApiError
+            ? err
+            : new LocalApiError(
+                500,
+                "internal_error",
+                "internal server error",
+              ),
+          err instanceof LocalApiError ? null : err,
         );
       });
     });
@@ -422,16 +438,32 @@ export class KchatLocalApiServer {
       }
       throw new LocalApiError(404, "not_found", "route not found");
     } catch (err) {
-      respondError(
-        res,
+      // Phase 14 Round 7 Devin Review ANALYSIS_0005: a non-
+      // `LocalApiError` thrown from a handler (e.g. an unexpected
+      // `TypeError` from inside `handlers.ingestChannel`) used to
+      // be propagated to the wire verbatim via `err.message` —
+      // which could expose file paths, stack fragments, or other
+      // implementation details over the loopback API. The server
+      // is loopback-only with bearer auth, so the practical impact
+      // is low (the only legitimate caller is the .kcz extension
+      // running on the same machine as the same user), but the
+      // port file at mode 0600 is the only thing keeping the token
+      // confidential — if the userData directory were ever
+      // mistakenly snapshotted into a backup or shared filesystem,
+      // an attacker with the token could probe handlers to extract
+      // error messages. Sanitising to a generic "internal server
+      // error" + a redacted-by-default `Error.message` chain here
+      // (which `respondError()` keeps out of the wire body and
+      // routes to stderr for operator diagnostics) closes that
+      // defence-in-depth gap. `LocalApiError.message` is
+      // hand-authored at every throw site in this file and is
+      // therefore safe to surface as-is.
+      const wireErr =
         err instanceof LocalApiError
           ? err
-          : new LocalApiError(
-              500,
-              "internal_error",
-              err instanceof Error ? err.message : String(err),
-            ),
-      );
+          : new LocalApiError(500, "internal_error", "internal server error");
+      const internalErr = err instanceof LocalApiError ? null : err;
+      respondError(res, wireErr, internalErr);
     }
   }
 
@@ -643,6 +675,50 @@ function respond(
   res.end(payload);
 }
 
-function respondError(res: ServerResponse, err: LocalApiError): void {
+/**
+ * Write a `LocalApiError` to the wire. Idempotent: if `res` has
+ * already had its headers written (a partial / failed earlier
+ * response), this is a no-op rather than the
+ * `ERR_HTTP_HEADERS_SENT` throw `respond()` would otherwise emit.
+ *
+ * `internalErr`, if provided, is the original non-`LocalApiError`
+ * the caller intercepted on its way to becoming a generic 500. It
+ * is NEVER serialised to the wire body — only logged to stderr so
+ * operators can diagnose the failure from the Electron log
+ * pipeline. Surfacing it directly would leak implementation
+ * details (file paths, stack fragments) past the loopback bearer-
+ * token boundary; see ANALYSIS_0005.
+ */
+function respondError(
+  res: ServerResponse,
+  err: LocalApiError,
+  internalErr: unknown = null,
+): void {
+  if (internalErr !== null) {
+    // Best-effort logging — the local API has no logger handle in
+    // scope (it's a leaf module) and Electron's main-process
+    // console is wired to the same log pipeline as the rest of the
+    // app, so `console.error` is the structurally cleanest channel.
+    // We deliberately log the raw error here (not just
+    // `err.message`) so a stack trace is captured for diagnosis.
+    console.error("[kchatLocalApi] internal handler error:", internalErr);
+  }
+  if (res.headersSent) {
+    // Phase 14 Round 7 Devin Review ANALYSIS_0004: the outer
+    // `dispatch().catch()` wrapper in `start()` calls this as a
+    // last-line-of-defence after the inner try/catch already
+    // emitted a response. If headers are already sent, a second
+    // `res.writeHead()` would throw `ERR_HTTP_HEADERS_SENT` and
+    // re-enter the same catch path. End the response (if not
+    // already ended) and bail.
+    if (!res.writableEnded) {
+      try {
+        res.end();
+      } catch {
+        // The socket is gone; nothing more to do.
+      }
+    }
+    return;
+  }
   respond(res, err.status, { error: err.message, code: err.code });
 }
