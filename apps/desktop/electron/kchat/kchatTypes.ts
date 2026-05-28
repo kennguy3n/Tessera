@@ -240,24 +240,20 @@ export interface KchatConnectedUserView {
  * Connection state surfaced to the renderer via `kchat:status`.
  * `error` carries a human-readable reason when `state === "error"`.
  *
- * Phase 13 Task 4: `authMode` distinguishes the PAT-backed
- * connection (operator pasted a personal access token in the
- * Settings card) from the extension-bridge connection (Tessera
- * delegated auth to a locally-running `uney-chat-desktop`
- * instance). The renderer uses this to swap the "Connected via
- * PAT" / "Connected via KChat Desktop" affordance in the
- * Settings card and the sidebar connectivity indicator without
- * having to hit a separate IPC channel. `"none"` is the value
- * surfaced while disconnected so the discriminator is total
- * rather than optional — every consumer either branches on
- * `state` first (and ignores `authMode`) or branches on both.
+ * Phase 14: `authMode` is either `"none"` (disconnected) or
+ * `"pat"` (operator pasted a personal access token in the
+ * Settings card). The earlier extension-bridge delegation path
+ * has been removed — KChat Desktop and Tessera are now
+ * independent KChat clients that cooperate only through the
+ * `.kcz` extension Tessera ships into KChat Desktop and through
+ * the `kchat://` / `tessera://` deeplink schemes.
  *
- * `extensionAvailable` is the cached output of the latest
- * extension-bridge probe (see `kchatExtensionBridge.ts`). The
- * Settings card uses it to decide whether to show the
- * "Connect via KChat Desktop" primary action; the value is
- * refreshed on every `kchat:status` read so the UX picks up a
- * desktop-app launch without a Tessera restart.
+ * `authMode` is optional on the type so the internal
+ * `KchatClient` (which knows nothing about auth) can emit
+ * transitions without filling it in; the `KchatAuthService`
+ * wrapper always sets it before the state crosses the IPC
+ * boundary, so renderer-side reads can safely default
+ * `undefined → "none"`.
  */
 export interface KchatConnectionState {
   state: "disconnected" | "connecting" | "connected" | "error";
@@ -267,24 +263,12 @@ export interface KchatConnectionState {
   /** ISO-8601 timestamp of the last successful health check. */
   lastHealthyAt?: string;
   /**
-   * Phase 13 Task 4 — `"none"` when `state === "disconnected"`,
-   * `"pat"` when connected via personal access token,
-   * `"extension"` when connected via the `uney-chat-desktop`
-   * extension bridge. Field is optional on the type so the
-   * internal `KchatClient` (which knows nothing about auth mode)
-   * can emit transitions without filling it in; the
-   * `KchatAuthService` wrapper always sets it before the state
-   * crosses the IPC boundary, so renderer-side reads can safely
-   * default `undefined → "none"`.
+   * `"none"` when `state === "disconnected"`, `"pat"` when
+   * connected via personal access token. Filled in by
+   * `KchatAuthService.getState()` before this struct crosses the
+   * IPC boundary.
    */
-  authMode?: "none" | "pat" | "extension";
-  /**
-   * Phase 13 Task 4 — last cached extension-bridge availability.
-   * Optional for the same reason as `authMode`; the
-   * `KchatAuthService.getState()` wrapper supplies the value
-   * before it reaches the renderer.
-   */
-  extensionAvailable?: boolean;
+  authMode?: "none" | "pat";
 }
 
 /**

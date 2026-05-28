@@ -1,13 +1,29 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+/**
+ * Renderer test suite for `KchatSettingsCard.tsx`. Phase 14.
+ *
+ * The card has a single connection mode (Personal Access Token).
+ * When the Tessera `.kcz` extension installed in KChat Desktop
+ * is reachable AND has recently checked in, an additional
+ * "enhanced integration active" affordance is rendered with a
+ * button that invokes the `kchat://app/settings/extensions`
+ * deeplink.
+ *
+ * Detection is driven by polling `kchat.desktopBridgeStatus()`:
+ * the card treats the integration as live when the snapshot has
+ * `apiServerRunning === true` AND `lastExtensionContactAt` is
+ * within `EXTENSION_HEARTBEAT_STALE_MS` (90 s) of the current
+ * clock.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
   screen,
   fireEvent,
   waitFor,
-  act,
 } from "@testing-library/react";
 import KchatSettingsCard, {
   getStoredDefaultTeamId,
+  isExtensionDetected,
   setStoredDefaultTeamId,
 } from "../components/KchatSettingsCard";
 import { ToastProvider } from "../components/Toast";
@@ -25,38 +41,40 @@ function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
     }),
     disconnect: vi.fn().mockResolvedValue({ disconnected: true }),
     listTeams: vi.fn().mockResolvedValue([
-      { id: "team-1", name: "team-one", display_name: "Team One", type: "O" as const },
-      { id: "team-2", name: "team-two", display_name: "Team Two", type: "O" as const },
+      {
+        id: "team-1",
+        name: "team-one",
+        display_name: "Team One",
+        type: "O" as const,
+      },
+      {
+        id: "team-2",
+        name: "team-two",
+        display_name: "Team Two",
+        type: "O" as const,
+      },
     ]),
     listChannels: vi.fn().mockResolvedValue([]),
     listMembers: vi.fn().mockResolvedValue([]),
     listChannelFiles: vi.fn().mockResolvedValue([]),
     shareArtifact: vi.fn(),
     addChannelSource: vi.fn(),
-    // Phase 13 Theme 1 Devin Review ANALYSIS_0003 (this commit):
-    // The Settings card's mount-time `useEffect` calls
-    // `kchat.extensionStatus()` to probe the extension bridge.
-    // Previously the makeApi helper didn't include this method,
-    // so the probe threw `TypeError: not a function`, the
-    // `reprobeExtension` catch handler set `showManual = true`,
-    // and existing tests passed by accident. Providing an
-    // explicit mock exercises the intended code path (probe
-    // succeeds → extension unavailable → PAT form auto-shown)
-    // instead of relying on the error path as a substitute.
-    extensionStatus: vi.fn().mockResolvedValue({
-      available: false,
-      protocolVersion: 0,
-      desktopVersion: null,
-      capabilities: [],
+    desktopBridgeStatus: vi.fn().mockResolvedValue({
+      apiServerRunning: true,
+      apiServerPort: 51234,
+      portFilePath: "/tmp/tessera-kchat-port.json",
+      lastExtensionContactAt: null,
     }),
-    extensionConnect: vi.fn(),
-    extensionDisconnect: vi.fn(),
+    openInDesktop: vi
+      .fn()
+      .mockResolvedValue({ opened: true, url: "kchat://" }),
+    openDesktopExtensions: vi
+      .fn()
+      .mockResolvedValue({
+        opened: true,
+        url: "kchat://app/settings/extensions",
+      }),
     backfillProgress: vi.fn(),
-    // Block B Task 1 push subscriptions — defaults to a no-op
-    // unsubscribe so `KchatSettingsCard`'s on-mount listener
-    // wiring (when it eventually adopts the push API) doesn't
-    // throw under tests; `overrides` lets a test inject a stub
-    // that captures the callback.
     onStatusChange: vi.fn().mockReturnValue(() => {}),
     onEvent: vi.fn().mockReturnValue(() => {}),
     ...overrides,
@@ -71,21 +89,65 @@ beforeEach(() => {
   window.localStorage.clear();
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("KchatSettingsCard", () => {
   it("renders nothing when feature is disabled", async () => {
-    const api = makeApi({ isAvailable: vi.fn().mockResolvedValue(false) });
+    const api = makeApi({
+      isAvailable: vi.fn().mockResolvedValue(false),
+    });
     const { container } = wrap(<KchatSettingsCard api={api} />);
-    // Wait for the effect to run
     await waitFor(() => expect(api.isAvailable).toHaveBeenCalled());
-    expect(container.querySelector('[data-testid="kchat-settings-card"]')).toBeNull();
+    expect(
+      container.querySelector('[data-testid="kchat-settings-card"]'),
+    ).toBeNull();
+  });
+
+  it("does not poll desktopBridgeStatus when the feature is disabled", async () => {
+    // Phase 14 Round 6 Devin Review ANALYSIS_0004: the bridge-status
+    // poll previously fired even when `kchat.isAvailable()` returned
+    // false (and the component rendered null), creating IPC traffic
+    // with no visible consumer. The fix gates the polling effect on
+    // `available === true` so the IPC heartbeat stops alongside the
+    // rendering. The IPC call is individually cheap (single
+    // in-memory read in the main process), but the structural fix
+    // makes the gating contract consistent with the status / teams
+    // effects in the same component and prevents idle CPU drift in
+    // builds that ship with the feature flag off.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = makeApi({
+      isAvailable: vi.fn().mockResolvedValue(false),
+    });
+    const { container } = wrap(<KchatSettingsCard api={api} />);
+    await waitFor(() => expect(api.isAvailable).toHaveBeenCalled());
+    expect(
+      container.querySelector('[data-testid="kchat-settings-card"]'),
+    ).toBeNull();
+    // Even after the feature-gate check has resolved, the poll
+    // effect must not have run because `available === false`.
+    expect(api.desktopBridgeStatus).not.toHaveBeenCalled();
+    // Advance the bridge-status poll cadence (the `setInterval`
+    // tick is 10 s; advance well beyond it). The gated effect
+    // should still produce zero calls — the component is rendered
+    // null, so an idle IPC heartbeat here is pure waste.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(api.desktopBridgeStatus).not.toHaveBeenCalled();
   });
 
   it("renders the disconnected card with Server URL + token inputs", async () => {
     const api = makeApi();
     wrap(<KchatSettingsCard api={api} />);
-    expect(await screen.findByTestId("kchat-settings-card")).toBeInTheDocument();
-    expect(screen.getByLabelText(/server url/i)).toHaveValue("https://kchat.com");
-    expect(screen.getByLabelText(/personal access token/i)).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("kchat-settings-card"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/server url/i)).toHaveValue(
+      "https://kchat.com",
+    );
+    expect(
+      screen.getByLabelText(/personal access token/i),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("kchat-connect")).toHaveTextContent(/connect/i);
   });
 
@@ -206,61 +268,152 @@ describe("KchatSettingsCard", () => {
     expect(err).toHaveTextContent("Connection refused");
   });
 
-  it("re-probes the extension surface on every onStatusChange push (Devin Review ANALYSIS_0005)", async () => {
-    // The fix for Devin Review ANALYSIS_0005 wired
-    // `kchat.onStatusChange` into the same effect that performs
-    // the initial extension probe so a desktop-app launch that
-    // happens AFTER Settings is mounted is reflected in the
-    // UI without a manual refresh. Without the wire-up the
-    // probe ran exactly once on mount; once `available: false`
-    // landed, the "Connect via KChat Desktop" CTA never
-    // re-appeared even if the desktop app subsequently started.
-    let pushStatus: ((s: { state: "disconnected" }) => void) | null = null;
-    const api = makeApi({
-      onStatusChange: vi.fn((cb: (s: { state: "disconnected" }) => void) => {
-        pushStatus = cb;
-        return () => {
-          pushStatus = null;
-        };
-      }) as unknown as typeof window.tessera.kchat.onStatusChange,
-      // First call: desktop app is offline. Second call (after the
-      // status push): desktop app has launched.
-      extensionStatus: vi
-        .fn()
-        .mockResolvedValueOnce({
-          available: false,
-          desktopVersion: null,
-          protocolVersion: null,
-          capabilities: [],
-        })
-        .mockResolvedValue({
-          available: true,
-          desktopVersion: "1.2.3",
-          protocolVersion: 1,
-          capabilities: ["handshake", "events"],
-        }),
-    });
-
+  it("does not render the 'KChat Desktop detected' affordance when the extension has never checked in", async () => {
+    const api = makeApi();
     wrap(<KchatSettingsCard api={api} />);
-
-    // Initial probe should have been called exactly once.
+    await screen.findByTestId("kchat-settings-card");
     await waitFor(() =>
-      expect(api.extensionStatus).toHaveBeenCalledTimes(1),
+      expect(api.desktopBridgeStatus).toHaveBeenCalled(),
     );
-    expect(pushStatus).not.toBeNull();
+    expect(
+      screen.queryByTestId("kchat-desktop-detected"),
+    ).toBeNull();
+  });
 
-    // Simulate a status push from the main process (e.g. the
-    // desktop app launched after Settings was mounted). The
-    // effect should call `extensionStatus` again. Wrapped in
-    // `act()` so React applies the state updates synchronously
-    // (and so we don't get an "update not wrapped in act"
-    // warning on stderr).
-    act(() => {
-      pushStatus!({ state: "disconnected" });
+  it("renders the 'KChat Desktop detected' affordance when the extension has recently checked in", async () => {
+    const api = makeApi({
+      desktopBridgeStatus: vi.fn().mockResolvedValue({
+        apiServerRunning: true,
+        apiServerPort: 51234,
+        portFilePath: "/tmp/tessera-kchat-port.json",
+        lastExtensionContactAt: new Date().toISOString(),
+      }),
     });
+    wrap(<KchatSettingsCard api={api} />);
+    await screen.findByTestId("kchat-settings-card");
+    expect(
+      await screen.findByTestId("kchat-desktop-detected"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("kchat-open-desktop-extensions"),
+    ).toHaveTextContent(/Open KChat Desktop extensions/i);
+  });
 
+  it("invokes openDesktopExtensions when the affordance button is clicked", async () => {
+    const api = makeApi({
+      desktopBridgeStatus: vi.fn().mockResolvedValue({
+        apiServerRunning: true,
+        apiServerPort: 51234,
+        portFilePath: "/tmp/tessera-kchat-port.json",
+        lastExtensionContactAt: new Date().toISOString(),
+      }),
+    });
+    wrap(<KchatSettingsCard api={api} />);
+    const btn = await screen.findByTestId("kchat-open-desktop-extensions");
+    fireEvent.click(btn);
     await waitFor(() =>
-      expect(api.extensionStatus).toHaveBeenCalledTimes(2),
+      expect(api.openDesktopExtensions).toHaveBeenCalledTimes(1),
     );
+  });
+
+  it("treats a heartbeat older than the stale window as 'not detected'", async () => {
+    const api = makeApi({
+      desktopBridgeStatus: vi.fn().mockResolvedValue({
+        apiServerRunning: true,
+        apiServerPort: 51234,
+        portFilePath: "/tmp/tessera-kchat-port.json",
+        lastExtensionContactAt: new Date(
+          Date.now() - 5 * 60_000, // 5 minutes ago
+        ).toISOString(),
+      }),
+    });
+    wrap(<KchatSettingsCard api={api} />);
+    await screen.findByTestId("kchat-settings-card");
+    await waitFor(() =>
+      expect(api.desktopBridgeStatus).toHaveBeenCalled(),
+    );
+    // Wait briefly so the React batch processes the IPC resolve.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(
+      screen.queryByTestId("kchat-desktop-detected"),
+    ).toBeNull();
+  });
+});
+
+describe("isExtensionDetected", () => {
+  it("returns false when status is null", () => {
+    expect(isExtensionDetected(null, Date.now())).toBe(false);
+  });
+
+  it("returns false when the API server is not running", () => {
+    expect(
+      isExtensionDetected(
+        {
+          apiServerRunning: false,
+          apiServerPort: null,
+          portFilePath: null,
+          lastExtensionContactAt: new Date().toISOString(),
+        },
+        Date.now(),
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false when the extension has never checked in", () => {
+    expect(
+      isExtensionDetected(
+        {
+          apiServerRunning: true,
+          apiServerPort: 1,
+          portFilePath: "/x",
+          lastExtensionContactAt: null,
+        },
+        Date.now(),
+      ),
+    ).toBe(false);
+  });
+
+  it("returns true when the heartbeat is within the staleness window", () => {
+    const now = Date.now();
+    expect(
+      isExtensionDetected(
+        {
+          apiServerRunning: true,
+          apiServerPort: 1,
+          portFilePath: "/x",
+          lastExtensionContactAt: new Date(now - 5_000).toISOString(),
+        },
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false when the heartbeat is past the staleness window", () => {
+    const now = Date.now();
+    expect(
+      isExtensionDetected(
+        {
+          apiServerRunning: true,
+          apiServerPort: 1,
+          portFilePath: "/x",
+          lastExtensionContactAt: new Date(now - 5 * 60_000).toISOString(),
+        },
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false when the heartbeat string is malformed", () => {
+    expect(
+      isExtensionDetected(
+        {
+          apiServerRunning: true,
+          apiServerPort: 1,
+          portFilePath: "/x",
+          lastExtensionContactAt: "not-an-iso-string",
+        },
+        Date.now(),
+      ),
+    ).toBe(false);
   });
 });

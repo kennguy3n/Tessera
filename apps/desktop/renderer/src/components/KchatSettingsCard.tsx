@@ -1,24 +1,31 @@
 /**
  * KChat connection card shown in the Settings page.
  *
- * - Hidden entirely when `window.tessera.kchat.isAvailable()`
- *   returns false (feature gate — defaults to true today, future
- *   licence/enterprise gating can flip it).
- * - When disconnected: shows server URL + personal-access-token
- *   inputs and a `Connect` button. Phase 13 Task 5 layers a
- *   "Connect via KChat Desktop" primary CTA on top when the
- *   `uney-chat-desktop` extension bridge is reachable; the PAT
- *   form is moved under a disclosure toggle ("Manual connection")
- *   so the recommended path is one click.
- * - When connected: shows the connected user, server URL,
- *   `Disconnect` button, and a default-team selector populated from
- *   `kchat:listTeams`. The selected default-team id is persisted in
- *   localStorage so KChat-aware UI elsewhere (sidebar, share modal)
- *   can default to the same team without an extra IPC. Phase 13
- *   Task 5 adds an "auth mode" pill next to the connected-user
- *   label so the operator can tell at a glance whether they're
- *   connected via PAT or via the desktop app.
- * - On error: shows the error message inline.
+ * Phase 14. Tessera and KChat Desktop are independent KChat
+ * clients; this card is the single place a user pastes a KChat
+ * Personal Access Token (PAT). When the Tessera `.kcz` extension
+ * installed in KChat Desktop is also reachable (i.e. KChat
+ * Desktop is running on the same machine AND has the extension
+ * installed), an additional "enhanced integration" affordance is
+ * shown — but it never replaces the PAT flow; both apps still
+ * authenticate to the KChat server independently.
+ *
+ * Detection mechanism: Tessera's main process owns a localhost
+ * HTTP server (see `kchatLocalApi.ts`). Whenever the extension
+ * makes an authenticated call into that server, Tessera records
+ * a heartbeat (`lastExtensionContactAt`). The Settings card
+ * polls `kchat.desktopBridgeStatus()` and renders the affordance
+ * when the heartbeat is fresh. This is purely passive — Tessera
+ * does NOT probe KChat Desktop over any external IPC.
+ *
+ *   * Disconnected: shows server URL + token inputs and a
+ *     `Connect` button.
+ *   * Connected: shows the connected user, server URL,
+ *     `Disconnect` button, and a default-team selector.
+ *   * Error: shows the error message inline.
+ *   * Enhanced detected: renders an informational pill plus a
+ *     "Open KChat Desktop extensions" button that invokes the
+ *     `kchat://app/settings/extensions` deeplink.
  */
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import Card from "./Card";
@@ -26,12 +33,23 @@ import Button from "./Button";
 import { useToast } from "./Toast";
 import type {
   KchatConnectionStateView,
-  KchatExtensionStatusView,
+  KchatDesktopBridgeStatusView,
   KchatTeamView,
 } from "../../../shared/types";
 
 const DEFAULT_SERVER = "https://kchat.com";
 const TEAM_LS_KEY = "tessera.kchat.defaultTeamId";
+
+/**
+ * A heartbeat older than this is treated as "extension no longer
+ * connected" — the .kcz extension is expected to make at least
+ * one status call per minute when it's loaded inside a running
+ * KChat Desktop.
+ */
+const EXTENSION_HEARTBEAT_STALE_MS = 90_000;
+
+/** Cadence at which the renderer re-reads the bridge status. */
+const BRIDGE_STATUS_POLL_MS = 10_000;
 
 interface KchatSettingsCardProps {
   /** Optional override for `window.tessera.kchat` (used by tests). */
@@ -59,6 +77,25 @@ export function setStoredDefaultTeamId(id: string | null): void {
   }
 }
 
+/**
+ * Treat the bridge status as "extension-detected" only when the
+ * local API server is up AND the extension has been heard from
+ * recently. Local API server up alone isn't sufficient: a
+ * running Tessera with no .kcz installed in KChat Desktop also
+ * exposes the server but the heartbeat never arrives.
+ */
+export function isExtensionDetected(
+  status: KchatDesktopBridgeStatusView | null,
+  nowMs: number,
+): boolean {
+  if (status === null) return false;
+  if (!status.apiServerRunning) return false;
+  if (status.lastExtensionContactAt === null) return false;
+  const heartbeatMs = Date.parse(status.lastExtensionContactAt);
+  if (Number.isNaN(heartbeatMs)) return false;
+  return nowMs - heartbeatMs < EXTENSION_HEARTBEAT_STALE_MS;
+}
+
 export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) {
   const kchat = api ?? window.tessera?.kchat;
   const toast = useToast();
@@ -77,74 +114,21 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
   const [defaultTeamId, setDefaultTeamId] = useState<string | null>(
     getStoredDefaultTeamId(),
   );
-  const [extensionStatus, setExtensionStatus] =
-    useState<KchatExtensionStatusView | null>(null);
-  // Phase 13 Task 5 — the PAT form is hidden by default when the
-  // extension bridge is available; the user can still reveal it
-  // via a disclosure toggle ("Use a personal access token
-  // instead"). Auto-revealed when the extension is unavailable
-  // so the only connection method is visible without a click.
-  const [showManual, setShowManual] = useState<boolean>(false);
+  const [bridgeStatus, setBridgeStatus] =
+    useState<KchatDesktopBridgeStatusView | null>(null);
+  // `now` ticks on the bridge poll cadence so the `isExtensionDetected`
+  // staleness check rerenders without a separate clock. Initialised
+  // to `Date.now()` so the first render after mount evaluates
+  // freshness against the actual mount time, not against `0`.
+  const [now, setNow] = useState<number>(() => Date.now());
 
-  // Feature gate + initial status sync + extension probe.
-  //
-  // Phase 13 Theme 1 Devin Review ANALYSIS_0005 follow-up: this
-  // effect now ALSO subscribes to `kchat.onStatusChange` so the
-  // extension probe re-runs whenever the main-process pushes a
-  // status update. The original implementation only ran the
-  // probe on mount, which left a UX gap: if the user opened
-  // Settings while the desktop app was offline and then launched
-  // it later, the "Connect via KChat Desktop" CTA never
-  // appeared until the user navigated away and back. Re-probing
-  // on every status push closes that gap with no manual refresh.
-  //
-  // Cost analysis: the probe is a single Unix-domain-socket
-  // connect with a 1 s timeout (no token mint, no HTTP) so the
-  // per-push cost is bounded. Status pushes occur on auth-state
-  // transitions and on the periodic health check; under steady
-  // state that's at most one push every ~30 s, which is well
-  // below any rate that would matter.
-  //
-  // The probe ALSO still runs on mount — `kchat.status()` may
-  // not push during initial render if no transition occurred,
-  // and we want the CTA visible immediately when Settings opens.
+  // Feature gate + initial status sync.
   useEffect(() => {
     if (!kchat) {
       setAvailable(false);
       return;
     }
     let cancelled = false;
-    // The PAT-form disclosure should default to the inverse of
-    // extension-availability on the FIRST probe only. Subsequent
-    // re-probes (driven by `onStatusChange` pushes) must not
-    // stomp on a user-initiated toggle — e.g. if the user
-    // expanded the PAT form while the desktop app was offline
-    // and is mid-typing a token, a status push that flips the
-    // probe back to `available` should leave the form open.
-    let initialProbeDone = false;
-
-    // Inner helper so the probe logic is reusable between the
-    // initial-mount path and the `onStatusChange` callback below.
-    // Both call sites must respect the `cancelled` guard so a
-    // pending probe doesn't race a component unmount.
-    const reprobeExtension = async () => {
-      try {
-        const probe = await kchat.extensionStatus();
-        if (cancelled) return;
-        setExtensionStatus(probe);
-        if (!initialProbeDone) {
-          setShowManual(!probe.available);
-          initialProbeDone = true;
-        }
-      } catch {
-        if (cancelled) return;
-        if (!initialProbeDone) {
-          setShowManual(true);
-          initialProbeDone = true;
-        }
-      }
-    };
-
     (async () => {
       try {
         const ok = await kchat.isAvailable();
@@ -154,23 +138,15 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
         if (cancelled) return;
         setState(s);
         if (s.serverUrl) setServerUrl(s.serverUrl);
-        await reprobeExtension();
-      } catch (err) {
-        if (!cancelled) {
-          setAvailable(false);
-        }
+      } catch {
+        if (!cancelled) setAvailable(false);
       }
     })();
 
-    // Re-probe on every status push so a desktop-app launch
-    // *after* Settings is mounted is reflected without a
-    // navigate-away-and-back. Also update local state so the
-    // connected-user pill / inline error rerender immediately.
     const unsubscribe = kchat.onStatusChange((s) => {
       if (cancelled) return;
       setState(s);
       if (s.serverUrl) setServerUrl(s.serverUrl);
-      void reprobeExtension();
     });
 
     return () => {
@@ -179,9 +155,53 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
     };
   }, [kchat]);
 
+  // Poll the bridge-status snapshot so the "KChat Desktop detected"
+  // affordance picks up a desktop-app launch / extension install
+  // without a Settings remount. The poll is cheap (a single IPC
+  // round-trip into the main process); the interval is generous
+  // (10 s) to keep idle CPU near zero.
+  //
+  // Phase 14 Round 6 Devin Review ANALYSIS_0004: the poll is gated on
+  // `available === true` in addition to `kchat` being present, so the
+  // effect does not fire IPC calls when the renderer-side feature
+  // flag (`kchat.isAvailable()`) is off and the component renders
+  // null. This matches the gating on the status / teams effects
+  // elsewhere in this component — without it, a build that ships
+  // with `available === false` would still pay the cost of a 10 s
+  // IPC heartbeat with no consumer rendering the result. The IPC
+  // round-trip is cheap individually, but consistency-of-gating is
+  // a clearer contract for future readers than "this one effect is
+  // special".
+  useEffect(() => {
+    if (!kchat || !available) return;
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const next = await kchat.desktopBridgeStatus();
+        if (!cancelled) {
+          setBridgeStatus(next);
+          setNow(Date.now());
+        }
+      } catch {
+        if (!cancelled) {
+          // Treat a probe failure as "no extension detected"
+          // without surfacing a toast — the user has no
+          // remediation for an IPC channel failure.
+          setBridgeStatus(null);
+          setNow(Date.now());
+        }
+      }
+    };
+    void pull();
+    const handle = window.setInterval(pull, BRIDGE_STATUS_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(handle);
+    };
+  }, [kchat, available]);
+
   // Once connected, hydrate the team list so the default-team
-  // selector can render. Re-run when the connection state flips to
-  // `connected` (disconnect → reconnect path).
+  // selector can render.
   useEffect(() => {
     if (!kchat || state.state !== "connected") {
       setTeams([]);
@@ -193,8 +213,6 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
         const list = await kchat.listTeams();
         if (cancelled) return;
         setTeams(list);
-        // If no default is stored, pick the first team so KChat UI
-        // elsewhere has somewhere to land.
         if (!getStoredDefaultTeamId() && list[0]) {
           setStoredDefaultTeamId(list[0].id);
           setDefaultTeamId(list[0].id);
@@ -231,8 +249,6 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
       toast.addToast(`Connected to KChat as ${user.username}`, "success");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // The connection might have transitioned to `error` server-
-      // side; refresh state so the inline error renders.
       try {
         const s = await kchat.status();
         setState(s);
@@ -249,17 +265,7 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
     if (!kchat) return;
     setBusy(true);
     try {
-      // Phase 13 Task 5 — dispatch to the right disconnect
-      // channel based on the current auth mode. Calling
-      // `kchat:disconnect` while in extension mode would still
-      // work (the auth service routes internally) but the
-      // dedicated channel emits a more specific audit row and
-      // leaves the PAT vault entry intact.
-      if (state.authMode === "extension") {
-        await kchat.extensionDisconnect();
-      } else {
-        await kchat.disconnect();
-      }
+      await kchat.disconnect();
       setState({ state: "disconnected" });
       setTeams([]);
       setStoredDefaultTeamId(null);
@@ -271,34 +277,24 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
     } finally {
       setBusy(false);
     }
-  }, [kchat, state.authMode, toast]);
+  }, [kchat, toast]);
 
-  const handleExtensionConnect = useCallback(async () => {
+  const handleOpenExtensionSettings = useCallback(async () => {
+    // The `kchat://app/settings/extensions` deeplink is routed by
+    // the OS to whichever binary owns the `kchat://` scheme —
+    // KChat Desktop when it's installed. The IPC handler is a
+    // typed enum (no free-form URLs cross the boundary) so the
+    // renderer cannot smuggle arbitrary deeplinks into
+    // `shell.openExternal`.
     if (!kchat) return;
-    setBusy(true);
     try {
-      const user = await kchat.extensionConnect();
-      // The `kchat:status` event will fire on the next status
-      // push; do an immediate read so the UI flips without
-      // waiting on the round-trip.
-      const s = await kchat.status();
-      setState(s);
-      if (s.serverUrl) setServerUrl(s.serverUrl);
-      toast.addToast(
-        `Connected to KChat as ${user.username} (via Desktop)`,
-        "success",
-      );
+      await kchat.openDesktopExtensions();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      try {
-        const s = await kchat.status();
-        setState(s);
-      } catch {
-        /* ignore secondary failure */
-      }
-      toast.addToast(`KChat Desktop connect failed: ${msg}`, "error");
-    } finally {
-      setBusy(false);
+      toast.addToast(
+        `Failed to open KChat Desktop extension settings: ${msg}`,
+        "error",
+      );
     }
   }, [kchat, toast]);
 
@@ -310,15 +306,15 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
   const connectedLabel = useMemo(() => {
     if (state.state !== "connected" || !state.user) return null;
     const fullName = `${state.user.firstName ?? ""} ${state.user.lastName ?? ""}`.trim();
-    return fullName ? `${fullName} (@${state.user.username})` : `@${state.user.username}`;
+    return fullName
+      ? `${fullName} (@${state.user.username})`
+      : `@${state.user.username}`;
   }, [state]);
 
-  const authModeLabel = useMemo(() => {
-    if (state.state !== "connected") return null;
-    if (state.authMode === "extension") return "via KChat Desktop";
-    if (state.authMode === "pat") return "via personal access token";
-    return null;
-  }, [state]);
+  const extensionDetected = useMemo(
+    () => isExtensionDetected(bridgeStatus, now),
+    [bridgeStatus, now],
+  );
 
   if (available === null) return null;
   if (available === false) return null;
@@ -339,6 +335,60 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
         is stored in the OS keychain and never leaves the main
         process.
       </p>
+
+      {extensionDetected && (
+        <div
+          data-testid="kchat-desktop-detected"
+          style={{
+            marginBottom: "var(--spacing-md)",
+            padding: "var(--spacing-sm) var(--spacing-md)",
+            border: "1px solid var(--color-success, #2c8a3d)",
+            borderRadius: "var(--border-radius-md)",
+            background:
+              "var(--color-success-subtle, rgba(44,138,61,0.08))",
+          }}
+        >
+          <p
+            style={{
+              fontSize: "var(--font-size-sm)",
+              color: "var(--color-text-headline)",
+              marginBottom: "var(--spacing-xs)",
+              fontWeight: "var(--font-weight-medium)" as unknown as number,
+            }}
+          >
+            KChat Desktop is running — enhanced integration active
+          </p>
+          <p
+            style={{
+              fontSize: "var(--font-size-xs)",
+              color: "var(--color-text-secondary)",
+              marginBottom: "var(--spacing-sm)",
+            }}
+          >
+            The Tessera extension installed in KChat Desktop can open
+            sources, share artifacts, and trigger channel ingestion
+            without leaving the chat client. Both apps still
+            authenticate to the KChat server with their own
+            credentials.
+          </p>
+          <button
+            type="button"
+            onClick={handleOpenExtensionSettings}
+            data-testid="kchat-open-desktop-extensions"
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--color-text-link, #06f)",
+              cursor: "pointer",
+              fontSize: "var(--font-size-sm)",
+              textDecoration: "underline",
+              padding: 0,
+            }}
+          >
+            Open KChat Desktop extensions
+          </button>
+        </div>
+      )}
 
       <div style={{ marginBottom: "var(--spacing-md)" }}>
         <label
@@ -366,52 +416,7 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
         />
       </div>
 
-      {state.state !== "connected" && extensionStatus?.available && (
-        <div
-          style={{ marginBottom: "var(--spacing-md)" }}
-          data-testid="kchat-extension-available"
-        >
-          <p
-            style={{
-              fontSize: "var(--font-size-sm)",
-              color: "var(--color-text-secondary)",
-              marginBottom: "var(--spacing-sm)",
-            }}
-          >
-            KChat Desktop is running on this machine
-            {extensionStatus.desktopVersion
-              ? ` (v${extensionStatus.desktopVersion})`
-              : ""}
-            . Tessera can use its authenticated session — no token
-            copy-paste required.
-          </p>
-          <Button
-            onClick={handleExtensionConnect}
-            disabled={busy}
-            data-testid="kchat-extension-connect"
-          >
-            {busy ? "Connecting…" : "Connect via KChat Desktop"}
-          </Button>
-          <button
-            type="button"
-            onClick={() => setShowManual((v) => !v)}
-            data-testid="kchat-toggle-manual"
-            style={{
-              marginLeft: "var(--spacing-sm)",
-              background: "none",
-              border: "none",
-              color: "var(--color-text-link, #06f)",
-              cursor: "pointer",
-              fontSize: "var(--font-size-sm)",
-              textDecoration: "underline",
-            }}
-          >
-            {showManual ? "Hide manual connection" : "Use a token instead"}
-          </button>
-        </div>
-      )}
-
-      {state.state !== "connected" && showManual && (
+      {state.state !== "connected" && (
         <div style={{ marginBottom: "var(--spacing-md)" }}>
           <label
             htmlFor={tokenId}
@@ -439,10 +444,20 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
         </div>
       )}
 
-      <div style={{ display: "flex", gap: "var(--spacing-sm)", alignItems: "center" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: "var(--spacing-sm)",
+          alignItems: "center",
+        }}
+      >
         {state.state === "connected" ? (
           <>
-            <Button onClick={handleDisconnect} disabled={busy} data-testid="kchat-disconnect">
+            <Button
+              onClick={handleDisconnect}
+              disabled={busy}
+              data-testid="kchat-disconnect"
+            >
               {busy ? "Disconnecting…" : "Disconnect"}
             </Button>
             <span
@@ -453,25 +468,17 @@ export default function KchatSettingsCard({ api }: KchatSettingsCardProps = {}) 
               data-testid="kchat-connected-user"
             >
               Connected as <strong>{connectedLabel}</strong>
-              {authModeLabel ? (
-                <span
-                  data-testid="kchat-auth-mode"
-                  style={{
-                    marginLeft: "var(--spacing-xs)",
-                    fontSize: "var(--font-size-xs)",
-                    color: "var(--color-text-secondary)",
-                  }}
-                >
-                  {authModeLabel}
-                </span>
-              ) : null}
             </span>
           </>
-        ) : showManual ? (
-          <Button onClick={handleConnect} disabled={busy} data-testid="kchat-connect">
+        ) : (
+          <Button
+            onClick={handleConnect}
+            disabled={busy}
+            data-testid="kchat-connect"
+          >
             {busy ? "Connecting…" : "Connect"}
           </Button>
-        ) : null}
+        )}
       </div>
 
       {state.state === "error" && state.error && (

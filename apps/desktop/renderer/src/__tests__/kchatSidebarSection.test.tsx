@@ -61,6 +61,18 @@ function makeApi(overrides: Partial<typeof window.tessera.kchat> = {}) {
     addChannelSource: vi.fn(),
     onStatusChange: vi.fn().mockReturnValue(() => {}),
     onEvent: vi.fn().mockReturnValue(() => {}),
+    desktopBridgeStatus: vi.fn().mockResolvedValue({
+      apiServerRunning: true,
+      apiServerPort: 51234,
+      portFilePath: "/tmp/tessera-kchat-port.json",
+      lastExtensionContactAt: null,
+    }),
+    openInDesktop: vi
+      .fn()
+      .mockResolvedValue({ opened: true, url: "kchat://" }),
+    openDesktopExtensions: vi
+      .fn()
+      .mockResolvedValue({ opened: true, url: "kchat://" }),
     ...overrides,
   } as unknown as typeof window.tessera.kchat;
 }

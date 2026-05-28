@@ -61,7 +61,7 @@ describe("appInitComplete guard on window-all-closed", () => {
     // mid-construction (e.g. if createWindow itself opens a child
     // window that closes before the main window is ready).
     //
-    // Search the full source from the `app.whenReady()` anchor
+    // Search the full source from the `app.whenReady().then` anchor
     // forward, rather than carving out a `[\s\S]*?\}\);` block —
     // the whenReady body now contains nested arrow-function blocks
     // (`app.on("activate", () => { ... });`, `setImmediate(() => {
@@ -69,8 +69,15 @@ describe("appInitComplete guard on window-all-closed", () => {
     // inner `});`, miss the trailing statements, and fail to find
     // both anchors. `indexOf` from a starting position is robust to
     // future additions of nested closures inside the callback.
-    const whenReadyIdx = source.indexOf("app.whenReady()");
-    expect(whenReadyIdx, "could not find app.whenReady() in main.ts").toBeGreaterThan(-1);
+    //
+    // Anchor on `app.whenReady().then` (the actual call expression,
+    // not the bare `app.whenReady()` substring) so doc-comment
+    // mentions of the call elsewhere in the file do not shift the
+    // anchor backwards. The `.then` suffix is part of the call
+    // syntax and never appears in prose, which keeps the test
+    // robust against arbitrary new comments in `main.ts`.
+    const whenReadyIdx = source.indexOf("app.whenReady().then");
+    expect(whenReadyIdx, "could not find app.whenReady().then in main.ts").toBeGreaterThan(-1);
     // The unconditional top-level `createWindow();` call (not the
     // one inside the activate listener) is what creates the main
     // window on startup. Anchor on the second occurrence after

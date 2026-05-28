@@ -106,6 +106,15 @@ vi.mock("electron", () => ({
   BrowserWindow: {
     fromWebContents: () => null,
   },
+  // `shell.openExternal` is loaded at module-import time by
+  // `electron/ipc/kchat.ts` (Phase 14 Round 13 ANALYSIS_0001 —
+  // top-level import). This test never invokes the
+  // `kchat:openInDesktop` / `kchat:openDesktopExtensions` handlers,
+  // but the symbol must exist or `import` resolution fails before
+  // any tests run.
+  shell: {
+    openExternal: vi.fn(() => Promise.resolve()),
+  },
 }));
 
 // The evidence-pack bytes are arbitrary opaque payload from the

@@ -5,6 +5,22 @@ import { ModelSidecar } from "./sidecar";
 import { DiffusionSidecar, resolveDiffusionBinary } from "./diffusionSidecar";
 import { KchatAuthService } from "./kchat/kchatAuth";
 import { KchatEventForwarder } from "./kchat/kchatEventForwarder";
+import {
+  KchatLocalApiServer,
+  type LocalApiHandlers,
+  type LocalApiStatus,
+  type TesseraKchatSourceRow,
+  type IngestChannelRequest,
+  type IngestChannelResponse,
+  type ShareArtifactRequest,
+  type ShareArtifactResponse,
+  LOCAL_API_CAPABILITIES,
+  LocalApiError,
+} from "./kchat/kchatLocalApi";
+import {
+  DeeplinkBridge,
+  attachAppEvents as attachDeeplinkEvents,
+} from "./kchat/kchatDeeplinkBridge";
 import { getOrCreateDbKeyAsync, EncryptionUnavailableError } from "./dbKey";
 import type {
   AddCitationRequest,
@@ -730,6 +746,50 @@ let kchatAuthService: KchatAuthService | null = null;
 // design). Reset alongside the auth service in tests via
 // `resetKchatAuthService`.
 let kchatEventForwarder: KchatEventForwarder | null = null;
+// Phase 14 Task 2: localhost HTTP server the Tessera `.kcz`
+// extension (running inside KChat Desktop) talks to. Lazily
+// started by `startKchatLocalApiServer()` from the main-process
+// `whenReady` chain and torn down by `stopKchatLocalApiServer()`
+// from the `will-quit` chain (or by tests that need a fresh
+// instance between cases). NOTE: this slot is intentionally NOT
+// cleared by `resetKchatAuthService` — unlike the auth
+// service's companion `KchatEventForwarder`, the local API
+// server holds an active bound HTTP port and a synchronous
+// `slot = null` would leak the listening socket. Tests that
+// need a clean slate must call the async
+// `stopKchatLocalApiServer()` explicitly.
+let kchatLocalApiServer: KchatLocalApiServer | null = null;
+// Pending-promise slot so concurrent `startKchatLocalApiServer()`
+// calls coalesce onto a single `server.start()` rather than racing
+// through the `kchatLocalApiServer === null` check and binding two
+// HTTP ports (Phase 14 Round 11 Devin Review ANALYSIS_0002).
+let kchatLocalApiServerPending: Promise<KchatLocalApiServer> | null = null;
+// Stopping-promise slot so a `startKchatLocalApiServer()` call that
+// arrives while a `stopKchatLocalApiServer()` is in flight waits for
+// the stop to fully complete before constructing a new server. Without
+// this slot, the start's IIFE would race the stop's slot-clearing
+// writes: the stop captures the start's pending promise, awaits it,
+// reads `kchatLocalApiServer`, and clears the slot — but a concurrent
+// new start that arrived AFTER the stop cleared the pending slot and
+// BEFORE the stop cleared `kchatLocalApiServer` would observe an empty
+// pending slot, construct its own server, and its IIFE would later
+// write `kchatLocalApiServer = serverC`. The stop's subsequent slot
+// clear then either wipes serverC (orphaning it — server still
+// running, slot null, nobody can call `stop()` on it) or, depending
+// on ordering, the start's IIFE overwrites the stop's null write
+// (giving the caller back a server that the stop has already torn
+// down). Phase 14 Round 15 Devin Review ANALYSIS_0001.
+//
+// Symmetric with the start's pending slot: the start awaits the
+// stopping slot if non-null, and the stop publishes its work into
+// the stopping slot so concurrent stops also serialise.
+let kchatLocalApiServerStopping: Promise<void> | null = null;
+// Phase 14 Task 3: `tessera://` deeplink router. Constructed
+// eagerly at module load so a pre-ready `open-url` event from
+// macOS can be parked before `whenReady` fires. The renderer
+// installs the consumer once it boots.
+const kchatDeeplinkBridge = new DeeplinkBridge();
+let kchatDeeplinkTeardown: (() => void) | null = null;
 // Block B Task 4 (Phase 11) second-pass Devin Review ANALYSIS_0002:
 // the IPC handler populates this slot with the full-channel-sync
 // closure that `runAddKchatChannel` powers, so the forwarder can
@@ -1094,6 +1154,323 @@ export function getKchatEventForwarder(): KchatEventForwarder | null {
 }
 
 /**
+ * Accessor for the singleton localhost API server used by the
+ * Tessera `.kcz` extension installed in KChat Desktop (Phase 14
+ * Task 2). Returns `null` until {@link startKchatLocalApiServer}
+ * has been called from the main-process `whenReady` chain.
+ */
+export function getKchatLocalApiServer(): KchatLocalApiServer | null {
+  return kchatLocalApiServer;
+}
+
+/**
+ * Start the localhost API server. Idempotent and concurrency-safe
+ * against:
+ *
+ *   1. **Concurrent starts** (Phase 14 Round 11 Devin Review
+ *      ANALYSIS_0002). The first caller drives `server.start()`, and
+ *      any concurrent callers that arrive while that `start()` is
+ *      in-flight coalesce onto the same promise instead of racing
+ *      through the null-check and binding a second port.
+ *
+ *   2. **Stop-during-in-flight-start** (Phase 14 Round 12 Devin
+ *      Review BUG_0001). Handled by `stopKchatLocalApiServer()`:
+ *      it captures and awaits the pending start before clearing
+ *      `kchatLocalApiServer`.
+ *
+ *   3. **Start-during-in-flight-stop** (Phase 14 Round 15 Devin
+ *      Review ANALYSIS_0001). Handled here: if a stop is in flight
+ *      we await `kchatLocalApiServerStopping` BEFORE entering the
+ *      pending-promise branch, so the stop fully tears down the
+ *      previous server (and clears `kchatLocalApiServer`) before
+ *      we construct a new one. Without this wait, a new start's
+ *      IIFE would race the in-flight stop's slot writes — the new
+ *      server could land in the slot mid-stop and be silently torn
+ *      down by the stop's `kchatLocalApiServer = null` write, or
+ *      worse, the start's IIFE could clobber the stop's null write
+ *      and hand the caller a server the stop has already closed.
+ *      Re-checking idempotency after the await is load-bearing:
+ *      the stop's predecessor start may have left a live server in
+ *      the slot.
+ *
+ * Sequential calls after the first succeeds return the cached
+ * instance synchronously.
+ *
+ * Called once from the main-process `whenReady` chain in
+ * `main.ts`; the pending-promise / stopping-promise slots are
+ * defence-in-depth so a future second call site doesn't silently
+ * leak an HTTP server.
+ *
+ * The `handlers` argument is supplied by the caller (the IPC
+ * registration layer) so this module stays decoupled from the
+ * Tessera source / artifact subsystems. The default-handlers
+ * factory below is a thin glue layer over `getKchatAuthService`
+ * plus the Rust bridge.
+ */
+export async function startKchatLocalApiServer(
+  userDataDir: string,
+  handlers: LocalApiHandlers,
+): Promise<KchatLocalApiServer> {
+  if (kchatLocalApiServer !== null) return kchatLocalApiServer;
+  // Drain any in-flight stop FIRST, so we never construct a new
+  // server whose slot-write races the stop's slot-clearing writes.
+  // The `while` (rather than `if`) tolerates a chain of overlapping
+  // stops: each iteration awaits the most recently published
+  // stopping promise, and we re-read the slot to pick up any newer
+  // stop that the previous await raced against. The catch swallows
+  // the stop's rejection because the stop's responsibility for
+  // teardown is complete by the time it rejects — we just need to
+  // know it has stopped writing to `kchatLocalApiServer`.
+  while (kchatLocalApiServerStopping !== null) {
+    const stopping = kchatLocalApiServerStopping;
+    try {
+      await stopping;
+    } catch {
+      // The stop's failure is the caller's problem to surface;
+      // here we only care that it has finished touching the slot.
+    }
+    // Re-check after the await: a stop's predecessor start may
+    // have left a live server in the slot that we should reuse.
+    if (kchatLocalApiServer !== null) return kchatLocalApiServer;
+  }
+  if (kchatLocalApiServerPending !== null) return kchatLocalApiServerPending;
+  kchatLocalApiServerPending = (async () => {
+    const server = new KchatLocalApiServer(handlers, {
+      userDataDir,
+    });
+    await server.start();
+    kchatLocalApiServer = server;
+    return server;
+  })();
+  try {
+    return await kchatLocalApiServerPending;
+  } finally {
+    kchatLocalApiServerPending = null;
+  }
+}
+
+/**
+ * Stop the localhost API server and remove the port-file. Called
+ * from `app.on("will-quit", ...)` in `main.ts`.
+ *
+ * The actual teardown work runs inside an IIFE published into
+ * `kchatLocalApiServerStopping` so a concurrent
+ * `startKchatLocalApiServer()` can await it before constructing a
+ * new server (Phase 14 Round 15 Devin Review ANALYSIS_0001).
+ * Concurrent stops also serialise via the same slot.
+ */
+export async function stopKchatLocalApiServer(): Promise<void> {
+  // Serialise concurrent stops. The second stop must wait for the
+  // first to complete before checking the slot — otherwise the
+  // second stop could observe a still-running server that the
+  // first stop is about to tear down, double-call `stop()`, and
+  // double-unlink the port file (the port-file unlink is
+  // idempotent today via `rmSync({ force: true })`, but the
+  // server's `close()` is not — calling it twice raises
+  // ERR_SERVER_NOT_RUNNING on the second invocation).
+  while (kchatLocalApiServerStopping !== null) {
+    const stopping = kchatLocalApiServerStopping;
+    try {
+      await stopping;
+    } catch {
+      // A prior stop rejected; we don't propagate its failure
+      // because the caller asked us to stop, and the prior stop
+      // has done its part of the teardown.
+    }
+  }
+  const work = (async (): Promise<void> => {
+    // Capture and clear the pending-promise slot FIRST. If a
+    // `startKchatLocalApiServer()` IIFE is still in flight, we
+    // MUST wait for it to settle before checking
+    // `kchatLocalApiServer` — otherwise the IIFE will complete
+    // `await server.start()` and write `kchatLocalApiServer =
+    // server` AFTER this function returns, leaving an orphaned
+    // running HTTP server that nobody will ever call `stop()` on
+    // (it would hold an event-loop handle and a bound port for
+    // the rest of the process lifetime). Phase 14 Round 12 Devin
+    // Review BUG_0001.
+    //
+    // Clearing the slot before the await is intentional: a third
+    // concurrent caller arriving while we're inside this await
+    // must NOT join the same start (we're about to tear it down)
+    // — it observes an empty pending slot, observes the non-null
+    // stopping slot we publish below, and awaits the teardown
+    // before constructing a fresh server. Phase 14 Round 15
+    // ANALYSIS_0001.
+    const pending = kchatLocalApiServerPending;
+    kchatLocalApiServerPending = null;
+    if (pending !== null) {
+      try {
+        await pending;
+      } catch {
+        // The in-flight start rejected. The IIFE's failure path
+        // is responsible for tearing down its own bound socket
+        // via the BUG_0001 rollback in `KchatLocalApiServer.start()`
+        // (Round 8). `kchatLocalApiServer` will be null when we
+        // fall through, so this branch is a no-op.
+      }
+    }
+    if (kchatLocalApiServer === null) return;
+    const server = kchatLocalApiServer;
+    kchatLocalApiServer = null;
+    await server.stop();
+  })();
+  // Publish the work into the stopping slot BEFORE awaiting it
+  // so a concurrent start that's already past its idempotency
+  // check can see it. The slot is cleared in `finally` only if
+  // it still points at OUR work — a subsequent stop may have
+  // replaced it (its `while` loop awaited us first), and we
+  // must not stomp the newer slot value.
+  kchatLocalApiServerStopping = work;
+  try {
+    await work;
+  } finally {
+    if (kchatLocalApiServerStopping === work) {
+      kchatLocalApiServerStopping = null;
+    }
+  }
+}
+
+/**
+ * Accessor for the singleton `tessera://` deeplink router.
+ * Always returns a live bridge — instantiated at module load so
+ * a pre-ready `open-url` event can be parked.
+ */
+export function getKchatDeeplinkBridge(): DeeplinkBridge {
+  return kchatDeeplinkBridge;
+}
+
+/**
+ * Attach the deeplink bridge to Electron app events. Idempotent;
+ * called from the main-process boot sequence after IPC
+ * registration so the consumer is already wired.
+ */
+export function attachKchatDeeplinkBridge(): void {
+  if (kchatDeeplinkTeardown !== null) return;
+  kchatDeeplinkTeardown = attachDeeplinkEvents(kchatDeeplinkBridge, app);
+}
+
+/**
+ * Detach the deeplink bridge listeners. Used by tests + by the
+ * `will-quit` handler so a re-launched main process does not
+ * stack listeners.
+ */
+export function detachKchatDeeplinkBridge(): void {
+  if (kchatDeeplinkTeardown === null) return;
+  const fn = kchatDeeplinkTeardown;
+  kchatDeeplinkTeardown = null;
+  fn();
+}
+
+/**
+ * Build a `LocalApiHandlers` adapter wired into the live KChat
+ * auth service. This is the production glue between the
+ * localhost API server and the rest of Tessera's main process.
+ * The artifact-share and ingest paths surface typed `LocalApiError`
+ * envelopes so failures are mapped to the right HTTP status.
+ *
+ * The handlers intentionally do NOT mint new tokens or write to
+ * the vault — they reuse the existing PAT session managed by
+ * {@link KchatAuthService}. If the user is disconnected, every
+ * call returns `tessera_unavailable` until the user reconnects.
+ */
+export function buildLocalApiHandlers(): LocalApiHandlers {
+  const tesseraVersion = app.getVersion();
+  return {
+    async status(): Promise<LocalApiStatus> {
+      const svc = getKchatAuthService();
+      const state = svc.getState();
+      return {
+        tesseraVersion,
+        connected: state.state === "connected",
+        serverUrl: state.serverUrl ?? null,
+        // The localhost API surface intentionally does not enumerate
+        // sources here; `listSources` does that. Surface a 0 / null
+        // so the wire-format stays stable when sources are wired in
+        // later phases.
+        indexedChannelCount: 0,
+        lastEventAt: state.lastHealthyAt ?? null,
+        capabilities: LOCAL_API_CAPABILITIES,
+      };
+    },
+    async listSources(): Promise<readonly TesseraKchatSourceRow[]> {
+      const fn = localApiSourcesProvider;
+      if (fn === null) {
+        throw new LocalApiError(
+          503,
+          "tessera_unavailable",
+          "Tessera sources provider not registered yet",
+        );
+      }
+      return fn();
+    },
+    async ingestChannel(
+      req: IngestChannelRequest,
+    ): Promise<IngestChannelResponse> {
+      const fn = localApiIngestChannelHandler;
+      if (fn === null) {
+        throw new LocalApiError(
+          503,
+          "tessera_unavailable",
+          "Tessera ingest handler not registered yet",
+        );
+      }
+      return fn(req);
+    },
+    async shareArtifact(
+      req: ShareArtifactRequest,
+    ): Promise<ShareArtifactResponse> {
+      const fn = localApiShareArtifactHandler;
+      if (fn === null) {
+        throw new LocalApiError(
+          503,
+          "tessera_unavailable",
+          "Tessera share-artifact handler not registered yet",
+        );
+      }
+      return fn(req);
+    },
+  };
+}
+
+// Provider slots populated by the IPC registration layer so the
+// local API server doesn't import the source / artifact modules
+// directly (avoiding a layering cycle).
+let localApiSourcesProvider:
+  | (() => Promise<readonly TesseraKchatSourceRow[]>)
+  | null = null;
+let localApiIngestChannelHandler:
+  | ((req: IngestChannelRequest) => Promise<IngestChannelResponse>)
+  | null = null;
+let localApiShareArtifactHandler:
+  | ((req: ShareArtifactRequest) => Promise<ShareArtifactResponse>)
+  | null = null;
+
+export function setLocalApiSourcesProvider(
+  fn:
+    | (() => Promise<readonly TesseraKchatSourceRow[]>)
+    | null,
+): void {
+  localApiSourcesProvider = fn;
+}
+
+export function setLocalApiIngestChannelHandler(
+  fn:
+    | ((req: IngestChannelRequest) => Promise<IngestChannelResponse>)
+    | null,
+): void {
+  localApiIngestChannelHandler = fn;
+}
+
+export function setLocalApiShareArtifactHandler(
+  fn:
+    | ((req: ShareArtifactRequest) => Promise<ShareArtifactResponse>)
+    | null,
+): void {
+  localApiShareArtifactHandler = fn;
+}
+
+/**
  * Replace (or clear) the singleton KChat auth service AND the
  * companion WebSocket forwarder. Used by tests to inject a
  * stub or a fresh instance between cases. Disposing the
@@ -1141,6 +1518,24 @@ export function resetKchatAuthService(
   // and a test that calls `resetKchatAuthService(null)` should
   // never observe an impl that closes over a torn-down service.
   setKchatBackfillImpl(null);
+  // Phase 14 Round 4 Devin Review polish: the three local-API
+  // provider slots (`localApiSourcesProvider`,
+  // `localApiIngestChannelHandler`,
+  // `localApiShareArtifactHandler`) are reachable from the
+  // localhost API server via `buildLocalApiHandlers()`. When the
+  // future IPC registration layer (Phase 14 Tasks 9–13) wires
+  // them up, the supplied closures will capture
+  // `getKchatAuthService()` / `getBridge()` just like the resync
+  // and backfill impls above — so the same "stale closure surviving
+  // a `resetKchatAuthService(null)` could deref a torn-down
+  // service" hazard applies. Clearing the slots here pre-emptively
+  // means the future wiring PR doesn't have to remember to update
+  // this reset path; the local API server's null-checks already
+  // map "slot is null" to a 503 `tessera_unavailable` envelope,
+  // which is the correct post-reset behaviour in tests.
+  setLocalApiSourcesProvider(null);
+  setLocalApiIngestChannelHandler(null);
+  setLocalApiShareArtifactHandler(null);
   kchatAuthService = next;
   if (next) {
     kchatEventForwarder = new KchatEventForwarder({
