@@ -80,8 +80,9 @@ for connect/sync/disconnect.
 
 KChat is the exception to the OAuth shape because it doesn't model chat
 as "files" — see the [KChat integration](#kchat-integration) section
-below for its dual-mode auth (extension vs. personal access token),
-WebSocket-driven event pipe, and post-level AEAD.
+below for its PAT-based auth, WebSocket-driven event pipe, post-level
+AEAD, and the optional Phase 14 `.kcz` extension that lets a running
+KChat Desktop talk to Tessera over a loopback HTTP API.
 
 ### KChat integration
 
@@ -91,20 +92,47 @@ retrievable evidence) and a **destination** (artifacts can be shared
 into a channel, optionally with an evidence-pack ZIP). It's the only
 connector that ships with its own dedicated UI surfaces.
 
-**Two auth modes:**
+**Auth — personal access token (PAT):**
 
-- **Extension mode** — if a [`uney-chat-desktop`](https://github.com/uneycom/uney-chat-desktop)
-  instance is running locally, Tessera connects to it over a
-  per-platform handshake socket (Linux `$XDG_RUNTIME_DIR/tessera-kchat-extension.sock`,
-  macOS Application Support, Windows named pipe) and receives a
-  scoped, short-lived delegated token. The desktop app's master
-  credentials never enter Tessera's vault. The token auto-refreshes
-  before expiry; the in-memory `KchatClient.token` rotates via an
-  `onRefreshSuccess` listener so downstream REST calls always carry a
-  fresh bearer.
-- **PAT mode** — manual fallback when the extension isn't available
-  (or the user prefers a personal access token). Standard `kchat:connect`
-  flow with the token stored in the vault under provider `kchat`.
+Tessera and KChat Desktop are *two independent Electron clients* that
+authenticate to the same KChat server independently. Tessera holds the
+user's PAT in the vault under provider `kchat`; KChat Desktop holds its
+own session. There is no session handoff between them, no shared
+secret, no IPC channel.
+
+The standard `kchat:connect` flow takes a server URL + PAT, verifies
+the token against `/users/me`, and persists on success.
+
+**Optional cross-app integration via the `.kcz` extension (Phase 14):**
+
+If the user has installed Tessera's
+[`tessera-kchat`](extensions/tessera-kchat/) `.kcz` extension inside
+KChat Desktop AND both apps are running, the two surfaces can talk to
+each other:
+
+- A loopback HTTP API in Tessera (`KchatLocalApiServer`) binds to
+  `127.0.0.1` on a kernel-assigned port and writes the port + a
+  256-bit bearer token to `{userData}/tessera-kchat-port.json` at
+  mode 0600 (atomic rename). The extension reads the file to
+  discover the API and proves identity with the bearer token on every
+  call.
+- Routes: `GET /api/status`, `GET /api/sources`, `POST /api/ingest-channel`,
+  `POST /api/share-artifact`. Every request is bearer-authed,
+  Host-header SSRF-guarded, and body-capped at 64 KiB.
+- Cross-app navigation rides two deeplink schemes:
+  `tessera://source/<id>`, `tessera://artifact/<id>`,
+  `tessera://ingest?channel=&team=` (KChat Desktop → Tessera) and
+  `kchat://app/conversation/<id>`, `kchat://app/settings/extensions`
+  (Tessera → KChat Desktop, via `shell.openExternal()`).
+- The Settings card renders a passive **"KChat Desktop detected —
+  enhanced integration active"** affordance when the loopback API has
+  received a bearer-authed request from the extension within the
+  last 90 seconds.
+
+The `.kcz` extension is installable from KChat Desktop's
+Settings → Developer → Extensions → "Install from .kcz" flow. Build
+it locally with `npm run build:kchat-extension` (output:
+`extensions/tessera-kchat/releases/com.tessera.kchat-bridge@<version>.kcz`).
 
 **What gets indexed:**
 

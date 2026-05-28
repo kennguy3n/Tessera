@@ -24,8 +24,10 @@ import { buildSpawnEnv } from "../sidecar";
 // `process.platform` at file load and assert it's unchanged at
 // teardown so any future test that reintroduces global mutation
 // fails loudly here rather than silently corrupting a neighbour.
-// Mirrors the architectural pattern landed in PR #57 for
-// `extensionSocketPath.test.ts`.
+// Mirrors the architectural pattern landed in PR #57 (the originating
+// test file was removed in PR #58 along with the socket-bridge surface,
+// but the pattern survives in `tokenVault.test.ts`,
+// `diffusionSidecar.test.ts`, and this suite).
 const ORIGINAL_PLATFORM = process.platform;
 beforeAll(() => {
   expect(process.platform).toBe(ORIGINAL_PLATFORM);

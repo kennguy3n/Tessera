@@ -10,19 +10,68 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **KChat extension bridge.** Tessera now connects to a locally-running
-  [`uney-chat-desktop`](https://github.com/uneycom/uney-chat-desktop)
-  instance over a per-platform handshake socket (Linux
-  `$XDG_RUNTIME_DIR`, macOS Application Support, Windows named pipe)
-  and runs as an *extension* of the user's authenticated KChat session.
-  The desktop app's master credentials never enter Tessera's vault —
-  only a scoped, short-lived delegated token that auto-refreshes
-  before expiry via `KchatExtensionSession.onRefreshSuccess`,
-  rotating the in-memory `KchatClient.token` so downstream REST
-  calls always carry a fresh bearer. PAT mode remains available as a
-  manual fallback. `kchat:status` exposes `authMode`
-  (`"none" | "pat" | "extension"`) so the UI lights up the right
-  surfaces without polling.
+- **KChat Desktop integration via `.kcz` extension + loopback HTTP API
+  + deeplinks (Phase 14).** Replaces Phase 13's socket-bridge
+  integration with the correct architecture: Tessera and KChat
+  Desktop are two independent Electron clients that share only the
+  KChat server backend. Cross-app surface is (a) a signed `.kcz`
+  extension under [`extensions/tessera-kchat/`](extensions/tessera-kchat/)
+  installed inside KChat Desktop and talking to Tessera over a
+  loopback-only HTTP API on `127.0.0.1` (bearer-token auth via 256-bit
+  `crypto.randomBytes(32)` → base64url with timing-safe compare,
+  Host-header SSRF guard against DNS-rebind, 64 KiB body cap, port
+  discovery via `{userData}/tessera-kchat-port.json` at mode 0600 via
+  atomic rename), (b) `tessera://` deeplinks for KChat Desktop →
+  Tessera navigation handled by `kchatDeeplinkBridge.ts` with
+  pre-ready route parking and Windows/Linux cold-start argv scanning
+  in the single-instance-lock else branch, and (c) `kchat://`
+  deeplinks for Tessera → KChat Desktop navigation via
+  `shell.openExternal()` (`kchat:openInDesktop`,
+  `kchat:openDesktopExtensions`, sharing a single rate-limiter bucket
+  so a runaway renderer can't multiply the OS-shell budget).
+- **Loopback API routes.** `GET /api/status` returns Tessera connection
+  state and indexed channels; `GET /api/sources` enumerates
+  KChat-sourced rows; `POST /api/ingest-channel` triggers a channel
+  backfill; `POST /api/share-artifact` accepts an artifact id +
+  optional evidence pack from the extension. Errors return a typed
+  `LocalApiErrorCode` envelope (`forbidden` / `not_found` /
+  `method_not_allowed` / `invalid_request` / `payload_too_large` /
+  `rate_limited` / `internal`) paired one-to-one with the HTTP status.
+- **`tessera://` deeplink protocol.** Routes: `tessera://source/<id>`,
+  `tessera://artifact/<id>`, `tessera://ingest?channel=&team=`.
+  Pre-ready URLs are parked in a FIFO queue and replayed on consumer
+  registration. macOS uses `open-url`, Win/Linux warm-start uses
+  `second-instance`, Win/Linux cold-start uses an argv scan inside
+  the single-instance-lock else branch so the URL doesn't get dropped
+  on the about-to-quit second instance.
+- **Concurrency-hardened start/stop state machine** for
+  `KchatLocalApiServer`. Three-slot state machine in `appState.ts`
+  (`kchatLocalApiServer` cached slot, `kchatLocalApiServerPending`
+  start-in-flight slot, `kchatLocalApiServerStopping` stop-in-flight
+  slot) safe against every overlap of start and stop: concurrent
+  starts coalesce onto one server; stop-during-in-flight-start
+  (success and rejection paths) does not strand a server;
+  start-during-in-flight-stop parks the new start on the stopping
+  promise rather than racing it; concurrent stops resolve to one
+  `server.close()` call.
+- **`KchatSettingsCard` passive detection.** Renders a passive
+  "KChat Desktop detected — enhanced integration active" affordance
+  when the loopback API has received a bearer-authed request from the
+  extension within the last 90 seconds. "Open KChat Desktop
+  extensions" button invokes `kchat://app/settings/extensions` via
+  the typed `openDesktopExtensions()` IPC.
+- **`KchatSidebarSection` per-channel deeplink action.** Small
+  external-link button next to each KChat channel source opens the
+  corresponding conversation in KChat Desktop via
+  `kchat://app/conversation/<id>`. A heartbeat dot turns green when
+  the loopback API has seen a recent extension request.
+- **`.kcz` extension build pipeline.** `npm run build:kchat-extension`
+  bundles the extension into
+  `extensions/tessera-kchat/releases/com.tessera.kchat-bridge@<version>.kcz`.
+  Build is deterministic (reverse-alpha walk + stable timestamps);
+  the walker throws on symbolic links rather than silently dropping
+  them (`.kcz` archives must contain only regular files for
+  cross-platform reproducibility).
 - **KChat post citation rendering.** KChat post hits in `CitationPanel`
   render with chat semantics — chat icon, `#channel @sender`, threaded
   indicator. Two module-scoped `KchatNameCache` LRUs (500-entry user-id
@@ -90,15 +139,49 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   inject attacker-controlled content the connector would later
   ingest. Wired into all four export-path call sites in
   `ipc/artifacts.ts`.
-- **`KchatAuthService` symmetric teardown.** All four shutdown sites
-  (`handleExtensionRefreshFailure`, `handleExtensionDisconnect`,
-  `teardownExtension`, `disconnect`) flip `authMode = "none"` BEFORE
-  calling `client.shutdown()`, so no `disconnected` status push ever
-  carries a stale `authMode: "extension"`.
-- **SSRF guard re-validated on extension vault restore.**
-  `enforceKchatServerUrl` is re-run when restoring an extension
-  session from the vault — defence-in-depth against SSRF policy
-  tightening between sessions and against tampered vault entries.
+- **`KchatAuthService` symmetric teardown.** `disconnect()` flips
+  `authMode = "none"` BEFORE calling `client.shutdown()`, so no
+  `disconnected` status push ever carries a stale `authMode: "pat"`.
+- **SSRF guard re-validated on vault restore.** `enforceKchatServerUrl`
+  is re-run when restoring a PAT session from the vault — defence-in-depth
+  against SSRF policy tightening between sessions and against tampered
+  vault entries.
+- **`restoreFromVault()` token-only rollback policy** on verify failure
+  (Phase 14 Round 9). The in-memory token is rolled back via
+  `setToken(null)` but `serverUrl` is intentionally NOT rolled back —
+  `setServerUrl("")` would silently fall back to `DEFAULT_KCHAT_SERVER`
+  (a worse failure mode than the stale value), and the token-presence
+  guard in `KchatClient.request()` prevents outbound traffic to the
+  stale URL. Documented in JSDoc + mirroring NOTE comments on the
+  catch blocks of both `restoreFromVault()` and `connect()`.
+- **`LocalApiErrorCode` wire-code/HTTP-status canonical mapping** (Phase
+  14 Round 10). Added `payload_too_large` paired with 413 so extensions
+  can branch on `code` to distinguish payload-size failures from
+  malformed-body failures. Mirrored in `TesseraLocalApiError`.
+- **Port-file-write failure rollback** in `KchatLocalApiServer.start()`
+  (Phase 14 Round 8). If `writeAtomic()` fails after a successful
+  `listen()`, the server closes the bound socket and clears
+  `this.server` / `this.boundPort` / `this.portFileAbsPath` before
+  re-throwing — without this rollback the leaked listener would hold
+  an event-loop handle for the lifetime of the process.
+- **Windows/Linux cold-start `tessera://` argv scan** (Phase 14 Round 14).
+  Runs inside the `else` branch of the single-instance-lock check
+  (primary instance only) and feeds any URL into
+  `getKchatDeeplinkBridge().ingestRawUrl(url)` so it lands in the
+  bridge's parking queue and gets FIFO-dispatched when the renderer
+  consumer registers later in the `whenReady` chain.
+- **Hoisted `shell` import** in `apps/desktop/electron/ipc/kchat.ts`
+  (Phase 14 Round 13). Dropped two `await import("electron")` sites in
+  the new deeplink handlers in favour of a top-level
+  `import { shell } from "electron"`. CONTRIBUTING.md compliance — new
+  code shouldn't propagate the pre-existing dynamic-import convention
+  violation in `artifacts.ts`.
+- **Hardened symmetric teardown on `KchatLocalApiServer.start()`
+  null-address branch** (Phase 14 Round 13 ANALYSIS_0007). `server.close()`
+  before the null-address throw, symmetric with the wrong-address
+  branch. Structurally unreachable in current Node but defended in
+  depth against any future `node:net` surprise where `address() === null`
+  after a successful `listen()`.
 - **Custom-provider `/v1/models` 404s.** `externalProvider:listModels`
   now returns a typed `endpoint_not_found` result on HTTP 404 from a
   custom provider; the renderer surfaces a clear hint pointing at the
@@ -119,6 +202,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   theme-aware link token. Every color value is a `var(--color-…)`
   reference so dark-mode overrides apply automatically.
 
+### Removed
+
+- **Phase 13 socket-bridge surface.** Removed
+  `kchatExtensionBridge.ts`, `kchatExtensionSession.ts`,
+  `kchatExtensionEvents.ts`, `extensionSocketPath.test.ts`,
+  `kchatExtension.test.ts`, three `kchat:extension*` preload channels
+  (`kchat:extensionStatus`, `kchat:extensionConnect`,
+  `kchat:extensionDisconnect`), the `extension-delegated` vault
+  provider, and the per-platform discovery code (Linux
+  `$XDG_RUNTIME_DIR`, macOS Application Support, Windows named pipe).
+  Superseded by Phase 14's `.kcz` extension + loopback HTTP API + deeplink
+  architecture (see Added). PAT mode survives unchanged — it remains
+  the single source of auth between Tessera and the KChat server.
+- **`KchatAuthMode` value `"extension"`.** `authMode` is now
+  `"none" | "pat"`. The mode-aware UI surfaces in `KchatSettingsCard`
+  collapsed to a single PAT path + the passive "KChat Desktop
+  detected" affordance driven by the loopback API heartbeat.
+
 ### Tests
 
 - **AEAD full-lifecycle round-trip.** Integration tests on
@@ -131,31 +232,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   revocation-takes-effect-immediately on the same manager instance,
   BM25 ordering preserved through AEAD verification, cross-source
   revocation isolation.
-- **Extension bridge token expiry + refresh.** Fake-timer-driven
-  auto-refresh at `REFRESH_MARGIN_MS`, refresh failure invalidates
-  the session, already-expired tokens classified as
-  `protocol-error`, multi-refresh chain (1 → 2 → 3 → 4 token
-  rotations).
 - **Preload contract regression.** Source-text assertion that every
   channel in the 17-entry `EXPECTED_KCHAT_CHANNELS` master list has
   a matching `ipcRenderer.invoke("<channel>")` string in
   `preload.ts` — catches the failure mode where a handler is
   registered but the preload bridge entry is missing, rendering the
   channel silently unreachable from the renderer.
-- **Explicit `disconnect()` extension-mode teardown.** Test 14 in
-  `kchatExtension.test.ts` pins six invariants of the
-  user-initiated `disconnect()` path while extension mode is
-  active: extension vault entry deleted, saved PAT entry preserved
-  (deliberate UX guarantee), authMode flips to `"none"`, no
-  stale-authMode `disconnected` push reaches subscribers,
-  audit-userid return contract, idempotency on second call.
-- **`extensionSocketPath()` per-platform discovery.** 11 cases in
-  `extensionSocketPath.test.ts` pin all four discovery branches
-  (Linux + `XDG_RUNTIME_DIR`, Linux fallback with uid-suffix
-  collision safety, macOS Application Support, Windows named
-  pipe) plus edge defences (empty XDG treated as unset, missing
-  `process.getuid`, freebsd parity with Linux, named-pipe namespace
-  integrity on Windows).
+- **KChat Desktop integration suite** (Phase 14 PR #58).
+  `kchatDesktopIntegration.test.ts` covers bind/discovery, auth +
+  Host-header policy, route surface, deeplink parsing, bridge
+  lifecycle, cold-start argv scanning, and two regression cases:
+  Round 8 BUG_0001 port-file-write rollback (kernel-assigned port
+  captured from inside the failing writer, ECONNREFUSED, second
+  `start()` succeeds), and Round 13 ANALYSIS_0007 null-address
+  symmetric teardown (uses the `createServerFn` injection seam to
+  swap `address` for `() => null`).
+- **Start/stop state machine regression suite** (Phase 14 Rounds
+  11/12/15). `kchatLocalApiServerSingleton.test.ts` pins seven race
+  scenarios: concurrent-starts coalesce, sequential cached fast
+  path, stop-then-start cycle, stop-during-in-flight-start
+  (success path), stop-during-in-flight-start (rejection path),
+  start-during-in-flight-stop (parks on stopping promise), and
+  concurrent-stops resolve to one `server.close()`.
+- **Cold-start argv scanning** (Phase 14 Round 14). Two regression
+  cases in `kchatDesktopIntegration.test.ts`: cold-start argv with
+  `tessera://` URL → URL extracted via the existing
+  `extractUrlFromArgv()` helper, parked, dispatched on consumer
+  registration; cold-start argv without deeplink → no-op, empty
+  queue at consumer-registration time.
 - **KChat citation surface dark-mode contract.** Regression test in
   `darkModeTokens.test.ts` pins that every KChat-specific CSS class
   CitationPanel references has a rule in `components.css`, that

@@ -48,8 +48,10 @@ import { encryptionUnavailableReason } from "../tokenVault";
 // instead. These hooks snapshot the live globals at file load and assert
 // they're unchanged at teardown so any future test that reintroduces
 // global mutation fails loudly here rather than silently corrupting a
-// neighbour. Mirrors the architectural pattern landed in PR #57 for
-// `extensionSocketPath.test.ts`.
+// neighbour. Mirrors the architectural pattern landed in PR #57 (the
+// originating test file was removed in PR #58 along with the
+// socket-bridge surface, but the pattern survives in this suite,
+// `sidecar.test.ts`, and `diffusionSidecar.test.ts`).
 const ORIGINAL_PLATFORM = process.platform;
 beforeAll(() => {
   expect(process.platform).toBe(ORIGINAL_PLATFORM);
@@ -111,8 +113,10 @@ describe("encryptionUnavailableReason", () => {
   // `Object.defineProperty` and restored it in `afterEach` — a
   // sequential-only pattern. This test pins the architectural
   // guarantee that the current implementation is purely a pure
-  // function of its argument. Mirrors the meta-test landed in PR #57
-  // for `extensionSocketPath`.
+  // function of its argument. Mirrors the meta-test pattern landed
+  // in PR #57 (the originating test file was removed in PR #58 along
+  // with the socket-bridge surface, but this snapshot+verify pattern
+  // survives across the platform-aware test suites).
   it("does not mutate process.platform when called with various platforms", () => {
     const before = process.platform;
     for (const platform of ["linux", "darwin", "win32", "freebsd"] as const) {
