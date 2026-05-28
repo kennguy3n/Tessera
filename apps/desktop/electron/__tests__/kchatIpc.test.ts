@@ -274,6 +274,7 @@ import {
   _resetKchatNameCachesForTest,
 } from "../ipc/kchat";
 import { enforceKchatServerUrl } from "../kchat/ssrfGuard";
+import * as ssrfGuardModule from "../kchat/ssrfGuard";
 import type { KchatBackfillRunOutcome } from "../../shared/types";
 
 function handler(channel: string) {
@@ -569,6 +570,61 @@ describe("kchat:connect — SSRF guard (eighth-pass invariant)", () => {
   // below for the replacement coverage. Same architectural pattern
   // as PR #57 (`ExtensionSocketDiscovery`) and PR #59
   // (`vaultCrypto` / `sidecar` platform injection).
+  //
+  // The IPC-integration coverage for the bypass branch is preserved
+  // by the "IPC handler delegates to the SSRF guard …" test below,
+  // which uses `vi.spyOn(ssrfGuardModule, "enforceKchatServerUrl")`
+  // to stub the bypass + verify the wiring — no env mutation needed.
+
+  it("IPC handler delegates to enforceKchatServerUrl with the operator-typed url and no opts (env-driven default preserved)", async () => {
+    // Restores the IPC-integration coverage that the env-mutating
+    // bypass test used to provide, without mutating `process.env`.
+    // The Devin Review Pass 3 finding flagged that the new
+    // direct-injection tests cover the guard contract precisely
+    // but don't verify the IPC handler's wiring to the guard. Per
+    // standing directive (correct long-term fix, not the easy
+    // patch), this test pins the wiring contract via a module-
+    // namespace spy: the IPC handler MUST call
+    // `enforceKchatServerUrl(url)` with no second argument so the
+    // env-driven default `process.env.TESSERA_KCHAT_ALLOW_INTERNAL`
+    // remains the production opt-out mechanism. A future refactor
+    // that accidentally passes `{ allowInternal: false }` would
+    // silently break the documented dev opt-out and this test
+    // would catch it.
+    const spy = vi
+      .spyOn(ssrfGuardModule, "enforceKchatServerUrl")
+      .mockResolvedValue(new URL("http://127.0.0.1:8080/"));
+    try {
+      serviceMock.connect.mockResolvedValue({
+        id: "user1234567890abcdefgh",
+        username: "dev",
+        email: "d@e.com",
+        first_name: "D",
+        last_name: "V",
+      });
+      const out = await handler("kchat:connect")(
+        EVENT,
+        "PAT",
+        "http://127.0.0.1:8080/",
+      );
+      expect(out).toMatchObject({ id: "user1234567890abcdefgh" });
+      // Verify the wiring: the IPC handler must call the guard
+      // with the raw URL and NO opts (so the env-driven default
+      // takes effect in production). Asserting on `spy.mock.calls`
+      // directly catches a future regression where someone wires
+      // `enforceKchatServerUrl(url, { allowInternal: false })` or
+      // `{ readEnv: () => undefined }` and accidentally bypasses
+      // the documented dev opt-out.
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]).toEqual(["http://127.0.0.1:8080/"]);
+      expect(serviceMock.connect).toHaveBeenCalledWith(
+        "PAT",
+        "http://127.0.0.1:8080/",
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
 
 // Phase 14-followup: the dev-opt-out branch of `enforceKchatServerUrl`
