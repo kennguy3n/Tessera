@@ -517,6 +517,7 @@ tessera/
 │       │   │   ├── kchatDeeplinkBridge.ts   # Phase 14: `tessera://` deeplink parser + pre-ready route parker. Routes: `tessera://source/<id>`, `tessera://artifact/<id>`, `tessera://ingest?channel=&team=`. Listens on `open-url` (macOS), `second-instance` (Win/Linux warm-start), and the single-instance-lock else branch's argv scan (Win/Linux cold-start) — URLs received before the renderer's consumer registers are parked FIFO and replayed once `whenReady` resolves
 │       │   │   ├── kchatEventForwarder.ts   # Bridges WebSocket events to bridge-side handlers (`file_added` targeted sync, `user_added/removed/member_updated` ACL projection, `channel_archived/deleted` cryptoshred)
 │       │   │   ├── kchatChannelSyncer.ts    # Channel-files sync + historical-backfill watermark loop with drain-on-quit
+│       │   │   ├── kchatNameCache.ts        # Bounded LRU resolving KChat user/channel ids → display names; touch-on-read, FIFO-eviction-at-bound; module-scoped singletons reset on `KchatAuthService.onStatusChange("none")`
 │       │   │   ├── kchatPaths.ts            # Canonical filesystem layout (`~/.tessera/kchat-channels/<channel-id>/`)
 │       │   │   ├── kchatTypes.ts            # Shared types (`KchatAuthMode`, …)
 │       │   │   └── ssrfGuard.ts             # `enforceKchatServerUrl` — scheme / host / port allow-list; re-validated on vault restore
