@@ -201,48 +201,64 @@ the entire KChat UI when `kchat:isAvailable` returns `false`.
 | `kchat:shareArtifact`                 | scalar-helper (artifact-id + KChat-id + format + bool×2)  | ✓ — uploads bytes via KChat token |
 | `kchat:searchPosts`                   | scalar-helper (query + limit)                             | ✓ — AEAD-verifies post bodies; rate-limited 10/s burst 20 |
 | `kchat:fetchThreadContext`            | scalar-helper (source UUID + KChat post-id)               | ✓ — returns the thread root + up to 2 earlier replies (chronological); AEAD-verifies parent bodies; name enrichment reuses the shared LRU caches; rate-limited 5/s burst 10 (legitimate caller fires this once per expand-click) |
-| `kchat:extensionStatus`               | no-input                                                  | ✓ — probes `uney-chat-desktop` Unix-socket / named-pipe; rate-limited 1/s burst 3 |
-| `kchat:extensionConnect`              | no-input                                                  | ✓ — runs handshake over the extension socket, persists scoped delegation under `kchat-extension` vault provider, applies SSRF guard to handshake `serverUrl`; rate-limited 1 per 5 s |
-| `kchat:extensionDisconnect`           | no-input                                                  | ✓ — tears down only the extension session; PAT vault entry survives; rate-limited 1 per 5 s |
+| `kchat:openInDesktop`                 | scalar-helper (KChat channel-id)                          | ✓ — constructs a `kchat://app/conversation/<id>` URL and invokes `shell.openExternal()`; shares a single rate-limiter bucket with `kchat:openDesktopExtensions` (key `kchat:openInDesktop`, 5/s burst 10) so a runaway renderer cannot multiply the OS-shell budget by opening N channels in parallel |
+| `kchat:openDesktopExtensions`         | no-input                                                  | ✓ — constructs a `kchat://app/settings/extensions` URL and invokes `shell.openExternal()`; shares the rate-limiter bucket above |
+| `kchat:desktopBridgeStatus`           | no-input                                                  | ✓ — returns `{ detected: boolean, lastHeartbeatAt: number \| null }` based on the loopback API's last bearer-authed request timestamp (90 s freshness window); pure read of in-memory state; rate-limited 5/s burst 10 (Settings card polls at 10 s + sidebar polls at 10 s) |
 | `kchat:backfillProgress`              | scalar-helper (KChat-id)                                  | ✓ — pure read of substrate state; rate-limited 2/s burst 5 |
 | `sources:backfillKchatChannel`        | scalar-helper (KChat-id)                                  | ✓ — historical-walk over `kchat:posts` REST surface |
 | `sources:addKchatChannel`             | scalar-helper (KChat-id + display-name)                   | ✓ — uses the KChat token from the vault to fan-out channel-file downloads into the source vault |
 
-### Phase 13 trust model for the extension surface
+### Phase 14 trust model for the KChat-Desktop integration surface
 
-The three `kchat:extension*` channels mount a new trust boundary
-beyond the existing PAT path. The salient policies:
+Three new channels (`kchat:openInDesktop`,
+`kchat:openDesktopExtensions`, `kchat:desktopBridgeStatus`) plus the
+loopback HTTP API expose Tessera's `.kcz` extension integration with
+KChat Desktop. The salient policies:
 
-1. **Transport is local-only**. The extension socket is a Unix
-   domain socket on Linux / macOS (`$XDG_RUNTIME_DIR/...` on
-   Linux, `~/Library/Application Support/Tessera/...` on macOS)
-   and a named pipe on Windows. There is **no TCP surface** — a
-   remote attacker cannot reach the bridge.
+1. **Deeplink invocation is fire-and-forget**. `kchat:openInDesktop` /
+   `kchat:openDesktopExtensions` only build a `kchat://...` URL and
+   pass it to `shell.openExternal()` — they do not pass any token,
+   secret, or PII along the URL. The OS protocol-handler dispatch
+   decides whether KChat Desktop is reachable; the IPC handler
+   resolves once the OS call returns.
 
-2. **Token never leaves the main process**. The delegation token
-   minted by `uney-chat-desktop` is stored under the
-   `kchat-extension` vault provider and surfaces to the renderer
-   only through the sanitised `KchatConnectionStateView` (no
-   token field).
+2. **Loopback HTTP API trust boundary lives in the main process**.
+   The bearer token (`crypto.randomBytes(32)` → base64url) and the
+   bound-port number are written to `{userData}/tessera-kchat-port.json`
+   at mode 0600 via atomic rename. The token is timing-safe-compared
+   on every request via `requireBearer()`. Every request also asserts
+   `Host: 127.0.0.1[:port]` to block DNS-rebind SSRF. The renderer
+   never sees the token — only the `kchat:desktopBridgeStatus`
+   read returns `{ detected, lastHeartbeatAt }`, derived from the
+   loopback API's in-memory heartbeat counter.
 
-3. **SSRF guard applies to the extension surface**. The
-   `serverUrl` carried in the handshake response is run through
-   the same `enforceKchatServerUrl` guard as the PAT-path
-   `kchat:connect`, so a malicious or compromised desktop app
-   cannot redirect Tessera's authenticated KChat traffic to a
-   private/loopback/link-local address.
+3. **Transport is loopback-only**. `KchatLocalApiServer` binds to
+   `127.0.0.1` exclusively (kernel-assigned port) — there is no
+   `0.0.0.0` bind and no non-loopback interface bind. A remote
+   attacker cannot reach the API even on a misconfigured host.
 
-4. **Rate-limited**. Discovery probe is 1/s burst 3 (cheap
-   read); handshake + disconnect are 1 per 5 s (each handshake
-   mints a fresh delegation, each disconnect tears down a live
-   socket — neither has a legitimate high-frequency caller).
+4. **Body cap, method allow-list, and route allow-list** all run
+   before the handler dispatch. POST bodies are capped at 64 KiB
+   and over-cap requests return HTTP 413 with `code: "payload_too_large"`.
+   Unknown routes return 404 / `not_found`; wrong methods return
+   405 / `method_not_allowed`.
 
-5. **Concurrent PAT + extension is rejected at the service
-   layer**. `KchatAuthService.connect()` tears down an active
-   extension session before the PAT attempt;
-   `KchatAuthService.connectViaExtension()` tears down an active
-   PAT connection before the handshake. Only one mode is ever
-   live at a time.
+5. **Rate-limited**. The two shell-launch channels share one
+   rate-limiter bucket (`kchat:openInDesktop`, 5/s burst 10) so a
+   runaway renderer that pings every channel in the sidebar can't
+   multiply the OS-shell budget. The `kchat:desktopBridgeStatus`
+   read is 5/s burst 10 (Settings card and sidebar both poll at 10 s).
+   The loopback HTTP API itself rate-limits each route per remote
+   address via the same `defaultRateLimiter` (loopback addresses
+   only have one effective remote, so this is effectively per-extension).
+
+6. **No session handoff between apps**. Tessera authenticates to the
+   KChat server with its own PAT (held in the vault under provider
+   `kchat`). KChat Desktop authenticates with its own session. The
+   loopback API never proxies KChat-server credentials and never
+   shares the PAT with the extension — the extension's identity
+   for talking to the KChat server is its own, independent of
+   Tessera's.
 
 ## Audit
 

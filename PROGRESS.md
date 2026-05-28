@@ -496,7 +496,163 @@ Theme 5 — Remaining polish
 
 ---
 
+## Phase 14 — KChat Desktop integration via `.kcz` extension + loopback API + deeplinks
+
+**Status:** `DONE` (Tasks 1–8 / PR #58 merged; Tasks 9–30 / this PR — docs + polish sweep)
+
+**Goal:** Replace Phase 13's socket-bridge integration with the correct
+architecture. Tessera and KChat Desktop are *two independent Electron
+clients* that share only the KChat server backend; cross-app surface is
+(a) a signed `.kcz` extension installed inside KChat Desktop talking to
+Tessera over a loopback-only HTTP API on `127.0.0.1`, (b) `tessera://`
+deeplinks for KChat Desktop → Tessera navigation, and (c) `kchat://`
+deeplinks for Tessera → KChat Desktop navigation via
+`shell.openExternal()`. No session handoff, no shared tokens, no
+external IPC channel.
+
+### Build
+
+Theme 1 — `.kcz` extension + loopback API + deeplinks (Tasks 1–8, PR #58)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | `extensions/tessera-kchat/` — `.kcz` manifest, source (`index.tsx`, `client.ts`, `portFile.ts`, `types.ts`, `views/sources-panel.tsx`), README, build pipeline. Manifest declares procedures `kchat.query_messages` / `kchat.query_conversations` / `kchat.send_message` and contributes the `tessera.sources-panel` view to the rightbar slot. | `DONE` (PR #58) |
+| 2 | `apps/desktop/electron/kchat/kchatLocalApi.ts` — loopback HTTP server bound to `127.0.0.1`, bearer-token auth (`crypto.randomBytes(32)` → base64url, timing-safe compare), Host-header SSRF guard, 64 KiB body cap, heartbeat tracked in `requireBearer()`. Discovery via `{userData}/tessera-kchat-port.json` (mode 0600 via atomic rename). | `DONE` (PR #58) |
+| 3 | `apps/desktop/electron/kchat/kchatDeeplinkBridge.ts` — `tessera://` parse + build for `source/<id>`, `artifact/<id>`, `ingest?channel=&team=`. Pre-ready route parking; `open-url` + `second-instance` + Win/Linux cold-start argv-scan listeners. | `DONE` (PR #58) |
+| 4 | `KchatSettingsCard` — single PAT connect path; "KChat Desktop detected" affordance renders when the local API's last extension heartbeat is fresher than 90 s. Button invokes `kchat://app/settings/extensions` deeplink via typed `openDesktopExtensions()` IPC. | `DONE` (PR #58) |
+| 5 | `KchatSidebarSection` — per-channel "Open in KChat Desktop" buttons that invoke `kchat://app/conversation/<id>`. Bridge-health dot (green when fresh heartbeat, grey otherwise). | `DONE` (PR #58) |
+| 6 | `apps/desktop/electron/ipc/kchat.ts` — `kchat:openInDesktop`, `kchat:openDesktopExtensions`, `kchat:desktopBridgeStatus` handlers. `shell.openExternal` for deeplinks. Shared rate-limiter bucket across both deeplink handlers so a runaway renderer can't multiply the OS-shell budget. | `DONE` (PR #58) |
+| 7 | `extensions/tessera-kchat/scripts/build.mjs` — builds a `.kcz` archive (deterministic zip) installable via KChat Desktop's Settings > Developer > Extensions. `npm run build:kchat-extension` at the repo root. The walker throws on symlinks rather than silently dropping them. | `DONE` (PR #58) |
+| 8 | `apps/desktop/electron/__tests__/kchatDesktopIntegration.test.ts` — 42 tests covering bind/discovery, auth + Host-header policy, route surface, deeplink parsing, bridge lifecycle, cold-start argv scanning, BUG_0001 port-file-write rollback, ANALYSIS_0007 null-address teardown, and a cross-cutting end-to-end client flow. | `DONE` (PR #58) |
+
+Theme 2 — Concurrency hardening (Tasks 9–13, PR #58)
+
+The `startKchatLocalApiServer()` / `stopKchatLocalApiServer()` pair landed
+across multiple Devin Review rounds as a three-slot state machine that is
+safe against every overlap of start and stop.
+
+| # | Item | Status |
+|---|---|---|
+| 9 | `kchatLocalApiServer` slot — cached fast-path on subsequent `start()` calls. | `DONE` (PR #58, initial) |
+| 10 | `kchatLocalApiServerPending` slot — concurrent starts coalesce onto a single in-flight `server.start()` instead of binding two ports. | `DONE` (PR #58, Round 11) |
+| 11 | Stop-during-in-flight-start fix — `stopKchatLocalApiServer()` captures pending, clears it, then awaits before checking the server slot, so the start IIFE can't write a stale server reference after stop returns. | `DONE` (PR #58, Round 12) |
+| 12 | `kchatLocalApiServerStopping` slot — start drains the stopping slot before constructing; stops serialise via the same slot (preventing double-`server.close()` which would raise `ERR_SERVER_NOT_RUNNING`). | `DONE` (PR #58, Round 15) |
+| 13 | Seven race scenarios pinned by regression tests in `kchatLocalApiServerSingleton.test.ts` — concurrent-starts, sequential cached fast-path, stop-then-start cycle, stop-during-in-flight-start (success + rejection), start-during-in-flight-stop, concurrent-stops. | `DONE` (PR #58, Rounds 11/12/15) |
+
+Theme 3 — Defence-in-depth + cross-platform deeplink coverage (Tasks 14–19, PR #58)
+
+| # | Item | Status |
+|---|---|---|
+| 14 | Port-file-write failure rollback — wrap `writeAtomic()` in try/catch, close the bound socket and clear `this.server` / `this.boundPort` / `this.portFileAbsPath` on failure so the leaked listener doesn't hold an event-loop handle for the lifetime of the process. Regression test captures the kernel-assigned port from inside the failing writer, asserts `ECONNREFUSED`, and confirms a second `start()` succeeds. | `DONE` (PR #58, Round 8 BUG_0001) |
+| 15 | `LocalApiErrorCode` wire-code/HTTP-status canonical mapping — added `payload_too_large` paired with 413 (was `invalid_request`) so extensions can branch on `code` to distinguish payload-size failures from malformed-body failures. Mirrored in `TesseraLocalApiError`. | `DONE` (PR #58, Round 10) |
+| 16 | Asymmetric teardown on null-address branch in `KchatLocalApiServer.start()` — `server.close()` before the throw, symmetric with the wrong-address branch right below. Practically unreachable but if `node:net` ever surprises us with `address() === null` after a successful `listen()`, the listening socket would otherwise orphan for the process lifetime. Regression test uses the `createServerFn` injection seam. | `DONE` (PR #58, Round 13 ANALYSIS_0007) |
+| 17 | Windows/Linux cold-start `tessera://` argv scan — `extractUrlFromArgv()` runs inside the `else` branch of the single-instance-lock check (primary instance only) and feeds any URL into `getKchatDeeplinkBridge().ingestRawUrl(url)` so it lands in the bridge's parking queue and gets FIFO-dispatched when the renderer consumer registers later in the `whenReady` chain. macOS uses `open-url` (covered by existing module-load listener); Win/Linux warm-start uses `second-instance`. | `DONE` (PR #58, Round 14 BUG_0001) |
+| 18 | `restoreFromVault()` rollback policy docstring + mirroring NOTE comments on the two catch blocks in `kchatAuth.ts` — documents that `setToken(null)` rolls back the token but `serverUrl` is intentionally NOT rolled back (`setServerUrl("")` would silently fall back to `DEFAULT_KCHAT_SERVER` — a worse failure mode than the stale value — and the token-presence guard in `KchatClient.request()` prevents outbound traffic to the stale URL). | `DONE` (PR #58, Round 9 BUG_0001) |
+| 19 | Hoist `shell` to a top-level `import { shell } from "electron"` in `apps/desktop/electron/ipc/kchat.ts`; dropped the two `await import("electron")` sites in the new deeplink handlers. CONTRIBUTING.md compliance — new code shouldn't propagate the pre-existing dynamic-import convention violation in `artifacts.ts`. | `DONE` (PR #58, Round 13 ANALYSIS_0001) |
+
+Theme 4 — Documentation sweep (Tasks 20–26, this PR)
+
+| # | Item | Status |
+|---|---|---|
+| 20 | `PHASES.md` — Phase 14 row added; Phase 13 marked as superseded by Phase 14 with explicit note that the socket-bridge surface was removed but the REST + PAT surface remains in production. | `DONE` (this PR) |
+| 21 | `PROGRESS.md` — Phase 14 section (this section) with build table for Themes 1–7, exit criteria, and dated changelog entries; new `2026-05-27 — Phase 14` block added below. | `DONE` (this PR) |
+| 22 | `ARCHITECTURE.md` — socket-bridge content removed (`kchatExtensionBridge.ts` directory entry, the extension-bridge data-flow diagram, the seven extension-bridge invariants); replaced with `.kcz` extension + loopback API + deeplink architecture: extension tree under `extensions/tessera-kchat/`, `kchatLocalApi.ts` / `kchatDeeplinkBridge.ts` in the IPC tree, new "KChat Desktop integration (Phase 14)" section with localhost-API data-flow diagram and the new set of invariants (loopback bind, bearer auth, Host SSRF guard, body cap, port file mode 0600, concurrency state machine, deeplink parking). | `DONE` (this PR) |
+| 23 | `README.md` — KChat integration subsection rewritten: removed dual-mode auth language ("extension vs. PAT"), replaced with the single PAT path + passive "KChat Desktop detected" affordance + cross-app deeplink description. | `DONE` (this PR) |
+| 24 | `CHANGELOG.md` — under `[Unreleased]`: 4 Added (`.kcz` extension, loopback HTTP API, `tessera://` deeplinks, `kchat:openInDesktop` IPC), 6 Changed (KChat extension bridge removed, Settings card UX, sidebar deeplink action, error-code wire contract, port-file write rollback, deeplink argv scan), 2 Removed (socket-bridge files, extension IPC handlers), 3 Tests (concurrency state machine, port-file rollback, cold-start argv scanning). | `DONE` (this PR) |
+| 25 | `docs/IPC_AUDIT.md` — removed three `kchat:extension*` rows (channels no longer exist in preload), added three new rows for `kchat:openInDesktop` / `kchat:openDesktopExtensions` / `kchat:desktopBridgeStatus` with real rate-limit profiles and input shapes; the trust-boundary section rewritten to describe the loopback-API + bearer-token + Host-SSRF-guard model. | `DONE` (this PR) |
+| 26 | `PHASES.md` / `PROGRESS.md` consistency audit — Tasks 1–30 attributed to PRs (PR #58 for Tasks 1–19, this PR for Tasks 20–30), exit criteria checkboxes updated. | `DONE` (this PR) |
+
+Theme 5 — Remaining polish (Tasks 27–30, this PR)
+
+| # | Item | Status |
+|---|---|---|
+| 27 | Stale comment / dead-code sweep — grep on HEAD for any remaining `kchatExtensionBridge` / `kchatExtensionSession` / `kchatExtensionEvents` / `extensionSocketPath` / `extension-delegated` mentions in code or tests confirms the only surviving references are historical mentions in this `PROGRESS.md` and the `CHANGELOG.md` `[Unreleased]` Removed block. No stale imports. | `DONE` (this PR) |
+| 28 | `kchatLocalApiServer` JSDoc / cross-reference audit — both `startKchatLocalApiServer()` (lines 1158–1198) and `stopKchatLocalApiServer()` (lines 1252–1262) carry round-by-round cross-references to the Devin Review IDs so a maintainer who runs `git log -S 'ANALYSIS_0001'` or `git log -S 'BUG_0001'` lands on the relevant test + JSDoc + commit message in one search. | `DONE` (PR #58 Rounds 11–15; verified this PR) |
+| 29 | Deeplink builder + parser round-trip coverage — `extensions/tessera-kchat/src/client.ts` and `apps/desktop/electron/kchat/kchatDeeplinkBridge.ts` already share types; this task verified `buildKchatDeeplink(channelId)` and `parseTesseraDeeplink(url)` round-trip cleanly for every supported route, with adversarial inputs (over-long ids, non-ASCII channel names, query-string injection) rejected by the existing assertion layer. | `DONE` (PR #58; verified this PR) |
+| 30 | Phase 14 verification matrix — local: `npm run lint` (0 errors), `npm run type-check` (clean tsconfig + tsconfig.electron), `npm run test:ui` (1905/1905 passing), `npm run build:kchat-extension` (produces `extensions/tessera-kchat/releases/com.tessera.kchat-bridge@0.1.0.kcz`), `npm run test:kchat-extension` (extension build pipeline tests passing). | `DONE` (PR #58 + this PR) |
+
+### Exit criteria
+
+- [x] `extensions/tessera-kchat/` exists in source with a valid `manifest.json`,
+      source tree, build pipeline, and README; `npm run build:kchat-extension`
+      produces an installable `.kcz` archive. *(PR #58)*
+- [x] `KchatLocalApiServer` binds to `127.0.0.1` exclusively (asserted by
+      integration test), generates a 256-bit bearer token per process
+      lifetime, writes the discovery file at mode 0600 via atomic
+      rename, and validates the `Host` header against
+      `/^127\.0\.0\.1(?::\d+)?$/` on every request. *(PR #58)*
+- [x] `tessera://` deeplinks land on the correct route from all three
+      entrypoints — macOS `open-url`, Win/Linux warm-start
+      `second-instance`, Win/Linux cold-start argv scan in the
+      single-instance-lock else branch. Pre-ready URLs are parked and
+      replayed FIFO when the renderer consumer registers. *(PR #58)*
+- [x] `kchat://app/conversation/<id>` and `kchat://app/settings/extensions`
+      open via `shell.openExternal()` from `kchat:openInDesktop` and
+      `kchat:openDesktopExtensions`, sharing a single rate-limiter bucket
+      so a runaway renderer can't multiply the OS-shell budget. *(PR #58)*
+- [x] `startKchatLocalApiServer()` / `stopKchatLocalApiServer()` are safe
+      against every start/stop overlap (concurrent starts, stop-during-
+      in-flight-start success, stop-during-in-flight-start rejection,
+      start-during-in-flight-stop, concurrent stops) — 7 race scenarios
+      pinned by regression tests. *(PR #58)*
+- [x] Documentation matches reality — every preload `kchat:*` channel
+      appears in `docs/IPC_AUDIT.md`, no surviving references to the
+      removed socket-bridge surface in `ARCHITECTURE.md` / `README.md` /
+      preload contract test, and the `.kcz` extension architecture is
+      described end-to-end. *(this PR)*
+
+---
+
 ## Phase changelog
+
+### 2026-05-27 — Phase 14 docs sweep (this PR)
+
+- **Tasks 20–26** — Documentation sweep. `PHASES.md` Phase 14 row added,
+  Phase 13 marked as superseded by Phase 14 (socket bridge removed; REST +
+  PAT surface unchanged). `PROGRESS.md` Phase 14 section added with build
+  table for Themes 1–5 and exit criteria. `ARCHITECTURE.md` socket-bridge
+  content replaced with the new `.kcz` + loopback API + deeplink
+  architecture (extension tree under `extensions/tessera-kchat/`,
+  `kchatLocalApi.ts` + `kchatDeeplinkBridge.ts` in the IPC tree, new
+  "KChat Desktop integration (Phase 14)" section with data-flow diagram
+  and invariants). `README.md` KChat integration subsection rewritten to
+  the single-PAT-path + passive detection + cross-app deeplink model.
+  `CHANGELOG.md` `[Unreleased]` block updated with Added / Changed /
+  Removed / Tests entries describing the Phase 14 surface. `IPC_AUDIT.md`
+  `kchat:extension*` rows removed, `kchat:openInDesktop` /
+  `kchat:openDesktopExtensions` / `kchat:desktopBridgeStatus` rows
+  added with real rate-limit profiles and input shapes.
+- **Tasks 27–30** — Polish. Grep on HEAD confirmed no stale
+  `kchatExtensionBridge` / `kchatExtensionSession` / `kchatExtensionEvents`
+  / `extensionSocketPath` / `extension-delegated` imports survive — only
+  historical mentions in `PROGRESS.md` and `CHANGELOG.md` `Removed` block.
+  Deeplink builder / parser round-trip coverage verified across every
+  route. Phase 14 verification matrix re-run: lint 0 errors, type-check
+  clean, 1905 tests passing, `.kcz` archive builds successfully.
+
+### 2026-05-27 — Phase 14 Tasks 1–19 (PR #58)
+
+- **Tasks 1–8** — Replaced Phase 13's socket bridge with the correct
+  architecture. `extensions/tessera-kchat/` scaffold + `.kcz` manifest +
+  source + build pipeline. `apps/desktop/electron/kchat/kchatLocalApi.ts`
+  loopback HTTP server (127.0.0.1, bearer-token, Host SSRF guard, 64 KiB
+  body cap, port discovery at mode 0600). `apps/desktop/electron/kchat/
+  kchatDeeplinkBridge.ts` `tessera://` parse + build + pre-ready
+  parking + Win/Linux cold-start argv scan. Settings card single-PAT
+  path + passive "KChat Desktop detected" affordance. Sidebar
+  per-channel `kchat://app/conversation/<id>` buttons. `kchat:openInDesktop`
+  / `kchat:openDesktopExtensions` / `kchat:desktopBridgeStatus` IPC.
+  Removed: `kchatExtensionBridge.ts`, `kchatExtensionSession.ts`,
+  `kchatExtensionEvents.ts`, `extensionSocketPath.test.ts`,
+  `kchatExtension.test.ts`, three `kchat:extension*` preload channels.
+- **Tasks 9–19** — Concurrency hardening (Rounds 11/12/15:
+  pending-promise + stopping-promise slots; 7 race scenarios pinned by
+  regression tests) + defence in depth (Round 8: port-file-write
+  rollback closes the leaked listener; Round 10: `payload_too_large`
+  paired with 413; Round 13: symmetric teardown on null-address branch;
+  Round 14: Windows/Linux cold-start argv scan in the single-instance-
+  lock else branch; Round 9: `restoreFromVault()` rollback policy
+  docstring; Round 13: hoisted `shell` import).
 
 ### 2026-05-27 — Phase 13 Theme 5 (PR #55)
 

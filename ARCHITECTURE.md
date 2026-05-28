@@ -511,15 +511,14 @@ tessera/
 │       │   │   ├── connectors/          # per-provider OAuth + sync handlers (gdrive / onedrive / notion / jira / confluence / figma)
 │       │   │   └── index.ts             # `registerAllIpcHandlers()`
 │       │   ├── kchat/                   # KChat (Mattermost v4) integration — see "KChat integration" section below
-│       │   │   ├── kchatAuth.ts             # `KchatAuthService`: dual-mode (`pat` / `extension`) auth, vault wiring, WebSocket lifecycle, refresh handlers, symmetric teardown
+│       │   │   ├── kchatAuth.ts             # `KchatAuthService`: PAT auth, vault wiring, WebSocket lifecycle, refresh handlers, symmetric teardown ordering (`authMode = "none"` before `client.shutdown()`)
 │       │   │   ├── kchatClient.ts           # REST client (channels / posts / files / users); deserialisation-boundary validation of every server-id field
-│       │   │   ├── kchatExtensionBridge.ts  # Localhost socket discovery (Linux `$XDG_RUNTIME_DIR`, macOS Application Support, Windows named pipe); per-platform handshake protocol; PAT fallback
-│       │   │   ├── kchatExtensionSession.ts # Scoped delegated token lifecycle: `current` slot, auto-refresh timer at `REFRESH_MARGIN_MS` before expiry, `onRefreshSuccess` listener, `cancelRefresh()`, failure-nulls-session invariant
-│       │   │   ├── kchatExtensionEvents.ts  # Translates desktop-app events to `KchatWebSocketEventView` so `KchatEventForwarder` is shape-compatible across PAT and extension modes
+│       │   │   ├── kchatLocalApi.ts         # Phase 14: loopback HTTP API the `.kcz` extension running inside KChat Desktop talks to. Binds to `127.0.0.1` only; bearer-token auth (`crypto.randomBytes(32)` → base64url, timing-safe compare); Host-header SSRF guard; 64 KiB body cap; routes: `GET /api/status`, `GET /api/sources`, `POST /api/ingest-channel`, `POST /api/share-artifact`. Discovery via `{userData}/tessera-kchat-port.json` (mode 0600 via atomic rename). Heartbeat tracked in `requireBearer()` for Settings-card "KChat Desktop detected" affordance
+│       │   │   ├── kchatDeeplinkBridge.ts   # Phase 14: `tessera://` deeplink parser + pre-ready route parker. Routes: `tessera://source/<id>`, `tessera://artifact/<id>`, `tessera://ingest?channel=&team=`. Listens on `open-url` (macOS), `second-instance` (Win/Linux warm-start), and the single-instance-lock else branch's argv scan (Win/Linux cold-start) — URLs received before the renderer's consumer registers are parked FIFO and replayed once `whenReady` resolves
 │       │   │   ├── kchatEventForwarder.ts   # Bridges WebSocket events to bridge-side handlers (`file_added` targeted sync, `user_added/removed/member_updated` ACL projection, `channel_archived/deleted` cryptoshred)
 │       │   │   ├── kchatChannelSyncer.ts    # Channel-files sync + historical-backfill watermark loop with drain-on-quit
 │       │   │   ├── kchatPaths.ts            # Canonical filesystem layout (`~/.tessera/kchat-channels/<channel-id>/`)
-│       │   │   ├── kchatTypes.ts            # Shared types (`KchatAuthMode`, `KchatExtensionStatus`, …)
+│       │   │   ├── kchatTypes.ts            # Shared types (`KchatAuthMode`, …)
 │       │   │   └── ssrfGuard.ts             # `enforceKchatServerUrl` — scheme / host / port allow-list; re-validated on vault restore
 │       │   ├── appState.ts          # Bridge initialization, async DB-key path, password-vault hand-off
 │       │   ├── preload.ts           # Typed preload API exposed to renderer
@@ -566,6 +565,21 @@ tessera/
 │   ├── tessera_connectors/          # gdrive.rs, onedrive.rs, notion.rs, jira.rs, confluence.rs, figma.rs + registry/token/types
 │   ├── tessera_runtime/             # Local model runtime + optional `external_provider` HTTP adapter (OpenAI-compatible / Anthropic / custom)
 │   └── tessera_audit/               # Audit trail logging
+├── extensions/                      # Phase 14 — KChat Desktop extensions packaged as `.kcz` archives
+│   └── tessera-kchat/               # `.kcz` extension that runs *inside* KChat Desktop and talks to Tessera over the loopback HTTP API
+│       ├── manifest.json            # Extension identity (`com.tessera.kchat-bridge`), declared procedures, contributed views, permissions
+│       ├── src/
+│       │   ├── index.tsx            # Extension entry point — registers the rightbar view, opens a `TesseraLocalApiClient` against the discovered port
+│       │   ├── client.ts            # Typed HTTP client (`TesseraLocalApiClient`) — calls `GET /api/status`, `GET /api/sources`, `POST /api/ingest-channel`, `POST /api/share-artifact` with the bearer token from the discovery file. Mirrors `LocalApiErrorCode` as `TesseraLocalApiError` so callers can branch on `code` (e.g. `payload_too_large`)
+│       │   ├── portFile.ts          # Reads + validates `{userData}/tessera-kchat-port.json`; rejects entries older than the freshness window
+│       │   ├── types.ts             # Shared wire types between extension and host (`LocalApiStatusV1`, etc.)
+│       │   └── views/sources-panel.tsx  # Rightbar React view — lists Tessera-indexed channels for the current KChat user
+│       ├── scripts/
+│       │   ├── build.mjs            # Deterministic `.kcz` archive builder (stable order via reverse-alpha walk; symlinks throw)
+│       │   ├── fsWalk.mjs           # Cross-platform directory walker; throws on symlinks rather than silently dropping them
+│       │   └── zipWriter.mjs        # Streaming zip writer with stable timestamps for reproducible builds
+│       ├── package.json             # Build / test scripts; depends only on Node stdlib
+│       └── README.md                # Installation + dev workflow
 ├── sidecars/                        # Model runtime binaries
 │   ├── llama-server/                # PrismML llama.cpp sidecar
 │   ├── scripts/                     # Platform download scripts (sh + ps1)
@@ -604,55 +618,98 @@ chat server) as a first-class collaboration surface — both as a *source*
 and as a *destination* (artifacts can be shared into a channel, optionally
 with an evidence pack).
 
-### Auth modes
+### Auth model — single PAT path
+
+Tessera and KChat Desktop are *two independent Electron clients* that
+authenticate to the same KChat server backend independently. There is no
+session handoff between them.
 
 | Mode | When it applies | Where credentials live |
 |---|---|---|
-| **`extension`** | A running `uney-chat-desktop` instance is reachable on the local handshake socket (Linux `$XDG_RUNTIME_DIR/tessera-kchat-extension.sock`, macOS Application Support, Windows named pipe). | Scoped, short-lived delegated token in the vault under provider `kchat-extension`. The desktop app's master credentials never enter Tessera's vault. The token auto-refreshes `REFRESH_MARGIN_MS` before expiry; `KchatExtensionSession.onRefreshSuccess` rotates the in-memory `KchatClient.token` so downstream REST calls always carry a fresh bearer. |
-| **`pat`** | Manual fallback when the extension is unavailable or the user prefers a personal access token. | Vault under provider `kchat` (the canonical `kchat:connect` flow). |
+| **`pat`** | A user pastes a personal access token (or server URL + PAT) into the Settings card. | Vault under provider `kchat`. The token is verified against `/users/me` before persistence; on verify-failure the in-memory token is rolled back but `serverUrl` is intentionally NOT rolled back (`setServerUrl("")` would silently fall back to `DEFAULT_KCHAT_SERVER` — a worse failure mode than the stale value — and the token-presence guard in `KchatClient.request()` prevents outbound traffic to the stale URL). |
 | **`none`** | No active KChat connection. | — |
 
-`kchat:status` surfaces the current mode; `kchat:extensionStatus` surfaces
-extension availability. `KchatSettingsCard` lights up the right UX without
-the renderer needing to poll the bridge.
+`kchat:status` surfaces the current mode; `kchat:desktopBridgeStatus`
+exposes whether a `.kcz` extension running inside KChat Desktop has hit
+the loopback API recently (90 s freshness window) so the Settings card
+can render a passive "KChat Desktop detected — enhanced integration
+active" affordance without polling the desktop app.
+
+### Cross-app architecture (Phase 14)
+
+Cross-app surface is three independent channels — no shared token, no
+shared session, no external IPC.
+
+1. **`.kcz` extension inside KChat Desktop** — Built from
+   `extensions/tessera-kchat/`. Installed via KChat Desktop's
+   Settings → Developer → Extensions → "Install from .kcz" flow.
+   Runs inside KChat Desktop's renderer using its procedures-registry
+   capabilities. Talks to Tessera over a loopback-only HTTP API.
+2. **Loopback HTTP API in Tessera** — `KchatLocalApiServer` binds to
+   `127.0.0.1` (kernel-assigned port) when Tessera starts and writes
+   the port + bearer token to `{userData}/tessera-kchat-port.json` at
+   mode 0600 (atomic rename). The extension reads the file to
+   discover the API and proves identity with the bearer token on every
+   call. Every request also asserts `Host: 127.0.0.1[:port]` to block
+   DNS-rebind SSRF.
+3. **Deeplinks for cross-app navigation** —
+   - `tessera://` registered by Tessera. Routes: `source/<id>`,
+     `artifact/<id>`, `ingest?channel=&team=`. Handled in
+     `kchatDeeplinkBridge.ts`; pre-ready URLs are parked and replayed
+     FIFO when the renderer consumer registers.
+   - `kchat://` opened by Tessera via `shell.openExternal()` in
+     `ipc/kchat.ts` (`kchat:openInDesktop`,
+     `kchat:openDesktopExtensions`).
 
 ### Data flow
 
 ```
-[ uney-chat-desktop instance ]              [ Tessera Electron main process ]
+[ KChat Desktop renderer ]                  [ Tessera Electron main process ]
             │                                            │
-   IPC handshake (scoped token)  ◀─── kchatExtensionBridge.ts ─────────────────────┐
-            │                                            │                        │
-            ▼                                            ▼                        │
-   WS frames (events) ───────▶  kchatExtensionEvents.ts  ───▶  KchatEventForwarder │
-                                            │                          │          │
-                                            ▼                          ▼          │
-                                  KchatExtensionSession   (file_added → targeted   │
-                                  ┌──────────────────┐    sync; user_added /       │
-                                  │ current: { token,│    user_removed → ACL       │
-                                  │   expiresAt, … } │    projection;              │
-                                  │ refresh timer    │    channel_deleted →        │
-                                  │ onRefreshSuccess │    cryptoshred)             │
-                                  └──────────────────┘                             │
-                                            │                                      │
-                                            ▼                                      │
-                                       KchatClient                                 │
-                                  (REST: channels / posts / files / users)         │
-                                            │                                      │
-                                            ▼                                      │
-                                  Channel-files + posts sync                       │
-                                            │                                      │
-                                            ▼                                      │
-                          tessera_sources::manager + kchat_crypto                  │
-                  (per-source DEK; AES-256-GCM column AEAD on `kchat_posts`;       │
-                   FTS5 for BM25; HashTrickEmbedding for vector; RRF fusion)       │
-                                            │                                      │
-                                            ▼                                      │
-                            kchat:searchPosts / kchat:fetchThreadContext            │
-                                            │                                      │
-                                            ▼                                      │
-                                React renderer: CitationPanel (chat icon,           │
-                                #channel @sender, threaded indicator) <─────────────┘
+            │ .kcz extension                             │
+            │ (extensions/tessera-kchat/)                │
+            │                                            │
+            │ 1. read port + bearer token from           │
+            │    {userData}/tessera-kchat-port.json      │
+            │ 2. HTTP fetch over 127.0.0.1:<port>        │
+            │                                            ▼
+            ├─── GET /api/status  ─────────────▶  KchatLocalApiServer
+            │       (bearer auth, Host SSRF guard, 64 KiB body cap)
+            │                                            │
+            ├─── GET /api/sources ─────────────▶  enumerates KChat-sourced
+            │                                     `Source` rows
+            │                                            │
+            ├─── POST /api/ingest-channel ─────▶  triggers backfill
+            │                                            │
+            └─── POST /api/share-artifact ─────▶  uploads an artifact +
+                                                  optional evidence-pack zip
+
+[ KChat Desktop ] ◀─── kchat://app/conversation/<id>  ────  shell.openExternal()
+                  ◀─── kchat://app/settings/extensions ────  (rate-limited via
+                                                              shared bucket)
+
+[ Tessera renderer ] ◀─── tessera://source/<id>  ─────────  kchatDeeplinkBridge
+                     ◀─── tessera://artifact/<id> ────────  (open-url, second-
+                     ◀─── tessera://ingest?…  ───────────── instance, cold-start
+                                                             argv scan)
+
+         ┌─── independently of all the above ──────────────────┐
+         ▼                                                     ▼
+    KchatClient (REST: channels / posts / files / users) — same KChat server,
+    authenticates with the user's PAT held in Tessera's vault. Tessera
+    indexes channel files + posts; KChat Desktop renders chat.
+                                            │
+                                            ▼
+                          tessera_sources::manager + kchat_crypto
+                  (per-source DEK; AES-256-GCM column AEAD on `kchat_posts`;
+                   FTS5 for BM25; HashTrickEmbedding for vector; RRF fusion)
+                                            │
+                                            ▼
+                            kchat:searchPosts / kchat:fetchThreadContext
+                                            │
+                                            ▼
+                                React renderer: CitationPanel (chat icon,
+                                #channel @sender, threaded indicator)
 ```
 
 ### Key invariants
@@ -692,22 +749,84 @@ code review.
   *(Pinned by `apps/desktop/electron/__tests__/exportPathSafety.test.ts`
   — 9 containment cases covering prefix-overlap, escape-via-`..`,
   deny-covers-allow, empty-deny passthrough.)*
-- **SSRF guard on the extension surface.** `enforceKchatServerUrl`
-  applies to the handshake `serverUrl` returned by the desktop app and
-  is re-validated when restoring an extension session from the vault
+- **SSRF guard on the PAT server URL.** `enforceKchatServerUrl`
+  applies to the PAT-supplied server URL on `kchat:connect` and is
+  re-validated when restoring a PAT session from the vault
   (defence-in-depth against SSRF policy tightening between sessions
   and against tampered vault entries). *(Pinned by
-  `apps/desktop/electron/__tests__/kchatExtension.test.ts` test 7
-  "SSRF re-validation on vault-restored serverUrl rejects loopback"
-  and test 9 "SSRF on extension handshake serverUrl is rejected".)*
-- **Symmetric teardown across all four shutdown sites.**
-  `handleExtensionRefreshFailure`, `handleExtensionDisconnect`,
-  `teardownExtension`, and `disconnect` all flip `authMode = "none"`
-  BEFORE calling `client.shutdown()`, so no `disconnected` status push
-  ever carries a stale `authMode: "extension"`. *(Pinned by
-  `apps/desktop/electron/__tests__/kchatExtension.test.ts` test 8
-  "shutdown push during extension-disconnect carries authMode=none,
-  not stale 'extension'" — fails pre-fix, passes post-fix.)*
+  `apps/desktop/electron/__tests__/kchatAuth.test.ts` SSRF cases on
+  `connect()` and `restoreFromVault()`.)*
+- **Symmetric teardown on PAT disconnect.** `disconnect()` flips
+  `authMode = "none"` BEFORE calling `client.shutdown()`, so no
+  `disconnected` status push ever carries a stale `authMode: "pat"`.
+  *(Pinned by `apps/desktop/electron/__tests__/kchatAuth.test.ts`
+  stale-authMode-push regression.)*
+- **Loopback bind only.** `KchatLocalApiServer` binds to `127.0.0.1`
+  exclusively, never `0.0.0.0` or a non-loopback interface. Integration
+  test scans every non-loopback address returned by `os.networkInterfaces()`
+  and asserts each one rejects a connection with `ECONNREFUSED`.
+  *(Pinned by `apps/desktop/electron/__tests__/kchatDesktopIntegration.test.ts`
+  "binds to 127.0.0.1 only".)*
+- **Bearer-token auth on every request.** The loopback server generates
+  a 256-bit random token (`crypto.randomBytes(32)` → base64url) on
+  startup and writes it to `{userData}/tessera-kchat-port.json` at
+  mode 0600 via atomic rename. Every request passes through
+  `requireBearer()` which performs a timing-safe comparison and updates
+  the heartbeat. Missing or wrong-token requests return 403 with
+  `code: "forbidden"` and no body leakage. *(Pinned by
+  `kchatDesktopIntegration.test.ts` auth + Host-header policy block.)*
+- **Host-header SSRF guard.** Every request asserts the `Host` header
+  matches `/^127\.0\.0\.1(?::\d+)?$/`. Defends against DNS-rebind
+  attacks where a `*.rebind.example.com` resolves to `127.0.0.1` —
+  the browser would still send a non-`127.0.0.1` Host. Port is not
+  treated as a security boundary (the bearer token is); the regex
+  intentionally accepts any port string so the failure path is 403,
+  not 400. *(Pinned by `kchatDesktopIntegration.test.ts` Host-header
+  block.)*
+- **64 KiB request body cap.** `readJsonBody()` enforces a hard 64 KiB
+  cap on `POST` bodies and returns HTTP 413 with `code: "payload_too_large"`
+  (paired one-to-one with the status in the typed `LocalApiErrorCode`
+  / `TesseraLocalApiError` envelope). Defends against memory-exhaustion
+  by a compromised extension. *(Pinned by `kchatDesktopIntegration.test.ts`
+  413 regression with explicit `code` assertion.)*
+- **Port-file write rollback.** If `writeAtomic()` fails after a
+  successful `listen()`, the server closes the bound socket and
+  clears `this.server` / `this.boundPort` / `this.portFileAbsPath`
+  before re-throwing. Without this rollback the listener would orphan
+  for the lifetime of the process — `KchatLocalApiServer` exposes no
+  external handle to it once the constructor's caller hasn't retained
+  a reference. *(Pinned by `kchatDesktopIntegration.test.ts`
+  BUG_0001 regression — captures the kernel-assigned port from inside
+  the failing writer, asserts `ECONNREFUSED`, confirms a second
+  `start()` succeeds.)*
+- **Symmetric teardown on null-address branch.** If `node:net` returns
+  `address() === null` after a successful `listen()` (structurally
+  unreachable in current Node, but defended in depth), the bound
+  socket is closed before the throw, symmetric with the wrong-address
+  branch right below. *(Pinned by `kchatDesktopIntegration.test.ts`
+  ANALYSIS_0007 regression — uses the `createServerFn` injection
+  seam.)*
+- **Start / stop concurrency state machine.** A three-slot state
+  machine in `appState.ts` (`kchatLocalApiServer` cached slot,
+  `kchatLocalApiServerPending` start-in-flight slot,
+  `kchatLocalApiServerStopping` stop-in-flight slot) is safe against
+  every overlap of start and stop: concurrent starts coalesce onto
+  one server; stop-during-in-flight-start (success and rejection
+  paths) does not strand a server; start-during-in-flight-stop
+  parks the new start on the stopping promise rather than racing it;
+  concurrent stops resolve to one `server.close()` call (Node's
+  `http.Server.close()` is not idempotent and would raise
+  `ERR_SERVER_NOT_RUNNING` on the second call). *(Pinned by
+  `apps/desktop/electron/__tests__/kchatLocalApiServerSingleton.test.ts`
+  — seven race scenarios.)*
+- **Deeplink parking.** URLs arriving via `tessera://` before the
+  renderer's consumer registers are parked in a FIFO queue in
+  `KchatDeeplinkBridge` and dispatched in arrival order once a
+  consumer registers via `kchat:registerDeeplinkConsumer`. Argv-scan
+  for cold-start URLs runs inside the single-instance-lock else
+  branch (primary instance only) so we don't try to ingest a URL
+  on the about-to-quit second instance. *(Pinned by
+  `kchatDesktopIntegration.test.ts` cold-start argv regression.)*
 - **Preload contract.** Every channel in the
   `EXPECTED_KCHAT_CHANNELS` master list (17 entries) has a matching
   `ipcRenderer.invoke("<channel>")` string in `preload.ts`. A handler
@@ -727,7 +846,8 @@ notes in [`docs/IPC_AUDIT.md`](docs/IPC_AUDIT.md). A summary:
 |---|---|
 | `kchat:isAvailable` / `kchat:status` | Capability probe + current `authMode` |
 | `kchat:connect` / `kchat:disconnect` | PAT-mode lifecycle |
-| `kchat:extensionStatus` / `kchat:extensionConnect` / `kchat:extensionDisconnect` | Extension-mode lifecycle |
+| `kchat:openInDesktop` / `kchat:openDesktopExtensions` | Open a `kchat://` deeplink in KChat Desktop via `shell.openExternal()`; shared rate-limiter bucket so a runaway renderer can't multiply the OS-shell budget |
+| `kchat:desktopBridgeStatus` | Whether the `.kcz` extension has hit the loopback API recently (90 s freshness window) — drives the Settings card's passive "KChat Desktop detected" affordance |
 | `kchat:listTeams` / `kchat:listChannels` / `kchat:listMembers` / `kchat:listChannelFiles` | Read-only browse surface |
 | `kchat:shareArtifact` | Share an artifact (optionally with evidence pack) to a channel |
 | `kchat:searchPosts` | AEAD-verified post search (rate-limited) |
