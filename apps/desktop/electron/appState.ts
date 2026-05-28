@@ -759,6 +759,11 @@ let kchatEventForwarder: KchatEventForwarder | null = null;
 // need a clean slate must call the async
 // `stopKchatLocalApiServer()` explicitly.
 let kchatLocalApiServer: KchatLocalApiServer | null = null;
+// Pending-promise slot so concurrent `startKchatLocalApiServer()`
+// calls coalesce onto a single `server.start()` rather than racing
+// through the `kchatLocalApiServer === null` check and binding two
+// HTTP ports (Phase 14 Round 11 Devin Review ANALYSIS_0002).
+let kchatLocalApiServerPending: Promise<KchatLocalApiServer> | null = null;
 // Phase 14 Task 3: `tessera://` deeplink router. Constructed
 // eagerly at module load so a pre-ready `open-url` event from
 // macOS can be parked before `whenReady` fires. The renderer
@@ -1131,9 +1136,17 @@ export function getKchatLocalApiServer(): KchatLocalApiServer | null {
 }
 
 /**
- * Start the localhost API server. Idempotent: subsequent calls
- * return the existing instance. Called once from the main-process
- * `whenReady` chain in `main.ts`.
+ * Start the localhost API server. Idempotent and concurrency-safe:
+ * the first caller drives `server.start()`, and any concurrent
+ * callers that arrive while that `start()` is in-flight coalesce
+ * onto the same promise instead of racing through the null-check
+ * and binding a second port (Phase 14 Round 11 Devin Review
+ * ANALYSIS_0002). Sequential calls after the first succeeds
+ * return the cached instance synchronously.
+ *
+ * Called once from the main-process `whenReady` chain in
+ * `main.ts`; the pending-promise slot is defence-in-depth so a
+ * future second call site doesn't silently leak an HTTP server.
  *
  * The `handlers` argument is supplied by the caller (the IPC
  * registration layer) so this module stays decoupled from the
@@ -1146,12 +1159,20 @@ export async function startKchatLocalApiServer(
   handlers: LocalApiHandlers,
 ): Promise<KchatLocalApiServer> {
   if (kchatLocalApiServer !== null) return kchatLocalApiServer;
-  const server = new KchatLocalApiServer(handlers, {
-    userDataDir,
-  });
-  await server.start();
-  kchatLocalApiServer = server;
-  return server;
+  if (kchatLocalApiServerPending !== null) return kchatLocalApiServerPending;
+  kchatLocalApiServerPending = (async () => {
+    const server = new KchatLocalApiServer(handlers, {
+      userDataDir,
+    });
+    await server.start();
+    kchatLocalApiServer = server;
+    return server;
+  })();
+  try {
+    return await kchatLocalApiServerPending;
+  } finally {
+    kchatLocalApiServerPending = null;
+  }
 }
 
 /**
@@ -1159,6 +1180,10 @@ export async function startKchatLocalApiServer(
  * from `app.on("will-quit", ...)` in `main.ts`.
  */
 export async function stopKchatLocalApiServer(): Promise<void> {
+  // Clear the pending-promise slot so a concurrent
+  // `startKchatLocalApiServer()` in flight (if any) does not
+  // resurrect the slot after we've stopped the server.
+  kchatLocalApiServerPending = null;
   if (kchatLocalApiServer === null) return;
   const server = kchatLocalApiServer;
   kchatLocalApiServer = null;
