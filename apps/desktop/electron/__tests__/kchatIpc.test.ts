@@ -398,12 +398,14 @@ describe("kchat IPC registration", () => {
     // `preload.ts` is silently unreachable from the renderer.
     // Reading source text avoids needing to spin up a real Electron
     // `contextBridge` (same pattern as sandboxPreloadContract.test.ts).
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require("fs");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require("path");
-    const preloadSource: string = fs.readFileSync(
-      path.resolve(__dirname, "..", "preload.ts"),
+    // Uses the top-of-file `nodeFs` / `nodePath` imports rather than
+    // inline `require()` calls so the file doesn't need
+    // `eslint-disable` directives that drift against `@typescript-
+    // eslint` rule renames between major versions (the prior
+    // `no-require-imports` directive name didn't match the project's
+    // active `no-var-requires` rule and broke CI lint).
+    const preloadSource: string = nodeFs.readFileSync(
+      nodePath.resolve(__dirname, "..", "preload.ts"),
       "utf-8",
     );
     for (const channel of EXPECTED_KCHAT_CHANNELS) {
