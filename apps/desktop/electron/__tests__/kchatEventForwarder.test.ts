@@ -2275,43 +2275,54 @@ describe("KchatEventForwarder", () => {
       getBridge: () => bridgeMock,
       getCacheDir: customGetCacheDir,
     });
-    const client = new FakeClient();
-    fwd.start(client as unknown as KchatClient);
+    // try/finally guarantees the tmpdir is reclaimed even if
+    // an assertion below throws, matching the
+    // `records fs_scrub_succeeded=false on audit row when
+    // filesystem scrub fails` test's permission-restore pattern.
+    // Without this, a failing assertion would leak the
+    // `tessera-fwd-cachedir-inject-*` tmpdir under `os.tmpdir()`
+    // until the OS cleaned it up, which under high test churn
+    // could accumulate on dev machines.
+    try {
+      const client = new FakeClient();
+      fwd.start(client as unknown as KchatClient);
 
-    client.triggerWsEvent(
-      makeRawEvent({
-        event: "channel_archived",
-        data: {},
-        broadcast: {
-          omit_users: {},
-          channel_id: "chan-injected",
-          team_id: "team-1",
-          user_id: "principal",
-        },
-        seq: 200,
-      }),
-    );
-    await waitForCondition(
-      () =>
-        bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length >
-        0,
-    );
+      client.triggerWsEvent(
+        makeRawEvent({
+          event: "channel_archived",
+          data: {},
+          broadcast: {
+            omit_users: {},
+            channel_id: "chan-injected",
+            team_id: "team-1",
+            user_id: "principal",
+          },
+          seq: 200,
+        }),
+      );
+      await waitForCondition(
+        () =>
+          bridgeMock!.bridgeLogKchatSourceCryptoshredded.mock.calls.length >
+          0,
+      );
 
-    expect(seenChannelIds).toContain("chan-injected");
-    const [cacheDir] =
-      bridgeMock!.bridgeRevokeKchatSource.mock.calls[0];
-    expect(cacheDir).toBe(
-      nodePath.join(customCacheRoot, "kchat-channels", "chan-injected"),
-    );
-    // Dispose BEFORE the tmpdir cleanup so the forwarder stops
-    // accepting new WS events first. If a future maintainer
-    // inserts more triggerWsEvent calls or assertions between
-    // the waitForCondition and cleanup, this ordering prevents
-    // a race where a freshly-dispatched handler would touch the
-    // tmpdir mid-rm.
-    fwd.dispose();
-    // Cleanup so we don't leave the tmpdir around after the test.
-    nodeFs.rmSync(customCacheRoot, { recursive: true, force: true });
+      expect(seenChannelIds).toContain("chan-injected");
+      const [cacheDir] =
+        bridgeMock!.bridgeRevokeKchatSource.mock.calls[0];
+      expect(cacheDir).toBe(
+        nodePath.join(customCacheRoot, "kchat-channels", "chan-injected"),
+      );
+    } finally {
+      // Dispose BEFORE the tmpdir cleanup so the forwarder stops
+      // accepting new WS events first. If a future maintainer
+      // inserts more triggerWsEvent calls or assertions between
+      // the waitForCondition and cleanup, this ordering prevents
+      // a race where a freshly-dispatched handler would touch the
+      // tmpdir mid-rm.
+      fwd.dispose();
+      // Cleanup so we don't leave the tmpdir around after the test.
+      nodeFs.rmSync(customCacheRoot, { recursive: true, force: true });
+    }
   });
 
   it("defaults getCacheDir to kchatChannelCacheDir (os.homedir-rooted)", async () => {
