@@ -2303,9 +2303,15 @@ describe("KchatEventForwarder", () => {
     expect(cacheDir).toBe(
       nodePath.join(customCacheRoot, "kchat-channels", "chan-injected"),
     );
+    // Dispose BEFORE the tmpdir cleanup so the forwarder stops
+    // accepting new WS events first. If a future maintainer
+    // inserts more triggerWsEvent calls or assertions between
+    // the waitForCondition and cleanup, this ordering prevents
+    // a race where a freshly-dispatched handler would touch the
+    // tmpdir mid-rm.
+    fwd.dispose();
     // Cleanup so we don't leave the tmpdir around after the test.
     nodeFs.rmSync(customCacheRoot, { recursive: true, force: true });
-    fwd.dispose();
   });
 
   it("defaults getCacheDir to kchatChannelCacheDir (os.homedir-rooted)", async () => {
