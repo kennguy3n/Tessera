@@ -82,6 +82,18 @@ describe("manifest loading", () => {
   // PR #57 (`ExtensionSocketDiscovery`), PR #59 (`vaultCrypto` /
   // `sidecar` platform injection), and PR #61 (`ssrfGuard`
   // `allowInternal` / `readEnv`).
+  //
+  // Cleanup symmetry: clear the module-level `cachedManifest`
+  // between tests so the last-test’s parsed manifest can’t leak
+  // into the next test’s cache (every test here uses
+  // `forceReload=true` so the bypass would protect them anyway,
+  // but cleanup keeps the invariant that no test relies on
+  // another test’s residual state — a future test that calls
+  // `loadManifest(false, ...)` would otherwise pick up a stale
+  // entry).
+  afterEach(() => {
+    resetManifestCache();
+  });
 
   it("loads and parses sidecars/models.json", () => {
     expect(fs.existsSync(MANIFEST)).toBe(true);
@@ -1747,14 +1759,17 @@ describe("manifest validation guard (parsePlatform + validateManifest)", () => {
       },
     };
     await fsp.writeFile(badPath, JSON.stringify(goodManifest), "utf8");
-    // Reuses the same path but with different file contents. The
-    // path-keyed cache would normally hit here, so explicitly
-    // reset it before forcing the re-read. (Even with
-    // forceReload=true the cache is bypassed for the new read,
-    // but defense-in-depth: clear so a future validator that
-    // memoises post-read state can’t latch onto the failed parse.)
-    resetManifestCache();
-    const reloaded = loadManifest(true, { manifestPath: badPath });
+    // Use `forceReload=false` on purpose so the cache-lookup path
+    // is exercised. The first `loadManifest(true, ...)` above
+    // threw — if the failed parse had been cached at `badPath`,
+    // this read would either return the bad-cached manifest or
+    // throw (no fs read happens on a cache hit). The fact that
+    // this re-read parses the now-good file from disk and
+    // succeeds proves the failed manifest was never written to
+    // the cache, which is the actual invariant the test name
+    // claims. (Don’t add a `resetManifestCache()` here — that
+    // would mask the bug the test is meant to detect.)
+    const reloaded = loadManifest(false, { manifestPath: badPath });
     expect(reloaded.llama_server?.variants[0].platform).toBe("linux-x64");
   });
 });
