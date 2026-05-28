@@ -1180,10 +1180,37 @@ export async function startKchatLocalApiServer(
  * from `app.on("will-quit", ...)` in `main.ts`.
  */
 export async function stopKchatLocalApiServer(): Promise<void> {
-  // Clear the pending-promise slot so a concurrent
-  // `startKchatLocalApiServer()` in flight (if any) does not
-  // resurrect the slot after we've stopped the server.
+  // Capture and clear the pending-promise slot FIRST. If a
+  // `startKchatLocalApiServer()` IIFE is still in flight, we
+  // MUST wait for it to settle before checking
+  // `kchatLocalApiServer` — otherwise the IIFE will complete
+  // `await server.start()` and write `kchatLocalApiServer =
+  // server` AFTER this function returns, leaving an orphaned
+  // running HTTP server that nobody will ever call `stop()` on
+  // (it would hold an event-loop handle and a bound port for
+  // the rest of the process lifetime). Phase 14 Round 12 Devin
+  // Review BUG_0001.
+  //
+  // Clearing the slot before the await is intentional: a third
+  // concurrent caller arriving while we're inside this await
+  // must NOT join the same start (we're about to tear it down)
+  // — it should observe an empty slot and either construct a
+  // fresh server (if `startKchatLocalApiServer` is called again
+  // after `stopKchatLocalApiServer` returns) or simply find no
+  // server to act on.
+  const pending = kchatLocalApiServerPending;
   kchatLocalApiServerPending = null;
+  if (pending !== null) {
+    try {
+      await pending;
+    } catch {
+      // The in-flight start rejected. The IIFE's failure path
+      // is responsible for tearing down its own bound socket
+      // via the BUG_0001 rollback in `KchatLocalApiServer.start()`
+      // (Round 8). `kchatLocalApiServer` will be null when we
+      // fall through, so this branch is a no-op.
+    }
+  }
   if (kchatLocalApiServer === null) return;
   const server = kchatLocalApiServer;
   kchatLocalApiServer = null;

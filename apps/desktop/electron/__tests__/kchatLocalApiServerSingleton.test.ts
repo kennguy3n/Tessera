@@ -94,6 +94,7 @@ vi.mock("electron", () => ({
 interface FakeServer {
   id: number;
   startResolver: () => void;
+  startRejecter: (err: Error) => void;
   startCalled: boolean;
   stopCalled: boolean;
 }
@@ -109,6 +110,7 @@ vi.mock("../kchat/kchatLocalApi", async (importOriginal) => {
       this.self = {
         id: constructorCalls.length + 1,
         startResolver: () => {},
+        startRejecter: () => {},
         startCalled: false,
         stopCalled: false,
       };
@@ -116,11 +118,16 @@ vi.mock("../kchat/kchatLocalApi", async (importOriginal) => {
     }
     start(): Promise<{ port: number; token: string }> {
       this.self.startCalled = true;
-      return new Promise<{ port: number; token: string }>((resolveFn) => {
-        this.self.startResolver = () => {
-          resolveFn({ port: 50_000 + this.self.id, token: "fake-token" });
-        };
-      });
+      return new Promise<{ port: number; token: string }>(
+        (resolveFn, rejectFn) => {
+          this.self.startResolver = () => {
+            resolveFn({ port: 50_000 + this.self.id, token: "fake-token" });
+          };
+          this.self.startRejecter = (err) => {
+            rejectFn(err);
+          };
+        },
+      );
     }
     stop(): Promise<void> {
       this.self.stopCalled = true;
@@ -248,7 +255,7 @@ describe("startKchatLocalApiServer — singleton + concurrency", () => {
   });
 
   it(
-    "clears the pending-promise slot so a stop during an in-flight start cannot resurrect it",
+    "stop-then-start after a clean start/stop cycle constructs a fresh server",
     async () => {
       const { startKchatLocalApiServer, stopKchatLocalApiServer } =
         await import("../appState");
@@ -282,6 +289,151 @@ describe("startKchatLocalApiServer — singleton + concurrency", () => {
       expect(constructorCalls.length).toBe(2);
       constructorCalls[1]?.startResolver();
       await secondP;
+    },
+  );
+
+  // Phase 14 Round 12 Devin Review BUG_0001 regression: a
+  // `stopKchatLocalApiServer()` call that lands while a
+  // `startKchatLocalApiServer()` IIFE is still in flight MUST
+  // wait for the IIFE to settle and then stop the resulting
+  // server. The earlier Round 11 fix only cleared the
+  // pending-promise slot, which is necessary but not sufficient
+  // — the IIFE keeps executing in the background, ends up
+  // writing `kchatLocalApiServer = server`, and would leak the
+  // bound socket for the rest of the process lifetime.
+  it(
+    "stop-during-in-flight-start waits for the start to complete and then stops the resulting server",
+    async () => {
+      const { startKchatLocalApiServer, stopKchatLocalApiServer } =
+        await import("../appState");
+      const handlers = {
+        status: vi.fn(),
+        listSources: vi.fn(),
+        ingestChannel: vi.fn(),
+        shareArtifact: vi.fn(),
+      };
+
+      // Kick off a start. The fake's `start()` returns a
+      // promise that does NOT resolve until we invoke its
+      // resolver — at this point the IIFE inside
+      // `startKchatLocalApiServer` is parked on `await
+      // server.start()`.
+      const startP = startKchatLocalApiServer(
+        "/tmp/tessera-test",
+        handlers,
+      );
+      await Promise.resolve();
+      expect(constructorCalls.length).toBe(1);
+      expect(constructorCalls[0]?.startCalled).toBe(true);
+      expect(constructorCalls[0]?.stopCalled).toBe(false);
+
+      // Call stop WHILE the start is still in flight. We must
+      // not await stop synchronously here — its first await is
+      // on the pending promise, which we haven't unblocked yet.
+      const stopP = stopKchatLocalApiServer();
+
+      // Yield once so stop has a chance to enter its await and
+      // observe the pending promise.
+      await Promise.resolve();
+      // The start has not resolved yet, so stop has not yet
+      // reached the `await server.stop()` line.
+      expect(constructorCalls[0]?.stopCalled).toBe(false);
+
+      // Unblock the in-flight start. Now stop will observe the
+      // resolved pending promise, see `kchatLocalApiServer` is
+      // set, and proceed to call `server.stop()`.
+      constructorCalls[0]?.startResolver();
+      await startP;
+      await stopP;
+
+      // The bug this regression pins: without the fix, the
+      // stop-during-in-flight branch would return early
+      // (because `kchatLocalApiServer` was still null when the
+      // initial slot check ran) and the resulting server would
+      // never have `stop()` called on it. With the fix,
+      // `stop()` must have been called exactly once.
+      expect(constructorCalls[0]?.stopCalled).toBe(true);
+
+      // And a fresh start AFTER both have settled must
+      // construct a brand-new server (no leftover slot state).
+      const restartP = startKchatLocalApiServer(
+        "/tmp/tessera-test",
+        handlers,
+      );
+      await Promise.resolve();
+      expect(constructorCalls.length).toBe(2);
+      constructorCalls[1]?.startResolver();
+      await restartP;
+    },
+  );
+
+  // Phase 14 Round 12 Devin Review BUG_0001 regression #2:
+  // stop-during-in-flight-start where the start REJECTS must
+  // not throw out of `stopKchatLocalApiServer`. The IIFE's
+  // failure path (BUG_0001 rollback in
+  // `KchatLocalApiServer.start()`, Round 8) is responsible for
+  // tearing down its own socket; `stop()` simply needs to
+  // swallow the rejection, observe a null server slot, and
+  // return cleanly.
+  it(
+    "stop-during-in-flight-start where start rejects swallows the rejection and returns cleanly",
+    async () => {
+      const { startKchatLocalApiServer, stopKchatLocalApiServer } =
+        await import("../appState");
+      const handlers = {
+        status: vi.fn(),
+        listSources: vi.fn(),
+        ingestChannel: vi.fn(),
+        shareArtifact: vi.fn(),
+      };
+
+      // Kick off a start that will reject. The IIFE inside
+      // `startKchatLocalApiServer` is parked on `await
+      // server.start()` until we invoke `startRejecter()`.
+      const startP = startKchatLocalApiServer(
+        "/tmp/tessera-test",
+        handlers,
+      );
+      await Promise.resolve();
+      const fake = constructorCalls[0];
+      expect(fake).toBeDefined();
+      expect(fake?.startCalled).toBe(true);
+
+      // Call stop WHILE the in-flight start is still pending.
+      // stop() must await the pending promise.
+      const stopP = stopKchatLocalApiServer();
+      await Promise.resolve();
+
+      // Drive the in-flight start to a rejection. This
+      // simulates the BUG_0001 rollback path in
+      // `KchatLocalApiServer.start()` where the port-file
+      // write throws after the socket is bound — that path
+      // closes its own socket before rethrowing, so the
+      // module-level `kchatLocalApiServer` is never set.
+      const startupErr = new Error("simulated start failure");
+      fake?.startRejecter(startupErr);
+
+      // The outer `startP` reflects the IIFE's rejection.
+      await expect(startP).rejects.toBe(startupErr);
+      // `stopP` must NOT throw — the catch inside
+      // `stopKchatLocalApiServer` swallows the rejection and
+      // observes a null server slot (the IIFE rejected before
+      // assigning).
+      await expect(stopP).resolves.toBeUndefined();
+      // The fake's stop() was never called because the start
+      // never succeeded.
+      expect(fake?.stopCalled).toBe(false);
+
+      // A subsequent start after both have settled must
+      // construct a brand-new server.
+      const restartP = startKchatLocalApiServer(
+        "/tmp/tessera-test",
+        handlers,
+      );
+      await Promise.resolve();
+      expect(constructorCalls.length).toBe(2);
+      constructorCalls[1]?.startResolver();
+      await restartP;
     },
   );
 });
