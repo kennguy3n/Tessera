@@ -222,8 +222,19 @@ export async function enforceKchatServerUrl(
   // globally — production callers (no `opts`) get the env-driven
   // default unchanged because `readEnv` defaults to `process.env`.
   const readEnv = opts?.readEnv ?? ((name: string) => process.env[name]);
+  // Parens around the RHS make the `===` -vs- `??` precedence
+  // explicit. JavaScript's operator precedence binds `===`
+  // (precedence 10) tighter than `??` (precedence 5), so the
+  // unparenthesised form `opts?.allowInternal ?? readEnv(...) === "1"`
+  // parses as `opts?.allowInternal ?? (readEnv(...) === "1")` — which
+  // is what we want, but reviewers reading the line have to remember
+  // that to be sure. The parens cost nothing and remove a class of
+  // future regressions where someone "tidies up" by wrapping the
+  // wrong sub-expression. Per Devin Review Pass 2 ANALYSIS_0001 on
+  // PR #61: `??` precedence relative to comparison operators is a
+  // common source of confusion, so make the grouping explicit.
   const allowInternal =
-    opts?.allowInternal ?? readEnv("TESSERA_KCHAT_ALLOW_INTERNAL") === "1";
+    opts?.allowInternal ?? (readEnv("TESSERA_KCHAT_ALLOW_INTERNAL") === "1");
   if (allowInternal) {
     return parsed;
   }
