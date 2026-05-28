@@ -134,6 +134,26 @@ export class KchatAuthService {
    * should leave the stored credential intact so a later
    * `restoreFromVault()` can recover the prior session. Only an
    * explicit `disconnect()` clears the vault.
+   *
+   * **Caller contract.** Returns `null` when there is no stored
+   * credential to restore (this is the happy path for "fresh
+   * install" / "user has not connected yet"). **Throws** when a
+   * credential exists but `verifyConnection()` fails (network
+   * error, 401 from an expired/revoked PAT, etc.) — the auth
+   * service is left in `{ state: "disconnected", authMode: "none",
+   * vault intact }`. Production callers (added in a follow-up
+   * Phase 14 task that wires startup restoration into `main.ts`)
+   * MUST wrap this call in a `try/catch` so a transient startup
+   * failure doesn't propagate out of the app-ready chain — they
+   * should log and leave the user in the disconnected state so
+   * the UI surfaces a "reconnect" affordance, rather than
+   * crashing the main process. The throw-vs-`null` split is
+   * deliberate: returning `null` for both "nothing stored" and
+   * "stored but verify failed" would silently swallow the
+   * verify error, and treating "nothing stored" as a throw
+   * would force every caller to distinguish "expected absence"
+   * from "real failure" via instanceof checks. Per Phase 14
+   * Round 8 Devin Review ANALYSIS_0005.
    */
   async restoreFromVault(): Promise<KchatUser | null> {
     const stored = readStoredAuth();

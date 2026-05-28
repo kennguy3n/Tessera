@@ -380,7 +380,36 @@ export class KchatLocalApiServer {
       null,
       2,
     );
-    this.fsWriter.writeAtomic(this.portFileAbsPath, portFileContents);
+    try {
+      this.fsWriter.writeAtomic(this.portFileAbsPath, portFileContents);
+    } catch (err) {
+      // Phase 14 Round 8 Devin Review BUG_0001: if the port-file
+      // write fails (disk full, EACCES on the userData directory,
+      // EROFS, etc.) the HTTP server is already bound to a
+      // kernel-assigned port. Without this rollback, `start()`
+      // rejects but `this.server` still holds an open listening
+      // socket: `stop()` is never called by the caller because
+      // the failure propagated out of `start()`, and the module-
+      // level slot in `appState.ts` was never assigned. The socket
+      // would then leak for the lifetime of the process, holding
+      // an event-loop handle that blocks clean shutdown.
+      //
+      // Close the bound socket and clear all the state we just
+      // installed so the instance is structurally indistinguishable
+      // from one that never called `start()`. A subsequent
+      // `start()` is then safe to retry. Re-throw the original
+      // error so the caller sees the underlying I/O failure.
+      const leakedServer = this.server;
+      this.server = null;
+      this.boundPort = null;
+      this.portFileAbsPath = null;
+      if (leakedServer !== null) {
+        await new Promise<void>((resolveFn) => {
+          leakedServer.close(() => resolveFn());
+        });
+      }
+      throw err;
+    }
     return { port: address.port, token: this.token };
   }
 

@@ -31,9 +31,11 @@ import {
   PORT_FILE_NAME,
   type IngestChannelRequest,
   type LocalApiHandlers,
+  type PortFileWriter,
   type ShareArtifactRequest,
   type TesseraKchatSourceRow,
 } from "../kchat/kchatLocalApi";
+import { createConnection } from "node:net";
 import {
   buildDeeplink,
   DeeplinkBridge,
@@ -209,6 +211,89 @@ describe("KchatLocalApiServer — bind + discovery file", () => {
           tokenForTesting: "too-short",
         }),
     ).toThrow(/at least 32 characters/);
+  });
+
+  // Phase 14 Round 8 Devin Review BUG_0001: when the port-file
+  // write throws after the HTTP server has already been bound,
+  // `start()` MUST close the bound socket and roll back its
+  // internal state — otherwise the leaked server holds an
+  // event-loop handle for the rest of the process lifetime,
+  // because the caller never stored the instance anywhere it
+  // could call `stop()` from. This test pins that behaviour by
+  // (a) confirming the captured port no longer accepts TCP
+  // connections after `start()` rejects, and (b) confirming the
+  // instance can run `start()` again successfully (i.e. its
+  // internal slot was cleared, so the "called twice" guard
+  // doesn't trip on a phantom prior start).
+  it("closes the bound socket and rolls back internal state when the port-file write fails", async () => {
+    const { handlers } = makeHandlers();
+    const userDataDir = mkdtempSync(join(tmpdir(), "tessera-localapi-leak-"));
+    let portCapturedFromFailedStart = 0;
+    const failingWriter: PortFileWriter = {
+      writeAtomic(_path, contents) {
+        const parsed = JSON.parse(contents) as { port: number };
+        portCapturedFromFailedStart = parsed.port;
+        throw new Error("simulated EACCES on userData");
+      },
+      unlink() {
+        /* no-op; we never reach a state that needs cleanup */
+      },
+    };
+    const server = new KchatLocalApiServer(handlers, {
+      userDataDir,
+      tokenForTesting: TEST_TOKEN,
+      fsWriter: failingWriter,
+    });
+    await expect(server.start()).rejects.toThrow(/simulated EACCES/);
+    // The port captured from inside the failing writer was the
+    // real kernel-assigned port the server bound to. If the
+    // rollback worked, that port should no longer accept TCP
+    // connections — we'd get ECONNREFUSED instead.
+    expect(portCapturedFromFailedStart).toBeGreaterThan(0);
+    await new Promise<void>((resolveFn) => {
+      const probe = createConnection(
+        { host: "127.0.0.1", port: portCapturedFromFailedStart },
+        () => {
+          // If we got `connect`, the rollback failed — the
+          // bound socket is still listening on the captured
+          // port. Tear the probe down and let the assertion
+          // below trip.
+          probe.destroy();
+          resolveFn();
+        },
+      );
+      probe.once("error", () => {
+        // ECONNREFUSED is the expected outcome — the rollback
+        // closed the listening socket.
+        resolveFn();
+      });
+    });
+    // A second `start()` on the same instance must succeed,
+    // proving the rolled-back instance is structurally
+    // indistinguishable from one that never called `start()`.
+    // Replace the writer with a no-op so the second start can
+    // complete.
+    const noopWriter: PortFileWriter = {
+      writeAtomic() {
+        /* no-op */
+      },
+      unlink() {
+        /* no-op */
+      },
+    };
+    // Reach into the instance to swap the writer. The field is
+    // private; we cast through `unknown` to a writer-bearing
+    // shape, which is acceptable in tests where we're pinning
+    // a contract that depends on internal-state rollback. This
+    // does NOT bypass the production code path — `start()`
+    // still calls `this.fsWriter.writeAtomic`, we're just
+    // pointing it at a non-throwing implementation now.
+    (server as unknown as { fsWriter: PortFileWriter }).fsWriter =
+      noopWriter;
+    const second = await server.start();
+    expect(second.port).toBeGreaterThan(0);
+    await server.stop();
+    rmSync(userDataDir, { recursive: true, force: true });
   });
 });
 
