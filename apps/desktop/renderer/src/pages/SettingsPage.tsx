@@ -8,6 +8,7 @@ import ExternalProviderCard from "../components/ExternalProviderCard";
 import HybridSearchCard from "../components/HybridSearchCard";
 import KchatSettingsCard from "../components/KchatSettingsCard";
 import AuditActivityCard from "../components/AuditActivityCard";
+import SourceHealthDashboard from "../components/SourceHealthDashboard";
 import { useSettings, useUpdateSetting } from "../hooks/useSettings";
 import {
   EXPORT_FORMATS,
@@ -202,6 +203,8 @@ export default function SettingsPage() {
         <KchatSettingsCard />
 
         <AuditActivityCard />
+
+        <SourceHealthDashboard />
 
         <Card>
           <h3 style={{ marginBottom: "var(--spacing-md)" }}>Export</h3>

@@ -162,6 +162,11 @@ export const SettingsUpdateSchema = z.object({
   defaultExportFormat: ExportFormat.optional(),
   ignorePatterns: z.array(z.string().max(1024)).max(10_000).optional(),
   watchPatterns: z.array(z.string().max(1024)).max(10_000).optional(),
+  // Phase 15 Task 19: first-run onboarding flag. Renderer-writable so
+  // the wizard's "Finish" / "Skip" buttons can flip it to `true`. No
+  // `.catch()` because a renderer-side type narrowing failure would
+  // be a renderer bug worth surfacing rather than silently coercing.
+  onboardingCompleted: z.boolean().optional(),
 });
 export type SettingsUpdateInput = z.infer<typeof SettingsUpdateSchema>;
 
