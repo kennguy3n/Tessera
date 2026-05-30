@@ -184,4 +184,54 @@ describe("SourceHealthDashboard", () => {
       expect(screen.getByRole("alert")).toHaveTextContent(/ipc boom/);
     });
   });
+
+  // Devin Review PR #70 ANALYSIS_0002 regression: when a successful
+  // initial load is followed by a failed refresh, the table is kept
+  // (graceful degradation) but the user must be told the data is
+  // stale via (1) updated banner copy citing the freshness, (2)
+  // `aria-describedby` linking the table to the banner, (3) a
+  // `data-stale` attribute the styles use to dim the table.
+  it("marks the table as stale and updates the banner when a refresh fails after a successful load", async () => {
+    const initialReport = makeReport([
+      {
+        sourceId: "src-1",
+        path: "/docs/initial",
+        health: "healthy",
+        chunkCount: 10,
+      },
+    ]);
+    const healthReport = vi
+      .fn()
+      .mockResolvedValueOnce(initialReport)
+      .mockRejectedValueOnce(new Error("refresh boom"));
+    const api = { ...makeApi(initialReport), healthReport } as unknown as SourceApi;
+    render(<SourceHealthDashboard api={api} />);
+    // Wait for the initial successful load to render the row.
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("source-health-row-src-1"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    // The table is fresh on first paint — not yet marked stale.
+    const tableFresh = screen.getByRole("table");
+    expect(tableFresh.getAttribute("data-stale")).toBeNull();
+    // Trigger the refresh which will reject.
+    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    // After the failed refresh: row still there, error banner cites
+    // stale data, table flagged data-stale + aria-describedby.
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /Failed to refresh source health: refresh boom\. Showing data from/i,
+      );
+    });
+    expect(
+      screen.getByTestId("source-health-row-src-1"),
+    ).toBeInTheDocument();
+    const tableStale = screen.getByRole("table");
+    expect(tableStale.getAttribute("data-stale")).toBe("true");
+    expect(tableStale.getAttribute("aria-describedby")).toBe(
+      "source-health-error",
+    );
+  });
 });

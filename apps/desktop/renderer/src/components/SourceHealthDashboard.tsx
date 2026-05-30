@@ -171,6 +171,20 @@ export default function SourceHealthDashboard({
     refresh();
   }, [refresh]);
 
+  // Devin Review PR #70 ANALYSIS_0002: when `error` is set AND a
+  // prior `report` exists, the dashboard previously rendered both
+  // the error banner AND the table side-by-side with no indication
+  // that the table data was stale. The architecturally correct fix
+  // is to (1) make the staleness explicit in the error banner copy
+  // (referencing `report.generatedAt`), (2) show a "Last refreshed"
+  // caption whenever a report is loaded so the user always knows
+  // the freshness of what they're looking at, (3) dim the table
+  // visually + wire `aria-describedby` to the error banner so
+  // screen readers also announce "this data is stale". The
+  // graceful-degradation choice (show stale > show blank) is
+  // preserved — we just no longer hide it from the user.
+  const isStale = error !== null && report !== null;
+
   return (
     <Card data-testid="source-health-dashboard">
       <div
@@ -192,8 +206,22 @@ export default function SourceHealthDashboard({
         </Button>
       </div>
 
+      {report && (
+        <div
+          data-testid="source-health-last-refreshed"
+          style={{
+            fontSize: "var(--font-size-xs)",
+            color: "var(--color-text-secondary, #6b7280)",
+            marginBottom: "var(--spacing-sm)",
+          }}
+        >
+          Last refreshed: {formatRelativeTime(report.generatedAt)}
+        </div>
+      )}
+
       {error && (
         <div
+          id="source-health-error"
           role="alert"
           style={{
             color: "#b91c1c",
@@ -201,7 +229,9 @@ export default function SourceHealthDashboard({
             marginBottom: "var(--spacing-sm)",
           }}
         >
-          Failed to load source health: {error}
+          {report
+            ? `Failed to refresh source health: ${error}. Showing data from ${formatRelativeTime(report.generatedAt)}.`
+            : `Failed to load source health: ${error}`}
         </div>
       )}
 
@@ -223,8 +253,20 @@ export default function SourceHealthDashboard({
       {report && report.sources.length > 0 && (
         <div
           role="table"
-          aria-label="Source health summary"
-          style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}
+          aria-label={
+            isStale
+              ? "Source health summary (showing stale data, refresh failed)"
+              : "Source health summary"
+          }
+          aria-describedby={isStale ? "source-health-error" : undefined}
+          data-stale={isStale ? "true" : undefined}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.5rem",
+            opacity: isStale ? 0.6 : 1,
+            transition: "opacity 0.15s ease",
+          }}
         >
           <div
             role="row"
