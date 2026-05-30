@@ -6,7 +6,27 @@
  * with the component file: both this helpers module and the
  * component module independently consume types from the third file,
  * breaking the would-be A↔B dependency edge.
+ *
+ * As of Phase 16 PR 1, `evaluateFormula` is a thin wrapper around
+ * the real formula engine in `./formulaEngine/`. It preserves the
+ * historical return-type (`string | number | boolean`) so existing
+ * callers (and the on-disk artifact format) keep working unchanged.
+ * Callers that need the full structured `FormulaValue` (including
+ * `FormulaError` objects with a `code` and `message`) should call
+ * `evaluateSheetFormula` instead.
  */
+import {
+  DependencyGraph,
+  cellKey,
+  defaultContext,
+  evaluate,
+  extractReferences,
+  isFormulaError,
+  parseFormula,
+  type AstNode,
+  type CellResolver,
+  type FormulaValue,
+} from "./formulaEngine";
 import type { SheetContent } from "./sheetEditorTypes";
 
 /** Parse CSV text respecting RFC 4180 quoted fields (handles commas inside quotes). */
@@ -102,57 +122,178 @@ export function parseSheetContent(content: string): SheetContent {
 }
 
 /**
- * Evaluate a single-cell formula expression against the supplied
- * sheet state and return the computed value. Supports SUM /
- * AVERAGE / COUNT / MIN / MAX over an A1-style cell range. Returns
- * the sentinel string `#ERR` for malformed formulas and `#REF`
- * for ranges that resolve to out-of-bounds cells.
+ * Promote a raw cell-text value to a typed `FormulaValue` for the
+ * resolver. Mirrors how Excel/Google Sheets interpret untyped cell
+ * input: bare numbers become numbers, `TRUE`/`FALSE` become
+ * booleans, everything else stays a string (blank → `null`).
  *
- * Exported for unit-test coverage of the parser / evaluator,
- * separate from the SheetEditor render pipeline.
+ * Quoted strings (`"foo"`) are NOT unquoted — Excel preserves the
+ * quotes when they are part of the literal cell text.
+ *
+ * Exported so the React component (which renders the same value
+ * in the formula bar) stays in sync.
+ */
+export function literalFromCellText(raw: string | undefined): FormulaValue {
+  if (raw === undefined || raw === "") return null;
+  const trimmed = raw.trim();
+  if (trimmed === "") return raw;
+  const upper = trimmed.toUpperCase();
+  if (upper === "TRUE") return true;
+  if (upper === "FALSE") return false;
+  const n = Number(trimmed);
+  if (Number.isFinite(n)) return n;
+  return raw;
+}
+
+/**
+ * Build a `CellResolver` + shared visiting/cache state over a
+ * `SheetContent`. The resolver:
+ *   - caches per-cell `FormulaValue`s so `=A1+A1` doesn't
+ *     quadratically re-evaluate
+ *   - shares ONE visiting set across the whole top-level
+ *     evaluation, which is how chains like `A1=B1`, `B1=A1` get
+ *     promoted to `#CIRCULAR!` instead of stack-overflowing.
+ *
+ * The shared visiting set is returned alongside the resolver so the
+ * top-level driver (`evaluateSheetFormula`) can hand it to
+ * `defaultContext()` instead of having the resolver clobber it on
+ * each recursive call.
+ */
+function makeResolver(sheet: SheetContent): {
+  resolver: CellResolver;
+  visiting: Set<string>;
+} {
+  const cache = new Map<string, FormulaValue>();
+  const visiting = new Set<string>();
+  const resolver: CellResolver = {
+    getRaw(row, col) {
+      return sheet.rows[row]?.[col];
+    },
+    getEvaluated(row, col) {
+      const key = cellKey(row, col);
+      if (cache.has(key)) return cache.get(key)!;
+      const raw = sheet.rows[row]?.[col];
+      if (raw === undefined) {
+        cache.set(key, null);
+        return null;
+      }
+      if (raw.startsWith("=")) {
+        const parsed = parseFormula(raw);
+        if (!parsed.ok) {
+          const err: FormulaValue = {
+            kind: "error",
+            code: parsed.code,
+            message: parsed.message,
+          };
+          cache.set(key, err);
+          return err;
+        }
+        // Push the cell on the shared visiting set so any nested
+        // lookup that points back at us (directly or transitively)
+        // is caught by the evaluator's cycle check.
+        visiting.add(key);
+        try {
+          const ctx = defaultContext(resolver, { visiting });
+          const v = evaluate(parsed.ast, ctx);
+          cache.set(key, v);
+          return v;
+        } finally {
+          visiting.delete(key);
+        }
+      }
+      const v = literalFromCellText(raw);
+      cache.set(key, v);
+      return v;
+    },
+  };
+  return { resolver, visiting };
+}
+
+/**
+ * Evaluate a formula expression against the supplied sheet state
+ * and return a display-ready value (string / number / boolean).
+ * Backed by the full formula engine in `./formulaEngine/` — supports
+ * ~30 functions (math / conditional / logic), cell references,
+ * nested expressions, and Excel-compatible error sentinels.
+ *
+ * Returns:
+ *   - `number` for numeric results
+ *   - `string` for string results, error sentinels (`#REF!`, etc.),
+ *     and stringified booleans
+ *   - `boolean` for true/false results
+ *
+ * Blank results (e.g. an empty cell reference) collapse to `""`
+ * so the grid renders nothing rather than the literal `null`.
  */
 export function evaluateFormula(
   formula: string,
   sheet: SheetContent,
-): string | number {
-  const expr = formula.slice(1).trim().toUpperCase();
+): string | number | boolean {
+  const value = evaluateSheetFormula(formula, sheet);
+  if (value === null) return "";
+  if (isFormulaError(value)) return value.code;
+  return value;
+}
 
-  const rangeMatch = expr.match(
-    /^(SUM|AVERAGE|COUNT|MIN|MAX)\(([A-Z]+\d+):([A-Z]+\d+)\)$/,
-  );
-  if (!rangeMatch) return "#ERR";
+/**
+ * Evaluate `formula` against `sheet` and return the structured
+ * `FormulaValue` (so callers can detect errors via `isFormulaError`
+ * and render them with a tooltip / colour, instead of squashing to
+ * a bare string).
+ */
+export function evaluateSheetFormula(
+  formula: string,
+  sheet: SheetContent,
+): FormulaValue {
+  const { resolver, visiting } = makeResolver(sheet);
+  const parsed = parseFormula(formula);
+  if (!parsed.ok) {
+    return { kind: "error", code: parsed.code, message: parsed.message };
+  }
+  const ctx = defaultContext(resolver, { visiting });
+  return evaluate(parsed.ast, ctx);
+}
 
-  const [, func, startRef, endRef] = rangeMatch;
-  const startCell = parseCellRef(startRef);
-  const endCell = parseCellRef(endRef);
-  if (!startCell || !endCell) return "#REF";
-
-  const values: number[] = [];
-  for (let r = startCell.row; r <= endCell.row; r++) {
-    for (let c = startCell.col; c <= endCell.col; c++) {
-      const raw = sheet.rows[r]?.[c] ?? "";
-      const num = parseFloat(raw);
-      if (!isNaN(num)) values.push(num);
+/**
+ * Build a fresh `DependencyGraph` describing every formula cell in
+ * `sheet`. Cells whose text starts with `=` are parsed once each;
+ * non-formula cells contribute no edges. Used by the SheetEditor
+ * to wire incremental recomputation when an edit lands.
+ *
+ * Returns the populated graph; callers manage further updates via
+ * `graph.setDependencies()` as individual cells change.
+ */
+export function buildSheetDependencyGraph(sheet: SheetContent): DependencyGraph {
+  const graph = new DependencyGraph();
+  for (let r = 0; r < sheet.rows.length; r++) {
+    const row = sheet.rows[r];
+    if (!row) continue;
+    for (let c = 0; c < row.length; c++) {
+      const raw = row[c];
+      if (!raw || !raw.startsWith("=")) continue;
+      const parsed = parseFormula(raw);
+      if (!parsed.ok) continue;
+      graph.setDependencies(cellKey(r, c), extractReferences(parsed.ast));
     }
   }
-
-  if (values.length === 0) return 0;
-
-  switch (func) {
-    case "SUM":
-      return values.reduce((a, b) => a + b, 0);
-    case "AVERAGE":
-      return values.reduce((a, b) => a + b, 0) / values.length;
-    case "COUNT":
-      return values.length;
-    case "MIN":
-      return Math.min(...values);
-    case "MAX":
-      return Math.max(...values);
-    default:
-      return "#ERR";
-  }
+  return graph;
 }
+
+/**
+ * Convenience: parse a single cell's formula and return the set of
+ * cells it depends on. Returns an empty set for non-formula text
+ * or syntactically invalid formulas (the cell itself will surface
+ * the parse error at evaluation time).
+ */
+export function dependenciesOfCell(rawText: string | undefined): Set<string> {
+  if (!rawText || !rawText.startsWith("=")) return new Set<string>();
+  const parsed = parseFormula(rawText);
+  if (!parsed.ok) return new Set<string>();
+  return extractReferences(parsed.ast);
+}
+
+/** Walk `ast` (testing aid). Re-exported from the engine for callers. */
+export type { AstNode };
 
 /**
  * Parse an A1-style cell reference (e.g. `A1`, `AA1`, `AZ100`)

@@ -246,24 +246,36 @@ describe("evaluateFormula", () => {
     expect(evaluateFormula("=MAX(A1:B3)", sheet)).toBe(30);
   });
 
-  it("returns #ERR for a malformed formula", () => {
-    expect(evaluateFormula("=NOPE(A1:A2)", sheet)).toBe("#ERR");
-    expect(evaluateFormula("=SUM(A1)", sheet)).toBe("#ERR");
-    expect(evaluateFormula("=SUM A1:A2", sheet)).toBe("#ERR");
+  // The following cases pin the documented behaviour of the real
+  // tokenizer → parser → evaluator pipeline (Phase 16 PR 1). The
+  // earlier regex-based evaluator returned the broader `#ERR`
+  // sentinel for every failure mode; the new engine emits the
+  // specific Excel-compatible error codes so the formula bar can
+  // surface a useful diagnostic.
+
+  it("returns #NAME? for an unknown function", () => {
+    expect(evaluateFormula("=NOPE(A1:A2)", sheet)).toBe("#NAME?");
   });
 
-  it("returns #REF for a syntactically valid formula with garbage cell refs", () => {
-    // The grammar permits any [A-Z]+\d+ token, so "1A" is rejected
-    // at the range parser. To force the #REF path we have to send
-    // something that PASSES the regex but FAILS parseCellRef — and
-    // the regex already ensures that won't happen. Pin instead the
-    // out-of-range-row behaviour: AVERAGE over a range whose cells
-    // are entirely outside the sheet returns 0 (zero numeric values
-    // produces the documented `return 0` short-circuit).
-    expect(evaluateFormula("=AVERAGE(C99:C100)", sheet)).toBe(0);
+  it("accepts SUM over a single cell (matching Excel)", () => {
+    // The legacy regex required an A1:B5 range; the real engine
+    // accepts any expression list, so SUM of a single cell returns
+    // that cell's value.
+    expect(evaluateFormula("=SUM(A1)", sheet)).toBe(1);
   });
 
-  it("returns 0 when the range contains no numeric values", () => {
+  it("returns #ERR! for an unparseable formula", () => {
+    expect(evaluateFormula("=SUM A1:A2", sheet)).toBe("#ERR!");
+  });
+
+  it("returns #DIV/0! for AVERAGE over a range with no numeric cells", () => {
+    // Out-of-range rows resolve to blanks, so AVERAGE has zero
+    // numeric inputs and surfaces the standard division-by-zero
+    // sentinel — matching Excel and Google Sheets.
+    expect(evaluateFormula("=AVERAGE(C99:C100)", sheet)).toBe("#DIV/0!");
+  });
+
+  it("returns 0 when SUM has no numeric values", () => {
     const noNums: SheetContent = {
       columns: ["A"],
       rows: [["x"], ["y"]],

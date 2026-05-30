@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
   evaluateFormula,
   parseCSVLines,
@@ -7,6 +7,22 @@ import {
 import type { SheetContent } from "./sheetEditorTypes";
 
 export type { SheetContent } from "./sheetEditorTypes";
+
+/**
+ * Convert a zero-based column index to the A1-style column label
+ * shown in the header (and in the formula bar's cell-address
+ * box). Pure function with no React deps — exported solely for the
+ * formula-bar code path; not used outside this file.
+ */
+function columnLabel(index: number): string {
+  let label = "";
+  let n = index;
+  while (n >= 0) {
+    label = String.fromCharCode(65 + (n % 26)) + label;
+    n = Math.floor(n / 26) - 1;
+  }
+  return label;
+}
 
 interface SheetEditorProps {
   content: string;
@@ -30,9 +46,13 @@ export default function SheetEditor({
 }: SheetEditorProps) {
   const [sheet, setSheet] = useState<SheetContent>(() => parseSheetContent(content));
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
+  // `activeCell` is the cell whose raw formula appears in the formula bar.
+  // It moves on single click (selection) and on edit commit.
+  const [activeCell, setActiveCell] = useState<{ row: number; col: number } | null>(null);
   const [editValue, setEditValue] = useState("");
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const formulaBarRef = useRef<HTMLInputElement>(null);
   const lastSavedRef = useRef(content);
 
   const debouncedSave = useCallback(
@@ -144,7 +164,27 @@ export default function SheetEditor({
   const startEdit = (rowIdx: number, colIdx: number) => {
     const value = sheet.rows[rowIdx]?.[colIdx] ?? "";
     setEditingCell({ row: rowIdx, col: colIdx });
+    setActiveCell({ row: rowIdx, col: colIdx });
     setEditValue(value);
+  };
+
+  /**
+   * Select a cell without entering edit mode. The selected cell's
+   * raw text is mirrored into the formula bar so the user can
+   * inspect formulas without a double-click. Re-clicking the
+   * already-active cell promotes it into edit mode.
+   */
+  const selectCell = (rowIdx: number, colIdx: number) => {
+    if (
+      activeCell &&
+      activeCell.row === rowIdx &&
+      activeCell.col === colIdx &&
+      !editingCell
+    ) {
+      startEdit(rowIdx, colIdx);
+      return;
+    }
+    setActiveCell({ row: rowIdx, col: colIdx });
   };
 
   const commitEdit = () => {
@@ -153,6 +193,17 @@ export default function SheetEditor({
       setEditingCell(null);
     }
   };
+
+  // Apply a value typed into the formula bar to the active cell.
+  // This is the keyboard/Enter path; blur also commits via
+  // onBlur on the input. Tests rely on the Enter handler.
+  const commitFormulaBar = useCallback(
+    (raw: string) => {
+      if (!activeCell) return;
+      updateCell(activeCell.row, activeCell.col, raw);
+    },
+    [activeCell, updateCell],
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!editingCell) return;
@@ -178,6 +229,19 @@ export default function SheetEditor({
     }
     return value;
   };
+
+  // Raw text of the currently-active cell, surfaced in the formula
+  // bar above the grid. Defaults to the empty string when nothing
+  // is selected, matching Excel.
+  const formulaBarValue = useMemo(() => {
+    if (!activeCell) return "";
+    return sheet.rows[activeCell.row]?.[activeCell.col] ?? "";
+  }, [activeCell, sheet]);
+
+  const activeAddress = useMemo(() => {
+    if (!activeCell) return "";
+    return `${columnLabel(activeCell.col)}${activeCell.row + 1}`;
+  }, [activeCell]);
 
   const importCSV = useCallback(
     (csvText: string) => {
@@ -211,6 +275,71 @@ export default function SheetEditor({
         >
           Import CSV
         </button>
+      </div>
+
+      <div className="sheet-formula-bar" data-testid="sheet-formula-bar">
+        <span
+          className="sheet-formula-bar-address"
+          data-testid="sheet-formula-bar-address"
+        >
+          {activeAddress || "\u00a0"}
+        </span>
+        <span className="sheet-formula-bar-fx" aria-hidden="true">
+          fx
+        </span>
+        <input
+          ref={formulaBarRef}
+          className="sheet-formula-bar-input"
+          data-testid="sheet-formula-bar-input"
+          aria-label="Formula bar"
+          value={
+            editingCell &&
+            activeCell &&
+            editingCell.row === activeCell.row &&
+            editingCell.col === activeCell.col
+              ? editValue
+              : formulaBarValue
+          }
+          disabled={!activeCell}
+          onChange={(e) => {
+            if (!activeCell) return;
+            if (
+              !editingCell ||
+              editingCell.row !== activeCell.row ||
+              editingCell.col !== activeCell.col
+            ) {
+              setEditingCell(activeCell);
+            }
+            setEditValue(e.target.value);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitFormulaBar(
+                editingCell &&
+                  activeCell &&
+                  editingCell.row === activeCell.row &&
+                  editingCell.col === activeCell.col
+                  ? editValue
+                  : formulaBarValue,
+              );
+              setEditingCell(null);
+            } else if (e.key === "Escape") {
+              setEditingCell(null);
+            }
+          }}
+          onBlur={() => {
+            if (
+              editingCell &&
+              activeCell &&
+              editingCell.row === activeCell.row &&
+              editingCell.col === activeCell.col
+            ) {
+              commitFormulaBar(editValue);
+              setEditingCell(null);
+            }
+          }}
+        />
       </div>
 
       <div className="sheet-grid-wrapper">
@@ -250,11 +379,16 @@ export default function SheetEditor({
                 {sheet.columns.map((_, ci) => {
                   const isEditing =
                     editingCell?.row === ri && editingCell?.col === ci;
+                  const isActive =
+                    activeCell?.row === ri && activeCell?.col === ci;
                   const rawValue = row[ci] ?? "";
                   return (
                     <td
                       key={ci}
-                      className={`sheet-cell ${isEditing ? "editing" : ""}`}
+                      className={`sheet-cell ${isEditing ? "editing" : ""} ${
+                        isActive ? "active" : ""
+                      }`}
+                      onClick={() => selectCell(ri, ci)}
                       onDoubleClick={() => startEdit(ri, ci)}
                     >
                       {isEditing ? (
@@ -281,14 +415,4 @@ export default function SheetEditor({
       </div>
     </div>
   );
-}
-
-function columnLabel(index: number): string {
-  let label = "";
-  let n = index;
-  while (n >= 0) {
-    label = String.fromCharCode(65 + (n % 26)) + label;
-    n = Math.floor(n / 26) - 1;
-  }
-  return label;
 }
