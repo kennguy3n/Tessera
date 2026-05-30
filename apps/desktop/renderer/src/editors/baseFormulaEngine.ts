@@ -155,11 +155,36 @@ export function extractFieldRefs(source: string): string[] {
  * Evaluate a base formula against a single record. Returns the
  * engine's typed `FormulaValue` (the caller decides how to render
  * `null` / error sentinels into the cell).
+ *
+ * `currentFieldName` (optional) is the formula-field whose source we
+ * are evaluating. When supplied it seeds the cycle-detection set so
+ * that a self-reference (`{Total}` inside the formula stored on the
+ * field named `Total`) and mutual references between formula fields
+ * are caught and reported as `#CIRCULAR!` instead of recursing until
+ * the JS call stack overflows.
  */
 export function evaluateBaseFormula(
   source: string,
   fields: BaseField[],
   record: BaseRecord,
+  currentFieldName?: string,
+): FormulaValue {
+  const seed = currentFieldName ? new Set<string>([currentFieldName]) : new Set<string>();
+  return evaluateBaseFormulaInner(source, fields, record, seed);
+}
+
+/**
+ * Internal recursive entry point. Threads `visiting` (the set of
+ * formula-field names currently on the evaluation stack) so the
+ * inner resolver can short-circuit cycles before the engine recurses
+ * back through `getEvaluated`. Exported for tests; the public
+ * surface is `evaluateBaseFormula`.
+ */
+export function evaluateBaseFormulaInner(
+  source: string,
+  fields: BaseField[],
+  record: BaseRecord,
+  visiting: Set<string>,
 ): FormulaValue {
   if (!source || !source.trim()) return null;
   const { rewritten } = rewriteFieldRefs(source, fields);
@@ -178,12 +203,26 @@ export function evaluateBaseFormula(
       if (row !== 0) return null;
       const field = fields[col];
       if (!field) return null;
-      // Nested base-formula references: re-evaluate inline. Cycles
-      // are prevented by the caller (`BaseEditor` collects the
-      // resolution path) — this resolver just hands back the
-      // coerced primitive.
+      // Nested base-formula references: re-evaluate inline, but
+      // first guard against direct self-reference and mutual
+      // recursion between formula fields. Without this the engine
+      // would call `getEvaluated` back into here forever and blow
+      // the JS call stack (see PR #78 Devin Review BUG_0002).
       if (field.type === "formula" && field.formula) {
-        return evaluateBaseFormula(field.formula, fields, record);
+        if (visiting.has(field.name)) {
+          return makeError(
+            "#CIRCULAR!",
+            `Formula field "${field.name}" participates in a circular reference`,
+          );
+        }
+        const nextVisiting = new Set(visiting);
+        nextVisiting.add(field.name);
+        return evaluateBaseFormulaInner(
+          field.formula,
+          fields,
+          record,
+          nextVisiting,
+        );
       }
       const raw = record[field.name];
       if (raw == null) return null;

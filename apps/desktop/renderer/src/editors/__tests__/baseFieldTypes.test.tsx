@@ -333,32 +333,76 @@ describe("BaseEditor — rating field", () => {
 });
 
 describe("BaseEditor — duration field", () => {
-  it("parses h:mm input and persists integer minutes", async () => {
+  it("parses h:mm input on blur and persists integer minutes", async () => {
     const { onSave } = renderEditor({
       fields: [{ name: "Length", type: "duration" }],
       records: [{ id: "r1", Length: null }],
     });
     const input = screen.getByPlaceholderText("h:mm") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "1:30" } });
+    // Commit is on blur (or Enter) — fix for BUG_0003 so users can
+    // type intermediate keystrokes like "1" / "1:" without the
+    // controlled input rejecting them mid-typing.
+    fireEvent.blur(input);
     await flushSave();
     expect(lastSavedRecords(onSave)[0].Length).toBe(90);
   });
 
-  it("ignores malformed h:mm input — controlled value remains the parsed value", async () => {
-    const { onSave } = renderEditor({
+  it("allows free typing including intermediate keystrokes", () => {
+    renderEditor({
       fields: [{ name: "Length", type: "duration" }],
       records: [{ id: "r1", Length: 60 }],
     });
     const input = screen.getByPlaceholderText("h:mm") as HTMLInputElement;
     // Pre-condition: 60 minutes renders as 1:00.
     expect(input.value).toBe("1:00");
+    // Typing intermediate values that don't yet match h:mm should
+    // be reflected in the input (draft state), not rejected.
+    fireEvent.change(input, { target: { value: "2" } });
+    expect(input.value).toBe("2");
+    fireEvent.change(input, { target: { value: "2:" } });
+    expect(input.value).toBe("2:");
+    fireEvent.change(input, { target: { value: "2:3" } });
+    expect(input.value).toBe("2:3");
+  });
+
+  it("rejects malformed input on blur and re-displays the last committed value", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Length", type: "duration" }],
+      records: [{ id: "r1", Length: 60 }],
+    });
+    const input = screen.getByPlaceholderText("h:mm") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "garbage" } });
+    fireEvent.blur(input);
     await flushSave();
-    // The malformed value never reached onChange so the stored
-    // minutes are unchanged, and the controlled input re-renders
-    // the parsed 1:00 representation.
+    // Malformed draft is discarded on commit and the cell rolls
+    // back to the previously committed minutes representation.
     expect(input.value).toBe("1:00");
     expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("commits on Enter as well as blur", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Length", type: "duration" }],
+      records: [{ id: "r1", Length: null }],
+    });
+    const input = screen.getByPlaceholderText("h:mm") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "0:45" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await flushSave();
+    expect(lastSavedRecords(onSave)[0].Length).toBe(45);
+  });
+
+  it("clamps a negative stored value to a sane display", () => {
+    renderEditor({
+      fields: [{ name: "Length", type: "duration" }],
+      records: [{ id: "r1", Length: -90 }],
+    });
+    const input = screen.getByPlaceholderText("h:mm") as HTMLInputElement;
+    // Without clamping, JS `%` would produce "-2:-30". The helper
+    // floors negative values to 0 so a corrupt JSON load can't
+    // display gibberish.
+    expect(input.value).toBe("0:00");
   });
 });
 
@@ -469,5 +513,120 @@ describe("BaseEditor — AddFieldDialog", () => {
       type: "currency",
       currencySymbol: "£",
     });
+  });
+
+  it("rejects creating a field named 'id' (would shadow the record identifier)", () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Name", type: "text" }],
+      records: [{ id: "r1", Name: "Alice" }],
+    });
+    onSave.mockClear();
+    fireEvent.click(screen.getByText("+ Field"));
+    fireEvent.change(screen.getByPlaceholderText("Field name"), {
+      target: { value: "id" },
+    });
+    fireEvent.click(screen.getByText("Add"));
+    // The dialog stays open with an inline error and does NOT
+    // produce a save (no field was added).
+    expect(screen.getByRole("alert").textContent).toMatch(/reserved/i);
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("rejects creating a field with an existing name (would silently clobber data)", () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Name", type: "text" }],
+      records: [{ id: "r1", Name: "Alice" }],
+    });
+    onSave.mockClear();
+    fireEvent.click(screen.getByText("+ Field"));
+    fireEvent.change(screen.getByPlaceholderText("Field name"), {
+      target: { value: "Name" },
+    });
+    fireEvent.click(screen.getByText("Add"));
+    expect(screen.getByRole("alert").textContent).toMatch(/already exists/i);
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty / whitespace-only field name", () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Name", type: "text" }],
+      records: [{ id: "r1", Name: "Alice" }],
+    });
+    onSave.mockClear();
+    fireEvent.click(screen.getByText("+ Field"));
+    fireEvent.change(screen.getByPlaceholderText("Field name"), {
+      target: { value: "   " },
+    });
+    fireEvent.click(screen.getByText("Add"));
+    expect(screen.getByRole("alert").textContent).toMatch(/required/i);
+    expect(onSave).not.toHaveBeenCalled();
+  });
+});
+
+describe("BaseEditor — record-identity guards", () => {
+  it("clicking the 'x' on the id column would do nothing (column doesn't render)", () => {
+    // The id key is invisible to the user — it has no BaseField in
+    // `data.fields`, so the grid never renders a remove button for
+    // it. This test documents the invariant: as long as the user
+    // can't create a field named "id" (above) and can't see one in
+    // the column list, the `removeField("id")` guard is defense in
+    // depth.
+    renderEditor({
+      fields: [{ name: "Name", type: "text" }],
+      records: [{ id: "r1", Name: "Alice" }],
+    });
+    expect(screen.queryByText("(id)")).toBeNull();
+  });
+
+  it("LinkedRecordCell picker excludes the current record itself", () => {
+    renderEditor({
+      fields: [
+        { name: "Title", type: "text" },
+        { name: "Refs", type: "linked_record", linkedDisplayField: "Title" },
+      ],
+      records: [
+        { id: "r1", Title: "Alpha", Refs: [] },
+        { id: "r2", Title: "Beta", Refs: [] },
+        { id: "r3", Title: "Gamma", Refs: [] },
+      ],
+    });
+    // Find the picker '+' button on the first record's Refs cell.
+    // There's one per row, so we open the first.
+    const plusButtons = screen.getAllByRole("button", { name: "+" });
+    fireEvent.click(plusButtons[0]);
+    // The picker should offer Beta and Gamma — but NOT Alpha
+    // (the current record itself).
+    const listbox = screen.getByRole("listbox");
+    expect(listbox.textContent).toContain("Beta");
+    expect(listbox.textContent).toContain("Gamma");
+    expect(listbox.textContent).not.toContain("Alpha");
+  });
+});
+
+describe("BaseEditor — formula cycle detection", () => {
+  it("returns #CIRCULAR! for a self-referencing formula instead of crashing", () => {
+    renderEditor({
+      fields: [
+        { name: "Self", type: "formula", formula: "{Self} + 1" },
+      ],
+      records: [{ id: "r1", Self: null }],
+    });
+    // The rendered cell should display #CIRCULAR! — the engine's
+    // cycle detector caught the back-edge before recursing into
+    // an unbounded stack.
+    expect(screen.getByText("#CIRCULAR!")).toBeInTheDocument();
+  });
+
+  it("returns #CIRCULAR! for mutual references between two formula fields", () => {
+    renderEditor({
+      fields: [
+        { name: "A", type: "formula", formula: "{B} + 1" },
+        { name: "B", type: "formula", formula: "{A} + 1" },
+      ],
+      records: [{ id: "r1", A: null, B: null }],
+    });
+    // Both cells in the grid should report #CIRCULAR!
+    const cells = screen.getAllByText("#CIRCULAR!");
+    expect(cells.length).toBeGreaterThanOrEqual(2);
   });
 });

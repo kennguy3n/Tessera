@@ -15,12 +15,31 @@
  *   - `aggregateValues` for rollup fields
  *   - `lookupValues` for lookup fields
  *   - `computeAutoNumber` for the auto_number field type
+ *   - `RESERVED_FIELD_NAMES` / `isReservedFieldName` guard against
+ *     user-named fields colliding with `BaseRecord` reserved keys
+ *     (currently just `id`; see `addField` / `removeField` /
+ *     `AddFieldDialog.submit` in `BaseEditor.tsx`)
  */
 import type {
   BaseContent,
   BaseRecord,
   RollupAggregation,
 } from "./baseEditorTypes";
+
+/**
+ * Names the user must not assign to a field. `id` is the stable
+ * per-record identifier produced by `makeRecordId()` and consumed by
+ * linked_record / rollup / lookup; shadowing or deleting it would
+ * orphan every cross-record reference on the next save/reload.
+ *
+ * Kept here (next to `makeRecordId`) so the invariant lives in the
+ * same module as the function that mints the identifier.
+ */
+export const RESERVED_FIELD_NAMES: ReadonlySet<string> = new Set(["id"]);
+
+export function isReservedFieldName(name: string): boolean {
+  return RESERVED_FIELD_NAMES.has(name.trim());
+}
 
 /**
  * Produce a short opaque record id. Uses crypto.getRandomValues when

@@ -112,3 +112,42 @@ describe("evaluateBaseFormula", () => {
     expect(formatFormulaResult(v)).toBe("TRUE");
   });
 });
+
+describe("evaluateBaseFormula — cycle detection", () => {
+  it("returns #CIRCULAR! for a direct self-reference (formula field references itself)", () => {
+    const fields: BaseField[] = [
+      { name: "Self", type: "formula", formula: "{Self} + 1" },
+    ];
+    const record: BaseRecord = { id: "r1", Self: null };
+    // Seeding the visiting set with the current field name is what
+    // the FormulaCell does in practice; without the seed a direct
+    // self-reference would recurse via getEvaluated.
+    const v = evaluateBaseFormula("{Self} + 1", fields, record, "Self");
+    expect(formatFormulaResult(v)).toBe("#CIRCULAR!");
+  });
+
+  it("returns #CIRCULAR! for mutual references between two formula fields", () => {
+    const fields: BaseField[] = [
+      { name: "A", type: "formula", formula: "{B} + 1" },
+      { name: "B", type: "formula", formula: "{A} + 1" },
+    ];
+    const record: BaseRecord = { id: "r1", A: null, B: null };
+    const v = evaluateBaseFormula("{B} + 1", fields, record, "A");
+    expect(formatFormulaResult(v)).toBe("#CIRCULAR!");
+  });
+
+  it("does NOT report a cycle for a diamond dependency that re-visits a leaf", () => {
+    // A and B both reference Leaf (non-formula). This is not a
+    // cycle; the visiting set only tracks formula fields on the
+    // current path, so revisiting Leaf via two different parents
+    // must still evaluate cleanly.
+    const fields: BaseField[] = [
+      { name: "Leaf", type: "number" },
+      { name: "A", type: "formula", formula: "{Leaf} * 2" },
+      { name: "B", type: "formula", formula: "{A} + {Leaf}" },
+    ];
+    const record: BaseRecord = { id: "r1", Leaf: 5, A: null, B: null };
+    const v = evaluateBaseFormula("{A} + {Leaf}", fields, record, "B");
+    expect(formatFormulaResult(v)).toBe("15");
+  });
+});

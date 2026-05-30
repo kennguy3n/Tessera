@@ -16,6 +16,7 @@ import {
   aggregateValues,
   lookupValues,
   computeAutoNumber,
+  isReservedFieldName,
 } from "./baseEditorHelpers";
 import {
   evaluateBaseFormula,
@@ -51,8 +52,11 @@ export default function BaseEditor({
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showAddField, setShowAddField] = useState(false);
+  // Keyed by record `id`, not array index — a deletion of another
+  // record while this modal is open would otherwise shift the
+  // target index and silently rewrite the wrong record's value.
   const [expandedCell, setExpandedCell] = useState<
-    { recordIndex: number; field: BaseField } | null
+    { recordId: string; field: BaseField } | null
   >(null);
   // Active view kind plus per-view config (which field drives kanban
   // columns, which date drives the calendar, etc.). Both are
@@ -102,6 +106,12 @@ export default function BaseEditor({
 
   const addField = useCallback(
     (field: BaseField) => {
+      // Defense in depth: the AddFieldDialog also rejects these,
+      // but we re-check here so any future programmatic caller can't
+      // shadow `id` (the record-identifier key linked_record /
+      // rollup / lookup all depend on) or another existing field.
+      if (isReservedFieldName(field.name)) return;
+      if (data.fields.some((f) => f.name === field.name)) return;
       const updated: BaseContent = {
         fields: [...data.fields, field],
         records: data.records.map((r) => ({
@@ -117,6 +127,10 @@ export default function BaseEditor({
 
   const removeField = useCallback(
     (fieldName: string) => {
+      // `id` is the stable record identifier; deleting it would
+      // strip every record's id and orphan every linked_record
+      // reference on the next save/reload cycle.
+      if (isReservedFieldName(fieldName)) return;
       const updated: BaseContent = {
         fields: data.fields.filter((f) => f.name !== fieldName),
         records: data.records.map((r) => {
@@ -360,7 +374,7 @@ export default function BaseEditor({
                         allFields={data.fields}
                         onChange={(val) => updateCell(originalIndex, field.name, val)}
                         onExpand={() =>
-                          setExpandedCell({ recordIndex: originalIndex, field })
+                          setExpandedCell({ recordId: record.id, field })
                         }
                       />
                     </td>
@@ -382,16 +396,28 @@ export default function BaseEditor({
       </div>
       )}
 
-      {expandedCell && (
-        <LongTextModal
-          field={expandedCell.field}
-          value={data.records[expandedCell.recordIndex]?.[expandedCell.field.name]}
-          onChange={(val) =>
-            updateCell(expandedCell.recordIndex, expandedCell.field.name, val)
-          }
-          onClose={() => setExpandedCell(null)}
-        />
-      )}
+      {expandedCell && (() => {
+        // Resolve the live record by id on every render so deletes /
+        // reorderings of OTHER records don't drift the target.
+        const expandedIndex = data.records.findIndex(
+          (r) => r.id === expandedCell.recordId,
+        );
+        if (expandedIndex === -1) {
+          // Target record was deleted out from under us — close the
+          // modal silently rather than write to nothing.
+          return null;
+        }
+        return (
+          <LongTextModal
+            field={expandedCell.field}
+            value={data.records[expandedIndex]?.[expandedCell.field.name]}
+            onChange={(val) =>
+              updateCell(expandedIndex, expandedCell.field.name, val)
+            }
+            onClose={() => setExpandedCell(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -629,12 +655,53 @@ function RatingCell({ value, onChange }: CellInputProps) {
   );
 }
 
+/**
+ * Format integer minutes as `h:mm`. Clamps negative values to 0 so a
+ * record loaded from JSON with a stray negative number renders as
+ * `0:00` instead of `"-2:-30"` (JS `%` preserves dividend sign).
+ */
+function formatDurationMinutes(value: unknown): string {
+  if (value == null) return "";
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return "";
+  const safe = Math.max(0, Math.floor(n));
+  const hh = Math.floor(safe / 60);
+  const mm = safe % 60;
+  return `${hh}:${String(mm).padStart(2, "0")}`;
+}
+
 function DurationCell({ value, onChange }: CellInputProps) {
-  // Stored as integer minutes; rendered as h:mm.
-  const minutes = typeof value === "number" ? value : 0;
-  const hh = Math.floor(minutes / 60);
-  const mm = minutes % 60;
-  const text = value == null ? "" : `${hh}:${String(mm).padStart(2, "0")}`;
+  // Stored as integer minutes; rendered as h:mm. We keep a local
+  // `draft` string so users can type freely (intermediate keystrokes
+  // like `"2"` or `"2:"` are not valid h:mm but must be allowed) —
+  // the committed minutes value only updates on blur / Enter, after
+  // the draft parses successfully. Empty input clears the field.
+  const committed = formatDurationMinutes(value);
+  const [draft, setDraft] = useState<string | null>(null);
+  const text = draft !== null ? draft : committed;
+
+  const commit = () => {
+    if (draft === null) return;
+    const trimmed = draft.trim();
+    if (trimmed === "") {
+      onChange(null);
+      setDraft(null);
+      return;
+    }
+    const m = trimmed.match(/^(\d+):(\d{1,2})$/);
+    if (m) {
+      const h = Number(m[1]);
+      const min = Number(m[2]);
+      if (Number.isFinite(h) && Number.isFinite(min) && min < 60) {
+        onChange(h * 60 + min);
+        setDraft(null);
+        return;
+      }
+    }
+    // Malformed: discard the draft and re-display the last committed
+    // value so the cell never gets stuck in an invalid state.
+    setDraft(null);
+  };
 
   return (
     <input
@@ -642,19 +709,14 @@ function DurationCell({ value, onChange }: CellInputProps) {
       className="base-cell-input"
       value={text}
       placeholder="h:mm"
-      onChange={(e) => {
-        const v = e.target.value.trim();
-        if (v === "") {
-          onChange(null);
-          return;
-        }
-        const m = v.match(/^(\d+):(\d{1,2})$/);
-        if (m) {
-          const h = Number(m[1]);
-          const min = Number(m[2]);
-          if (Number.isFinite(h) && Number.isFinite(min) && min < 60) {
-            onChange(h * 60 + min);
-          }
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        } else if (e.key === "Escape") {
+          setDraft(null);
         }
       }}
     />
@@ -762,8 +824,11 @@ function MultiSelectCell({ field, value, onChange }: CellInputProps) {
 
 function FormulaCell({ field, record, allFields }: CellInputProps) {
   // Read-only: computed at render time from the live record values.
+  // Pass the current field name so the engine's cycle detector can
+  // catch self-references and mutual recursion between formula
+  // fields before the JS call stack overflows.
   const src = field.formula ?? "";
-  const result = evaluateBaseFormula(src, allFields, record);
+  const result = evaluateBaseFormula(src, allFields, record, field.name);
   return (
     <span
       className="base-cell-readonly"
@@ -778,6 +843,7 @@ function FormulaCell({ field, record, allFields }: CellInputProps) {
 function LinkedRecordCell({
   field,
   value,
+  record,
   allRecords,
   onChange,
 }: CellInputProps) {
@@ -858,7 +924,11 @@ function LinkedRecordCell({
           }}
         >
           {allRecords
-            .filter((r) => !links.includes(r.id))
+            // Exclude already-linked records and the current record
+            // itself — a record linking to itself causes rollup /
+            // lookup to include its own field values, which is
+            // almost never what the user wants.
+            .filter((r) => r.id !== record.id && !links.includes(r.id))
             .map((r) => (
               <button
                 type="button"
@@ -1247,6 +1317,7 @@ function AddFieldDialog({
   const [linkedDisplayField, setLinkedDisplayField] = useState("");
   const [currencySymbol, setCurrencySymbol] = useState("$");
   const [percentPrecision, setPercentPrecision] = useState("0");
+  const [nameError, setNameError] = useState<string | null>(null);
 
   const linkFieldChoices = existingFields.filter(
     (f) => f.type === "linked_record",
@@ -1254,7 +1325,24 @@ function AddFieldDialog({
 
   const submit = () => {
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      setNameError("Name is required");
+      return;
+    }
+    // Reject reserved names (`id` is the per-record stable identifier
+    // every linked_record / rollup / lookup depends on; shadowing it
+    // would orphan every link on the next reload).
+    if (isReservedFieldName(trimmed)) {
+      setNameError(`"${trimmed}" is reserved and cannot be used as a field name`);
+      return;
+    }
+    // Two fields with the same name would both read/write the same
+    // key on the record object, silently clobbering each other.
+    if (existingFields.some((f) => f.name === trimmed)) {
+      setNameError(`A field named "${trimmed}" already exists`);
+      return;
+    }
+    setNameError(null);
     const field: BaseField = { name: trimmed, type };
     if (type === "select" || type === "multi_select") {
       const opts = optionsText
@@ -1290,7 +1378,10 @@ function AddFieldDialog({
           className="input"
           placeholder="Field name"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value);
+            if (nameError) setNameError(null);
+          }}
         />
         <select
           className="input"
@@ -1407,6 +1498,16 @@ function AddFieldDialog({
           value={percentPrecision}
           onChange={(e) => setPercentPrecision(e.target.value)}
         />
+      )}
+
+      {nameError && (
+        <div
+          className="base-add-field-error"
+          role="alert"
+          style={{ color: "var(--color-danger, #b91c1c)", fontSize: "0.8rem" }}
+        >
+          {nameError}
+        </div>
       )}
 
       <div style={{ display: "flex", gap: "0.4rem" }}>

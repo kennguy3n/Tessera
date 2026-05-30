@@ -20,6 +20,8 @@ import {
   lookupValues,
   computeAutoNumber,
   findRecordsLinkingTo,
+  isReservedFieldName,
+  RESERVED_FIELD_NAMES,
 } from "../baseEditorHelpers";
 import type { BaseRecord } from "../baseEditorTypes";
 
@@ -211,5 +213,33 @@ describe("findRecordsLinkingTo", () => {
     expect(findRecordsLinkingTo(mixed, "Tasks", "t1").map((r) => r.id)).toEqual([
       "r1",
     ]);
+  });
+});
+
+describe("isReservedFieldName", () => {
+  it("flags 'id' as reserved (it is the BaseRecord identifier key)", () => {
+    expect(isReservedFieldName("id")).toBe(true);
+  });
+
+  it("flags whitespace-padded reserved names", () => {
+    expect(isReservedFieldName("  id  ")).toBe(true);
+  });
+
+  it("is case-sensitive — 'ID' and 'Id' are NOT reserved", () => {
+    // The data layer keys records by the literal string "id"; if a
+    // future change wants to reserve case-insensitive variants we
+    // should update this test deliberately.
+    expect(isReservedFieldName("ID")).toBe(false);
+    expect(isReservedFieldName("Id")).toBe(false);
+  });
+
+  it("does not flag ordinary user field names", () => {
+    for (const name of ["Title", "id_old", "identifier", "primary_key", ""]) {
+      expect(isReservedFieldName(name)).toBe(false);
+    }
+  });
+
+  it("exposes RESERVED_FIELD_NAMES as a ReadonlySet containing 'id'", () => {
+    expect(RESERVED_FIELD_NAMES.has("id")).toBe(true);
   });
 });
