@@ -23,7 +23,9 @@ import {
   parseSlideContent,
   setFrontmatterTheme,
   buildSlideFromLayout,
+  buildBlock,
   duplicateSlideAt,
+  moveSlide as moveSlideHelper,
   moveBlock,
   removeBlock as removeBlockHelper,
   appendBlock,
@@ -144,6 +146,12 @@ export default function SlideEditor({
   const [findQuery, setFindQuery] = useState("");
   const [findCaseSensitive, setFindCaseSensitive] = useState(false);
   const [findActiveIndex, setFindActiveIndex] = useState(0);
+  // Drag-and-drop reorder state. We track IDs (not indices) so the
+  // dragged item survives a setState that re-renders the list with a
+  // different array order — the source's index could change between
+  // dragStart and drop, but its id can't.
+  const [draggedSlideId, setDraggedSlideId] = useState<string | null>(null);
+  const [draggedBlockId, setDraggedBlockId] = useState<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef(content);
 
@@ -329,17 +337,22 @@ export default function SlideEditor({
 
   const moveSlide = useCallback(
     (from: number, to: number) => {
-      if (to < 0 || to >= slides.length) return;
       setSlides((prev) => {
-        const updated = [...prev];
-        const [moved] = updated.splice(from, 1);
-        updated.splice(to, 0, moved);
+        const updated = moveSlideHelper(prev, from, to);
+        // `moveSlideHelper` is reference-stable on out-of-range / same-
+        // position moves, so React skips the re-render entirely when
+        // the user drag-drops a slide back onto itself.
+        if (updated === prev) return prev;
+        // Keep the active pointer anchored to the moved slide so the
+        // canvas continues to render what the user just dragged.
+        // `setActiveIndex` receives the *new* index because the helper
+        // already placed the moved slide at `to` in the next array.
         setActiveIndex(to);
         debouncedSave(updated);
         return updated;
       });
     },
-    [slides.length, debouncedSave],
+    [debouncedSave],
   );
 
   // ───── Block-level mutators (delegate to helpers) ─────────────────
@@ -517,6 +530,7 @@ export default function SlideEditor({
           const block = slide.blocks[blockIndex];
           if (!block || block.type !== "image") return prev;
           const updatedSlide = replaceBlock(slide, blockIndex, {
+            id: block.id,
             type: "image",
             content: dataUrl,
             alt: block.alt ?? "",
@@ -549,7 +563,48 @@ export default function SlideEditor({
       <div className="slide-editor-sidebar">
         <div className="slide-thumbnails">
           {slides.map((slide, i) => (
-            <div key={i} className="slide-thumb-row">
+            <div
+              // Stable key driven off `slide.id` (not `i`). Indices
+              // would force React to destroy + remount the entire row
+              // tree on every reorder, defeating the no-op-stable
+              // contract of `moveSlide` and tearing down the layout
+              // menu / aria-live state inside it.
+              key={slide.id}
+              className={`slide-thumb-row ${
+                draggedSlideId === slide.id ? "is-dragging" : ""
+              }`}
+              draggable
+              onDragStart={(event) => {
+                setDraggedSlideId(slide.id);
+                // Setting dataTransfer keeps the drag-image alive in
+                // Chromium-based renderers — without `setData` the
+                // browser cancels the drag immediately.
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", slide.id);
+              }}
+              onDragOver={(event) => {
+                // Default browser behaviour is "this drop target
+                // doesn't accept anything"; we must preventDefault to
+                // declare the row as a valid drop target so the
+                // browser fires `onDrop` instead of swallowing the
+                // release.
+                if (draggedSlideId && draggedSlideId !== slide.id) {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }
+              }}
+              onDrop={(event) => {
+                if (!draggedSlideId || draggedSlideId === slide.id) return;
+                event.preventDefault();
+                const fromIdx = slides.findIndex(
+                  (s) => s.id === draggedSlideId,
+                );
+                if (fromIdx < 0) return;
+                moveSlide(fromIdx, i);
+                setDraggedSlideId(null);
+              }}
+              onDragEnd={() => setDraggedSlideId(null)}
+            >
               <button
                 type="button"
                 className={`slide-thumb ${i === activeIndex ? "active" : ""}`}
@@ -824,7 +879,12 @@ export default function SlideEditor({
             <div className="slide-blocks">
               {activeSlide.blocks.map((block, bi) => (
                 <SlideBlockRow
-                  key={bi}
+                  // Stable key driven off `block.id` (not `bi`) so a
+                  // drag-reorder preserves component identity — the
+                  // `<textarea>` keeps its cursor / selection state
+                  // across the reorder, instead of being unmounted
+                  // and re-created with a fresh DOM node.
+                  key={block.id}
                   block={block}
                   blockIndex={bi}
                   totalBlocks={activeSlide.blocks.length}
@@ -853,13 +913,28 @@ export default function SlideEditor({
                   onMoveUp={() => onBlockMove(activeIndex, bi, bi - 1)}
                   onMoveDown={() => onBlockMove(activeIndex, bi, bi + 1)}
                   onRemove={() => onBlockRemove(activeIndex, bi)}
+                  draggedBlockId={draggedBlockId}
+                  onDragStartBlock={setDraggedBlockId}
+                  onDragEndBlock={() => setDraggedBlockId(null)}
+                  onDropBlock={(targetIdx) => {
+                    if (!draggedBlockId) return;
+                    const fromIdx = activeSlide.blocks.findIndex(
+                      (b) => b.id === draggedBlockId,
+                    );
+                    if (fromIdx < 0) return;
+                    onBlockMove(activeIndex, fromIdx, targetIdx);
+                    setDraggedBlockId(null);
+                  }}
                 />
               ))}
               <button
                 type="button"
                 className="btn-sm"
                 onClick={() =>
-                  onBlockAppend(activeIndex, { type: "text", content: "" })
+                  onBlockAppend(
+                    activeIndex,
+                    buildBlock({ type: "text", content: "" }),
+                  )
                 }
               >
                 + Add Block
@@ -890,6 +965,16 @@ interface SlideBlockRowProps {
   onMoveUp: () => void;
   onMoveDown: () => void;
   onRemove: () => void;
+  /**
+   * Drag-and-drop coordination — the parent owns the "currently
+   * dragged block id" so multiple SlideBlockRow siblings can
+   * coordinate without each maintaining its own copy of the
+   * cross-row drag state.
+   */
+  draggedBlockId: string | null;
+  onDragStartBlock: (id: string) => void;
+  onDragEndBlock: () => void;
+  onDropBlock: (targetIndex: number) => void;
 }
 
 /**
@@ -912,6 +997,10 @@ function SlideBlockRow({
   onMoveUp,
   onMoveDown,
   onRemove,
+  draggedBlockId,
+  onDragStartBlock,
+  onDragEndBlock,
+  onDropBlock,
 }: SlideBlockRowProps) {
   const altId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -925,8 +1014,38 @@ function SlideBlockRow({
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
+  const isDragging = draggedBlockId === block.id;
+  const isDropTargetCandidate =
+    draggedBlockId !== null && draggedBlockId !== block.id;
+
   return (
-    <div className="slide-block">
+    <div
+      className={`slide-block ${isDragging ? "is-dragging" : ""}`}
+      // Block-level drag-and-drop. We attach to the outer wrapper so
+      // the whole block "card" is the drag handle / drop target, not
+      // just one button inside it. The `<textarea>` and `<input>`
+      // children still let the user click into them normally because
+      // the browser only initiates a drag when the user grabs a
+      // non-text-input region (the toolbar / preview gutter).
+      draggable
+      onDragStart={(event) => {
+        onDragStartBlock(block.id);
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", block.id);
+      }}
+      onDragOver={(event) => {
+        if (isDropTargetCandidate) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        }
+      }}
+      onDrop={(event) => {
+        if (!isDropTargetCandidate) return;
+        event.preventDefault();
+        onDropBlock(blockIndex);
+      }}
+      onDragEnd={onDragEndBlock}
+    >
       <div className="slide-block-toolbar">
         <select
           value={block.type}
@@ -976,6 +1095,12 @@ function SlideBlockRow({
             ref={fileInputRef}
             accept="image/*"
             onChange={handleFileChange}
+            // Defensive: the parent `.slide-block` wrapper has
+            // `draggable`, and some Chromium versions can initiate
+            // the parent's drag if the user grabs the file-input's
+            // border/padding instead of the button face. Setting
+            // `draggable={false}` on the input prevents that escape.
+            draggable={false}
           />
           {block.content && (
             <img
@@ -994,6 +1119,11 @@ function SlideBlockRow({
             value={block.alt ?? ""}
             onChange={(e) => onAltChange(e.target.value)}
             placeholder="Describe the image for screen readers..."
+            // See note on file input above — keep drag-grab confined
+            // to the toolbar / preview gutter, not the alt-text
+            // entry, so reorder can't be triggered by mis-clicks
+            // while typing alt text.
+            draggable={false}
           />
         </div>
       ) : (
@@ -1002,6 +1132,15 @@ function SlideBlockRow({
             className="slide-block-content"
             value={block.content}
             onChange={(e) => onContentChange(e.target.value)}
+            // Defensive: prevent the parent `.slide-block` wrapper's
+            // `draggable` from intercepting drag-starts that begin
+            // in the textarea's padding/border area. The browser
+            // normally allows text-selection inside `<textarea>` to
+            // win over a parent's drag, but Chromium edge cases can
+            // initiate the parent drag when the grab point misses
+            // the text-content layer (e.g. a click in the scrollbar
+            // gutter on a wrap-wrapped line).
+            draggable={false}
             placeholder={
               block.type === "bullets"
                 ? "One bullet point per line..."

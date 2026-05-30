@@ -27,11 +27,104 @@ export interface ParsedSlideContent {
   marpTheme: MarpRenderOptions["theme"] | undefined;
 }
 
+/**
+ * Generate a stable, collision-resistant identifier for a slide or
+ * block. Falls back to a `Math.random` + counter combination when the
+ * `crypto.randomUUID` API is unavailable (older Electron renderers,
+ * jsdom in unit tests, etc.) so callers never need a polyfill.
+ *
+ * IDs are persisted in the saved JSON. We deliberately use opaque
+ * string IDs rather than indices because (a) drag-and-drop reorder
+ * makes index-based React keys destroy and re-mount component
+ * instances on every move, and (b) the find panel needs to refer to
+ * a specific slide / block even across edits that change array
+ * positions.
+ */
+let __slideIdCounter = 0;
+export function newSlideId(prefix: "slide" | "block" = "slide"): string {
+  const g = globalThis as unknown as {
+    crypto?: { randomUUID?: () => string };
+  };
+  if (typeof g.crypto?.randomUUID === "function") {
+    return `${prefix}-${g.crypto.randomUUID()}`;
+  }
+  __slideIdCounter += 1;
+  // 36-char base alphanumerics keep the IDs roughly the same length
+  // as the UUID fallback and avoid characters that would need
+  // escaping in JSON or DOM attribute values.
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `${prefix}-${Date.now().toString(36)}-${__slideIdCounter.toString(36)}-${rand}`;
+}
+
+/**
+ * Ensure every slide and every block has a non-empty `id` string,
+ * mutating in place is NOT done — a new array is returned so the
+ * caller's setState can detect the migration without a deep equal.
+ * When every input already has an ID, the original `slides` reference
+ * is returned unchanged so callers can use referential equality to
+ * short-circuit a re-render.
+ *
+ * Used by `parseSlideContent` to backfill IDs on legacy decks saved
+ * before Phase 18 PR 8 (which had no `Slide.id` / `SlideBlock.id`
+ * field). Exported because the tests verify the migration and the
+ * SlideEditor's content-sync effect uses it directly.
+ */
+export function backfillSlideIds(slides: readonly Slide[]): Slide[] {
+  // Lazy clone-on-first-mutation: don't allocate a new `Slide[]` or
+  // a new `blocks[]` until we hit the first ID-less slide/block. The
+  // common case (already-migrated decks) returns the original array
+  // and the original block arrays untouched — zero GC pressure and
+  // referential equality is preserved end-to-end so React's setState
+  // can short-circuit.
+  let nextSlides: Slide[] | null = null;
+  for (let i = 0; i < slides.length; i += 1) {
+    const slide = slides[i];
+    let nextBlocks: SlideBlock[] | null = null;
+    for (let j = 0; j < slide.blocks.length; j += 1) {
+      const block = slide.blocks[j];
+      if (block.id) {
+        // Only need to copy already-seen blocks into the new array
+        // once we know we're cloning — i.e. when `nextBlocks` is
+        // non-null. While `nextBlocks` is null, the original
+        // `slide.blocks` is still the source of truth and we keep
+        // walking.
+        if (nextBlocks) nextBlocks.push(block);
+        continue;
+      }
+      // First ID-less block — initialise the clone and back-fill
+      // the prefix we already walked.
+      if (!nextBlocks) {
+        nextBlocks = slide.blocks.slice(0, j);
+      }
+      nextBlocks.push({ ...block, id: newSlideId("block") });
+    }
+    const hasNewId = !slide.id;
+    if (!hasNewId && !nextBlocks) {
+      // Slide is already fully migrated. Pass through unchanged —
+      // only copy it into `nextSlides` if a previous slide forced us
+      // to clone the outer array.
+      if (nextSlides) nextSlides.push(slide);
+      continue;
+    }
+    // First slide that needs mutation — initialise the outer clone
+    // and back-fill the prefix.
+    if (!nextSlides) {
+      nextSlides = slides.slice(0, i) as Slide[];
+    }
+    nextSlides.push({
+      ...slide,
+      id: slide.id || newSlideId("slide"),
+      blocks: nextBlocks ?? slide.blocks,
+    });
+  }
+  return nextSlides ?? (slides as Slide[]);
+}
+
 export function parseSlideContent(content: string): ParsedSlideContent {
   const emptyDefault: ParsedSlideContent = {
-    slides: [
-      { title: "Title Slide", blocks: [{ type: "text", content: "" }], notes: "" },
-    ],
+    slides: backfillSlideIds([
+      { id: "", title: "Title Slide", blocks: [{ id: "", type: "text", content: "" }], notes: "" },
+    ]),
     marpMode: false,
     marpSource: "",
     marpTheme: undefined,
@@ -41,7 +134,7 @@ export function parseSlideContent(content: string): ParsedSlideContent {
     const parsed = JSON.parse(content) as SlideContent;
     if (parsed.slides && Array.isArray(parsed.slides) && parsed.slides.length > 0) {
       return {
-        slides: parsed.slides,
+        slides: backfillSlideIds(parsed.slides),
         marpMode: parsed.marp?.enabled ?? false,
         marpSource: parsed.marp?.source ?? "",
         marpTheme: parsed.marp?.theme,
@@ -51,7 +144,9 @@ export function parseSlideContent(content: string): ParsedSlideContent {
     // Not JSON — treat as single text slide
   }
   return {
-    slides: [{ title: "Slide 1", blocks: [{ type: "text", content }], notes: "" }],
+    slides: backfillSlideIds([
+      { id: "", title: "Slide 1", blocks: [{ id: "", type: "text", content }], notes: "" },
+    ]),
     marpMode: false,
     marpSource: "",
     marpTheme: undefined,
@@ -318,37 +413,59 @@ export function applyMarpToShadow(
  * would clutter the speaker-notes panel with sample text on every
  * insertion.
  */
+/**
+ * Build a fresh `SlideBlock` with a newly-minted `id`. Centralised so
+ * every callsite (helpers below, SlideEditor's "+ Add Block" handler)
+ * goes through one place and we can never accidentally construct a
+ * block without an ID.
+ */
+export function buildBlock(
+  partial: Omit<SlideBlock, "id"> & { id?: string },
+): SlideBlock {
+  return { ...partial, id: partial.id ?? newSlideId("block") };
+}
+
 export function buildSlideFromLayout(layout: SlideLayout): Slide {
+  const baseId = newSlideId("slide");
   switch (layout) {
     case "blank":
-      return { title: "", blocks: [{ type: "text", content: "" }], notes: "" };
+      return {
+        id: baseId,
+        title: "",
+        blocks: [buildBlock({ type: "text", content: "" })],
+        notes: "",
+      };
     case "title":
       return {
+        id: baseId,
         title: "New Slide",
         blocks: [],
         notes: "",
       };
     case "titleContent":
       return {
+        id: baseId,
         title: "New Slide",
-        blocks: [{ type: "text", content: "" }],
+        blocks: [buildBlock({ type: "text", content: "" })],
         notes: "",
       };
     case "twoColumn":
       return {
+        id: baseId,
         title: "New Slide",
         blocks: [
-          { type: "text", content: "" },
-          { type: "text", content: "" },
+          buildBlock({ type: "text", content: "" }),
+          buildBlock({ type: "text", content: "" }),
         ],
         notes: "",
       };
     case "imageCaption":
       return {
+        id: baseId,
         title: "New Slide",
         blocks: [
-          { type: "image", content: "", alt: "" },
-          { type: "text", content: "" },
+          buildBlock({ type: "image", content: "", alt: "" }),
+          buildBlock({ type: "text", content: "" }),
         ],
         notes: "",
       };
@@ -374,10 +491,15 @@ export function duplicateSlideAt(
     return { slides, insertedAt: -1 };
   }
   const original = slides[index];
+  // CRITICAL: the duplicate gets a fresh `id` for both the slide and
+  // every block. Reusing the originals' IDs would collide with the
+  // source's React keys and corrupt drag-and-drop reorder + the find
+  // panel's per-slide / per-block jump pointer.
   const copy: Slide = {
+    id: newSlideId("slide"),
     title: original.title,
     notes: original.notes,
-    blocks: original.blocks.map((b) => ({ ...b })),
+    blocks: original.blocks.map((b) => ({ ...b, id: newSlideId("block") })),
   };
   const next = [
     ...slides.slice(0, index + 1),
@@ -385,6 +507,32 @@ export function duplicateSlideAt(
     ...slides.slice(index + 1),
   ];
   return { slides: next, insertedAt: index + 1 };
+}
+
+/**
+ * Move the slide at `from` to position `to` within the deck. Returns
+ * a new array. Out-of-range / same-position moves are no-ops and
+ * return the input reference unchanged so callers can use `===` to
+ * short-circuit a re-render (same contract as `moveBlock`).
+ */
+export function moveSlide(
+  slides: Slide[],
+  from: number,
+  to: number,
+): Slide[] {
+  if (
+    from < 0 ||
+    from >= slides.length ||
+    to < 0 ||
+    to >= slides.length ||
+    from === to
+  ) {
+    return slides;
+  }
+  const next = [...slides];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
 }
 
 /**
@@ -433,7 +581,11 @@ export function removeBlock(slide: Slide, index: number): Slide {
  * that DSL string).
  */
 export function appendBlock(slide: Slide, block: SlideBlock): Slide {
-  return { ...slide, blocks: [...slide.blocks, block] };
+  // Defence-in-depth: callers should construct blocks via `buildBlock`,
+  // but if a caller passes a block without an `id` we mint one so the
+  // helper's contract ("every block in a Slide has an id") holds.
+  const withId: SlideBlock = block.id ? block : { ...block, id: newSlideId("block") };
+  return { ...slide, blocks: [...slide.blocks, withId] };
 }
 
 /**
@@ -461,9 +613,25 @@ export function replaceBlock(
   block: SlideBlock,
 ): Slide {
   if (index < 0 || index >= slide.blocks.length) return slide;
-  if (slide.blocks[index] === block) return slide;
+  const existing = slide.blocks[index];
+  // PR 7 round 4 identity short-circuit: if the caller hands us the
+  // SAME block reference that's already at `index`, return the slide
+  // unchanged. This preserves the `nextBlockForTypeChange` same-type
+  // optimisation end-to-end — without it, `replaceBlock` would still
+  // build a fresh array/Slide and the parent's
+  // `if (updatedSlide === slide) return prev` short-circuit would
+  // miss, firing a redundant `debouncedSave`.
+  if (existing === block) return slide;
+  // Preserve the existing block's `id` if the caller didn't supply
+  // one. The common call shape is `replaceBlock(slide, i, { ...old,
+  // type: nextType })` which carries the existing id forward; we only
+  // mint a new id when the caller hands us a block with no id at all
+  // (e.g. a freshly-constructed block bypassing `buildBlock`).
+  const withId: SlideBlock = block.id
+    ? block
+    : { ...block, id: existing.id ?? newSlideId("block") };
   const next = [...slide.blocks];
-  next[index] = block;
+  next[index] = withId;
   return { ...slide, blocks: next };
 }
 

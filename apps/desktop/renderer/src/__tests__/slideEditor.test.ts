@@ -40,7 +40,7 @@ describe("parseSlideContent", () => {
   it("restores marp.theme alongside marp.enabled and marp.source", () => {
     const payload: SlideContent = {
       slides: [
-        { title: "Hello", blocks: [{ type: "text", content: "body" }], notes: "" },
+        { id: "test-s-1", title: "Hello", blocks: [{ id: "test-b-1", type: "text", content: "body" }], notes: "" },
       ],
       marp: {
         enabled: true,
@@ -59,7 +59,7 @@ describe("parseSlideContent", () => {
   it("leaves marpTheme undefined when the saved JSON has no marp block", () => {
     const payload: SlideContent = {
       slides: [
-        { title: "Hello", blocks: [{ type: "text", content: "body" }], notes: "" },
+        { id: "test-s-2", title: "Hello", blocks: [{ id: "test-b-2", type: "text", content: "body" }], notes: "" },
       ],
     };
     const parsed = parseSlideContent(JSON.stringify(payload));
@@ -71,7 +71,7 @@ describe("parseSlideContent", () => {
 describe("slidesToMarpMarkdown", () => {
   it("emits a valid Marp front-matter header", () => {
     const out = slidesToMarpMarkdown([
-      { title: "T", blocks: [{ type: "text", content: "x" }], notes: "" },
+      { id: "test-s-3", title: "T", blocks: [{ id: "test-b-3", type: "text", content: "x" }], notes: "" },
     ]);
     expect(out.startsWith("---\nmarp: true\n")).toBe(true);
     expect(out).toMatch(/^---\nmarp: true\ntheme: 'default'\npaginate: true\n---/);
@@ -79,7 +79,7 @@ describe("slidesToMarpMarkdown", () => {
 
   it("respects a non-default theme override", () => {
     const out = slidesToMarpMarkdown(
-      [{ title: "T", blocks: [{ type: "text", content: "x" }], notes: "" }],
+      [{ id: "test-s-4", title: "T", blocks: [{ id: "test-b-4", type: "text", content: "x" }], notes: "" }],
       { theme: "uncover" },
     );
     expect(out).toContain("theme: 'uncover'");
@@ -88,11 +88,12 @@ describe("slidesToMarpMarkdown", () => {
   it("converts bullets, diagrams, and notes into Marp-friendly syntax", () => {
     const out = slidesToMarpMarkdown([
       {
+        id: "test-ms-1",
         title: "Roadmap",
         blocks: [
-          { type: "text", content: "Intro paragraph" },
-          { type: "bullets", content: "alpha\n- beta\n* gamma" },
-          { type: "diagram", content: "graph TD; A-->B" },
+          { id: "test-b-5", type: "text", content: "Intro paragraph" },
+          { id: "test-b-6", type: "bullets", content: "alpha\n- beta\n* gamma" },
+          { id: "test-b-7", type: "diagram", content: "graph TD; A-->B" },
         ],
         notes: "Slide presenter notes",
       },
@@ -123,14 +124,16 @@ describe("slidesToMarpMarkdown", () => {
     // no angle-bracket escape hatch.
     const out = slidesToMarpMarkdown([
       {
+        id: "test-ms-2",
         title: "Cover",
         blocks: [
           {
+            id: "test-mb-1",
             type: "image",
             content: "data:image/png;base64,iVBORw0KGgo=",
             alt: "Company logo [v2]",
           },
-          { type: "image", content: "https://example.com/x.png" },
+          { id: "test-b-8", type: "image", content: "https://example.com/x.png" },
         ],
         notes: "",
       },
@@ -156,14 +159,17 @@ describe("slidesToMarpMarkdown", () => {
     // export pipeline intact.
     const out = slidesToMarpMarkdown([
       {
+        id: "test-ms-3",
         title: "Refs",
         blocks: [
           {
+            id: "test-mb-2",
             type: "image",
             content: "https://example.com/C_(lang).png",
             alt: "C",
           },
           {
+            id: "test-mb-3",
             type: "image",
             content: "https://example.com/path with spaces.png",
             alt: "",
@@ -180,10 +186,11 @@ describe("slidesToMarpMarkdown", () => {
 
   it("skips empty blocks and slides without titles cleanly", () => {
     const out = slidesToMarpMarkdown([
-      { title: "", blocks: [{ type: "text", content: "" }], notes: "" },
+      { id: "test-s-5", title: "", blocks: [{ id: "test-b-9", type: "text", content: "" }], notes: "" },
       {
+        id: "test-ms-4",
         title: "Second",
-        blocks: [{ type: "text", content: "body" }],
+        blocks: [{ id: "test-b-10", type: "text", content: "body" }],
         notes: "",
       },
     ]);
@@ -200,18 +207,21 @@ describe("slidesToMarpMarkdown", () => {
     // authored in the WYSIWYG editor.
     const out = slidesToMarpMarkdown([
       {
+        id: "test-ms-5",
         title: "First",
-        blocks: [{ type: "text", content: "alpha" }],
+        blocks: [{ id: "test-b-11", type: "text", content: "alpha" }],
         notes: "",
       },
       {
+        id: "test-ms-6",
         title: "Second",
-        blocks: [{ type: "text", content: "beta" }],
+        blocks: [{ id: "test-b-12", type: "text", content: "beta" }],
         notes: "",
       },
       {
+        id: "test-ms-7",
         title: "Third",
-        blocks: [{ type: "text", content: "gamma" }],
+        blocks: [{ id: "test-b-13", type: "text", content: "gamma" }],
         notes: "",
       },
     ]);
@@ -248,8 +258,9 @@ describe("slidesToMarpMarkdown", () => {
     const notes = "close --> evil <script>alert(1)</script>";
     const out = slidesToMarpMarkdown([
       {
+        id: "test-ms-8",
         title: "Hostile",
-        blocks: [{ type: "text", content: "body" }],
+        blocks: [{ id: "test-b-14", type: "text", content: "body" }],
         notes,
       },
     ]);
@@ -412,15 +423,26 @@ describe("setFrontmatterTheme", () => {
 // Phase 18 PR 7 — slide UX helpers
 // ─────────────────────────────────────────────────────────────────────
 
+let __slideOfCounter = 0;
 function slideOf(title: string, content: string, notes = ""): Slide {
-  return { title, blocks: [{ type: "text", content }], notes };
+  __slideOfCounter += 1;
+  return {
+    id: `slideOf-s-${__slideOfCounter}`,
+    title,
+    blocks: [
+      { id: `slideOf-b-${__slideOfCounter}`, type: "text", content },
+    ],
+    notes,
+  };
 }
 
 describe("buildSlideFromLayout", () => {
   it("returns a single empty text block for the blank layout", () => {
     const s = buildSlideFromLayout("blank");
     expect(s.title).toBe("");
-    expect(s.blocks).toEqual([{ type: "text", content: "" }]);
+    expect(s.blocks).toEqual([
+      { id: expect.any(String), type: "text", content: "" },
+    ]);
     expect(s.notes).toBe("");
   });
 
@@ -433,7 +455,9 @@ describe("buildSlideFromLayout", () => {
   it("returns one text block for the titleContent layout", () => {
     const s = buildSlideFromLayout("titleContent");
     expect(s.title).toBe("New Slide");
-    expect(s.blocks).toEqual([{ type: "text", content: "" }]);
+    expect(s.blocks).toEqual([
+      { id: expect.any(String), type: "text", content: "" },
+    ]);
   });
 
   it("returns two text blocks for the twoColumn layout", () => {
@@ -445,8 +469,17 @@ describe("buildSlideFromLayout", () => {
   it("returns an image+caption pair for the imageCaption layout", () => {
     const s = buildSlideFromLayout("imageCaption");
     expect(s.blocks).toHaveLength(2);
-    expect(s.blocks[0]).toEqual({ type: "image", content: "", alt: "" });
-    expect(s.blocks[1]).toEqual({ type: "text", content: "" });
+    expect(s.blocks[0]).toEqual({
+      id: expect.any(String),
+      type: "image",
+      content: "",
+      alt: "",
+    });
+    expect(s.blocks[1]).toEqual({
+      id: expect.any(String),
+      type: "text",
+      content: "",
+    });
   });
 
   it("returns a fresh object each call so multiple inserts don't alias", () => {
@@ -506,11 +539,12 @@ describe("duplicateSlideAt", () => {
 describe("moveBlock", () => {
   it("moves a block to a later position", () => {
     const slide: Slide = {
+      id: "test-ms-9",
       title: "T",
       blocks: [
-        { type: "text", content: "a" },
-        { type: "text", content: "b" },
-        { type: "text", content: "c" },
+        { id: "test-b-20", type: "text", content: "a" },
+        { id: "test-b-21", type: "text", content: "b" },
+        { id: "test-b-22", type: "text", content: "c" },
       ],
       notes: "",
     };
@@ -520,11 +554,12 @@ describe("moveBlock", () => {
 
   it("moves a block to an earlier position", () => {
     const slide: Slide = {
+      id: "test-ms-10",
       title: "T",
       blocks: [
-        { type: "text", content: "a" },
-        { type: "text", content: "b" },
-        { type: "text", content: "c" },
+        { id: "test-b-23", type: "text", content: "a" },
+        { id: "test-b-24", type: "text", content: "b" },
+        { id: "test-b-25", type: "text", content: "c" },
       ],
       notes: "",
     };
@@ -534,8 +569,9 @@ describe("moveBlock", () => {
 
   it("returns the same reference when from === to (no-op for setState)", () => {
     const slide: Slide = {
+      id: "test-ms-11",
       title: "T",
-      blocks: [{ type: "text", content: "a" }],
+      blocks: [{ id: "test-b-26", type: "text", content: "a" }],
       notes: "",
     };
     expect(moveBlock(slide, 0, 0)).toBe(slide);
@@ -543,8 +579,9 @@ describe("moveBlock", () => {
 
   it("returns the same reference for out-of-range indices", () => {
     const slide: Slide = {
+      id: "test-ms-12",
       title: "T",
-      blocks: [{ type: "text", content: "a" }],
+      blocks: [{ id: "test-b-27", type: "text", content: "a" }],
       notes: "",
     };
     expect(moveBlock(slide, -1, 0)).toBe(slide);
@@ -553,10 +590,11 @@ describe("moveBlock", () => {
 
   it("does not mutate the input array", () => {
     const slide: Slide = {
+      id: "test-ms-13",
       title: "T",
       blocks: [
-        { type: "text", content: "a" },
-        { type: "text", content: "b" },
+        { id: "test-b-28", type: "text", content: "a" },
+        { id: "test-b-29", type: "text", content: "b" },
       ],
       notes: "",
     };
@@ -568,20 +606,24 @@ describe("moveBlock", () => {
 describe("removeBlock", () => {
   it("removes the block at the given index", () => {
     const slide: Slide = {
+      id: "test-ms-14",
       title: "T",
       blocks: [
-        { type: "text", content: "a" },
-        { type: "text", content: "b" },
+        { id: "test-b-30", type: "text", content: "a" },
+        { id: "test-b-31", type: "text", content: "b" },
       ],
       notes: "",
     };
-    expect(removeBlock(slide, 0).blocks).toEqual([{ type: "text", content: "b" }]);
+    expect(removeBlock(slide, 0).blocks).toEqual([
+      { id: "test-b-31", type: "text", content: "b" },
+    ]);
   });
 
   it("allows the slide to end up with zero blocks", () => {
     const slide: Slide = {
+      id: "test-ms-15",
       title: "T",
-      blocks: [{ type: "text", content: "only" }],
+      blocks: [{ id: "test-b-33", type: "text", content: "only" }],
       notes: "",
     };
     expect(removeBlock(slide, 0).blocks).toEqual([]);
@@ -589,8 +631,9 @@ describe("removeBlock", () => {
 
   it("returns the same reference for out-of-range indices", () => {
     const slide: Slide = {
+      id: "test-ms-16",
       title: "T",
-      blocks: [{ type: "text", content: "a" }],
+      blocks: [{ id: "test-b-34", type: "text", content: "a" }],
       notes: "",
     };
     expect(removeBlock(slide, -1)).toBe(slide);
@@ -601,28 +644,34 @@ describe("removeBlock", () => {
 describe("appendBlock", () => {
   it("appends a block to the end", () => {
     const slide: Slide = {
+      id: "test-ms-17",
       title: "T",
-      blocks: [{ type: "text", content: "a" }],
+      blocks: [{ id: "test-b-35", type: "text", content: "a" }],
       notes: "",
     };
-    const next = appendBlock(slide, { type: "bullets", content: "b" });
+    const next = appendBlock(slide, {
+      id: "test-b-36",
+      type: "bullets",
+      content: "b",
+    });
     expect(next.blocks).toEqual([
-      { type: "text", content: "a" },
-      { type: "bullets", content: "b" },
+      { id: "test-b-35", type: "text", content: "a" },
+      { id: "test-b-36", type: "bullets", content: "b" },
     ]);
   });
 
   it("works on an empty slide", () => {
-    const slide: Slide = { title: "T", blocks: [], notes: "" };
-    expect(appendBlock(slide, { type: "text", content: "x" }).blocks).toEqual([
-      { type: "text", content: "x" },
-    ]);
+    const slide: Slide = { id: "test-s-6", title: "T", blocks: [], notes: "" };
+    expect(
+      appendBlock(slide, { id: "test-b-39", type: "text", content: "x" })
+        .blocks,
+    ).toEqual([{ id: "test-b-39", type: "text", content: "x" }]);
   });
 
   it("does not mutate the input blocks array", () => {
-    const slide: Slide = { title: "T", blocks: [], notes: "" };
+    const slide: Slide = { id: "test-s-7", title: "T", blocks: [], notes: "" };
     const originalBlocksRef = slide.blocks;
-    appendBlock(slide, { type: "text", content: "x" });
+    appendBlock(slide, { id: "test-b-41", type: "text", content: "x" });
     expect(slide.blocks).toBe(originalBlocksRef);
     expect(slide.blocks).toEqual([]);
   });
@@ -631,28 +680,34 @@ describe("appendBlock", () => {
 describe("replaceBlock", () => {
   it("replaces the block at the given index", () => {
     const slide: Slide = {
+      id: "test-ms-18",
       title: "T",
       blocks: [
-        { type: "text", content: "a" },
-        { type: "text", content: "b" },
+        { id: "test-b-42", type: "text", content: "a" },
+        { id: "test-b-43", type: "text", content: "b" },
       ],
       notes: "",
     };
-    const next = replaceBlock(slide, 1, { type: "bullets", content: "new" });
+    const next = replaceBlock(slide, 1, {
+      id: "test-b-44",
+      type: "bullets",
+      content: "new",
+    });
     expect(next.blocks).toEqual([
-      { type: "text", content: "a" },
-      { type: "bullets", content: "new" },
+      { id: "test-b-42", type: "text", content: "a" },
+      { id: "test-b-44", type: "bullets", content: "new" },
     ]);
   });
 
   it("returns the same reference for out-of-range indices", () => {
     const slide: Slide = {
+      id: "test-ms-19",
       title: "T",
-      blocks: [{ type: "text", content: "a" }],
+      blocks: [{ id: "test-b-47", type: "text", content: "a" }],
       notes: "",
     };
-    expect(replaceBlock(slide, 5, { type: "text", content: "x" })).toBe(slide);
-    expect(replaceBlock(slide, -1, { type: "text", content: "x" })).toBe(slide);
+    expect(replaceBlock(slide, 5, { id: "test-b-48", type: "text", content: "x" })).toBe(slide);
+    expect(replaceBlock(slide, -1, { id: "test-b-49", type: "text", content: "x" })).toBe(slide);
   });
 
   it("returns the same reference when the replacement is === the existing block", () => {
@@ -692,16 +747,19 @@ describe("nextBlockForTypeChange", () => {
     // `<textarea>`, so the URL was being pasted into the textarea
     // (janking the renderer) instead of being cleared.
     const imageBlock: SlideBlock = {
+      id: "test-mb-4",
       type: "image",
       content: "data:image/png;base64,AAAA",
       alt: "Logo",
     };
     expect(nextBlockForTypeChange(imageBlock, "text")).toEqual({
+      id: "test-mb-4",
       type: "text",
       content: "",
       alt: undefined,
     });
     expect(nextBlockForTypeChange(imageBlock, "bullets")).toEqual({
+      id: "test-mb-4",
       type: "bullets",
       content: "",
       alt: undefined,
@@ -710,6 +768,7 @@ describe("nextBlockForTypeChange", () => {
     // post-clear content is empty (the diagram-seed branch wins over
     // the image-clear branch when content would otherwise be `""`).
     expect(nextBlockForTypeChange(imageBlock, "diagram")).toEqual({
+      id: "test-mb-4",
       type: "diagram",
       content: DEFAULT_DIAGRAM_DSL,
       alt: undefined,
@@ -717,28 +776,37 @@ describe("nextBlockForTypeChange", () => {
   });
 
   it("clears content when switching INTO an image block", () => {
-    const textBlock: SlideBlock = { type: "text", content: "hello" };
+    const textBlock: SlideBlock = {
+      id: "test-b-50",
+      type: "text",
+      content: "hello",
+    };
     expect(nextBlockForTypeChange(textBlock, "image")).toEqual({
+      id: "test-b-50",
       type: "image",
       content: "",
       alt: "",
     });
     const bulletsBlock: SlideBlock = {
+      id: "test-mb-5",
       type: "bullets",
       content: "- one\n- two",
     };
     expect(nextBlockForTypeChange(bulletsBlock, "image")).toEqual({
+      id: "test-mb-5",
       type: "image",
       content: "",
       alt: "",
     });
     // Preserves a pre-existing alt when switching back to image.
     const wasImageEmpty: SlideBlock = {
+      id: "test-mb-6",
       type: "text",
       content: "x",
       alt: "previous alt",
     };
     expect(nextBlockForTypeChange(wasImageEmpty, "image")).toEqual({
+      id: "test-mb-6",
       type: "image",
       content: "",
       alt: "previous alt",
@@ -746,7 +814,7 @@ describe("nextBlockForTypeChange", () => {
   });
 
   it("seeds the diagram starter DSL only when content is empty", () => {
-    const emptyText: SlideBlock = { type: "text", content: "" };
+    const emptyText: SlideBlock = { id: "test-b-51", type: "text", content: "" };
     expect(nextBlockForTypeChange(emptyText, "diagram").content).toBe(
       DEFAULT_DIAGRAM_DSL,
     );
@@ -755,6 +823,7 @@ describe("nextBlockForTypeChange", () => {
     // diagrams have a dedicated type, and reseeding would clobber
     // their work.
     const existingText: SlideBlock = {
+      id: "test-mb-7",
       type: "text",
       content: "graph TD; A-->B",
     };
@@ -767,11 +836,21 @@ describe("nextBlockForTypeChange", () => {
     // A common authoring workflow: write an outline as bullets, then
     // switch to text to flow it into prose, then back. The content
     // must round-trip verbatim so the user doesn't lose work.
-    const bullets: SlideBlock = { type: "bullets", content: "- a\n- b" };
+    const bullets: SlideBlock = {
+      id: "test-b-52",
+      type: "bullets",
+      content: "- a\n- b",
+    };
     const toText = nextBlockForTypeChange(bullets, "text");
-    expect(toText).toEqual({ type: "text", content: "- a\n- b", alt: undefined });
+    expect(toText).toEqual({
+      id: "test-b-52",
+      type: "text",
+      content: "- a\n- b",
+      alt: undefined,
+    });
     const back = nextBlockForTypeChange(toText, "bullets");
     expect(back).toEqual({
+      id: "test-b-52",
       type: "bullets",
       content: "- a\n- b",
       alt: undefined,
@@ -780,12 +859,13 @@ describe("nextBlockForTypeChange", () => {
 
   it("strips alt on non-image types and defaults alt to '' on image", () => {
     const imageBlock: SlideBlock = {
+      id: "test-mb-8",
       type: "image",
       content: "data:image/png;base64,AAA",
       alt: "logo",
     };
     expect(nextBlockForTypeChange(imageBlock, "bullets").alt).toBe(undefined);
-    const textWithoutAlt: SlideBlock = { type: "text", content: "x" };
+    const textWithoutAlt: SlideBlock = { id: "test-b-54", type: "text", content: "x" };
     expect(nextBlockForTypeChange(textWithoutAlt, "image").alt).toBe("");
   });
 
@@ -797,19 +877,26 @@ describe("nextBlockForTypeChange", () => {
     // early-return, image→image would land in the boundary-clear
     // branch and destroy the uploaded data URL.
     const imageBlock: SlideBlock = {
+      id: "noop-img",
       type: "image",
       content: "data:image/png;base64,KEEPME",
       alt: "logo",
     };
     expect(nextBlockForTypeChange(imageBlock, "image")).toBe(imageBlock);
-    const textBlock: SlideBlock = { type: "text", content: "hello" };
+    const textBlock: SlideBlock = {
+      id: "noop-text",
+      type: "text",
+      content: "hello",
+    };
     expect(nextBlockForTypeChange(textBlock, "text")).toBe(textBlock);
     const diagramBlock: SlideBlock = {
+      id: "noop-diag",
       type: "diagram",
       content: "graph TD; A-->B",
     };
     expect(nextBlockForTypeChange(diagramBlock, "diagram")).toBe(diagramBlock);
     const bulletsBlock: SlideBlock = {
+      id: "noop-bul",
       type: "bullets",
       content: "- one\n- two",
     };
@@ -820,10 +907,11 @@ describe("nextBlockForTypeChange", () => {
 describe("slideWordCount", () => {
   it("sums words across title, blocks, and notes", () => {
     const slide: Slide = {
+      id: "test-ms-20",
       title: "Hello world",
       blocks: [
-        { type: "text", content: "foo bar baz" },
-        { type: "bullets", content: "one two" },
+        { id: "test-b-55", type: "text", content: "foo bar baz" },
+        { id: "test-b-56", type: "bullets", content: "one two" },
       ],
       notes: "speaker note here",
     };
@@ -833,6 +921,7 @@ describe("slideWordCount", () => {
 
   it("collapses runs of whitespace (does not over-count)", () => {
     const slide: Slide = {
+      id: "test-ms-21",
       title: "foo  bar   baz",
       blocks: [],
       notes: "",
@@ -842,9 +931,11 @@ describe("slideWordCount", () => {
 
   it("counts image-block alt text, not the data URL", () => {
     const slide: Slide = {
+      id: "test-ms-22",
       title: "",
       blocks: [
         {
+          id: "test-mb-9",
           type: "image",
           content: "data:image/png;base64,iVBORw0KGgo=",
           alt: "Architecture diagram showing flow",
@@ -858,7 +949,7 @@ describe("slideWordCount", () => {
 
   it("returns 0 for an empty slide", () => {
     expect(
-      slideWordCount({ title: "", blocks: [], notes: "" }),
+      slideWordCount({ id: "test-s-8", title: "", blocks: [], notes: "" }),
     ).toBe(0);
   });
 });
@@ -885,10 +976,11 @@ describe("findInSlides", () => {
   it("finds matches in title, blocks, and notes in deck order", () => {
     const slides: Slide[] = [
       {
+        id: "test-ms-23",
         title: "foo bar",
         blocks: [
-          { type: "text", content: "foo block" },
-          { type: "bullets", content: "another foo here" },
+          { id: "test-b-57", type: "text", content: "foo block" },
+          { id: "test-b-58", type: "bullets", content: "another foo here" },
         ],
         notes: "final foo in notes",
       },
@@ -946,9 +1038,11 @@ describe("findInSlides", () => {
 
   it("searches image-block alt text, not the data URL", () => {
     const slide: Slide = {
+      id: "test-ms-24",
       title: "",
       blocks: [
         {
+          id: "test-mb-10",
           type: "image",
           content: "data:image/png;base64,iVBORw0KGgo=",
           alt: "architecture diagram",

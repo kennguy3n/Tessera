@@ -10,6 +10,19 @@
 export type SlideBlockType = "text" | "bullets" | "diagram" | "image";
 
 export interface SlideBlock {
+  /**
+   * Stable identifier used as the React key and the drag-and-drop
+   * payload. Generated fresh by `buildSlideFromLayout`, `appendBlock`,
+   * `replaceBlock` (only when the caller doesn't pre-set one), and on
+   * every duplicated block so reorders and duplicates never collide.
+   *
+   * Persisted in the saved JSON so a deck round-trips through disk
+   * without React losing component identity. Legacy decks written
+   * before Phase 18 PR 8 don't have block IDs; `parseSlideContent`
+   * backfills them on load so the rest of the editor never sees a
+   * block without an ID.
+   */
+  id: string;
   type: SlideBlockType;
   /**
    * Block content. Semantics depend on `type`:
@@ -46,6 +59,20 @@ export type SlideLayout =
   | "imageCaption";
 
 export interface Slide {
+  /**
+   * Stable identifier used as the React key in the sidebar
+   * thumbnails, in find-panel results, and as the drag-and-drop
+   * payload when reordering slides. Generated fresh by
+   * `buildSlideFromLayout` and by `duplicateSlideAt` (the duplicate
+   * gets a new ID, not the source's ID — duplicating a slide must
+   * not collide with the original's React key).
+   *
+   * Persisted in the saved JSON so a deck round-trips through disk
+   * without React losing slide identity. `parseSlideContent`
+   * backfills IDs for slides parsed from older saves that don't
+   * have one.
+   */
+  id: string;
   title: string;
   blocks: SlideBlock[];
   notes: string;
