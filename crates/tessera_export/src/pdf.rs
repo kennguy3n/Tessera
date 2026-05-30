@@ -397,7 +397,32 @@ pub fn export_pdf_with_svgs<S: std::hash::BuildHasher>(
 #[cfg(feature = "typst")]
 fn typst_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
+    // Track whether the previously *emitted* character is a literal
+    // `/`. We need to check the emitted-output side rather than the
+    // input side because `file:///x` would otherwise produce
+    // `file:/\//x` — the escape would only break up the first pair
+    // of slashes, leaving a second `//` at positions 7-8 of the
+    // output. By looking at the emitted output, we know that after
+    // emitting `/\/` the last char is `/`, so the very next `/` from
+    // the input still needs to be escaped to `\/` again.
+    let mut prev_emitted_slash = false;
     for ch in s.chars() {
+        // Devin Review PR #70 follow-up BUG_0001: neutralise Typst
+        // comment introducers (`//` line, `/*` block) so that
+        // file:// / http:// URIs and `/* ... */` prose in artifact
+        // titles can't crash the Typst compile with "unclosed
+        // delimiter" and silently degrade the whole PDF to the
+        // minimal-PDF fallback path. The fix is to escape any `/`
+        // that would otherwise be the second character of a
+        // comment token; we escape the *second* char of the pair so
+        // a lone `/` still passes through unescaped (preserving
+        // visual fidelity for path / date strings).
+        if prev_emitted_slash && (ch == '/' || ch == '*') {
+            out.push('\\');
+            out.push(ch);
+            prev_emitted_slash = ch == '/';
+            continue;
+        }
         match ch {
             // Devin Review PR #70 BUG_0003: backtick (`) was missing
             // from the escape set. Typst uses `` ` `` to delimit raw
@@ -427,6 +452,7 @@ fn typst_escape(s: &str) -> String {
             }
             _ => out.push(ch),
         }
+        prev_emitted_slash = ch == '/';
     }
     out
 }
@@ -565,6 +591,96 @@ mod tests {
         let template = "Hello {{name}}, welcome.";
         let template_escaped = typst_escape(template);
         assert!(template_escaped.contains("\\{\\{name\\}\\}"));
+    }
+
+    /// Devin Review PR #70 follow-up BUG_0001 — unit test for the
+    /// real root cause. The reviewer reported missing `[N]` brackets
+    /// in citation entries and proposed escaping the brackets; that
+    /// diagnosis is empirically wrong (see comment in `typst_escape`).
+    /// The actual bug is that the citation `source_uri` field
+    /// commonly contains `file://` URIs and Typst parses `//` as a
+    /// line comment, which consumes the closing `]` of the
+    /// surrounding `#text(...)[ ... ]` content block and crashes the
+    /// whole compile with "unclosed delimiter". The whole document
+    /// then silently degrades to the minimal-PDF fallback, which is
+    /// what produces the user-visible "missing brackets" symptom.
+    ///
+    /// Lock the contract: `typst_escape` MUST break up any `//`
+    /// (and any `/*`) sequence so Typst's tokenizer cannot treat
+    /// them as comment introducers.
+    #[cfg(feature = "typst")]
+    #[test]
+    fn typst_escape_neutralises_line_and_block_comment_sequences() {
+        // `//` line-comment introducer must be broken up.
+        let escaped = typst_escape("file:///path/to/ref.pdf");
+        assert!(
+            !escaped.contains("//"),
+            "typst_escape left a raw `//` in output: {escaped:?}",
+        );
+        assert!(
+            escaped.contains("/\\/"),
+            "typst_escape did not produce expected `/\\/` sequence: {escaped:?}",
+        );
+        // `/*` block-comment introducer must also be broken up.
+        let escaped_block = typst_escape("see /* note */ here");
+        assert!(
+            !escaped_block.contains("/*"),
+            "typst_escape left a raw `/*` in output: {escaped_block:?}",
+        );
+        // A single `/` MUST pass through unmolested — escaping every
+        // slash would visually change every path / date in the
+        // rendered output.
+        let escaped_single = typst_escape("a/b/c date 2024/01/01");
+        assert_eq!(
+            escaped_single, "a/b/c date 2024/01/01",
+            "typst_escape over-escaped a non-comment slash"
+        );
+    }
+
+    /// Devin Review PR #70 follow-up BUG_0001 — end-to-end regression.
+    /// Before this fix, `export_pdf_with_svgs` for ANY artifact with a
+    /// citation whose `source_uri` contained `//` (i.e. every real
+    /// file:// or http:// URI) would silently fall through to the
+    /// minimal-PDF builder because the Typst compile failed with
+    /// "unclosed delimiter". This test exercises the public entry
+    /// point with a realistic `file:///` URI and asserts the output
+    /// is the Typst-built PDF (which uses `/FlateDecode`-compressed
+    /// streams; the minimal builder never emits those).
+    #[cfg(feature = "typst")]
+    #[test]
+    fn pdf_with_svgs_compiles_citations_for_file_uri_without_fallback() {
+        let artifact = Artifact::new("Cited Doc".to_string(), ArtifactType::Document, None);
+        let citation = Citation {
+            citation_id: tessera_core::CitationId::new(),
+            source_id: tessera_core::SourceId::new(),
+            source_type: tessera_core::SourceType::LocalFile,
+            source_title: "TheReferenceTitle".to_string(),
+            // Realistic URI: contains `//` which is Typst's line
+            // comment introducer. This MUST round-trip cleanly
+            // through `typst_escape` and out the other side.
+            source_uri: "file:///path/to/ref.pdf".to_string(),
+            chunk_hash: "h".to_string(),
+            source_file_hash: "fh".to_string(),
+            page: Some(1),
+            confidence: 1.0,
+            used_for: "intro".to_string(),
+            created_at: chrono::Utc::now(),
+        };
+        let prerendered: std::collections::HashMap<usize, String> =
+            std::collections::HashMap::new();
+        let pdf = export_pdf_with_svgs(&artifact, &[citation], &prerendered);
+        assert!(
+            pdf.starts_with(b"%PDF-"),
+            "expected a real PDF, got {} bytes",
+            pdf.len()
+        );
+        let pdf_str = String::from_utf8_lossy(&pdf);
+        assert!(
+            pdf_str.contains("/FlateDecode"),
+            "expected Typst-compressed PDF (no fallback) — `//` in URI was \
+             likely re-parsed as a line comment again; sample:\n{}",
+            &pdf_str[..pdf_str.len().min(400)]
+        );
     }
 
     #[test]
