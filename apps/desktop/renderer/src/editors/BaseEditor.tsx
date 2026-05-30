@@ -139,6 +139,17 @@ export default function BaseEditor({
     if (content !== lastSavedRef.current) {
       setData(parseBaseContent(content));
       lastSavedRef.current = content;
+      // Clear `selectedIds` whenever the records are replaced wholesale.
+      // The selection is keyed by record id, but a version restore (or
+      // any out-of-band content sync) swaps the entire record set —
+      // any retained ids would either: (a) silently no-op the bulk
+      // toolbar's "Delete N selected" with a misleading count visible
+      // until next click, or (b) in the astronomically unlikely 16-hex
+      // collision, delete a record the user never intended to select.
+      // The expand-modal `expandedCell` is already cleared by the
+      // sibling effect below for the same reason; do the same for the
+      // bulk selection so the post-sync UI is consistent.
+      setSelectedIds(new Set());
     }
   }, [content]);
 

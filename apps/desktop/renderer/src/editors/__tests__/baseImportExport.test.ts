@@ -680,4 +680,63 @@ describe("parseJsonToBase — JSON → BaseContent", () => {
     expect(reimported.fields).toEqual(original.fields);
     expect(reimported.records).toEqual(original.records);
   });
+
+  it("sanitises every imported field via sanitizeBaseField — out-of-range percentPrecision is clamped (BUG-0001)", () => {
+    // A hand-crafted JSON with `percentPrecision: 200` would crash the
+    // very next CSV export (`Number.prototype.toFixed` throws for
+    // arguments outside [0, 100]). The fix runs every imported field
+    // through `sanitizeBaseField`, the same pass `parseBaseContent`
+    // uses on the artifact's stored JSON, so the export-side defence
+    // never has to fire on the happy path.
+    const json = JSON.stringify({
+      fields: [{ name: "Pct", type: "percent", percentPrecision: 200 }],
+      records: [{ id: "r1", Pct: 0.5 }],
+    });
+    const result = parseJsonToBase(json);
+    // sanitizeBaseField caps percentPrecision at 20 (`toFixed`'s
+    // domain plus an extra safety margin).
+    expect(result.fields).toEqual([
+      { name: "Pct", type: "percent", percentPrecision: 20 },
+    ]);
+    // Re-exporting the sanitised field must not throw — proof the
+    // sanitisation actually unblocks the export path.
+    const csv = exportBaseCsv(result);
+    expect(csv).toContain("50.");
+  });
+});
+
+describe("formatValueForCsv defensive clamp", () => {
+  it("clamps percentPrecision above 20 so a stale field config can't throw RangeError on export (BUG-0002)", () => {
+    // Defence-in-depth: even if `parseJsonToBase`'s sanitisation is
+    // bypassed (e.g. a future call site bypasses the parser, or
+    // `data.fields` is hand-mutated by another editor flow), the
+    // export path must not throw. Without the upper clamp,
+    // `Number.prototype.toFixed(200)` raises `RangeError` and the
+    // user's export silently fails. With the clamp we get harmless
+    // extra precision instead.
+    const field: BaseField = {
+      name: "Pct",
+      type: "percent",
+      percentPrecision: 200,
+    };
+    const record: BaseRecord = { id: "r1", Pct: 0.5 };
+    // Must not throw.
+    const cell = formatValueForCsv(field, record, [record], [field]);
+    // 50% rendered with the clamped precision (20 digits).
+    expect(cell).toMatch(/^50\.0{20}%$/);
+  });
+
+  it("clamps negative percentPrecision to zero so a stale field config can't throw RangeError on export", () => {
+    // Same shape as the upper-bound test but on the lower bound —
+    // `Math.max(0, …)` and `Math.floor(…)` together turn a negative
+    // input into 0 (the previous lower-clamp test), but combine with
+    // a non-integer to confirm `Math.floor` runs.
+    const field: BaseField = {
+      name: "Pct",
+      type: "percent",
+      percentPrecision: -3.7,
+    };
+    const record: BaseRecord = { id: "r1", Pct: 0.25 };
+    expect(formatValueForCsv(field, record, [record], [field])).toBe("25%");
+  });
 });

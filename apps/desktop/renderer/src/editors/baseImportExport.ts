@@ -55,6 +55,7 @@ import {
   resolveLinkedRecords,
   isReservedFieldName,
   RESERVED_FIELD_NAMES,
+  sanitizeBaseField,
 } from "./baseEditorHelpers";
 import type {
   BaseContent,
@@ -236,7 +237,17 @@ export function formatValueForCsv(
       if (value == null || value === "") return "";
       const n = Number(value);
       if (!Number.isFinite(n)) return "";
-      const digits = Math.max(0, field.percentPrecision ?? 0);
+      // Defense-in-depth clamp to the same [0, 20] range that
+      // `sanitizeBaseField` enforces on parse. `parseBaseContent` is
+      // the canonical normaliser, but the export path runs against
+      // *live* `data.fields`, which can drift if a future field-edit
+      // path forgets to re-sanitize, or if a hand-crafted JSON import
+      // ever slips past sanitisation. `Number.prototype.toFixed`
+      // throws `RangeError` for arguments outside [0, 100]; clamping
+      // here turns a hostile config into harmless extra precision
+      // instead of a thrown export.
+      const raw = Math.max(0, Math.floor(field.percentPrecision ?? 0));
+      const digits = Math.min(20, raw);
       return `${(n * 100).toFixed(digits)}%`;
     }
 
@@ -672,7 +683,16 @@ export function parseJsonToBase(jsonText: string): BaseContent {
       "JSON object must have `fields` (array) and `records` (array)",
     );
   }
-  const fields = obj.fields as BaseField[];
+  // Every imported field goes through `sanitizeBaseField` — the same
+  // pass `parseBaseContent` runs on the artifact's stored JSON. Without
+  // this, a hand-edited or third-party JSON could land with e.g.
+  // `percentPrecision: 200` and crash the very next CSV export
+  // (`Number.prototype.toFixed` throws above 100). Sanitising on every
+  // entry point — not just the artifact loader — keeps `data.fields`
+  // trustworthy for every downstream consumer (cell renderers, the CSV
+  // exporter, the formula engine), so they can assume the invariants
+  // hold instead of each re-clamping defensively.
+  const fields = (obj.fields as BaseField[]).map(sanitizeBaseField);
   const records = (obj.records as BaseRecord[]).map((r) => ({
     ...r,
     id: typeof r.id === "string" && r.id.length > 0 ? r.id : makeRecordId(),
