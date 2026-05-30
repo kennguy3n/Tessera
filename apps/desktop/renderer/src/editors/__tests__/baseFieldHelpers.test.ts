@@ -624,6 +624,24 @@ describe("matchesFilter — per-type filtering", () => {
     expect(matchesFilter("currency", 75, ">50%")).toBe(false);
   });
 
+  it("percent: lone `%` (or whitespace-only after strip) never matches (ANALYSIS-0004 round 11)", () => {
+    // After stripping the trailing `%`, the operand is empty.
+    // Without the empty-after-strip guard, `Number("") === 0` would
+    // silently turn the filter into `= 0%` and match every zero-valued
+    // row — a confusing footgun on a half-typed filter. The guard
+    // returns false so rows are hidden instead of mass-matched against
+    // an accidental zero.
+    expect(matchesFilter("percent", 0, "%")).toBe(false);
+    expect(matchesFilter("percent", 0.0, "%")).toBe(false);
+    expect(matchesFilter("percent", 0.5, "%")).toBe(false);
+    // Whitespace + lone `%` collapses to the same case.
+    expect(matchesFilter("percent", 0, "  %  ")).toBe(false);
+    // Sanity: a real numeric operand with `%` still works (the guard
+    // only short-circuits the empty-after-strip case).
+    expect(matchesFilter("percent", 0, "0%")).toBe(true);
+    expect(matchesFilter("percent", 0.5, "50%")).toBe(true);
+  });
+
   // ────────────────────────────────────────────────────────────────
   // Float-safe equality (PR #79 round 8 — ANALYSIS_…_0001)
   // ────────────────────────────────────────────────────────────────

@@ -610,6 +610,15 @@ export function matchesFilter(
     // (preserving the explicit type contract).
     const normalisedFilter =
       fieldType === "percent" ? f.replace(/%\s*$/, "").trim() : f;
+    // Stripping a trailing `%` can leave an empty operand if the user
+    // typed just `%` with nothing else. Without this guard,
+    // `Number("") === 0` would silently turn the filter into `= 0%`
+    // and match every zero-valued row — a confusing footgun on what
+    // is obviously a half-typed filter. Treat empty-after-strip as
+    // "no numeric intent" and fall through to the substring branch
+    // (which won't match `%` against a fraction render like `"0.5"`).
+    // Devin Review PR #79 round 11 (ANALYSIS_…_0004) flagged this.
+    if (normalisedFilter === "") return false;
     // Match `>=`, `<=`, `>`, `<`, `=` then a number.
     const m = normalisedFilter.match(
       /^\s*(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)\s*$/,

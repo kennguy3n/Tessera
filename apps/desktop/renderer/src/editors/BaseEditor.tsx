@@ -134,25 +134,6 @@ export default function BaseEditor({
     };
   }, []);
 
-  // Sync external content prop changes (e.g., version restore)
-  useEffect(() => {
-    if (content !== lastSavedRef.current) {
-      setData(parseBaseContent(content));
-      lastSavedRef.current = content;
-      // Clear `selectedIds` whenever the records are replaced wholesale.
-      // The selection is keyed by record id, but a version restore (or
-      // any out-of-band content sync) swaps the entire record set —
-      // any retained ids would either: (a) silently no-op the bulk
-      // toolbar's "Delete N selected" with a misleading count visible
-      // until next click, or (b) in the astronomically unlikely 16-hex
-      // collision, delete a record the user never intended to select.
-      // The expand-modal `expandedCell` is already cleared by the
-      // sibling effect below for the same reason; do the same for the
-      // bulk selection so the post-sync UI is consistent.
-      setSelectedIds(new Set());
-    }
-  }, [content]);
-
   // If the record currently behind the expand modal disappears
   // (deleted in the grid, or replaced by an out-of-band content
   // sync), drop `expandedCell` to null. The render path already
@@ -254,6 +235,45 @@ export default function BaseEditor({
       return dirty ? next : prev;
     });
   }, []);
+
+  // Sync external content prop changes (e.g., version restore).
+  //
+  // Hoisted *below* `dropStaleViewState` because the dependency array
+  // captures it — referencing the `const` binding at render time before
+  // its `useCallback` declaration would hit TDZ. Effects fire in
+  // *commit-time* order regardless of declaration order, and this
+  // effect doesn't depend on any sibling effects above, so the
+  // out-of-place position has no functional consequence.
+  useEffect(() => {
+    if (content !== lastSavedRef.current) {
+      const parsed = parseBaseContent(content);
+      setData(parsed);
+      lastSavedRef.current = content;
+      // Clear `selectedIds` whenever the records are replaced wholesale.
+      // The selection is keyed by record id, but a version restore (or
+      // any out-of-band content sync) swaps the entire record set —
+      // any retained ids would either: (a) silently no-op the bulk
+      // toolbar's "Delete N selected" with a misleading count visible
+      // until next click, or (b) in the astronomically unlikely 16-hex
+      // collision, delete a record the user never intended to select.
+      // The expand-modal `expandedCell` is already cleared by another
+      // effect for the same reason; do the same for the bulk selection
+      // so the post-sync UI is consistent.
+      setSelectedIds(new Set());
+      // Drop stale view-state pointers (sort / filter / viewConfig) that
+      // reference fields the restored schema no longer carries. The
+      // grid render path *tolerates* dangling pointers — `sortFieldDef`
+      // is undefined and the sort becomes a no-op, `filteredAndSorted`
+      // skips missing fields — but the toolbar would still render the
+      // stale sort indicator and a now-orphan filter input for a column
+      // that doesn't exist any more. Doing this here matches what
+      // `removeField` / `handleImportCsv` / `handleImportJson` already
+      // do on the internal-mutation paths; the version-restore /
+      // external-sync path is the last one that was missing it.
+      // Devin Review PR #79 round 11 (ANALYSIS_…_0001) flagged the gap.
+      dropStaleViewState(parsed.fields);
+    }
+  }, [content, dropStaleViewState]);
 
   const removeField = useCallback(
     (fieldName: string) => {
