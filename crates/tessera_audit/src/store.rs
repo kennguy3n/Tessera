@@ -328,7 +328,7 @@ impl AuditStore {
         // attempting a fresh rotation on a healthy table.
         let _rotation_guard = AUDIT_ROTATION_SERIALIZER
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let live_count = self.count()?;
         if live_count <= AUDIT_ROTATION_THRESHOLD {
