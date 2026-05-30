@@ -24,8 +24,9 @@ import {
   RESERVED_FIELD_NAMES,
   sanitizeBaseField,
   matchesFilter,
+  applyFieldRename,
 } from "../baseEditorHelpers";
-import type { BaseRecord } from "../baseEditorTypes";
+import type { BaseField, BaseRecord } from "../baseEditorTypes";
 
 describe("makeRecordId", () => {
   it("produces a 16-character lowercase hex id", () => {
@@ -443,5 +444,119 @@ describe("matchesFilter — per-type filtering", () => {
     // happens to store numeric ids.
     expect(matchesFilter("number", "12abc34", "ABC")).toBe(true);
     expect(matchesFilter("number", "12abc34", "xyz")).toBe(false);
+  });
+});
+
+describe("applyFieldRename — atomic cross-pointer rename", () => {
+  // `BaseEditor.renameField` is meant to be atomic across every place
+  // a field name lives on a `BaseField`:
+  //   • `name`                  (the column label)
+  //   • `linkedField`           (rollup / lookup → linked_record source)
+  //   • `targetField`           (rollup / lookup → target column)
+  //   • `linkedDisplayField`    (linked_record → display column)
+  // The pre-fix `renameField` only patched pointers on **other** fields.
+  // A self-referential pointer on the renamed field itself would survive
+  // with the old name still embedded, which is the bug `BUG_0001` flagged.
+  // These tests pin the post-fix contract.
+
+  it("rewrites the field's own name", () => {
+    const f: BaseField = { name: "Price", type: "number" };
+    expect(applyFieldRename(f, "Price", "Cost").name).toBe("Cost");
+  });
+
+  it("rewrites linkedField when it points at the renamed name", () => {
+    const f: BaseField = {
+      name: "Total",
+      type: "rollup",
+      linkedField: "Links",
+      targetField: "Amount",
+      aggregation: "SUM",
+    };
+    expect(applyFieldRename(f, "Links", "Refs").linkedField).toBe("Refs");
+  });
+
+  it("rewrites targetField on a different field referencing the renamed column", () => {
+    const f: BaseField = {
+      name: "Total",
+      type: "rollup",
+      linkedField: "Links",
+      targetField: "Price",
+      aggregation: "SUM",
+    };
+    expect(applyFieldRename(f, "Price", "Cost").targetField).toBe("Cost");
+  });
+
+  it("rewrites linkedDisplayField for a linked_record field", () => {
+    const f: BaseField = {
+      name: "Refs",
+      type: "linked_record",
+      linkedDisplayField: "Title",
+    };
+    expect(applyFieldRename(f, "Title", "Name").linkedDisplayField).toBe(
+      "Name",
+    );
+  });
+
+  it("patches a self-referential pointer on the renamed field itself", () => {
+    // The bug `BUG_0001` was: when renaming the field that owns the
+    // self-reference (here, "Foo" → "Bar" on a rollup whose
+    // `targetField` was also "Foo"), the rename atomicity broke
+    // because only the `name` was rewritten — `targetField` kept the
+    // stale "Foo". After the fix both must flip together.
+    const f: BaseField = {
+      name: "Foo",
+      type: "rollup",
+      linkedField: "Foo",
+      targetField: "Foo",
+      aggregation: "SUM",
+    };
+    const out = applyFieldRename(f, "Foo", "Bar");
+    expect(out.name).toBe("Bar");
+    expect(out.linkedField).toBe("Bar");
+    expect(out.targetField).toBe("Bar");
+  });
+
+  it("does not touch pointers that reference a different name", () => {
+    const f: BaseField = {
+      name: "Total",
+      type: "rollup",
+      linkedField: "Links",
+      targetField: "Amount",
+      aggregation: "SUM",
+    };
+    const out = applyFieldRename(f, "Unrelated", "Renamed");
+    expect(out.name).toBe("Total");
+    expect(out.linkedField).toBe("Links");
+    expect(out.targetField).toBe("Amount");
+  });
+
+  it("returns the same reference when nothing matched (React skips re-render)", () => {
+    const f: BaseField = { name: "Price", type: "number" };
+    expect(applyFieldRename(f, "Unrelated", "Renamed")).toBe(f);
+  });
+
+  it("returns a fresh object when at least one pointer changed", () => {
+    const f: BaseField = {
+      name: "Price",
+      type: "number",
+    };
+    const out = applyFieldRename(f, "Price", "Cost");
+    expect(out).not.toBe(f);
+    // Original input must be untouched (no mutation in place).
+    expect(f.name).toBe("Price");
+  });
+
+  it("leaves `formula` source untouched — that path goes through renameFieldInFormula", () => {
+    // The helper deliberately does NOT touch `formula` so the call
+    // chain in `BaseEditor.renameField` can route formula rewrites
+    // through the shared escape-aware scanner in baseFormulaEngine.
+    const f: BaseField = {
+      name: "Total",
+      type: "formula",
+      formula: "{Price} + {Tax}",
+    };
+    const out = applyFieldRename(f, "Price", "Cost");
+    // Field name moved, but formula source is byte-for-byte the same.
+    expect(out.formula).toBe("{Price} + {Tax}");
   });
 });

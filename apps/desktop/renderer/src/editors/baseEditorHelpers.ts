@@ -135,6 +135,53 @@ export function sanitizeBaseField(field: BaseField): BaseField {
 }
 
 /**
+ * Apply a `oldName` → `newName` rename across every field-name pointer
+ * a single `BaseField` can hold: `linkedField`, `targetField`,
+ * `linkedDisplayField`, plus the field's own `name`. The `formula`
+ * source is left untouched here — callers should re-run
+ * `renameFieldInFormula` separately because the formula scanner is
+ * defined alongside the rest of the formula machinery and we do not
+ * want a runtime dependency from this module into the formula engine.
+ *
+ * The pointer rewrite applies **to every field**, including the one
+ * being renamed. A self-referential pointer is unusual but not
+ * impossible (e.g., a hand-edited JSON payload, or a future refactor
+ * where a rollup targets its own field), and the rename contract is
+ * meant to be atomic — every `*FieldName` pointer that used to spell
+ * `oldName` must read `newName` after this call, with no leftover
+ * reference. Returns the same `field` reference (by identity) when
+ * nothing changed, so React can skip re-renders downstream.
+ *
+ * Exported so unit tests can pin the cross-pointer contract without
+ * standing up the full `BaseEditor` render pipeline (which the prior
+ * integration-test attempt found brittle).
+ */
+export function applyFieldRename(
+  field: BaseField,
+  oldName: string,
+  newName: string,
+): BaseField {
+  let out: BaseField | null = null;
+  if (field.linkedField === oldName) {
+    out = out ?? { ...field };
+    out.linkedField = newName;
+  }
+  if (field.targetField === oldName) {
+    out = out ?? { ...field };
+    out.targetField = newName;
+  }
+  if (field.linkedDisplayField === oldName) {
+    out = out ?? { ...field };
+    out.linkedDisplayField = newName;
+  }
+  if (field.name === oldName) {
+    out = out ?? { ...field };
+    out.name = newName;
+  }
+  return out ?? field;
+}
+
+/**
  * Decode the artifact's serialized JSON body into the in-memory
  * BaseContent shape the editor mounts. Falls back to a
  * two-field (Name + Status) default when the body is empty or

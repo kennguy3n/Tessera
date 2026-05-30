@@ -18,6 +18,7 @@ import {
   computeAutoNumber,
   isReservedFieldName,
   matchesFilter,
+  applyFieldRename,
 } from "./baseEditorHelpers";
 import {
   evaluateBaseFormula,
@@ -260,19 +261,26 @@ export default function BaseEditor({
       // `extractFieldRefs` always agree on what counts as a reference.
       const renameFormula = (src: string | undefined): string | undefined =>
         renameFieldInFormula(src, oldName, trimmed);
+      // Two passes per field, both delegating to shared helpers:
+      //   (a) `applyFieldRename` rewrites `name` + `linkedField` /
+      //       `targetField` / `linkedDisplayField` on every field,
+      //       including the renamed field itself (a self-referential
+      //       pointer is unusual but not impossible, and the rename
+      //       contract is meant to be atomic).
+      //   (b) `renameFormula` (a thin wrapper around
+      //       `renameFieldInFormula`) rewrites the field's `formula`
+      //       source using the same escape-aware token scanner the
+      //       evaluator and dep-graph use, so the three paths can
+      //       never disagree on what counts as a `{FieldName}`
+      //       reference.
+      // Both helpers preserve referential identity when nothing
+      // changed, so React skips reconciling unchanged fields.
       const nextFields: BaseField[] = data.fields.map((f) => {
-        if (f.name === oldName) {
-          return { ...f, name: trimmed, formula: renameFormula(f.formula) };
-        }
-        // Patch dangling references in OTHER fields' configs.
-        const patched: BaseField = { ...f };
-        if (patched.linkedField === oldName) patched.linkedField = trimmed;
-        if (patched.targetField === oldName) patched.targetField = trimmed;
-        if (patched.linkedDisplayField === oldName) {
-          patched.linkedDisplayField = trimmed;
-        }
-        if (patched.formula) patched.formula = renameFormula(patched.formula);
-        return patched;
+        const renamed = applyFieldRename(f, oldName, trimmed);
+        if (!renamed.formula) return renamed;
+        const rewritten = renameFormula(renamed.formula);
+        if (rewritten === renamed.formula) return renamed;
+        return { ...renamed, formula: rewritten };
       });
       const nextRecords: BaseRecord[] = data.records.map((r) => {
         if (!(oldName in r)) return r;
