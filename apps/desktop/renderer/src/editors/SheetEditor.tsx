@@ -1,9 +1,16 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
+  buildSheetDependencyGraph,
   evaluateFormula,
+  evaluateSheetFormula,
   parseCSVLines,
   parseSheetContent,
 } from "./sheetEditorHelpers";
+import {
+  cellKey,
+  isFormulaError,
+  type FormulaValue,
+} from "./formulaEngine";
 import type { SheetContent } from "./sheetEditorTypes";
 
 export type { SheetContent } from "./sheetEditorTypes";
@@ -85,9 +92,19 @@ export default function SheetEditor({
   }, [content]);
 
   useEffect(() => {
-    if (editingCell && inputRef.current) {
-      inputRef.current.focus();
+    if (!editingCell || !inputRef.current) return;
+    // Don't steal focus when the user is actively typing in the
+    // formula bar — that bar drives `editingCell` via onChange, so
+    // a naive .focus() would yank focus out of it on every keystroke.
+    // Only move focus into the in-cell input when nothing in the
+    // formula bar (or any other input) currently holds focus.
+    if (
+      formulaBarRef.current &&
+      document.activeElement === formulaBarRef.current
+    ) {
+      return;
     }
+    inputRef.current.focus();
   }, [editingCell]);
 
   const updateCell = useCallback(
@@ -223,11 +240,54 @@ export default function SheetEditor({
     }
   };
 
-  const getCellDisplay = (value: string): string => {
-    if (value.startsWith("=")) {
+  // Memoize the evaluated value of every formula cell once per
+  // render pass. The previous implementation called
+  // `evaluateFormula` per-cell from render, which built a fresh
+  // resolver+cache for each cell — so a sheet with N formulas all
+  // referencing the same A1 re-parsed A1 N times. We now build a
+  // single shared resolver (via `evaluateSheetFormula`'s underlying
+  // cache) and walk every formula cell once, keyed by the same
+  // `cellKey(row, col)` the dependency graph uses.
+  //
+  // The dependency graph itself is built alongside the cache (a)
+  // to keep both representations in lockstep for future
+  // incremental-recalc work, and (b) so we can detect references to
+  // cells outside `sheet.rows` length and still surface them.
+  const cellCache = useMemo(() => {
+    const cache = new Map<string, FormulaValue>();
+    // Building the graph also parses each formula and exposes
+    // structural info we'll need when wiring incremental recalc in
+    // a later PR. It's cheap (string compare + tokenize) and we
+    // already need to walk every cell either way.
+    buildSheetDependencyGraph(sheet);
+    for (let ri = 0; ri < sheet.rows.length; ri++) {
+      const row = sheet.rows[ri];
+      if (!row) continue;
+      for (let ci = 0; ci < row.length; ci++) {
+        const raw = row[ci];
+        if (!raw || !raw.startsWith("=")) continue;
+        cache.set(cellKey(ri, ci), evaluateSheetFormula(raw, sheet));
+      }
+    }
+    return cache;
+  }, [sheet]);
+
+  const getCellDisplay = (
+    value: string,
+    rowIdx: number,
+    colIdx: number,
+  ): string => {
+    if (!value.startsWith("=")) return value;
+    const cached = cellCache.get(cellKey(rowIdx, colIdx));
+    if (cached === undefined) {
+      // Shouldn't happen — `cellCache` is built from the same
+      // `sheet` we're rendering — but fall back to a one-off
+      // evaluation rather than rendering the raw formula text.
       return String(evaluateFormula(value, sheet));
     }
-    return value;
+    if (cached === null) return "";
+    if (isFormulaError(cached)) return cached.code;
+    return String(cached);
   };
 
   // Raw text of the currently-active cell, surfaced in the formula
@@ -402,7 +462,7 @@ export default function SheetEditor({
                         />
                       ) : (
                         <span className="sheet-cell-display">
-                          {getCellDisplay(rawValue)}
+                          {getCellDisplay(rawValue, ri, ci)}
                         </span>
                       )}
                     </td>

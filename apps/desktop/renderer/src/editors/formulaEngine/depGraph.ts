@@ -140,6 +140,11 @@ export class DependencyGraph {
         const deps = this.deps.get(user);
         deps?.delete(cell);
       }
+      // Also drop our own reverse-index entry so a future setDependencies
+      // call against this cell key starts from an empty user set.
+      // Without this, `usedBy(cell)` keeps returning the stale dependents
+      // and `recalcOrder` would walk cells that no longer depend on us.
+      this.users.delete(cell);
     }
   }
 
