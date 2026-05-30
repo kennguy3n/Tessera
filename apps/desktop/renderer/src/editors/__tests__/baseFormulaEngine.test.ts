@@ -66,14 +66,27 @@ describe("extractFieldRefs", () => {
     ]);
   });
 
-  it("keeps a brace-pair that begins inside a quoted string but the closing quote is escaped", () => {
-    // `\"` inside the double-quoted literal does NOT close the
-    // string. The scanner must consume `\\"` verbatim so the `{Real}`
-    // outside the string is still seen as a reference, and the
-    // `{Fake}` inside the string is not.
+  it("keeps a brace-pair that begins inside a quoted string but the embedded quote is doubled per RFC-4180", () => {
+    // The formula tokenizer uses Excel/RFC-4180 escape semantics:
+    // an embedded `"` inside `"…"` is written as `""`. The first
+    // `""` is a doubled-quote escape (the literal stays open), so
+    // `{Fake}` is still inside the string and `{Real}` outside is
+    // the only real reference. The scanner stays aligned with the
+    // evaluator on what counts as "inside a literal".
     expect(
-      extractFieldRefs('"open \\"{Fake}\\" still open" + {Real}'),
+      extractFieldRefs('"open ""{Fake}"" still open" + {Real}'),
     ).toEqual(["Real"]);
+  });
+
+  it("treats a backslash as a literal character (formula engine has no backslash escapes)", () => {
+    // `\\"` is *not* an escape for the formula engine — the `"`
+    // after the backslash closes the literal. This documents that
+    // the scanner intentionally diverges from C-style string
+    // semantics and stays in lock-step with the underlying
+    // tokenizer (`formulaEngine/tokenizer.ts`).
+    expect(
+      extractFieldRefs('"open \\" + {ClosedRef} + "reopen"'),
+    ).toEqual(["ClosedRef"]);
   });
 });
 
@@ -107,16 +120,16 @@ describe("renameFieldInFormula", () => {
     );
   });
 
-  it("handles escaped quotes inside a string literal — the `{Price}` after the escaped quote stays inside the string", () => {
-    // Before the shared scanner, the old inline rename in BaseEditor
-    // and `rewriteFieldRefs` disagreed on this: one treated the
-    // backslash-quote as ending the string, so it would rewrite
-    // `{Price}` that was actually still inside the literal. Now both
-    // routes consume `\\"` verbatim and treat the trailing `"` as
-    // the real terminator.
-    const src = '"prefix \\"{Price}\\" suffix" + {Price}';
+  it("handles doubled-quote escapes inside a string literal — the `{Price}` between the doubled quotes stays inside the string", () => {
+    // RFC-4180 / Excel doubled-quote escape: `""` inside `"…"` is
+    // an embedded `"` and the literal stays open. The first
+    // `{Price}` is inside the literal and must be left alone; the
+    // second is real code and must be renamed. All three rewrite
+    // paths (extract / rewrite / rename) share the same scanner so
+    // they cannot disagree.
+    const src = '"prefix ""{Price}"" suffix" + {Price}';
     expect(renameFieldInFormula(src, "Price", "Cost")).toBe(
-      '"prefix \\"{Price}\\" suffix" + {Cost}',
+      '"prefix ""{Price}"" suffix" + {Cost}',
     );
   });
 

@@ -71,16 +71,24 @@ type FormulaToken =
 /**
  * Walk a base-formula source and yield a stream of {@link FormulaToken}s,
  * correctly skipping `{` and `}` that appear *inside* single- or
- * double-quoted string literals. Backslash escape sequences inside
- * the literal are passed through transparently so `"a\"b"` doesn't
- * prematurely close the string.
+ * double-quoted string literals.
+ *
+ * String-literal semantics intentionally mirror the underlying formula
+ * tokenizer (`formulaEngine/tokenizer.ts`): a string is opened by `"`
+ * or `'`, and an embedded delimiter is escaped by **doubling it**
+ * (RFC-4180 / Excel convention, e.g. `"a""b"` is the four-char string
+ * `a"b`). Backslash is a literal character — the formula engine does
+ * **not** treat `\"` as an escape, so this scanner does not either.
+ * Keeping the two scanners aligned is what guarantees that
+ * `extractFieldRefs`, `rewriteFieldRefs`, `renameFieldInFormula`, and
+ * the evaluator/dep-graph all agree on the same notion of "inside a
+ * string literal" — otherwise a rename of `{Price}` could rewrite a
+ * literal the evaluator was actually reading as code, or vice versa.
  *
  * Centralising the scan in one helper keeps `rewriteFieldRefs`,
  * `extractFieldRefs`, and `BaseEditor.renameField`'s in-place formula
  * rewrite from drifting — historically they each had their own
- * scanner and `renameField`'s was the only one that handled `\"` /
- * `\'` correctly, so a name-rename inside a quoted string would
- * disagree with what the evaluator and the dep-graph actually saw.
+ * scanner with subtly different rules.
  */
 function walkFormulaSource(source: string): FormulaToken[] {
   const tokens: FormulaToken[] = [];
@@ -98,14 +106,18 @@ function walkFormulaSource(source: string): FormulaToken[] {
     const ch = source[i];
     if (inStr) {
       buf += ch;
-      if (ch === "\\" && i + 1 < source.length) {
-        // Escape sequence — emit the next char verbatim, never close
-        // the literal on it. Matters for `"a\"b"` and friends.
-        buf += source[i + 1];
-        i += 2;
-        continue;
+      if (ch === inStr) {
+        // RFC-4180 doubled-quote escape: a literal `"` inside a
+        // `"…"` string is written `""` (and similarly `''` for
+        // single-quoted sheet names). Consume both characters so
+        // the literal stays open.
+        if (source[i + 1] === inStr) {
+          buf += source[i + 1];
+          i += 2;
+          continue;
+        }
+        inStr = null;
       }
-      if (ch === inStr) inStr = null;
       i += 1;
       continue;
     }

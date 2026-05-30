@@ -513,8 +513,49 @@ export function parseCsvToBase(
   // header name matches; otherwise mint a text field.  The `id`
   // column is excluded — it's a record-level property, not a
   // user-visible field.
+  //
+  // Field names must be unique across the resulting BaseContent —
+  // every downstream consumer (the `renameField` uniqueness check,
+  // the per-field filter map keyed by name, every `fields.find` /
+  // `data.fields.some` lookup, JSON keys on each record) assumes
+  // that. CSV headers can legitimately collide (`Name,Name`, or a
+  // malformed export that lost a column), so disambiguate with a
+  // ` (2)` / ` (3)` … suffix instead of silently importing a
+  // half-broken schema. The renamed column still pulls from the
+  // correct CSV column — the column index is preserved on
+  // `fieldForColumn` so cell values never get shuffled.
   const fields: BaseField[] = [];
   const fieldForColumn: (BaseField | null)[] = [];
+  const usedNames = new Set<string>();
+
+  // Pre-scan the trimmed header list so the disambiguator knows
+  // about *every* deliberate name, including ones that appear
+  // later in the row. This is what stops a header sequence like
+  // `Name, Name, Name (2)` from producing `["Name", "Name (2)",
+  // "Name (2) (2)"]` — the second `Name` would steal the third
+  // column's deliberate name. Looking ahead lets us pick `Name
+  // (3)` for the duplicate and let column 3 keep `Name (2)`.
+  const allHeaderNames = new Set<string>(headers.map((h) => h.trim()));
+
+  /**
+   * Append a numeric suffix (` (2)`, ` (3)`, …) to `base` until the
+   * result is not already in use AND does not collide with any
+   * other deliberately-named header. Starting at `(2)` matches the
+   * convention macOS Finder, Windows Explorer, and Google Drive all
+   * use for collisions, so it reads as obvious to a user looking
+   * at the imported schema.
+   */
+  const uniquify = (base: string): string => {
+    if (!usedNames.has(base)) return base;
+    let i = 2;
+    while (
+      usedNames.has(`${base} (${i})`) ||
+      allHeaderNames.has(`${base} (${i})`)
+    ) {
+      i += 1;
+    }
+    return `${base} (${i})`;
+  };
 
   for (const header of headers) {
     const name = header.trim();
@@ -523,9 +564,17 @@ export function parseCsvToBase(
       continue;
     }
     const fromSchema = schema?.find((f) => f.name === name);
-    const field: BaseField = fromSchema ?? { name, type: "text" };
+    const finalName = uniquify(name);
+    // Only re-use the schema field config when the header matched
+    // it AND we didn't have to rename it for uniqueness — a
+    // renamed column is no longer logically the same field.
+    const field: BaseField =
+      fromSchema && finalName === name
+        ? fromSchema
+        : { name: finalName, type: "text" };
     fields.push(field);
     fieldForColumn.push(field);
+    usedNames.add(finalName);
   }
 
   // Locate the (optional) `id` column once — header layout is

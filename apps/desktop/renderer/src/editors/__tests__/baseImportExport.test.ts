@@ -506,6 +506,67 @@ describe("parseCsvToBase — CSV → BaseContent", () => {
     expect(result.records.map((r) => r.Name)).toEqual(["Alice", "Bob"]);
   });
 
+  it("disambiguates duplicate CSV headers with ` (2)`, ` (3)` suffixes (ANALYSIS-0004)", () => {
+    // The simple-collision case: two identical headers, no
+    // pre-existing suffixed names anywhere in the row. The second
+    // `Name` becomes `Name (2)`. Downstream code keys filters,
+    // sort, record JSON keys, and the `renameField` uniqueness
+    // guard by field name, so silently importing duplicates would
+    // break the editor.
+    const csv = "Name,Name,Age\r\nAlice,A1,30\r\nBob,B1,40";
+    const result = parseCsvToBase(csv);
+    expect(result.fields.map((f) => f.name)).toEqual([
+      "Name",
+      "Name (2)",
+      "Age",
+    ]);
+    expect(result.records).toHaveLength(2);
+    expect(result.records[0].Name).toBe("Alice");
+    expect(result.records[0]["Name (2)"]).toBe("A1");
+    expect(result.records[0].Age).toBe("30");
+  });
+
+  it("preserves a deliberately-named ` (N)` header that appears later in the row (look-ahead disambiguation)", () => {
+    // Trickier case: the third column is a deliberate `Name (2)`.
+    // If the dedup pass only looked at names already taken, the
+    // duplicate at column 1 would steal `Name (2)` and the
+    // deliberate one at column 2 would get bumped to `Name (2)
+    // (2)`. The look-ahead at every header name lets us skip
+    // `(2)` for the auto-rename and pick `(3)` instead, so the
+    // user's deliberate naming wins.
+    const csv = "Name,Name,Name (2)\r\nAlice,A1,X\r\nBob,B1,Y";
+    const result = parseCsvToBase(csv);
+    expect(result.fields.map((f) => f.name)).toEqual([
+      "Name",
+      "Name (3)",
+      "Name (2)",
+    ]);
+    expect(result.records).toHaveLength(2);
+    expect(result.records[0].Name).toBe("Alice");
+    expect(result.records[0]["Name (3)"]).toBe("A1");
+    expect(result.records[0]["Name (2)"]).toBe("X");
+    expect(result.records[1].Name).toBe("Bob");
+    expect(result.records[1]["Name (3)"]).toBe("B1");
+    expect(result.records[1]["Name (2)"]).toBe("Y");
+  });
+
+  it("does not re-use the schema field config for a column that was renamed for uniqueness", () => {
+    // The schema has a single `Name` field of type `number`. If the
+    // CSV has two `Name` columns, only the first one is *logically*
+    // that field — the second is a fresh column whose type we know
+    // nothing about, so it must fall back to `text` rather than
+    // adopt the schema's `number` config (which would silently lose
+    // every non-numeric cell).
+    const csv = "Name,Name\r\n1,hello\r\n2,world";
+    const result = parseCsvToBase(csv, [{ name: "Name", type: "number" }]);
+    expect(result.fields).toEqual([
+      { name: "Name", type: "number" },
+      { name: "Name (2)", type: "text" },
+    ]);
+    expect(result.records[0].Name).toBe(1);
+    expect(result.records[0]["Name (2)"]).toBe("hello");
+  });
+
   it("round-trips a real export through exportBaseCsv → parseCsvToBase", () => {
     const original = {
       fields: [
