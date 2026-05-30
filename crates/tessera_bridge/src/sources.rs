@@ -588,6 +588,63 @@ pub fn remove_source(manager: &SourceManager, source_id: &str) -> BridgeResult<(
         .map_err(BridgeError::Core)
 }
 
+// -- Phase 15 Task 11: sync-failure state pass-throughs -----------------
+//
+// Three thin helpers the napi bridge wraps in `#[napi]` exports
+// so the TS-side `runConnectorSync` can record and read the
+// per-source failure state. The retry/backoff policy itself is
+// applied in TS so the connectors layer remains the single
+// authority on how errors are classified — we just durably
+// persist the resulting state in SQLite.
+
+/// Phase 15 Task 11: read the persisted `(last_sync_error,
+/// retry_count, failed_permanently)` tuple for one source row.
+pub fn get_source_sync_failure_state(
+    manager: &SourceManager,
+    source_id: &str,
+) -> BridgeResult<(Option<String>, u32, bool)> {
+    let uuid =
+        uuid::Uuid::parse_str(source_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    manager
+        .get_sync_failure_state(&SourceId(uuid))
+        .map_err(BridgeError::Core)
+}
+
+/// Phase 15 Task 11: atomic write of all three failure-state
+/// columns. The TS caller passes the JSON-serialised
+/// `PersistedSyncError` plus the policy-computed retry count and
+/// permanent flag.
+pub fn record_source_sync_failure(
+    manager: &SourceManager,
+    source_id: &str,
+    last_sync_error_json: &str,
+    retry_count: u32,
+    failed_permanently: bool,
+) -> BridgeResult<()> {
+    let uuid =
+        uuid::Uuid::parse_str(source_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    manager
+        .record_sync_failure(
+            &SourceId(uuid),
+            last_sync_error_json,
+            retry_count,
+            failed_permanently,
+        )
+        .map_err(BridgeError::Core)
+}
+
+/// Phase 15 Task 11: clear the failure-state columns. Called from
+/// TS after a successful connector sync — the live "sync OK"
+/// signal must clear any sticky "permanently failed" badge so the
+/// user does not have to manually dismiss it after re-authorising.
+pub fn record_source_sync_success(manager: &SourceManager, source_id: &str) -> BridgeResult<()> {
+    let uuid =
+        uuid::Uuid::parse_str(source_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    manager
+        .record_sync_success(&SourceId(uuid))
+        .map_err(BridgeError::Core)
+}
+
 pub fn search_sources(
     manager: &SourceManager,
     query: &str,

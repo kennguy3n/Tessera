@@ -667,6 +667,24 @@ impl AuditLogger {
     pub fn recent_events(&self, limit: u32, offset: u32) -> Result<Vec<AuditEvent>> {
         self.store.recent_events(limit, offset)
     }
+
+    /// Phase 15 Task 12: thin pass-through to
+    /// [`AuditStore::rotate`]. The bridge invokes this from a
+    /// scheduled background task and via the `audit:rotate` IPC
+    /// surface so Settings can offer a "rotate now" button.
+    pub fn rotate(
+        &self,
+        archive_dir: &std::path::Path,
+    ) -> Result<Option<crate::store::RotationOutcome>> {
+        self.store.rotate(archive_dir)
+    }
+
+    /// Phase 15 Task 12: thin pass-through to
+    /// [`AuditStore::list_archives`]. The `audit:getArchives` IPC
+    /// fans this out to the renderer.
+    pub fn list_archives(archive_dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
+        AuditStore::list_archives(archive_dir)
+    }
 }
 
 #[cfg(test)]

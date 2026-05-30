@@ -2,6 +2,10 @@ import { ChildProcess, spawn, SpawnOptions } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { buildSpawnEnv } from "./sidecar";
+import {
+  writePidFileSync,
+  clearPidFileSync,
+} from "./sidecarPidRegistry";
 
 /**
  * Diffusion sidecar configuration. Mirrors the shape of
@@ -255,9 +259,37 @@ export class DiffusionSidecar {
         } catch {
           // ESRCH on Linux/macOS = already exited; harmless.
         }
+        // Phase 15 Task 9: synchronous PID-file cleanup mirrors
+        // ModelSidecar's exit-handler path. See sidecar.ts for
+        // the contract.
+        try {
+          clearPidFileSync(this.options.label);
+        } catch {
+          // Best-effort.
+        }
       };
       process.on("exit", handler);
       this.crashCleanupHandler = handler;
+    }
+
+    // Phase 15 Task 9: register the spawned PID under
+    // `<userData>/tessera-sidecar-pids/<label>.pid` so the next
+    // cold launch's `reapOrphanedSidecars` can clean us up if the
+    // parent crashes hard. Same contract as ModelSidecar.start();
+    // see `sidecarPidRegistry.ts`.
+    if (typeof this.process.pid === "number") {
+      try {
+        writePidFileSync(
+          this.options.label,
+          this.process.pid,
+          this.options.binaryPath,
+        );
+      } catch (e) {
+        console.warn(
+          `[tessera] failed to write diffusion sidecar PID file for ${this.options.label}:`,
+          e,
+        );
+      }
     }
 
     this.process.on("exit", (code) => {
@@ -265,6 +297,13 @@ export class DiffusionSidecar {
       this.stopHealthCheck();
       this.stopIdleMonitor();
       this.clearCrashCleanup();
+      // Phase 15 Task 9: drop the PID-registry entry now that
+      // the child has reaped itself.
+      try {
+        clearPidFileSync(this.options.label);
+      } catch {
+        // Best-effort.
+      }
       if (this._isTerminating) return;
       if (code !== 0 && code !== null) {
         this.restartCount++;

@@ -258,6 +258,21 @@ const api: TesseraApi = {
       ),
     exportMarp: (req) => ipcRenderer.invoke("artifacts:exportMarp", req),
     exportTypst: (req) => ipcRenderer.invoke("artifacts:exportTypst", req),
+    // Phase 15 Task 8: artifact auto-save recovery surface. See
+    // `ArtifactApi.checkRecovery` / `discardRecovery` for the
+    // contract.
+    checkRecovery: (id: string) =>
+      ipcRenderer.invoke("artifacts:checkRecovery", id),
+    discardRecovery: (id: string) =>
+      ipcRenderer.invoke("artifacts:discardRecovery", id),
+    // Phase 15 Task 10: failed-export queue surface. See
+    // `ArtifactApi.failedExports` / `retryExport` /
+    // `discardFailedExport` for the contract.
+    failedExports: () => ipcRenderer.invoke("artifacts:failedExports"),
+    retryExport: (exportId: string) =>
+      ipcRenderer.invoke("artifacts:retryExport", exportId),
+    discardFailedExport: (exportId: string) =>
+      ipcRenderer.invoke("artifacts:discardFailedExport", exportId),
   },
   templates: {
     list: () => ipcRenderer.invoke("templates:list"),
@@ -552,6 +567,25 @@ const api: TesseraApi = {
   audit: {
     listRecent: (limit?: number, offset?: number) =>
       ipcRenderer.invoke("audit:listRecent", limit, offset),
+    /**
+     * Phase 15 Task 12: list audit-archive file paths in the
+     * userData/audit-archives directory, newest first. Returns
+     * `[]` when no rotations have ever happened. Used by the
+     * Settings page audit pane to render a list of rotated
+     * archives the user can copy/inspect.
+     */
+    getArchives: (): Promise<string[]> =>
+      ipcRenderer.invoke("audit:getArchives"),
+    /**
+     * Phase 15 Task 12: trigger an immediate audit-log rotation.
+     * Returns `null` when the live table is at or below the
+     * threshold (no rotation occurred), or an object with the
+     * archive path + rotated-row count when one fired.
+     */
+    rotate: (): Promise<{
+      archivePath: string;
+      rotatedCount: number;
+    } | null> => ipcRenderer.invoke("audit:rotate"),
   },
 };
 

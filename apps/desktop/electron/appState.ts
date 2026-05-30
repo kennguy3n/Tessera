@@ -121,6 +121,21 @@ export interface NativeBridge {
    * unencrypted (only used in fallback / test paths).
    */
   initBridge(dbPath: string, templateDir: string, dbKey?: string | null): void;
+  /**
+   * Phase 15 Task 7: graceful shutdown hook. Runs
+   * `PRAGMA wal_checkpoint(TRUNCATE)` so the on-disk WAL file is
+   * folded back into the main database file before the process
+   * exits. The `will-quit` handler (`apps/desktop/electron/main.ts`)
+   * calls this after the scheduler and sidecars are drained so the
+   * next cold start does not pay a WAL-replay cost and backup
+   * tooling sees a single self-contained file.
+   *
+   * Safe to call before {@link initBridge} — the Rust side returns
+   * `Ok(())` as a no-op when the bridge hasn't been initialised,
+   * so the will-quit handler doesn't need to guard against early
+   * boot failures.
+   */
+  bridgeDispose(): void;
   bridgeAddLocalFolder(path: string): SourceInfo;
   bridgeAddLocalFile(path: string): SourceInfo;
   /**
@@ -661,6 +676,61 @@ export interface NativeBridge {
     timestamp: string;
     details: string;
   }>;
+  /**
+   * Phase 15 Task 12: rotate the audit log (archive + delete the
+   * oldest rows once the live table exceeds 100K rows). Returns
+   * `null` when the table is below the threshold, otherwise an
+   * object describing where the gzipped JSONL archive was
+   * written.
+   *
+   * `archiveDir` is the absolute path the renderer wants archives
+   * in — typically `<userData>/audit-archives/`. Owning the path
+   * choice in the renderer (rather than letting the bridge pick)
+   * keeps the rotation kicked off via IPC consistent with the one
+   * a future scheduler invokes from the main process.
+   */
+  bridgeAuditRotate(archiveDir: string): {
+    archivePath: string;
+    rotatedCount: number;
+  } | null;
+  /**
+   * Phase 15 Task 12: list the audit-archive filenames in
+   * `archiveDir`, newest-first. Returns `[]` when the directory
+   * does not yet exist.
+   */
+  bridgeAuditListArchives(archiveDir: string): string[];
+  /**
+   * Phase 15 Task 11: read the persisted sync-failure state for
+   * one source row. Returns `last_error_json = null`, `retry_count
+   * = 0`, `failed_permanently = false` when the row has never
+   * failed (and when the row does not exist at all — the two
+   * cases are indistinguishable to the renderer by design).
+   */
+  bridgeGetSourceSyncFailureState(sourceId: string): {
+    lastErrorJson: string | null;
+    retryCount: number;
+    failedPermanently: boolean;
+  };
+  /**
+   * Phase 15 Task 11: atomic persistence of all three failure-
+   * state columns. The caller (TS-side connectorBackoff) computes
+   * the new `retryCount` and `failedPermanently` flag by applying
+   * the policy in `connectorBackoff.ts` to the previous state +
+   * the just-classified error.
+   */
+  bridgeRecordSourceSyncFailure(
+    sourceId: string,
+    lastSyncErrorJson: string,
+    retryCount: number,
+    failedPermanently: boolean,
+  ): void;
+  /**
+   * Phase 15 Task 11: clear failure-state columns. Resets
+   * `last_sync_error → NULL`, `retry_count → 0`,
+   * `failed_permanently → false`. Called from the success branch
+   * of `runConnectorSync`.
+   */
+  bridgeRecordSourceSyncSuccess(sourceId: string): void;
   // --- Vision + image generation ---
   //
   // Async bridges that talk to local sidecars:
