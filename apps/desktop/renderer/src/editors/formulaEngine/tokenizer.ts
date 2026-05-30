@@ -105,6 +105,22 @@ export function tokenize(input: string): Token[] {
     baseOffset = 1;
   }
   let i = 0;
+  // Every exit from this function — clean stream end OR early-return
+  // after an ERROR token — flows through `finish()` so callers always
+  // observe a trailing EOF sentinel. The parser already short-circuits
+  // on ERROR, but `peek()`/`expect()` style helpers on either side of
+  // an ERROR token would index past the end of the array without it,
+  // and downstream consumers (autocomplete, syntax highlighting) get a
+  // simpler invariant if EOF is unconditionally present.
+  const finish = (): Token[] => {
+    tokens.push({
+      type: "EOF",
+      text: "",
+      start: baseOffset + i,
+      end: baseOffset + i,
+    });
+    return tokens;
+  };
   while (i < src.length) {
     const ch = src[i];
     const absStart = baseOffset + i;
@@ -142,7 +158,7 @@ export function tokenize(input: string): Token[] {
           start: baseOffset + literalStart,
           end: baseOffset + i,
         });
-        return tokens;
+        return finish();
       }
       tokens.push({
         type: "STRING",
@@ -186,7 +202,7 @@ export function tokenize(input: string): Token[] {
           start: baseOffset + literalStart,
           end: baseOffset + i,
         });
-        return tokens;
+        return finish();
       }
       tokens.push({
         type: "SHEET_QUOTED",
@@ -227,7 +243,7 @@ export function tokenize(input: string): Token[] {
             start: baseOffset + numStart,
             end: baseOffset + i,
           });
-          return tokens;
+          return finish();
         }
       }
       const text = src.slice(numStart, i);
@@ -288,7 +304,7 @@ export function tokenize(input: string): Token[] {
             start: baseOffset + idStart,
             end: baseOffset + i,
           });
-          return tokens;
+          return finish();
         }
         tokens.push({
           type: "CELL_REF",
@@ -406,10 +422,9 @@ export function tokenize(input: string): Token[] {
       start: absStart,
       end: absStart + 1,
     });
-    return tokens;
+    return finish();
   }
-  tokens.push({ type: "EOF", text: "", start: baseOffset + i, end: baseOffset + i });
-  return tokens;
+  return finish();
 }
 
 function isDigit(ch: string): boolean {

@@ -20,7 +20,7 @@
 import type { CSSProperties } from "react";
 
 import type { CellFormat } from "../sheetEditorTypes";
-import { isFormulaError, type FormulaValue } from "./types";
+import { isFormulaError, makeError, type FormulaError, type FormulaValue } from "./types";
 import { dateToSerial, serialToDate } from "./functions/date";
 
 /** Format `value` as a string using `format` (or General if absent). */
@@ -32,21 +32,64 @@ export function applyCellFormat(
   if (isFormulaError(value)) return value.code;
   const pattern = format?.numberFormat;
   if (!pattern) return defaultRender(value);
-  if (typeof value === "number") return renderNumberOrDate(value, pattern);
-  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
-  // String / blank: try to coerce a date-shaped format on a numeric
-  // string, otherwise pass through.
+  // Strings render through the shared pattern engine only when they
+  // parse as a number (currency/percent on numeric strings, dates on
+  // serial-shaped strings). If they don't parse, fall back to the
+  // raw string — cell rendering is forgiving where TEXT() is strict.
   if (typeof value === "string") {
-    if (looksLikeDateFormat(pattern)) {
-      const n = Number(value);
-      if (Number.isFinite(n)) return renderNumberOrDate(n, pattern);
-    } else {
-      const n = Number(value);
-      if (Number.isFinite(n)) return formatNumberPattern(n, pattern);
-    }
-    return value;
+    const out = formatValueWithPattern(value, pattern);
+    if (isFormulaError(out)) return value;
+    return out;
   }
-  return defaultRender(value);
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  // Number path — the same engine TEXT() uses.
+  const out = formatValueWithPattern(value, pattern);
+  return isFormulaError(out) ? out.code : out;
+}
+
+/**
+ * TEXT()-grade renderer: apply an Excel-style format pattern to any
+ * `FormulaValue`. Exported so `text.ts:TEXT()` doesn't have to ship
+ * a parallel implementation — a single source of truth for date
+ * disambiguation (`mm` after `hh` = minutes), AM/PM, currency,
+ * percent, thousands separators, etc.
+ *
+ * Empty pattern → default "General" rendering.
+ * Errors propagate (`#VALUE!` on unparseable strings).
+ */
+export function formatValueWithPattern(
+  value: FormulaValue,
+  pattern: string,
+): string | FormulaError {
+  if (isFormulaError(value)) return value;
+  if (pattern === "") return defaultRender(value);
+  const n = coerceToNumberForPattern(value);
+  if (isFormulaError(n)) return n;
+  return renderNumberOrDate(n, pattern);
+}
+
+/**
+ * Coerce any non-error `FormulaValue` to a numeric serial for
+ * pattern application. `null`/blank → 0, booleans → 0/1, numbers
+ * passthrough, parseable strings → their `Number(...)` value.
+ * Unparseable strings raise `#VALUE!` so TEXT() reports the user's
+ * mistake instead of silently formatting a NaN.
+ *
+ * Callers must filter out `FormulaError` before invoking (the
+ * narrowed type signature enforces this at compile time).
+ */
+function coerceToNumberForPattern(
+  value: Exclude<FormulaValue, FormulaError>,
+): number | FormulaError {
+  if (value === null) return 0;
+  if (typeof value === "number") return value;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  // String
+  const trimmed = value.trim();
+  if (trimmed === "") return 0;
+  const n = Number(trimmed);
+  if (Number.isFinite(n)) return n;
+  return makeError("#VALUE!", `cannot format "${value}" as a number`);
 }
 
 /** General-format rendering for a `FormulaValue` (no explicit pattern). */

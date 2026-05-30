@@ -111,6 +111,33 @@ describe("TEXT", () => {
       "2024-01-15",
     );
   });
+  // Regression: PR 76 review flagged that the standalone formatDate
+  // in text.ts had no `sawHour` flag, so `mm` after `hh` rendered the
+  // month instead of the minute. We now delegate to the shared
+  // engine in `format.ts` which disambiguates correctly.
+  it("disambiguates mm as minutes after an hour token", () => {
+    // 2024-03-15 14:07:09 UTC → Excel serial with a fractional day.
+    // DATE+ fractional time built via TIME-equivalent literal arithmetic:
+    // 14:07:09 = (14*3600 + 7*60 + 9) / 86400.
+    const time = (14 * 3600 + 7 * 60 + 9) / 86400;
+    const out = evalFormula(`=TEXT(DATE(2024,3,15)+${time}, "hh:mm:ss")`);
+    expect(out).toBe("14:07:09");
+  });
+  it("preserves mm as month when not preceded by hour", () => {
+    expect(evalFormula('=TEXT(DATE(2024,3,15), "yyyy-mm-dd")')).toBe(
+      "2024-03-15",
+    );
+  });
+  it("renders AM/PM tokens", () => {
+    const morning = (9 * 3600) / 86400;
+    const evening = (21 * 3600) / 86400;
+    expect(evalFormula(`=TEXT(DATE(2024,1,1)+${morning}, "h AM/PM")`)).toBe(
+      "9 AM",
+    );
+    expect(evalFormula(`=TEXT(DATE(2024,1,1)+${evening}, "h AM/PM")`)).toBe(
+      "21 PM",
+    );
+  });
 });
 
 describe("VALUE", () => {

@@ -37,6 +37,7 @@
  * back to `new Date()`. Tests inject a fixed clock so date assertions
  * are stable.
  */
+import type { AstNode } from "../parser";
 import {
   evaluate,
   toNumber,
@@ -312,7 +313,7 @@ const MONTH_LOOKUP: Record<string, number> = {
 };
 
 function singleNumber(
-  arg: import("../parser").AstNode,
+  arg: AstNode,
   ctx: EvaluationContext,
 ): number | FormulaError {
   const v = evaluate(arg, ctx);

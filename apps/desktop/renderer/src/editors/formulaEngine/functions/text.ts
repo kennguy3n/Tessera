@@ -61,9 +61,8 @@ import {
   isFormulaError,
   makeError,
   type FormulaError,
-  type FormulaValue,
 } from "../types";
-import { serialToDate } from "./date";
+import { formatValueWithPattern } from "../format";
 
 function singleString(
   arg: AstNode,
@@ -323,7 +322,13 @@ const TEXT: FunctionImpl = (args, ctx) => {
   if (isFormulaError(v)) return v;
   const fmt = singleString(args[1], ctx);
   if (isFormulaError(fmt)) return fmt;
-  return formatValue(v, fmt);
+  // Delegate to the shared pattern engine used by the cell-format
+  // renderer in `../format.ts`. Keeping a single implementation
+  // guarantees that `=TEXT(A1, "hh:mm:ss")` and a cell with
+  // `numberFormat: "hh:mm:ss"` render identically — in particular,
+  // the `mm`-after-`hh` minutes disambiguation and AM/PM tokens
+  // live in exactly one place.
+  return formatValueWithPattern(v, fmt);
 };
 
 const VALUE: FunctionImpl = (args, ctx) => {
@@ -349,173 +354,6 @@ const VALUE: FunctionImpl = (args, ctx) => {
   const signed = parenNeg ? -n : n;
   return percent ? signed / 100 : signed;
 };
-
-// ---------------------------------------------------------------------------
-// Format engine for TEXT().
-// ---------------------------------------------------------------------------
-
-/**
- * Render `value` per a TEXT() format string. The format syntax is
- * an intentional subset of Excel's full grammar — common patterns
- * the editor users actually type. Anything we don't recognise is
- * surfaced as `#VALUE!` so the user fixes the format instead of
- * silently getting garbage.
- */
-export function formatValue(
-  value: FormulaValue,
-  format: string,
-): string | FormulaError {
-  if (isFormulaError(value)) return value;
-  if (format === "") return coerceToString(value);
-  // Numeric formats handle dates as serial numbers and percentages.
-  // We attempt date-formatting first if the format clearly looks
-  // like a date pattern (contains y/m/d/h/s tokens outside an
-  // escape).
-  if (isDateFormat(format)) {
-    const n = toNumber(value);
-    if (isFormulaError(n)) return n;
-    const d = serialToDate(n);
-    return formatDate(d, format);
-  }
-  // Number / percent formats.
-  const n = toNumber(value);
-  if (isFormulaError(n)) return n;
-  return formatNumberPattern(n, format);
-}
-
-function isDateFormat(format: string): boolean {
-  // Strip escape sequences before inspecting tokens.
-  const stripped = format.replace(/\\./g, "").replace(/"[^"]*"/g, "");
-  return /[ydhms]/i.test(stripped);
-}
-
-function formatNumberPattern(n: number, format: string): string | FormulaError {
-  const isPercent = format.includes("%");
-  const value = isPercent ? n * 100 : n;
-  const sansPct = format.replace(/%/g, "");
-  // Find decimal-point position.
-  const dotIdx = sansPct.indexOf(".");
-  const intPart = dotIdx === -1 ? sansPct : sansPct.slice(0, dotIdx);
-  const fracPart = dotIdx === -1 ? "" : sansPct.slice(dotIdx + 1);
-  // Count `0` chars in fractional part = forced decimal places.
-  const forcedFrac = (fracPart.match(/0/g) ?? []).length;
-  const optionalFrac = (fracPart.match(/#/g) ?? []).length;
-  const maxFrac = forcedFrac + optionalFrac;
-  const useThousands = /#,##0|0,000|#,##/.test(intPart);
-  const rounded = Number(value.toFixed(maxFrac));
-  const sign = rounded < 0 ? "-" : "";
-  const absVal = Math.abs(rounded);
-  // Split into whole + frac segments.
-  let wholeStr = Math.trunc(absVal).toString();
-  let fracStr = "";
-  if (maxFrac > 0) {
-    const fracVal = absVal - Math.trunc(absVal);
-    fracStr = fracVal.toFixed(maxFrac).slice(2); // "0.42" -> "42"
-    // Trim trailing zeros allowed by `#`s, but keep `0`s.
-    let trimEnd = fracStr.length;
-    while (trimEnd > forcedFrac && fracStr[trimEnd - 1] === "0") {
-      trimEnd--;
-    }
-    fracStr = fracStr.slice(0, trimEnd);
-  }
-  if (useThousands) {
-    wholeStr = wholeStr.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  }
-  let out = sign + wholeStr;
-  if (fracStr.length > 0) out += "." + fracStr;
-  if (isPercent) out += "%";
-  return out;
-}
-
-function formatDate(d: Date, format: string): string | FormulaError {
-  // Replace tokens in length-descending order so `yyyy` doesn't get
-  // captured by `yy` first. Use a single pass over a token grammar
-  // to avoid replacing characters inside literals (quoted strings)
-  // or escapes (`\<char>`).
-  const out: string[] = [];
-  let i = 0;
-  const pad = (n: number, w: number) => String(n).padStart(w, "0");
-  while (i < format.length) {
-    const ch = format[i];
-    if (ch === "\\" && i + 1 < format.length) {
-      out.push(format[i + 1]);
-      i += 2;
-      continue;
-    }
-    if (ch === '"') {
-      i++;
-      while (i < format.length && format[i] !== '"') {
-        out.push(format[i]);
-        i++;
-      }
-      if (i < format.length) i++; // skip closing quote
-      continue;
-    }
-    // Token detection.
-    const remaining = format.slice(i);
-    let matched = false;
-    for (const tok of DATE_TOKENS) {
-      if (remaining.startsWith(tok.match)) {
-        out.push(tok.render(d, pad));
-        i += tok.match.length;
-        matched = true;
-        break;
-      }
-    }
-    if (matched) continue;
-    out.push(ch);
-    i++;
-  }
-  return out.join("");
-}
-
-interface DateToken {
-  readonly match: string;
-  readonly render: (d: Date, pad: (n: number, w: number) => string) => string;
-}
-
-// Longest tokens FIRST so `yyyy` matches before `yy`.
-const DATE_TOKENS: DateToken[] = [
-  { match: "yyyy", render: (d) => String(d.getUTCFullYear()) },
-  { match: "yy", render: (d, pad) => pad(d.getUTCFullYear() % 100, 2) },
-  { match: "mmmm", render: (d) => MONTH_NAMES[d.getUTCMonth()] },
-  { match: "mmm", render: (d) => MONTH_NAMES[d.getUTCMonth()].slice(0, 3) },
-  { match: "mm", render: (d, pad) => pad(d.getUTCMonth() + 1, 2) },
-  { match: "m", render: (d) => String(d.getUTCMonth() + 1) },
-  { match: "dddd", render: (d) => DAY_NAMES[d.getUTCDay()] },
-  { match: "ddd", render: (d) => DAY_NAMES[d.getUTCDay()].slice(0, 3) },
-  { match: "dd", render: (d, pad) => pad(d.getUTCDate(), 2) },
-  { match: "d", render: (d) => String(d.getUTCDate()) },
-  { match: "hh", render: (d, pad) => pad(d.getUTCHours(), 2) },
-  { match: "h", render: (d) => String(d.getUTCHours()) },
-  { match: "ss", render: (d, pad) => pad(d.getUTCSeconds(), 2) },
-  { match: "s", render: (d) => String(d.getUTCSeconds()) },
-];
-
-const MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-
-const DAY_NAMES = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-];
 
 export const TEXT_FUNCTIONS: Record<string, FunctionImpl> = {
   CONCATENATE,

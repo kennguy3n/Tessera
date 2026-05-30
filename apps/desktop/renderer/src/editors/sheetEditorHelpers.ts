@@ -429,6 +429,65 @@ export function evaluateWorkbookFormula(
 }
 
 /**
+ * Evaluate every formula cell in the active sheet of `sheet` using
+ * ONE shared workbook resolver, so intermediate dependencies are
+ * computed at most once per render even when many formulas reference
+ * the same target. Returns a `Map<cellKey, FormulaValue>` keyed by
+ * `"row,col"` (sheet name omitted — callers route through the
+ * active sheet).
+ *
+ * Without this helper, the prior render path called
+ * `evaluateSheetFormula(raw, sheet)` per formula cell, building a
+ * fresh resolver each time and re-evaluating shared dependencies
+ * `N²` times. The resolver returned by `makeWorkbookResolver`
+ * already caches per-cell evaluations internally, so we just walk
+ * the grid and ask the resolver for each formula cell — it handles
+ * dedup and cycle detection.
+ */
+export function evaluateAllSheetFormulas(
+  sheet: SheetContent,
+): Map<string, FormulaValue> {
+  return evaluateAllWorkbookFormulas(toWorkbook(sheet));
+}
+
+/**
+ * Workbook flavour of {@link evaluateAllSheetFormulas}: evaluate
+ * every formula cell across every tab through one shared resolver.
+ * Returns a map keyed by fully qualified cell keys (`"Sheet1!r,c"`).
+ * Cross-sheet formulas only re-evaluate their targets the first
+ * time they're touched in this pass.
+ */
+export function evaluateAllWorkbookFormulas(
+  workbook: Workbook,
+): Map<string, FormulaValue> {
+  const cache = new Map<string, FormulaValue>();
+  const { resolver } = makeWorkbookResolver(workbook);
+  for (const tab of workbook.sheets) {
+    for (let r = 0; r < tab.rows.length; r++) {
+      const row = tab.rows[r];
+      if (!row) continue;
+      for (let c = 0; c < row.length; c++) {
+        const raw = row[c];
+        if (!raw || !raw.startsWith("=")) continue;
+        // The resolver caches per-cell evaluations internally, so a
+        // formula that depends on another formula resolves through
+        // the same cache rather than spawning a fresh evaluation
+        // tree. Keep keys local-form for the active sheet (no
+        // prefix) so SheetEditor can look them up by `"r,c"`; use
+        // the qualified form for other tabs so cross-sheet refs
+        // don't collide.
+        const localKey =
+          tab.name === workbook.sheets[workbook.activeSheetIndex].name
+            ? cellKey(r, c)
+            : cellKey(r, c, tab.name);
+        cache.set(localKey, resolver.getEvaluated(r, c, tab.name));
+      }
+    }
+  }
+  return cache;
+}
+
+/**
  * Build a fresh `DependencyGraph` describing every formula cell in
  * `sheet`. Cells whose text starts with `=` are parsed once each;
  * non-formula cells contribute no edges. Used by the SheetEditor
