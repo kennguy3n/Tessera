@@ -73,9 +73,29 @@ app
       // so we synthesize a minimal sender stub and invoke through Electron's
       // own invocation surface: a hidden BrowserWindow whose webContents
       // round-trips `sources:list` and resolves a promise back here.
+      // Devin Review PR #70 ANALYSIS_0001: the probe renderer needs
+      // `require("electron")` to reach `ipcRenderer`. That global is
+      // only present when `nodeIntegration: true` AND `sandbox: false`
+      // — with `nodeIntegration: false` the require() throws
+      // `ReferenceError: require is not defined`, the catch returns
+      // `{ ok: false }`, and the probe always exits 70 (i.e. the
+      // smoke test was never actually exercising the IPC channel).
+      // Enabling nodeIntegration is safe here because (a) the only
+      // content ever loaded is `about:blank` — no untrusted markup,
+      // no remote URL, no preload — and (b) this script is invoked
+      // exclusively from the Linux smoke harness, never from the
+      // production app entry. The alternative (a preload script that
+      // exposes a probe-only API) adds packaging complexity (the
+      // preload would have to be copied into the installed
+      // resources/ tree) for no security benefit in this specific
+      // hidden, about:blank-only window.
       const win = new BrowserWindow({
         show: false,
-        webPreferences: { nodeIntegration: false, sandbox: false },
+        webPreferences: {
+          nodeIntegration: true,
+          contextIsolation: false,
+          sandbox: false,
+        },
       });
       // Load `about:blank` so the renderer is ready to invoke. We don't
       // need any actual UI for the probe.

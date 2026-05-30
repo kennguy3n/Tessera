@@ -26,7 +26,15 @@ use crate::mermaid;
 /// happens to contain `|` for a table row.
 fn parse_md_table_row(line: &str) -> Option<Vec<String>> {
     let trimmed = line.trim();
-    if !trimmed.starts_with('|') || !trimmed.ends_with('|') {
+    // Devin Review PR #70 BUG_0001: a lone `|` (which `.trim()` could
+    // produce from a line like `  |  `) passes the leading/trailing
+    // pipe gate but causes `&trimmed[1..0]` — a `start > end` slice
+    // that panics. Reject anything shorter than `||` (two pipes
+    // with at minimum zero cells between them) before slicing. Two
+    // pipes back-to-back (`||`) still yields a single empty cell on
+    // `interior.split('|')`, which is the correct round-trip for a
+    // genuinely empty single-column table row.
+    if trimmed.len() < 2 || !trimmed.starts_with('|') || !trimmed.ends_with('|') {
         return None;
     }
     // Strip the leading and trailing `|` then split on the interior
@@ -100,27 +108,41 @@ pub fn export_docx(artifact: &Artifact, citations: &[Citation]) -> Vec<u8> {
         };
         for raw_line in content_for_docx.lines() {
             let line = raw_line;
-            // Detect a markdown-table row first so the buffer can grow
-            // even when the line would otherwise match another rule
-            // (e.g. a `| --- |` separator that vaguely looks like a
-            // bullet to the eye).
-            if let Some(cells) = parse_md_table_row(line) {
-                if is_md_table_separator(&cells) {
-                    // Consume the separator without appending — it
-                    // conveys alignment only.
+            // Devin Review PR #70 BUG_0002: previously we attempted
+            // table-row detection BEFORE consulting `in_code_block`,
+            // which silently consumed pipe-delimited lines inside a
+            // fenced code block (e.g. shell aliases or markdown source
+            // pasted into a `` ``` ``-block) as table data and stripped
+            // them from the rendered monospace block. Code-block state
+            // must win: toggle the fence first, then — only when we are
+            // NOT inside a code block — try to parse the line as a table
+            // row. Lines inside a code block fall through to the
+            // monospace renderer below.
+            if line.trim_start().starts_with("```") {
+                // A fence transition flushes any pending table so we
+                // don't bleed a table into the code block that follows.
+                docx = flush_table(docx, &mut table_buf);
+                in_code_block = !in_code_block;
+                continue;
+            }
+            if !in_code_block {
+                // Detect a markdown-table row first so the buffer can grow
+                // even when the line would otherwise match another rule
+                // (e.g. a `| --- |` separator that vaguely looks like a
+                // bullet to the eye).
+                if let Some(cells) = parse_md_table_row(line) {
+                    if is_md_table_separator(&cells) {
+                        // Consume the separator without appending — it
+                        // conveys alignment only.
+                        continue;
+                    }
+                    table_buf.push(cells);
                     continue;
                 }
-                table_buf.push(cells);
-                continue;
             }
             // Any non-table line flushes the pending table first so
             // the row order is preserved.
             docx = flush_table(docx, &mut table_buf);
-            // Toggle code-block state when we see a fence.
-            if line.trim_start().starts_with("```") {
-                in_code_block = !in_code_block;
-                continue;
-            }
             if in_code_block {
                 // Word stores font assignments per script-class slot. For
                 // typical code (ASCII / Latin-1 source), the `ascii` and
@@ -395,5 +417,61 @@ mod tests {
         let bytes = export_docx(&artifact, &[]);
         assert_is_zip(&bytes);
         assert!(bytes.len() > 100);
+    }
+
+    /// Devin Review PR #70 BUG_0001 regression: a content line that is
+    /// just `|` (or `  |  ` after `.trim()`) used to panic at
+    /// `&trimmed[1..0]` inside `parse_md_table_row`, taking down the
+    /// entire DOCX export. We verify the parser now returns `None` for
+    /// every short / malformed pipe-only line, AND that the full export
+    /// pipeline returns a valid DOCX when the artifact body contains
+    /// such a line.
+    #[test]
+    fn parse_md_table_row_rejects_short_pipe_lines_without_panic() {
+        assert_eq!(parse_md_table_row("|"), None);
+        assert_eq!(parse_md_table_row("  |  "), None);
+        assert_eq!(parse_md_table_row(""), None);
+        assert_eq!(parse_md_table_row("foo"), None);
+        // The full-export round-trip — must not panic.
+        let mut artifact = Artifact::new("Pipe".to_string(), ArtifactType::Document, None);
+        artifact.update_content("Some prose.\n|\nMore prose.".into());
+        let bytes = export_docx(&artifact, &[]);
+        assert_is_zip(&bytes);
+    }
+
+    /// Devin Review PR #70 BUG_0002 regression: pipe-delimited lines
+    /// inside a fenced code block must be rendered as code (in the
+    /// Consolas font) and NOT extracted into a Word table. Before the
+    /// fix, `| A | B |` inside ` ```bash ` would be silently consumed
+    /// by the table buffer and lost from the code block.
+    #[test]
+    fn pipe_lines_inside_code_block_render_as_code_not_table() {
+        let mut artifact = Artifact::new("Sh".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "```bash\n\
+             alias ll='ls | grep foo'\n\
+             | A | B |\n\
+             | --- | --- |\n\
+             | 1 | 2 |\n\
+             ```\n\
+             After.\n"
+                .into(),
+        );
+        let bytes = export_docx(&artifact, &[]);
+        assert_is_zip(&bytes);
+        let xml = read_docx_text(&bytes);
+        // Every pipe-bearing line must survive verbatim inside the
+        // document body (not vanish into a `<w:tbl>` element).
+        for needle in [
+            "alias ll=",
+            "| A | B |",
+            "| --- | --- |",
+            "| 1 | 2 |",
+        ] {
+            assert!(
+                xml.contains(needle),
+                "code-block line {needle:?} missing from document.xml:\n{xml}"
+            );
+        }
     }
 }

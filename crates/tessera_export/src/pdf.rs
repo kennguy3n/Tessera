@@ -4,6 +4,15 @@ use tessera_artifacts::Artifact;
 use tessera_citations::citation::Citation;
 
 use crate::mermaid;
+// Devin Review PR #70 ANALYSIS_0004: the typst submodule is only
+// available when the `typst` feature is enabled, but the import is
+// still legitimately top-of-file (matches the existing pattern used
+// by `crate::exporter`'s feature-gated imports). Moving the
+// `use crate::typst` call out of `export_pdf_with_svgs` keeps the
+// crate's import block as the single place a reader can scan to
+// understand its dependencies.
+#[cfg(feature = "typst")]
+use crate::typst as typst_export;
 
 /// Generate a minimal but valid PDF document from an artifact.
 /// Uses the PDF 1.4 specification with built-in Helvetica font (no external font files needed).
@@ -283,13 +292,11 @@ fn pdf_escape(s: &str) -> String {
 /// builder. Production callers that want diagram embedding must
 /// enable the `typst` feature in their dependency declaration.
 #[cfg(feature = "typst")]
-pub fn export_pdf_with_svgs(
+pub fn export_pdf_with_svgs<S: std::hash::BuildHasher>(
     artifact: &Artifact,
     citations: &[Citation],
-    prerendered: &std::collections::HashMap<usize, String>,
+    prerendered: &std::collections::HashMap<usize, String, S>,
 ) -> Vec<u8> {
-    use crate::typst as typst_export;
-
     // Build Typst markup. The Typst document mirrors the structure
     // of the minimal PDF: title heading, metadata line, content
     // (with `image()` substitutions for mermaid blocks), citations
@@ -387,11 +394,23 @@ pub fn export_pdf_with_svgs(
 /// would mis-format the output and, in the worst case, allow a
 /// malicious citation title to inject markup. We escape conservatively
 /// with backslash for every character Typst recognises as a sigil.
+#[cfg(feature = "typst")]
 fn typst_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
         match ch {
-            '#' | '*' | '_' | '=' | '[' | ']' | '<' | '>' | '$' | '@' | '\\' | '~' | '\'' => {
+            // Devin Review PR #70 BUG_0003: backtick (`) was missing
+            // from the escape set. Typst uses `` ` `` to delimit raw
+            // / code text, so an artifact body containing inline
+            // markdown code spans (extremely common: `` `foo` ``) or a
+            // code fence sentinel would (a) open an unintended raw
+            // block and (b) frequently leave an unmatched backtick
+            // that fails Typst compilation outright. That failure
+            // silently dropped the entire SVG-embedding path back to
+            // the minimal PDF builder for ~every real document. Add
+            // the backtick to the escape set so inline code survives
+            // the Typst pipeline.
+            '#' | '*' | '_' | '=' | '[' | ']' | '<' | '>' | '$' | '@' | '\\' | '~' | '\'' | '`' => {
                 out.push('\\');
                 out.push(ch);
             }
@@ -485,6 +504,34 @@ mod tests {
         // Surrounding content stays.
         assert!(pdf_str.contains("Intro line"));
         assert!(pdf_str.contains("Outro"));
+    }
+
+    /// Devin Review PR #70 BUG_0003 regression: `typst_escape` must
+    /// backslash-escape every character that Typst recognises as a
+    /// markup sigil, INCLUDING the backtick used to delimit raw / code
+    /// text. Inline markdown code spans (`` `foo` ``) are extremely
+    /// common in artifact bodies; an unescaped backtick would open an
+    /// unintended raw block and frequently leave an unmatched token
+    /// that fails Typst compilation outright, silently degrading the
+    /// SVG-embedding PDF path back to the minimal builder.
+    #[cfg(feature = "typst")]
+    #[test]
+    fn typst_escape_handles_backtick_and_sigils() {
+        // Every documented Typst sigil should be preceded by `\`.
+        let input = "# heading *bold* _it_ = $math$ [link] <tag> @ref \\backslash ~tilde 'apos `code` rest";
+        let escaped = typst_escape(input);
+        for sigil in [
+            "\\#", "\\*", "\\_", "\\=", "\\[", "\\]", "\\<", "\\>", "\\$", "\\@", "\\\\", "\\~",
+            "\\'", "\\`",
+        ] {
+            assert!(
+                escaped.contains(sigil),
+                "typst_escape missed sigil {sigil:?}; output:\n{escaped}",
+            );
+        }
+        // Plain ASCII / non-sigil text passes through verbatim.
+        assert!(escaped.contains("rest"));
+        assert!(escaped.contains("heading"));
     }
 
     #[test]

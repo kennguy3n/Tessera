@@ -164,19 +164,44 @@ fn is_valid_defined_name(name: &str) -> bool {
     if !chars.all(|c| c.is_alphanumeric() || c == '_' || c == '.') {
         return false;
     }
-    // Looks-like-cell-reference rejection: a name whose lowercase form is
-    // exactly `[a-z]+[0-9]+` would collide with A1-style cell refs. This
-    // is the most common cause of "name is invalid" rejections in Excel.
+    // Looks-like-cell-reference rejection. Excel cells use the form
+    // `[A-Z]{1,3}[1-9][0-9]*` and columns max out at `XFD` (16384) /
+    // rows at `1048576`. The previous heuristic rejected ANY name that
+    // matched `[A-Z]+[0-9]+`, which over-rejected legitimate defined
+    // names like `Revenue1`, `Phase2`, `Tier3`, `Quarter1990` — none
+    // of those are valid Excel cell references (`REVENUE1` would be a
+    // 7-letter column, which doesn't exist) and Excel itself happily
+    // accepts them as defined names.
+    //
+    // Devin Review PR #70 ANALYSIS_0002: tighten the check so we only
+    // reject names that actually collide with the Excel address space:
+    //   * column part: 1-3 ASCII letters, AND
+    //   * the resulting column index is <= 16384 (XFD), AND
+    //   * row part: a positive integer 1..=1048576.
+    // Anything outside that envelope is safely a defined name.
     let lower = name.to_ascii_lowercase();
-    let split = lower.find(|c: char| c.is_ascii_digit());
-    if let Some(idx) = split {
-        let (alpha, digits) = lower.split_at(idx);
-        if !alpha.is_empty()
-            && alpha.chars().all(|c| c.is_ascii_lowercase())
-            && !digits.is_empty()
-            && digits.chars().all(|c| c.is_ascii_digit())
-        {
-            return false;
+    if let Some(digit_start) = lower.find(|c: char| c.is_ascii_digit()) {
+        let (alpha, digits) = lower.split_at(digit_start);
+        let alpha_ok =
+            !alpha.is_empty() && alpha.len() <= 3 && alpha.chars().all(|c| c.is_ascii_lowercase());
+        let digits_ok = !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit());
+        if alpha_ok && digits_ok {
+            // Compute the 1-indexed column number from the lowercase letters.
+            // 'a' = 1, 'z' = 26, 'aa' = 27, ..., 'xfd' = 16384.
+            let col_idx: u32 = alpha
+                .chars()
+                .fold(0u32, |acc, c| acc * 26 + (c as u32 - 'a' as u32 + 1));
+            // Row part must also parse as a valid Excel row (1..=1048576).
+            // Anything outside the row range (e.g. `A0`, `A0001` with
+            // leading zero is fine since `.parse::<u32>()` accepts it,
+            // `XFD9999999`) cannot collide with a real cell reference
+            // and is safely a defined name.
+            let row_ok = digits
+                .parse::<u32>()
+                .is_ok_and(|r| (1..=1_048_576).contains(&r));
+            if (1..=16_384).contains(&col_idx) && row_ok {
+                return false;
+            }
         }
     }
     true
@@ -409,6 +434,12 @@ mod tests {
     fn is_valid_defined_name_accepts_excel_legal_names() {
         // Legal names — leading letter or underscore, alphanumerics +
         // underscores + dots, not a cell reference.
+        // Devin Review PR #70 ANALYSIS_0002: the tightened cell-ref
+        // heuristic now correctly accepts `Revenue1`, `Phase2`,
+        // `Tier3`, `Quarter1990`, and `XFE1` (alpha part is 3 chars
+        // but the resulting column index 16385 is past the Excel
+        // limit of 16384 / XFD). The previous over-broad pattern
+        // would have rejected all of these.
         for ok in [
             "Revenue",
             "Q1_Sales",
@@ -416,11 +447,19 @@ mod tests {
             "Tax.2025",
             "x", // single char letter — Excel allows this
             "Tier1_Threshold.Override",
+            "Revenue1",
+            "Phase2",
+            "Tier3",
+            "Quarter1990",
+            "XFE1",        // col 16385 — past XFD/16384, so not a cell ref
+            "ABCD1",       // 4-letter alpha cannot be a cell ref
+            "A1048577",    // row 1048577 — past the 1048576 limit
+            "A0",          // row 0 doesn't exist in Excel
         ] {
             assert!(is_valid_defined_name(ok), "rejected legal name {ok:?}");
         }
         // Illegal — empty, leading digit, illegal char, looks like a
-        // cell reference (A1, XFD1048576), too long.
+        // real cell reference (A1, XFD1048576, Z99999), too long.
         let too_long = "n".repeat(256);
         for bad in [
             "",
@@ -431,6 +470,8 @@ mod tests {
             "A1",
             "XFD1048576",
             "Z99999",
+            "AA1",
+            "XFD1",
             too_long.as_str(),
         ] {
             assert!(!is_valid_defined_name(bad), "accepted illegal name {bad:?}");

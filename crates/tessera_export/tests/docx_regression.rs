@@ -101,7 +101,7 @@ fn count_tags(xml_bytes: &[u8], wanted: &[&str]) -> Vec<(String, usize)> {
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+            Ok(Event::Start(e) | Event::Empty(e)) => {
                 let name = e.name();
                 let local = std::str::from_utf8(name.local_name().as_ref())
                     .unwrap_or("")
