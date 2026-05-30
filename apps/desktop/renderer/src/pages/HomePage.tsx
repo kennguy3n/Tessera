@@ -9,7 +9,7 @@ import StatusBadge from "../components/StatusBadge";
 import OnboardingWizard from "../components/OnboardingWizard";
 import { useRecentArtifacts } from "../hooks/useArtifacts";
 import { useSourceList } from "../hooks/useSources";
-import { useSettings, useUpdateSetting } from "../hooks/useSettings";
+import { useSettings } from "../hooks/useSettings";
 import type { SourceInfo } from "../types/ipc";
 
 /**
@@ -72,10 +72,6 @@ export default function HomePage() {
   // (see `OnboardingWizard.dismiss()`), so this never races against
   // the persisted state.
   const [wizardDismissed, setWizardDismissed] = useState(false);
-  // `useUpdateSetting` isn't called from this page directly, but we
-  // keep the import path warm so a future inline setting toggle can
-  // reuse the same hook — the wizard owns the persist call itself.
-  useUpdateSetting();
 
   const hasSources = sources.length > 0;
   const hasArtifacts = recent.length > 0;
