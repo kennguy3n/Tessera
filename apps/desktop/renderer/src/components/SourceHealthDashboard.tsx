@@ -151,7 +151,27 @@ export default function SourceHealthDashboard({
 
   const refresh = useCallback(async () => {
     if (!sources) {
+      // Devin Review PR #70 follow-up ANALYSIS_0004: the bridge can
+      // legitimately be unavailable (transient renderer<->main
+      // initialisation window, or `SettingsPage` mounted from a test
+      // that didn't override `api`). Previously the early-return left
+      // `report=null, loading=false, error=null`, so the card body
+      // rendered completely empty — header + Refresh button with no
+      // status text, no error message, and no empty-state placeholder.
+      // The user would see a blank Source Health card and have no
+      // idea whether it was loading, broken, or simply had no data.
+      //
+      // Route the unavailable-bridge case through the existing error
+      // banner so the user gets a clear "Bridge not available …"
+      // explanation, the table is replaced by the banner, and the
+      // Refresh button stays clickable so the user can retry once the
+      // bridge initialises. We deliberately do NOT throw or set
+      // `loading=true` — that would either crash the React tree or
+      // keep the button disabled forever during a slow bridge boot.
       setReport(null);
+      setError(
+        "Bridge not available — Source Health cannot load until the renderer reconnects to the main process.",
+      );
       setLoading(false);
       return;
     }

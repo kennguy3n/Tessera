@@ -234,4 +234,45 @@ describe("SourceHealthDashboard", () => {
       "source-health-error",
     );
   });
+
+  // Devin Review PR #70 follow-up ANALYSIS_0004 regression: when the
+  // bridge is unavailable (transient renderer<->main init window, or
+  // `SettingsPage` mounted from a test that didn't override `api`),
+  // the card body used to render completely empty — header + Refresh
+  // button with no status text. The fix surfaces a "Bridge not
+  // available" error in the standard error banner so the user gets a
+  // clear explanation, and the Refresh button stays clickable so the
+  // user can retry once the bridge initialises.
+  it("surfaces a clear error banner when the bridge is unavailable instead of rendering an empty card body", async () => {
+    // Save and clear `window.tessera` to simulate the bridge being
+    // unavailable. We restore it in `finally` so other tests in the
+    // file are not affected.
+    const originalTessera = (window as unknown as { tessera?: unknown })
+      .tessera;
+    (window as unknown as { tessera?: unknown }).tessera = undefined;
+    try {
+      // Mount the component WITHOUT an `api` prop so it falls back to
+      // `window.tessera?.sources`, which we have just made undefined.
+      render(<SourceHealthDashboard />);
+      // The banner must mention "Bridge not available" so a screen
+      // reader / sighted user is told the failure mode explicitly,
+      // not a blank card body.
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          /Bridge not available/i,
+        );
+      });
+      // The Refresh button must NOT be disabled (otherwise the user
+      // could not retry once the bridge initialises). `loading=false`
+      // after the early-return path means the button label says
+      // "Refresh", not "Refreshing…".
+      const refreshBtn = screen.getByRole("button", { name: /refresh/i });
+      expect(refreshBtn).not.toBeDisabled();
+      expect(refreshBtn).toHaveTextContent(/Refresh$/);
+      // No table / no rows should render — the report is null.
+      expect(screen.queryByRole("table")).toBeNull();
+    } finally {
+      (window as unknown as { tessera?: unknown }).tessera = originalTessera;
+    }
+  });
 });

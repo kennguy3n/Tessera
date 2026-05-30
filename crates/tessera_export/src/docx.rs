@@ -60,10 +60,23 @@ fn parse_md_table_row(line: &str) -> Option<Vec<String>> {
 /// separator and the row dropped from the rendered DOCX. CommonMark
 /// requires a minimum of three dashes for a valid table separator;
 /// matching that contract eliminates the false positive.
+///
+/// Devin Review PR #70 follow-up ANALYSIS_0005: CommonMark §4.10
+/// allows at most ONE colon on each side of the dash run (left = align
+/// left, right = align right, both = center). The previous
+/// `trim_matches(':')` stripped any number of colons, so pathological
+/// shapes like `::---::` would also pass — a spec deviation. The new
+/// implementation peels at most one colon per side then verifies the
+/// interior is all dashes with length >= 3.
 fn is_md_table_separator(cells: &[String]) -> bool {
     !cells.is_empty()
         && cells.iter().all(|c| {
-            let s = c.trim_matches(':');
+            let s = c.as_str();
+            // Strip at most one leading colon.
+            let s = s.strip_prefix(':').unwrap_or(s);
+            // Strip at most one trailing colon.
+            let s = s.strip_suffix(':').unwrap_or(s);
+            // The remainder must be three or more dashes — nothing else.
             s.len() >= 3 && s.chars().all(|ch| ch == '-')
         })
 }
@@ -527,5 +540,35 @@ mod tests {
                 "expected cell {needle:?} in document.xml:\n{xml}"
             );
         }
+    }
+
+    /// Devin Review PR #70 follow-up ANALYSIS_0005 regression:
+    /// CommonMark §4.10 permits at most one colon on each side of
+    /// the dash run. The previous `trim_matches(':')` implementation
+    /// accepted any number, so spec-illegal shapes like `::---::`
+    /// were misclassified as separators. Pin the spec-conformant
+    /// behaviour so a future readability pass that goes back to
+    /// `trim_matches` flags here instead of in production.
+    #[test]
+    fn separator_detection_caps_colons_at_one_per_side() {
+        // Single-colon variants — valid per spec.
+        assert!(is_md_table_separator(&[":---".into()]));
+        assert!(is_md_table_separator(&["---:".into()]));
+        assert!(is_md_table_separator(&[":---:".into()]));
+        // Multi-colon variants — INVALID per spec, must be rejected.
+        assert!(!is_md_table_separator(&["::---".into()]));
+        assert!(!is_md_table_separator(&["---::".into()]));
+        assert!(!is_md_table_separator(&["::---::".into()]));
+        // Mixed valid/invalid — any invalid cell invalidates the row.
+        assert!(!is_md_table_separator(&[
+            ":---".into(),
+            "::---".into(),
+        ]));
+        // Colons-only (no dashes) — INVALID; the dash run is required.
+        assert!(!is_md_table_separator(&[":".into()]));
+        assert!(!is_md_table_separator(&["::".into()]));
+        // Colon embedded in the middle of dashes — INVALID; colons may
+        // only appear at the outer edges.
+        assert!(!is_md_table_separator(&["--:--".into()]));
     }
 }
