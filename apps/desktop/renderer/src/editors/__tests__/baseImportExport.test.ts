@@ -420,6 +420,20 @@ describe("coerceCsvCellToFieldValue — string → runtime type coercion", () =>
     expect(coerceCsvCellToFieldValue("bogus", "duration")).toBe(null);
   });
 
+  it("duration: also accepts a bare integer minute count for hand-crafted CSVs", () => {
+    // Symmetry with `parseDurationFilterOperand` (filter UI) and
+    // intuitive for a user pasting raw minutes from a spreadsheet.
+    // The exporter only ever emits h:mm so the lossless round-trip
+    // contract is unaffected.
+    expect(coerceCsvCellToFieldValue("65", "duration")).toBe(65);
+    expect(coerceCsvCellToFieldValue("0", "duration")).toBe(0);
+    expect(coerceCsvCellToFieldValue("1440", "duration")).toBe(1440);
+    // Reject fractional and negative — the cell renderer floors+clamps
+    // to 0, so accepting them here would silently lose information.
+    expect(coerceCsvCellToFieldValue("65.5", "duration")).toBe(null);
+    expect(coerceCsvCellToFieldValue("-5", "duration")).toBe(null);
+  });
+
   it("multi_select / attachment: splits on ';' and trims", () => {
     expect(coerceCsvCellToFieldValue("a; b; c", "multi_select")).toEqual([
       "a",

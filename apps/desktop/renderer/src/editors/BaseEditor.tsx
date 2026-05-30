@@ -144,13 +144,25 @@ export default function BaseEditor({
   // architecturally correct place for that cleanup.
   useEffect(() => {
     if (!expandedCell) return;
-    const stillExists = data.records.some(
+    // Two independent reasons to dismiss the modal:
+    //   (1) the target record was deleted out from under us; or
+    //   (2) the target field was removed (via the Manage Fields
+    //       dialog or the column-header ×).
+    // Without check (2), the modal would keep rendering against a
+    // BaseField snapshot we captured at open-time while the user
+    // sees the field gone from the grid behind the modal — and any
+    // edit committed via the open modal would silently *re-add* the
+    // field key to that record, undoing the field removal partially.
+    const recordStillExists = data.records.some(
       (r) => r.id === expandedCell.recordId,
     );
-    if (!stillExists) {
+    const fieldStillExists = data.fields.some(
+      (f) => f.name === expandedCell.field.name,
+    );
+    if (!recordStillExists || !fieldStillExists) {
       setExpandedCell(null);
     }
-  }, [data.records, expandedCell]);
+  }, [data.records, data.fields, expandedCell]);
 
   const updateData = useCallback(
     (updated: BaseContent) => {

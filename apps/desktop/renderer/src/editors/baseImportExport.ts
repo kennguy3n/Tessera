@@ -450,15 +450,33 @@ export function coerceCsvCellToFieldValue(
     }
 
     case "duration": {
+      // Accept BOTH `h:mm` (the export format — preserves lossless
+      // round-trip) AND a bare integer in minutes. The bare-integer
+      // path matches what `parseDurationFilterOperand` does for the
+      // filter UI (`baseEditorHelpers.ts`), and it's also what a
+      // user hand-crafting a CSV from a spreadsheet of minute values
+      // (e.g. "65" → 1h 5m) intuitively expects. Round-trip stays
+      // lossless because the exporter only ever emits `h:mm`, never
+      // bare integers.
       if (trimmed === "") return null;
       const m = trimmed.match(/^(\d+):(\d{1,2})$/);
-      if (!m) return null;
-      const h = Number(m[1]);
-      const min = Number(m[2]);
-      if (!Number.isFinite(h) || !Number.isFinite(min) || min >= 60) {
-        return null;
+      if (m) {
+        const h = Number(m[1]);
+        const min = Number(m[2]);
+        if (!Number.isFinite(h) || !Number.isFinite(min) || min >= 60) {
+          return null;
+        }
+        return h * 60 + min;
       }
-      return h * 60 + min;
+      // Fall back to bare-integer minutes. Must be a non-negative
+      // integer — fractional minutes and negatives are rejected
+      // because the cell renderer floors+clamps to 0 anyway, so
+      // accepting them here would silently lose information.
+      if (/^\d+$/.test(trimmed)) {
+        const n = Number(trimmed);
+        return Number.isFinite(n) ? n : null;
+      }
+      return null;
     }
 
     case "auto_number":
