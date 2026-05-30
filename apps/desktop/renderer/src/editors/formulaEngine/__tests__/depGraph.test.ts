@@ -62,6 +62,20 @@ describe("DependencyGraph — basic mutation", () => {
     expect(Array.from(g.usedBy("b"))).toEqual([]);
     expect(Array.from(g.dependsOn("c"))).toEqual([]);
   });
+  it("remove() also clears the cell's own reverse-index entry", () => {
+    // Regression: previously `remove(a)` cleaned up edges from `a`'s
+    // dependents but left `users.get(a)` populated. A later edit that
+    // re-introduced a cell at key `a` would then see phantom
+    // dependents in usedBy(a) / recalcOrder([a]).
+    const g = new DependencyGraph();
+    g.setDependencies("b", new Set(["a"])); // b depends on a
+    g.setDependencies("c", new Set(["a"])); // c depends on a
+    g.remove("a");
+    expect(Array.from(g.usedBy("a"))).toEqual([]);
+    // Re-introducing `a` from scratch must not resurrect b/c.
+    g.setDependencies("a", new Set());
+    expect(g.recalcOrder(["a"]).order).toEqual([]);
+  });
 });
 
 describe("DependencyGraph — recalcOrder", () => {

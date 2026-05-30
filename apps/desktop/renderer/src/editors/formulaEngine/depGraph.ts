@@ -202,9 +202,16 @@ export class DependencyGraph {
     }
     const ready: string[] = [];
     for (const [c, n] of indeg) if (n === 0) ready.push(c);
+    // Index-based dequeue: `ready.shift()` is O(n) (V8 reindexes the
+    // backing storage on every shift), so naively using it inside the
+    // Kahn loop turns the whole sort into O(V²). For an interactive
+    // grid that's negligible, but the engine is shared by the Base
+    // editor's formula field which can fan out to thousands of
+    // computed cells. Advancing a `head` cursor keeps this O(V+E).
     const order: string[] = [];
-    while (ready.length) {
-      const c = ready.shift()!;
+    let head = 0;
+    while (head < ready.length) {
+      const c = ready[head++];
       order.push(c);
       for (const user of this.usedBy(c)) {
         if (!affected.has(user)) continue;
