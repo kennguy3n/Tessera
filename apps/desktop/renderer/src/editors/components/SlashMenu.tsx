@@ -59,14 +59,34 @@ export function SlashMenu({
   );
   const [highlight, setHighlight] = useState(0);
 
-  // Clamp the highlight whenever the filtered list shortens (typing
-  // narrows the catalog and would otherwise leave the highlight out
-  // of bounds).
+  // Clamp the highlight INLINE — synchronously during render — so the
+  // active item never goes momentarily out-of-bounds when the filtered
+  // catalog shrinks. The previous `useEffect` version would let the
+  // current render commit with `highlight=4` against a 2-item list
+  // (no item received `slash-menu-item-active`), then fire the effect
+  // on commit and trigger a corrected re-render — a one-frame flash
+  // of unhighlighted items. Computing the effective highlight inline
+  // eliminates the flash because the render itself sees the clamped
+  // value. We still call `setHighlight` from a `useEffect` below to
+  // keep React's state in sync with what we rendered (otherwise the
+  // next keydown's `(h + 1) % filtered.length` would advance from the
+  // stale `highlight=4` and skip items). Devin Review PR #80 round 4
+  // (ANALYSIS_…_0003).
+  const effectiveHighlight =
+    filtered.length === 0
+      ? 0
+      : Math.max(0, Math.min(highlight, filtered.length - 1));
+
+  // Sync state to the rendered value when they diverged (the inline
+  // clamp above produced a different effective index than React's
+  // `highlight` state). This effect intentionally runs after render
+  // and only writes when the values actually differ to avoid an
+  // infinite setState loop.
   useEffect(() => {
-    if (highlight >= filtered.length) {
-      setHighlight(filtered.length === 0 ? 0 : filtered.length - 1);
+    if (effectiveHighlight !== highlight) {
+      setHighlight(effectiveHighlight);
     }
-  }, [filtered.length, highlight]);
+  }, [effectiveHighlight, highlight]);
 
   const select = useCallback(
     (idx: number) => {
@@ -94,7 +114,10 @@ export function SlashMenu({
         if (filtered.length === 0) return;
         e.preventDefault();
         e.stopPropagation();
-        select(highlight);
+        // Use the inline-clamped index so we always invoke the
+        // command the user currently *sees* highlighted, not a stale
+        // state value that the next render would have corrected.
+        select(effectiveHighlight);
       } else if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -107,7 +130,7 @@ export function SlashMenu({
     return () => {
       document.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [trigger.visible, filtered, highlight, select, onDismiss]);
+  }, [trigger.visible, filtered, effectiveHighlight, select, onDismiss]);
 
   // Click-outside dismiss. We bind on the editor's DOM element so a
   // click on the popup itself doesn't bubble out and dismiss.
@@ -155,10 +178,6 @@ export function SlashMenu({
     if (items.length > 0) groups.push({ category, items });
   }
 
-  // Flat index lookup: index of the command in `filtered` (preserves
-  // the filterSlashCommands ranking) → highlight.
-  let runningIndex = -1;
-
   return (
     <div
       className="slash-menu"
@@ -176,8 +195,12 @@ export function SlashMenu({
             <div className="slash-menu-group-label">{group.category}</div>
             {group.items.map((cmd) => {
               const flatIndex = filtered.indexOf(cmd);
-              if (flatIndex > runningIndex) runningIndex = flatIndex;
-              const active = flatIndex === highlight;
+              // Render against the *inline-clamped* effective index
+              // so the active item never goes momentarily out of
+              // bounds when the filtered catalog shrinks (typing a
+              // narrower query while highlight pointed past the new
+              // end). Devin Review PR #80 round 4 (ANALYSIS_…_0003).
+              const active = flatIndex === effectiveHighlight;
               return (
                 <button
                   type="button"

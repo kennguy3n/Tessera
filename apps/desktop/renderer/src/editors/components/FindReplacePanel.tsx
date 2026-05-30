@@ -229,13 +229,37 @@ export function FindReplacePanel({ editor, onClose }: FindReplacePanelProps) {
     const range = matchToDocRange(snapshot, freshMatches[idx]);
     if (!range) return;
     // Drop the `.focus(…)` chain that was here: see the comment on
-    // `recompute` above. `insertContentAt` doesn't require editor
+    // `recompute` above. The replace command doesn't require editor
     // focus, and pulling focus mid-replace would yank the caret out
     // of the Replace input on every click. Devin Review PR #80
     // (BUG_…_0002).
-    editor.chain().insertContentAt(range, replacement).run();
-    setTimeout(() => recompute(), 0);
-  }, [editor, query, opts, replacement, recompute]);
+    //
+    // Use `tr.insertText`, NOT `insertContentAt`. `insertContentAt`
+    // parses its string argument as HTML — so a replacement of
+    // `<b>foo</b>` would create bold text and a replacement starting
+    // with an unknown tag like `<unknowntag>` would silently insert
+    // *nothing* (the user's literal-text intent is lost, and the
+    // matched range is still deleted — data loss). The pure-string
+    // helpers `replaceOne` / `replaceAll` in `documentEditorHelpers.ts`
+    // already do literal splicing, so keeping the editor side in
+    // lock-step matches every standard find/replace implementation
+    // (Google Docs, VS Code). Devin Review PR #80 round 4 (BUG_…_0001).
+    //
+    // Also drop the trailing `setTimeout(() => recompute(), 0)`:
+    // `editor.on("update")` fires synchronously when the transaction
+    // lands and its handler already refreshes matches + republishes
+    // the highlight descriptor. The setTimeout was running the same
+    // `buildDocText` + `findAllMatches` pass a second time for no
+    // observable benefit. Devin Review PR #80 round 4
+    // (ANALYSIS_…_0002).
+    editor
+      .chain()
+      .command(({ tr }) => {
+        tr.insertText(replacement, range.from, range.to);
+        return true;
+      })
+      .run();
+  }, [editor, query, opts, replacement]);
 
   const doReplaceAll = useCallback(() => {
     const snapshot = buildDocText(editor.state.doc);
@@ -245,15 +269,24 @@ export function FindReplacePanel({ editor, onClose }: FindReplacePanelProps) {
     if (freshMatches.length === 0) return;
     // Walk in reverse so each splice keeps the earlier indices valid.
     // No `.focus(…)` here either — same focus-theft rationale.
+    //
+    // Same `tr.insertText` swap + same `setTimeout` drop as `doReplace`
+    // above — Devin Review PR #80 round 4 (BUG_…_0001 +
+    // ANALYSIS_…_0002). Batching all splices into a single chain lets
+    // ProseMirror collapse them into one transaction so the
+    // `editor.on("update")` handler fires exactly once for the whole
+    // batch.
     const chain = editor.chain();
     for (let i = freshMatches.length - 1; i >= 0; i -= 1) {
       const range = matchToDocRange(snapshot, freshMatches[i]);
       if (!range) continue;
-      chain.insertContentAt(range, replacement);
+      chain.command(({ tr }) => {
+        tr.insertText(replacement, range.from, range.to);
+        return true;
+      });
     }
     chain.run();
-    setTimeout(() => recompute(), 0);
-  }, [editor, query, opts, replacement, recompute]);
+  }, [editor, query, opts, replacement]);
 
   const onFindKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLInputElement>) => {
