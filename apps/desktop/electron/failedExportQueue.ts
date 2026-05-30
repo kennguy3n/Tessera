@@ -259,6 +259,39 @@ export async function enqueueFailedExport(args: {
   filePath: string;
   errorMessage: string;
 }): Promise<FailedExportEntry> {
+  // Devin Review PR #69 ANALYSIS_0003: validate the inputs at the
+  // write boundary, not just at the read boundary. The on-disk
+  // queue file is the source of truth for what the renderer
+  // surfaces as "retry this", and `listFailedExports` already
+  // filters out entries whose `filePath` is empty / non-absolute
+  // because the retry handler (and the safe-export allowlist that
+  // gates it) demand an absolute path. Without a matching
+  // write-side guard, a future caller that passes a relative path
+  // (e.g. `~/exports/foo.pdf` not pre-resolved, or a CWD-relative
+  // path from a future CLI mode) would succeed at enqueue time and
+  // then silently disappear from the renderer on the next refresh
+  // — a phantom write that's almost impossible to debug because
+  // there's no error anywhere on the trace.
+  //
+  // Failing fast at the enqueue boundary surfaces caller bugs
+  // immediately, mirrors the validation the renderer relies on,
+  // and keeps the invariant "every on-disk entry is renderable"
+  // symmetric on both sides of the storage layer. The current
+  // production caller (`artifacts:exportToFile` in
+  // `ipc/artifacts.ts`) already resolves to an absolute path via
+  // `resolvedPath` before calling, so this guard is a regression
+  // catcher rather than a behavioural change for any reachable
+  // code path today.
+  if (typeof args.filePath !== "string" || args.filePath.length === 0) {
+    throw new Error(
+      "enqueueFailedExport: filePath must be a non-empty string",
+    );
+  }
+  if (!path.isAbsolute(args.filePath)) {
+    throw new Error(
+      `enqueueFailedExport: filePath must be absolute, got ${JSON.stringify(args.filePath)}`,
+    );
+  }
   return serializeWrites(async () => {
     const existing = await listFailedExports();
     const entry: FailedExportEntry = {
