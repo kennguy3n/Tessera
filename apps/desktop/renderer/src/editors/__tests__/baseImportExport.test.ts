@@ -681,6 +681,68 @@ describe("parseJsonToBase — JSON → BaseContent", () => {
     expect(reimported.records).toEqual(original.records);
   });
 
+  it("filters non-object records in the canonical shape without throwing (BUG-0004)", () => {
+    // Defensive: a hand-edited / third-party canonical-JSON could
+    // land with `null` (or another primitive) in `records`. Before
+    // the round-7 fix the canonical path did `(obj.records as
+    // BaseRecord[]).map((r) => ({ ...r, id: ... }))`, which threw
+    // `TypeError: Cannot read properties of null (reading 'id')`
+    // and surfaced a useless stack trace in the import dialog.
+    // After: `ensureRecordIds` drops the bad slots and re-stamps
+    // IDs, matching what `parseBaseContent` does for the artifact
+    // loader. The valid record survives unchanged.
+    const json = JSON.stringify({
+      fields: [{ name: "Title", type: "text" }],
+      records: [{ id: "r1", Title: "Alpha" }, null, "not-an-object", 42],
+    });
+    const result = parseJsonToBase(json);
+    expect(result.fields).toEqual([{ name: "Title", type: "text" }]);
+    expect(result.records).toEqual([{ id: "r1", Title: "Alpha" }]);
+  });
+
+  it("filters non-object rows in the bare-array shape without throwing (BUG-0004)", () => {
+    // Symmetric to the canonical-shape test — the array shape's
+    // record-build `.map` also previously accessed `row.id` without
+    // re-filtering, even though the field-harvest loop had a guard.
+    // After the round-7 fix both loops share a single up-front
+    // filter, so a `[validObj, null, validObj]` payload no longer
+    // crashes during import.
+    const json = JSON.stringify([
+      { id: "r1", Title: "Alpha" },
+      null,
+      { id: "r2", Title: "Bravo" },
+    ]);
+    const result = parseJsonToBase(json);
+    expect(result.fields).toEqual([{ name: "Title", type: "text" }]);
+    expect(result.records).toEqual([
+      { id: "r1", Title: "Alpha" },
+      { id: "r2", Title: "Bravo" },
+    ]);
+  });
+
+  it("mints a fresh id when a canonical record has a non-string id (BUG-0004)", () => {
+    // `ensureRecordIds` also covers the related "wrong-typed id"
+    // case: a record with `id: 42` or `id: null` gets a fresh
+    // makeRecordId() so downstream linked_record lookups keep
+    // working. Previously the canonical path's truthy check happened
+    // to do the right thing here, but routing through
+    // `ensureRecordIds` makes the contract explicit and shared with
+    // the artifact loader.
+    const json = JSON.stringify({
+      fields: [{ name: "Title", type: "text" }],
+      records: [
+        { id: 42, Title: "BadId" },
+        { id: "", Title: "Empty" },
+      ],
+    });
+    const result = parseJsonToBase(json);
+    expect(result.records).toHaveLength(2);
+    for (const r of result.records) {
+      expect(typeof r.id).toBe("string");
+      expect((r.id as string).length).toBeGreaterThan(0);
+    }
+  });
+
   it("sanitises every imported field via sanitizeBaseField — out-of-range percentPrecision is clamped (BUG-0001)", () => {
     // A hand-crafted JSON with `percentPrecision: 200` would crash the
     // very next CSV export (`Number.prototype.toFixed` throws for

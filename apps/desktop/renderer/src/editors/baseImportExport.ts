@@ -56,6 +56,7 @@ import {
   isReservedFieldName,
   RESERVED_FIELD_NAMES,
   sanitizeBaseField,
+  ensureRecordIds,
 } from "./baseEditorHelpers";
 import type {
   BaseContent,
@@ -646,30 +647,42 @@ export function parseJsonToBase(jsonText: string): BaseContent {
         "JSON array must contain objects, got: " + typeof first,
       );
     }
+    // Filter out primitives / null / arrays once, up front, so the
+    // field-harvest loop AND the record-build loop can trust every
+    // remaining element is a plain object. The field-harvest loop
+    // already had this guard (round 1 PR-#79 review), but the
+    // record-build `.map` on line 660 read `row.id` without
+    // re-filtering — a non-object slipped through `[{...valid...},
+    // null]` would crash with `Cannot read properties of null` at
+    // import time. Doing the filter once also means `ensureRecordIds`
+    // (which we delegate to below for the ID-stamping) only ever
+    // sees the same survivors, matching what the artifact loader
+    // (`parseBaseContent`) does.
+    const cleanRows = (parsed as unknown[]).filter(
+      (row): row is Record<string, unknown> =>
+        typeof row === "object" && row !== null && !Array.isArray(row),
+    );
     const seen = new Set<string>();
     const fields: BaseField[] = [];
-    for (const row of parsed) {
-      if (typeof row !== "object" || row === null) continue;
-      for (const key of Object.keys(row as object)) {
+    for (const row of cleanRows) {
+      for (const key of Object.keys(row)) {
         if (RESERVED_FIELD_NAMES.has(key)) continue;
         if (seen.has(key)) continue;
         seen.add(key);
         fields.push({ name: key, type: "text" });
       }
     }
-    const records: BaseRecord[] = (parsed as Record<string, unknown>[]).map(
-      (row) => {
-        const id =
-          typeof row.id === "string" && row.id.length > 0
-            ? row.id
-            : makeRecordId();
-        const record: BaseRecord = { id };
-        for (const field of fields) {
-          record[field.name] = row[field.name] ?? null;
-        }
-        return record;
-      },
-    );
+    const records: BaseRecord[] = cleanRows.map((row) => {
+      const id =
+        typeof row.id === "string" && row.id.length > 0
+          ? row.id
+          : makeRecordId();
+      const record: BaseRecord = { id };
+      for (const field of fields) {
+        record[field.name] = row[field.name] ?? null;
+      }
+      return record;
+    });
     return { fields, records };
   }
 
@@ -693,9 +706,16 @@ export function parseJsonToBase(jsonText: string): BaseContent {
   // exporter, the formula engine), so they can assume the invariants
   // hold instead of each re-clamping defensively.
   const fields = (obj.fields as BaseField[]).map(sanitizeBaseField);
-  const records = (obj.records as BaseRecord[]).map((r) => ({
-    ...r,
-    id: typeof r.id === "string" && r.id.length > 0 ? r.id : makeRecordId(),
-  }));
+  // Route records through `ensureRecordIds` — the same defensive
+  // pass `parseBaseContent` runs. Plain-`.map` over the array would
+  // throw `TypeError: Cannot read properties of null (reading 'id')`
+  // the moment a hand-edited / third-party canonical JSON contains a
+  // `null` slot in `records`, leaking a raw TypeError to the import
+  // dialog instead of a useful error — or, worse, silently producing
+  // a broken `BaseRecord[]`. `ensureRecordIds` drops non-objects,
+  // re-stamps missing IDs, and preserves referential identity when
+  // the input was already well-formed, so the canonical-JSON path
+  // now matches the artifact-loader path in robustness.
+  const records = ensureRecordIds(obj.records as unknown[]);
   return { fields, records };
 }

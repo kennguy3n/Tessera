@@ -200,14 +200,70 @@ export default function BaseEditor({
     [data, updateData],
   );
 
+  // Drop sort / filter / view-config pointers that reference fields
+  // the current schema doesn't have — used after `removeField`,
+  // `handleImportCsv`, and `handleImportJson`. Without this, deleting
+  // the field currently used for `sortField` / `kanbanGroupField` /
+  // `calendarDateField` leaves the view-config pointing at a name
+  // that no longer exists; `filteredAndSorted` tolerates the stale
+  // state by skipping the sort, but Kanban / Calendar / Timeline /
+  // Gallery silently render empty because they look up
+  // `fields.find((f) => f.name === config.kanbanGroupField)` and
+  // miss. Devin Review on PR #79 flagged the sort+filter half in
+  // round 3, the viewConfig half in round 4, and the
+  // `removeField`-doesn't-call-this gap in round 7 — so a single
+  // shared helper now owns the entire cleanup and stays symmetric
+  // with `renameField`'s pointer-rewrite list. Defined ahead of
+  // `removeField` so the `useCallback` dependency array can capture
+  // it without hitting TDZ.
+  const dropStaleViewState = useCallback((nextFields: BaseField[]) => {
+    // Each setter is independent React state, so we read the latest
+    // value via the functional-updater signature and run the same
+    // prune logic the helper centralises. We can't call
+    // `pruneViewStateAgainstFields` once for all three because the
+    // three `prev` values live in separate `useState` slots — but the
+    // helper still lives in `baseEditorHelpers` (and is unit-tested
+    // there) to document the contract, and `renameField` shares the
+    // `VIEW_CONFIG_FIELD_POINTERS` constant so both call sites stay
+    // in lock-step when a new field-name pointer is added to
+    // `BaseViewConfig`.
+    const names = new Set(nextFields.map((f) => f.name));
+    setSortField((prev) => (prev !== null && !names.has(prev) ? null : prev));
+    setFilters((prev) => {
+      let dirty = false;
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        if (names.has(k)) {
+          out[k] = v;
+        } else {
+          dirty = true;
+        }
+      }
+      return dirty ? out : prev;
+    });
+    setViewConfig((prev) => {
+      let dirty = false;
+      const next: BaseViewConfig = { ...prev };
+      for (const k of VIEW_CONFIG_FIELD_POINTERS) {
+        const ref = prev[k];
+        if (ref !== null && !names.has(ref)) {
+          next[k] = null;
+          dirty = true;
+        }
+      }
+      return dirty ? next : prev;
+    });
+  }, []);
+
   const removeField = useCallback(
     (fieldName: string) => {
       // `id` is the stable record identifier; deleting it would
       // strip every record's id and orphan every linked_record
       // reference on the next save/reload cycle.
       if (isReservedFieldName(fieldName)) return;
+      const nextFields = data.fields.filter((f) => f.name !== fieldName);
       const updated: BaseContent = {
-        fields: data.fields.filter((f) => f.name !== fieldName),
+        fields: nextFields,
         records: data.records.map((r) => {
           const copy = { ...r };
           delete copy[fieldName];
@@ -215,8 +271,15 @@ export default function BaseEditor({
         }),
       };
       updateData(updated);
+      // Drop any view-state pointers (sort, filter, kanbanGroup,
+      // calendarDate, …) that referenced the deleted field. Routes
+      // through the same shared cleanup the import flows use so
+      // `removeField`, `handleImportCsv`, and `handleImportJson` stay
+      // perfectly symmetric. The column-header `×` button (also
+      // wired to `removeField`) inherits the same fix for free.
+      dropStaleViewState(nextFields);
     },
-    [data, updateData],
+    [data, updateData, dropStaleViewState],
   );
 
   // Move a field one slot up or down in `data.fields`. The grid /
@@ -481,57 +544,6 @@ export default function BaseEditor({
       "application/json;charset=utf-8",
     );
   }, [data, triggerDownload]);
-
-  // After an import we must drop sort / filter / view-config state
-  // that references fields the imported schema doesn't have — the
-  // grid header would still show a typed-in filter on a column that
-  // no longer exists, the sort indicator would point at nothing, and
-  // Kanban / Calendar / Timeline / Gallery would silently render
-  // empty because they look up `fields.find((f) => f.name ===
-  // config.kanbanGroupField)` and miss. `filteredAndSorted` already
-  // tolerates the stale state but the UI looks broken until the user
-  // manually clears each one. Devin Review on PR #79 flagged both
-  // halves of this (sort+filter in round 3, viewConfig in round 4)
-  // so a single shared helper now owns the entire cleanup and stays
-  // symmetric with `renameField`'s pointer-rewrite list.
-  const dropStaleViewState = useCallback((nextFields: BaseField[]) => {
-    // Each setter is independent React state, so we read the latest
-    // value via the functional-updater signature and run the same
-    // prune logic the helper centralises. We can't call
-    // `pruneViewStateAgainstFields` once for all three because the
-    // three `prev` values live in separate `useState` slots — but the
-    // helper still lives in `baseEditorHelpers` (and is unit-tested
-    // there) to document the contract, and `renameField` shares the
-    // `VIEW_CONFIG_FIELD_POINTERS` constant so both call sites stay
-    // in lock-step when a new field-name pointer is added to
-    // `BaseViewConfig`.
-    const names = new Set(nextFields.map((f) => f.name));
-    setSortField((prev) => (prev !== null && !names.has(prev) ? null : prev));
-    setFilters((prev) => {
-      let dirty = false;
-      const out: Record<string, string> = {};
-      for (const [k, v] of Object.entries(prev)) {
-        if (names.has(k)) {
-          out[k] = v;
-        } else {
-          dirty = true;
-        }
-      }
-      return dirty ? out : prev;
-    });
-    setViewConfig((prev) => {
-      let dirty = false;
-      const next: BaseViewConfig = { ...prev };
-      for (const k of VIEW_CONFIG_FIELD_POINTERS) {
-        const ref = prev[k];
-        if (ref !== null && !names.has(ref)) {
-          next[k] = null;
-          dirty = true;
-        }
-      }
-      return dirty ? next : prev;
-    });
-  }, []);
 
   // Importing replaces the entire base content. The dialog confirms
   // before doing so for any non-empty existing base, but the action
