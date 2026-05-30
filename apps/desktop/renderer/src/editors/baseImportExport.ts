@@ -756,27 +756,35 @@ export function parseJsonToBase(jsonText: string): BaseContent {
   // Shape 2: bare array of objects.
   if (Array.isArray(parsed)) {
     if (parsed.length === 0) return { fields: [], records: [] };
-    const first = parsed[0];
-    if (typeof first !== "object" || first === null) {
-      throw new Error(
-        "JSON array must contain objects, got: " + typeof first,
-      );
-    }
     // Filter out primitives / null / arrays once, up front, so the
     // field-harvest loop AND the record-build loop can trust every
     // remaining element is a plain object. The field-harvest loop
     // already had this guard (round 1 PR-#79 review), but the
-    // record-build `.map` on line 660 read `row.id` without
-    // re-filtering — a non-object slipped through `[{...valid...},
-    // null]` would crash with `Cannot read properties of null` at
-    // import time. Doing the filter once also means `ensureRecordIds`
-    // (which we delegate to below for the ID-stamping) only ever
-    // sees the same survivors, matching what the artifact loader
-    // (`parseBaseContent`) does.
+    // record-build `.map` below reads `row.id` without re-filtering —
+    // a non-object slipped through `[{...valid...}, null]` would
+    // crash with `Cannot read properties of null` at import time.
+    // Doing the filter once also means `ensureRecordIds` (which we
+    // delegate to below for the ID-stamping in the canonical path)
+    // sees the same survivors here.
+    //
+    // The pre-flight `first` check that used to live here threw on
+    // `[null, {valid: 1}]` purely because the *first* element was
+    // invalid — even though every remaining element was importable.
+    // Devin Review PR #79 round 10 (ANALYSIS_…_0005) flagged this as
+    // an asymmetry vs. the canonical-shape path (which silently
+    // filters non-objects via `ensureRecordIds`). The two paths now
+    // agree: a mixed array imports the valid rows; an array with
+    // *no* valid rows throws so the user is not silently fed back
+    // an empty base with no diagnostic.
     const cleanRows = (parsed as unknown[]).filter(
       (row): row is Record<string, unknown> =>
         typeof row === "object" && row !== null && !Array.isArray(row),
     );
+    if (cleanRows.length === 0) {
+      throw new Error(
+        "JSON array must contain at least one object record (received only primitives / null / arrays)",
+      );
+    }
     const seen = new Set<string>();
     const fields: BaseField[] = [];
     for (const row of cleanRows) {

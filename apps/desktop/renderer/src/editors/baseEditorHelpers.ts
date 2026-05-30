@@ -598,8 +598,22 @@ export function matchesFilter(
     // Review flagged this on PR #79 (ANALYSIS_pr-review-job-b04…-0006).
     const scaleOperand = (n: number): number =>
       fieldType === "percent" ? n / 100 : n;
+    // For `percent` columns *also* accept a trailing `%` on the
+    // user's operand — the displayed value carries one (`50%`), so
+    // it's the most natural thing for a user to type. Without this
+    // the regex below misses `>50%` and `Number("50%") = NaN` flips
+    // the filter into substring mode against `"0.5"`, which silently
+    // returns nothing. Devin Review PR #79 round 10
+    // (ANALYSIS_…_0004) flagged the silent fall-through. Stripping
+    // is gated on `fieldType === "percent"` so `>10%` against a
+    // plain `number` column still falls through to substring
+    // (preserving the explicit type contract).
+    const normalisedFilter =
+      fieldType === "percent" ? f.replace(/%\s*$/, "").trim() : f;
     // Match `>=`, `<=`, `>`, `<`, `=` then a number.
-    const m = f.match(/^\s*(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)\s*$/);
+    const m = normalisedFilter.match(
+      /^\s*(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)\s*$/,
+    );
     if (m) {
       const op = m[1];
       const operand = scaleOperand(Number(m[2]));
@@ -619,7 +633,7 @@ export function matchesFilter(
       }
     }
     // Bare numeric → equals (with percent rescaling).
-    const bare = Number(f);
+    const bare = Number(normalisedFilter);
     if (Number.isFinite(bare)) {
       const n = Number(value);
       return Number.isFinite(n) && numbersApproxEqual(n, scaleOperand(bare));

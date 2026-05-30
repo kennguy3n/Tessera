@@ -596,6 +596,35 @@ describe("matchesFilter — per-type filtering", () => {
   });
 
   // ────────────────────────────────────────────────────────────────
+  // Percent operand may carry a trailing `%` (round 10 — ANALYSIS_…_0004)
+  // ────────────────────────────────────────────────────────────────
+  it("percent accepts a trailing `%` on the user's operand (ANALYSIS-0004 round 10)", () => {
+    // The displayed value carries a `%` (`50%`), so the most natural
+    // thing a user types is `>50%` not `>50`. Before round 10 the
+    // regex rejected the `%`, then `Number("50%") = NaN` silently
+    // dropped the filter into substring mode against `"0.5"`,
+    // returning nothing. Now the percent branch strips a trailing
+    // `%` from the operand before parsing.
+    expect(matchesFilter("percent", 0.5, ">50%")).toBe(false);
+    expect(matchesFilter("percent", 0.6, ">50%")).toBe(true);
+    expect(matchesFilter("percent", 0.5, ">=50%")).toBe(true);
+    expect(matchesFilter("percent", 0.5, "<=50%")).toBe(true);
+    expect(matchesFilter("percent", 0.4, "<50%")).toBe(true);
+    expect(matchesFilter("percent", 0.5, "=50%")).toBe(true);
+    // Bare numeric with `%` also works (e.g. user just types `50%`).
+    expect(matchesFilter("percent", 0.5, "50%")).toBe(true);
+    expect(matchesFilter("percent", 0.5, "60%")).toBe(false);
+    // Suffix is whitespace-tolerant — `50 %` reads as natural English.
+    expect(matchesFilter("percent", 0.5, ">=50 %")).toBe(true);
+    // The `%` strip is gated on `fieldType === "percent"` so other
+    // numeric types still preserve the explicit-type contract: `>50%`
+    // against a plain `number` falls through to substring (no implicit
+    // rescaling).
+    expect(matchesFilter("number", 75, ">50%")).toBe(false);
+    expect(matchesFilter("currency", 75, ">50%")).toBe(false);
+  });
+
+  // ────────────────────────────────────────────────────────────────
   // Float-safe equality (PR #79 round 8 — ANALYSIS_…_0001)
   // ────────────────────────────────────────────────────────────────
   it("percent `=N` matches non-representable fractions like 33.3% (ANALYSIS-0001)", () => {

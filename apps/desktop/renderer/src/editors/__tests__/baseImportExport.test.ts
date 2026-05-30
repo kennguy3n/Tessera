@@ -754,10 +754,22 @@ describe("parseJsonToBase — JSON → BaseContent", () => {
     expect(result).toEqual({ fields: [], records: [] });
   });
 
-  it("throws on a bare array of non-objects", () => {
+  it("throws on a bare array of non-objects (every element invalid)", () => {
     expect(() => parseJsonToBase(JSON.stringify([1, 2, 3]))).toThrowError(
-      /array must contain objects/,
+      /at least one object record/,
     );
+  });
+
+  it("accepts a mixed array where only some elements are objects (round 10 ANALYSIS_…_0005)", () => {
+    // Previously the bare-array path checked `parsed[0]` and threw if
+    // the *first* element wasn't an object — even though every later
+    // element was a perfectly valid record. The canonical-shape path
+    // silently filters non-objects via `ensureRecordIds`, so the two
+    // paths now agree: a mixed array imports the surviving records.
+    const json = JSON.stringify([null, { Name: "Alice" }, 42, { Name: "Bob" }]);
+    const result = parseJsonToBase(json);
+    expect(result.fields).toEqual([{ name: "Name", type: "text" }]);
+    expect(result.records.map((r) => r.Name)).toEqual(["Alice", "Bob"]);
   });
 
   it("throws on a non-object/non-array top-level value", () => {
