@@ -410,7 +410,18 @@ fn typst_escape(s: &str) -> String {
             // the minimal PDF builder for ~every real document. Add
             // the backtick to the escape set so inline code survives
             // the Typst pipeline.
-            '#' | '*' | '_' | '=' | '[' | ']' | '<' | '>' | '$' | '@' | '\\' | '~' | '\'' | '`' => {
+            //
+            // Devin Review PR #70 follow-up BUG_0004: curly braces
+            // (`{` / `}`) were also missing from the escape set. Typst
+            // treats `{...}` as code-mode brackets — an artifact body
+            // containing JSON examples, mustache-style placeholders
+            // (`{{name}}`), set notation (`{1, 2, 3}`), or any prose
+            // that happens to include a brace would cause Typst to
+            // interpret the following text as code and fail compilation,
+            // again silently dropping back to the minimal-PDF fallback.
+            // Add `{` and `}` so curly braces in user content survive
+            // the Typst pipeline.
+            '#' | '*' | '_' | '=' | '[' | ']' | '<' | '>' | '$' | '@' | '\\' | '~' | '\'' | '`' | '{' | '}' => {
                 out.push('\\');
                 out.push(ch);
             }
@@ -518,11 +529,11 @@ mod tests {
     #[test]
     fn typst_escape_handles_backtick_and_sigils() {
         // Every documented Typst sigil should be preceded by `\`.
-        let input = "# heading *bold* _it_ = $math$ [link] <tag> @ref \\backslash ~tilde 'apos `code` rest";
+        let input = "# heading *bold* _it_ = $math$ [link] <tag> @ref \\backslash ~tilde 'apos `code` { } rest";
         let escaped = typst_escape(input);
         for sigil in [
             "\\#", "\\*", "\\_", "\\=", "\\[", "\\]", "\\<", "\\>", "\\$", "\\@", "\\\\", "\\~",
-            "\\'", "\\`",
+            "\\'", "\\`", "\\{", "\\}",
         ] {
             assert!(
                 escaped.contains(sigil),
@@ -532,6 +543,28 @@ mod tests {
         // Plain ASCII / non-sigil text passes through verbatim.
         assert!(escaped.contains("rest"));
         assert!(escaped.contains("heading"));
+    }
+
+    /// Devin Review PR #70 follow-up BUG_0004 regression: curly-brace
+    /// payloads (JSON examples, mustache-style placeholders, set
+    /// notation) used to leak through `typst_escape` unescaped and
+    /// caused Typst to enter code mode, failing compilation and
+    /// silently dropping the entire SVG-embedding PDF path back to
+    /// the minimal-PDF builder. Lock the contract: any string
+    /// containing `{` / `}` MUST emerge with `\{` / `\}` so the
+    /// braces render as literal characters in the PDF body.
+    #[cfg(feature = "typst")]
+    #[test]
+    fn typst_escape_escapes_curly_braces_to_prevent_code_mode() {
+        let json_example = r#"{"name": "Devin", "scores": [1, 2, 3]}"#;
+        let escaped = typst_escape(json_example);
+        // Every `{` and `}` in the input must be backslash-escaped.
+        assert_eq!(json_example.matches('{').count(), escaped.matches("\\{").count());
+        assert_eq!(json_example.matches('}').count(), escaped.matches("\\}").count());
+        // Mustache-style double braces (`{{name}}`) also survive.
+        let template = "Hello {{name}}, welcome.";
+        let template_escaped = typst_escape(template);
+        assert!(template_escaped.contains("\\{\\{name\\}\\}"));
     }
 
     #[test]

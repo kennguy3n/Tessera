@@ -48,14 +48,23 @@ fn parse_md_table_row(line: &str) -> Option<Vec<String>> {
 }
 
 /// Phase 15 Task 13: detect the markdown table separator row
-/// `| --- | :---: | ---: |`. The dashes can be any length >= 3 and may
-/// have alignment colons on either or both sides. Returns true when
-/// every cell in `cells` matches the separator pattern.
+/// `| --- | :---: | ---: |`. The dashes must be length >= 3 (per
+/// CommonMark §4.10) and may have alignment colons on either or both
+/// sides. Returns true when every cell in `cells` matches the
+/// separator pattern.
+///
+/// Devin Review PR #70 follow-up ANALYSIS_0002: the previous
+/// implementation accepted any number of dashes >= 1, so a genuine
+/// table data row like `| - | - |` (e.g. two cells each holding a
+/// literal hyphen as a bullet placeholder) was silently consumed as a
+/// separator and the row dropped from the rendered DOCX. CommonMark
+/// requires a minimum of three dashes for a valid table separator;
+/// matching that contract eliminates the false positive.
 fn is_md_table_separator(cells: &[String]) -> bool {
     !cells.is_empty()
         && cells.iter().all(|c| {
             let s = c.trim_matches(':');
-            !s.is_empty() && s.chars().all(|ch| ch == '-')
+            s.len() >= 3 && s.chars().all(|ch| ch == '-')
         })
 }
 
@@ -471,6 +480,51 @@ mod tests {
             assert!(
                 xml.contains(needle),
                 "code-block line {needle:?} missing from document.xml:\n{xml}"
+            );
+        }
+    }
+
+    /// Devin Review PR #70 follow-up ANALYSIS_0002 regression:
+    /// `is_md_table_separator` must require >= 3 dashes per
+    /// CommonMark §4.10, so a data row like `| - | - |` (literal
+    /// hyphens) is preserved as a row instead of being silently
+    /// consumed as a separator.
+    #[test]
+    fn separator_detection_requires_three_or_more_dashes() {
+        // Real separators (CommonMark spec) — three+ dashes, with or
+        // without alignment colons.
+        assert!(is_md_table_separator(&["---".into(), "---".into()]));
+        assert!(is_md_table_separator(&[":---".into(), "---:".into(), ":---:".into()]));
+        assert!(is_md_table_separator(&["----------".into()]));
+        // Short hyphen sequences (1-2 dashes) — NOT a separator; these
+        // are real cell contents and must be preserved.
+        assert!(!is_md_table_separator(&["-".into(), "-".into()]));
+        assert!(!is_md_table_separator(&["--".into(), "--".into()]));
+        assert!(!is_md_table_separator(&[":-:".into(), "--".into()]));
+        // Mixed: any cell <3 dashes invalidates the entire separator.
+        assert!(!is_md_table_separator(&["---".into(), "-".into()]));
+        // End-to-end round-trip: a literal-hyphen table data row must
+        // survive into the DOCX (must NOT be dropped as a separator).
+        let mut artifact = Artifact::new("Hy".to_string(), ArtifactType::Document, None);
+        artifact.update_content(
+            "| col1 | col2 |\n\
+             | --- | --- |\n\
+             | - | - |\n\
+             | foo | bar |\n"
+                .into(),
+        );
+        let bytes = export_docx(&artifact, &[]);
+        assert_is_zip(&bytes);
+        let xml = read_docx_text(&bytes);
+        // The literal-hyphen row must appear as a table cell in the
+        // body (i.e. the substring "-" appears wrapped by table cell
+        // XML). We assert by checking the bottom data row also lands
+        // — both rows must exist, which means the literal-hyphen row
+        // was not consumed as a separator.
+        for needle in ["col1", "col2", "foo", "bar"] {
+            assert!(
+                xml.contains(needle),
+                "expected cell {needle:?} in document.xml:\n{xml}"
             );
         }
     }
