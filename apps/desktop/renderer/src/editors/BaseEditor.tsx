@@ -2192,9 +2192,17 @@ function filterPlaceholderForType(type: FieldType): string {
     case "currency":
     case "percent":
     case "rating":
-    case "duration":
     case "auto_number":
       return "e.g. >10";
+    case "duration":
+      // Duration is stored as integer minutes but rendered as h:mm,
+      // so the filter accepts both formats — hint at the h:mm form
+      // (which matches the cell display) since that's the
+      // less-discoverable of the two. Devin Review PR #79 round 12
+      // (ANALYSIS_…_0003) called out that the old "e.g. >10" hint
+      // silently invited users to type ">1" against a 1:05 cell and
+      // get ">1 minute" instead of the intended ">1 hour".
+      return "e.g. >1:30";
     case "checkbox":
       return "true / false";
     case "multi_select":

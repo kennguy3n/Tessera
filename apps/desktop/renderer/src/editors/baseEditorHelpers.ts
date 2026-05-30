@@ -417,6 +417,17 @@ export function isComputedFieldType(type: FieldType): boolean {
  *     (so "0" or ">=0" on an empty cell hides the row rather than
  *     reporting a false positive — `Number(null) === 0` would
  *     otherwise lie).
+ *   - **Duration**: stored as integer minutes (`65` = 1h05m) but
+ *     displayed and edited as `h:mm` (`1:05`). The filter accepts
+ *     **both** formats so the user can type either what they see in
+ *     the cell (`>1:30`) or raw minutes (`>90`). An operand
+ *     containing `:` is parsed as `h:mm` (so `>1:30` becomes ">90
+ *     minutes"); a bare integer is treated as minutes. Mixed-format
+ *     comparisons therefore agree — `>1:30` and `>90` filter the
+ *     same rows. Devin Review PR #79 round 12 (ANALYSIS_…_0003)
+ *     flagged the UX mismatch: previously typing `>1` against a cell
+ *     showing `1:05` meant ">1 minute" instead of the expected
+ *     ">1 hour", silently matching every non-empty row.
  *   - **Percent**: stored as a fraction (`0.5` = 50%) but the user
  *     thinks in display percentages. The filter operand is rescaled
  *     so `>10` means ">10%", matching what the placeholder hints at.
@@ -480,6 +491,57 @@ export function numbersApproxEqual(a: number, b: number): boolean {
   if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
   const scale = Math.max(Math.abs(a), Math.abs(b), 1);
   return Math.abs(a - b) <= 1e-9 * scale;
+}
+
+/**
+ * Parse a duration **filter operand** into integer minutes. Accepts
+ * the two formats a user is likely to type into the per-column filter
+ * box for a `duration` field:
+ *
+ *   - **`h:mm`** (e.g. `1:30`) — matches the cell display, so a user
+ *     can copy what they see in the grid (`1:05`) directly into the
+ *     filter (`=1:05`, `>=1:05`, etc.). Minutes are validated to be
+ *     `0 <= mm < 60`; `1:75` is rejected (returns `NaN`) rather than
+ *     silently interpreted as `2:15` — the user has clearly typed
+ *     something that isn't a real clock-style duration.
+ *   - **bare integer minutes** (e.g. `90`) — for power users who
+ *     think in minutes and don't want to do the h:mm arithmetic.
+ *     `90` and `1:30` therefore filter the same rows.
+ *
+ * Returns `NaN` for any other input (empty string, fractional minutes,
+ * negatives with an `h:mm`, anything non-numeric) so the caller can
+ * fall through to the substring branch instead of silently filtering
+ * against `0`. We deliberately do **not** accept a bare decimal like
+ * `1.5` here: duration storage is integer-minutes-only and there's no
+ * visual cue in the cell that would lead a user to type `>1.5`, so
+ * letting it pass would just mask a typo. (Power users who want
+ * half-minute granularity can type `>90` for ">1.5 hours".)
+ *
+ * Kept aligned with `coerceCsvCellToFieldValue`'s duration branch in
+ * `baseImportExport.ts` (same `^(\d+):(\d{1,2})$` shape, same `min < 60`
+ * guard) so the filter and the importer agree on what counts as a
+ * valid clock-style operand.
+ */
+export function parseDurationFilterOperand(raw: string): number {
+  const trimmed = raw.trim();
+  if (trimmed === "") return NaN;
+  if (trimmed.includes(":")) {
+    const m = trimmed.match(/^(\d+):(\d{1,2})$/);
+    if (!m) return NaN;
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (!Number.isFinite(h) || !Number.isFinite(min) || min >= 60) {
+      return NaN;
+    }
+    return h * 60 + min;
+  }
+  // Bare integer minutes (no fractional component — duration storage
+  // is integer-minutes-only, so a fractional operand would never
+  // exact-match anything anyway and is more likely a typo than intent).
+  const m = trimmed.match(/^-?\d+$/);
+  if (!m) return NaN;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : NaN;
 }
 
 export function matchesFilter(
@@ -598,6 +660,19 @@ export function matchesFilter(
     // Review flagged this on PR #79 (ANALYSIS_pr-review-job-b04…-0006).
     const scaleOperand = (n: number): number =>
       fieldType === "percent" ? n / 100 : n;
+    // For `duration` the stored value is integer minutes (`65` = 1h05m)
+    // but the cell renders as `h:mm` (`1:05`). A user looking at
+    // `1:05` and typing `>1` would otherwise get ">1 minute" (every
+    // non-empty row matches), not the obviously-intended ">1 hour".
+    // `parseDurationFilterOperand` accepts either `1:30` (h:mm —
+    // matches the cell display) or `90` (raw minutes — power users)
+    // and returns minutes in both cases, so the comparison below is
+    // always against the stored integer-minutes representation.
+    // Devin Review PR #79 round 12 (ANALYSIS_…_0003).
+    const parseOperand = (s: string): number =>
+      fieldType === "duration"
+        ? parseDurationFilterOperand(s)
+        : Number(s);
     // For `percent` columns *also* accept a trailing `%` on the
     // user's operand — the displayed value carries one (`50%`), so
     // it's the most natural thing for a user to type. Without this
@@ -619,13 +694,24 @@ export function matchesFilter(
     // (which won't match `%` against a fraction render like `"0.5"`).
     // Devin Review PR #79 round 11 (ANALYSIS_…_0004) flagged this.
     if (normalisedFilter === "") return false;
-    // Match `>=`, `<=`, `>`, `<`, `=` then a number.
+    // Match `>=`, `<=`, `>`, `<`, `=` then the operand.  For
+    // `duration` we accept `h:mm` as well as a bare number (e.g.
+    // `>1:30`); for every other numeric type the operand is a plain
+    // decimal (`>10`, `<=5.5`).  Splitting the operator from the
+    // operand and delegating operand parsing to `parseOperand` keeps
+    // the duration / non-duration paths sharing the same comparison
+    // pipeline.
+    const operandPattern =
+      fieldType === "duration"
+        ? "(\\d+:\\d{1,2}|-?\\d+(?:\\.\\d+)?)"
+        : "(-?\\d+(?:\\.\\d+)?)";
     const m = normalisedFilter.match(
-      /^\s*(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)\s*$/,
+      new RegExp(`^\\s*(>=|<=|>|<|=)\\s*${operandPattern}\\s*$`),
     );
     if (m) {
       const op = m[1];
-      const operand = scaleOperand(Number(m[2]));
+      const parsed = parseOperand(m[2]);
+      const operand = scaleOperand(parsed);
       const n = Number(value);
       if (!Number.isFinite(n) || !Number.isFinite(operand)) return false;
       switch (op) {
@@ -641,8 +727,9 @@ export function matchesFilter(
           return numbersApproxEqual(n, operand);
       }
     }
-    // Bare numeric → equals (with percent rescaling).
-    const bare = Number(normalisedFilter);
+    // Bare operand → equals (with type-specific parsing: h:mm for
+    // duration, decimal for everything else, then percent rescaling).
+    const bare = parseOperand(normalisedFilter);
     if (Number.isFinite(bare)) {
       const n = Number(value);
       return Number.isFinite(n) && numbersApproxEqual(n, scaleOperand(bare));

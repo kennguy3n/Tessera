@@ -28,6 +28,7 @@ import {
   isComputedFieldType,
   pruneViewStateAgainstFields,
   VIEW_CONFIG_FIELD_POINTERS,
+  parseDurationFilterOperand,
 } from "../baseEditorHelpers";
 import type { BaseField, BaseRecord } from "../baseEditorTypes";
 import type { BaseViewConfig } from "../baseviews/types";
@@ -671,6 +672,77 @@ describe("matchesFilter — per-type filtering", () => {
     expect(matchesFilter("currency", 0.1 + 0.2, "=0.3")).toBe(true);
     // Clearly distinct values still compare unequal.
     expect(matchesFilter("number", 0.3001, "=0.3")).toBe(false);
+  });
+
+  // ────────────────────────────────────────────────────────────────
+  // Duration filter accepts h:mm (round 12 — ANALYSIS_…_0003)
+  //
+  // Duration values are stored as integer minutes (`65` = 1h05m) but
+  // the cell renders as `h:mm` (`1:05`). Before round 12 the filter
+  // only accepted raw minutes, so a user looking at `1:05` and typing
+  // `>1` got ">1 minute" (every non-empty row matches) instead of the
+  // obviously-intended ">1 hour". The fix accepts BOTH formats — h:mm
+  // (matches the display) AND raw minutes (power users).
+  // ────────────────────────────────────────────────────────────────
+  it("duration accepts both h:mm and raw-minutes operands (ANALYSIS-0003 round 12)", () => {
+    // Stored 65 minutes (= 1:05). Operator + h:mm.
+    expect(matchesFilter("duration", 65, ">1:00")).toBe(true);
+    expect(matchesFilter("duration", 65, ">=1:05")).toBe(true);
+    expect(matchesFilter("duration", 65, "<=1:05")).toBe(true);
+    expect(matchesFilter("duration", 65, "<1:30")).toBe(true);
+    expect(matchesFilter("duration", 65, "=1:05")).toBe(true);
+    expect(matchesFilter("duration", 65, ">1:30")).toBe(false);
+    // Bare h:mm → equality.
+    expect(matchesFilter("duration", 65, "1:05")).toBe(true);
+    expect(matchesFilter("duration", 65, "1:06")).toBe(false);
+    // Raw minutes still work for backward compatibility / power users.
+    // `>1` against a 1:05 cell now means ">1 minute" still (raw
+    // minutes treat the bare integer as minutes — explicit choice),
+    // but `>60` and `>1:00` both mean ">1 hour" and agree.
+    expect(matchesFilter("duration", 65, ">60")).toBe(true);
+    expect(matchesFilter("duration", 65, ">1:00")).toBe(true);
+    expect(matchesFilter("duration", 65, "<70")).toBe(true);
+    expect(matchesFilter("duration", 65, "=65")).toBe(true);
+    expect(matchesFilter("duration", 65, "65")).toBe(true);
+    // A user typing the cell display verbatim filters as expected
+    // (the original UX failure: `>1:30` previously fell into substring
+    // mode against `"90"` and silently matched nothing).
+    expect(matchesFilter("duration", 90, ">1:30")).toBe(false);
+    expect(matchesFilter("duration", 91, ">1:30")).toBe(true);
+    expect(matchesFilter("duration", 120, ">=2:00")).toBe(true);
+    // Multi-hour clock format: minutes >= 60 in the second segment is
+    // rejected as malformed (`1:60` is not a real h:mm). Falls back
+    // to substring on `String(value) = "120"` which doesn't include
+    // `1:60`, so no match.
+    expect(matchesFilter("duration", 120, "=1:60")).toBe(false);
+    // Empty cell is still hidden by any numeric filter (same null /
+    // empty guard as the other numeric types).
+    expect(matchesFilter("duration", null, ">0")).toBe(false);
+    expect(matchesFilter("duration", null, ">0:00")).toBe(false);
+  });
+
+  it("parseDurationFilterOperand round-trips h:mm and raw minutes", () => {
+    // h:mm → minutes.
+    expect(parseDurationFilterOperand("1:30")).toBe(90);
+    expect(parseDurationFilterOperand("0:45")).toBe(45);
+    expect(parseDurationFilterOperand("10:00")).toBe(600);
+    expect(parseDurationFilterOperand("  1:05  ")).toBe(65);
+    // Raw minutes pass through unchanged.
+    expect(parseDurationFilterOperand("90")).toBe(90);
+    expect(parseDurationFilterOperand("0")).toBe(0);
+    expect(parseDurationFilterOperand("-15")).toBe(-15);
+    // Invalid h:mm (minutes >= 60) → NaN so the caller falls through
+    // to substring matching instead of silently treating `1:60` as
+    // `2:00`.
+    expect(Number.isNaN(parseDurationFilterOperand("1:60"))).toBe(true);
+    expect(Number.isNaN(parseDurationFilterOperand("1:99"))).toBe(true);
+    // Malformed / non-numeric → NaN.
+    expect(Number.isNaN(parseDurationFilterOperand(""))).toBe(true);
+    expect(Number.isNaN(parseDurationFilterOperand("abc"))).toBe(true);
+    expect(Number.isNaN(parseDurationFilterOperand("1.5"))).toBe(true); // fractional minutes not accepted
+    expect(Number.isNaN(parseDurationFilterOperand("1:"))).toBe(true);
+    expect(Number.isNaN(parseDurationFilterOperand(":30"))).toBe(true);
+    expect(Number.isNaN(parseDurationFilterOperand("1:2:3"))).toBe(true);
   });
 });
 
