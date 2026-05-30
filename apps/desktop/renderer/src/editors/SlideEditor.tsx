@@ -1,4 +1,12 @@
-import { useState, useCallback, useRef, useEffect, useId } from "react";
+import {
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+  useId,
+  useMemo,
+  type ChangeEvent,
+} from "react";
 import {
   renderMermaid,
   MermaidEnvironmentError,
@@ -14,13 +22,26 @@ import {
   extractFrontmatterTheme,
   parseSlideContent,
   setFrontmatterTheme,
+  buildSlideFromLayout,
+  duplicateSlideAt,
+  moveBlock,
+  removeBlock as removeBlockHelper,
+  appendBlock,
+  replaceBlock,
+  slideWordCount,
+  deckWordCount,
+  findInSlides,
+  fileToDataUrl,
   type ParsedSlideContent,
+  type SlideFindMatch,
 } from "./slideEditorHelpers";
 import type {
   MarpModeState,
   Slide,
+  SlideBlock,
   SlideBlockType,
   SlideContent,
+  SlideLayout,
 } from "./slideEditorTypes";
 
 export type {
@@ -71,6 +92,29 @@ function SpeakerNotesField({
   );
 }
 
+/**
+ * Human-readable label for each layout choice in the Add Slide menu.
+ * Kept here (rather than in `slideEditorTypes.ts`) so the helpers
+ * module stays display-string-free — those types are consumed by
+ * non-UI callers (e.g. the future export pipeline) and shouldn't ship
+ * a hard dependency on English labels.
+ */
+const LAYOUT_LABELS: Record<SlideLayout, string> = {
+  blank: "Blank",
+  title: "Title only",
+  titleContent: "Title + content",
+  twoColumn: "Two columns",
+  imageCaption: "Image + caption",
+};
+
+const LAYOUT_ORDER: SlideLayout[] = [
+  "blank",
+  "title",
+  "titleContent",
+  "twoColumn",
+  "imageCaption",
+];
+
 export default function SlideEditor({
   content,
   onSave,
@@ -94,6 +138,11 @@ export default function SlideEditor({
   const [marpTheme, setMarpTheme] = useState<MarpRenderOptions["theme"]>(
     () => initial.marpTheme ?? "default",
   );
+  const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
+  const [findPanelOpen, setFindPanelOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
+  const [findActiveIndex, setFindActiveIndex] = useState(0);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef(content);
 
@@ -169,17 +218,42 @@ export default function SlideEditor({
     [debouncedSave],
   );
 
-  const addSlide = useCallback(() => {
-    setSlides((prev) => {
-      const updated = [
-        ...prev,
-        { title: "New Slide", blocks: [{ type: "text" as const, content: "" }], notes: "" },
-      ];
-      setActiveIndex(updated.length - 1);
-      debouncedSave(updated);
-      return updated;
-    });
-  }, [debouncedSave]);
+  /**
+   * Add a new slide using the given layout. The new slide is inserted
+   * at the end of the deck and becomes the active slide; this matches
+   * the prior single-button "+ Add Slide" behaviour for users who don't
+   * care about layout, while letting power-users pre-populate the
+   * block skeleton in one click.
+   */
+  const addSlide = useCallback(
+    (layout: SlideLayout) => {
+      setSlides((prev) => {
+        const updated = [...prev, buildSlideFromLayout(layout)];
+        setActiveIndex(updated.length - 1);
+        debouncedSave(updated);
+        return updated;
+      });
+      setLayoutMenuOpen(false);
+    },
+    [debouncedSave],
+  );
+
+  const duplicateSlide = useCallback(
+    (index: number) => {
+      setSlides((prev) => {
+        const { slides: next, insertedAt } = duplicateSlideAt(prev, index);
+        // `duplicateSlideAt` returns the input array unchanged + `-1` on an
+        // out-of-range index. Bail out of the setState so React doesn't
+        // commit an identical reference (which would still trigger
+        // child reconciliation if we let the new array escape).
+        if (insertedAt < 0) return prev;
+        setActiveIndex(insertedAt);
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
 
   const removeSlide = useCallback(
     (index: number) => {
@@ -210,34 +284,249 @@ export default function SlideEditor({
     [slides.length, debouncedSave],
   );
 
+  // ───── Block-level mutators (delegate to helpers) ─────────────────
+  //
+  // Each one is a one-liner over the corresponding helper from
+  // `slideEditorHelpers.ts`. The helpers return reference-stable
+  // results on no-op inputs (out-of-range indices, identical from/to,
+  // …) so we don't need to special-case those here — React's setState
+  // does the identity check itself.
+
+  const onBlockMove = useCallback(
+    (slideIndex: number, from: number, to: number) => {
+      setSlides((prev) => {
+        const slide = prev[slideIndex];
+        if (!slide) return prev;
+        const updatedSlide = moveBlock(slide, from, to);
+        if (updatedSlide === slide) return prev;
+        const next = [...prev];
+        next[slideIndex] = updatedSlide;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  const onBlockRemove = useCallback(
+    (slideIndex: number, blockIndex: number) => {
+      setSlides((prev) => {
+        const slide = prev[slideIndex];
+        if (!slide) return prev;
+        const updatedSlide = removeBlockHelper(slide, blockIndex);
+        if (updatedSlide === slide) return prev;
+        const next = [...prev];
+        next[slideIndex] = updatedSlide;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  const onBlockAppend = useCallback(
+    (slideIndex: number, block: SlideBlock) => {
+      setSlides((prev) => {
+        const slide = prev[slideIndex];
+        if (!slide) return prev;
+        const updatedSlide = appendBlock(slide, block);
+        const next = [...prev];
+        next[slideIndex] = updatedSlide;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  const onBlockReplace = useCallback(
+    (slideIndex: number, blockIndex: number, block: SlideBlock) => {
+      setSlides((prev) => {
+        const slide = prev[slideIndex];
+        if (!slide) return prev;
+        const updatedSlide = replaceBlock(slide, blockIndex, block);
+        if (updatedSlide === slide) return prev;
+        const next = [...prev];
+        next[slideIndex] = updatedSlide;
+        debouncedSave(next);
+        return next;
+      });
+    },
+    [debouncedSave],
+  );
+
+  // ───── Find panel ─────────────────────────────────────────────────
+  //
+  // Recompute matches every time the query / case-sensitivity / slide
+  // data changes. The match list is memoised so re-renders that don't
+  // touch any of the four inputs (e.g. block-content edits on a
+  // different slide than the active match) don't trigger a re-walk.
+
+  const findMatches = useMemo<SlideFindMatch[]>(
+    () => findInSlides(slides, findQuery, { caseSensitive: findCaseSensitive }),
+    [slides, findQuery, findCaseSensitive],
+  );
+
+  // Clamp the active match index against the live match count so the
+  // status line never shows "5 of 3". We do this inline (rather than in
+  // an effect) so the render synchronously sees the clamped value —
+  // following the same pattern PR 6 used for the slash-menu highlight.
+  const effectiveFindIndex =
+    findMatches.length === 0
+      ? 0
+      : Math.max(0, Math.min(findActiveIndex, findMatches.length - 1));
+
+  // Sync the React state when the inline clamp produced a different
+  // value. We only write when the values actually differ to avoid a
+  // setState loop.
+  useEffect(() => {
+    if (effectiveFindIndex !== findActiveIndex) {
+      setFindActiveIndex(effectiveFindIndex);
+    }
+  }, [effectiveFindIndex, findActiveIndex]);
+
+  // Jump the active-slide pointer to whichever slide the active match
+  // lives on so the user sees the matched content immediately.
+  useEffect(() => {
+    if (findMatches.length === 0) return;
+    const match = findMatches[effectiveFindIndex];
+    if (match && match.slideIndex !== activeIndex) {
+      setActiveIndex(match.slideIndex);
+    }
+    // We deliberately omit `activeIndex` from the deps so we don't
+    // re-jump when the user manually clicks a different thumbnail
+    // while the find panel is open — only an explicit Next / Prev
+    // (which changes `effectiveFindIndex`) should reseat the view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveFindIndex, findMatches]);
+
+  const navigateFind = useCallback(
+    (direction: "next" | "previous") => {
+      if (findMatches.length === 0) return;
+      setFindActiveIndex((prev) => {
+        const len = findMatches.length;
+        if (direction === "next") return (prev + 1) % len;
+        return (prev - 1 + len) % len;
+      });
+    },
+    [findMatches.length],
+  );
+
+  // ───── Image-block upload ─────────────────────────────────────────
+  //
+  // `fileToDataUrl` returns a promise; on resolution we replace the
+  // block in-place with the data URL. On rejection (the FileReader
+  // failing — extremely rare for browser uploads but possible for a
+  // race-condition during a tab close) we log to the console rather
+  // than surfacing an error to the user, because the block is still
+  // in a valid empty state.
+
+  const onImageUpload = useCallback(
+    async (
+      slideIndex: number,
+      blockIndex: number,
+      file: File,
+    ) => {
+      try {
+        const dataUrl = await fileToDataUrl(file);
+        setSlides((prev) => {
+          const slide = prev[slideIndex];
+          if (!slide) return prev;
+          const block = slide.blocks[blockIndex];
+          if (!block || block.type !== "image") return prev;
+          const updatedSlide = replaceBlock(slide, blockIndex, {
+            type: "image",
+            content: dataUrl,
+            alt: block.alt ?? "",
+          });
+          if (updatedSlide === slide) return prev;
+          const next = [...prev];
+          next[slideIndex] = updatedSlide;
+          debouncedSave(next);
+          return next;
+        });
+      } catch (err) {
+        // Surface the failure in the dev console; the block stays in
+        // its previous (probably empty) state so the user can retry.
+        console.warn("Failed to read image file:", err);
+      }
+    },
+    [debouncedSave],
+  );
+
   const activeSlide = slides[activeIndex];
+  const activeWordCount = activeSlide ? slideWordCount(activeSlide) : 0;
+  const totalWordCount = useMemo(() => deckWordCount(slides), [slides]);
 
   return (
     <div className="slide-editor">
       <div className="slide-editor-sidebar">
         <div className="slide-thumbnails">
           {slides.map((slide, i) => (
-            <button
-              key={i}
-              type="button"
-              className={`slide-thumb ${i === activeIndex ? "active" : ""}`}
-              // `aria-current="true"` is the WAI-ARIA standard for a
-              // "the currently selected item in a non-page set"
-              // signal. Pairs with the visual `active` class so
-              // assistive tech announces the active slide alongside
-              // sighted users' visual highlight.
-              aria-current={i === activeIndex ? "true" : undefined}
-              onClick={() => setActiveIndex(i)}
-            >
-              <span className="slide-thumb-number">{i + 1}</span>
-              <span className="slide-thumb-title">{slide.title || "Untitled"}</span>
-            </button>
+            <div key={i} className="slide-thumb-row">
+              <button
+                type="button"
+                className={`slide-thumb ${i === activeIndex ? "active" : ""}`}
+                // `aria-current="true"` is the WAI-ARIA standard for a
+                // "the currently selected item in a non-page set"
+                // signal. Pairs with the visual `active` class so
+                // assistive tech announces the active slide alongside
+                // sighted users' visual highlight.
+                aria-current={i === activeIndex ? "true" : undefined}
+                onClick={() => setActiveIndex(i)}
+              >
+                <span className="slide-thumb-number">{i + 1}</span>
+                <span className="slide-thumb-title">{slide.title || "Untitled"}</span>
+              </button>
+              <div className="slide-thumb-actions">
+                <button
+                  type="button"
+                  className="btn-xs"
+                  onClick={() => duplicateSlide(i)}
+                  aria-label={`Duplicate slide ${i + 1}`}
+                  title="Duplicate slide"
+                >
+                  ⎘
+                </button>
+                <button
+                  type="button"
+                  className="btn-xs danger"
+                  onClick={() => removeSlide(i)}
+                  disabled={slides.length <= 1}
+                  aria-label={`Delete slide ${i + 1}`}
+                  title="Delete slide"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
           ))}
         </div>
         <div className="slide-sidebar-actions">
-          <button type="button" className="btn-sm" onClick={addSlide}>
+          <button
+            type="button"
+            className="btn-sm"
+            onClick={() => setLayoutMenuOpen((open) => !open)}
+            aria-haspopup="menu"
+            aria-expanded={layoutMenuOpen}
+          >
             + Add Slide
           </button>
+          {layoutMenuOpen && (
+            <div className="slide-layout-menu" role="menu">
+              {LAYOUT_ORDER.map((layout) => (
+                <button
+                  key={layout}
+                  type="button"
+                  role="menuitem"
+                  className="slide-layout-menu-item"
+                  onClick={() => addSlide(layout)}
+                >
+                  {LAYOUT_LABELS[layout]}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -262,6 +551,12 @@ export default function SlideEditor({
           >
             Next
           </button>
+          <span
+            className="slide-word-count"
+            title="Words on this slide / total in deck"
+          >
+            Words: {activeWordCount} / {totalWordCount}
+          </span>
           <button
             type="button"
             className="btn-sm danger"
@@ -276,6 +571,15 @@ export default function SlideEditor({
             onClick={() => setShowNotes(!showNotes)}
           >
             Notes
+          </button>
+          <button
+            type="button"
+            className={`btn-sm ${findPanelOpen ? "active" : ""}`}
+            onClick={() => setFindPanelOpen((open) => !open)}
+            aria-label="Find in slides"
+            title="Find in slides (Cmd/Ctrl+F)"
+          >
+            Find
           </button>
           <button
             type="button"
@@ -296,6 +600,72 @@ export default function SlideEditor({
             Marp Mode
           </button>
         </div>
+
+        {findPanelOpen && (
+          <div className="slide-find-panel" role="search">
+            <input
+              type="text"
+              className="slide-find-input"
+              value={findQuery}
+              onChange={(e) => {
+                setFindQuery(e.target.value);
+                // Reset to the first match when the query changes so
+                // the user lands on the first hit rather than at a
+                // stale index that may now overshoot the new match
+                // count (the clamp would correct it, but starting from
+                // 0 matches typical find-bar UX).
+                setFindActiveIndex(0);
+              }}
+              placeholder="Find in slides..."
+              aria-label="Find query"
+              autoFocus
+            />
+            <label className="slide-find-toggle">
+              <input
+                type="checkbox"
+                checked={findCaseSensitive}
+                onChange={(e) => setFindCaseSensitive(e.target.checked)}
+              />
+              Case
+            </label>
+            <span className="slide-find-status">
+              {findMatches.length === 0
+                ? findQuery
+                  ? "No matches"
+                  : "Type to search"
+                : `${effectiveFindIndex + 1} of ${findMatches.length}`}
+            </span>
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={() => navigateFind("previous")}
+              disabled={findMatches.length === 0}
+              aria-label="Previous match"
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={() => navigateFind("next")}
+              disabled={findMatches.length === 0}
+              aria-label="Next match"
+            >
+              ›
+            </button>
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={() => {
+                setFindPanelOpen(false);
+                setFindQuery("");
+              }}
+              aria-label="Close find panel"
+            >
+              ×
+            </button>
+          </div>
+        )}
 
         {marpMode && (
           <div className="marp-mode">
@@ -366,60 +736,50 @@ export default function SlideEditor({
             />
             <div className="slide-blocks">
               {activeSlide.blocks.map((block, bi) => (
-                <div key={bi} className="slide-block">
-                  <select
-                    value={block.type}
-                    onChange={(e) => {
-                      const newBlocks = [...activeSlide.blocks];
-                      const nextType = e.target.value as SlideBlockType;
-                      newBlocks[bi] = {
-                        ...newBlocks[bi],
-                        type: nextType,
-                        content:
-                          nextType === "diagram" && !newBlocks[bi].content
-                            ? DEFAULT_DIAGRAM_DSL
-                            : newBlocks[bi].content,
-                      };
-                      updateSlide(activeIndex, { blocks: newBlocks });
-                    }}
-                  >
-                    <option value="text">Text</option>
-                    <option value="bullets">Bullets</option>
-                    <option value="diagram">Diagram</option>
-                  </select>
-                  <textarea
-                    className="slide-block-content"
-                    value={block.content}
-                    onChange={(e) => {
-                      const newBlocks = [...activeSlide.blocks];
-                      newBlocks[bi] = { ...newBlocks[bi], content: e.target.value };
-                      updateSlide(activeIndex, { blocks: newBlocks });
-                    }}
-                    placeholder={
-                      block.type === "bullets"
-                        ? "One bullet point per line..."
-                        : block.type === "diagram"
-                          ? "Mermaid diagram DSL..."
-                          : "Enter text content..."
-                    }
-                    rows={block.type === "diagram" ? 8 : 4}
-                    spellCheck={block.type !== "diagram"}
-                  />
-                  {block.type === "diagram" && (
-                    <MermaidPreview dsl={block.content} />
-                  )}
-                </div>
+                <SlideBlockRow
+                  key={bi}
+                  block={block}
+                  blockIndex={bi}
+                  totalBlocks={activeSlide.blocks.length}
+                  onTypeChange={(nextType) => {
+                    onBlockReplace(activeIndex, bi, {
+                      ...block,
+                      type: nextType,
+                      content:
+                        nextType === "diagram" && !block.content
+                          ? DEFAULT_DIAGRAM_DSL
+                          : nextType === "image"
+                            ? ""
+                            : block.content,
+                      alt: nextType === "image" ? (block.alt ?? "") : undefined,
+                    });
+                  }}
+                  onContentChange={(nextContent) => {
+                    onBlockReplace(activeIndex, bi, {
+                      ...block,
+                      content: nextContent,
+                    });
+                  }}
+                  onAltChange={(nextAlt) => {
+                    onBlockReplace(activeIndex, bi, {
+                      ...block,
+                      alt: nextAlt,
+                    });
+                  }}
+                  onImageFile={(file) => {
+                    onImageUpload(activeIndex, bi, file);
+                  }}
+                  onMoveUp={() => onBlockMove(activeIndex, bi, bi - 1)}
+                  onMoveDown={() => onBlockMove(activeIndex, bi, bi + 1)}
+                  onRemove={() => onBlockRemove(activeIndex, bi)}
+                />
               ))}
               <button
                 type="button"
                 className="btn-sm"
-                onClick={() => {
-                  const newBlocks = [
-                    ...activeSlide.blocks,
-                    { type: "text" as const, content: "" },
-                  ];
-                  updateSlide(activeIndex, { blocks: newBlocks });
-                }}
+                onClick={() =>
+                  onBlockAppend(activeIndex, { type: "text", content: "" })
+                }
               >
                 + Add Block
               </button>
@@ -440,6 +800,146 @@ export default function SlideEditor({
 
 const DEFAULT_DIAGRAM_DSL = `flowchart LR
   Source --> Process --> Output`;
+
+interface SlideBlockRowProps {
+  block: SlideBlock;
+  blockIndex: number;
+  totalBlocks: number;
+  onTypeChange: (next: SlideBlockType) => void;
+  onContentChange: (next: string) => void;
+  onAltChange: (next: string) => void;
+  onImageFile: (file: File) => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onRemove: () => void;
+}
+
+/**
+ * Per-block editor row. Pulled out into a separate component so the
+ * per-block hooks (`useId` for the alt-text label) don't have to live
+ * inside the `.map(...)` body — calling hooks inside a `.map` callback
+ * works in practice but is fragile (the React docs warn against it
+ * because reordering the map breaks the hook call order). Owning a
+ * component per block lets us also memoise file-input id generation
+ * cheaply.
+ */
+function SlideBlockRow({
+  block,
+  blockIndex,
+  totalBlocks,
+  onTypeChange,
+  onContentChange,
+  onAltChange,
+  onImageFile,
+  onMoveUp,
+  onMoveDown,
+  onRemove,
+}: SlideBlockRowProps) {
+  const altId = useId();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) onImageFile(file);
+    // Reset the input so picking the same file twice still fires
+    // `onChange` — browsers suppress the change event when the
+    // selection matches the previous one.
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  return (
+    <div className="slide-block">
+      <div className="slide-block-toolbar">
+        <select
+          value={block.type}
+          onChange={(e) => onTypeChange(e.target.value as SlideBlockType)}
+          aria-label={`Block ${blockIndex + 1} type`}
+        >
+          <option value="text">Text</option>
+          <option value="bullets">Bullets</option>
+          <option value="diagram">Diagram</option>
+          <option value="image">Image</option>
+        </select>
+        <button
+          type="button"
+          className="btn-xs"
+          onClick={onMoveUp}
+          disabled={blockIndex === 0}
+          aria-label={`Move block ${blockIndex + 1} up`}
+          title="Move block up"
+        >
+          ↑
+        </button>
+        <button
+          type="button"
+          className="btn-xs"
+          onClick={onMoveDown}
+          disabled={blockIndex === totalBlocks - 1}
+          aria-label={`Move block ${blockIndex + 1} down`}
+          title="Move block down"
+        >
+          ↓
+        </button>
+        <button
+          type="button"
+          className="btn-xs danger"
+          onClick={onRemove}
+          aria-label={`Remove block ${blockIndex + 1}`}
+          title="Remove block"
+        >
+          ×
+        </button>
+      </div>
+
+      {block.type === "image" ? (
+        <div className="slide-block-image">
+          <input
+            type="file"
+            ref={fileInputRef}
+            accept="image/*"
+            onChange={handleFileChange}
+          />
+          {block.content && (
+            <img
+              src={block.content}
+              alt={block.alt ?? ""}
+              className="slide-block-image-preview"
+            />
+          )}
+          <label htmlFor={altId} className="slide-block-alt-label">
+            Alt text
+          </label>
+          <input
+            id={altId}
+            type="text"
+            className="slide-block-alt-input"
+            value={block.alt ?? ""}
+            onChange={(e) => onAltChange(e.target.value)}
+            placeholder="Describe the image for screen readers..."
+          />
+        </div>
+      ) : (
+        <>
+          <textarea
+            className="slide-block-content"
+            value={block.content}
+            onChange={(e) => onContentChange(e.target.value)}
+            placeholder={
+              block.type === "bullets"
+                ? "One bullet point per line..."
+                : block.type === "diagram"
+                  ? "Mermaid diagram DSL..."
+                  : "Enter text content..."
+            }
+            rows={block.type === "diagram" ? 8 : 4}
+            spellCheck={block.type !== "diagram"}
+          />
+          {block.type === "diagram" && <MermaidPreview dsl={block.content} />}
+        </>
+      )}
+    </div>
+  );
+}
 
 function MermaidPreview({ dsl }: { dsl: string }) {
   const [svg, setSvg] = useState<string>("");
@@ -542,4 +1042,3 @@ function MarpPreview({ markdown, theme }: { markdown: string; theme: string }) {
   }
   return <div ref={hostRef} className="marp-preview" />;
 }
-

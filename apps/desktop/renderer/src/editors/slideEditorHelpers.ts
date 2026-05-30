@@ -13,7 +13,12 @@
  */
 import type { MarpRenderOptions } from "../services/marpRenderer";
 import { yamlSingleQuote } from "../utils/yaml";
-import type { Slide, SlideContent } from "./slideEditorTypes";
+import type {
+  Slide,
+  SlideBlock,
+  SlideContent,
+  SlideLayout,
+} from "./slideEditorTypes";
 
 export interface ParsedSlideContent {
   slides: Slide[];
@@ -263,4 +268,323 @@ export function applyMarpToShadow(
     shadow.appendChild(deck);
   }
   deck.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 18 PR 7 — UX helpers (block & slide mutations, layouts, find)
+//
+// Every helper below is PURE: takes a `Slide[]` (or `Slide`) plus
+// arguments and returns a fresh structure. Callers feed the result
+// into `setSlides(...)` — none of these helpers mutates its inputs.
+// Keeping the mutation logic out of the component file lets the unit
+// tests exercise the algorithms without booting a TipTap stack and
+// keeps the `SlideEditor.tsx` callback bodies one-liners.
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Return a freshly-constructed `Slide` populated with the block skeleton
+ * for the given layout. The layout name only governs the initial block
+ * composition — the user may add, remove, reorder, or retype any block
+ * after insertion, and the layout itself is NOT persisted on the
+ * `Slide` (see the JSDoc on `SlideLayout` for why).
+ *
+ * Pure: returns a new object on every call so callers can splice it
+ * into `slides` without sharing references with a future slide. Notes
+ * default to empty — the layout doesn't pre-fill them because that
+ * would clutter the speaker-notes panel with sample text on every
+ * insertion.
+ */
+export function buildSlideFromLayout(layout: SlideLayout): Slide {
+  switch (layout) {
+    case "blank":
+      return { title: "", blocks: [{ type: "text", content: "" }], notes: "" };
+    case "title":
+      return {
+        title: "New Slide",
+        blocks: [],
+        notes: "",
+      };
+    case "titleContent":
+      return {
+        title: "New Slide",
+        blocks: [{ type: "text", content: "" }],
+        notes: "",
+      };
+    case "twoColumn":
+      return {
+        title: "New Slide",
+        blocks: [
+          { type: "text", content: "" },
+          { type: "text", content: "" },
+        ],
+        notes: "",
+      };
+    case "imageCaption":
+      return {
+        title: "New Slide",
+        blocks: [
+          { type: "image", content: "", alt: "" },
+          { type: "text", content: "" },
+        ],
+        notes: "",
+      };
+  }
+}
+
+/**
+ * Insert a duplicate of the slide at `index` immediately after it.
+ * The duplicate is a deep clone — every block object is recreated so a
+ * subsequent edit to either copy doesn't reach across via a shared
+ * reference. Returns the new slide array plus the index of the inserted
+ * copy so the caller can move focus / set `activeIndex` correctly.
+ *
+ * If `index` is out of range, returns the input array unchanged plus
+ * `-1` (no-op). Callers may rely on referential equality of the array
+ * to detect this case without a separate boolean.
+ */
+export function duplicateSlideAt(
+  slides: Slide[],
+  index: number,
+): { slides: Slide[]; insertedAt: number } {
+  if (index < 0 || index >= slides.length) {
+    return { slides, insertedAt: -1 };
+  }
+  const original = slides[index];
+  const copy: Slide = {
+    title: original.title,
+    notes: original.notes,
+    blocks: original.blocks.map((b) => ({ ...b })),
+  };
+  const next = [
+    ...slides.slice(0, index + 1),
+    copy,
+    ...slides.slice(index + 1),
+  ];
+  return { slides: next, insertedAt: index + 1 };
+}
+
+/**
+ * Move the block at `from` to position `to` within the active slide's
+ * block list. Returns a new `Slide` (the input is not mutated). If
+ * either index is out of range, returns the slide unchanged so the
+ * caller's setState reuses the previous reference (preventing a
+ * redundant re-render).
+ */
+export function moveBlock(slide: Slide, from: number, to: number): Slide {
+  if (
+    from < 0 ||
+    from >= slide.blocks.length ||
+    to < 0 ||
+    to >= slide.blocks.length ||
+    from === to
+  ) {
+    return slide;
+  }
+  const next = [...slide.blocks];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return { ...slide, blocks: next };
+}
+
+/**
+ * Remove the block at `index`. Returns a new `Slide`. Out-of-range
+ * removes are a no-op (reference-preserving — same rationale as
+ * `moveBlock`). Removing the last block is allowed; the slide may
+ * legitimately end up with zero blocks (the "title-only" layout).
+ */
+export function removeBlock(slide: Slide, index: number): Slide {
+  if (index < 0 || index >= slide.blocks.length) return slide;
+  return {
+    ...slide,
+    blocks: slide.blocks.filter((_, i) => i !== index),
+  };
+}
+
+/**
+ * Append a new block to a slide. Returns a new `Slide`. Used by the
+ * "+ Add Block" button and by the layout-aware paste path. The new
+ * block's `content` defaults to empty so the user immediately sees an
+ * input to type into; for diagram blocks the caller is expected to
+ * seed the default Mermaid DSL itself (the helper has no access to
+ * that DSL string).
+ */
+export function appendBlock(slide: Slide, block: SlideBlock): Slide {
+  return { ...slide, blocks: [...slide.blocks, block] };
+}
+
+/**
+ * Replace the block at `index` with `block`. Returns a new `Slide`.
+ * Out-of-range indices are no-ops. Used by the per-block type select
+ * and the per-block content textarea so the existing `updateSlide`
+ * call site can stay a one-liner.
+ */
+export function replaceBlock(
+  slide: Slide,
+  index: number,
+  block: SlideBlock,
+): Slide {
+  if (index < 0 || index >= slide.blocks.length) return slide;
+  const next = [...slide.blocks];
+  next[index] = block;
+  return { ...slide, blocks: next };
+}
+
+/**
+ * Total word count for a single slide — counts title, every block's
+ * content, and notes. Used by the toolbar word counter. The split
+ * regex (`/\s+/`) collapses runs of whitespace so `"foo  bar"` counts
+ * as 2, not 3 (the empty string between the two spaces would
+ * otherwise pad the count).
+ *
+ * Image blocks contribute their `alt` text (if any) plus 0 for the
+ * data URL — the URL itself isn't human-readable content. Diagram
+ * blocks contribute their DSL token count, which approximates the
+ * "information density" of the diagram.
+ */
+export function slideWordCount(slide: Slide): number {
+  const fragments: string[] = [slide.title, slide.notes];
+  for (const block of slide.blocks) {
+    if (block.type === "image") {
+      fragments.push(block.alt ?? "");
+    } else {
+      fragments.push(block.content);
+    }
+  }
+  return fragments
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .reduce((acc, s) => acc + s.split(/\s+/).length, 0);
+}
+
+/**
+ * Total word count across every slide in the deck. Used in the
+ * SlideEditor toolbar header alongside the slide counter so the user
+ * has a quick "how much content is in this deck" signal.
+ */
+export function deckWordCount(slides: Slide[]): number {
+  return slides.reduce((acc, slide) => acc + slideWordCount(slide), 0);
+}
+
+/**
+ * A single match returned by `findInSlides`. The `location` field
+ * identifies WHERE in the slide the match lives so the Find panel can
+ * (eventually) jump the user to the specific block; for now the panel
+ * only jumps to the slide index, but encoding the location lets us
+ * add per-block jumping later without changing the data shape.
+ */
+export interface SlideFindMatch {
+  slideIndex: number;
+  /** Which field on the slide contained the match. */
+  location: "title" | "notes" | { kind: "block"; blockIndex: number };
+  /** Lowercased substring index of the match within the source field. */
+  offset: number;
+  /** Length of the matched substring (== query length for case-sensitive). */
+  length: number;
+}
+
+export interface SlideFindOptions {
+  caseSensitive?: boolean;
+}
+
+/**
+ * Find every occurrence of `query` across the deck. Returns matches in
+ * deck order: by `slideIndex`, then within a slide by field order
+ * (title → blocks in array order → notes), then by `offset` within a
+ * field.
+ *
+ * An empty query yields no matches (returning every position would be
+ * meaningless and would blow up the result array). Case-insensitivity
+ * is implemented by lowercasing both sides before `indexOf` —
+ * Unicode-sensitive folding is left for a future PR (every Latin
+ * locale Tessera ships templates for is correctly handled by the
+ * basic ASCII lowercase pass).
+ */
+export function findInSlides(
+  slides: Slide[],
+  query: string,
+  options: SlideFindOptions = {},
+): SlideFindMatch[] {
+  if (!query) return [];
+  const caseSensitive = options.caseSensitive === true;
+  const needle = caseSensitive ? query : query.toLowerCase();
+  const results: SlideFindMatch[] = [];
+
+  function findAllOccurrences(haystackRaw: string): number[] {
+    if (!haystackRaw) return [];
+    const haystack = caseSensitive ? haystackRaw : haystackRaw.toLowerCase();
+    const offsets: number[] = [];
+    let from = 0;
+    while (from <= haystack.length - needle.length) {
+      const idx = haystack.indexOf(needle, from);
+      if (idx === -1) break;
+      offsets.push(idx);
+      from = idx + needle.length;
+    }
+    return offsets;
+  }
+
+  for (let s = 0; s < slides.length; s += 1) {
+    const slide = slides[s];
+    for (const offset of findAllOccurrences(slide.title)) {
+      results.push({
+        slideIndex: s,
+        location: "title",
+        offset,
+        length: needle.length,
+      });
+    }
+    for (let b = 0; b < slide.blocks.length; b += 1) {
+      const block = slide.blocks[b];
+      // Image blocks search their alt text, not the data URL — data
+      // URLs aren't human-readable content and matching against them
+      // would surface useless results (e.g. "img" matching the MIME
+      // type prefix of every base64 image in the deck).
+      const source = block.type === "image" ? (block.alt ?? "") : block.content;
+      for (const offset of findAllOccurrences(source)) {
+        results.push({
+          slideIndex: s,
+          location: { kind: "block", blockIndex: b },
+          offset,
+          length: needle.length,
+        });
+      }
+    }
+    for (const offset of findAllOccurrences(slide.notes)) {
+      results.push({
+        slideIndex: s,
+        location: "notes",
+        offset,
+        length: needle.length,
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Convert a `File` (from a `<input type="file">` or a drag-drop event)
+ * to a base64 `data:` URL. Used by the image-block upload path so the
+ * resulting URL can be inlined into the slide JSON. Returns a promise
+ * that rejects if the file cannot be read.
+ *
+ * NOTE: this is `FileReader`-based to stay browser-only — no Node
+ * `Buffer` imports — because the SlideEditor is a renderer-side
+ * component and must work in the existing jsdom test harness without
+ * a node:fs polyfill.
+ */
+export function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("Image read returned non-string result"));
+        return;
+      }
+      resolve(result);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Image read failed"));
+    reader.readAsDataURL(file);
+  });
 }

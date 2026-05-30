@@ -5,8 +5,17 @@ import {
   escapeHtmlComment,
   extractFrontmatterTheme,
   setFrontmatterTheme,
+  buildSlideFromLayout,
+  duplicateSlideAt,
+  moveBlock,
+  removeBlock,
+  appendBlock,
+  replaceBlock,
+  slideWordCount,
+  deckWordCount,
+  findInSlides,
 } from "../editors/slideEditorHelpers";
-import { type SlideContent } from "../editors/SlideEditor";
+import type { Slide, SlideContent } from "../editors/slideEditorTypes";
 
 describe("parseSlideContent", () => {
   it("returns the empty-default shape for empty input", () => {
@@ -322,5 +331,415 @@ describe("setFrontmatterTheme", () => {
     // closing `---` of the frontmatter).
     const separators = (out.match(/^---$/gm) ?? []).length;
     expect(separators).toBe(3); // open, close, between-slides
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 18 PR 7 — slide UX helpers
+// ─────────────────────────────────────────────────────────────────────
+
+function slideOf(title: string, content: string, notes = ""): Slide {
+  return { title, blocks: [{ type: "text", content }], notes };
+}
+
+describe("buildSlideFromLayout", () => {
+  it("returns a single empty text block for the blank layout", () => {
+    const s = buildSlideFromLayout("blank");
+    expect(s.title).toBe("");
+    expect(s.blocks).toEqual([{ type: "text", content: "" }]);
+    expect(s.notes).toBe("");
+  });
+
+  it("returns no blocks for the title layout", () => {
+    const s = buildSlideFromLayout("title");
+    expect(s.title).toBe("New Slide");
+    expect(s.blocks).toEqual([]);
+  });
+
+  it("returns one text block for the titleContent layout", () => {
+    const s = buildSlideFromLayout("titleContent");
+    expect(s.title).toBe("New Slide");
+    expect(s.blocks).toEqual([{ type: "text", content: "" }]);
+  });
+
+  it("returns two text blocks for the twoColumn layout", () => {
+    const s = buildSlideFromLayout("twoColumn");
+    expect(s.blocks).toHaveLength(2);
+    expect(s.blocks.every((b) => b.type === "text")).toBe(true);
+  });
+
+  it("returns an image+caption pair for the imageCaption layout", () => {
+    const s = buildSlideFromLayout("imageCaption");
+    expect(s.blocks).toHaveLength(2);
+    expect(s.blocks[0]).toEqual({ type: "image", content: "", alt: "" });
+    expect(s.blocks[1]).toEqual({ type: "text", content: "" });
+  });
+
+  it("returns a fresh object each call so multiple inserts don't alias", () => {
+    const a = buildSlideFromLayout("titleContent");
+    const b = buildSlideFromLayout("titleContent");
+    expect(a).not.toBe(b);
+    expect(a.blocks).not.toBe(b.blocks);
+    a.blocks[0].content = "mutated";
+    expect(b.blocks[0].content).toBe("");
+  });
+});
+
+describe("duplicateSlideAt", () => {
+  it("inserts a deep clone immediately after the source slide", () => {
+    const a = slideOf("A", "alpha");
+    const b = slideOf("B", "beta");
+    const result = duplicateSlideAt([a, b], 0);
+    expect(result.insertedAt).toBe(1);
+    expect(result.slides).toHaveLength(3);
+    expect(result.slides[0]).toBe(a);
+    expect(result.slides[1]).not.toBe(a);
+    expect(result.slides[1].title).toBe("A");
+    expect(result.slides[2]).toBe(b);
+  });
+
+  it("deep-clones blocks so post-duplicate edits don't reach across", () => {
+    const original = slideOf("A", "alpha");
+    const result = duplicateSlideAt([original], 0);
+    result.slides[1].blocks[0].content = "changed";
+    expect(original.blocks[0].content).toBe("alpha");
+  });
+
+  it("is a no-op for an out-of-range index and reports insertedAt=-1", () => {
+    const slides = [slideOf("A", "alpha")];
+    const result = duplicateSlideAt(slides, 5);
+    expect(result.insertedAt).toBe(-1);
+    expect(result.slides).toBe(slides);
+  });
+
+  it("is a no-op for a negative index", () => {
+    const slides = [slideOf("A", "alpha")];
+    const result = duplicateSlideAt(slides, -1);
+    expect(result.insertedAt).toBe(-1);
+    expect(result.slides).toBe(slides);
+  });
+
+  it("appends at the end when duplicating the last slide", () => {
+    const a = slideOf("A", "alpha");
+    const b = slideOf("B", "beta");
+    const result = duplicateSlideAt([a, b], 1);
+    expect(result.insertedAt).toBe(2);
+    expect(result.slides).toHaveLength(3);
+    expect(result.slides[2].title).toBe("B");
+  });
+});
+
+describe("moveBlock", () => {
+  it("moves a block to a later position", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [
+        { type: "text", content: "a" },
+        { type: "text", content: "b" },
+        { type: "text", content: "c" },
+      ],
+      notes: "",
+    };
+    const next = moveBlock(slide, 0, 2);
+    expect(next.blocks.map((b) => b.content)).toEqual(["b", "c", "a"]);
+  });
+
+  it("moves a block to an earlier position", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [
+        { type: "text", content: "a" },
+        { type: "text", content: "b" },
+        { type: "text", content: "c" },
+      ],
+      notes: "",
+    };
+    const next = moveBlock(slide, 2, 0);
+    expect(next.blocks.map((b) => b.content)).toEqual(["c", "a", "b"]);
+  });
+
+  it("returns the same reference when from === to (no-op for setState)", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [{ type: "text", content: "a" }],
+      notes: "",
+    };
+    expect(moveBlock(slide, 0, 0)).toBe(slide);
+  });
+
+  it("returns the same reference for out-of-range indices", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [{ type: "text", content: "a" }],
+      notes: "",
+    };
+    expect(moveBlock(slide, -1, 0)).toBe(slide);
+    expect(moveBlock(slide, 0, 5)).toBe(slide);
+  });
+
+  it("does not mutate the input array", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [
+        { type: "text", content: "a" },
+        { type: "text", content: "b" },
+      ],
+      notes: "",
+    };
+    moveBlock(slide, 0, 1);
+    expect(slide.blocks.map((b) => b.content)).toEqual(["a", "b"]);
+  });
+});
+
+describe("removeBlock", () => {
+  it("removes the block at the given index", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [
+        { type: "text", content: "a" },
+        { type: "text", content: "b" },
+      ],
+      notes: "",
+    };
+    expect(removeBlock(slide, 0).blocks).toEqual([{ type: "text", content: "b" }]);
+  });
+
+  it("allows the slide to end up with zero blocks", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [{ type: "text", content: "only" }],
+      notes: "",
+    };
+    expect(removeBlock(slide, 0).blocks).toEqual([]);
+  });
+
+  it("returns the same reference for out-of-range indices", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [{ type: "text", content: "a" }],
+      notes: "",
+    };
+    expect(removeBlock(slide, -1)).toBe(slide);
+    expect(removeBlock(slide, 5)).toBe(slide);
+  });
+});
+
+describe("appendBlock", () => {
+  it("appends a block to the end", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [{ type: "text", content: "a" }],
+      notes: "",
+    };
+    const next = appendBlock(slide, { type: "bullets", content: "b" });
+    expect(next.blocks).toEqual([
+      { type: "text", content: "a" },
+      { type: "bullets", content: "b" },
+    ]);
+  });
+
+  it("works on an empty slide", () => {
+    const slide: Slide = { title: "T", blocks: [], notes: "" };
+    expect(appendBlock(slide, { type: "text", content: "x" }).blocks).toEqual([
+      { type: "text", content: "x" },
+    ]);
+  });
+
+  it("does not mutate the input blocks array", () => {
+    const slide: Slide = { title: "T", blocks: [], notes: "" };
+    const originalBlocksRef = slide.blocks;
+    appendBlock(slide, { type: "text", content: "x" });
+    expect(slide.blocks).toBe(originalBlocksRef);
+    expect(slide.blocks).toEqual([]);
+  });
+});
+
+describe("replaceBlock", () => {
+  it("replaces the block at the given index", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [
+        { type: "text", content: "a" },
+        { type: "text", content: "b" },
+      ],
+      notes: "",
+    };
+    const next = replaceBlock(slide, 1, { type: "bullets", content: "new" });
+    expect(next.blocks).toEqual([
+      { type: "text", content: "a" },
+      { type: "bullets", content: "new" },
+    ]);
+  });
+
+  it("returns the same reference for out-of-range indices", () => {
+    const slide: Slide = {
+      title: "T",
+      blocks: [{ type: "text", content: "a" }],
+      notes: "",
+    };
+    expect(replaceBlock(slide, 5, { type: "text", content: "x" })).toBe(slide);
+    expect(replaceBlock(slide, -1, { type: "text", content: "x" })).toBe(slide);
+  });
+});
+
+describe("slideWordCount", () => {
+  it("sums words across title, blocks, and notes", () => {
+    const slide: Slide = {
+      title: "Hello world",
+      blocks: [
+        { type: "text", content: "foo bar baz" },
+        { type: "bullets", content: "one two" },
+      ],
+      notes: "speaker note here",
+    };
+    // title=2 + text=3 + bullets=2 + notes=3 = 10
+    expect(slideWordCount(slide)).toBe(10);
+  });
+
+  it("collapses runs of whitespace (does not over-count)", () => {
+    const slide: Slide = {
+      title: "foo  bar   baz",
+      blocks: [],
+      notes: "",
+    };
+    expect(slideWordCount(slide)).toBe(3);
+  });
+
+  it("counts image-block alt text, not the data URL", () => {
+    const slide: Slide = {
+      title: "",
+      blocks: [
+        {
+          type: "image",
+          content: "data:image/png;base64,iVBORw0KGgo=",
+          alt: "Architecture diagram showing flow",
+        },
+      ],
+      notes: "",
+    };
+    // alt = 4 words. content (data URL) MUST contribute 0.
+    expect(slideWordCount(slide)).toBe(4);
+  });
+
+  it("returns 0 for an empty slide", () => {
+    expect(
+      slideWordCount({ title: "", blocks: [], notes: "" }),
+    ).toBe(0);
+  });
+});
+
+describe("deckWordCount", () => {
+  it("sums slideWordCount across the deck", () => {
+    const a = slideOf("A B", "one two three");
+    const b = slideOf("X", "", "speaker note");
+    // a: title=2 + content=3 = 5; b: title=1 + notes=2 = 3 → total 8.
+    expect(deckWordCount([a, b])).toBe(8);
+  });
+
+  it("returns 0 for an empty deck", () => {
+    expect(deckWordCount([])).toBe(0);
+  });
+});
+
+describe("findInSlides", () => {
+  it("returns no matches for an empty query (avoids exponential blowup)", () => {
+    const slide = slideOf("Hello", "world");
+    expect(findInSlides([slide], "")).toEqual([]);
+  });
+
+  it("finds matches in title, blocks, and notes in deck order", () => {
+    const slides: Slide[] = [
+      {
+        title: "foo bar",
+        blocks: [
+          { type: "text", content: "foo block" },
+          { type: "bullets", content: "another foo here" },
+        ],
+        notes: "final foo in notes",
+      },
+      slideOf("second slide foo", "unrelated"),
+    ];
+    const matches = findInSlides(slides, "foo");
+    expect(matches).toHaveLength(5);
+    // First match is in slide 0 title.
+    expect(matches[0]).toMatchObject({ slideIndex: 0, location: "title" });
+    expect(matches[1]).toMatchObject({
+      slideIndex: 0,
+      location: { kind: "block", blockIndex: 0 },
+    });
+    expect(matches[2]).toMatchObject({
+      slideIndex: 0,
+      location: { kind: "block", blockIndex: 1 },
+    });
+    expect(matches[3]).toMatchObject({ slideIndex: 0, location: "notes" });
+    expect(matches[4]).toMatchObject({ slideIndex: 1, location: "title" });
+  });
+
+  it("is case-insensitive by default", () => {
+    const slide = slideOf("Hello", "world");
+    const matches = findInSlides([slide], "HELLO");
+    expect(matches).toHaveLength(1);
+    expect(matches[0].length).toBe(5);
+  });
+
+  it("honors caseSensitive: true", () => {
+    const slide = slideOf("Hello", "world");
+    expect(findInSlides([slide], "HELLO", { caseSensitive: true })).toEqual([]);
+    expect(
+      findInSlides([slide], "Hello", { caseSensitive: true }),
+    ).toHaveLength(1);
+  });
+
+  it("walks forward by needle.length so it never matches overlapping occurrences", () => {
+    // Find/replace UX convention: matches do NOT overlap. 'aaa' inside
+    // 'aaaaa' should produce exactly one match starting at 0 — the
+    // remaining 'aa' is too short for another non-overlapping hit.
+    // (An overlapping walk would have reported offsets [0, 1, 2] which
+    // is never what a user wants from a find dialog.)
+    const slide = slideOf("", "aaaaa");
+    const matches = findInSlides([slide], "aaa");
+    expect(matches.map((m) => m.offset)).toEqual([0]);
+  });
+
+  it("finds two non-overlapping matches when the haystack is long enough", () => {
+    // 'aaa' inside 'aaaaaa' (6 chars) has room for two non-overlapping
+    // hits at offsets 0 and 3.
+    const slide = slideOf("", "aaaaaa");
+    const matches = findInSlides([slide], "aaa");
+    expect(matches.map((m) => m.offset)).toEqual([0, 3]);
+  });
+
+  it("searches image-block alt text, not the data URL", () => {
+    const slide: Slide = {
+      title: "",
+      blocks: [
+        {
+          type: "image",
+          content: "data:image/png;base64,iVBORw0KGgo=",
+          alt: "architecture diagram",
+        },
+      ],
+      notes: "",
+    };
+    // Match against alt — should hit
+    expect(findInSlides([slide], "architecture")).toHaveLength(1);
+    // Match against data URL substring — should NOT hit
+    expect(findInSlides([slide], "base64")).toEqual([]);
+  });
+
+  it("returns multiple matches in a single field", () => {
+    const slide = slideOf("foo and foo and foo", "");
+    const matches = findInSlides([slide], "foo");
+    expect(matches).toHaveLength(3);
+    expect(matches.map((m) => m.offset)).toEqual([0, 8, 16]);
+    expect(matches.every((m) => m.location === "title")).toBe(true);
+  });
+
+  it("reports correct offset and length", () => {
+    const slide = slideOf("", "xxx hello xxx");
+    const matches = findInSlides([slide], "hello");
+    expect(matches).toHaveLength(1);
+    expect(matches[0].offset).toBe(4);
+    expect(matches[0].length).toBe(5);
   });
 });
