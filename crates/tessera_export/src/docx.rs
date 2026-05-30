@@ -11,12 +11,45 @@
 //! out of the box, so a future iteration can wire in image-based
 //! rasterization.
 
-use docx_rs::{Docx, Paragraph, Run};
+use docx_rs::{Docx, Paragraph, Run, Table, TableCell, TableRow};
 use std::io::Cursor;
 use tessera_artifacts::Artifact;
 use tessera_citations::citation::Citation;
 
 use crate::mermaid;
+
+/// Phase 15 Task 13: parse a single markdown table row of the form
+/// `| col1 | col2 | col3 |` into the individual cell strings. Returns
+/// `None` when the line is not a well-formed table row (no leading/
+/// trailing pipe, or zero cells once trimmed). Leading and trailing
+/// pipes are required so we do not mistake a prose sentence that
+/// happens to contain `|` for a table row.
+fn parse_md_table_row(line: &str) -> Option<Vec<String>> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('|') || !trimmed.ends_with('|') {
+        return None;
+    }
+    // Strip the leading and trailing `|` then split on the interior
+    // pipes. Each segment is the cell text; we trim whitespace.
+    let interior = &trimmed[1..trimmed.len() - 1];
+    let cells: Vec<String> = interior.split('|').map(|s| s.trim().to_string()).collect();
+    if cells.is_empty() {
+        return None;
+    }
+    Some(cells)
+}
+
+/// Phase 15 Task 13: detect the markdown table separator row
+/// `| --- | :---: | ---: |`. The dashes can be any length >= 3 and may
+/// have alignment colons on either or both sides. Returns true when
+/// every cell in `cells` matches the separator pattern.
+fn is_md_table_separator(cells: &[String]) -> bool {
+    !cells.is_empty()
+        && cells.iter().all(|c| {
+            let s = c.trim_matches(':');
+            !s.is_empty() && s.chars().all(|ch| ch == '-')
+        })
+}
 
 /// Export an artifact to DOCX bytes. Returns the binary representation of
 /// a valid Word document.
@@ -34,8 +67,55 @@ pub fn export_docx(artifact: &Artifact, citations: &[Citation]) -> Vec<u8> {
         let content_for_docx =
             mermaid::replace_blocks(&artifact.content, mermaid::to_pdf_placeholder);
         let mut in_code_block = false;
+        // Phase 15 Task 13: accumulate consecutive markdown-table rows
+        // and flush them together as a single `Table` element once we
+        // either hit a non-table line or fall out of the loop. The
+        // buffer holds the parsed cells per row; the separator row
+        // (`| --- | --- |`) is consumed but NOT added to the buffer
+        // (it conveys alignment only — we render without alignment).
+        let mut table_buf: Vec<Vec<String>> = Vec::new();
+        let flush_table = |docx: Docx, buf: &mut Vec<Vec<String>>| -> Docx {
+            if buf.is_empty() {
+                return docx;
+            }
+            // Build a `Table` from the buffered rows. The first row is
+            // styled as the header (bold) so it visually matches Word's
+            // default table-header convention.
+            let mut rows: Vec<TableRow> = Vec::with_capacity(buf.len());
+            for (row_idx, cells) in buf.iter().enumerate() {
+                let mut tcs: Vec<TableCell> = Vec::with_capacity(cells.len());
+                for cell_text in cells {
+                    let run = if row_idx == 0 {
+                        Run::new().add_text(cell_text).bold()
+                    } else {
+                        Run::new().add_text(cell_text)
+                    };
+                    let para = Paragraph::new().style("Normal").add_run(run);
+                    tcs.push(TableCell::new().add_paragraph(para));
+                }
+                rows.push(TableRow::new(tcs));
+            }
+            buf.clear();
+            docx.add_table(Table::new(rows))
+        };
         for raw_line in content_for_docx.lines() {
             let line = raw_line;
+            // Detect a markdown-table row first so the buffer can grow
+            // even when the line would otherwise match another rule
+            // (e.g. a `| --- |` separator that vaguely looks like a
+            // bullet to the eye).
+            if let Some(cells) = parse_md_table_row(line) {
+                if is_md_table_separator(&cells) {
+                    // Consume the separator without appending — it
+                    // conveys alignment only.
+                    continue;
+                }
+                table_buf.push(cells);
+                continue;
+            }
+            // Any non-table line flushes the pending table first so
+            // the row order is preserved.
+            docx = flush_table(docx, &mut table_buf);
             // Toggle code-block state when we see a fence.
             if line.trim_start().starts_with("```") {
                 in_code_block = !in_code_block;
@@ -125,6 +205,9 @@ pub fn export_docx(artifact: &Artifact, citations: &[Citation]) -> Vec<u8> {
                     .add_run(Run::new().add_text(line)),
             );
         }
+        // Phase 15 Task 13: flush any trailing table (content ended on
+        // a table without a following blank/prose line).
+        docx = flush_table(docx, &mut table_buf);
     }
 
     if !citations.is_empty() {

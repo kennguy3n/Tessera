@@ -245,6 +245,162 @@ fn pdf_escape(s: &str) -> String {
         .replace(')', "\\)")
 }
 
+/// Phase 15 Task 15: PDF export with Mermaid diagrams rendered as
+/// embedded SVG via the Typst pipeline.
+///
+/// Architecture:
+///
+/// 1. Extract every ```mermaid block from `artifact.content` via
+///    [`mermaid::extract_blocks`].
+/// 2. For each block, pick the SVG to embed:
+///    - if the caller supplied a pre-rendered SVG in `prerendered`
+///      (keyed by block index, 0-based), use that. This is the
+///      production path: the renderer process drives `mermaid.js`
+///      and produces the same SVG the user sees in the in-app
+///      preview.
+///    - otherwise fall back to [`mermaid::render_block_to_svg`]
+///      which emits a structural SVG containing the diagram type +
+///      DSL text. This keeps headless / CLI export working in
+///      environments without a renderer.
+/// 3. Register each SVG as a virtual file inside a
+///    [`crate::typst::TesseraWorld`] and emit Typst markup that
+///    references it via `image("diagram-N.svg")`.
+/// 4. Compile to PDF via the Typst pipeline.
+///
+/// Fallback: if Typst compilation fails for any reason (font not
+/// found, malformed user content, etc.), we fall back to the
+/// minimal hand-rolled PDF builder via [`export_pdf`] so callers
+/// always get *some* PDF output rather than an empty buffer. The
+/// fallback emits the same placeholder text the pre-Phase-15
+/// `export_pdf` produced, which is the existing documented
+/// behaviour. A future refactor could surface the Typst error to
+/// the caller via a `Result`-returning variant, but the current
+/// production callers don't have a path to surface that error to
+/// the user, so silently degrading is the right default.
+///
+/// Feature-gated on `typst`: when the feature is disabled (e.g. in
+/// the default build), this function falls back to the minimal
+/// builder. Production callers that want diagram embedding must
+/// enable the `typst` feature in their dependency declaration.
+#[cfg(feature = "typst")]
+pub fn export_pdf_with_svgs(
+    artifact: &Artifact,
+    citations: &[Citation],
+    prerendered: &std::collections::HashMap<usize, String>,
+) -> Vec<u8> {
+    use crate::typst as typst_export;
+
+    // Build Typst markup. The Typst document mirrors the structure
+    // of the minimal PDF: title heading, metadata line, content
+    // (with `image()` substitutions for mermaid blocks), citations
+    // appendix. We emit Typst markup rather than reusing the
+    // markdown export's output because Typst's markdown reader is
+    // not a 1:1 superset of CommonMark — using native Typst syntax
+    // for the surrounding text gives predictable layout.
+    let mut markup = String::new();
+    let _ = write!(
+        markup,
+        "#set page(paper: \"us-letter\", margin: 1in)\n\
+         #set text(font: \"Libertinus Serif\", size: 11pt)\n\
+         #show heading.where(level: 1): set text(size: 18pt, weight: \"bold\")\n\
+         \n\
+         = {}\n\
+         \n\
+         #text(size: 10pt, fill: rgb(\"#475569\"))[Type: {} | Version: {} | Created: {}]\n\
+         \n",
+        typst_escape(&artifact.title),
+        typst_escape(&artifact.artifact_type.to_string()),
+        artifact.version,
+        artifact.created_at.format("%Y-%m-%d %H:%M"),
+    );
+
+    // Walk the content and substitute mermaid blocks with #image
+    // references. We do this via `mermaid::extract_blocks` so the
+    // byte ranges align exactly with the source.
+    let blocks = mermaid::extract_blocks(&artifact.content);
+    let mut svg_files: Vec<(String, Vec<u8>)> = Vec::with_capacity(blocks.len());
+    let mut cursor = 0usize;
+    for (idx, block) in blocks.iter().enumerate() {
+        let (start, end) = block.range;
+        // Emit the pre-block text verbatim (escaped for Typst).
+        markup.push_str(&typst_escape(&artifact.content[cursor..start]));
+        // Pick the SVG: prerendered wins, fallback otherwise.
+        let svg = prerendered
+            .get(&idx)
+            .cloned()
+            .unwrap_or_else(|| mermaid::render_block_to_svg(block));
+        let virt_name = format!("diagram-{idx}.svg");
+        svg_files.push((virt_name.clone(), svg.into_bytes()));
+        // Emit a Typst image reference. width: auto + height: auto
+        // lets Typst use the SVG's intrinsic dimensions; we cap
+        // width to the available text width so wide diagrams scale.
+        let _ = write!(
+            markup,
+            "\n#image(\"{virt_name}\", width: 100%)\n\n",
+        );
+        cursor = end;
+    }
+    // Trailing text after the last block.
+    markup.push_str(&typst_escape(&artifact.content[cursor..]));
+
+    if !citations.is_empty() {
+        markup.push_str("\n\n== Citations\n\n");
+        for (i, citation) in citations.iter().enumerate() {
+            let _ = write!(
+                markup,
+                "#text(size: 9pt)[[{}] {} — {}]\n\n",
+                i + 1,
+                typst_escape(&citation.source_title),
+                typst_escape(&citation.source_uri),
+            );
+        }
+    }
+
+    // Build a Typst world with every SVG registered as a virtual
+    // file so the `image(...)` calls resolve.
+    let mut world = typst_export::TesseraWorld::new(&markup);
+    for (name, bytes) in svg_files {
+        let _ = world.add_file(&name, bytes);
+    }
+    match typst_export::compile_world_to_pdf(&world) {
+        Ok(pdf) => pdf,
+        Err(err) => {
+            // Defensive fallback: compilation failed (e.g. bad
+            // user-supplied SVG). Fall back to the minimal-PDF
+            // builder so callers still get bytes. We log the error
+            // via eprintln! because this module has no logger
+            // injection point yet.
+            eprintln!(
+                "[tessera_export::pdf] Typst PDF compilation failed; \
+                 falling back to minimal PDF builder: {err}"
+            );
+            export_pdf(artifact, citations)
+        }
+    }
+}
+
+/// Escape Typst markup metacharacters in user-supplied text.
+///
+/// Typst markup treats `#`, `*`, `_`, `=`, `[`, `]`, `<`, `>`, `$`, `@`,
+/// `\\` and a handful of others as syntax. Embedding unescaped user
+/// content (e.g. an artifact body containing `*important*` or `# Heading`)
+/// would mis-format the output and, in the worst case, allow a
+/// malicious citation title to inject markup. We escape conservatively
+/// with backslash for every character Typst recognises as a sigil.
+fn typst_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '#' | '*' | '_' | '=' | '[' | ']' | '<' | '>' | '$' | '@' | '\\' | '~' | '\'' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

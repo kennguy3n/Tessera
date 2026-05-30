@@ -174,7 +174,14 @@ impl std::error::Error for TypstError {}
 /// Compile Typst markup into a PDF byte buffer.
 pub fn compile_to_pdf(markup: &str) -> Result<Vec<u8>, TypstError> {
     let world = TesseraWorld::new(markup);
-    let warned = typst::compile(&world);
+    compile_world_to_pdf(&world)
+}
+
+/// Compile a pre-built [`TesseraWorld`] into a PDF byte buffer.
+/// Use this when the caller needs to register virtual files
+/// (e.g. SVG diagram images) before compilation.
+pub fn compile_world_to_pdf(world: &TesseraWorld) -> Result<Vec<u8>, TypstError> {
+    let warned = typst::compile(world);
     let document = warned.output.map_err(TypstError::Compile)?;
     let options = typst_pdf::PdfOptions::default();
     typst_pdf::pdf(&document, &options).map_err(TypstError::Serialize)
