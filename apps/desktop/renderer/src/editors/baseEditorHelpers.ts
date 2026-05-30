@@ -374,12 +374,41 @@ export function findRecordsLinkingTo(
 // ─────────────────────────────────────────────────────────────────────
 
 /**
+ * Field types whose **stored** value is either `null` or a raw
+ * source string — the value the user sees comes from a render-time
+ * computation against other fields / the record's position in the
+ * grid.
+ *
+ *   - `formula` / `rollup` / `lookup` — derive from other fields.
+ *   - `auto_number` — derives from the record's index in
+ *     `data.records`; the stored value is always `null` (see
+ *     `getDefaultValue` in `BaseEditor.tsx`).
+ *
+ * Filter + sort paths in the grid view must compute the display
+ * string for these types before comparing — comparing the *stored*
+ * value would hit `null` for every row on `auto_number`, and the
+ * formula *source* (rather than its evaluated result) for the
+ * other three.  Centralising the predicate here keeps the four
+ * type names from drifting between callers (a Devin Review
+ * finding on PR #79 caught the filter path having only three of
+ * the four).
+ */
+export function isComputedFieldType(type: FieldType): boolean {
+  return (
+    type === "formula" ||
+    type === "rollup" ||
+    type === "lookup" ||
+    type === "auto_number"
+  );
+}
+
+/**
  * The user-facing filter for the grid is a single text input per
  * column. We want that input to feel right for the underlying field
  * type without forcing the user to learn a query DSL:
  *
  *   - **Numeric** types (`number`, `currency`, `percent`, `rating`,
- *     `duration`, `auto_number`): support comparison operators
+ *     `duration`): support comparison operators
  *     `>`, `>=`, `<`, `<=`, `=` (e.g. `>10`, `<=5`). A bare numeric
  *     input is treated as `equals`. A non-numeric input falls back
  *     to substring on the rendered string so the column doesn't
@@ -392,11 +421,15 @@ export function findRecordsLinkingTo(
  *   - **Date**: substring on the ISO string the cell stores.
  *   - **Text-like**, **select**: case-insensitive substring on the
  *     stored string.
- *   - **Computed** types (`formula`, `rollup`, `lookup`): substring
- *     on the *displayed* value (caller computes that via
- *     `formatValueForCsv` or similar; we accept it pre-formatted as
- *     the `displayValue` arg so this helper stays decoupled from the
- *     formula engine).
+ *   - **Computed** types (`formula`, `rollup`, `lookup`,
+ *     `auto_number`): callers compute the **display string** for
+ *     the record (typically via `formatValueForCsv`) and pass it as
+ *     `displayValue`.  Numeric comparison operators (`>`, `<=`,
+ *     etc.) then parse that display string as a number; everything
+ *     else falls back to case-insensitive substring on the same
+ *     string.  This makes `auto_number > 5` behave the way the
+ *     placeholder text (`e.g. >10`) promises, because the matcher
+ *     no longer sees `null` / `0` for every row.
  *
  * Empty filter strings always match, so a half-typed filter on one
  * column doesn't accidentally hide every row.
@@ -410,14 +443,45 @@ export function matchesFilter(
   const f = filter.trim();
   if (f === "") return true;
 
-  // Computed types: caller passes the rendered string; we substring-match.
-  if (
-    fieldType === "formula" ||
-    fieldType === "rollup" ||
-    fieldType === "lookup"
-  ) {
-    const target = (displayValue ?? "").toLowerCase();
-    return target.includes(f.toLowerCase());
+  // Computed types: caller passes the rendered string. Numeric
+  // comparison operators against an `auto_number` column should
+  // behave the same as on a plain numeric column (the placeholder
+  // text encourages `>5` etc.), so we run the operator-prefix
+  // parser against the display string first and fall back to
+  // substring matching for non-numeric inputs / non-numeric
+  // displays.
+  if (isComputedFieldType(fieldType)) {
+    const target = displayValue ?? "";
+    const m = f.match(/^\s*(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)\s*$/);
+    if (m) {
+      const op = m[1];
+      const operand = Number(m[2]);
+      const n = Number(target);
+      if (Number.isFinite(n) && Number.isFinite(operand)) {
+        switch (op) {
+          case ">":
+            return n > operand;
+          case ">=":
+            return n >= operand;
+          case "<":
+            return n < operand;
+          case "<=":
+            return n <= operand;
+          case "=":
+            return n === operand;
+        }
+      }
+      // Operator parse hit, but the displayed value isn't numeric —
+      // a `>10` on a formula returning `"hello"` should hide the
+      // row, not silently fall back to substring matching.
+      return false;
+    }
+    const bare = Number(f);
+    if (Number.isFinite(bare)) {
+      const n = Number(target);
+      if (Number.isFinite(n)) return n === bare;
+    }
+    return target.toLowerCase().includes(f.toLowerCase());
   }
 
   // Multi-valued types: match if ANY element contains the filter.
@@ -443,13 +507,18 @@ export function matchesFilter(
   }
 
   // Numeric types: support operator prefixes.
+  // `auto_number` is intentionally excluded — it's a computed
+  // type and handled by the `isComputedFieldType` branch above.
+  // Its stored value is always `null`, so reading
+  // `Number(value)` here would compare `0` to whatever the user
+  // typed and hide every row, which was the bug Devin Review
+  // flagged on PR #79 (BUG_pr-review-job-…-0001).
   const numericTypes: FieldType[] = [
     "number",
     "currency",
     "percent",
     "rating",
     "duration",
-    "auto_number",
   ];
   if (numericTypes.includes(fieldType)) {
     // Match `>=`, `<=`, `>`, `<`, `=` then a number.

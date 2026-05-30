@@ -25,6 +25,7 @@ import {
   sanitizeBaseField,
   matchesFilter,
   applyFieldRename,
+  isComputedFieldType,
 } from "../baseEditorHelpers";
 import type { BaseField, BaseRecord } from "../baseEditorTypes";
 
@@ -361,6 +362,35 @@ describe("isReservedFieldName", () => {
   });
 });
 
+describe("isComputedFieldType", () => {
+  it("returns true exactly for the four computed types", () => {
+    expect(isComputedFieldType("formula")).toBe(true);
+    expect(isComputedFieldType("rollup")).toBe(true);
+    expect(isComputedFieldType("lookup")).toBe(true);
+    expect(isComputedFieldType("auto_number")).toBe(true);
+  });
+
+  it("returns false for every non-computed type", () => {
+    // Spot-check the major non-computed buckets.
+    expect(isComputedFieldType("text")).toBe(false);
+    expect(isComputedFieldType("number")).toBe(false);
+    expect(isComputedFieldType("checkbox")).toBe(false);
+    expect(isComputedFieldType("multi_select")).toBe(false);
+    expect(isComputedFieldType("linked_record")).toBe(false);
+    expect(isComputedFieldType("currency")).toBe(false);
+    expect(isComputedFieldType("percent")).toBe(false);
+    expect(isComputedFieldType("rating")).toBe(false);
+    expect(isComputedFieldType("duration")).toBe(false);
+    expect(isComputedFieldType("attachment")).toBe(false);
+    expect(isComputedFieldType("long_text")).toBe(false);
+    expect(isComputedFieldType("date")).toBe(false);
+    expect(isComputedFieldType("email")).toBe(false);
+    expect(isComputedFieldType("phone")).toBe(false);
+    expect(isComputedFieldType("url")).toBe(false);
+    expect(isComputedFieldType("select")).toBe(false);
+  });
+});
+
 describe("matchesFilter — per-type filtering", () => {
   it("empty filter always matches (so a half-typed input doesn't hide rows)", () => {
     expect(matchesFilter("text", "anything", "")).toBe(true);
@@ -435,6 +465,55 @@ describe("matchesFilter — per-type filtering", () => {
     expect(matchesFilter("lookup", "ignored", "alice", "Alice")).toBe(true);
     // Missing displayValue (defensive default) matches empty string only.
     expect(matchesFilter("formula", "ignored", "x")).toBe(false);
+  });
+
+  // ──────────────────────────────────────────────────────────────────
+  // auto_number
+  //
+  // `auto_number` columns store `null` for every record (the display
+  // value is computed from the row position at render time).  Devin
+  // Review PR #79 caught the filter path comparing the stored `null`
+  // — coerced to `0` via `Number(null)` — against the user's input,
+  // which always hid every row. The fix routes `auto_number` through
+  // the same display-value path as formula / rollup / lookup, but
+  // also keeps the operator-prefix grammar so the placeholder text
+  // (`e.g. >10`) actually works.
+  // ──────────────────────────────────────────────────────────────────
+  it("auto_number: bare numeric filter equality against the display string", () => {
+    expect(matchesFilter("auto_number", null, "3", "3")).toBe(true);
+    expect(matchesFilter("auto_number", null, "3", "4")).toBe(false);
+  });
+
+  it("auto_number: > / >= / < / <= operators parse the display string as a number", () => {
+    expect(matchesFilter("auto_number", null, ">5", "7")).toBe(true);
+    expect(matchesFilter("auto_number", null, ">5", "5")).toBe(false);
+    expect(matchesFilter("auto_number", null, ">=5", "5")).toBe(true);
+    expect(matchesFilter("auto_number", null, "<3", "2")).toBe(true);
+    expect(matchesFilter("auto_number", null, "<=3", "3")).toBe(true);
+  });
+
+  it("auto_number: stored null does NOT short-circuit to a numeric-zero match", () => {
+    // The pre-fix code path did `Number(null) === 0` and matched
+    // `=0` for every row. Pinning this case ensures we don't
+    // regress: a row whose displayed value is 5 should NOT match
+    // `=0`.
+    expect(matchesFilter("auto_number", null, "=0", "5")).toBe(false);
+    expect(matchesFilter("auto_number", null, ">0", "5")).toBe(true);
+  });
+
+  it("auto_number: non-numeric filter falls back to substring on the display string", () => {
+    // Defensive: a user could type a non-numeric search string;
+    // the matcher should still find a row whose display contains it.
+    expect(matchesFilter("auto_number", null, "1", "10")).toBe(false); // bare-numeric branch — strict equality
+    expect(matchesFilter("auto_number", null, "10", "10")).toBe(true);
+  });
+
+  it("computed types: numeric-operator filter on a non-numeric display string returns false", () => {
+    // `>10` against a formula returning "hello" should hide the row
+    // (not silently fall through to substring matching), so a
+    // numeric filter on a text-valued formula behaves predictably.
+    expect(matchesFilter("formula", "ignored", ">10", "hello")).toBe(false);
+    expect(matchesFilter("rollup", "ignored", ">=5", "")).toBe(false);
   });
 
   it("falls back to substring on the raw value for a non-numeric filter on a numeric column", () => {

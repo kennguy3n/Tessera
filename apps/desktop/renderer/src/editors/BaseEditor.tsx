@@ -19,6 +19,7 @@ import {
   isReservedFieldName,
   matchesFilter,
   applyFieldRename,
+  isComputedFieldType,
 } from "./baseEditorHelpers";
 import {
   evaluateBaseFormula,
@@ -476,6 +477,31 @@ export default function BaseEditor({
     );
   }, [data, triggerDownload]);
 
+  // After an import we must also drop sort / filter state that
+  // references fields the imported schema doesn't have, otherwise
+  // the header would still show a typed-in filter on a column that
+  // no longer exists and the sort indicator would point at
+  // nothing.  `filteredAndSorted` already tolerates the stale
+  // state (missing fields are skipped), but the UI looks broken
+  // until the user manually clears each one — a Devin Review
+  // finding on PR #79 flagged this as a paper-cut.
+  const dropStaleViewState = useCallback((nextFields: BaseField[]) => {
+    const names = new Set(nextFields.map((f) => f.name));
+    setSortField((prev) => (prev !== null && !names.has(prev) ? null : prev));
+    setFilters((prev) => {
+      let dirty = false;
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        if (names.has(k)) {
+          out[k] = v;
+        } else {
+          dirty = true;
+        }
+      }
+      return dirty ? out : prev;
+    });
+  }, []);
+
   // Importing replaces the entire base content. The dialog confirms
   // before doing so for any non-empty existing base, but the action
   // itself is `updateData` — same debounced-save path as everything
@@ -488,8 +514,9 @@ export default function BaseEditor({
       updateData(next);
       setImportDialog(null);
       setSelectedIds(new Set());
+      dropStaleViewState(next.fields);
     },
-    [data.fields, updateData],
+    [data.fields, updateData, dropStaleViewState],
   );
 
   const handleImportJson = useCallback(
@@ -498,8 +525,9 @@ export default function BaseEditor({
       updateData(next);
       setImportDialog(null);
       setSelectedIds(new Set());
+      dropStaleViewState(next.fields);
     },
-    [updateData],
+    [updateData, dropStaleViewState],
   );
 
   const updateCell = useCallback(
@@ -528,31 +556,47 @@ export default function BaseEditor({
     let records = [...data.records];
 
     // Apply per-field filters via the type-aware matcher.
-    // Computed types (formula/rollup/lookup) need a rendered
-    // display string, which `formatValueForCsv` already computes
-    // identically to the cell-render path.
+    // Computed types (formula / rollup / lookup / auto_number)
+    // need a rendered display string — their stored value is
+    // either a source expression (`formula`) or `null`
+    // (`auto_number`), so comparing it directly would always
+    // miss. `formatValueForCsv` already computes the same display
+    // string the cell renders, so threading it through here keeps
+    // the filter, sort, CSV export, and cell render in lock-step.
     for (const [fieldName, filterVal] of Object.entries(filters)) {
       if (!filterVal.trim()) continue;
       const field = data.fields.find((f) => f.name === fieldName);
       if (!field) continue;
       records = records.filter((r) => {
-        const display =
-          field.type === "formula" ||
-          field.type === "rollup" ||
-          field.type === "lookup"
-            ? formatValueForCsv(field, r, data.records, data.fields)
-            : undefined;
+        const display = isComputedFieldType(field.type)
+          ? formatValueForCsv(field, r, data.records, data.fields)
+          : undefined;
         return matchesFilter(field.type, r[fieldName], filterVal, display);
       });
     }
 
-    // Apply sort. Numeric-aware locale-compare keeps "10" after
-    // "2", which is the user-expected behavior in a grid.
+    // Apply sort. For computed types we compare the **display**
+    // string (same one the cell renders) — a sort on an
+    // `auto_number` column would otherwise be a no-op because the
+    // stored value is `null` for every record. Numeric-aware
+    // locale-compare keeps "10" after "2" for plain numeric
+    // columns and also makes "1", "2", …, "10" sort correctly on
+    // computed columns whose display happens to be numeric.
     if (sortField) {
+      const sortFieldDef = data.fields.find((f) => f.name === sortField);
+      const sortIsComputed =
+        sortFieldDef !== undefined && isComputedFieldType(sortFieldDef.type);
+      const displayFor = (r: BaseRecord): string => {
+        if (sortIsComputed && sortFieldDef) {
+          return formatValueForCsv(sortFieldDef, r, data.records, data.fields);
+        }
+        const raw = r[sortField];
+        return raw == null ? "" : String(raw);
+      };
       records.sort((a, b) => {
-        const va = a[sortField] ?? "";
-        const vb = b[sortField] ?? "";
-        const cmp = String(va).localeCompare(String(vb), undefined, {
+        const va = displayFor(a);
+        const vb = displayFor(b);
+        const cmp = va.localeCompare(vb, undefined, {
           numeric: true,
         });
         return sortDir === "asc" ? cmp : -cmp;
