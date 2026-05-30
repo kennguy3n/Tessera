@@ -61,14 +61,14 @@ fn assert_parity(paths: &[PathBuf]) {
         );
 
         let serial_result = extract_text(input_path).ok_or_err_msg();
-        let parallel_normalised = parallel_result.as_ref().map_err(|e| e.to_string()).cloned();
+        let parallel_normalised = parallel_result
+            .as_ref()
+            .map_err(ToString::to_string)
+            .cloned();
 
         assert_eq!(
             serial_result,
-            parallel_normalised
-                .as_ref()
-                .map(|s| s.clone())
-                .map_err(std::clone::Clone::clone),
+            parallel_normalised.clone(),
             "parallel result differs from serial for {} (index {i})",
             input_path.display(),
         );

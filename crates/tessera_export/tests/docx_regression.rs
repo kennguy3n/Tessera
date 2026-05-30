@@ -94,10 +94,8 @@ fn read_zip_entry(bytes: &[u8], name: &str) -> Option<Vec<u8>> {
 fn count_tags(xml_bytes: &[u8], wanted: &[&str]) -> Vec<(String, usize)> {
     let mut reader = Reader::from_reader(xml_bytes);
     reader.config_mut().trim_text(false);
-    let mut counts: std::collections::HashMap<String, usize> = wanted
-        .iter()
-        .map(|t| ((*t).to_string(), 0usize))
-        .collect();
+    let mut counts: std::collections::HashMap<String, usize> =
+        wanted.iter().map(|t| ((*t).to_string(), 0usize)).collect();
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
@@ -189,7 +187,8 @@ fn assert_byte_stable(a: &Artifact, citations: &[Citation]) {
                     (b1, b2)
                 };
                 assert_eq!(
-                    n1, n2,
+                    n1,
+                    n2,
                     "DOCX part {part:?} is not stable across runs (lengths {} vs {})",
                     n1.len(),
                     n2.len(),
@@ -338,7 +337,10 @@ fn golden_code_blocks_fixture_is_stable_and_valid() {
     }
     // The code lines must appear verbatim.
     assert!(s.contains("fn main() {"), "code line missing");
-    assert!(s.contains(r#"println!(&quot;hello&quot;);"#), "code line content missing or unescaped");
+    assert!(
+        s.contains(r#"println!(&quot;hello&quot;);"#),
+        "code line content missing or unescaped"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -385,7 +387,13 @@ fn golden_citations_fixture_is_stable_and_valid() {
     assert!(s.contains("Sources"), "Sources header missing");
     assert!(s.contains("1. Quarterly Brief.pdf"), "citation 1 missing");
     assert!(s.contains("2. Annual Letter.md"), "citation 2 missing");
-    assert!(s.contains("Revenue projections"), "used_for of citation 1 missing");
-    assert!(s.contains("Confidence: 90%"), "confidence rendering missing");
+    assert!(
+        s.contains("Revenue projections"),
+        "used_for of citation 1 missing"
+    );
+    assert!(
+        s.contains("Confidence: 90%"),
+        "confidence rendering missing"
+    );
     assert!(s.contains("Page: 2"), "page rendering missing");
 }

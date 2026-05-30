@@ -29,7 +29,8 @@ use std::path::{Path, PathBuf};
 
 use tessera_sources::extractor::{extract_files_parallel, extract_text};
 
-const SMALL_MD: &str = "# Heading\n\nSome paragraph body with a few words.\n\n- bullet one\n- bullet two\n";
+const SMALL_MD: &str =
+    "# Heading\n\nSome paragraph body with a few words.\n\n- bullet one\n- bullet two\n";
 const MEDIUM_BODY_LINE: &str =
     "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs.\n";
 

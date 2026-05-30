@@ -324,7 +324,7 @@ mod tests {
         let glyph_use_sequence = |svg: &str| -> Vec<String> {
             svg.match_indices("<use")
                 .map(|(idx, _)| {
-                    let end = svg[idx..].find('>').map(|e| idx + e + 1).unwrap_or(svg.len());
+                    let end = svg[idx..].find('>').map_or(svg.len(), |e| idx + e + 1);
                     svg[idx..end].to_string()
                 })
                 .collect()

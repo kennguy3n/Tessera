@@ -49,7 +49,8 @@ fn export_pdf_with_svgs_emits_typst_compiled_pdf_with_image_data() {
         "output is not a PDF (missing %PDF magic). first 16 bytes: {:?}",
         &pdf[..pdf.len().min(16)]
     );
-    assert!(pdf.ends_with(b"%%EOF\n") || pdf.ends_with(b"%%EOF"),
+    assert!(
+        pdf.ends_with(b"%%EOF\n") || pdf.ends_with(b"%%EOF"),
         "output is not a complete PDF (missing %%EOF trailer)"
     );
 
@@ -91,11 +92,7 @@ fn export_pdf_with_svgs_prefers_prerendered_over_structural_fallback() {
 
 #[test]
 fn export_pdf_with_svgs_no_mermaid_blocks_still_compiles() {
-    let mut artifact = Artifact::new(
-        "Plain Doc".to_string(),
-        ArtifactType::Document,
-        None,
-    );
+    let mut artifact = Artifact::new("Plain Doc".to_string(), ArtifactType::Document, None);
     artifact.content = "Just some prose. No diagrams here.".to_string();
     let pdf = export_pdf_with_svgs(&artifact, &[], &HashMap::new());
     assert!(pdf.starts_with(b"%PDF"));

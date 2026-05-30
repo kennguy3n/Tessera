@@ -237,6 +237,8 @@ The ten most-used templates (PRD, proposal, SOP, report, meeting agenda, meeting
 
 Localized templates live under `templates/<category>/locales/<locale>/<slug>.yaml` and share the same base id with a locale suffix (e.g. `prd-v1-es`). `crates/tessera_templates/tests/bundled_templates.rs` enforces that every non-English locale ships the full canonical set so the filter shows a consistent picker across languages.
 
+Semantic search quality for non-English content depends on the embedding model. The default `HashTrickEmbedding` provider is fully offline and dimension-256 character-n-gram based — it works for any script but is biased toward ASCII and won't capture cross-lingual paraphrase. Settings → Embedding model lets you opt into one of two ONNX-Runtime sentence-transformer models: `all-MiniLM-L6-v2` (22 MB, English-only) or `paraphrase-multilingual-MiniLM-L12-v2` (~120 MB INT8 quantized, covering 50+ languages including all nine non-English locales Tessera ships templates for). Both transformer models export 384-dim vectors so the rest of the hybrid retrieval pipeline (FTS5 + RRF + recency decay) is unchanged on a switch. If more than 10 % of your indexed chunks contain non-ASCII text and the corpus has at least 50 chunks, the Settings card surfaces a hint recommending the multilingual model.
+
 ## Productivity workflows
 
 | Feature | Description |

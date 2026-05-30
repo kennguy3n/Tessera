@@ -685,6 +685,39 @@ Theme 6 — Documentation & verification (Tasks 29–30, PR 6)
 
 ---
 
+## Phase 19 — Multilingual semantic search via ONNX Runtime
+
+**Status:** `IN PROGRESS`
+
+**Goal:** Tessera's hybrid retrieval can run a real sentence-transformer
+embedding model for the vector signal — without giving up the offline,
+zero-download default. The provider is pluggable behind the existing
+`EmbeddingProvider` trait, and the dimensionality is invariant across
+backends so the ANN index, cosine pipeline, and `chunk_embeddings`
+storage layout all stay the same on a model switch.
+
+### Build
+
+| # | Item | Status |
+|---|---|---|
+| 1 | ONNX Runtime embedding provider — `crates/tessera_sources/src/onnx_embedder.rs` + `model_registry.rs`. `OnnxEmbeddingProvider` wraps `ort::Session` + `tokenizers::Tokenizer` behind `Mutex` for interior mutability, mean-pools the last-hidden-state with attention-mask weighting, L2-normalises the result. `embed_batch` runs in fixed batches (`BATCH_SIZE = 32`) padded to the in-batch max length (capped at `MAX_SEQUENCE_LENGTH = 128`). Two pinned models with SHA-256 verification: (a) `all-MiniLM-L6-v2` — 22 MB, English-only, smallest download; (b) `paraphrase-multilingual-MiniLM-L12-v2` — ~120 MB INT8 quantized, 50+ languages including all nine non-English locales Tessera ships templates for. Both export 384-dim vectors so neither the FTS5 + vector + RRF + recency fusion in `hybrid.rs` nor the `chunk_embeddings` schema branches on the active model. Downloads stream to a `.partial` sibling and only rename after SHA-256 match; partial files are reused on resume. `model_id()` returns `"onnx:<slug>:384d"` so a switch invalidates cached embeddings via the existing `chunk_embeddings.model_id` predicate and triggers re-embedding through `backfill_embeddings_tracked`. Bridge surface: `bridge_download_embedding_model` (`AsyncTask`) + `bridge_get_embedding_download_progress` (poll-based, no `ThreadsafeFunction`) + `bridge_switch_embedding_model` (atomic provider swap + backfill kick-off) + `bridge_get_embedding_model_status` (corpus non-ASCII ratio + currently active model id + per-model installed bit). Renderer: `EmbeddingModelCard` in Settings ships a three-way provider radio (HashTrick / English MiniLM / Multilingual XLM-R), a determinate-or-indeterminate download progress bar, and a multilingual-recommendation hint that surfaces when >10 % of indexed chunks contain non-ASCII text *and* the corpus has at least 50 chunks (suppresses spurious hints on tiny corpora and is hidden whenever the multilingual model is already active). IPC contracts (`settings:downloadEmbeddingModel`, `settings:switchEmbeddingModel`, `settings:getEmbeddingModelStatus`, `settings:getEmbeddingDownloadProgress`) flow through `idempotentHandle` + per-channel rate limiter (`downloadEmbeddingModel` 1/5 s, `switchEmbeddingModel` 1/1 s) with audit logging on success. | `IN PROGRESS` (this PR) |
+
+### Exit criteria
+
+- [x] `OnnxEmbeddingProvider` produces a 384-dim L2-normalised vector for English text under `cargo test -- --ignored` (Test 1).
+- [x] Cross-lingual recall: `paraphrase-multilingual-MiniLM-L12-v2` scores cos(en, fr) > 0.7 on the canonical "financial report" / "rapport financier" pair (Test 2), and the English-only model scores significantly lower on the same pair (Test 3) — proving the multilingual model adds value.
+- [x] Multilingual model produces non-trivial vectors for CJK (Test 4) and Arabic (Test 5) inputs.
+- [x] Distinct `model_id()` per slug so the existing `chunk_embeddings.model_id` filter invalidates cached vectors on switch (Test 6).
+- [x] Batch embedding is identical to single embedding for the same input (Test 7).
+- [x] Renderer card surfaces the three options, gates the multilingual hint behind the 10 % non-ASCII + 50-chunk threshold, suppresses the hint when multilingual is already active, and skips redundant downloads when a model is already installed (11 Vitest cases in `embeddingModelCard.test.tsx`).
+- [x] All `cargo test --workspace` and renderer Vitest suites stay green; `cargo clippy --all-targets --all-features -- -D warnings` is clean.
+
+### PR breakdown
+
+- [ ] **PR 1 (Task 1)** — ONNX provider + model registry + bridge wiring + Settings card + tests + docs sweep (this PR).
+
+---
+
 ## Phase changelog
 
 ### 2026-05-27 — Phase 14 docs sweep (this PR)

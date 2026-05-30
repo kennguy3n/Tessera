@@ -163,6 +163,32 @@ export const RATE_LIMIT_PROFILES = {
     tokensPerInterval: 1,
     intervalMs: 10_000,
   },
+  // Phase 19 Task 1: ONNX model download. A 22 MB or 120 MB
+  // download takes 5-60 s on a typical home connection. The bridge
+  // tracker's `mark_starting` resets the progress slot but does NOT
+  // serialise concurrent `DownloadEmbeddingModelTask` instances —
+  // two rapid calls before this rate limiter kicks in could both
+  // spawn libuv workers that proceed in parallel (the SHA-256 /
+  // atomic-rename invariant keeps them safe but their progress
+  // updates would race and waste bandwidth). This rate limiter at
+  // 1 / 5 s is the actual primary serialisation barrier; the SHA
+  // check is the integrity backstop. Both together also keep the
+  // upstream HuggingFace CDN happy under runaway-component
+  // scenarios.
+  "settings:downloadEmbeddingModel": {
+    tokensPerInterval: 1,
+    intervalMs: 5_000,
+  },
+  // Switching the active model is cheap (a few hundred ms ONNX
+  // session load) but every switch invalidates the current
+  // model's vectors from the search hot path and queues a
+  // backfill. 1 per second is plenty for an attentive user; a
+  // runaway component would otherwise oscillate the active model
+  // and thrash the search engine's vector cache.
+  "settings:switchEmbeddingModel": {
+    tokensPerInterval: 1,
+    intervalMs: 1_000,
+  },
   "settings:updateHybridSearchConfig": {
     tokensPerInterval: 5,
     intervalMs: 1_000,

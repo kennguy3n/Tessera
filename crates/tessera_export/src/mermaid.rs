@@ -311,8 +311,7 @@ pub fn render_block_to_svg(block: &MermaidBlock) -> String {
     let padding = 12.0_f32;
     let lines: Vec<&str> = block.dsl.lines().collect();
     let content_lines = lines.len().max(1) as f32;
-    let height =
-        header_height + padding * 2.0 + content_lines * line_height + 4.0;
+    let height = header_height + padding * 2.0 + content_lines * line_height + 4.0;
     // Width: at least 360 to look like a diagram box, scaled up by the
     // longest line so DSL lines aren't clipped (assuming 7 px per
     // monospace char at 11 px font).

@@ -76,6 +76,15 @@ struct AppState {
     /// a `bridge_backfill_embeddings` `AsyncTask` is in flight on a
     /// libuv worker thread holding the `source_manager` lock.
     embedding_progress: Arc<EmbeddingProgressTracker>,
+    /// Phase 19 Task 1: tracker for in-flight ONNX embedding-model
+    /// downloads. Pollable from any thread without locking
+    /// `source_manager`, just like `embedding_progress` — important
+    /// because the download `AsyncTask` runs on a libuv worker
+    /// thread that does NOT hold the source-manager mutex (the
+    /// download is purely a filesystem + network operation) but
+    /// the renderer polls progress on its own timer that must not
+    /// block on either.
+    download_progress: Arc<sources::DownloadProgressTracker>,
     /// Phase 15 Task 7: Arc clone of the shared SQLite connection so
     /// `bridge_dispose` can run `wal_checkpoint(TRUNCATE)` without
     /// going through any individual store's lock. Holding it here
@@ -178,6 +187,13 @@ pub fn init_bridge(
             automation_store: Mutex::new(automation_store),
             template_dir,
             embedding_progress,
+            // Phase 19 Task 1: tracker starts in `idle` with no
+            // download in flight; the first call to
+            // `bridge_download_embedding_model` flips it to
+            // `downloading` synchronously before the AsyncTask
+            // spawns, defusing the same renderer-polls-stale-state
+            // race the embedding-progress tracker handles.
+            download_progress: Arc::new(sources::DownloadProgressTracker::new()),
             shared_conn: conn,
         })
         .map_err(|_| napi::Error::from_reason("Bridge already initialized"))?;
@@ -784,6 +800,186 @@ pub fn bridge_update_hybrid_search_config(
         .lock()
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     sources::update_hybrid_search_config(&mgr, update)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+// =====================================================================
+// Phase 19 Task 1: ONNX embedding-model management exports.
+//
+// Four exports mirror the four IPC channels in
+// `apps/desktop/electron/ipc/settings.ts`:
+//   * `bridge_get_embedding_model_status` — list models + download/loaded status
+//   * `bridge_download_embedding_model` — async download with progress polling
+//   * `bridge_get_embedding_download_progress` — lightweight progress poll
+//   * `bridge_switch_embedding_model` — synchronous swap of the live embedder
+//
+// The download is the only async path; switching is intentionally
+// synchronous (a few hundred ms to load the ONNX session) so the
+// renderer can chain "switch → backfill_embeddings" in a single
+// `await` without waking up an extra worker thread.
+// =====================================================================
+
+/// Snapshot of available embedding models + the bridge's current
+/// download/active state. Single round-trip so the Settings UI
+/// renders in one frame. `user_data_dir` is the app's userData
+/// path (e.g. Electron's `app.getPath("userData")`); the registry
+/// stores models under `{user_data_dir}/models/onnx/{slug}/`.
+#[napi]
+pub fn bridge_get_embedding_model_status(
+    user_data_dir: String,
+) -> napi::Result<sources::EmbeddingModelStatusInfo> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::get_embedding_model_status(&mgr, &s.download_progress, &user_data_dir)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// `napi::Task` that downloads the ONNX model + tokenizer for `slug`
+/// on a libuv worker thread.
+///
+/// The IPC layer awaits the resulting Promise, but the renderer can
+/// (and does) poll `bridge_get_embedding_download_progress`
+/// concurrently on a 500 ms timer to render the progress bar. The
+/// download `AsyncTask` does NOT hold the `SourceManager` mutex —
+/// downloads are pure filesystem + network work that doesn't touch
+/// the DB — so the renderer's other IPCs (search, list_sources,
+/// etc.) keep working at full speed while a 120 MB model
+/// downloads.
+///
+/// On success the tracker is flipped to `done`. On failure the
+/// tracker is flipped to `failed` with the error message attached.
+/// Either way the Promise also resolves / rejects so an `await` on
+/// the JS side gets the result without polling.
+pub struct DownloadEmbeddingModelTask {
+    slug: String,
+    user_data_dir: String,
+    tracker: Arc<sources::DownloadProgressTracker>,
+}
+
+impl Task for DownloadEmbeddingModelTask {
+    type Output = sources::EmbeddingModelInfo;
+    type JsValue = sources::EmbeddingModelInfo;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        let slug = self.slug.clone();
+        let user_data_dir = self.user_data_dir.clone();
+        let tracker = Arc::clone(&self.tracker);
+
+        // The registry's `download_model` is async (it uses
+        // streaming `reqwest`). napi `Task::compute` runs
+        // synchronously on a worker thread, so we spin up a
+        // current-thread tokio runtime here. A current-thread
+        // runtime is correct because the registry function only
+        // spawns its own work via `await` on the request future —
+        // there's no need for the multi-thread runtime's worker
+        // pool overhead.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| napi::Error::from_reason(format!("tokio runtime build: {e}")))?;
+
+        let install_dir_result = rt.block_on(sources::download_embedding_model(
+            &slug,
+            &user_data_dir,
+            Arc::clone(&tracker),
+        ));
+
+        match install_dir_result {
+            Ok(_install_dir) => {
+                tracker.mark_done();
+                let mgr = state()?
+                    .source_manager
+                    .lock()
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+                sources::get_embedding_model_status(&mgr, &tracker, &user_data_dir)
+                    .map(|status| {
+                        status
+                            .models
+                            .into_iter()
+                            .find(|m| m.slug == slug)
+                            .unwrap_or(sources::EmbeddingModelInfo {
+                                slug,
+                                display_name: String::new(),
+                                dim: 0,
+                                model_size_bytes: 0.0,
+                                tokenizer_size_bytes: 0.0,
+                                languages: String::new(),
+                                installed: false,
+                                model_id: String::new(),
+                            })
+                    })
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                tracker.mark_failed(&msg);
+                Err(napi::Error::from_reason(msg))
+            }
+        }
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(output)
+    }
+}
+
+/// Trigger an ONNX embedding-model download. Returns a Promise
+/// that resolves with the final [`sources::EmbeddingModelInfo`]
+/// (with `installed=true` and the canonical `model_id` filled in)
+/// or rejects with the download error.
+///
+/// The pre-flight `mark_starting(&slug)` flips the tracker to
+/// `downloading` synchronously on the JS main thread so the
+/// renderer's first progress poll for this download cannot see
+/// the previous run's terminal state. Same race-defusing pattern
+/// as `bridge_backfill_embeddings`.
+#[napi]
+pub fn bridge_download_embedding_model(
+    slug: String,
+    user_data_dir: String,
+) -> napi::Result<AsyncTask<DownloadEmbeddingModelTask>> {
+    let s = state()?;
+    s.download_progress.mark_starting(&slug);
+    Ok(AsyncTask::new(DownloadEmbeddingModelTask {
+        slug,
+        user_data_dir,
+        tracker: Arc::clone(&s.download_progress),
+    }))
+}
+
+/// Lightweight progress poll for in-flight ONNX model downloads.
+/// Mirrors `bridge_get_embedding_progress` — bypasses the
+/// `source_manager` lock so the renderer's progress bar updates
+/// at full timer cadence regardless of what else is going on.
+#[napi]
+pub fn bridge_get_embedding_download_progress() -> napi::Result<sources::DownloadProgressInfo> {
+    let s = state()?;
+    Ok(s.download_progress.snapshot())
+}
+
+/// Synchronously swap the active embedder to a downloaded ONNX
+/// model. Returns the freshly-loaded model's catalogue entry so
+/// the renderer can echo it back as the new "current" badge.
+///
+/// Does NOT trigger a re-embed pass — that's the renderer's
+/// responsibility (it'll typically call
+/// `bridge_backfill_embeddings` immediately after) so the
+/// progress UI can show the backfill bar without the bridge
+/// having to invent a synthetic combined progress payload.
+#[napi]
+pub fn bridge_switch_embedding_model(
+    slug: String,
+    user_data_dir: String,
+) -> napi::Result<sources::EmbeddingModelInfo> {
+    let s = state()?;
+    let mut mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::switch_embedding_model(&mut mgr, &user_data_dir, &slug)
         .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
@@ -2860,9 +3056,7 @@ pub struct AuditRotationResultView {
 }
 
 #[napi]
-pub fn bridge_audit_rotate(
-    archive_dir: String,
-) -> napi::Result<Option<AuditRotationResultView>> {
+pub fn bridge_audit_rotate(archive_dir: String) -> napi::Result<Option<AuditRotationResultView>> {
     let s = state()?;
     // Devin Review ANALYSIS-0001: do NOT go through the outer
     // `Mutex<AuditLogger>` for the rotation path. Inside
@@ -2906,10 +3100,7 @@ pub fn bridge_audit_rotate(
 pub fn bridge_audit_list_archives(archive_dir: String) -> napi::Result<Vec<String>> {
     let paths = AuditLogger::list_archives(std::path::Path::new(&archive_dir))
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    Ok(paths
-        .into_iter()
-        .map(|p| p.display().to_string())
-        .collect())
+    Ok(paths.into_iter().map(|p| p.display().to_string()).collect())
 }
 
 /// Return the `limit` most recent audit rows, newest first.

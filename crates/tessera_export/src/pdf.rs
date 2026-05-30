@@ -341,10 +341,7 @@ pub fn export_pdf_with_svgs<S: std::hash::BuildHasher>(
         // Emit a Typst image reference. width: auto + height: auto
         // lets Typst use the SVG's intrinsic dimensions; we cap
         // width to the available text width so wide diagrams scale.
-        let _ = write!(
-            markup,
-            "\n#image(\"{virt_name}\", width: 100%)\n\n",
-        );
+        let _ = write!(markup, "\n#image(\"{virt_name}\", width: 100%)\n\n",);
         cursor = end;
     }
     // Trailing text after the last block.
@@ -446,7 +443,8 @@ fn typst_escape(s: &str) -> String {
             // again silently dropping back to the minimal-PDF fallback.
             // Add `{` and `}` so curly braces in user content survive
             // the Typst pipeline.
-            '#' | '*' | '_' | '=' | '[' | ']' | '<' | '>' | '$' | '@' | '\\' | '~' | '\'' | '`' | '{' | '}' => {
+            '#' | '*' | '_' | '=' | '[' | ']' | '<' | '>' | '$' | '@' | '\\' | '~' | '\'' | '`'
+            | '{' | '}' => {
                 out.push('\\');
                 out.push(ch);
             }
@@ -585,8 +583,14 @@ mod tests {
         let json_example = r#"{"name": "Devin", "scores": [1, 2, 3]}"#;
         let escaped = typst_escape(json_example);
         // Every `{` and `}` in the input must be backslash-escaped.
-        assert_eq!(json_example.matches('{').count(), escaped.matches("\\{").count());
-        assert_eq!(json_example.matches('}').count(), escaped.matches("\\}").count());
+        assert_eq!(
+            json_example.matches('{').count(),
+            escaped.matches("\\{").count()
+        );
+        assert_eq!(
+            json_example.matches('}').count(),
+            escaped.matches("\\}").count()
+        );
         // Mustache-style double braces (`{{name}}`) also survive.
         let template = "Hello {{name}}, welcome.";
         let template_escaped = typst_escape(template);

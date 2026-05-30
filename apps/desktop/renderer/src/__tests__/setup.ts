@@ -316,6 +316,51 @@ const mockApi = {
       recencyHalflifeSecs: 30 * 24 * 60 * 60,
       candidatePoolSize: 0,
     }),
+    // Phase 19 Task 1: ONNX embedding-model picker IPC. Test
+    // doubles return the "idle, no models installed, HashTrick
+    // active" baseline so every Settings page test renders the
+    // card without throwing. Specific tests override these via
+    // `vi.spyOn` when they care about a particular state.
+    getEmbeddingModelStatus: vi.fn().mockResolvedValue({
+      currentModelId: "hash-trick-v1-256d-char3-5",
+      models: [],
+      download: {
+        status: "idle" as const,
+        slug: null,
+        bytesTotal: null,
+        bytesDownloaded: 0,
+        lastError: null,
+      },
+      nonAsciiChunks: 0,
+      totalChunks: 0,
+    }),
+    getEmbeddingDownloadProgress: vi.fn().mockResolvedValue({
+      status: "idle" as const,
+      slug: null,
+      bytesTotal: null,
+      bytesDownloaded: 0,
+      lastError: null,
+    }),
+    downloadEmbeddingModel: vi.fn().mockResolvedValue({
+      slug: "all-MiniLM-L6-v2",
+      displayName: "all-MiniLM-L6-v2",
+      dim: 384,
+      modelSizeBytes: 22 * 1024 * 1024,
+      tokenizerSizeBytes: 700 * 1024,
+      languages: "en",
+      installed: true,
+      modelId: "onnx:all-MiniLM-L6-v2:384d",
+    }),
+    switchEmbeddingModel: vi.fn().mockResolvedValue({
+      slug: "all-MiniLM-L6-v2",
+      displayName: "all-MiniLM-L6-v2",
+      dim: 384,
+      modelSizeBytes: 22 * 1024 * 1024,
+      tokenizerSizeBytes: 700 * 1024,
+      languages: "en",
+      installed: true,
+      modelId: "onnx:all-MiniLM-L6-v2:384d",
+    }),
   },
   externalProvider: {
     get: vi.fn().mockResolvedValue({

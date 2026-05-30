@@ -484,12 +484,7 @@ mod tests {
         let xml = read_docx_text(&bytes);
         // Every pipe-bearing line must survive verbatim inside the
         // document body (not vanish into a `<w:tbl>` element).
-        for needle in [
-            "alias ll=",
-            "| A | B |",
-            "| --- | --- |",
-            "| 1 | 2 |",
-        ] {
+        for needle in ["alias ll=", "| A | B |", "| --- | --- |", "| 1 | 2 |"] {
             assert!(
                 xml.contains(needle),
                 "code-block line {needle:?} missing from document.xml:\n{xml}"
@@ -507,7 +502,11 @@ mod tests {
         // Real separators (CommonMark spec) — three+ dashes, with or
         // without alignment colons.
         assert!(is_md_table_separator(&["---".into(), "---".into()]));
-        assert!(is_md_table_separator(&[":---".into(), "---:".into(), ":---:".into()]));
+        assert!(is_md_table_separator(&[
+            ":---".into(),
+            "---:".into(),
+            ":---:".into()
+        ]));
         assert!(is_md_table_separator(&["----------".into()]));
         // Short hyphen sequences (1-2 dashes) — NOT a separator; these
         // are real cell contents and must be preserved.
@@ -560,10 +559,7 @@ mod tests {
         assert!(!is_md_table_separator(&["---::".into()]));
         assert!(!is_md_table_separator(&["::---::".into()]));
         // Mixed valid/invalid — any invalid cell invalidates the row.
-        assert!(!is_md_table_separator(&[
-            ":---".into(),
-            "::---".into(),
-        ]));
+        assert!(!is_md_table_separator(&[":---".into(), "::---".into(),]));
         // Colons-only (no dashes) — INVALID; the dash run is required.
         assert!(!is_md_table_separator(&[":".into()]));
         assert!(!is_md_table_separator(&["::".into()]));

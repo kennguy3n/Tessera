@@ -34,8 +34,7 @@ use crate::pdf_extractor::extract_pdf_text;
 fn extraction_pool() -> Option<&'static rayon::ThreadPool> {
     static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
     POOL.get_or_init(|| {
-        let available = std::thread::available_parallelism()
-            .map_or(1, std::num::NonZeroUsize::get);
+        let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
         let target = (available / 2).clamp(1, 8);
         rayon::ThreadPoolBuilder::new()
             .num_threads(target)

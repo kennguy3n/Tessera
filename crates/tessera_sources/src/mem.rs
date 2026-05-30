@@ -58,7 +58,6 @@ pub fn current_rss_bytes() -> Option<u64> {
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
-        let _ = Path::new; // suppress unused-import warning
         None
     }
 }

@@ -451,10 +451,10 @@ mod tests {
             "Phase2",
             "Tier3",
             "Quarter1990",
-            "XFE1",        // col 16385 — past XFD/16384, so not a cell ref
-            "ABCD1",       // 4-letter alpha cannot be a cell ref
-            "A1048577",    // row 1048577 — past the 1048576 limit
-            "A0",          // row 0 doesn't exist in Excel
+            "XFE1",     // col 16385 — past XFD/16384, so not a cell ref
+            "ABCD1",    // 4-letter alpha cannot be a cell ref
+            "A1048577", // row 1048577 — past the 1048576 limit
+            "A0",       // row 0 doesn't exist in Excel
         ] {
             assert!(is_valid_defined_name(ok), "rejected legal name {ok:?}");
         }

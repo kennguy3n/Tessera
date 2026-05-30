@@ -160,7 +160,7 @@ flowchart TB
 | Core engine | Rust | Performance, memory safety, indexing, storage, crypto |
 | Optional later | Go | Remote connector daemons, network services |
 | Local database | SQLite / SQLCipher | Local-first, encrypted, single-file DB |
-| Search | FTS5 full-text + `HashTrickEmbedding` vector similarity + Reciprocal Rank Fusion (k=60) + temporal recency decay (30-day half-life) | Hybrid retrieval without external services; BM25 captures keywords, the embedding signal handles typos / substrings / paraphrase, RRF combines the rankings on rank rather than incomparable raw scores, and the recency decay biases toward fresh material when content similarity ties |
+| Search | FTS5 full-text + pluggable `EmbeddingProvider` (default `HashTrickEmbedding` offline; optional ONNX Runtime `OnnxEmbeddingProvider` with `all-MiniLM-L6-v2` 22 MB English or `paraphrase-multilingual-MiniLM-L12-v2` ~120 MB multilingual, both 384-dim) + Reciprocal Rank Fusion (k=60) + temporal recency decay (30-day half-life) | Hybrid retrieval without external services; BM25 captures keywords, the embedding signal handles typos / substrings / paraphrase, RRF combines the rankings on rank rather than incomparable raw scores, and the recency decay biases toward fresh material when content similarity ties. The transformer-backed embeddings are opt-in — users can stay fully offline with HashTrick or upgrade to semantic recall (English-only or 50+ languages) without changing the vector dim |
 | Model runtime | llama.cpp / PrismML sidecar | Local GGUF model inference |
 | Apple Silicon | MLX | macOS ARM acceleration |
 | Electron bridge | N-API | Low-overhead Rust ↔ Node.js calls |
@@ -229,8 +229,21 @@ Search inside Tessera runs through `crates/tessera_sources/src/hybrid.rs`
   (`crates/tessera_sources/src/embedding.rs`). The default offline
   implementation `HashTrickEmbedding` produces signed character-n-gram
   vectors (Weinberger et al. 2009, dim=256, char 3..=5) so partial
-  matches and typos surface without a transformer. A transformer-backed
-  provider can be plugged in to add distributional semantics.
+  matches and typos surface without a transformer. Two
+  transformer-backed providers are available behind the same trait
+  (`crates/tessera_sources/src/onnx_embedder.rs`, ONNX Runtime CPU EP):
+  `all-MiniLM-L6-v2` (22 MB, English, 384-dim) and
+  `paraphrase-multilingual-MiniLM-L12-v2` (~120 MB INT8 quantized, 50+
+  languages including all nine non-English locales Tessera ships
+  templates for, 384-dim). Tokenization runs through HuggingFace
+  `tokenizers` so CJK / Arabic / Devanagari / Hangul / Cyrillic flow
+  through unchanged; mean-pooling weights tokens by the attention mask
+  and the output is L2-normalised. Both transformer models export the
+  same dim, so the ANN index, cosine code, and `chunk_embeddings`
+  storage layout are invariant on a switch — the only thing that
+  changes is `chunk_embeddings.model_id`, which acts as a versioning
+  key so cached vectors from the previous provider are filtered out
+  and re-embedded through `backfill_embeddings_tracked`.
 - **Temporal recency** via `recency_multiplier(age_secs, halflife_secs)`,
   a true half-life decay (`2^(-Δt / halflife)`, default 30-day half-life)
   applied multiplicatively to the fused score so fresh material wins ties.
@@ -241,6 +254,26 @@ sidesteps the cross-scale tuning that any weighted-sum approach would
 require. Per-signal weights and the recency half-life are configurable
 through `HybridSearchConfig`; setting `vector_weight` to 0 collapses
 the pipeline to BM25 + recency.
+
+#### Embedding provider tiers (Phase 19)
+
+The vector signal supports three interchangeable providers, all behind
+the same `EmbeddingProvider` trait. The Settings page exposes them as
+a single radio group; switching providers swaps the active backend and
+triggers `backfill_embeddings_tracked` to re-embed the entire corpus
+under the new `model_id`.
+
+| Tier | `model_id` | Dim | Download | Languages | When to pick it |
+|---|---|---|---|---|---|
+| **Fast** | `hash-trick-v1-256d-char3-5` | 256 | 0 (bundled) | Script-agnostic ASCII bias | The default — fully offline, no network. Good baseline for English-with-typography; recall suffers on paraphrase and cross-lingual queries. |
+| **Semantic — English** | `onnx:all-MiniLM-L6-v2:384d` | 384 | 22 MB | English | Smallest semantic option. Best per-MB recall for an English-only workspace; will *not* embed CJK / Arabic / Devanagari well. |
+| **Semantic — Multilingual** | `onnx:paraphrase-multilingual-MiniLM-L12-v2:384d` | 384 | ~120 MB INT8 | 50+ languages including all nine non-English Tessera locales (es / fr / de / ja / zh / pt / ko / ar / hi) | Recommended default when any non-English content is indexed. Same retrieval API and same 384-dim, so the rest of the hybrid pipeline doesn't branch. |
+
+The renderer surfaces an auto-recommendation: if the indexed corpus
+has at least 50 chunks and more than 10 % of them contain non-ASCII
+text, the Settings card highlights the multilingual option. The hint
+is suppressed when the multilingual model is already active or when
+the corpus is too small to draw a meaningful conclusion from.
 
 ### User experience
 

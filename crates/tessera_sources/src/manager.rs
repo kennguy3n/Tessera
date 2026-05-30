@@ -662,6 +662,45 @@ impl SourceManager {
         self.indexer.backfill_embeddings(&self.store, batch_size)
     }
 
+    /// Swap the active embedding provider.
+    ///
+    /// Used by the bridge when the user changes the embedding tier
+    /// in Settings (e.g. "Fast (HashTrick)" → "Semantic — English
+    /// (MiniLM)" → "Semantic — Multilingual (XLM-R)"). The provider
+    /// is plumbed both into [`SourceManager::embedder`] (which the
+    /// search hot path reads to embed the query) and into the
+    /// underlying [`Indexer`] (which embeds new chunks at ingest
+    /// time). Both sides MUST agree, otherwise the indexer would
+    /// keep writing vectors under the old `model_id` even as the
+    /// query side asks for the new one.
+    ///
+    /// `model_id` changes are handled transparently by
+    /// `chunk_embeddings`'s `(chunk_id, model_id)` schema: vectors
+    /// from the old model remain on disk (so a user who switches
+    /// back doesn't have to re-embed), and the search path filters
+    /// to the current model's vectors. Calling
+    /// [`SourceManager::backfill_embeddings_tracked`] after a swap
+    /// populates the new model's vectors in the background.
+    pub fn set_embedder(&mut self, embedder: Option<Arc<dyn EmbeddingProvider>>) {
+        self.indexer.set_embedder(embedder.clone());
+        self.embedder = embedder;
+    }
+
+    /// Returns the `model_id` of the currently-attached embedder, or
+    /// `None` if there is no embedder. Used by the bridge to
+    /// answer `settings:getEmbeddingModelStatus` without having to
+    /// snapshot every loaded model URL.
+    pub fn current_embedder_model_id(&self) -> Option<String> {
+        self.embedder.as_ref().map(|e| e.model_id().to_string())
+    }
+
+    /// Phase 19 Task 1: forward to [`SourceStore::count_non_ascii_chunks`]
+    /// for the Settings page's "consider the multilingual model"
+    /// hint. Returns `(non_ascii_chunks, total_chunks)`.
+    pub fn count_non_ascii_chunks(&self) -> Result<(u64, u64)> {
+        self.store.count_non_ascii_chunks()
+    }
+
     /// Backfill embeddings with a tracked progress snapshot exposed
     /// via [`embedding_progress`]. The renderer polls
     /// `bridge_get_embedding_progress` during the call and shows a
@@ -4382,7 +4421,7 @@ mod tests {
         let cache_dir = dir.path().to_str().unwrap();
         let manager = SourceManager::new_in_memory(&[]).unwrap();
         let added = manager.add_kchat_channel(cache_dir).unwrap();
-        let source_id = added.source.id.clone();
+        let source_id = added.source.id;
 
         let t0 = 1_700_000_000_000_i64;
         let root = make_threaded_post_input(
@@ -4436,7 +4475,10 @@ mod tests {
             "expected root + 2 most-recent earlier-replies (got {:?})",
             ctx.iter().map(|m| m.post_id.as_str()).collect::<Vec<_>>()
         );
-        assert_eq!(ctx[0].post_id, "root-1", "root must come first chronologically");
+        assert_eq!(
+            ctx[0].post_id, "root-1",
+            "root must come first chronologically"
+        );
         assert!(ctx[0].is_root, "first row must carry is_root=true");
         assert_eq!(ctx[1].post_id, "reply-1");
         assert!(!ctx[1].is_root, "sibling rows must carry is_root=false");
@@ -4452,7 +4494,10 @@ mod tests {
         // Timestamps strictly increasing (chronological order).
         assert!(ctx[0].created_at_ms < ctx[1].created_at_ms);
         assert!(ctx[1].created_at_ms < ctx[2].created_at_ms);
-        assert!(ctx[2].created_at_ms < t0 + 180_000, "hit's own row must be excluded");
+        assert!(
+            ctx[2].created_at_ms < t0 + 180_000,
+            "hit's own row must be excluded"
+        );
 
         // Channel id surfaces for renderer permalink composition.
         for m in &ctx {
@@ -4468,7 +4513,7 @@ mod tests {
         let cache_dir = dir.path().to_str().unwrap();
         let manager = SourceManager::new_in_memory(&[]).unwrap();
         let added = manager.add_kchat_channel(cache_dir).unwrap();
-        let source_id = added.source.id.clone();
+        let source_id = added.source.id;
 
         manager
             .ingest_kchat_post(&make_post_input(
@@ -4499,12 +4544,15 @@ mod tests {
         let cache_dir = dir.path().to_str().unwrap();
         let manager = SourceManager::new_in_memory(&[]).unwrap();
         let added = manager.add_kchat_channel(cache_dir).unwrap();
-        let source_id = added.source.id.clone();
+        let source_id = added.source.id;
 
         let ctx = manager
             .fetch_kchat_thread_context(&source_id, "nonexistent-post-id")
             .unwrap();
-        assert!(ctx.is_empty(), "unknown post must surface no thread context");
+        assert!(
+            ctx.is_empty(),
+            "unknown post must surface no thread context"
+        );
     }
 
     /// `(source_id, post_id)` is the lookup key — a post in a
@@ -4531,9 +4579,7 @@ mod tests {
             .unwrap();
 
         let bogus = SourceId(uuid::Uuid::new_v4());
-        let ctx = manager
-            .fetch_kchat_thread_context(&bogus, "reply")
-            .unwrap();
+        let ctx = manager.fetch_kchat_thread_context(&bogus, "reply").unwrap();
         assert!(
             ctx.is_empty(),
             "unknown source must surface no thread context"
@@ -4551,12 +4597,18 @@ mod tests {
         let cache_dir = dir.path().to_str().unwrap();
         let manager = SourceManager::new_in_memory(&[]).unwrap();
         let added = manager.add_kchat_channel(cache_dir).unwrap();
-        let source_id = added.source.id.clone();
+        let source_id = added.source.id;
 
         let t0 = 1_700_000_000_000_i64;
         manager
             .ingest_kchat_post(&make_threaded_post_input(
-                cache_dir, "root", "c", None, "u0", "thread starts here", t0,
+                cache_dir,
+                "root",
+                "c",
+                None,
+                "u0",
+                "thread starts here",
+                t0,
             ))
             .unwrap();
         for i in 1..=6 {
@@ -4611,13 +4663,19 @@ mod tests {
         let cache_dir = dir.path().to_str().unwrap();
         let manager = SourceManager::new_in_memory(&[]).unwrap();
         let added = manager.add_kchat_channel(cache_dir).unwrap();
-        let source_id = added.source.id.clone();
+        let source_id = added.source.id;
 
         let t0 = 1_700_000_000_000_i64;
         // NO ingest of "root" — only the replies.
         manager
             .ingest_kchat_post(&make_threaded_post_input(
-                cache_dir, "r1", "c", Some("root"), "u1", "first orphan reply", t0,
+                cache_dir,
+                "r1",
+                "c",
+                Some("root"),
+                "u1",
+                "first orphan reply",
+                t0,
             ))
             .unwrap();
         manager
@@ -4635,9 +4693,16 @@ mod tests {
         let ctx = manager
             .fetch_kchat_thread_context(&source_id, "r2")
             .unwrap();
-        assert_eq!(ctx.len(), 1, "should surface only the indexed earlier sibling");
+        assert_eq!(
+            ctx.len(),
+            1,
+            "should surface only the indexed earlier sibling"
+        );
         assert_eq!(ctx[0].post_id, "r1");
-        assert!(!ctx[0].is_root, "no row should claim is_root when root absent");
+        assert!(
+            !ctx[0].is_root,
+            "no row should claim is_root when root absent"
+        );
     }
 
     /// Revoked source: the DEK is cryptoshredded so no thread
@@ -4649,7 +4714,7 @@ mod tests {
         let manager = SourceManager::new_in_memory(&[]).unwrap();
         manager.set_kchat_principal("self-user").unwrap();
         let added = manager.add_kchat_channel(cache_dir).unwrap();
-        let source_id = added.source.id.clone();
+        let source_id = added.source.id;
 
         let t0 = 1_700_000_000_000_i64;
         manager
@@ -4702,7 +4767,7 @@ mod tests {
         let cache_dir = dir.path().to_str().unwrap();
         let manager = SourceManager::new_in_memory(&[]).unwrap();
         let added = manager.add_kchat_channel(cache_dir).unwrap();
-        let source_id = added.source.id.clone();
+        let source_id = added.source.id;
 
         let t0 = 1_700_000_000_000_i64;
         manager
@@ -4770,12 +4835,18 @@ mod tests {
         let cache_dir = dir.path().to_str().unwrap();
         let manager = SourceManager::new_in_memory(&[]).unwrap();
         let added = manager.add_kchat_channel(cache_dir).unwrap();
-        let source_id = added.source.id.clone();
+        let source_id = added.source.id;
 
         let t0 = 1_700_000_000_000_i64;
         manager
             .ingest_kchat_post(&make_threaded_post_input(
-                cache_dir, "rt", "c", None, "u0", "root body", t0,
+                cache_dir,
+                "rt",
+                "c",
+                None,
+                "u0",
+                "root body",
+                t0,
             ))
             .unwrap();
         // The hit IS the only reply; its created_at_ms is the
@@ -4956,10 +5027,7 @@ mod tests {
         // ── Phase 5: re-grant the source ──
 
         let regrant = manager
-            .refresh_kchat_acl(
-                cache_dir,
-                &[make_acl_member("self-user", "channel_admin")],
-            )
+            .refresh_kchat_acl(cache_dir, &[make_acl_member("self-user", "channel_admin")])
             .unwrap();
         assert_eq!(
             regrant,
@@ -5124,10 +5192,7 @@ mod tests {
 
         // Re-grant.
         manager
-            .refresh_kchat_acl(
-                cache_dir,
-                &[make_acl_member("self-user", "channel_admin")],
-            )
+            .refresh_kchat_acl(cache_dir, &[make_acl_member("self-user", "channel_admin")])
             .unwrap();
 
         // Re-ingest a new thread.

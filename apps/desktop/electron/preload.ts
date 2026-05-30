@@ -306,6 +306,20 @@ const api: TesseraApi = {
       ipcRenderer.invoke("settings:getHybridSearchConfig"),
     updateHybridSearchConfig: (update: HybridSearchConfigUpdate) =>
       ipcRenderer.invoke("settings:updateHybridSearchConfig", update),
+    // Phase 19 Task 1: ONNX embedding-model lifecycle. Channel
+    // names mirror the IPC handlers in `electron/ipc/settings.ts`,
+    // which themselves mirror the bridge exports in
+    // `crates/tessera_bridge/src/napi_exports.rs`. Three reads, two
+    // mutations — keeps the renderer's `EmbeddingModelCard` and
+    // its background poll loop independent of the mutation paths.
+    getEmbeddingModelStatus: () =>
+      ipcRenderer.invoke("settings:getEmbeddingModelStatus"),
+    getEmbeddingDownloadProgress: () =>
+      ipcRenderer.invoke("settings:getEmbeddingDownloadProgress"),
+    downloadEmbeddingModel: (slug: string) =>
+      ipcRenderer.invoke("settings:downloadEmbeddingModel", { slug }),
+    switchEmbeddingModel: (slug: string) =>
+      ipcRenderer.invoke("settings:switchEmbeddingModel", { slug }),
   },
   externalProvider: {
     get: () => ipcRenderer.invoke("externalProvider:get"),

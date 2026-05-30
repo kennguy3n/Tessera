@@ -6,6 +6,7 @@ import ModelRuntimeCard from "../components/ModelRuntimeCard";
 import ModelSlotPanel from "../components/ModelSlotPanel";
 import ExternalProviderCard from "../components/ExternalProviderCard";
 import HybridSearchCard from "../components/HybridSearchCard";
+import EmbeddingModelCard from "../components/EmbeddingModelCard";
 import KchatSettingsCard from "../components/KchatSettingsCard";
 import AuditActivityCard from "../components/AuditActivityCard";
 import SourceHealthDashboard from "../components/SourceHealthDashboard";
@@ -199,6 +200,8 @@ export default function SettingsPage() {
         <ExternalProviderCard />
 
         <HybridSearchCard />
+
+        <EmbeddingModelCard />
 
         <KchatSettingsCard />
 

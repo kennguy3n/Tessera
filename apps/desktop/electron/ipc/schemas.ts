@@ -229,6 +229,58 @@ export type ExternalProviderApiKeyInput = z.infer<
 // the renderer's slider can only ever produce values in these ranges,
 // so anything outside is a sign of a renderer bug or a tampering
 // attempt rather than a configuration choice we should honour.
+/**
+ * Phase 19 Task 1: slugs the renderer is allowed to ask the bridge
+ * to download / switch to. Must stay in lock-step with
+ * `crates/tessera_sources/src/model_registry.rs::SHIPPED_MODELS`.
+ *
+ * Keeping the enum here (not in Rust) is a deliberate defense-in-
+ * depth choice: a compromised renderer that bypasses the picker
+ * UI and crafts a `settings:downloadEmbeddingModel` IPC payload
+ * cannot point the bridge at an arbitrary HTTP URL — the IPC layer
+ * rejects unknown slugs at the zod boundary before the bridge ever
+ * sees the value. The Rust side ALSO validates against the
+ * registry as a second line of defense (`lookup(slug)?`), so even
+ * a renderer that imported a stale schema would fail closed.
+ */
+export const EmbeddingModelSlugSchema = z.enum([
+  "all-MiniLM-L6-v2",
+  "paraphrase-multilingual-MiniLM-L12-v2",
+  // Phase 19 Task 1: reserved pseudo-slug that maps to the bundled
+  // offline HashTrick provider on the Rust side. No download path
+  // — `settings:downloadEmbeddingModel` rejects this slug. See
+  // `crates/tessera_bridge/src/sources.rs::HASH_TRICK_SLUG`.
+  "hash-trick",
+]);
+export type EmbeddingModelSlug = z.infer<typeof EmbeddingModelSlugSchema>;
+
+/**
+ * Phase 19 Task 1: download-only subset of the slug enum. The
+ * `hash-trick` slug is omitted here because it has no on-disk
+ * artefact and downloading it makes no sense — calling
+ * `settings:downloadEmbeddingModel` with it must fail closed at
+ * the IPC boundary rather than reach the bridge with a no-op.
+ */
+export const DownloadableEmbeddingModelSlugSchema = z.enum([
+  "all-MiniLM-L6-v2",
+  "paraphrase-multilingual-MiniLM-L12-v2",
+]);
+export type DownloadableEmbeddingModelSlug = z.infer<
+  typeof DownloadableEmbeddingModelSlugSchema
+>;
+
+export const DownloadableEmbeddingModelSlugInputSchema = z
+  .object({
+    slug: DownloadableEmbeddingModelSlugSchema,
+  })
+  .strict();
+
+export const EmbeddingModelSlugInputSchema = z
+  .object({
+    slug: EmbeddingModelSlugSchema,
+  })
+  .strict();
+
 export const HybridSearchConfigUpdateSchema = z
   .object({
     bm25Weight: z.number().finite().min(0).max(10).optional(),
