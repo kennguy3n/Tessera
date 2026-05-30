@@ -174,6 +174,19 @@ export async function listFailedExports(): Promise<FailedExportEntry[]> {
   // UI. We deliberately do NOT throw on per-entry corruption — the
   // worst case ("renderer doesn't see one failed export") is far
   // better than the failure mode ("settings page crashes").
+  //
+  // Defense-in-depth (Devin Review PR #69, store.rs:423 follow-up):
+  // also require `filePath` to be a non-empty ABSOLUTE path. The
+  // queue is only ever written with an already-resolved absolute
+  // destination (see `enqueue` callers), so any entry on disk with
+  // a relative path is the signature of a tampered queue file. We
+  // drop those entries here rather than passing them to the retry
+  // handler, where a relative path would resolve against the
+  // process cwd and could land outside the safe-export allowlist
+  // (the allowlist check exits early on non-absolute inputs). The
+  // retry handler ALSO rejects non-absolute paths as a second
+  // layer of defense; this filter just keeps the renderer-visible
+  // list clean so the user never sees a "broken" retry button.
   const entries = (parsed as { entries: unknown[] }).entries.filter(
     (e): e is FailedExportEntry => {
       if (e === null || typeof e !== "object") return false;
@@ -183,6 +196,8 @@ export async function listFailedExports(): Promise<FailedExportEntry[]> {
         typeof candidate.artifactId === "string" &&
         typeof candidate.format === "string" &&
         typeof candidate.filePath === "string" &&
+        candidate.filePath.length > 0 &&
+        path.isAbsolute(candidate.filePath) &&
         typeof candidate.errorMessage === "string" &&
         typeof candidate.failedAt === "number" &&
         typeof candidate.retryCount === "number"

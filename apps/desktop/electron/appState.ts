@@ -968,6 +968,26 @@ type DiffusionSidecarState =
   | "failed";
 let diffusionSidecarState: DiffusionSidecarState = "unloaded";
 let diffusionSidecarLoadError: Error | null = null;
+// Phase 15 PR 2 Devin Review follow-up: track the in-flight
+// `import("./diffusionSidecar")` promise so the shutdown path can
+// await it before deciding whether the sidecar slot is null.
+//
+// Without this, `stopAllSidecars()` had a race window: if
+// `handleWillQuit` fires while the dynamic import is still resolving,
+// the function sees `diffusionSidecar === null` and skips the slot.
+// The import then resolves, the constructor runs, and the resulting
+// `DiffusionSidecar` instance is never stopped — orphaning any future
+// `start()` call's sd-server process if the constructor ever grows a
+// side-effect (port probing, binary extraction, file lock).
+//
+// The constructor is side-effect-free today (it only stores config),
+// but waiting on the import promise is the architecturally correct
+// fix: it closes the race regardless of what the constructor does in
+// the future. The wait is bounded by `LOAD_AWAIT_TIMEOUT_MS` so a
+// truly hung import does NOT block `app.quit()`; the process.exit
+// SIGKILL fallback in `main.ts` is the final backstop.
+let diffusionSidecarLoadPromise: Promise<void> | null = null;
+const DIFFUSION_LOAD_AWAIT_TIMEOUT_MS = 2_000;
 
 function resolveNativeAddon(): NativeBridge | null {
   // The compiled main bundle now lives at `dist-electron/electron/main.js`
@@ -1112,7 +1132,12 @@ export async function initAppState(): Promise<boolean> {
   // not block boot completion.
   diffusionSidecarState = "loading";
   diffusionSidecarLoadError = null;
-  import("./diffusionSidecar")
+  // Retain the promise so `stopAllSidecars()` can await it (with a
+  // bounded timeout) and observe the resolved sidecar before the
+  // shutdown path decides whether to skip the slot. Cleared in the
+  // terminal `.finally()` so a stale promise reference doesn't keep
+  // the module record alive after the load settles.
+  diffusionSidecarLoadPromise = import("./diffusionSidecar")
     .then(({ DiffusionSidecar, resolveDiffusionBinary }) => {
       diffusionSidecar = new DiffusionSidecar({
         binaryPath: resolveDiffusionBinary(
@@ -1142,6 +1167,12 @@ export async function initAppState(): Promise<boolean> {
         "[Tessera] Diffusion sidecar lazy-load failed; image generation will be unavailable until next launch:",
         diffusionSidecarLoadError.message,
       );
+    })
+    .finally(() => {
+      // The promise has resolved either to a constructed sidecar or
+      // a permanent-failure state. Either way the load is no longer
+      // "in flight" and the shutdown path has nothing to wait on.
+      diffusionSidecarLoadPromise = null;
     });
 
   console.log(
@@ -1747,11 +1778,39 @@ export function resetKchatEventForwarder(
  * shutdowns apart.
  */
 export async function stopAllSidecars(): Promise<void> {
+  // If the diffusion sidecar's dynamic import is still in flight,
+  // wait for it (bounded) so we observe the resolved sidecar slot
+  // before deciding whether to stop it. See the comment on
+  // `diffusionSidecarLoadPromise` for the race-window rationale.
+  await awaitDiffusionLoadOrTimeout(DIFFUSION_LOAD_AWAIT_TIMEOUT_MS);
   await stopSidecarsList([
     { label: "text", sidecar: modelSidecar },
     { label: "vision", sidecar: visionSidecar },
     { label: "diffusion", sidecar: diffusionSidecar },
   ]);
+}
+
+/**
+ * Internal helper used by [`stopAllSidecars`] (and exported only
+ * for the lazy-load-race test). Returns when either the in-flight
+ * `import("./diffusionSidecar")` settles OR `timeoutMs` elapses.
+ * Settled means the constructor ran (or the import threw) and
+ * `diffusionSidecar` is now in its final shutdown-visible state.
+ * The timeout is the safety belt: a truly hung import must not
+ * block `app.quit()`.
+ */
+export async function awaitDiffusionLoadOrTimeout(
+  timeoutMs: number,
+): Promise<void> {
+  const pending = diffusionSidecarLoadPromise;
+  if (pending === null) return;
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  const timeoutP = new Promise<void>((resolve) => {
+    timeoutHandle = setTimeout(resolve, timeoutMs);
+    if (typeof timeoutHandle.unref === "function") timeoutHandle.unref();
+  });
+  await Promise.race([pending, timeoutP]);
+  if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
 }
 
 /**
