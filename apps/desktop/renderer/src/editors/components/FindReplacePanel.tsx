@@ -49,6 +49,15 @@ export function FindReplacePanel({ editor, onClose }: FindReplacePanelProps) {
   const [wholeWord, setWholeWord] = useState(false);
   const [regex, setRegex] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
+  // Mirror of `activeIndex` read inside `recompute` so the callback
+  // does NOT depend on the state variable directly. If it did,
+  // every `navigate()` (which calls `setActiveIndex(…)`) would
+  // recreate `recompute`, retrigger the `useEffect([recompute])`
+  // below, and double-dispatch the highlight command — wasted work
+  // on every Prev / Next click. Devin Review PR #80 (BUG_…_0003)
+  // flagged the redundant loop.
+  const activeIndexRef = useRef(activeIndex);
+  activeIndexRef.current = activeIndex;
   const findInputRef = useRef<HTMLInputElement>(null);
 
   const opts = useMemo(
@@ -62,19 +71,35 @@ export function FindReplacePanel({ editor, onClose }: FindReplacePanelProps) {
   const [matches, setMatches] = useState<FindMatch[]>([]);
 
   const recompute = useCallback(() => {
+    // CRITICAL: do NOT call `editor.chain().focus(…)` here. The find
+    // input is what owns DOM focus while this panel is mounted, and
+    // `view.focus()` would yank focus to the editor on every
+    // keystroke (because this callback fires from a `useEffect([
+    // recompute])` keyed on `query`/`opts`). `applyFindHighlight`
+    // and `clearFindHighlight` only dispatch meta transactions to
+    // update the decoration plugin's state — ProseMirror does NOT
+    // require editor focus to apply a meta-only transaction. Devin
+    // Review PR #80 (BUG_…_0002 + ANALYSIS_…_0006) flagged this as
+    // making the find input unusable.
     if (!query) {
       setMatches([]);
       setActiveIndex(-1);
-      editor.chain().focus(undefined, { scrollIntoView: false }).clearFindHighlight().run();
+      editor.chain().clearFindHighlight().run();
       return;
     }
     const snapshot = buildDocText(editor.state.doc);
     const next = findAllMatches(snapshot.text, query, opts);
     setMatches(next);
-    const nextActive = next.length === 0 ? -1 : Math.max(0, Math.min(activeIndex, next.length - 1));
+    // Read the *current* activeIndex via the ref so this callback's
+    // identity doesn't change when navigation moves the index (see
+    // `activeIndexRef` declaration above).
+    const nextActive =
+      next.length === 0
+        ? -1
+        : Math.max(0, Math.min(activeIndexRef.current, next.length - 1));
     setActiveIndex(nextActive);
-    editor.chain().focus(undefined, { scrollIntoView: false }).applyFindHighlight(query, opts, nextActive).run();
-  }, [editor, query, opts, activeIndex]);
+    editor.chain().applyFindHighlight(query, opts, nextActive).run();
+  }, [editor, query, opts]);
 
   // Run on mount + on every query/opts change.
   useEffect(() => {
@@ -108,11 +133,31 @@ export function FindReplacePanel({ editor, onClose }: FindReplacePanelProps) {
 
   const navigate = useCallback(
     (direction: "next" | "previous") => {
-      if (matches.length === 0) return;
-      const caret = editor.state.selection.from;
-      // Translate caret (doc position) back to a plain-text index
-      // using the same snapshot the matcher used.
+      // Rebuild the snapshot AND rerun the matcher inside `navigate`
+      // so the position map, the match indices, and the caret
+      // translation all come from the same doc revision. The
+      // `matches` state mirror is updated by `recompute` and the
+      // `editor.on("update")` handler, but those run on a different
+      // cadence — a doc edit between recompute and a navigate click
+      // would leave `matches` with stale indices that don't align
+      // with the live position map. Reading them fresh here keeps
+      // navigation deterministic. Devin Review PR #80
+      // (ANALYSIS_…_0005) flagged the cross-snapshot race.
       const snapshot = buildDocText(editor.state.doc);
+      const freshMatches = query
+        ? findAllMatches(snapshot.text, query, opts)
+        : [];
+      if (freshMatches.length === 0) {
+        setMatches([]);
+        setActiveIndex(-1);
+        return;
+      }
+      // Keep the panel's mirror in lock-step if the doc-update path
+      // hasn't caught up yet — prevents the "1 of 17" counter from
+      // momentarily showing a stale number after a navigation that
+      // followed a quick edit.
+      setMatches(freshMatches);
+      const caret = editor.state.selection.from;
       let textCaret = 0;
       for (let i = 0; i < snapshot.positions.length; i += 1) {
         if (snapshot.positions[i] >= caret) {
@@ -121,46 +166,56 @@ export function FindReplacePanel({ editor, onClose }: FindReplacePanelProps) {
         }
         textCaret = i + 1;
       }
-      const nextIdx = pickActiveMatch(matches, textCaret, direction);
+      const nextIdx = pickActiveMatch(freshMatches, textCaret, direction);
       setActiveIndex(nextIdx);
       editor.chain().applyFindHighlight(query, opts, nextIdx).run();
       // Scroll the match into view by setting the editor selection.
-      const range = matchToDocRange(snapshot, matches[nextIdx]);
+      const range = matchToDocRange(snapshot, freshMatches[nextIdx]);
       if (range) {
         editor.chain().setTextSelection(range).scrollIntoView().run();
       }
     },
-    [editor, matches, query, opts],
+    [editor, query, opts],
   );
 
   const doReplace = useCallback(() => {
-    if (activeIndex < 0 || activeIndex >= matches.length) return;
+    // Rebuild snapshot + matches from the live doc (same reasoning
+    // as `navigate`: the closure-captured `matches`/`activeIndex`
+    // could be from an earlier doc revision).
     const snapshot = buildDocText(editor.state.doc);
-    const range = matchToDocRange(snapshot, matches[activeIndex]);
+    const freshMatches = query
+      ? findAllMatches(snapshot.text, query, opts)
+      : [];
+    const idx = activeIndexRef.current;
+    if (idx < 0 || idx >= freshMatches.length) return;
+    const range = matchToDocRange(snapshot, freshMatches[idx]);
     if (!range) return;
-    editor
-      .chain()
-      .focus(undefined, { scrollIntoView: false })
-      .insertContentAt(range, replacement)
-      .run();
-    // After splice, recompute matches and keep the active index
-    // pointing at the same logical position (or clamp).
+    // Drop the `.focus(…)` chain that was here: see the comment on
+    // `recompute` above. `insertContentAt` doesn't require editor
+    // focus, and pulling focus mid-replace would yank the caret out
+    // of the Replace input on every click. Devin Review PR #80
+    // (BUG_…_0002).
+    editor.chain().insertContentAt(range, replacement).run();
     setTimeout(() => recompute(), 0);
-  }, [editor, matches, activeIndex, replacement, recompute]);
+  }, [editor, query, opts, replacement, recompute]);
 
   const doReplaceAll = useCallback(() => {
-    if (matches.length === 0) return;
-    // Walk in reverse so each splice keeps the earlier indices valid.
     const snapshot = buildDocText(editor.state.doc);
-    const chain = editor.chain().focus(undefined, { scrollIntoView: false });
-    for (let i = matches.length - 1; i >= 0; i -= 1) {
-      const range = matchToDocRange(snapshot, matches[i]);
+    const freshMatches = query
+      ? findAllMatches(snapshot.text, query, opts)
+      : [];
+    if (freshMatches.length === 0) return;
+    // Walk in reverse so each splice keeps the earlier indices valid.
+    // No `.focus(…)` here either — same focus-theft rationale.
+    const chain = editor.chain();
+    for (let i = freshMatches.length - 1; i >= 0; i -= 1) {
+      const range = matchToDocRange(snapshot, freshMatches[i]);
       if (!range) continue;
       chain.insertContentAt(range, replacement);
     }
     chain.run();
     setTimeout(() => recompute(), 0);
-  }, [editor, matches, replacement, recompute]);
+  }, [editor, query, opts, replacement, recompute]);
 
   const onFindKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLInputElement>) => {

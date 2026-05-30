@@ -95,9 +95,31 @@ export function buildDocText(doc: ProseMirrorNode): DocTextSnapshot {
 
 /**
  * Translate a `FindMatch` (plain-text indices) into a `{from, to}`
- * document range. Returns null if the indices are out of bounds (a
- * defensive guard for the unlikely case where the React layer
- * dispatches with a stale snapshot relative to the live doc).
+ * document range. Returns null if the match cannot be turned into a
+ * valid contiguous PM range, specifically:
+ *
+ *   - `start >= positions.length` — out-of-bounds (defensive guard
+ *     for the unlikely case where the React layer dispatches with a
+ *     stale snapshot relative to the live doc);
+ *   - `end <= start` — a zero-width regex match (`^`, `$`, `\b`,
+ *     `(?=foo)`, …). The previous implementation computed
+ *     `toEndIndex = end - 1 = start - 1` which for `start === 0`
+ *     went negative, made `positions[-1]` `undefined`, and produced
+ *     `to = NaN` — silently corrupting every downstream PM call.
+ *     Devin Review PR #80 (BUG_…_0001) flagged the NaN path. We
+ *     treat zero-width matches as un-paintable (decoration plugin
+ *     skips them) rather than rendering an empty highlight at every
+ *     anchor in the doc;
+ *   - the match's plain-text run crosses a block boundary (the
+ *     synthesized `\n` separator emitted by `buildDocText`). A PM
+ *     `Decoration.inline` covering a from→to that straddles a block
+ *     close + next-block open would log a console warning and
+ *     refuse to render. Devin Review PR #80 (ANALYSIS_…_0003)
+ *     noted that the `\n` and the first char of the next block both
+ *     map to the same PM position, which would otherwise produce a
+ *     visually impossible decoration. We detect that case here and
+ *     return null so the highlight plugin simply skips cross-block
+ *     matches instead of crashing or rendering garbage.
  */
 export function matchToDocRange(
   snapshot: DocTextSnapshot,
@@ -105,9 +127,15 @@ export function matchToDocRange(
 ): { from: number; to: number } | null {
   const { start, end } = match;
   if (start >= snapshot.positions.length) return null;
+  if (end <= start) return null;
   const fromPos = snapshot.positions[start];
   const toEndIndex = Math.min(end - 1, snapshot.positions.length - 1);
   const toPos = snapshot.positions[toEndIndex] + 1;
+  // Cross-block detection: if any synthesized `\n` lives strictly
+  // inside [start, end), the match spans a block boundary.
+  for (let i = start; i < toEndIndex; i += 1) {
+    if (snapshot.text[i] === "\n") return null;
+  }
   return { from: fromPos, to: toPos };
 }
 

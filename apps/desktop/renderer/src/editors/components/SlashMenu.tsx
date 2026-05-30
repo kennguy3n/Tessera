@@ -43,6 +43,16 @@ export function SlashMenu({
   onSelect,
   onDismiss,
 }: SlashMenuProps) {
+  // `editor` is intentionally a prop even though we don't read it
+  // inside this component — keeps the API symmetric with
+  // FindReplacePanel and lets future extensions wire a hover-preview
+  // that lifts text from `editor.state` without prop-drilling refactor.
+  // The `void` discard runs at module-evaluation time so it's actually
+  // executed (the previous version put it AFTER `return` where it
+  // was dead code that the no-unused-vars linter might mis-credit
+  // — Devin Review PR #80 ANALYSIS_…_0001 flagged).
+  void editor;
+
   const filtered = useMemo(
     () => filterSlashCommands(trigger.query),
     [trigger.query],
@@ -190,9 +200,4 @@ export function SlashMenu({
       )}
     </div>
   );
-  // `editor` is intentionally a prop even though we don't read it
-  // inside this component — keeps the API symmetric with
-  // FindReplacePanel and lets future extensions wire a hover-preview
-  // that lifts text from `editor.state` without prop-drilling refactor.
-  void editor;
 }

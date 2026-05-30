@@ -155,6 +155,58 @@ describe("matchToDocRange — plain-text indices → PM positions", () => {
     });
     expect(bogus).toBeNull();
   });
+
+  it("returns null on a zero-width match instead of producing NaN positions (BUG_0001)", () => {
+    // Regex anchors like `^`, `$`, `\b`, and zero-width lookaheads
+    // produce matches where `end === start`. The previous
+    // implementation calculated `toEndIndex = end - 1` which for
+    // `start === 0` was `-1`, made `positions[-1]` `undefined`, and
+    // returned `to = undefined + 1 = NaN`. Every downstream
+    // PM call (setTextSelection, insertContentAt, Decoration.inline)
+    // would silently corrupt because NaN compares false to every
+    // integer. The fix short-circuits zero-width matches to null
+    // so the decoration plugin / replace path simply skips them.
+    const editor = makeEditor({ initialContent: "<p>abc</p>" });
+    const snapshot = buildDocText(editor.state.doc);
+    expect(matchToDocRange(snapshot, { start: 0, end: 0 })).toBeNull();
+    expect(matchToDocRange(snapshot, { start: 1, end: 1 })).toBeNull();
+    // Sanity: a one-char match still works.
+    const single = matchToDocRange(snapshot, { start: 1, end: 2 });
+    expect(single).not.toBeNull();
+    expect(single!.to).toBeGreaterThan(single!.from);
+    expect(Number.isFinite(single!.from)).toBe(true);
+    expect(Number.isFinite(single!.to)).toBe(true);
+  });
+
+  it("returns null when a match would span a block boundary instead of producing an unrenderable cross-block decoration (ANALYSIS_0003)", () => {
+    // `buildDocText` emits a synthesized `\n` between adjacent block
+    // nodes so cross-block searches don't false-match. The `\n` and
+    // the first char of the next block end up mapped to the same PM
+    // position, which would otherwise produce a Decoration.inline
+    // whose from→to straddles a block close + next-block open — PM
+    // logs a console warning and refuses to render it. The fix
+    // detects an embedded `\n` in [start, end) and returns null so
+    // the highlight plugin skips cross-block matches.
+    const editor = makeEditor({
+      initialContent: "<p>Alpha</p><p>Beta</p>",
+    });
+    const snapshot = buildDocText(editor.state.doc);
+    expect(snapshot.text).toBe("Alpha\nBeta");
+    const newlineIdx = snapshot.text.indexOf("\n");
+    // A would-be regex match spanning "ha\nBe" (e.g. /a.B/s) crosses
+    // the block. matchToDocRange must refuse it.
+    const crossBlock = matchToDocRange(snapshot, {
+      start: newlineIdx - 2,
+      end: newlineIdx + 3,
+    });
+    expect(crossBlock).toBeNull();
+    // Sanity: a match wholly inside one block is unaffected.
+    const insideBlock = matchToDocRange(snapshot, {
+      start: 0,
+      end: 5,
+    });
+    expect(insideBlock).not.toBeNull();
+  });
 });
 
 describe("FindReplaceExtension — applyFindHighlight / clearFindHighlight", () => {
