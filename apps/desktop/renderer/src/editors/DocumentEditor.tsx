@@ -1,10 +1,47 @@
-import { useEffect, useCallback, useRef } from "react";
-import { useEditor, EditorContent } from "@tiptap/react";
+import {
+  useEffect,
+  useCallback,
+  useRef,
+  useState,
+  useMemo,
+  type ChangeEvent,
+} from "react";
+import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import Link from "@tiptap/extension-link";
+// `@tiptap/extension-table` is the umbrella package — it re-exports every
+// table primitive as a named export but does NOT ship a default export
+// (unlike its sibling `extension-table-row` / `-header` / `-cell`,
+// which all re-export `<Class> as default` from this very package).
+// Use the named import to stay correct against the published .d.ts.
+import { Table } from "@tiptap/extension-table";
+import TableRow from "@tiptap/extension-table-row";
+import TableHeader from "@tiptap/extension-table-header";
+import TableCell from "@tiptap/extension-table-cell";
+import TaskList from "@tiptap/extension-task-list";
+import TaskItem from "@tiptap/extension-task-item";
+import CharacterCount from "@tiptap/extension-character-count";
+import Image from "@tiptap/extension-image";
+import HorizontalRule from "@tiptap/extension-horizontal-rule";
+import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+import { common, createLowlight } from "lowlight";
 import { MermaidNode } from "./extensions/MermaidExtension";
-import { parseDocumentContent } from "./documentEditorHelpers";
+import {
+  FindReplaceExtension,
+} from "./extensions/FindReplaceExtension";
+import {
+  SlashCommandExtension,
+  type SlashTriggerState,
+} from "./extensions/SlashCommandExtension";
+import {
+  parseDocumentContent,
+  countDocText,
+  fileToDataUrl,
+  type SlashCommand,
+} from "./documentEditorHelpers";
+import { FindReplacePanel } from "./components/FindReplacePanel";
+import { SlashMenu } from "./components/SlashMenu";
 
 interface DocumentEditorProps {
   content: string;
@@ -13,6 +50,19 @@ interface DocumentEditorProps {
   onDraftChange?: (content: string) => void;
   autoSaveMs?: number;
 }
+
+// Lowlight bundle shared across editor instances. `common` ships the
+// 35 languages every documentation site needs (js/ts/python/rust/go/…)
+// without dragging in the full ~190-language bundle that doubles the
+// renderer's bytes-shipped.
+const lowlight = createLowlight(common);
+
+const SLASH_TRIGGER_INITIAL: SlashTriggerState = {
+  query: "",
+  range: null,
+  clientRect: null,
+  visible: false,
+};
 
 export default function DocumentEditor({
   content,
@@ -40,11 +90,47 @@ export default function DocumentEditor({
     onSaveRef.current = onSave;
   }, [onSave]);
 
+  // Find/replace panel visibility — toggled by Ctrl+F and the toolbar.
+  const [findOpen, setFindOpen] = useState(false);
+
+  // Bumped on every TipTap `onUpdate` so memos that derive from the
+  // editor's plain-text content (e.g. word count, outline headings)
+  // recompute when the doc changes. Naïvely depending on
+  // `editor.state.doc` works at runtime — TipTap re-renders this
+  // component on every dispatch — but the React-Hooks lint rule
+  // can't see through `editor` to that property and flags it as
+  // accessing a value that won't trigger re-renders. A small
+  // monotonic counter is both correct AND lint-clean.
+  const [docVersion, setDocVersion] = useState(0);
+
+  // Slash-trigger state, populated by the extension's `onStateChange`.
+  const [slashTrigger, setSlashTrigger] = useState<SlashTriggerState>(
+    SLASH_TRIGGER_INITIAL,
+  );
+
+  // File-picker ref for the toolbar's image upload button. We keep
+  // the underlying `<input type=file>` in the DOM but visually hidden
+  // so screen readers can still surface it.
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
         heading: { levels: [1, 2, 3] },
+        // We replace StarterKit's basic codeBlock with the lowlight-
+        // backed variant below so syntax highlighting fires on
+        // every code block (including ones pasted from clipboard).
+        codeBlock: false,
+        // Keep StarterKit's HorizontalRule for the basic case; we
+        // configure the standalone one separately so the slash menu
+        // can call `setHorizontalRule()` without ambiguity.
+        horizontalRule: false,
       }),
+      CodeBlockLowlight.configure({
+        lowlight,
+        defaultLanguage: "plaintext",
+      }),
+      HorizontalRule,
       Placeholder.configure({
         placeholder: "Start writing your document...",
       }),
@@ -52,7 +138,19 @@ export default function DocumentEditor({
         openOnClick: false,
         autolink: true,
       }),
+      Table.configure({ resizable: true }),
+      TableRow,
+      TableHeader,
+      TableCell,
+      TaskList,
+      TaskItem.configure({ nested: true }),
+      CharacterCount,
+      Image.configure({ inline: false, allowBase64: true }),
       MermaidNode,
+      FindReplaceExtension,
+      SlashCommandExtension.configure({
+        onStateChange: (state) => setSlashTrigger(state),
+      }),
     ],
     content: parseDocumentContent(content),
     onCreate: ({ editor }) => {
@@ -61,6 +159,11 @@ export default function DocumentEditor({
       lastSavedRef.current = editor.getHTML();
     },
     onUpdate: ({ editor }) => {
+      // Bump the doc-version counter so derived memos recompute. We
+      // bump even when the HTML round-trips to the last-saved value
+      // (e.g. user typed then immediately undid) so transient outline
+      // / word-count changes still reflect.
+      setDocVersion((v) => v + 1);
       const html = editor.getHTML();
       if (html === lastSavedRef.current) return;
 
@@ -97,6 +200,25 @@ export default function DocumentEditor({
     }
   }, [content, editor]);
 
+  // Ctrl/Cmd+F opens the find panel. We bind on the editor's wrapping
+  // div so the binding only fires when the editor has focus — global
+  // capture would steal the browser's own Ctrl+F when the user is on
+  // a different panel.
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom as HTMLElement;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setFindOpen(true);
+      }
+    };
+    dom.addEventListener("keydown", onKeyDown);
+    return () => {
+      dom.removeEventListener("keydown", onKeyDown);
+    };
+  }, [editor]);
+
   const setLink = useCallback(() => {
     if (!editor) return;
     const url = window.prompt("Enter URL:");
@@ -105,17 +227,142 @@ export default function DocumentEditor({
     }
   }, [editor]);
 
+  // Common splice for slash-menu activation: drop the `/<query>`
+  // text, then dispatch the chosen block insert. Centralised here so
+  // every command runs through the same cleanup.
+  const dispatchSlash = useCallback(
+    (cmd: SlashCommand) => {
+      if (!editor) return;
+      const chain = editor.chain().focus().deleteSlashTrigger();
+      switch (cmd.id) {
+        case "heading-1":
+          chain.setNode("heading", { level: 1 }).run();
+          break;
+        case "heading-2":
+          chain.setNode("heading", { level: 2 }).run();
+          break;
+        case "heading-3":
+          chain.setNode("heading", { level: 3 }).run();
+          break;
+        case "paragraph":
+          chain.setNode("paragraph").run();
+          break;
+        case "blockquote":
+          chain.toggleBlockquote().run();
+          break;
+        case "code-block":
+          chain.toggleCodeBlock().run();
+          break;
+        case "horizontal-rule":
+          chain.setHorizontalRule().run();
+          break;
+        case "bullet-list":
+          chain.toggleBulletList().run();
+          break;
+        case "ordered-list":
+          chain.toggleOrderedList().run();
+          break;
+        case "task-list":
+          chain.toggleTaskList().run();
+          break;
+        case "table":
+          chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+          break;
+        case "image":
+          chain.run();
+          imageInputRef.current?.click();
+          break;
+        case "mermaid":
+          chain.insertMermaid().run();
+          break;
+        default:
+          chain.run();
+          break;
+      }
+      setSlashTrigger(SLASH_TRIGGER_INITIAL);
+    },
+    [editor],
+  );
+
+  const dismissSlash = useCallback(() => {
+    setSlashTrigger(SLASH_TRIGGER_INITIAL);
+  }, []);
+
+  const onPickImage = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      if (!editor) return;
+      const file = e.target.files?.[0];
+      // Reset so picking the same file twice in a row still fires.
+      e.target.value = "";
+      if (!file) return;
+      try {
+        const url = await fileToDataUrl(file);
+        editor.chain().focus().setImage({ src: url, alt: file.name }).run();
+      } catch (err) {
+        window.alert((err as Error).message);
+      }
+    },
+    [editor],
+  );
+
+  const insertImageFromToolbar = useCallback(() => {
+    imageInputRef.current?.click();
+  }, []);
+
+  // Word/character counts derived from the editor's plain text. We
+  // recompute on every render — TipTap's reactivity guarantees this
+  // component re-renders on every doc change.
+  const counts = useMemo(() => {
+    if (!editor) return { characters: 0, charactersNoSpaces: 0, words: 0 };
+    return countDocText(editor.getText());
+    // `docVersion` is bumped in `onUpdate` (see above) on every
+    // editor dispatch, which is what actually drives recomputation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, docVersion]);
+
   if (!editor) return null;
 
   return (
     <div className="document-editor">
-      <Toolbar editor={editor} onSetLink={setLink} />
+      <Toolbar
+        editor={editor}
+        onSetLink={setLink}
+        onInsertImage={insertImageFromToolbar}
+        onOpenFind={() => setFindOpen(true)}
+      />
       <div className="document-editor-outline">
         <OutlinePanel editor={editor} />
       </div>
       <div className="document-editor-content">
         <EditorContent editor={editor} />
+        {findOpen && (
+          <FindReplacePanel
+            editor={editor}
+            onClose={() => setFindOpen(false)}
+          />
+        )}
+        {slashTrigger.visible && (
+          <SlashMenu
+            editor={editor}
+            trigger={slashTrigger}
+            onSelect={dispatchSlash}
+            onDismiss={dismissSlash}
+          />
+        )}
       </div>
+      <div className="document-editor-footer" aria-live="polite">
+        <span>{counts.words} words</span>
+        <span>{counts.characters} characters</span>
+        <span>{counts.charactersNoSpaces} without spaces</span>
+      </div>
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={onPickImage}
+        aria-hidden="true"
+      />
     </div>
   );
 }
@@ -123,12 +370,15 @@ export default function DocumentEditor({
 function Toolbar({
   editor,
   onSetLink,
+  onInsertImage,
+  onOpenFind,
 }: {
-  editor: ReturnType<typeof useEditor>;
+  editor: Editor;
   onSetLink: () => void;
+  onInsertImage: () => void;
+  onOpenFind: () => void;
 }) {
-  if (!editor) return null;
-
+  const inTable = editor.isActive("table");
   return (
     <div className="editor-toolbar">
       <button
@@ -191,6 +441,14 @@ function Toolbar({
       </button>
       <button
         type="button"
+        className={editor.isActive("taskList") ? "toolbar-btn active" : "toolbar-btn"}
+        onClick={() => editor.chain().focus().toggleTaskList().run()}
+        title="Task List"
+      >
+        ☑
+      </button>
+      <button
+        type="button"
         className={editor.isActive("blockquote") ? "toolbar-btn active" : "toolbar-btn"}
         onClick={() => editor.chain().focus().toggleBlockquote().run()}
         title="Blockquote"
@@ -217,18 +475,100 @@ function Toolbar({
       <button
         type="button"
         className="toolbar-btn"
+        onClick={() =>
+          editor
+            .chain()
+            .focus()
+            .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+            .run()
+        }
+        title="Insert Table"
+      >
+        ⊞
+      </button>
+      <button
+        type="button"
+        className="toolbar-btn"
+        onClick={onInsertImage}
+        title="Insert Image"
+      >
+        IMG
+      </button>
+      <button
+        type="button"
+        className="toolbar-btn"
+        onClick={() => editor.chain().focus().setHorizontalRule().run()}
+        title="Horizontal Rule"
+      >
+        —
+      </button>
+      <button
+        type="button"
+        className="toolbar-btn"
         onClick={() => editor.chain().focus().insertMermaid().run()}
         title="Insert Mermaid diagram"
       >
         Diagram
       </button>
+      <span className="toolbar-separator" />
+      {inTable && (
+        <>
+          <button
+            type="button"
+            className="toolbar-btn"
+            onClick={() => editor.chain().focus().addRowAfter().run()}
+            title="Add row"
+          >
+            +R
+          </button>
+          <button
+            type="button"
+            className="toolbar-btn"
+            onClick={() => editor.chain().focus().addColumnAfter().run()}
+            title="Add column"
+          >
+            +C
+          </button>
+          <button
+            type="button"
+            className="toolbar-btn"
+            onClick={() => editor.chain().focus().deleteRow().run()}
+            title="Delete row"
+          >
+            -R
+          </button>
+          <button
+            type="button"
+            className="toolbar-btn"
+            onClick={() => editor.chain().focus().deleteColumn().run()}
+            title="Delete column"
+          >
+            -C
+          </button>
+          <button
+            type="button"
+            className="toolbar-btn"
+            onClick={() => editor.chain().focus().deleteTable().run()}
+            title="Delete table"
+          >
+            ✕
+          </button>
+          <span className="toolbar-separator" />
+        </>
+      )}
+      <button
+        type="button"
+        className="toolbar-btn"
+        onClick={onOpenFind}
+        title="Find & replace (Ctrl+F)"
+      >
+        🔍
+      </button>
     </div>
   );
 }
 
-function OutlinePanel({ editor }: { editor: ReturnType<typeof useEditor> }) {
-  if (!editor) return null;
-
+function OutlinePanel({ editor }: { editor: Editor }) {
   const headings: { level: number; text: string; pos: number }[] = [];
   editor.state.doc.descendants((node, pos) => {
     if (node.type.name === "heading") {
@@ -264,5 +604,3 @@ function OutlinePanel({ editor }: { editor: ReturnType<typeof useEditor> }) {
     </nav>
   );
 }
-
-
