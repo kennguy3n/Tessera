@@ -32,6 +32,7 @@ import {
   deckWordCount,
   findInSlides,
   fileToDataUrl,
+  nextBlockForTypeChange,
   type ParsedSlideContent,
   type SlideFindMatch,
 } from "./slideEditorHelpers";
@@ -800,17 +801,11 @@ export default function SlideEditor({
                   blockIndex={bi}
                   totalBlocks={activeSlide.blocks.length}
                   onTypeChange={(nextType) => {
-                    onBlockReplace(activeIndex, bi, {
-                      ...block,
-                      type: nextType,
-                      content:
-                        nextType === "diagram" && !block.content
-                          ? DEFAULT_DIAGRAM_DSL
-                          : nextType === "image"
-                            ? ""
-                            : block.content,
-                      alt: nextType === "image" ? (block.alt ?? "") : undefined,
-                    });
+                    onBlockReplace(
+                      activeIndex,
+                      bi,
+                      nextBlockForTypeChange(block, nextType),
+                    );
                   }}
                   onContentChange={(nextContent) => {
                     onBlockReplace(activeIndex, bi, {
@@ -855,9 +850,6 @@ export default function SlideEditor({
     </div>
   );
 }
-
-const DEFAULT_DIAGRAM_DSL = `flowchart LR
-  Source --> Process --> Output`;
 
 interface SlideBlockRowProps {
   block: SlideBlock;

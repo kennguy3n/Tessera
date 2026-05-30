@@ -115,8 +115,21 @@ function renderSlideAsMarp(slide: Slide): string {
       // it can be large — the round-trip back through `parseSlideContent`
       // depends on it being present, and Marp handles base64 data URLs
       // natively.
+      //
+      // We use CommonMark's angle-bracket link-destination form
+      // (`<url>`) unconditionally so URLs containing characters that
+      // would otherwise terminate the `()` group — most notably `(`
+      // and `)`, but also spaces — round-trip correctly. Per
+      // CommonMark §6.4, the angle-bracket form accepts any character
+      // except an unescaped `<`, `>`, or newline. None of those can
+      // appear in a valid `data:image/…` URL (base64 uses
+      // `A-Za-z0-9+/=` only) or in any valid HTTP(S) URL (`<` / `>` /
+      // newline must be percent-encoded), so the angle-bracket form
+      // is safe for every URL we're ever asked to emit. Brackets in
+      // alt text are still stripped because the `[...]` group has no
+      // angle-bracket escape hatch.
       const alt = (block.alt ?? "").replace(/[[\]]/g, "");
-      parts.push(`![${alt}](${content})`);
+      parts.push(`![${alt}](<${content}>)`);
     } else {
       parts.push(content);
     }
@@ -438,6 +451,78 @@ export function replaceBlock(
   const next = [...slide.blocks];
   next[index] = block;
   return { ...slide, blocks: next };
+}
+
+/**
+ * Default `mermaid` source seeded into a new diagram block so the
+ * Marp preview shows a meaningful figure the moment the user picks
+ * the `diagram` type. Kept in the helpers module so the same string
+ * is shared by `SlideEditor` (the type-change handler) and by
+ * `nextBlockForTypeChange` (the pure helper that drives the
+ * keep/seed/clear decision for the `content` field).
+ */
+export const DEFAULT_DIAGRAM_DSL = `flowchart LR
+  Source --> Process --> Output`;
+
+/**
+ * Pure transition function for the type-select dropdown: returns the
+ * `SlideBlock` value that should replace `block` when the user picks
+ * `nextType` from the type picker.
+ *
+ * The `content` field is reset to `""` whenever the block crosses
+ * the `image` boundary in either direction:
+ *
+ *   - **Switching INTO an image block** (`nextType === "image"`):
+ *     reset so the file-input UI starts from a clean slate. The
+ *     previous content is almost certainly prose or a mermaid DSL,
+ *     not an image source URL, so leaving it would only confuse the
+ *     image-preview surface.
+ *
+ *   - **Switching OUT of an image block** (`block.type === "image"`):
+ *     reset because an image block's `content` is a potentially
+ *     multi-megabyte `data:image/...;base64,...` URL written by
+ *     `fileToDataUrl`. The new editor surface for `text` / `bullets`
+ *     / `diagram` is a `<textarea>` and pasting a multi-MB data URL
+ *     into a textarea janks the renderer and is never the user's
+ *     intent (an image's URL is not the same kind of thing as prose
+ *     or a mermaid DSL).
+ *
+ * If the user picks `diagram` and the current content is empty, we
+ * seed the well-known starter DSL so the Marp preview shows
+ * something meaningful immediately. Otherwise content is kept
+ * verbatim so toggling `text` ↔ `bullets` is non-destructive (a
+ * common workflow when rewriting an outline as prose or vice versa).
+ *
+ * The `alt` field is only meaningful for image blocks, so it's set
+ * to `undefined` whenever the new type is not `image` (this also
+ * frees the saved JSON of a dead `alt` field on non-image blocks).
+ */
+export function nextBlockForTypeChange(
+  block: SlideBlock,
+  nextType: SlideBlock["type"],
+): SlideBlock {
+  const wasImage = block.type === "image";
+  const becomesImage = nextType === "image";
+  // Step 1 — clear when the block crosses the `image` boundary in
+  // either direction (see doc-comment above for why a data URL must
+  // not survive into a `<textarea>`, and why prose must not survive
+  // into the image-source field).
+  const carried = wasImage || becomesImage ? "" : block.content;
+  // Step 2 — seed the diagram starter only when the new type is
+  // `diagram` AND we have no carried content. The order matters: if
+  // a user does image → diagram, step 1 clears the data URL and
+  // step 2 then seeds the starter DSL, so the diagram preview shows
+  // something meaningful instead of staying blank. A user with
+  // prose already typed (text → diagram with existing content)
+  // keeps their work — `carried` is non-empty so step 2 is a no-op.
+  const content =
+    nextType === "diagram" && !carried ? DEFAULT_DIAGRAM_DSL : carried;
+  return {
+    ...block,
+    type: nextType,
+    content,
+    alt: becomesImage ? (block.alt ?? "") : undefined,
+  };
 }
 
 /**

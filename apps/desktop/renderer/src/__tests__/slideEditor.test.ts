@@ -14,8 +14,10 @@ import {
   slideWordCount,
   deckWordCount,
   findInSlides,
+  nextBlockForTypeChange,
+  DEFAULT_DIAGRAM_DSL,
 } from "../editors/slideEditorHelpers";
-import type { Slide, SlideContent } from "../editors/slideEditorTypes";
+import type { Slide, SlideBlock, SlideContent } from "../editors/slideEditorTypes";
 
 describe("parseSlideContent", () => {
   it("returns the empty-default shape for empty input", () => {
@@ -113,8 +115,12 @@ describe("slidesToMarpMarkdown", () => {
     // the Marp source. The PPTX export pipeline (Marp CLI) then
     // rendered it as visible text instead of an `<img>` element, and
     // the data URL leaked into the slide body. Rendering the block as
-    // `![alt](url)` lets Marp emit a real image. Brackets in alt text
-    // are stripped so they cannot prematurely close the `[...]` group.
+    // `![alt](<url>)` (CommonMark angle-bracket link-destination form)
+    // lets Marp emit a real image and is robust to URLs containing
+    // characters that would otherwise terminate the `()` group (e.g.
+    // `(`, `)`, spaces — common in Wikipedia / Mediawiki URLs).
+    // Brackets in alt text are stripped because the `[...]` group has
+    // no angle-bracket escape hatch.
     const out = slidesToMarpMarkdown([
       {
         title: "Cover",
@@ -130,12 +136,46 @@ describe("slidesToMarpMarkdown", () => {
       },
     ]);
     expect(out).toContain(
-      "![Company logo v2](data:image/png;base64,iVBORw0KGgo=)",
+      "![Company logo v2](<data:image/png;base64,iVBORw0KGgo=>)",
     );
-    expect(out).toContain("![](https://example.com/x.png)");
+    expect(out).toContain("![](<https://example.com/x.png>)");
     // The raw data URL must never appear outside the image-syntax
-    // parentheses (i.e. no standalone paragraph dump).
+    // angle-bracket / parentheses (i.e. no standalone paragraph dump).
     expect(out).not.toMatch(/^data:image\//m);
+  });
+
+  it("renders image URLs containing parens via CommonMark angle-bracket form", () => {
+    // Regression test for ANALYSIS_0001 (Devin Review on PR #81
+    // round 2): Wikipedia / Mediawiki / SharePoint URLs commonly
+    // contain unescaped `(` and `)` characters (e.g.
+    // `C_(programming_language).png`). Emitting these inside the
+    // CommonMark `()` link-destination group truncates the URL at the
+    // first `)`. Switching to the angle-bracket form `<url>` accepts
+    // any character except `<`, `>`, or newline — none of which can
+    // appear in a valid HTTP URL — so paren-bearing URLs survive the
+    // export pipeline intact.
+    const out = slidesToMarpMarkdown([
+      {
+        title: "Refs",
+        blocks: [
+          {
+            type: "image",
+            content: "https://example.com/C_(lang).png",
+            alt: "C",
+          },
+          {
+            type: "image",
+            content: "https://example.com/path with spaces.png",
+            alt: "",
+          },
+        ],
+        notes: "",
+      },
+    ]);
+    expect(out).toContain("![C](<https://example.com/C_(lang).png>)");
+    expect(out).toContain(
+      "![](<https://example.com/path with spaces.png>)",
+    );
   });
 
   it("skips empty blocks and slides without titles cleanly", () => {
@@ -613,6 +653,119 @@ describe("replaceBlock", () => {
     };
     expect(replaceBlock(slide, 5, { type: "text", content: "x" })).toBe(slide);
     expect(replaceBlock(slide, -1, { type: "text", content: "x" })).toBe(slide);
+  });
+});
+
+describe("nextBlockForTypeChange", () => {
+  // The type-select dropdown handler in `SlideEditor.tsx` delegates to
+  // this pure helper. Tests pin the keep / seed / clear matrix so the
+  // dropdown stays well-behaved when block types cross the `image`
+  // boundary (BUG_0001 on PR #81 round 2) and when entering `diagram`
+  // for the first time.
+
+  it("clears content when switching FROM an image block (BUG_0001)", () => {
+    // Regression: previously, switching FROM image → text|bullets|diagram
+    // preserved `block.content`, which for an image block is a
+    // multi-megabyte `data:image/...;base64,...` URL written by
+    // `fileToDataUrl`. The new editor surface for those types is a
+    // `<textarea>`, so the URL was being pasted into the textarea
+    // (janking the renderer) instead of being cleared.
+    const imageBlock: SlideBlock = {
+      type: "image",
+      content: "data:image/png;base64,AAAA",
+      alt: "Logo",
+    };
+    expect(nextBlockForTypeChange(imageBlock, "text")).toEqual({
+      type: "text",
+      content: "",
+      alt: undefined,
+    });
+    expect(nextBlockForTypeChange(imageBlock, "bullets")).toEqual({
+      type: "bullets",
+      content: "",
+      alt: undefined,
+    });
+    // Switching image → diagram seeds the DSL starter because the
+    // post-clear content is empty (the diagram-seed branch wins over
+    // the image-clear branch when content would otherwise be `""`).
+    expect(nextBlockForTypeChange(imageBlock, "diagram")).toEqual({
+      type: "diagram",
+      content: DEFAULT_DIAGRAM_DSL,
+      alt: undefined,
+    });
+  });
+
+  it("clears content when switching INTO an image block", () => {
+    const textBlock: SlideBlock = { type: "text", content: "hello" };
+    expect(nextBlockForTypeChange(textBlock, "image")).toEqual({
+      type: "image",
+      content: "",
+      alt: "",
+    });
+    const bulletsBlock: SlideBlock = {
+      type: "bullets",
+      content: "- one\n- two",
+    };
+    expect(nextBlockForTypeChange(bulletsBlock, "image")).toEqual({
+      type: "image",
+      content: "",
+      alt: "",
+    });
+    // Preserves a pre-existing alt when switching back to image.
+    const wasImageEmpty: SlideBlock = {
+      type: "text",
+      content: "x",
+      alt: "previous alt",
+    };
+    expect(nextBlockForTypeChange(wasImageEmpty, "image")).toEqual({
+      type: "image",
+      content: "",
+      alt: "previous alt",
+    });
+  });
+
+  it("seeds the diagram starter DSL only when content is empty", () => {
+    const emptyText: SlideBlock = { type: "text", content: "" };
+    expect(nextBlockForTypeChange(emptyText, "diagram").content).toBe(
+      DEFAULT_DIAGRAM_DSL,
+    );
+    // Existing content survives the text → diagram switch — the user
+    // may have typed mermaid DSL inside a text block before realising
+    // diagrams have a dedicated type, and reseeding would clobber
+    // their work.
+    const existingText: SlideBlock = {
+      type: "text",
+      content: "graph TD; A-->B",
+    };
+    expect(nextBlockForTypeChange(existingText, "diagram").content).toBe(
+      "graph TD; A-->B",
+    );
+  });
+
+  it("keeps content untouched on text ↔ bullets toggles", () => {
+    // A common authoring workflow: write an outline as bullets, then
+    // switch to text to flow it into prose, then back. The content
+    // must round-trip verbatim so the user doesn't lose work.
+    const bullets: SlideBlock = { type: "bullets", content: "- a\n- b" };
+    const toText = nextBlockForTypeChange(bullets, "text");
+    expect(toText).toEqual({ type: "text", content: "- a\n- b", alt: undefined });
+    const back = nextBlockForTypeChange(toText, "bullets");
+    expect(back).toEqual({
+      type: "bullets",
+      content: "- a\n- b",
+      alt: undefined,
+    });
+  });
+
+  it("strips alt on non-image types and defaults alt to '' on image", () => {
+    const imageBlock: SlideBlock = {
+      type: "image",
+      content: "data:image/png;base64,AAA",
+      alt: "logo",
+    };
+    expect(nextBlockForTypeChange(imageBlock, "bullets").alt).toBe(undefined);
+    const textWithoutAlt: SlideBlock = { type: "text", content: "x" };
+    expect(nextBlockForTypeChange(textWithoutAlt, "image").alt).toBe("");
   });
 });
 
