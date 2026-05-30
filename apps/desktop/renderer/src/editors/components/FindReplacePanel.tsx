@@ -131,13 +131,25 @@ export function FindReplacePanel({ editor, onClose }: FindReplacePanelProps) {
         next.length === 0
           ? -1
           : Math.max(0, Math.min(activeIndexRef.current, next.length - 1));
-      if (nextActive !== activeIndexRef.current) {
+      const indexChanged = nextActive !== activeIndexRef.current;
+      if (indexChanged) {
         setActiveIndex(nextActive);
       }
-      // Republish the highlight descriptor so the decoration's
-      // `find-match-active` class follows the clamped index, not the
-      // stale one carried on the plugin's previous descriptor.
-      editor.chain().applyFindHighlight(query, opts, nextActive).run();
+      // Only republish the highlight descriptor when the clamped
+      // active index actually moved. When it didn't, the decoration
+      // plugin's own `(tr.docChanged && prev.highlight)` branch has
+      // already rebuilt decorations against the new doc using the
+      // same (query, opts, activeIndex) carried on `prev.highlight`,
+      // and a re-dispatch here would force a SECOND rebuild that
+      // produces an identical DecorationSet — wasted work on every
+      // keystroke in long documents with many matches. Devin Review
+      // PR #80 round 3 (ANALYSIS_…_0003) flagged the doubled cost;
+      // skipping when the index is unchanged halves the rebuild
+      // budget in the common typing case while still reseating the
+      // descriptor whenever the active match genuinely moved.
+      if (indexChanged) {
+        editor.chain().applyFindHighlight(query, opts, nextActive).run();
+      }
     };
     editor.on("update", handler);
     return () => {
