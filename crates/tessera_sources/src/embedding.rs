@@ -254,21 +254,72 @@ impl EmbeddingProvider for HashTrickEmbedding {
             .collect::<Vec<_>>()
             .join(" ");
 
-        let chars: Vec<char> = lowered.chars().collect();
+        // Phase 15 Task 3: keep the n-gram windowing zero-alloc.
+        //
+        // The previous code did `let ngram: String = chars[i..i + n].iter().collect()`
+        // for every window — a fresh heap allocation per n-gram
+        // (with `n_min..=n_max` of 3..=5, that's roughly `3 *
+        // chars.len()` per `embed` call). At 256-dim default config
+        // a single 1 KB query chunk paid ~3000 string allocations.
+        // Replace with direct UTF-8 byte indexing using the
+        // pre-computed `char_byte_offsets` table so the inner loop
+        // hashes the on-stack `&[u8]` slice of `lowered` directly.
+        //
+        // The sign-hash salt buffer is also reused across windows
+        // via the small stack-resident `sign_buf` so we don't
+        // allocate the `[ngram_bytes ++ "\x00sign"]` concat each
+        // time. The 64-byte stack buffer covers any realistic
+        // n-gram (max 5 chars × 4 bytes/UTF-8-codepoint + the 5-byte
+        // salt = 25 bytes), with a heap fallback for the rare
+        // multi-byte combining-character edge case.
+        let lowered_bytes = lowered.as_bytes();
+        // `char_indices()` yields the byte offset of every
+        // codepoint; appending `lowered_bytes.len()` as the tail
+        // sentinel means `char_byte_offsets[i..i+n+1]` spans the
+        // bytes of the n-char window starting at codepoint i.
+        let char_byte_offsets: Vec<usize> = lowered
+            .char_indices()
+            .map(|(idx, _)| idx)
+            .chain(std::iter::once(lowered_bytes.len()))
+            .collect();
+        let char_count = char_byte_offsets.len().saturating_sub(1);
+
+        const SALT: &[u8] = b"\x00sign";
+        let mut sign_buf: [u8; 64] = [0; 64];
+
         for n in self.n_min..=self.n_max {
-            if chars.len() < n {
+            if char_count < n {
                 continue;
             }
-            for i in 0..=(chars.len() - n) {
-                let ngram: String = chars[i..i + n].iter().collect();
-                let h = fnv1a_64(ngram.as_bytes());
+            for i in 0..=(char_count - n) {
+                let start = char_byte_offsets[i];
+                let end = char_byte_offsets[i + n];
+                let ngram_bytes = &lowered_bytes[start..end];
+
+                let h = fnv1a_64(ngram_bytes);
                 let bucket = (h % self.dim as u64) as usize;
+
                 // Sign-hash uses the top bit of a second hash to
                 // determine +/-. We re-hash with a salt to decorrelate
                 // bucket and sign — otherwise the sign would be a
                 // function of `bucket` and the embedder would lose
                 // half its effective dimensions.
-                let sign_hash = fnv1a_64(&[ngram.as_bytes(), b"\x00sign"].concat());
+                let need = ngram_bytes.len() + SALT.len();
+                let sign_hash = if need <= sign_buf.len() {
+                    sign_buf[..ngram_bytes.len()].copy_from_slice(ngram_bytes);
+                    sign_buf[ngram_bytes.len()..need].copy_from_slice(SALT);
+                    fnv1a_64(&sign_buf[..need])
+                } else {
+                    // Rare path: n-gram is wider than the stack
+                    // buffer (multi-byte combining characters
+                    // pushing a 5-char window past 64 bytes). Fall
+                    // back to a heap concat. Correctness is
+                    // identical to the legacy path.
+                    let mut heap = Vec::with_capacity(need);
+                    heap.extend_from_slice(ngram_bytes);
+                    heap.extend_from_slice(SALT);
+                    fnv1a_64(&heap)
+                };
                 let sign = if sign_hash & 1 == 1 { 1.0 } else { -1.0 };
                 v[bucket] += sign;
             }

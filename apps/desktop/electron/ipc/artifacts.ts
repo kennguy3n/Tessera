@@ -25,9 +25,15 @@ import { getBridge } from "../appState";
 import { isSafeExportPath } from "../exportPathSafety";
 import { dispatchOnGenerate } from "../scheduler";
 import { validateExtractedItems } from "../extractedItemValidation";
-import { assertId, assertNumber, assertString } from "./validate";
+import {
+  assertId,
+  assertNumber,
+  assertString,
+  assertStringArray,
+} from "./validate";
 import { MarpExportSchema, TypstExportSchema } from "./schemas";
 import { getSafeExportRoots, getDenyExportRoots } from "./shared";
+import { BATCH_MAX_ITEMS, runBatch } from "./batch";
 
 export function registerArtifactsHandlers(): void {
   idempotentHandle(
@@ -116,6 +122,43 @@ export function registerArtifactsHandlers(): void {
         return bridge.bridgeExportArtifact(aId, fmt, co);
       }
       throw new Error("Native bridge not available");
+    },
+  );
+
+  // Phase 15 Task 6: bulk export entrypoint. Bulk export is a real
+  // workflow (the user picks a project's worth of slide decks and
+  // exports them to PDF) and the per-artifact `artifacts:export`
+  // channel was the obvious choke point — every artifact paid one
+  // IPC round-trip plus one renderer-side `Promise.all` slot,
+  // which for 30 decks meant 30 N-API bridge re-entries with no
+  // amortisation. The batched call funnels them into one
+  // contiguous bridge sequence and isolates per-item failures so
+  // one bad deck doesn't fail the whole job.
+  //
+  // The `contentOverride` argument from the single-shot
+  // `artifacts:export` is intentionally NOT forwarded — bulk
+  // export pulls the canonical artifact body from the DB for
+  // every id, the renderer can't reasonably supply 30 different
+  // overrides in one call. If a future surface needs the
+  // override, add a separate
+  // `artifacts:batchExportWithOverrides(items: { id, override }[])`
+  // channel rather than complicate this shape.
+  idempotentHandle(
+    "artifacts:batchExport",
+    async (_event, artifactIds: unknown, format: unknown) => {
+      const ids = assertStringArray(artifactIds, "artifactIds", {
+        maxLen: BATCH_MAX_ITEMS,
+        itemMaxLen: 128,
+      });
+      const validatedIds = ids.map((id) => assertId(id, "artifactId"));
+      const fmt = assertString(format, "format", { maxLen: 32 });
+      const bridge = getBridge();
+      if (!bridge) {
+        throw new Error("Native bridge not available");
+      }
+      return runBatch(validatedIds, async (id) =>
+        bridge.bridgeExportArtifact(id, fmt, null),
+      );
     },
   );
 

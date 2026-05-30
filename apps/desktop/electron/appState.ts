@@ -2,7 +2,14 @@ import { app } from "electron";
 import * as path from "path";
 import * as fs from "fs";
 import { ModelSidecar } from "./sidecar";
-import { DiffusionSidecar, resolveDiffusionBinary } from "./diffusionSidecar";
+// Phase 15 Task 1: `./diffusionSidecar` is loaded dynamically inside
+// `configureSidecars()` so the diffusion module graph (sd-server
+// binary resolution + tar extraction logic + stable-diffusion.cpp
+// log parsing) is not on the cold-start critical path. `import type`
+// keeps the `DiffusionSidecar` type available for field declarations
+// without emitting a runtime require — TypeScript erases type-only
+// imports at compile time, so no module-load cost remains.
+import type { DiffusionSidecar } from "./diffusionSidecar";
 import { KchatAuthService } from "./kchat/kchatAuth";
 import { KchatEventForwarder } from "./kchat/kchatEventForwarder";
 import {
@@ -987,17 +994,45 @@ export async function initAppState(): Promise<boolean> {
     port: 8385,
     label: "vision",
   });
-  diffusionSidecar = new DiffusionSidecar({
-    binaryPath: resolveDiffusionBinary(
-      app.getAppPath(),
-      __dirname,
-      (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath,
-    ),
-    port: 8386,
-    label: "diffusion",
-  });
+
+  // Phase 15 Task 1: defer the `./diffusionSidecar` module load. The
+  // diffusion sidecar is constructed (and the construction is what
+  // pulls in the heavy `./diffusionSidecar` module graph — binary
+  // resolution, tar extraction, log parsing) but the underlying
+  // `sd-server` process is NOT started here. It starts only on
+  // explicit user action (clicking "Generate image"). Loading the
+  // module asynchronously means cold-start does not pay for code
+  // that may never run on a given session.
+  //
+  // We catch and log the import failure rather than letting it
+  // propagate: a failed diffusion-sidecar load only impacts the
+  // image-generation feature, not the rest of the app, so it must
+  // not block boot completion.
+  import("./diffusionSidecar")
+    .then(({ DiffusionSidecar, resolveDiffusionBinary }) => {
+      diffusionSidecar = new DiffusionSidecar({
+        binaryPath: resolveDiffusionBinary(
+          app.getAppPath(),
+          __dirname,
+          (process as NodeJS.Process & { resourcesPath?: string })
+            .resourcesPath,
+        ),
+        port: 8386,
+        label: "diffusion",
+      });
+      console.log(
+        "[Tessera] Diffusion sidecar configured (port 8386, lazy-loaded)",
+      );
+    })
+    .catch((err: unknown) => {
+      console.warn(
+        "[Tessera] Diffusion sidecar lazy-load failed; image generation will be unavailable until next launch:",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
+
   console.log(
-    "[Tessera] Model sidecars configured (text=8384 vision=8385 diffusion=8386)",
+    "[Tessera] Model sidecars configured (text=8384 vision=8385; diffusion=8386 deferred)",
   );
 
   return true;

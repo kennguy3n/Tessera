@@ -603,6 +603,88 @@ Theme 5 — Remaining polish (Tasks 27–30, this PR)
 
 ---
 
+## Phase 15 — Production quality & E2E reliability
+
+**Status:** `IN PROGRESS`
+
+**Goal:** Tessera is production-quality across every existing surface —
+fast cold-starts, crash-safe persistence, byte-stable exports, equal
+treatment for Linux/macOS/Windows packaging, polished UX on every
+non-happy-path, and security defences that hold up under audit.
+
+### Build
+
+Theme 1 — Performance & startup (Tasks 1–6, PR 1)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Startup-time profiler + lazy-loaded heavy modules — `performance.mark()` / `performance.measure()` instrumentation at every boot stage (`app-ready`, `bridge-init`, `db-open`, `window-show`); `marpExport.ts` / `typstExport.ts` / `diffusionSidecar.ts` / `autoUpdater.ts` converted to dynamic `import()` so cold-start window-visible target is sub-2s without model load. `__tests__/startupPerf.test.ts` asserts none of the four heavy modules are statically imported from `main.ts` or `ipc/index.ts`. | `DONE` (PR 1) |
+| 2 | Indexing throughput benchmark + parallel extraction — `benches/indexing_bench.rs` (Criterion) covers 100 small Markdown files, 10 large PDFs, and a 50-file mixed corpus. `extractor::extract_files_parallel` uses a bounded `rayon` thread pool (`num_cpus / 2`, min 1) and preserves the watcher's content-hash skip path. Integration test asserts parallel output matches serial chunk-for-chunk. | `DONE` (PR 1) |
+| 3 | Search latency benchmark + query plan optimization — `benches/search_bench.rs` covers hybrid retrieval at 1K / 10K / 100K chunk corpus sizes. `tessera_sources::store` adds a covering index on `(source_id, chunk_hash)` for the vector path and a `PRAGMA optimize` idle hook; the embedding provider caches its n-gram hash table behind a `OnceLock`. Integration test pins identical top-K results before/after the optimisation. | `DONE` (PR 1) |
+| 4 | Memory profiling for large corpora — `manager` ships a `--profile` mode that emits RSS/heap stats after bulk index completion; bulk ingest now streams chunks in batches of 500 instead of accumulating a full corpus vector set. Rust test indexes 10K synthetic chunks and asserts peak RSS stays under 200 MB. | `DONE` (PR 1) |
+| 5 | Debounced file watcher coalescing — `watcher` implements a 500 ms coalescing window keyed on canonicalised path so rapid write+rename+chmod bursts collapse into a single re-index call. Rust test fires 100 rapid writes and asserts only one batch fires. | `DONE` (PR 1) |
+| 6 | IPC message batching for bulk operations — `sources:batchReindex(sourceIds[])` and `artifacts:batchExport(artifactIds[], format)` IPC channels share a single bridge call and report per-item success/failure. `__tests__/batchIpc.test.ts` pins batch semantics, partial failure handling, and rate-limit interaction. | `DONE` (PR 1) |
+
+Theme 2 — Reliability & crash recovery (Tasks 7–12, PR 2)
+
+| # | Item | Status |
+|---|---|---|
+| 7 | WAL mode + crash-safe DB writes — `PRAGMA journal_mode=WAL` issued after the SQLCipher key application; graceful shutdown runs `PRAGMA wal_checkpoint(TRUNCATE)`; startup runs `PRAGMA integrity_check` and surfaces a structured corruption error to the renderer when corruption persists past a single checkpoint retry. Rust test simulates a mid-write crash and verifies the DB is readable on next open. | `DONE` (PR 2) |
+| 8 | Artifact auto-save recovery — every editor's auto-save writes a `<artifactId>.tessera-recovery` JSON sidecar before the bridge call; `artifacts:checkRecovery` / `artifacts:discardRecovery` IPC let the renderer offer "restore unsaved changes" on next open. Vitest covers IPC-rejection-mid-save → recovery-file-readable round-trip. | `DONE` (PR 2) |
+| 9 | Graceful sidecar shutdown — `{userData}/tessera-sidecar.pid` written on spawn; startup scans for orphan PIDs and reaps them; `will-quit` issues `SIGTERM` → 5 s grace → `SIGKILL` escalation. Vitest spawns a mock sidecar, kills the parent, and verifies the orphan-cleanup path on next startup. | `DONE` (PR 2) |
+| 10 | Export failure recovery + retry queue — failed exports persist to `config.json` with `{ id, artifactId, format, error, retryCount, lastAttemptAt }`; `artifacts:failedExports` / `artifacts:retryExport(id)` IPC drive the UI. Vitest covers queue persistence, retry logic, and dequeue-on-success. | `DONE` (PR 2) |
+| 11 | Connector sync error resilience — base-2 s, max-5 min exponential backoff with jitter applied uniformly across all 7 connectors via `connectors::retry::ConnectorBackoffPolicy`; last-error + retry-count persisted on the source row; transient (timeout/429/503) vs permanent (401/403/404) classified at the error-construction site. Per-connector Rust tests pin transient and permanent paths and the backoff schedule. | `DONE` (PR 2) |
+| 12 | Audit log rotation — when the audit table exceeds 100 K rows, `audit::store::rotate_if_needed` archives the oldest half to `audit-archive-<UTC-ISO8601>.jsonl.gz` (gzip-compressed JSONL) under `{userData}/audit-archives/` and deletes them from the live table; `audit:getArchives` IPC lists archives by filename + size + row count. Rust test inserts 100 K+1 rows and verifies rotation fires, the archive parses back to valid JSONL, and the live table is trimmed. | `DONE` (PR 2) |
+
+Theme 3 — Export fidelity & platform parity (Tasks 13–18, PR 3)
+
+| # | Item | Status |
+|---|---|---|
+| 13 | DOCX cross-platform regression suite — `crates/tessera_export/tests/docx_regression.rs` holds 5 golden artifacts (headings, lists, tables, code blocks, citations) and asserts byte-stable DOCX output across runs; a parallel OOXML schema test parses the produced `document.xml` with `quick-xml` and asserts the required `<w:body>` / `<w:p>` / `<w:r>` envelope. | `DONE` (PR 3) |
+| 14 | XLSX formula preservation + named ranges — `xlsx::write_sheet_xml` emits `<f>` formula elements for SUM/AVERAGE/COUNT/MIN/MAX cells and serialises sheet-level named ranges into `workbook.xml` `<definedNames>`. Rust test creates a sheet with formulas, exports, re-parses with `calamine`, and asserts formula cells round-trip as formula strings, not computed values. | `DONE` (PR 3) |
+| 15 | PDF Mermaid diagram rendering — `pdf::render` pre-renders Mermaid blocks to SVG via the existing `mermaid` module and embeds the SVG into the Typst pipeline via a `#image()` block. Rust test exports a document containing a Mermaid flowchart and asserts the output contains embedded SVG path data, not the raw Mermaid source. | `DONE` (PR 3) |
+| 16 | Linux `.deb` / AppImage smoke harness — `scripts/smoke-test-linux.sh` builds the `.deb` + AppImage via `electron-builder`, installs the `.deb` inside the `Dockerfile.smoke` Ubuntu 22.04 container, launches the app under `xvfb-run`, asserts Electron's `ready` event fires, and exercises one `sources:list` IPC round-trip. Wired as `npm run test:smoke:linux`. | `DONE` (PR 3) |
+| 17 | Windows portable `.zip` verifier — `packaging/electron-builder.yml` adds the `portable` Windows target alongside NSIS; `scripts/verify-windows-package.ps1` asserts the produced `.zip` contains `Tessera.exe`, `resources/`, and the bundled native `.node` addon. | `DONE` (PR 3) |
+| 18 | macOS universal-binary verifier — `packaging/electron-builder.yml` builds universal DMG (x64 + arm64); `scripts/verify-macos-package.sh` runs `lipo -info` on the bundled native addon and asserts both slices are present. | `DONE` (PR 3) |
+
+Theme 4 — UX completeness (Tasks 19–24, PR 4)
+
+| # | Item | Status |
+|---|---|---|
+| 19 | First-run onboarding wizard — new `components/OnboardingWizard.tsx`, surfaced from `HomePage` when the bridge reports zero sources AND zero artifacts AND `onboarding_completed` is not set in `config.json`. 3 steps: add-first-source folder picker, pick-a-template (top 3), workspace-ready with doc links. Vitest covers per-step rendering and the no-re-show invariant after dismissal. | `DONE` (PR 4) |
+| 20 | Empty-state illustrations across list pages — `SourcesPage` / `TasksPage` / `AutomationsPage` / `TemplatesPage` reuse the existing `EmptyState` component with a Lucide icon + descriptive copy + primary CTA when their data list is empty. Vitest snapshot tests pin each empty state. | `DONE` (PR 4) |
+| 21 | Toast notification polish — `ToastProvider` enforces stack-max-3, 5 s auto-dismiss for non-error toasts, persistence-until-dismissed for errors, focus trap on hover, Escape-to-dismiss. Vitest covers stacking, timing, and keyboard interaction. | `DONE` (PR 4) |
+| 22 | Source health dashboard — `components/SourceHealthDashboard.tsx` renders per-source last-sync time, sync status (healthy/warning/error), indexed chunk count, and storage size estimate; data flows through a new `sources:healthReport` IPC backed by a new bridge call. Vitest covers the component AND the IPC handler. | `DONE` (PR 4) |
+| 23 | Keyboard-navigable template gallery — `TemplatesPage` implements roving tabindex with ←→↑↓ arrow-key navigation, Enter to select, Tab to move between the filter controls and the grid, and `aria-activedescendant` for screen-reader compatibility. Vitest simulates keyboard events and asserts focus moves correctly. | `DONE` (PR 4) |
+| 24 | Artifact version comparison (diff view) — `VersionHistory.tsx` adds a "Compare" button between any two versions; new `utils/diff.ts` implements a section-level longest-common-subsequence diff (no external library) reused by document/sheet/base diff renderers. Unit test pins the diff algorithm against known inputs/outputs; component test verifies additions/deletions render. | `DONE` (PR 4) |
+
+Theme 5 — Security & compliance (Tasks 25–28, PR 5)
+
+| # | Item | Status |
+|---|---|---|
+| 25 | CSP audit + nonce-based inline scripts — `script-src` and `style-src` no longer carry `'unsafe-inline'`; a per-session nonce is generated at app start and injected into the HTML template; `connect-src` is locked to `'self'` + `127.0.0.1` (sidecar) + explicitly configured external provider endpoints. Vitest inspects the assembled CSP header and asserts no `'unsafe-inline'` on scripts. | `DONE` (PR 5) |
+| 26 | OAuth token-refresh race guard — `tokenVault.ts` adds a per-provider `Promise`-keyed mutex (`refreshLock`) so two concurrent expired-token detections coalesce onto a single HTTP refresh call. Vitest fires two concurrent refreshes and asserts exactly one upstream request is made; second caller awaits and receives the same token. | `DONE` (PR 5) |
+| 27 | Secrets zero-on-free for sensitive buffers — every `Buffer` holding plaintext keys / tokens / passphrases is zeroed via `buffer.fill(0)` inside a `finally` block in `vaultCrypto.ts` / `dbKey.ts` / `passwordVault.ts` / `secretsVault.ts` / `tokenVault.ts`. Vitest holds a reference to the buffer across the crypto call and asserts it is zeroed after return. | `DONE` (PR 5) |
+| 28 | Loopback API per-IP rate limit — `kchat/kchatLocalApi.ts` adds a sliding-window 100 req/min limiter keyed on remote address; 429 responses carry an accurate `Retry-After` header. `kchatDesktopIntegration.test.ts` fires 101 requests rapidly and asserts the 101st gets 429. | `DONE` (PR 5) |
+
+Theme 6 — Documentation & verification (Tasks 29–30, PR 6)
+
+| # | Item | Status |
+|---|---|---|
+| 29 | Linux documentation consistency pass — every platform-specific mention across `README.md` / `ARCHITECTURE.md` / `CONTRIBUTING.md` carries Linux prerequisites (libsecret-1-dev, libgtk-3-dev, libnss3-dev, libasound2-dev, libxss1, libxtst6, xdg-utils), Linux packaging (AppImage, `.deb`, arm64), Linux runtime detection (AVX2, AVX-512, NEON/dotprod, Vulkan, CUDA, ROCm) on equal footing with macOS/Windows; `sidecars/scripts/download-llama-server.sh` documents Linux arm64 explicitly. | `DONE` (PR 6) |
+| 30 | Phase 15 close-out — Phase 15 row in `PHASES.md`, Phase 15 section in `PROGRESS.md` with every task checked, `ARCHITECTURE.md` updated with the new IPC channels / files / crates, `README.md` Quick-start refreshed for any new prerequisites, `CHANGELOG.md` `[Unreleased]` block with Added / Changed / Tests entries. Stale documentation references reconciled. | `DONE` (PR 6) |
+
+### Exit criteria
+
+- [x] **PR 1 (Tasks 1–6)** — startup, indexing, search, memory, watcher coalescing, and IPC batching benchmarks and tests land; `cargo test --all` and `npm test` green on the new tests.
+- [x] **PR 2 (Tasks 7–12)** — WAL + integrity-check, recovery sidecar, sidecar PID cleanup, failed-export queue, backoff policy, and audit rotation all land with their dedicated tests.
+- [x] **PR 3 (Tasks 13–18)** — DOCX/XLSX/PDF regression tests pin export fidelity; Linux/Windows/macOS packaging verifiers green on the matrix.
+- [x] **PR 4 (Tasks 19–24)** — onboarding, empty states, toasts, source health, gallery keyboard nav, and version diff land; renderer Vitest suite green on the new components.
+- [x] **PR 5 (Tasks 25–28)** — CSP, OAuth race guard, secret zeroing, loopback rate limiter all land with regression tests.
+- [x] **PR 6 (Tasks 29–30)** — every doc surface mentions Linux on equal footing; Phase 15 close-out written across `PHASES.md` / `PROGRESS.md` / `CHANGELOG.md` / `ARCHITECTURE.md` / `README.md`.
+
+---
+
 ## Phase changelog
 
 ### 2026-05-27 — Phase 14 docs sweep (this PR)

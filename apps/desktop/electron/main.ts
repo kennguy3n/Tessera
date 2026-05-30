@@ -7,7 +7,17 @@ import { initAppState, stopAllSidecars } from "./appState";
 import { detectComputeBackends } from "./modelManagement";
 import { startScheduler, stopScheduler } from "./scheduler";
 import { getLogger } from "./logger";
-import { initAutoUpdater } from "./autoUpdater";
+import {
+  markEnd,
+  markStart,
+  logStartupPerfTable,
+} from "./startupPerf";
+// `./autoUpdater` is loaded dynamically inside `whenReady()` (see
+// `initAutoUpdater()` call site). Phase 15 Task 1: it pulls in
+// `electron-updater` (which itself imports `js-yaml` + `xml2js` +
+// http transport), is a no-op in dev (`app.isPackaged === false`),
+// and is never needed on the critical-path window-show. Deferring
+// the require keeps the cold-start V8 init off the boot wire.
 import { cspImageSources } from "./cspImageSources";
 import {
   registerAssetProtocolScheme,
@@ -264,6 +274,7 @@ function createWindow(): void {
     mainWindow.focus();
     return;
   }
+  markStart("window-show");
   const config = loadConfig();
 
   mainWindow = new BrowserWindow({
@@ -280,6 +291,28 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+
+  // Record the window-show measure on `ready-to-show` (the standard
+  // Electron signal for "the renderer has produced its first paint")
+  // rather than on `BrowserWindow` construction, which only allocates
+  // the native handle. Then surface the full boot-perf table to the
+  // logger so cold-start regressions are visible without attaching a
+  // profiler. The handler is `once` so re-loads (devtools refresh)
+  // don't accumulate measures.
+  mainWindow.once("ready-to-show", () => {
+    markEnd("window-show");
+    try {
+      logStartupPerfTable((event, payload) => {
+        getLogger().info(event, payload);
+      });
+    } catch (err) {
+      // Logging the perf table is best-effort; never crash startup.
+      console.warn(
+        "[Tessera] startup-perf log failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   });
 
   const isDev = !app.isPackaged;
@@ -522,7 +555,16 @@ function installCSPDevtoolsLogger(): void {
  */
 let appInitComplete = false;
 
+// Record the `app-ready` start anchor at module-load — i.e. as close
+// as we can get to the V8 main bundle entrypoint inside the Electron
+// process. The end mark is recorded inside the `whenReady` callback
+// so the resulting measure captures the entire Electron-internal
+// "ready up the GPU + IPC machinery" window. The other stage marks
+// then nest under this one.
+markStart("app-ready");
+
 app.whenReady().then(async () => {
+  markEnd("app-ready");
   // DB-key + password-vault unification.
   //
   // Boot ordering for the at-rest-encryption stack is now:
@@ -672,7 +714,9 @@ app.whenReady().then(async () => {
   // and falling back to unencrypted mode as an earlier boot
   // sequence did). See the doc comment at the top of this
   // callback for the full ordering rationale.
+  markStart("bridge-init");
   await initAppState();
+  markEnd("bridge-init");
   // Replay the persisted hybrid retrieval config into the live Rust
   // `SourceManager`. Must run AFTER `initAppState` brings the
   // bridge up (awaiting `initAppState` is what makes that ordering
@@ -699,7 +743,30 @@ app.whenReady().then(async () => {
   // Kick off the auto-update check. No-op in dev (app.isPackaged ==
   // false) and silently disabled when the user has unchecked
   // "Automatically check for updates" in Settings.
-  initAutoUpdater();
+  //
+  // Phase 15 Task 1: dynamic `import()` so the `electron-updater`
+  // module graph (~600 KB of YAML + XML + HTTP transport code) does
+  // not load on the cold-start critical path. We `void` the promise
+  // so the boot sequence does not block on the update check; any
+  // failure is logged via the auto-updater's own error handling.
+  //
+  // The same dynamic import also registers the `updates:*` IPC
+  // channels — moved out of `registerIpcHandlers()` (in `ipc.ts`) so
+  // the heavy module graph is genuinely deferred. The renderer never
+  // calls a `updates:*` channel during the first window-paint so the
+  // brief gap between IPC handler registration and the renderer
+  // becoming reachable is invisible in production. See the doc
+  // comment in `ipc.ts` for the rationale.
+  void import("./autoUpdater")
+    .then(({ initAutoUpdater, registerAutoUpdaterIpc }) => {
+      registerAutoUpdaterIpc();
+      initAutoUpdater();
+    })
+    .catch((err: unknown) => {
+      getLogger().error("autoUpdater.dynamicImport failed", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    });
 
   // Warm the hardware-detection cache off the critical path. The first
   // call to `detectComputeBackends()` issues `execFileSync` probes for
