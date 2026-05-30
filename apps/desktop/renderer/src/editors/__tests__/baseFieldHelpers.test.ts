@@ -67,6 +67,31 @@ describe("ensureRecordIds", () => {
     const out = ensureRecordIds(records);
     expect(out).toBe(records);
   });
+
+  it("drops primitives, null, and arrays — only keeps plain objects", () => {
+    // Devin Review ANALYSIS_0004 — hand-edited JSON like
+    // `records: [null, 42, "oops", [], { Name: "ok" }]` would
+    // previously crash on `null.id` (TypeError on the spread).
+    // The defensive path filters such elements out and re-keys
+    // the survivors.
+    const out = ensureRecordIds([
+      null,
+      42,
+      "oops",
+      ["array-elem"],
+      { id: "kept0000kept0000", Name: "Kept" },
+      { Name: "FreshId" },
+    ] as unknown[]);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toEqual({ id: "kept0000kept0000", Name: "Kept" });
+    expect(out[1].Name).toBe("FreshId");
+    expect(out[1].id).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("returns [] when EVERY element is invalid", () => {
+    const out = ensureRecordIds([null, undefined, 0, ""] as unknown[]);
+    expect(out).toEqual([]);
+  });
 });
 
 describe("parseBaseContent — record id integration", () => {

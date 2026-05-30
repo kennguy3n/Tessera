@@ -47,7 +47,22 @@ export default function BaseEditor({
   onDraftChange,
   autoSaveMs = 2000,
 }: BaseEditorProps) {
-  const [data, setData] = useState<BaseContent>(() => parseBaseContent(content));
+  // Both `data` and `viewConfig` need the *same* one-shot parse of
+  // `content` at mount time. Calling `parseBaseContent` twice would
+  // (a) waste a JSON.parse pass and (b) — more importantly — re-mint
+  // a second set of random record IDs that we immediately throw
+  // away, making the editor's view of "the records" diverge from
+  // the IDs we briefly handed to defaultViewConfig. Capture the
+  // initial parse once via useRef so both initializers can read it.
+  const initialDataRef = useRef<BaseContent | null>(null);
+  const getInitialData = (): BaseContent => {
+    if (initialDataRef.current === null) {
+      initialDataRef.current = parseBaseContent(content);
+    }
+    return initialDataRef.current;
+  };
+
+  const [data, setData] = useState<BaseContent>(getInitialData);
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -64,7 +79,7 @@ export default function BaseEditor({
   // JSON, so switching views never dirties the document.
   const [view, setView] = useState<BaseViewKind>("grid");
   const [viewConfig, setViewConfig] = useState<BaseViewConfig>(() =>
-    defaultViewConfig(parseBaseContent(content).fields),
+    defaultViewConfig(getInitialData().fields),
   );
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef(content);

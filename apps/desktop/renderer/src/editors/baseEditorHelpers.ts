@@ -67,15 +67,35 @@ export function makeRecordId(): string {
  * Records that already have an id keep theirs (round-trip safety);
  * legacy records loaded from artifacts that pre-date PR 4 are
  * assigned one on first parse so linked_record can reference them.
+ *
+ * Defensive: hand-edited JSON can carry `[null, 42, "oops"]`-style
+ * arrays even after `parseBaseContent` has coerced the *outer* value
+ * to an array. We drop any element that isn't a plain object — a
+ * primitive or null has no fields to preserve and would crash the
+ * spread on the next line — and re-key every survivor so callers can
+ * treat the return value as `BaseRecord[]` without further checks.
  */
-export function ensureRecordIds(records: BaseRecord[]): BaseRecord[] {
+export function ensureRecordIds(records: unknown[]): BaseRecord[] {
   let changed = false;
-  const out = records.map((r) => {
-    if (typeof r.id === "string" && r.id) return r;
+  const out: BaseRecord[] = [];
+  for (const r of records) {
+    if (typeof r !== "object" || r === null || Array.isArray(r)) {
+      // Drop primitives, null, and arrays — none can be turned into a
+      // valid record without inventing field values out of thin air.
+      changed = true;
+      continue;
+    }
+    const rec = r as BaseRecord;
+    if (typeof rec.id === "string" && rec.id) {
+      out.push(rec);
+      continue;
+    }
     changed = true;
-    return { ...r, id: makeRecordId() };
-  });
-  return changed ? out : records;
+    out.push({ ...rec, id: makeRecordId() });
+  }
+  // Preserve referential identity when the input was already
+  // well-formed — keeps `useState` initializers stable across HMR.
+  return changed ? out : (records as BaseRecord[]);
 }
 
 /**
