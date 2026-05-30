@@ -454,16 +454,26 @@ export function isComputedFieldType(type: FieldType): boolean {
  * `false` and the user's `=33.3` filter would silently match zero rows
  * — confusing because the value clearly *is* 33.3% in the grid.
  *
- * We use a relative epsilon (1e-9 of the larger magnitude, with a 1e-12
- * absolute floor near zero) which is small enough that any two values
- * the user would consider visually distinct still compare unequal,
- * while collapsing every rounding error a single multiply/divide can
- * introduce. Percent / number / currency / rating / duration all share
- * this comparator so behaviour is consistent across types.
+ * We use a relative epsilon of `1e-9 * max(|a|, |b|, 1)`. The `1`
+ * floor in the `max(…)` means the *minimum* tolerance is `1e-9` (never
+ * narrower), so two values that differ by less than ~1 ppb still
+ * compare equal even when both are near zero. Above magnitude 1 the
+ * tolerance scales with the operands so a single multiply / divide's
+ * rounding error never makes equality lie at any magnitude.
+ *
+ * `1e-9` is small enough that any two values the user would consider
+ * visually distinct still compare unequal (the percent filter renders
+ * at most ~6 digits of precision; rating / duration / currency at most
+ * 2), while large enough to collapse a single multiply/divide's
+ * rounding error. Percent / number / currency / rating / duration all
+ * share this comparator so behaviour is consistent across types.
  *
  * Devin Review on PR #79 round 8 (ANALYSIS_…_0001) flagged the strict
  * equality as a likely user-visible bug on common percentages like
  * 33.3% / 16.7% / 12.5% (the last is exact but the first two are not).
+ * Round 9 (ANALYSIS_…_0003) flagged the docstring saying "1e-12
+ * absolute floor near zero" while the code actually used a 1e-9 floor
+ * via the `Math.max(…, 1)` term — fixed to match the implementation.
  */
 export function numbersApproxEqual(a: number, b: number): boolean {
   if (a === b) return true;

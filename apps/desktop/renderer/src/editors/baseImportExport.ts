@@ -511,6 +511,26 @@ export function coerceCsvCellToFieldValue(
  * linkage stable across a round-trip.  Records without an `id`
  * column get a fresh one via `makeRecordId()`.
  */
+/**
+ * Deep-ish clone of a `BaseField` config. We use a plain spread plus
+ * a per-array clone for the only nested mutable member (`options`).
+ *
+ * `BaseField` is intentionally flat-by-design — every other property
+ * is a primitive — so this stays simple and explicit rather than
+ * reaching for `structuredClone`. If a new nested mutable field is
+ * added to `BaseField` in the future, extend this helper.
+ *
+ * Used by `parseCsvToBase` (and any other importer reusing a schema
+ * entry) so the imported `BaseContent.fields` never share references
+ * with the caller's schema. See Devin Review PR #79 round 9
+ * (ANALYSIS_…_0002).
+ */
+function cloneBaseField(source: BaseField): BaseField {
+  const cloned: BaseField = { ...source };
+  if (source.options) cloned.options = [...source.options];
+  return cloned;
+}
+
 export function parseCsvToBase(
   csv: string,
   schema?: BaseField[],
@@ -656,12 +676,25 @@ export function parseCsvToBase(
     // it AND we didn't have to rename it for uniqueness — a
     // renamed column is no longer logically the same field. Schema
     // reuse only applies to deliberate (user-named) headers.
+    //
+    // **We always clone the schema entry**. Returning the caller's
+    // `BaseField` object verbatim would tie the new `BaseContent`'s
+    // lifecycle to the previous one — any in-place mutation of
+    // `data.fields[i]` upstream (which the rest of the editor avoids
+    // today but is a documented foot-gun) would silently corrupt the
+    // just-imported data, and vice-versa. A spread + per-array clone
+    // is cheap (fields are flat config objects with at most one
+    // nested `options: string[]`) and keeps the two `BaseContent`s
+    // logically independent. Devin Review PR #79 round 9
+    // (ANALYSIS_…_0002) flagged the shared reference.
     const matchesSchemaName =
       slot.kind === "deliberate" && slot.rawName === finalName;
     const fromSchema = matchesSchemaName
       ? schema?.find((f) => f.name === finalName)
       : undefined;
-    const field: BaseField = fromSchema ?? { name: finalName, type: "text" };
+    const field: BaseField = fromSchema
+      ? cloneBaseField(fromSchema)
+      : { name: finalName, type: "text" };
     fields.push(field);
     fieldForColumn.push(field);
   }

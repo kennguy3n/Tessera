@@ -666,6 +666,38 @@ describe("parseCsvToBase — CSV → BaseContent", () => {
     expect(result.records[0].id).not.toBe("x");
     expect((result.records[0].id as string).length).toBeGreaterThan(0);
   });
+
+  it("clones reused schema fields so caller can mutate the result without corrupting the schema (and vice-versa)", () => {
+    // Regression guard for Devin Review PR #79 round 9
+    // (ANALYSIS_…_0002). Before the cloneBaseField helper, the
+    // imported `BaseContent.fields[i]` was the SAME object reference
+    // as `schema[i]`, so an in-place `options.push(…)` mutation on
+    // the imported field would silently bleed back into the schema
+    // (and vice versa). This test pins the lifecycle separation.
+    const schema = [
+      {
+        name: "Tags",
+        type: "multi_select" as const,
+        options: ["red", "green", "blue"],
+      },
+    ];
+    const csv = "Tags\nred";
+    const result = parseCsvToBase(csv, schema);
+    // The imported field has the same *values* as the schema entry
+    // (so column type/options/etc. flow through) …
+    expect(result.fields[0].name).toBe("Tags");
+    expect(result.fields[0].type).toBe("multi_select");
+    expect(result.fields[0].options).toEqual(["red", "green", "blue"]);
+    // … but it's a NEW object (not `===` to the schema entry) …
+    expect(result.fields[0]).not.toBe(schema[0]);
+    // … and its `options` array is a NEW array.
+    expect(result.fields[0].options).not.toBe(schema[0].options);
+    // Mutating either side does not affect the other.
+    (result.fields[0].options as string[]).push("purple");
+    expect(schema[0].options).toEqual(["red", "green", "blue"]);
+    schema[0].options.push("orange");
+    expect(result.fields[0].options).toEqual(["red", "green", "blue", "purple"]);
+  });
 });
 
 describe("parseJsonToBase — JSON → BaseContent", () => {

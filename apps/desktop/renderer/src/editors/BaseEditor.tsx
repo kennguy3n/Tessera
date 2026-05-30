@@ -476,38 +476,20 @@ export default function BaseEditor({
     [data, updateData],
   );
 
-  // Bulk delete every record in `selectedIds`. Runs the same
-  // cascade-clean as `removeRecord` so the resulting JSON has no
-  // dangling linked_record ids — important when the user deletes,
-  // e.g., a whole category's worth of records that other categories
-  // were linking to.
-  const removeSelectedRecords = useCallback(() => {
-    if (selectedIds.size === 0) return;
-    const toRemove = selectedIds;
-    const linkedFields = data.fields.filter(
-      (f) => f.type === "linked_record",
-    );
-    const survivors = data.records.filter((r) => !toRemove.has(r.id));
-    const cleaned =
-      linkedFields.length > 0
-        ? survivors.map((record) => {
-            let next: BaseRecord | null = null;
-            for (const field of linkedFields) {
-              const v = record[field.name];
-              if (!Array.isArray(v)) continue;
-              const filtered = (v as string[]).filter(
-                (id) => !toRemove.has(id),
-              );
-              if (filtered.length === v.length) continue;
-              if (next === null) next = { ...record };
-              next[field.name] = filtered;
-            }
-            return next ?? record;
-          })
-        : survivors;
-    updateData({ ...data, records: cleaned });
-    setSelectedIds(new Set());
-  }, [data, selectedIds, updateData]);
+  // Bulk delete every record in `selectedIds` *that is currently
+  // visible* in the filtered + sorted view (the `removeSelectedRecords`
+  // callback + the `visibleSelectedIds` selector are defined further
+  // down once `filteredAndSorted` exists — they're declared near here
+  // logically but TDZ-blocked until `filteredAndSorted` resolves).
+  //
+  // **Visibility scoping**: a previously-selected record that has
+  // since been filtered out is excluded from the delete so the user
+  // can't accidentally erase data they can't see. This matches the
+  // header "Select all visible records" intent (selection is scoped
+  // to the visible view; bulk delete is symmetric). Hidden ids stay
+  // in `selectedIds` so reselecting the filter that brought them
+  // back keeps them highlighted. See Devin Review PR #79 round 9
+  // (ANALYSIS_…_0004).
 
   // Export the current Base to a downloadable file. In a browser the
   // Blob/anchor dance is the canonical way to trigger a save without
@@ -649,6 +631,52 @@ export default function BaseEditor({
     return records;
   }, [data.records, data.fields, filters, sortField, sortDir]);
 
+  // See the visibility-scoping commentary higher up — this is the
+  // implementation half. `visibleSelectedIds` is the intersection of
+  // `selectedIds` and the currently-visible filtered+sorted view;
+  // `removeSelectedRecords` deletes only those and drops them from
+  // the selection set, leaving any hidden ids alone so they reappear
+  // selected when the filter changes back.
+  const visibleSelectedIds = useMemo(() => {
+    const out = new Set<string>();
+    for (const record of filteredAndSorted) {
+      if (selectedIds.has(record.id)) out.add(record.id);
+    }
+    return out;
+  }, [filteredAndSorted, selectedIds]);
+
+  const removeSelectedRecords = useCallback(() => {
+    if (visibleSelectedIds.size === 0) return;
+    const toRemove = visibleSelectedIds;
+    const linkedFields = data.fields.filter(
+      (f) => f.type === "linked_record",
+    );
+    const survivors = data.records.filter((r) => !toRemove.has(r.id));
+    const cleaned =
+      linkedFields.length > 0
+        ? survivors.map((record) => {
+            let next: BaseRecord | null = null;
+            for (const field of linkedFields) {
+              const v = record[field.name];
+              if (!Array.isArray(v)) continue;
+              const filtered = (v as string[]).filter(
+                (id) => !toRemove.has(id),
+              );
+              if (filtered.length === v.length) continue;
+              if (next === null) next = { ...record };
+              next[field.name] = filtered;
+            }
+            return next ?? record;
+          })
+        : survivors;
+    updateData({ ...data, records: cleaned });
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of toRemove) next.delete(id);
+      return next;
+    });
+  }, [data, visibleSelectedIds, updateData]);
+
   // Shared props passed to every non-grid view. The grid view stays
   // inline below because it has filter/sort behavior the others
   // don't need.
@@ -687,14 +715,14 @@ export default function BaseEditor({
         >
           Manage Fields
         </button>
-        {selectedIds.size > 0 && (
+        {visibleSelectedIds.size > 0 && (
           <button
             type="button"
             className="btn-sm danger"
             onClick={removeSelectedRecords}
-            aria-label={`Delete ${selectedIds.size} selected`}
+            aria-label={`Delete ${visibleSelectedIds.size} selected`}
           >
-            Delete {selectedIds.size} selected
+            Delete {visibleSelectedIds.size} selected
           </button>
         )}
         <span
