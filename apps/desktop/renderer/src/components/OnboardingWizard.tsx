@@ -29,6 +29,7 @@ import { useNavigate } from "react-router-dom";
 import { FolderPlus, LayoutTemplate, Rocket } from "lucide-react";
 import Button from "./Button";
 import Modal from "./Modal";
+import { useCspNonce } from "../utils/cspNonce";
 
 type Step = 0 | 1 | 2;
 
@@ -112,6 +113,7 @@ const FEATURED_TEMPLATES: ReadonlyArray<{
 ];
 
 export default function OnboardingWizard({ onDismiss }: OnboardingWizardProps) {
+  const cspNonce = useCspNonce();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>(0);
   // Re-entrancy guard MUST be a ref, not a useState value (Devin
@@ -283,7 +285,7 @@ export default function OnboardingWizard({ onDismiss }: OnboardingWizardProps) {
         </div>
       </div>
 
-      <style>{`
+      <style nonce={cspNonce}>{`
         .onboarding-wizard {
           display: flex;
           flex-direction: column;

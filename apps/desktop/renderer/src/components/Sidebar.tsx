@@ -1,8 +1,10 @@
 import { NavLink } from "react-router-dom";
 import { SIDEBAR_ITEMS, SIDEBAR_SHORTCUT_HINTS } from "../navigation";
 import KchatSidebarSection from "./KchatSidebarSection";
+import { useCspNonce } from "../utils/cspNonce";
 
 export default function Sidebar() {
+  const cspNonce = useCspNonce();
   return (
     <nav className="sidebar" role="navigation" aria-label="Main navigation">
       <div className="sidebar-brand">
@@ -41,7 +43,7 @@ export default function Sidebar() {
         })}
       </ul>
       <KchatSidebarSection />
-      <style>{`
+      <style nonce={cspNonce}>{`
         .sidebar {
           width: 220px;
           min-width: 220px;

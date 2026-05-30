@@ -49,6 +49,7 @@ import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Card from "../components/Card";
+import { useCspNonce } from "../utils/cspNonce";
 import {
   type VisionMode,
   type VisionResult,
@@ -60,6 +61,7 @@ import {
 } from "./visionPageUtils";
 
 export default function VisionPage() {
+  const cspNonce = useCspNonce();
   const navigate = useNavigate();
 
   const [available, setAvailable] = useState<boolean | null>(null);
@@ -227,7 +229,7 @@ export default function VisionPage() {
               Go to Settings
             </Button>
           </div>
-          <style>{`
+          <style nonce={cspNonce}>{`
             .vision-unavailable h2 {
               margin-top: 0;
               margin-bottom: var(--spacing-sm);
@@ -348,7 +350,7 @@ export default function VisionPage() {
               >
                 <strong>Error:</strong> {error}
               </div>
-              <style>{`
+              <style nonce={cspNonce}>{`
                 .vision-error {
                   color: var(--color-error);
                 }
@@ -386,7 +388,7 @@ export default function VisionPage() {
         </>
       )}
 
-      <style>{`
+      <style nonce={cspNonce}>{`
         .vision-picker-row {
           display: flex;
           align-items: center;

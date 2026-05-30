@@ -600,3 +600,14 @@ Object.defineProperty(window, "tessera", {
   value: mockApi,
   writable: true,
 });
+
+// Phase 15 Task 25 — preload exposes a per-session CSP nonce on
+// `window.tesseraCspNonce`. Provide a deterministic test value so
+// component-local `<style nonce={…}>` blocks render the attribute
+// instead of crashing with "undefined" — and so tests that want to
+// assert the nonce attribute on the rendered DOM have a known
+// expected value to compare against.
+Object.defineProperty(window, "tesseraCspNonce", {
+  value: "test-csp-nonce",
+  writable: true,
+});

@@ -114,5 +114,17 @@ import type { TesseraApi } from "../../../shared/types";
 declare global {
   interface Window {
     tessera: TesseraApi;
+    /**
+     * Phase 15 Task 25 — per-session CSP nonce exposed by
+     * `preload.ts`. Components that emit a `<style>{…}</style>`
+     * block read this and pass it as the `nonce` attribute so the
+     * strict `style-src-elem 'self' 'nonce-X'` directive accepts
+     * the inline stylesheet. May be the empty string in test
+     * harnesses where the preload script is mocked — components
+     * should pass it unconditionally; an empty nonce simply fails
+     * the CSP check at runtime, which is the loud failure we want
+     * if a renderer bundle ever loads without the matching nonce.
+     */
+    tesseraCspNonce: string;
   }
 }

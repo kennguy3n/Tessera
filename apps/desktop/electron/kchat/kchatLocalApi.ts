@@ -59,6 +59,12 @@ import {
 } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 
+import {
+  DEFAULT_LOOPBACK_LIMIT,
+  DEFAULT_LOOPBACK_WINDOW_MS,
+  LoopbackRateLimiter,
+} from "./kchatRateLimiter";
+
 /** Maximum size of a POST body the server will accept (64 KiB). */
 export const MAX_BODY_BYTES = 64 * 1024;
 
@@ -217,6 +223,19 @@ export interface LocalApiServerOptions {
   fsWriter?: PortFileWriter;
   /** Inject a clock (tests). Default `Date.now`. */
   nowMsForTesting?: () => number;
+  /**
+   * Phase 15 Task 28 — sliding-window rate limiter overrides.
+   *
+   * Production uses the defaults (100 req / 60s, per remote IP).
+   * Tests override `limit` / `windowMs` so a 101-request burst can
+   * complete inside a Vitest run without waiting a wall-clock
+   * minute, and the limiter's clock is wired to the same fake
+   * `nowMsForTesting` so the sliding-window logic is deterministic.
+   */
+  rateLimit?: {
+    limit?: number;
+    windowMs?: number;
+  };
 }
 
 export interface PortFileWriter {
@@ -273,6 +292,13 @@ export class KchatLocalApiServer {
   private lastExtensionContactMs: number | null = null;
   /** Injected clock for tests; defaults to `Date.now`. */
   private readonly nowMs: () => number;
+  /**
+   * Phase 15 Task 28 — per-IP sliding-window rate limiter. Runs
+   * BEFORE host-header validation and bearer auth so a bad actor
+   * cannot drain the rate budget by spamming malformed requests
+   * (which return 4xx earlier without ever reaching the handler).
+   */
+  private readonly rateLimiter: LoopbackRateLimiter;
 
   constructor(handlers: LocalApiHandlers, opts: LocalApiServerOptions) {
     this.handlers = handlers;
@@ -281,6 +307,15 @@ export class KchatLocalApiServer {
     this.fsWriter = opts.fsWriter ?? DEFAULT_FS_WRITER;
     this.createServerFn = opts.createServerFn ?? createServer;
     this.nowMs = opts.nowMsForTesting ?? (() => Date.now());
+    this.rateLimiter = new LoopbackRateLimiter({
+      limit: opts.rateLimit?.limit ?? DEFAULT_LOOPBACK_LIMIT,
+      windowMs: opts.rateLimit?.windowMs ?? DEFAULT_LOOPBACK_WINDOW_MS,
+      // Share the injected clock so test fast-forwards apply to the
+      // limiter too — without this, a test that fakes the clock for
+      // `lastExtensionContactMs` would still see real wall-clock
+      // timing inside the limiter and reject for real-time reasons.
+      nowMs: this.nowMs,
+    });
     if (opts.tokenForTesting !== undefined) {
       if (opts.tokenForTesting.length < 32) {
         throw new Error(
@@ -473,6 +508,24 @@ export class KchatLocalApiServer {
     try {
       if (!req.url) {
         throw new LocalApiError(400, "invalid_request", "missing URL");
+      }
+      // Phase 15 Task 28 — sliding-window rate limit, BEFORE host /
+      // bearer checks. We key by the connection's remote address; on
+      // a properly bound 127.0.0.1 server this is always
+      // "127.0.0.1" / "::ffff:127.0.0.1", but keying by IP keeps the
+      // contract correct if a future Phase extends the surface to
+      // multiple bound interfaces.
+      //
+      // Falls back to a synthetic "unknown" key only if the socket
+      // has no remoteAddress (should be unreachable for a real
+      // `IncomingMessage` — `net.Socket.remoteAddress` is always
+      // populated post-connect — but the guard means a unit-test
+      // request stream with no socket won't crash dispatch).
+      const remoteIp = req.socket?.remoteAddress ?? "unknown";
+      const rateDecision = this.rateLimiter.check(remoteIp);
+      if (!rateDecision.ok) {
+        respondRateLimited(res, rateDecision.retryAfterSeconds);
+        return;
       }
       this.validateHostHeader(req);
       const path = (req.url.split("?", 1)[0] ?? "").trim();
@@ -742,6 +795,49 @@ function respond(
   res.writeHead(status, {
     "content-type": "application/json",
     "content-length": String(payload.length),
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+  });
+  res.end(payload);
+}
+
+/**
+ * Phase 15 Task 28 — emit a 429 response with `Retry-After` set to
+ * the limiter's recommended back-off (seconds, integer per RFC
+ * 7231). Body uses the standard `LocalApiError` wire shape so the
+ * .kcz extension can pattern-match the `code` field without parsing
+ * a new envelope.
+ *
+ * The headers-already-sent guard mirrors `respondError`: a partial
+ * earlier response (extremely unlikely on this code path, but kept
+ * defensively because `dispatch().catch()` may run twice) must not
+ * raise `ERR_HTTP_HEADERS_SENT`.
+ */
+function respondRateLimited(
+  res: ServerResponse,
+  retryAfterSeconds: number,
+): void {
+  if (res.headersSent) {
+    if (!res.writableEnded) {
+      try {
+        res.end();
+      } catch {
+        // Socket gone.
+      }
+    }
+    return;
+  }
+  const payload = Buffer.from(
+    JSON.stringify({
+      code: "rate_limited",
+      message: `Loopback API rate limit exceeded; retry in ${retryAfterSeconds}s`,
+    }),
+    "utf8",
+  );
+  res.writeHead(429, {
+    "content-type": "application/json",
+    "content-length": String(payload.length),
+    "retry-after": String(retryAfterSeconds),
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
   });
