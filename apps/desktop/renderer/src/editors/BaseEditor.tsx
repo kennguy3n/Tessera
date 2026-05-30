@@ -2260,6 +2260,26 @@ function ManageFieldsDialog({
   const [draft, setDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
 
+  // If the field currently being edited disappears from `fields` (e.g.
+  // an external code path removed it while this dialog was open),
+  // clear the stale editing state. Without this, an `editingName`
+  // referencing a deleted field would persist invisibly; if a new
+  // field were later created with the same name (extremely unlikely
+  // while the dialog is open, but possible) the editing UI would
+  // reappear unexpectedly on that brand-new field. Defensive — matches
+  // what the user would intuitively expect ("the row I was editing is
+  // gone, so I'm no longer editing anything"). Devin Review PR #79
+  // round 15 (ANALYSIS_…_0003).
+  useEffect(() => {
+    if (editingName === null) return;
+    const stillExists = fields.some((f) => f.name === editingName);
+    if (!stillExists) {
+      setEditingName(null);
+      setDraft("");
+      setRenameError(null);
+    }
+  }, [fields, editingName]);
+
   const beginEdit = (name: string) => {
     setEditingName(name);
     setDraft(name);
