@@ -865,6 +865,25 @@ export interface SettingsData {
   defaultExportFormat: ExportFormat;
   ignorePatterns: string[];
   watchPatterns: string[];
+  /**
+   * Phase 15 Task 19: tracks whether the first-run `OnboardingWizard`
+   * has been completed (or explicitly dismissed) for this install.
+   * The wizard inspects this flag, the source list, and the artifact
+   * list on mount: it only shows when ALL three conditions hold
+   * (`onboardingCompleted === false`, zero sources, zero artifacts)
+   * so an existing user whose config was cleared but whose DB still
+   * contains data does not get surprised by a wizard on the next
+   * launch.
+   *
+   * Once the wizard is dismissed (either by reaching the final
+   * "Finish" step or by the explicit "Skip" button) the renderer
+   * calls `settings:update` with `{ onboardingCompleted: true }`
+   * and the wizard never appears again on this install — even if
+   * the user later removes every source and artifact. The user
+   * always has the manual "Add Source" / "Browse Templates" CTAs
+   * on `HomePage` for that case.
+   */
+  onboardingCompleted: boolean;
 }
 
 // -----------------------------------------------------------------
@@ -1535,6 +1554,48 @@ export interface SourceApi {
   ) => Promise<BackfillEmbeddingsResult>;
   /** Lightweight poll for the active backfill pass. */
   getEmbeddingProgress: () => Promise<EmbeddingProgressInfo>;
+  /**
+   * Phase 15 Task 22 — per-source health snapshot for the Settings
+   * page Source Health dashboard. One round-trip aggregates last
+   * sync time, sync-status traffic-light, indexed chunk count, and
+   * on-disk storage estimate across every source.
+   */
+  healthReport: () => Promise<SourceHealthReport>;
+}
+
+/**
+ * Phase 15 Task 22 — wire shape for `sources:healthReport`.
+ *
+ * `health` is a derived traffic-light over the underlying
+ * `SourceStatus` enum plus the on-disk staleness check:
+ *   - `error`   → backing status reads `error` / `access_revoked`
+ *   - `warning` → status is `indexing`, OR any indexed file failed
+ *                 to stat (file moved since last index), OR no
+ *                 `lastIndexed` timestamp persisted yet
+ *   - `healthy` → status is `indexed` / `connected` AND every
+ *                 indexed file is still readable
+ * `storageBytes` sums `fs.stat(path).size` over every indexed file
+ * (NOT over the source root directory) — exactly the bytes Tessera
+ * is paying to keep chunked. `staleFiles` reports how many indexed
+ * files no longer stat (useful for "Re-index to clean up" UI nudges).
+ */
+export interface SourceHealthEntry {
+  sourceId: string;
+  sourceType: string;
+  path: string;
+  lastIndexed: string | null;
+  /** Raw backing `SourceStatus` (snake_case from Rust). */
+  status: string;
+  health: "healthy" | "warning" | "error";
+  chunkCount: number;
+  storageBytes: number;
+  staleFiles: number;
+}
+
+export interface SourceHealthReport {
+  /** ISO-8601 timestamp the snapshot was assembled at. */
+  generatedAt: string;
+  sources: SourceHealthEntry[];
 }
 
 export interface ArtifactApi {

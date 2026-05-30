@@ -1,0 +1,101 @@
+# Phase 15 Task 16 — Tessera Linux smoke container.
+#
+# Used by scripts/smoke-test-linux.sh to install the .deb produced by
+# electron-builder into a clean Ubuntu base, launch the app headlessly under
+# Xvfb, and prove that:
+#
+#   * the .deb's declared dependencies cover everything the app needs at
+#     runtime (no missing .so, no missing CLI tool);
+#   * Electron's main process reaches the `ready` event (rules out a crash
+#     in early init: bridge load, sidecar resolution, asset loading);
+#   * one IPC channel (`sources:list`) round-trips (rules out a bridge
+#     load failure that wouldn't otherwise crash the renderer).
+#
+# The container is intentionally NOT a builder — it's a thin runtime test
+# harness. The .deb is built on the host and mounted in at /tmp; this
+# avoids rebuilding the Rust bridge inside the container for every smoke
+# run and keeps the image small.
+
+ARG BASE_IMAGE=ubuntu:22.04
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Runtime libs required by Electron + Chromium on Linux. The .deb's depends
+# block names these in its packaging metadata; we install them explicitly so
+# the `dpkg -i` step below succeeds without an `apt -f install` round-trip
+# (which on a fresh container can require network at unpredictable times).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        xvfb \
+        ca-certificates \
+        libgtk-3-0 \
+        libnotify4 \
+        libnss3 \
+        libxss1 \
+        libxtst6 \
+        xdg-utils \
+        libatspi2.0-0 \
+        libsecret-1-0 \
+        libdrm2 \
+        libgbm1 \
+        libuuid1 \
+        libappindicator3-1 \
+        libasound2 \
+        libcurl4 \
+        procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# The smoke probe is a tiny Node module that runs INSIDE the installed
+# Electron app's main process (via --require). It races the `ready` event
+# against a watchdog timer, runs one IPC round-trip, then quits.
+COPY electron-smoke-probe.cjs /usr/local/share/tessera/electron-smoke-probe.cjs
+
+# Smoke entrypoint:
+#   * dpkg-installs the .deb passed as $1
+#   * resolves the installed app binary path (electron-builder names it
+#     /usr/bin/tessera and the .desktop file sets StartupWMClass=Tessera)
+#   * launches the app under xvfb-run with --require pointed at the probe
+COPY <<'EOF' /usr/local/bin/tessera-smoke
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEB_PATH="${1:-}"
+if [[ -z "$DEB_PATH" || ! -f "$DEB_PATH" ]]; then
+  echo "usage: tessera-smoke <path-to-deb>" >&2
+  exit 64
+fi
+
+echo "==> installing $DEB_PATH"
+dpkg -i "$DEB_PATH" || apt-get install -y -f --no-install-recommends
+
+# electron-builder's productName=Tessera -> /opt/Tessera/tessera launcher,
+# with /usr/bin/tessera symlinked. Fall back to /opt if the symlink isn't
+# present (older electron-builder versions skipped it).
+APP_BIN="/usr/bin/tessera"
+if [[ ! -x "$APP_BIN" ]]; then
+  APP_BIN="/opt/Tessera/tessera"
+fi
+if [[ ! -x "$APP_BIN" ]]; then
+  echo "ERROR: could not find installed tessera binary (looked at /usr/bin/tessera, /opt/Tessera/tessera)" >&2
+  ls -la /opt/Tessera/ || true
+  exit 2
+fi
+echo "==> launching $APP_BIN under xvfb"
+
+# Pass the probe path via env var (Electron parses --require BEFORE we get a
+# chance to filter argv, so we use an env handoff instead to keep the launch
+# argv clean of paths the app might mis-parse).
+export TESSERA_SMOKE_PROBE=/usr/local/share/tessera/electron-smoke-probe.cjs
+export TESSERA_SMOKE_TIMEOUT_SECS="${SMOKE_TIMEOUT_SECS:-30}"
+
+# `--no-sandbox` is required inside an unprivileged Docker container where
+# the SUID chrome-sandbox helper isn't trusted by the kernel. This is OK
+# for a smoke test — we're not running untrusted web content here.
+exec xvfb-run -a --server-args="-screen 0 1024x768x24" \
+  "$APP_BIN" \
+    --no-sandbox \
+    --require="$TESSERA_SMOKE_PROBE"
+EOF
+RUN chmod +x /usr/local/bin/tessera-smoke
+
+ENTRYPOINT ["/usr/local/bin/tessera-smoke"]

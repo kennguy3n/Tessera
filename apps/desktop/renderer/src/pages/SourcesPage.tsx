@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { FolderPlus } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Card from "../components/Card";
@@ -369,7 +370,7 @@ export default function SourcesPage() {
 
       {sources.length === 0 ? (
         <EmptyState
-          icon="\uD83D\uDCC1"
+          icon={<FolderPlus size={48} strokeWidth={1.5} aria-hidden="true" />}
           title="No sources connected"
           message="Add a local folder or file to start indexing and searching your content."
           action={

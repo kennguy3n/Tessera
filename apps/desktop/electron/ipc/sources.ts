@@ -7,6 +7,7 @@
  * the heavy indexing pipeline lives in `crates/tessera_sources` and is
  * reached through the N-API bridge.
  */
+import * as fs from "node:fs/promises";
 import { getBridge } from "../appState";
 import {
   assertId,
@@ -192,6 +193,116 @@ export function registerSourcesHandlers(): void {
       failed: 0,
       modelId: null,
       lastError: null,
+    };
+  });
+
+  // Phase 15 Task 22: per-source health summary for the Settings page
+  // dashboard. Aggregates last-sync time, sync status traffic-light
+  // (healthy / warning / error), indexed chunk count, and an on-disk
+  // storage estimate. The handler runs as a single IPC round-trip so
+  // the renderer can show a stable grid even with dozens of sources.
+  //
+  // We compute storage as `sum(stat(path).size)` over every indexed
+  // file (NOT over the source root). For local sources this is the
+  // exact byte cost the user pays in chunks; for connector sources
+  // (Drive, OneDrive, Notion, etc.) the indexed-file rows hold the
+  // most recent snapshot blob written to the local mirror, so the
+  // sum still maps to "disk used by Tessera for this source".
+  //
+  // Errors are absorbed per source — a failing `stat` (e.g. file
+  // moved by the user since last index) demotes that source to
+  // status `warning` and contributes 0 to its storage tally but
+  // does NOT fail the whole report. The renderer renders the
+  // partial result; a fully unavailable bridge throws.
+  idempotentHandle("sources:healthReport", async () => {
+    const bridge = getBridge();
+    if (!bridge) {
+      throw new Error("Native bridge not available");
+    }
+    // `fs` (from `node:fs/promises`) is statically imported at the
+    // top of the file. Previously this handler used a dynamic
+    // `await import(...)` to keep the import off the cold-path,
+    // but Node already caches dynamic-import resolution and the
+    // remaining microtask yield was per-call dead weight — every
+    // other handler in this file imports its deps statically, so
+    // hoisting `fs` to the top normalises the style with no
+    // observable behaviour change. (Devin Review PR #70
+    // ANALYSIS_0007.)
+    const sources = bridge.bridgeListSources();
+    const items = await Promise.all(
+      sources.map(async (src) => {
+        let chunkCount = 0;
+        let storageBytes = 0;
+        let statErrors = 0;
+        try {
+          const detail = bridge.bridgeGetSourceDetail(src.id);
+          for (const file of detail.files) {
+            chunkCount += file.chunkCount;
+            try {
+              const st = await fs.stat(file.path);
+              storageBytes += st.size;
+            } catch {
+              // File missing / unreadable since last index — count
+              // as a stat error so we can flag the source as
+              // `warning`. We still report the chunk count from
+              // the index because the chunks ARE in our DB.
+              statErrors += 1;
+            }
+          }
+        } catch {
+          // bridgeGetSourceDetail failed entirely (e.g. row was
+          // removed between list and detail). Surface as an error
+          // status with no chunk/byte data.
+          return {
+            sourceId: src.id,
+            sourceType: src.sourceType,
+            path: src.path,
+            lastIndexed: src.lastIndexed,
+            status: src.status,
+            health: "error" as const,
+            chunkCount: 0,
+            storageBytes: 0,
+            staleFiles: 0,
+          };
+        }
+        // Health classification:
+        //   * `error`           — backing status is "error" / "access_revoked"
+        //   * `warning`         — backing status is "indexing" OR any
+        //                         indexed file failed to stat OR no
+        //                         lastIndexed timestamp on disk yet
+        //   * `healthy`         — backing status is "indexed" /
+        //                         "connected" AND no stale files
+        // The order matters: error > warning > healthy. A source with
+        // both error status AND missing files is still classified as
+        // `error` (the worse signal wins).
+        let health: "healthy" | "warning" | "error";
+        if (src.status === "error" || src.status === "access_revoked") {
+          health = "error";
+        } else if (
+          src.status === "indexing" ||
+          statErrors > 0 ||
+          src.lastIndexed === null
+        ) {
+          health = "warning";
+        } else {
+          health = "healthy";
+        }
+        return {
+          sourceId: src.id,
+          sourceType: src.sourceType,
+          path: src.path,
+          lastIndexed: src.lastIndexed,
+          status: src.status,
+          health,
+          chunkCount,
+          storageBytes,
+          staleFiles: statErrors,
+        };
+      }),
+    );
+    return {
+      generatedAt: new Date().toISOString(),
+      sources: items,
     };
   });
 }

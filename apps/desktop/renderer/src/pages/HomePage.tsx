@@ -1,12 +1,15 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Rocket } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
 import Button from "../components/Button";
 import EmptyState from "../components/EmptyState";
 import StatusBadge from "../components/StatusBadge";
+import OnboardingWizard from "../components/OnboardingWizard";
 import { useRecentArtifacts } from "../hooks/useArtifacts";
 import { useSourceList } from "../hooks/useSources";
+import { useSettings } from "../hooks/useSettings";
 import type { SourceInfo } from "../types/ipc";
 
 /**
@@ -61,10 +64,29 @@ export default function HomePage() {
   const navigate = useNavigate();
   const { recent, loading: artifactsLoading } = useRecentArtifacts();
   const { sources, loading: sourcesLoading } = useSourceList();
+  const { settings, loading: settingsLoading, refresh: refreshSettings } =
+    useSettings();
+  // Local optimistic flag so a successful Skip / Finish closes the
+  // wizard immediately even if `refreshSettings()` is still in flight.
+  // The IPC write has already succeeded by the time `onDismiss` fires
+  // (see `OnboardingWizard.dismiss()`), so this never races against
+  // the persisted state.
+  const [wizardDismissed, setWizardDismissed] = useState(false);
 
   const hasSources = sources.length > 0;
   const hasArtifacts = recent.length > 0;
-  const isLoading = artifactsLoading || sourcesLoading;
+  const isLoading = artifactsLoading || sourcesLoading || settingsLoading;
+
+  // Phase 15 Task 19: gate the wizard on all three signals.
+  // `settingsLoading` is intentionally included so we never flash the
+  // wizard before the persisted flag has loaded — the loading block
+  // below covers that interval with a generic "Loading..." instead.
+  const shouldShowWizard =
+    !settingsLoading &&
+    !wizardDismissed &&
+    !settings.onboardingCompleted &&
+    !hasSources &&
+    !hasArtifacts;
 
   // source-status breakdown — `useMemo` so the
   // count map is stable across renders that don't actually mutate
@@ -91,8 +113,16 @@ export default function HomePage() {
     return (
       <div>
         <PageHeader title="Home" description="Your productivity workspace" />
+        {shouldShowWizard && (
+          <OnboardingWizard
+            onDismiss={() => {
+              setWizardDismissed(true);
+              void refreshSettings();
+            }}
+          />
+        )}
         <EmptyState
-          icon="\uD83D\uDE80"
+          icon={<Rocket size={48} strokeWidth={1.5} aria-hidden="true" />}
           title="Welcome to Tessera"
           message="Get started by adding your first source — a local folder or file — then create artifacts from your data."
           action={

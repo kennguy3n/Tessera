@@ -6,7 +6,10 @@ use tessera_core::ExportFormat;
 use crate::csv::export_csv;
 use crate::html::export_html;
 use crate::markdown::export_markdown;
+#[cfg(not(feature = "typst"))]
 use crate::pdf::export_pdf;
+#[cfg(feature = "typst")]
+use crate::pdf::export_pdf_with_svgs;
 
 #[cfg(feature = "docx")]
 use crate::docx::export_docx;
@@ -62,7 +65,28 @@ pub fn export_to_file(
     let effective: &[Citation] = if include_citations { citations } else { &[] };
     match format {
         ExportFormat::Pdf => {
-            std::fs::write(path, export_pdf(artifact, effective))?;
+            // Phase 15 Task 15: when the `typst` feature is enabled
+            // (default), route through `export_pdf_with_svgs` so any
+            // ```mermaid blocks in the artifact body are rendered
+            // as embedded SVG diagrams. With no pre-rendered SVGs
+            // supplied, the function emits a structural SVG
+            // fallback for each block — still real SVG, not the raw
+            // DSL text — so the PDF carries the diagrams as image
+            // data rather than dropping them into the body as
+            // ```mermaid source lines (which is what the
+            // minimal-PDF placeholder path did).
+            #[cfg(feature = "typst")]
+            {
+                let prerendered = std::collections::HashMap::new();
+                std::fs::write(
+                    path,
+                    export_pdf_with_svgs(artifact, effective, &prerendered),
+                )?;
+            }
+            #[cfg(not(feature = "typst"))]
+            {
+                std::fs::write(path, export_pdf(artifact, effective))?;
+            }
         }
         #[cfg(feature = "docx")]
         ExportFormat::Docx => {
@@ -185,7 +209,18 @@ mod tests {
         let path = dir.path().join("output.pdf");
         export_to_file(&artifact, &[], ExportFormat::Pdf, &path, true).unwrap();
         let content = std::fs::read(&path).unwrap();
-        assert!(content.starts_with(b"%PDF-1.4"));
+        // The PDF version byte after `%PDF-1.` differs between code paths
+        // (the legacy minimal builder emits 1.4, typst 0.12 emits 1.7) so
+        // we assert the version-agnostic `%PDF-1.` prefix plus a valid
+        // PDF trailer. The exact version is verified by the focused tests
+        // in `tests/pdf_mermaid.rs`.
+        assert!(content.starts_with(b"%PDF-1."));
+        let trailer = &content[content.len().saturating_sub(8)..];
+        assert!(
+            trailer.windows(5).any(|w| w == b"%%EOF"),
+            "PDF must end with %%EOF trailer; got tail: {:?}",
+            trailer
+        );
     }
 
     #[cfg(feature = "docx")]

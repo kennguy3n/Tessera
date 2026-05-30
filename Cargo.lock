@@ -3665,6 +3665,7 @@ dependencies = [
  "comemo",
  "docx-rs",
  "ecow",
+ "quick-xml 0.36.2",
  "rust_xlsxwriter",
  "serde",
  "serde_json",
@@ -3676,6 +3677,7 @@ dependencies = [
  "typst-assets",
  "typst-pdf",
  "typst-svg",
+ "uuid",
  "zip 2.4.2",
 ]
 

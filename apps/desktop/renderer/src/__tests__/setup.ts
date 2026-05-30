@@ -111,6 +111,22 @@ const mockApi = {
       modelId: null,
       lastError: null,
     }),
+    // Phase 15 Task 22: empty-but-well-shaped default for
+    // `sources:healthReport`. SettingsPage now renders
+    // `<SourceHealthDashboard />` which fires this on mount, so
+    // every test that mounts SettingsPage needs a callable mock
+    // here — otherwise the dashboard renders in an error state
+    // ("sources.healthReport is not a function") and tests that
+    // later assert against the dashboard's empty / loaded UI
+    // observe the wrong DOM. Tests exercising the dashboard
+    // directly override this via `sourceHealthDashboard.test.tsx`
+    // with a populated `SourceHealthReport`. Default returns the
+    // empty `sources` array + a `generatedAt` timestamp so the
+    // dashboard renders its "No sources indexed yet" empty state.
+    healthReport: vi.fn().mockResolvedValue({
+      generatedAt: new Date().toISOString(),
+      sources: [],
+    }),
   },
   artifacts: {
     create: vi.fn().mockResolvedValue({
@@ -267,12 +283,18 @@ const mockApi = {
       defaultExportFormat: "markdown",
       ignorePatterns: [".git", "node_modules"],
       watchPatterns: ["**/*.md"],
+      // Phase 15 Task 19: default mock treats the test environment as
+      // "already-onboarded" so existing page-level tests don't
+      // accidentally render the wizard. Wizard-specific tests
+      // override this field explicitly.
+      onboardingCompleted: true,
     }),
     update: vi.fn().mockResolvedValue({
       theme: "light",
       defaultExportFormat: "markdown",
       ignorePatterns: [".git", "node_modules"],
       watchPatterns: ["**/*.md"],
+      onboardingCompleted: true,
     }),
     // Hybrid search config lives on `settings` (not `sources`)
     // because the channel name is `settings:*` and the handler is

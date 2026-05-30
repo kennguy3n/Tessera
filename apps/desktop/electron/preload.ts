@@ -195,6 +195,8 @@ const api: TesseraApi = {
       ),
     getEmbeddingProgress: () =>
       ipcRenderer.invoke("sources:getEmbeddingProgress"),
+    // Phase 15 Task 22 — Source Health dashboard.
+    healthReport: () => ipcRenderer.invoke("sources:healthReport"),
   },
   artifacts: {
     create: (title: string, artifactType: string, templateId?: string) =>

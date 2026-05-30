@@ -205,6 +205,10 @@ export function registerSettingsHandlers(): void {
       defaultExportFormat: config.defaultExportFormat,
       ignorePatterns: config.ignorePatterns,
       watchPatterns: config.watchPatterns,
+      // Phase 15 Task 19: surface the first-run onboarding flag to
+      // the renderer so `OnboardingWizard` can decide whether to
+      // mount itself.
+      onboardingCompleted: config.onboardingCompleted,
     } as SettingsData;
   });
 
@@ -240,11 +244,17 @@ export function registerSettingsHandlers(): void {
         "watchPatterns",
         `${parsed.watchPatterns.length} pattern(s)`,
       );
+    if (parsed.onboardingCompleted !== undefined)
+      auditSettingsField(
+        "onboardingCompleted",
+        String(parsed.onboardingCompleted),
+      );
     return {
       theme: persisted.theme,
       defaultExportFormat: persisted.defaultExportFormat,
       ignorePatterns: persisted.ignorePatterns,
       watchPatterns: persisted.watchPatterns,
+      onboardingCompleted: persisted.onboardingCompleted,
     } as SettingsData;
   });
 

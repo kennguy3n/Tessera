@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Plus, Trash2, Calendar, User } from "lucide-react";
+import { Plus, Trash2, Calendar, User, ClipboardList } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Modal from "../components/Modal";
@@ -385,6 +385,7 @@ export default function TasksPage() {
 
       {!loading && tasks.length === 0 && (
         <EmptyState
+          icon={<ClipboardList size={48} strokeWidth={1.5} aria-hidden="true" />}
           title="No tasks yet"
           message="Create a task or extract tasks from one of your sources to populate this board."
           action={

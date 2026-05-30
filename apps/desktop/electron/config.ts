@@ -77,6 +77,13 @@ export interface AppConfig {
   /** When true the renderer should auto-check for updates on launch. */
   autoUpdate: boolean;
   /**
+   * Phase 15 Task 19: persisted first-run onboarding flag. See
+   * `SettingsData.onboardingCompleted` in `shared/types.ts` for the
+   * full semantics. Defaults to `false` so fresh installs see the
+   * wizard on first launch.
+   */
+  onboardingCompleted: boolean;
+  /**
    * Persisted hybrid retrieval config. The defaults here mirror
    * `tessera_sources::hybrid::HybridSearchConfig::default()` so a
    * fresh install behaves identically with or without this field
@@ -177,6 +184,7 @@ const DEFAULT_CONFIG: Readonly<AppConfig> = Object.freeze({
   externalProvider: DEFAULT_EXTERNAL_PROVIDER,
   externalProviderTokenUsage: DEFAULT_EXTERNAL_PROVIDER_TOKEN_USAGE,
   autoUpdate: true,
+  onboardingCompleted: false,
   hybridSearchConfig: DEFAULT_HYBRID_SEARCH_CONFIG,
 });
 
@@ -303,6 +311,13 @@ const AppConfigSchema = z
     externalProvider: ExternalProviderConfigOnDiskSchema,
     externalProviderTokenUsage: ExternalProviderTokenUsageOnDiskSchema,
     autoUpdate: z.boolean().catch(true),
+    // Phase 15 Task 19: heal a corrupted on-disk value to `true` so a
+    // mangled config does NOT replay the onboarding wizard against an
+    // existing install. New installs always start at `false` via
+    // `DEFAULT_CONFIG`, so the only path to this `.catch()` is a
+    // corrupted persisted value — in which case the safe assumption
+    // is "user has already been here".
+    onboardingCompleted: z.boolean().catch(true),
     // Hybrid search config — every field has a `.catch()` fallback
     // matching the documented Rust default so a partially-corrupted
     // entry still produces a usable config. Bounds match the

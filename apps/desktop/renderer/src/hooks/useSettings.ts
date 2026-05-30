@@ -6,6 +6,11 @@ const DEFAULT_SETTINGS: SettingsData = {
   defaultExportFormat: "markdown",
   ignorePatterns: [".git", "node_modules", ".DS_Store"],
   watchPatterns: ["**/*.md", "**/*.txt", "**/*.csv", "**/*.json"],
+  // Phase 15 Task 19: default to `true` for the in-memory placeholder
+  // so a slow IPC response never causes a flash of the onboarding
+  // wizard on a previously-onboarded user. The real value is loaded
+  // by `refresh()` on mount and overwrites this within a tick.
+  onboardingCompleted: true,
 };
 
 export function useSettings() {

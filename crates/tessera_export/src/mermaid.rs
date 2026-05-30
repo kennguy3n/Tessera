@@ -259,12 +259,121 @@ pub fn to_markdown_block(block: &MermaidBlock) -> String {
 
 /// PDF replacement: emit a one-line text placeholder describing the diagram,
 /// since the basic PDF builder cannot rasterize SVG. Use the Typst PDF
-/// pipeline for real embedding.
+/// pipeline (see [`render_block_to_svg`]) for real embedding.
 pub fn to_pdf_placeholder(block: &MermaidBlock) -> String {
     format!(
         "[Diagram: {} — see HTML export for live rendering]",
         block.diagram_type
     )
+}
+
+/// Phase 15 Task 15: render a mermaid block to an SVG string suitable
+/// for embedding into a Typst document via `image.decode(svg, format: "svg")`.
+///
+/// Tessera does NOT bundle a full mermaid renderer on the Rust side
+/// (mermaid.js is a 1 MB+ Node dependency that depends on a JS
+/// runtime). The renderer process is responsible for the full,
+/// production-quality SVG rendering — it has access to mermaid.js
+/// and produces the same SVG the user sees in the in-app preview.
+/// Callers SHOULD provide that SVG via the `prerendered` map argument
+/// to [`crate::pdf::export_pdf_with_svgs`]; if they do, the
+/// production renderer-quality SVG is embedded as-is.
+///
+/// When no prerendered SVG is supplied (e.g. headless / CLI export,
+/// or any pathway that doesn't have a browser to drive mermaid.js),
+/// this function emits a **structural** SVG fallback: a bordered
+/// box containing the diagram type and the literal DSL text. The
+/// fallback is intentionally simple but is still real SVG (with
+/// `<rect>` and `<text>` elements), so:
+///   - the embedded image is genuinely embedded (not the raw DSL
+///     source text appearing inline in the PDF body, which is what
+///     the placeholder path produced),
+///   - the user can SEE that a diagram was intended to render here,
+///     and read the underlying DSL to reproduce it manually if
+///     needed,
+///   - automated tests can assert "the PDF contains SVG path/rect
+///     bytes, not the mermaid source" without depending on a JS
+///     runtime in the test environment.
+///
+/// The choice to produce a structural fallback rather than to error
+/// out keeps the export pipeline working in every environment Tessera
+/// ships to — desktop with a renderer, headless CLI, CI builds — at
+/// the cost of a less-pretty diagram in the "no renderer" path. The
+/// renderer-driven path is always preferred for production exports.
+pub fn render_block_to_svg(block: &MermaidBlock) -> String {
+    // Layout the DSL line-by-line inside the SVG. Width / height are
+    // chosen so a typical 6-line flowchart fits without clipping;
+    // wider diagrams stretch the box but Typst will scale on layout
+    // anyway. Font is monospace so the structural fallback looks
+    // intentional rather than broken.
+    let header_height = 24.0_f32;
+    let line_height = 14.0_f32;
+    let padding = 12.0_f32;
+    let lines: Vec<&str> = block.dsl.lines().collect();
+    let content_lines = lines.len().max(1) as f32;
+    let height =
+        header_height + padding * 2.0 + content_lines * line_height + 4.0;
+    // Width: at least 360 to look like a diagram box, scaled up by the
+    // longest line so DSL lines aren't clipped (assuming 7 px per
+    // monospace char at 11 px font).
+    let longest = lines.iter().map(|l| l.len()).max().unwrap_or(0).max(40);
+    let width = (longest as f32 * 7.0 + padding * 2.0).max(360.0);
+
+    let mut out = String::with_capacity(512 + block.dsl.len() * 2);
+    let _ = write!(
+        &mut out,
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" \
+         viewBox=\"0 0 {w} {h}\" width=\"{w}\" height=\"{h}\">",
+        w = width as u32,
+        h = height as u32,
+    );
+    let _ = write!(
+        &mut out,
+        "<rect x=\"1\" y=\"1\" width=\"{}\" height=\"{}\" \
+         fill=\"#f8fafc\" stroke=\"#334155\" stroke-width=\"1.5\" rx=\"6\"/>",
+        width as u32 - 2,
+        height as u32 - 2,
+    );
+    let _ = write!(
+        &mut out,
+        "<text x=\"{}\" y=\"{}\" font-family=\"sans-serif\" font-size=\"13\" \
+         fill=\"#0f172a\" font-weight=\"bold\">Diagram: {}</text>",
+        padding as u32,
+        (padding + 14.0) as u32,
+        escape_text(&block.diagram_type),
+    );
+    let mut y = padding + header_height;
+    for line in lines.iter() {
+        let _ = write!(
+            &mut out,
+            "<text x=\"{}\" y=\"{}\" font-family=\"monospace\" font-size=\"11\" \
+             fill=\"#1e293b\" xml:space=\"preserve\">{}</text>",
+            padding as u32,
+            y as u32,
+            escape_text(line),
+        );
+        y += line_height;
+    }
+    out.push_str("</svg>");
+    out
+}
+
+/// XML-escape an SVG text-node body. Mermaid DSL routinely contains
+/// `<`, `>`, and `&` (e.g. `A-->B`, `if & else`), all of which would
+/// otherwise produce malformed SVG that Typst's `image.decode` rejects.
+fn escape_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 fn escape_attr(s: &str) -> String {

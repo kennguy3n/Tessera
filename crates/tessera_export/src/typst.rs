@@ -174,7 +174,14 @@ impl std::error::Error for TypstError {}
 /// Compile Typst markup into a PDF byte buffer.
 pub fn compile_to_pdf(markup: &str) -> Result<Vec<u8>, TypstError> {
     let world = TesseraWorld::new(markup);
-    let warned = typst::compile(&world);
+    compile_world_to_pdf(&world)
+}
+
+/// Compile a pre-built [`TesseraWorld`] into a PDF byte buffer.
+/// Use this when the caller needs to register virtual files
+/// (e.g. SVG diagram images) before compilation.
+pub fn compile_world_to_pdf(world: &TesseraWorld) -> Result<Vec<u8>, TypstError> {
+    let warned = typst::compile(world);
     let document = warned.output.map_err(TypstError::Compile)?;
     let options = typst_pdf::PdfOptions::default();
     typst_pdf::pdf(&document, &options).map_err(TypstError::Serialize)
@@ -270,5 +277,82 @@ mod tests {
         assert!(now.year() >= 2024);
         assert!((1..=12).contains(&now.month()));
         assert!((1..=31).contains(&now.day()));
+    }
+
+    /// Devin Review PR #70 follow-up BUG_0005 — empirical regression
+    /// for the citation-block bracket grammar.
+    ///
+    /// A Devin Review snapshot repeatedly claimed that the
+    /// `pdf.rs::export_pdf_with_svgs` citation template
+    /// `#text(size: 9pt)[[{}] {} — {}]` causes Typst to interpret
+    /// the inner `[1]` as a nested content block and silently drop the
+    /// surrounding brackets, producing `1 Source — uri` instead of
+    /// `[1] Source — uri`. The proposed fix was to escape the
+    /// brackets as `\[{}\]`.
+    ///
+    /// We verified empirically (this test) that the claim is false:
+    /// inside an already-open `#text(...)[ ... ]` content block,
+    /// Typst's grammar renders the literal `[N]` and the escaped
+    /// `\[N\]` form **byte-for-byte identically** — same glyph IDs,
+    /// same x positions, same SVG length. There is no nested content
+    /// block; the brackets render as literal characters either way.
+    ///
+    /// The actual citation-rendering bug that drove the original
+    /// "missing brackets" report was the `//` line-comment introducer
+    /// in `file://`-style `source_uri` strings, which consumed the
+    /// closing `]` of the surrounding content block and crashed the
+    /// compile with `unclosed delimiter`. That failure path triggered
+    /// the silent fall-through to the minimal-PDF builder, which is
+    /// what visually produced the unbracketed citation lines. It is
+    /// fixed by `typst_escape`'s `//` / `/*` neutralisation
+    /// (`pdf.rs::typst_escape_neutralises_line_and_block_comment_sequences`)
+    /// plus the compile-success regression
+    /// (`pdf.rs::pdf_with_svgs_compiles_citations_for_file_uri_without_fallback`).
+    ///
+    /// This test locks down the grammar equivalence so a future
+    /// reader does not re-apply the same no-op escape "fix" or
+    /// silently downgrade a comment that documents the choice.
+    #[test]
+    fn bracket_nested_form_renders_identically_to_escaped_form() {
+        let render = |body: &str| -> String {
+            let markup = format!(
+                "#set page(paper: \"us-letter\", margin: 1in)\n\
+                 #set text(size: 11pt)\n\n#text(size: 12pt)[{body}]\n"
+            );
+            compile_to_svg(&markup).expect("compile")
+        };
+        let glyph_use_sequence = |svg: &str| -> Vec<String> {
+            svg.match_indices("<use")
+                .map(|(idx, _)| {
+                    let end = svg[idx..].find('>').map(|e| idx + e + 1).unwrap_or(svg.len());
+                    svg[idx..end].to_string()
+                })
+                .collect()
+        };
+        let nested = render("[1] Foo Bar");
+        let escaped = render(r"\[1\] Foo Bar");
+        let control = render("1 Foo Bar");
+
+        let nested_glyphs = glyph_use_sequence(&nested);
+        let escaped_glyphs = glyph_use_sequence(&escaped);
+        let control_glyphs = glyph_use_sequence(&control);
+
+        assert_eq!(
+            nested_glyphs, escaped_glyphs,
+            "Typst rendered `[1]` and `\\[1\\]` differently — the no-op \
+             bracket-escape assumption no longer holds. Re-verify the \
+             citation template in pdf.rs::build_typst_markup before \
+             responding to any 'missing brackets' Devin Review finding."
+        );
+        // Sanity floor: the bracketed forms MUST have two more glyphs
+        // than the control (the `[` and `]` glyphs themselves).
+        assert_eq!(
+            nested_glyphs.len(),
+            control_glyphs.len() + 2,
+            "expected `[` and `]` glyphs to render in `[1] Foo Bar` but \
+             glyph count {nested} vs control {control} differs by != 2",
+            nested = nested_glyphs.len(),
+            control = control_glyphs.len(),
+        );
     }
 }

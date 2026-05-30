@@ -4,6 +4,15 @@ use tessera_artifacts::Artifact;
 use tessera_citations::citation::Citation;
 
 use crate::mermaid;
+// Devin Review PR #70 ANALYSIS_0004: the typst submodule is only
+// available when the `typst` feature is enabled, but the import is
+// still legitimately top-of-file (matches the existing pattern used
+// by `crate::exporter`'s feature-gated imports). Moving the
+// `use crate::typst` call out of `export_pdf_with_svgs` keeps the
+// crate's import block as the single place a reader can scan to
+// understand its dependencies.
+#[cfg(feature = "typst")]
+use crate::typst as typst_export;
 
 /// Generate a minimal but valid PDF document from an artifact.
 /// Uses the PDF 1.4 specification with built-in Helvetica font (no external font files needed).
@@ -245,6 +254,209 @@ fn pdf_escape(s: &str) -> String {
         .replace(')', "\\)")
 }
 
+/// Phase 15 Task 15: PDF export with Mermaid diagrams rendered as
+/// embedded SVG via the Typst pipeline.
+///
+/// Architecture:
+///
+/// 1. Extract every ```mermaid block from `artifact.content` via
+///    [`mermaid::extract_blocks`].
+/// 2. For each block, pick the SVG to embed:
+///    - if the caller supplied a pre-rendered SVG in `prerendered`
+///      (keyed by block index, 0-based), use that. This is the
+///      production path: the renderer process drives `mermaid.js`
+///      and produces the same SVG the user sees in the in-app
+///      preview.
+///    - otherwise fall back to [`mermaid::render_block_to_svg`]
+///      which emits a structural SVG containing the diagram type +
+///      DSL text. This keeps headless / CLI export working in
+///      environments without a renderer.
+/// 3. Register each SVG as a virtual file inside a
+///    [`crate::typst::TesseraWorld`] and emit Typst markup that
+///    references it via `image("diagram-N.svg")`.
+/// 4. Compile to PDF via the Typst pipeline.
+///
+/// Fallback: if Typst compilation fails for any reason (font not
+/// found, malformed user content, etc.), we fall back to the
+/// minimal hand-rolled PDF builder via [`export_pdf`] so callers
+/// always get *some* PDF output rather than an empty buffer. The
+/// fallback emits the same placeholder text the pre-Phase-15
+/// `export_pdf` produced, which is the existing documented
+/// behaviour. A future refactor could surface the Typst error to
+/// the caller via a `Result`-returning variant, but the current
+/// production callers don't have a path to surface that error to
+/// the user, so silently degrading is the right default.
+///
+/// Feature-gated on `typst`: when the feature is disabled (e.g. in
+/// the default build), this function falls back to the minimal
+/// builder. Production callers that want diagram embedding must
+/// enable the `typst` feature in their dependency declaration.
+#[cfg(feature = "typst")]
+pub fn export_pdf_with_svgs<S: std::hash::BuildHasher>(
+    artifact: &Artifact,
+    citations: &[Citation],
+    prerendered: &std::collections::HashMap<usize, String, S>,
+) -> Vec<u8> {
+    // Build Typst markup. The Typst document mirrors the structure
+    // of the minimal PDF: title heading, metadata line, content
+    // (with `image()` substitutions for mermaid blocks), citations
+    // appendix. We emit Typst markup rather than reusing the
+    // markdown export's output because Typst's markdown reader is
+    // not a 1:1 superset of CommonMark — using native Typst syntax
+    // for the surrounding text gives predictable layout.
+    let mut markup = String::new();
+    let _ = write!(
+        markup,
+        "#set page(paper: \"us-letter\", margin: 1in)\n\
+         #set text(font: \"Libertinus Serif\", size: 11pt)\n\
+         #show heading.where(level: 1): set text(size: 18pt, weight: \"bold\")\n\
+         \n\
+         = {}\n\
+         \n\
+         #text(size: 10pt, fill: rgb(\"#475569\"))[Type: {} | Version: {} | Created: {}]\n\
+         \n",
+        typst_escape(&artifact.title),
+        typst_escape(&artifact.artifact_type.to_string()),
+        artifact.version,
+        artifact.created_at.format("%Y-%m-%d %H:%M"),
+    );
+
+    // Walk the content and substitute mermaid blocks with #image
+    // references. We do this via `mermaid::extract_blocks` so the
+    // byte ranges align exactly with the source.
+    let blocks = mermaid::extract_blocks(&artifact.content);
+    let mut svg_files: Vec<(String, Vec<u8>)> = Vec::with_capacity(blocks.len());
+    let mut cursor = 0usize;
+    for (idx, block) in blocks.iter().enumerate() {
+        let (start, end) = block.range;
+        // Emit the pre-block text verbatim (escaped for Typst).
+        markup.push_str(&typst_escape(&artifact.content[cursor..start]));
+        // Pick the SVG: prerendered wins, fallback otherwise.
+        let svg = prerendered
+            .get(&idx)
+            .cloned()
+            .unwrap_or_else(|| mermaid::render_block_to_svg(block));
+        let virt_name = format!("diagram-{idx}.svg");
+        svg_files.push((virt_name.clone(), svg.into_bytes()));
+        // Emit a Typst image reference. width: auto + height: auto
+        // lets Typst use the SVG's intrinsic dimensions; we cap
+        // width to the available text width so wide diagrams scale.
+        let _ = write!(
+            markup,
+            "\n#image(\"{virt_name}\", width: 100%)\n\n",
+        );
+        cursor = end;
+    }
+    // Trailing text after the last block.
+    markup.push_str(&typst_escape(&artifact.content[cursor..]));
+
+    if !citations.is_empty() {
+        markup.push_str("\n\n== Citations\n\n");
+        for (i, citation) in citations.iter().enumerate() {
+            let _ = write!(
+                markup,
+                "#text(size: 9pt)[[{}] {} — {}]\n\n",
+                i + 1,
+                typst_escape(&citation.source_title),
+                typst_escape(&citation.source_uri),
+            );
+        }
+    }
+
+    // Build a Typst world with every SVG registered as a virtual
+    // file so the `image(...)` calls resolve.
+    let mut world = typst_export::TesseraWorld::new(&markup);
+    for (name, bytes) in svg_files {
+        let _ = world.add_file(&name, bytes);
+    }
+    match typst_export::compile_world_to_pdf(&world) {
+        Ok(pdf) => pdf,
+        Err(err) => {
+            // Defensive fallback: compilation failed (e.g. bad
+            // user-supplied SVG). Fall back to the minimal-PDF
+            // builder so callers still get bytes. We log the error
+            // via eprintln! because this module has no logger
+            // injection point yet.
+            eprintln!(
+                "[tessera_export::pdf] Typst PDF compilation failed; \
+                 falling back to minimal PDF builder: {err}"
+            );
+            export_pdf(artifact, citations)
+        }
+    }
+}
+
+/// Escape Typst markup metacharacters in user-supplied text.
+///
+/// Typst markup treats `#`, `*`, `_`, `=`, `[`, `]`, `<`, `>`, `$`, `@`,
+/// `\\` and a handful of others as syntax. Embedding unescaped user
+/// content (e.g. an artifact body containing `*important*` or `# Heading`)
+/// would mis-format the output and, in the worst case, allow a
+/// malicious citation title to inject markup. We escape conservatively
+/// with backslash for every character Typst recognises as a sigil.
+#[cfg(feature = "typst")]
+fn typst_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    // Track whether the previously *emitted* character is a literal
+    // `/`. We need to check the emitted-output side rather than the
+    // input side because `file:///x` would otherwise produce
+    // `file:/\//x` — the escape would only break up the first pair
+    // of slashes, leaving a second `//` at positions 7-8 of the
+    // output. By looking at the emitted output, we know that after
+    // emitting `/\/` the last char is `/`, so the very next `/` from
+    // the input still needs to be escaped to `\/` again.
+    let mut prev_emitted_slash = false;
+    for ch in s.chars() {
+        // Devin Review PR #70 follow-up BUG_0001: neutralise Typst
+        // comment introducers (`//` line, `/*` block) so that
+        // file:// / http:// URIs and `/* ... */` prose in artifact
+        // titles can't crash the Typst compile with "unclosed
+        // delimiter" and silently degrade the whole PDF to the
+        // minimal-PDF fallback path. The fix is to escape any `/`
+        // that would otherwise be the second character of a
+        // comment token; we escape the *second* char of the pair so
+        // a lone `/` still passes through unescaped (preserving
+        // visual fidelity for path / date strings).
+        if prev_emitted_slash && (ch == '/' || ch == '*') {
+            out.push('\\');
+            out.push(ch);
+            prev_emitted_slash = ch == '/';
+            continue;
+        }
+        match ch {
+            // Devin Review PR #70 BUG_0003: backtick (`) was missing
+            // from the escape set. Typst uses `` ` `` to delimit raw
+            // / code text, so an artifact body containing inline
+            // markdown code spans (extremely common: `` `foo` ``) or a
+            // code fence sentinel would (a) open an unintended raw
+            // block and (b) frequently leave an unmatched backtick
+            // that fails Typst compilation outright. That failure
+            // silently dropped the entire SVG-embedding path back to
+            // the minimal PDF builder for ~every real document. Add
+            // the backtick to the escape set so inline code survives
+            // the Typst pipeline.
+            //
+            // Devin Review PR #70 follow-up BUG_0004: curly braces
+            // (`{` / `}`) were also missing from the escape set. Typst
+            // treats `{...}` as code-mode brackets — an artifact body
+            // containing JSON examples, mustache-style placeholders
+            // (`{{name}}`), set notation (`{1, 2, 3}`), or any prose
+            // that happens to include a brace would cause Typst to
+            // interpret the following text as code and fail compilation,
+            // again silently dropping back to the minimal-PDF fallback.
+            // Add `{` and `}` so curly braces in user content survive
+            // the Typst pipeline.
+            '#' | '*' | '_' | '=' | '[' | ']' | '<' | '>' | '$' | '@' | '\\' | '~' | '\'' | '`' | '{' | '}' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+        prev_emitted_slash = ch == '/';
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,6 +541,146 @@ mod tests {
         // Surrounding content stays.
         assert!(pdf_str.contains("Intro line"));
         assert!(pdf_str.contains("Outro"));
+    }
+
+    /// Devin Review PR #70 BUG_0003 regression: `typst_escape` must
+    /// backslash-escape every character that Typst recognises as a
+    /// markup sigil, INCLUDING the backtick used to delimit raw / code
+    /// text. Inline markdown code spans (`` `foo` ``) are extremely
+    /// common in artifact bodies; an unescaped backtick would open an
+    /// unintended raw block and frequently leave an unmatched token
+    /// that fails Typst compilation outright, silently degrading the
+    /// SVG-embedding PDF path back to the minimal builder.
+    #[cfg(feature = "typst")]
+    #[test]
+    fn typst_escape_handles_backtick_and_sigils() {
+        // Every documented Typst sigil should be preceded by `\`.
+        let input = "# heading *bold* _it_ = $math$ [link] <tag> @ref \\backslash ~tilde 'apos `code` { } rest";
+        let escaped = typst_escape(input);
+        for sigil in [
+            "\\#", "\\*", "\\_", "\\=", "\\[", "\\]", "\\<", "\\>", "\\$", "\\@", "\\\\", "\\~",
+            "\\'", "\\`", "\\{", "\\}",
+        ] {
+            assert!(
+                escaped.contains(sigil),
+                "typst_escape missed sigil {sigil:?}; output:\n{escaped}",
+            );
+        }
+        // Plain ASCII / non-sigil text passes through verbatim.
+        assert!(escaped.contains("rest"));
+        assert!(escaped.contains("heading"));
+    }
+
+    /// Devin Review PR #70 follow-up BUG_0004 regression: curly-brace
+    /// payloads (JSON examples, mustache-style placeholders, set
+    /// notation) used to leak through `typst_escape` unescaped and
+    /// caused Typst to enter code mode, failing compilation and
+    /// silently dropping the entire SVG-embedding PDF path back to
+    /// the minimal-PDF builder. Lock the contract: any string
+    /// containing `{` / `}` MUST emerge with `\{` / `\}` so the
+    /// braces render as literal characters in the PDF body.
+    #[cfg(feature = "typst")]
+    #[test]
+    fn typst_escape_escapes_curly_braces_to_prevent_code_mode() {
+        let json_example = r#"{"name": "Devin", "scores": [1, 2, 3]}"#;
+        let escaped = typst_escape(json_example);
+        // Every `{` and `}` in the input must be backslash-escaped.
+        assert_eq!(json_example.matches('{').count(), escaped.matches("\\{").count());
+        assert_eq!(json_example.matches('}').count(), escaped.matches("\\}").count());
+        // Mustache-style double braces (`{{name}}`) also survive.
+        let template = "Hello {{name}}, welcome.";
+        let template_escaped = typst_escape(template);
+        assert!(template_escaped.contains("\\{\\{name\\}\\}"));
+    }
+
+    /// Devin Review PR #70 follow-up BUG_0001 — unit test for the
+    /// real root cause. The reviewer reported missing `[N]` brackets
+    /// in citation entries and proposed escaping the brackets; that
+    /// diagnosis is empirically wrong (see comment in `typst_escape`).
+    /// The actual bug is that the citation `source_uri` field
+    /// commonly contains `file://` URIs and Typst parses `//` as a
+    /// line comment, which consumes the closing `]` of the
+    /// surrounding `#text(...)[ ... ]` content block and crashes the
+    /// whole compile with "unclosed delimiter". The whole document
+    /// then silently degrades to the minimal-PDF fallback, which is
+    /// what produces the user-visible "missing brackets" symptom.
+    ///
+    /// Lock the contract: `typst_escape` MUST break up any `//`
+    /// (and any `/*`) sequence so Typst's tokenizer cannot treat
+    /// them as comment introducers.
+    #[cfg(feature = "typst")]
+    #[test]
+    fn typst_escape_neutralises_line_and_block_comment_sequences() {
+        // `//` line-comment introducer must be broken up.
+        let escaped = typst_escape("file:///path/to/ref.pdf");
+        assert!(
+            !escaped.contains("//"),
+            "typst_escape left a raw `//` in output: {escaped:?}",
+        );
+        assert!(
+            escaped.contains("/\\/"),
+            "typst_escape did not produce expected `/\\/` sequence: {escaped:?}",
+        );
+        // `/*` block-comment introducer must also be broken up.
+        let escaped_block = typst_escape("see /* note */ here");
+        assert!(
+            !escaped_block.contains("/*"),
+            "typst_escape left a raw `/*` in output: {escaped_block:?}",
+        );
+        // A single `/` MUST pass through unmolested — escaping every
+        // slash would visually change every path / date in the
+        // rendered output.
+        let escaped_single = typst_escape("a/b/c date 2024/01/01");
+        assert_eq!(
+            escaped_single, "a/b/c date 2024/01/01",
+            "typst_escape over-escaped a non-comment slash"
+        );
+    }
+
+    /// Devin Review PR #70 follow-up BUG_0001 — end-to-end regression.
+    /// Before this fix, `export_pdf_with_svgs` for ANY artifact with a
+    /// citation whose `source_uri` contained `//` (i.e. every real
+    /// file:// or http:// URI) would silently fall through to the
+    /// minimal-PDF builder because the Typst compile failed with
+    /// "unclosed delimiter". This test exercises the public entry
+    /// point with a realistic `file:///` URI and asserts the output
+    /// is the Typst-built PDF (which uses `/FlateDecode`-compressed
+    /// streams; the minimal builder never emits those).
+    #[cfg(feature = "typst")]
+    #[test]
+    fn pdf_with_svgs_compiles_citations_for_file_uri_without_fallback() {
+        let artifact = Artifact::new("Cited Doc".to_string(), ArtifactType::Document, None);
+        let citation = Citation {
+            citation_id: tessera_core::CitationId::new(),
+            source_id: tessera_core::SourceId::new(),
+            source_type: tessera_core::SourceType::LocalFile,
+            source_title: "TheReferenceTitle".to_string(),
+            // Realistic URI: contains `//` which is Typst's line
+            // comment introducer. This MUST round-trip cleanly
+            // through `typst_escape` and out the other side.
+            source_uri: "file:///path/to/ref.pdf".to_string(),
+            chunk_hash: "h".to_string(),
+            source_file_hash: "fh".to_string(),
+            page: Some(1),
+            confidence: 1.0,
+            used_for: "intro".to_string(),
+            created_at: chrono::Utc::now(),
+        };
+        let prerendered: std::collections::HashMap<usize, String> =
+            std::collections::HashMap::new();
+        let pdf = export_pdf_with_svgs(&artifact, &[citation], &prerendered);
+        assert!(
+            pdf.starts_with(b"%PDF-"),
+            "expected a real PDF, got {} bytes",
+            pdf.len()
+        );
+        let pdf_str = String::from_utf8_lossy(&pdf);
+        assert!(
+            pdf_str.contains("/FlateDecode"),
+            "expected Typst-compressed PDF (no fallback) — `//` in URI was \
+             likely re-parsed as a line comment again; sample:\n{}",
+            &pdf_str[..pdf_str.len().min(400)]
+        );
     }
 
     #[test]
