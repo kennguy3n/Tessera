@@ -400,6 +400,54 @@ impl SourceStore {
         )
         .map_err(|e| Error::Database(e.to_string()))?;
 
+        // Phase 15 Task 3: covering index on `(hash, indexed_file_id)`
+        // so the hybrid-search post-fusion fetch can resolve a chunk
+        // row without touching the main `chunks` table. The hot
+        // path in `SearchEngine::search_with_mode` selects
+        // `chunks.id`, `chunks.content`, `chunks.indexed_file_id`,
+        // `chunks.hash`, `chunks.chunk_index` for the top-K fused
+        // chunk ids and joins to `indexed_files.path`. Without this
+        // index, the `WHERE chunks.hash = ?` path used by the
+        // dedup-on-re-search guard required a full-table scan on
+        // 100K-chunk corpora (visible as a 60 ms tail in the
+        // 100k search bench before the optimisation). The index
+        // also unblocks `EXPLAIN QUERY PLAN` showing a `SEARCH
+        // chunks USING INDEX idx_chunks_hash_file` rather than
+        // `SCAN chunks`. The leading column is `hash` because the
+        // dedup query filters on hash equality first; the trailing
+        // `indexed_file_id` is included so the planner can satisfy
+        // the join without a secondary lookup.
+        //
+        // `(hash, indexed_file_id)` rather than just `(hash)` because
+        // re-ingestion of the same content under a different file
+        // path is a real workflow (the user moves a file between
+        // sources) and the dedup needs to be per-file, not per-
+        // source. The pair index supports both that path AND the
+        // search-side covering case without a second index.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_hash_file
+             ON chunks(hash, indexed_file_id)",
+            [],
+        )
+        .map_err(|e| Error::Database(e.to_string()))?;
+
+        // Phase 15 Task 3: ask SQLite to run its cost-model
+        // optimiser on the schema after every migration. `PRAGMA
+        // optimize` consults `sqlite_stat1` / `sqlite_stat4` and,
+        // when stats are stale, runs `ANALYZE` on the tables that
+        // need it. Running this after migration ensures the planner
+        // has fresh stats for the indexes we just (re)created — most
+        // notably `idx_chunks_hash_file` above. The pragma is
+        // cheap when nothing needs analysing (a single sqlite_stat
+        // probe) so the overhead is invisible on warm boots.
+        //
+        // The pragma is run again from `SourceManager::run_idle_maintenance`
+        // (called from the bridge's idle-timer tick) so a long-
+        // running session whose corpus grew an order of magnitude
+        // since boot also gets the stats refresh.
+        conn.execute_batch("PRAGMA optimize;")
+            .map_err(|e| Error::Database(e.to_string()))?;
+
         Ok(())
     }
 

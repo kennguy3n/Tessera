@@ -8,9 +8,15 @@
  * reached through the N-API bridge.
  */
 import { getBridge } from "../appState";
-import { assertId, assertNumber, assertString } from "./validate";
+import {
+  assertId,
+  assertNumber,
+  assertString,
+  assertStringArray,
+} from "./validate";
 import { idempotentHandle } from "./register";
 import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
+import { BATCH_MAX_ITEMS, runBatch } from "./batch";
 
 export function registerSourcesHandlers(): void {
   idempotentHandle(
@@ -95,6 +101,39 @@ export function registerSourcesHandlers(): void {
     }
     throw new Error("Native bridge not available");
   });
+
+  // Phase 15 Task 6: bulk re-index entrypoint. Replaces the
+  // renderer-side `Promise.all(ids.map(id => invoke('sources:reindex', id)))`
+  // pattern with a single round-trip — for a 50-source workspace
+  // that's a 50× reduction in IPC handshake overhead, and (more
+  // importantly) the rate-limiter consumes one token for the batch
+  // instead of being tripped by the 50 individual calls.
+  //
+  // Per-source errors are surfaced in the per-item result shape;
+  // the batch never throws for a partial failure. The renderer
+  // distinguishes "all failed" from "all succeeded" via the
+  // `succeeded` / `failed` counts in the response.
+  idempotentHandle(
+    "sources:batchReindex",
+    async (_event, sourceIds: unknown) => {
+      const ids = assertStringArray(sourceIds, "sourceIds", {
+        maxLen: BATCH_MAX_ITEMS,
+        itemMaxLen: 128,
+      });
+      // Validate every id up-front so a single bad entry rejects
+      // the whole batch synchronously (before any bridge work
+      // starts). This is the more useful behaviour than per-item
+      // validation errors mixed into the result vector — a
+      // malformed id is almost certainly a renderer bug, not a
+      // recoverable per-item failure.
+      const validated = ids.map((id) => assertId(id, "sourceId"));
+      const bridge = getBridge();
+      if (!bridge) {
+        throw new Error("Native bridge not available");
+      }
+      return runBatch(validated, async (id) => bridge.bridgeReindexSource(id));
+    },
+  );
 
   idempotentHandle(
     "sources:getIndexingProgress",

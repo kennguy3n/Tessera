@@ -1450,6 +1450,59 @@ export interface UpdateStatusInfo {
 // drift.
 // -----------------------------------------------------------------
 
+// -----------------------------------------------------------------
+// Phase 15 Task 6 — IPC batch operation envelope shared between
+// the main process (`electron/ipc/batch.ts`), the preload bridge,
+// and the renderer-side callers. Lives in `shared/types.ts` (not
+// in `electron/ipc/batch.ts`) because the renderer cannot import
+// from `electron/` — that path is restricted to the main process
+// by Electron's process model and by the renderer's tsconfig.
+// Moving the contract here is the only way the three sides can
+// agree on the wire format. See `electron/ipc/batch.ts:runBatch`
+// for the producer side and `preload.ts` for the consumer side.
+// -----------------------------------------------------------------
+
+/**
+ * Hard cap on the number of items in a single batch IPC call.
+ *
+ * The cap is "an order of magnitude above any realistic UI
+ * action" — the largest practical bulk action a user might
+ * trigger is "re-index every source after a connector schema
+ * change", which on a power-user workspace tops out around ~50
+ * sources. 256 leaves plenty of headroom for "select all"
+ * workflows without letting a compromised renderer DOS the
+ * bridge. Renderer-side enforcement is advisory; the main
+ * process re-validates and rejects oversized batches.
+ */
+export const BATCH_MAX_ITEMS = 256;
+
+/**
+ * Per-item outcome surfaced to the renderer.
+ *
+ * Discriminated union (rather than `value: T | null`) so the
+ * renderer's `result.ok` narrowing in TypeScript works without
+ * an extra `result.error == null` check.
+ */
+export type BatchItemResult<T> =
+  | { id: string; ok: true; value: T }
+  | { id: string; ok: false; error: string };
+
+/**
+ * Aggregate response for a batch IPC call.
+ *
+ * - `total`: number of items submitted (always equals `results.length`).
+ * - `succeeded`: count of `ok: true` entries.
+ * - `failed`: count of `ok: false` entries.
+ * - `results`: per-item outcomes in input order, so the renderer
+ *   can render "row 7 of 12 failed" without a second round-trip.
+ */
+export interface BatchResponse<T> {
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: BatchItemResult<T>[];
+}
+
 export interface SourceApi {
   addLocalFolder: (path: string) => Promise<SourceInfo>;
   addLocalFile: (path: string) => Promise<SourceInfo>;
@@ -1458,6 +1511,19 @@ export interface SourceApi {
   searchSources: (query: string, limit: number) => Promise<SearchHit[]>;
   getDetail: (id: string) => Promise<SourceDetailInfo>;
   reindex: (id: string) => Promise<SourceInfo>;
+  /**
+   * Phase 15 Task 6: re-index up to {@link BATCH_MAX_ITEMS} sources
+   * in a single IPC round-trip. Replaces the
+   * `Promise.all(ids.map(id => sources.reindex(id)))` pattern so a
+   * 50-source workspace pays one rate-limiter token and one IPC
+   * handshake instead of 50.
+   *
+   * Per-source errors are isolated into the `BatchItemResult`
+   * envelope; the call resolves (does not reject) on partial
+   * failure. The renderer should iterate `results` and surface a
+   * per-item toast / dialog for each `ok: false`.
+   */
+  batchReindex: (sourceIds: string[]) => Promise<BatchResponse<SourceInfo>>;
   getIndexingProgress: (id: string) => Promise<IndexingProgressInfo>;
   /**
    * Run an embedding-backfill pass over every chunk missing an
@@ -1486,6 +1552,26 @@ export interface ArtifactApi {
     format: string,
     contentOverride?: string | null,
   ) => Promise<ExportResult>;
+  /**
+   * Phase 15 Task 6: export up to {@link BATCH_MAX_ITEMS} artifacts
+   * to the same `format` in a single IPC round-trip. Intended for
+   * "Export selected" workflows in the Artifacts page where the
+   * user has checked N rows and clicked "Export as PDF".
+   *
+   * Note: the per-item handler intentionally passes `null` for
+   * `contentOverride` — the batch path always exports the
+   * persisted DB content, never an in-editor override. If the
+   * renderer needs to export a dirty editor, it must save first
+   * (or fall through to the single-item `exportArtifact` path).
+   *
+   * Per-artifact errors are isolated into the `BatchItemResult`
+   * envelope; the call resolves (does not reject) on partial
+   * failure.
+   */
+  batchExport: (
+    artifactIds: string[],
+    format: string,
+  ) => Promise<BatchResponse<ExportResult>>;
   exportToFile: (
     id: string,
     format: string,

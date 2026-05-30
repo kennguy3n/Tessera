@@ -7,6 +7,7 @@ pub mod image_metadata;
 pub mod indexer;
 pub mod kchat_crypto;
 pub mod manager;
+pub mod mem;
 pub mod pdf_extractor;
 pub mod progress;
 pub mod search;

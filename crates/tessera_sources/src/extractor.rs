@@ -1,10 +1,101 @@
 use calamine::Reader;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tessera_core::error::{Error, Result};
 
 use crate::image_metadata::{extract_image_metadata, is_image_extension};
 use crate::pdf_extractor::extract_pdf_text;
+
+/// Phase 15 Task 2: process-wide rayon pool sized to `num_cpus / 2`
+/// (min 1, max 8) so bulk extraction parallelises across CPU cores
+/// without starving the rest of the app — most notably the UI thread,
+/// the file watcher's notify loop, and the model sidecar's HTTP
+/// transport. The pool is initialised once on first use and reused
+/// across every subsequent bulk-extract call to avoid the per-call
+/// startup cost of a fresh `ThreadPoolBuilder::build()`.
+///
+/// Pool sizing rationale:
+///
+///   - **Min 1**: `num_cpus() / 2` is `0` on a uniprocessor machine,
+///     and rayon rejects `num_threads(0)`. The min-1 clamp keeps the
+///     pool valid on every host.
+///   - **Max 8**: extraction is I/O-bound for the large-PDF case and
+///     CPU-bound for the small-Markdown case. On 32+ core servers,
+///     spinning up 16+ workers thrashes the FS page cache (each
+///     thread `read()`s a different file simultaneously) without
+///     producing a proportional throughput gain. The cap balances
+///     the two regimes.
+///
+/// Returns `None` if pool initialisation fails (rayon throws on
+/// thread-spawn failure, which only happens on hosts with severely
+/// restricted resource limits). The serial fallback in
+/// [`extract_files_parallel`] preserves correctness in that case.
+fn extraction_pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let available = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get);
+        let target = (available / 2).clamp(1, 8);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(target)
+            .thread_name(|i| format!("tessera-extract-{i}"))
+            .build()
+            .ok()
+    })
+    .as_ref()
+}
+
+/// Extract text from every supported file in `paths` in parallel,
+/// returning per-path results in input order.
+///
+/// Phase 15 Task 2: this is the bulk-extract entrypoint used by the
+/// indexer (`index_folder_with_progress`) when it has a batch of
+/// pre-walked paths to process. The parallel pass:
+///
+///   1. Spawns work onto the bounded `extraction_pool()`, capped at
+///      `num_cpus / 2` threads so the UI / watcher / sidecar threads
+///      keep CPU headroom.
+///   2. Preserves input order — the returned `Vec` is indexed
+///      identically to the input slice — so callers that walk the
+///      vector alongside their own per-path metadata (file id,
+///      progress slot offset, etc.) can rely on positional alignment.
+///   3. Mirrors the semantics of calling `extract_text(path)` for
+///      each path serially: every error path from the dispatch
+///      (unsupported extension, I/O failure, parse failure) surfaces
+///      as `Err(...)` in the corresponding output slot — so a
+///      caller that wraps the parallel pass in a `for (path, res) in
+///      paths.iter().zip(...)` loop sees identical control flow.
+///
+/// If the global rayon pool fails to initialise, falls back to
+/// serial extraction so the indexer still makes progress on hosts
+/// where rayon cannot spawn threads.
+///
+/// The integration test in `tests/parallel_extraction_parity.rs`
+/// asserts that for any mixed input slice, the output `Vec` is
+/// byte-identical to the serial path's output — so a future refactor
+/// of `extract_text` cannot drift the parallel path silently.
+pub fn extract_files_parallel(paths: &[PathBuf]) -> Vec<(PathBuf, Result<String>)> {
+    use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
+
+    let serial = |inputs: &[PathBuf]| -> Vec<(PathBuf, Result<String>)> {
+        inputs
+            .iter()
+            .map(|p| (p.clone(), extract_text(p)))
+            .collect()
+    };
+
+    let Some(pool) = extraction_pool() else {
+        return serial(paths);
+    };
+
+    pool.install(|| {
+        paths
+            .par_iter()
+            .map(|p| (p.clone(), extract_text(p)))
+            .collect()
+    })
+}
 
 pub fn extract_text(path: &Path) -> Result<String> {
     let ext = path

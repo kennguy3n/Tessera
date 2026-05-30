@@ -29,9 +29,19 @@ hkdf = { workspace = true }
 sha2 = { workspace = true }
 rand = { workspace = true }
 zeroize = { workspace = true }
+rayon = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "indexing_bench"
+harness = false
+
+[[bench]]
+name = "search_bench"
+harness = false
 
 [lints]
 workspace = true
