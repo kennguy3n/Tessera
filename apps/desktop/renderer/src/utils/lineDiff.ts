@@ -15,10 +15,25 @@
  * authored on Windows and Linux compare as equal when the only
  * difference is the line-ending convention.
  *
- * Time / memory: O(N * M). Acceptable for two artifact-document
- * versions (largest in practice <50K lines / few MB). For
- * pathological inputs we cap at MAX_LINES per side and degrade to a
- * single replace block beyond the cap — preferred over a UI hang.
+ * Time / memory: O(N * M). The DP table is a `(N+1) × (M+1)` array
+ * of `Int32Array` rows — 4 bytes per cell. We cap inputs at
+ * `MAX_LINES = 5_000` per side, which bounds the table at ~100 MB
+ * (`5_001² × 4 B ≈ 95 MB`) and the back-trace at O(N + M). For
+ * comparison, the previous cap of 50_000 would have permitted a
+ * `50_001² × 4 B ≈ 9.3 GB` allocation, which V8 cannot satisfy (the
+ * heap ceiling on the renderer is ~4 GB) — the tab would have
+ * crashed with `RangeError: Array buffer allocation failed` or just
+ * OOM-killed by the renderer process before reporting back.
+ *
+ * 5_000 lines comfortably covers the realistic artifact-document
+ * size envelope (Markdown / typst / code / outline editors all
+ * produce documents well under 5 K lines in practice — a 5 K-line
+ * Markdown file is ≈ 200 KB of text and would render to ~150
+ * pages). Beyond the cap we degrade to a single replace block
+ * (all `before` lines as removes, all `after` lines as adds) —
+ * preferred over a UI hang or OOM. The compare-view surface in
+ * `VersionHistory` displays a banner explaining the degradation so
+ * the user knows the diff is approximate.
  */
 
 export type DiffOp = "equal" | "add" | "remove";
@@ -38,7 +53,14 @@ export interface DiffSummary {
   unchanged: number;
 }
 
-const MAX_LINES = 50_000;
+/**
+ * Per-side line-count ceiling for the LCS DP table. See the module
+ * doc comment for the memory-budget derivation (`5_001² × 4 B`
+ * ≈ 95 MB peak, well inside the renderer's 4 GB heap with room for
+ * the rest of the React tree). Inputs exceeding this cap take the
+ * bypass branch below.
+ */
+const MAX_LINES = 5_000;
 
 /**
  * Split content into lines, stripping the line-ending convention
@@ -84,9 +106,13 @@ export function diffLines(
   }
 
   // Build the LCS DP table. `lcs[i][j]` = length of LCS of `a[0..i)`
-  // and `b[0..j)`. We allocate as Int32Array rows for memory
-  // efficiency on large inputs (50K * 50K = 2.5B i32 = 10 GB would
-  // explode; the MAX_LINES guard above bounds this at the cap).
+  // and `b[0..j)`. We allocate as `Int32Array` rows for memory
+  // efficiency on large inputs — the bypass branch above caps both
+  // dimensions at `MAX_LINES`, so the peak allocation here is
+  // `(MAX_LINES + 1)² × 4 B ≈ 95 MB` at the documented 5_000-line
+  // ceiling. A larger ceiling (e.g. the historical 50_000) would
+  // overshoot the renderer's heap (≈ 4 GB) by a factor of ~2 and
+  // crash the tab with `Array buffer allocation failed`.
   const m = a.length;
   const n = b.length;
   const lcs: Int32Array[] = [];

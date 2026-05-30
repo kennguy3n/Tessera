@@ -61,12 +61,20 @@ export default function VersionHistory({
       if (next.has(version.version)) {
         next.delete(version.version);
       } else {
-        // Cap at 2 selections — discard the oldest selection if the
-        // user picks a third version so the UI never lands in a
-        // "you must deselect before continuing" dead-end.
+        // Cap at 2 selections. When the user picks a third version we
+        // discard the LOWEST-numbered version currently in the set
+        // (NOT necessarily the first-clicked one — `Set` insertion
+        // order would give us that, but the policy we want is "always
+        // keep the two most recent versions the user has expressed
+        // interest in" and version number is a reliable recency proxy
+        // here because versions are append-only monotonically-
+        // incrementing integers). This keeps the UI out of the
+        // "you must deselect before continuing" dead-end while
+        // gravitating toward the most-recent-pair compare the user
+        // most likely wants.
         if (next.size >= 2) {
-          const oldest = Array.from(next).sort((a, b) => a - b)[0];
-          if (oldest !== undefined) next.delete(oldest);
+          const lowestNumbered = Array.from(next).sort((a, b) => a - b)[0];
+          if (lowestNumbered !== undefined) next.delete(lowestNumbered);
         }
         next.add(version.version);
       }
