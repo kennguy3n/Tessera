@@ -584,6 +584,27 @@ export async function runConnectorSync(
   try {
     token = await getValidAccessToken(ctx, provider);
   } catch (err) {
+    // Devin Review PR #69 follow-up BUG_0001: record the failure on
+    // every provider source BEFORE we branch into the offline-return
+    // or hard-throw paths. The original Task 11 wiring only recorded
+    // failures from the `runSync` catch below, so a token-refresh
+    // failure — whether the refresh-token exchange dropped on the
+    // network (transient) or the provider revoked the refresh token
+    // (NotConnectedError → permanent in classifyConnectorError) —
+    // would silently bypass the retry-count bump and the
+    // failed_permanently flip. The user would then click Sync forever
+    // with no failure feedback on the source-health badge. Mirroring
+    // the runSync catch closes the asymmetry: transient failures
+    // still bump retry_count toward MAX_RETRIES_BEFORE_PERMANENT, and
+    // a revoked refresh token immediately flips the source to
+    // permanent so the renderer surfaces the re-auth CTA.
+    //
+    // The call is intentionally placed BEFORE the isNetworkError
+    // branch so it runs on both the offline-degrade path AND the
+    // hard-throw path; `recordAllProviderFailures` swallows its own
+    // bridge errors so it cannot mask the user-facing error the
+    // caller is about to surface.
+    recordAllProviderFailures(ctx, provider, err);
     // A refresh-token exchange that fails because the network dropped
     // must still surface as "offline" to the renderer; otherwise the
     // user clicks Sync, sees a raw `fetch failed` and has no idea the
