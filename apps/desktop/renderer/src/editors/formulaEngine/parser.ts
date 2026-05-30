@@ -51,6 +51,12 @@ export type BinaryOp =
 
 export type UnaryOp = "+" | "-" | "%";
 
+/**
+ * AST node shape. `cell` and `range` carry an optional `sheet`
+ * naming a sibling worksheet (Phase 16 Task 13 multi-sheet). When
+ * absent, the reference targets the active sheet — backward
+ * compatible with all pre-multi-sheet formulas.
+ */
 export type AstNode =
   | { type: "number"; value: number }
   | { type: "string"; value: string }
@@ -61,6 +67,7 @@ export type AstNode =
       col: number;
       absoluteRow: boolean;
       absoluteCol: boolean;
+      sheet?: string;
     }
   | {
       type: "range";
@@ -76,6 +83,7 @@ export type AstNode =
         absoluteRow: boolean;
         absoluteCol: boolean;
       };
+      sheet?: string;
     }
   | { type: "identifier"; name: string }
   | { type: "function"; name: string; args: AstNode[] }
@@ -243,9 +251,40 @@ class Parser {
         return this.parseCellOrRange();
       case "FUNCTION_NAME":
         return this.parseFunctionCall();
-      case "IDENTIFIER":
+      case "IDENTIFIER": {
         this.advance();
+        // Sheet-qualified reference: `IDENTIFIER ! CELL_REF[:CELL_REF]`.
+        // Otherwise the identifier is a (possibly future) named-range
+        // reference handed back to the evaluator.
+        if (this.peek().type === "BANG") {
+          this.advance();
+          if (this.peek().type !== "CELL_REF") {
+            throw new ParseError(
+              "#ERR!",
+              `expected cell reference after "${tok.text}!"`,
+            );
+          }
+          return this.parseCellOrRange(tok.value as string);
+        }
         return { type: "identifier", name: tok.value as string };
+      }
+      case "SHEET_QUOTED": {
+        this.advance();
+        if (this.peek().type !== "BANG") {
+          throw new ParseError(
+            "#ERR!",
+            `quoted sheet name "${tok.value as string}" must be followed by "!"`,
+          );
+        }
+        this.advance();
+        if (this.peek().type !== "CELL_REF") {
+          throw new ParseError(
+            "#ERR!",
+            `expected cell reference after "'${tok.value as string}'!"`,
+          );
+        }
+        return this.parseCellOrRange(tok.value as string);
+      }
       case "LPAREN": {
         this.advance();
         const inner = this.parseExpression();
@@ -260,6 +299,7 @@ class Parser {
       case "RPAREN":
       case "COMMA":
       case "COLON":
+      case "BANG":
       case "EOF":
         throw new ParseError(
           "#ERR!",
@@ -281,7 +321,16 @@ class Parser {
     }
   }
 
-  private parseCellOrRange(): AstNode {
+  /**
+   * Parse a `CELL_REF` or `CELL_REF ':' CELL_REF` range. When called
+   * from a sheet-qualified context (`Sheet2!A1`), `sheet` carries
+   * the sheet name and is attached to the produced AST node. Both
+   * endpoints of a range share the same sheet — Excel and Google
+   * Sheets disallow mixing sheets within a single `A1:B5` literal,
+   * and our tokenizer never emits a CELL_REF with its own sheet
+   * prefix anyway.
+   */
+  private parseCellOrRange(sheet?: string): AstNode {
     const first = this.advance();
     if (!first.cellRef) {
       throw new ParseError("#REF!", `bad cell reference "${first.text}"`);
@@ -307,7 +356,7 @@ class Parser {
       const maxRow = Math.max(startRow, second.cellRef.row);
       const minCol = Math.min(startCol, second.cellRef.col);
       const maxCol = Math.max(startCol, second.cellRef.col);
-      return {
+      const range: AstNode = {
         type: "range",
         start: {
           row: minRow,
@@ -334,14 +383,18 @@ class Parser {
               : second.cellRef.absoluteCol,
         },
       };
+      if (sheet) range.sheet = sheet;
+      return range;
     }
-    return {
+    const cell: AstNode = {
       type: "cell",
       row: startRow,
       col: startCol,
       absoluteRow: startAbsRow,
       absoluteCol: startAbsCol,
     };
+    if (sheet) cell.sheet = sheet;
+    return cell;
   }
 
   private parseFunctionCall(): AstNode {

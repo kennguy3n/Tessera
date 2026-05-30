@@ -238,6 +238,13 @@ describe("evaluator — defaultContext sanity", () => {
     const ctx = defaultContext(resolver);
     expect(ctx.functions.has("SUM")).toBe(true);
     expect(ctx.functions.has("IF")).toBe(true);
-    expect(ctx.functions.has("VLOOKUP")).toBe(false); // shipped in PR 2
+    // Phase 16 PR 2 (Tasks 9–12) added text/lookup/date/stats fns —
+    // assert one representative member from each new group.
+    expect(ctx.functions.has("VLOOKUP")).toBe(true);
+    expect(ctx.functions.has("CONCATENATE")).toBe(true);
+    expect(ctx.functions.has("TODAY")).toBe(true);
+    expect(ctx.functions.has("MEDIAN")).toBe(true);
+    // Bogus name still misses.
+    expect(ctx.functions.has("NOT_A_REAL_FN")).toBe(false);
   });
 });

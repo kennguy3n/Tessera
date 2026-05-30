@@ -88,10 +88,16 @@ export interface RangeRef {
  * independent of the React state shape and lets the upcoming
  * cross-sheet / base-formula features inject their own resolvers
  * (e.g. multi-sheet workbook, base-record field references).
+ *
+ * Multi-sheet (Phase 16 Task 13): the optional `sheet` parameter
+ * names a sibling worksheet when a formula uses `Sheet2!A1` syntax.
+ * Single-sheet resolvers (legacy callers, Base-editor field
+ * resolver) ignore the parameter and continue to operate against
+ * their single backing grid.
  */
 export interface CellResolver {
-  /** Look up the raw text of a cell at `(row, col)`. */
-  getRaw(row: number, col: number): string | undefined;
+  /** Look up the raw text of a cell at `(row, col[, sheet])`. */
+  getRaw(row: number, col: number, sheet?: string): string | undefined;
   /**
    * Return the currently-cached evaluated value of a cell, or `null`
    * if the cell is blank. The evaluator calls this for references
@@ -99,5 +105,5 @@ export interface CellResolver {
    * progress are how circular references are detected (see
    * `EvaluationContext.visiting`).
    */
-  getEvaluated(row: number, col: number): FormulaValue;
+  getEvaluated(row: number, col: number, sheet?: string): FormulaValue;
 }

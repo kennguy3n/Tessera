@@ -35,6 +35,7 @@
  * callers that don't need to customise it.
  */
 import type { AstNode } from "./parser";
+import { cellKey } from "./depGraph";
 import {
   isFormulaError,
   makeError,
@@ -71,6 +72,13 @@ export interface EvaluationContext {
   readonly visiting: Set<string>;
   readonly functions: ReadonlyMap<string, FunctionImpl>;
   readonly random?: () => number;
+  /**
+   * Deterministic clock used by `TODAY()` / `NOW()` (and any future
+   * volatile time-based function). Falls back to `new Date()` when
+   * absent. Tests pin this to a fixed instant so date assertions are
+   * stable.
+   */
+  readonly now?: () => Date;
 }
 
 export function evaluate(node: AstNode, ctx: EvaluationContext): FormulaValue {
@@ -87,11 +95,14 @@ export function evaluate(node: AstNode, ctx: EvaluationContext): FormulaValue {
       // sees a precise error instead of a silent `0`.
       return makeError("#NAME?", `unknown name "${node.name}"`);
     case "cell": {
-      const key = `${node.row},${node.col}`;
+      // Cycle key matches `cellKey()` from depGraph so the resolver
+      // and the evaluator agree on visiting-set entries. Sheet is
+      // threaded so `Sheet1!A1` referring `Sheet2!A1` is not a cycle.
+      const key = cellKey(node.row, node.col, node.sheet);
       if (ctx.visiting.has(key)) {
         return makeError("#CIRCULAR!", `circular reference at ${key}`);
       }
-      return ctx.resolver.getEvaluated(node.row, node.col);
+      return ctx.resolver.getEvaluated(node.row, node.col, node.sheet);
     }
     case "range":
       // Bare ranges (not wrapped in a function call) collapse to
@@ -99,7 +110,11 @@ export function evaluate(node: AstNode, ctx: EvaluationContext): FormulaValue {
       // behaviour when no array context is provided. Functions that
       // want the full range expand it themselves via
       // `collectValues()` below.
-      return ctx.resolver.getEvaluated(node.start.row, node.start.col);
+      return ctx.resolver.getEvaluated(
+        node.start.row,
+        node.start.col,
+        node.sheet,
+      );
     case "function": {
       const impl = ctx.functions.get(node.name.toUpperCase());
       if (!impl) {
@@ -332,12 +347,12 @@ export function* collectValues(
   if (node.type === "range") {
     for (let r = node.start.row; r <= node.end.row; r++) {
       for (let c = node.start.col; c <= node.end.col; c++) {
-        const key = `${r},${c}`;
+        const key = cellKey(r, c, node.sheet);
         if (ctx.visiting.has(key)) {
           yield makeError("#CIRCULAR!", `circular reference at ${key}`);
           continue;
         }
-        yield ctx.resolver.getEvaluated(r, c);
+        yield ctx.resolver.getEvaluated(r, c, node.sheet);
       }
     }
     return;

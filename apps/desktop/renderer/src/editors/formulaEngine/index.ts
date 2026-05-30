@@ -43,6 +43,12 @@ export {
   DependencyGraph,
 } from "./depGraph";
 export { FUNCTION_REGISTRY } from "./functions";
+export {
+  applyCellFormat,
+  cellFormatStyle,
+  valueToDateSerial,
+} from "./format";
+export { dateToSerial, serialToDate } from "./functions/date";
 
 import { parseFormula } from "./parser";
 import {
@@ -67,6 +73,7 @@ export function defaultContext(
     visiting: overrides.visiting ?? new Set<string>(),
     functions: overrides.functions ?? FUNCTION_REGISTRY,
     random: overrides.random,
+    now: overrides.now,
   };
 }
 

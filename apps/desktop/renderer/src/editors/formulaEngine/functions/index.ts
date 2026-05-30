@@ -14,6 +14,10 @@ import type { FunctionImpl } from "../evaluator";
 import { MATH_FUNCTIONS } from "./math";
 import { CONDITIONAL_FUNCTIONS } from "./conditional";
 import { LOGIC_FUNCTIONS } from "./logic";
+import { TEXT_FUNCTIONS } from "./text";
+import { LOOKUP_FUNCTIONS } from "./lookup";
+import { DATE_FUNCTIONS } from "./date";
+import { STATS_FUNCTIONS } from "./stats";
 
 // Re-export so callers (functions/*, evaluator consumers) have a
 // single import location for the function-signature type.
@@ -24,6 +28,10 @@ function buildRegistry(): ReadonlyMap<string, FunctionImpl> {
     ...MATH_FUNCTIONS,
     ...CONDITIONAL_FUNCTIONS,
     ...LOGIC_FUNCTIONS,
+    ...TEXT_FUNCTIONS,
+    ...LOOKUP_FUNCTIONS,
+    ...DATE_FUNCTIONS,
+    ...STATS_FUNCTIONS,
   };
   const map = new Map<string, FunctionImpl>();
   for (const [name, impl] of Object.entries(all)) {

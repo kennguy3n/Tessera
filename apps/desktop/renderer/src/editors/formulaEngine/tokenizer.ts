@@ -52,6 +52,10 @@ export type TokenType =
   | "CELL_REF"
   | "FUNCTION_NAME"
   | "IDENTIFIER"
+  /** `'Sheet With Spaces'` quoted sheet-name segment (Phase 16 Task 13). */
+  | "SHEET_QUOTED"
+  /** `!` separator between sheet name and cell reference. */
+  | "BANG"
   | "LPAREN"
   | "RPAREN"
   | "COMMA"
@@ -101,6 +105,22 @@ export function tokenize(input: string): Token[] {
     baseOffset = 1;
   }
   let i = 0;
+  // Every exit from this function — clean stream end OR early-return
+  // after an ERROR token — flows through `finish()` so callers always
+  // observe a trailing EOF sentinel. The parser already short-circuits
+  // on ERROR, but `peek()`/`expect()` style helpers on either side of
+  // an ERROR token would index past the end of the array without it,
+  // and downstream consumers (autocomplete, syntax highlighting) get a
+  // simpler invariant if EOF is unconditionally present.
+  const finish = (): Token[] => {
+    tokens.push({
+      type: "EOF",
+      text: "",
+      start: baseOffset + i,
+      end: baseOffset + i,
+    });
+    return tokens;
+  };
   while (i < src.length) {
     const ch = src[i];
     const absStart = baseOffset + i;
@@ -138,7 +158,7 @@ export function tokenize(input: string): Token[] {
           start: baseOffset + literalStart,
           end: baseOffset + i,
         });
-        return tokens;
+        return finish();
       }
       tokens.push({
         type: "STRING",
@@ -147,6 +167,58 @@ export function tokenize(input: string): Token[] {
         start: baseOffset + literalStart,
         end: baseOffset + i,
       });
+      continue;
+    }
+    // Quoted sheet name — `'Sheet 1'`, `'My Sheet''s Data'`. Excel
+    // requires single-quote wrapping for sheet names containing
+    // characters illegal in an identifier (spaces, punctuation).
+    // We emit a SHEET_QUOTED token containing the unwrapped /
+    // un-doubled-quote name; the parser pairs it with the BANG +
+    // CELL_REF that follow.
+    if (ch === "'") {
+      const literalStart = i;
+      i++;
+      let value = "";
+      let terminated = false;
+      while (i < src.length) {
+        if (src[i] === "'") {
+          if (i + 1 < src.length && src[i + 1] === "'") {
+            value += "'";
+            i += 2;
+          } else {
+            i++;
+            terminated = true;
+            break;
+          }
+        } else {
+          value += src[i];
+          i++;
+        }
+      }
+      if (!terminated) {
+        tokens.push({
+          type: "ERROR",
+          text: src.slice(literalStart),
+          start: baseOffset + literalStart,
+          end: baseOffset + i,
+        });
+        return finish();
+      }
+      tokens.push({
+        type: "SHEET_QUOTED",
+        text: src.slice(literalStart, i),
+        value,
+        start: baseOffset + literalStart,
+        end: baseOffset + i,
+      });
+      continue;
+    }
+    // Sheet-name separator `!` — only legal between an identifier
+    // (sheet name) and a cell reference. The parser checks the
+    // surrounding tokens; the tokenizer just classifies.
+    if (ch === "!") {
+      tokens.push({ type: "BANG", text: "!", start: absStart, end: absStart + 1 });
+      i++;
       continue;
     }
     // Number literal — `12`, `12.5`, `.5`, `1e3`, `1.5E-3`.
@@ -171,7 +243,7 @@ export function tokenize(input: string): Token[] {
             start: baseOffset + numStart,
             end: baseOffset + i,
           });
-          return tokens;
+          return finish();
         }
       }
       const text = src.slice(numStart, i);
@@ -201,9 +273,24 @@ export function tokenize(input: string): Token[] {
       }
       const raw = src.slice(idStart, i);
       const upper = raw.toUpperCase();
-      // Cell reference detection — `\$?[A-Z]+\$?\d+`
+      // Cell reference detection — `\$?[A-Z]+\$?\d+`. We additionally
+      // check the next non-whitespace character for `!` so that a
+      // cell-ref-shaped identifier followed by the sheet separator
+      // (e.g. `Sheet1!A1`, where `Sheet1` happens to match
+      // `[A-Z]+\d+`) is emitted as IDENTIFIER and routed through
+      // the sheet-qualified-reference parse path. Without this
+      // look-ahead, `Sheet1` would tokenize as a CELL_REF and the
+      // parser would see a stray `!` it can't attach to anything.
       const cellMatch = /^(\$?)([A-Z]+)(\$?)(\d+)$/.exec(upper);
-      if (cellMatch) {
+      let nextNonWs = i;
+      while (
+        nextNonWs < src.length &&
+        (src[nextNonWs] === " " || src[nextNonWs] === "\t")
+      ) {
+        nextNonWs++;
+      }
+      const followedByBang = nextNonWs < src.length && src[nextNonWs] === "!";
+      if (cellMatch && !followedByBang) {
         const absoluteCol = cellMatch[1] === "$";
         const colLetters = cellMatch[2];
         const absoluteRow = cellMatch[3] === "$";
@@ -217,7 +304,7 @@ export function tokenize(input: string): Token[] {
             start: baseOffset + idStart,
             end: baseOffset + i,
           });
-          return tokens;
+          return finish();
         }
         tokens.push({
           type: "CELL_REF",
@@ -335,10 +422,9 @@ export function tokenize(input: string): Token[] {
       start: absStart,
       end: absStart + 1,
     });
-    return tokens;
+    return finish();
   }
-  tokens.push({ type: "EOF", text: "", start: baseOffset + i, end: baseOffset + i });
-  return tokens;
+  return finish();
 }
 
 function isDigit(ch: string): boolean {
