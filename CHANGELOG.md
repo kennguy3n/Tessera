@@ -83,10 +83,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     based — `script-src` and `style-src-elem` no longer carry
     `'unsafe-inline'`; a fresh 32-byte nonce per session flows main →
     preload (`additionalArguments`) → renderer (`useCspNonce()` hook)
-    and is applied to every app-owned `<style>` tag. `connect-src` is
-    locked to `'self'` + `127.0.0.1` (sidecar) + explicitly configured
-    external provider endpoints. OAuth refresh races are coalesced
-    onto a single in-flight `Promise` via a per-provider mutex in
+    and is applied to every app-owned `<style>` tag. `connect-src` in
+    production is locked to `'self'` only — the renderer never makes
+    direct outbound HTTP; every network call (KChat loopback sidecar,
+    external connector providers) goes through main-process IPC, so a
+    compromised renderer cannot exfiltrate via `fetch`. In dev mode
+    `connect-src` additionally allows the Vite HMR socket on
+    `ws://localhost:5173`. OAuth refresh races are coalesced onto a
+    single in-flight `Promise` via a per-provider mutex in
     `ipc/connectors/handlers.ts` — concurrent expired-token detections
     now produce exactly one upstream call. Sensitive buffers (SQLCipher
     key in `dbKey.ts`, password-vault decryption fragments in

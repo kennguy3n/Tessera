@@ -48,15 +48,31 @@ const AUTO_DISMISS_MS: Record<ToastType, number | null> = {
  */
 const MAX_VISIBLE_TOASTS = 3;
 
+/**
+ * Single state atom holding BOTH the visible (DOM-rendered, capped at
+ * `MAX_VISIBLE_TOASTS`) toasts AND the FIFO overflow queue. Collapsing
+ * the two arrays into one object lets every state transition
+ * (add/dismiss/promote) happen in a single functional `setQueueState`
+ * call whose updater can read `s.visible.length` and `s.queued` from a
+ * consistent snapshot — eliminating the prior pattern of calling
+ * `setQueued` from inside `setVisible`'s updater, which is undocumented
+ * in React and could break in future versions even though it works
+ * correctly under React 18's automatic batching.
+ *
+ * The two arrays remain conceptually distinct (queued items don't own
+ * timers, only visible ones do); the single-atom representation is
+ * purely about making the updates atomic.
+ */
+type ToastQueueState = {
+  readonly visible: ReadonlyArray<ToastShape>;
+  readonly queued: ReadonlyArray<ToastShape>;
+};
+const EMPTY_QUEUE_STATE: ToastQueueState = { visible: [], queued: [] };
+
 export function ToastProvider({ children }: { children: ReactNode }) {
-  // Two-queue model: `visible` is what's rendered to the DOM (capped
-  // at MAX_VISIBLE_TOASTS); `queued` is FIFO overflow that gets
-  // promoted when a visible slot frees. We could collapse them into
-  // a single array + slice() on render, but keeping them separate
-  // makes the promotion logic explicit (and the queued items don't
-  // own timers, only the visible ones do).
-  const [visible, setVisible] = useState<ToastShape[]>([]);
-  const [queued, setQueued] = useState<ToastShape[]>([]);
+  const [queueState, setQueueState] =
+    useState<ToastQueueState>(EMPTY_QUEUE_STATE);
+  const { visible, queued } = queueState;
   // Track timers per visible toast so manual dismiss cancels the
   // pending auto-dismiss and unmounting doesn't leak a setTimeout.
   // Errors don't have a timer (they persist), so the map may be
@@ -84,7 +100,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         // declaration order. The inline removal mirrors what the
         // public callback does for the visible array.
         timersRef.current.delete(toast.id);
-        setVisible((prev) => prev.filter((t) => t.id !== toast.id));
+        setQueueState((s) => ({
+          ...s,
+          visible: s.visible.filter((t) => t.id !== toast.id),
+        }));
       }, ms);
       timersRef.current.set(toast.id, timer);
     },
@@ -94,11 +113,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const dismissToast = useCallback(
     (id: number) => {
       clearTimer(id);
-      setVisible((prev) => prev.filter((t) => t.id !== id));
-      // A queued entry may share the same id only if the caller
-      // double-dismisses across the visible/queued boundary — drop
-      // it from queued too for safety.
-      setQueued((prev) => prev.filter((t) => t.id !== id));
+      // Single atomic update — drop the toast from BOTH arrays in
+      // case it briefly straddled the visible/queued boundary on a
+      // double-dismiss. One functional updater means React sees one
+      // consistent transition.
+      setQueueState((s) => ({
+        visible: s.visible.filter((t) => t.id !== id),
+        queued: s.queued.filter((t) => t.id !== id),
+      }));
     },
     [clearTimer],
   );
@@ -107,15 +129,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     toastCounter += 1;
     const id = toastCounter;
     const toast: ToastShape = { id, message, type };
-    setVisible((prev) => {
-      if (prev.length < MAX_VISIBLE_TOASTS) {
-        return [...prev, toast];
+    // Decide visible-vs-queued from the SAME snapshot we are
+    // returning, in ONE functional updater. No nested setters.
+    setQueueState((s) => {
+      if (s.visible.length < MAX_VISIBLE_TOASTS) {
+        return { ...s, visible: [...s.visible, toast] };
       }
-      // Already at cap — push onto the queue. Done inside this
-      // setter so the queue update is sequenced after the visible
-      // check (React batches the two state updates).
-      setQueued((q) => [...q, toast]);
-      return prev;
+      return { ...s, queued: [...s.queued, toast] };
     });
   }, []);
 
@@ -126,13 +146,24 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   // multiple dismisses landing in the same frame.
   useEffect(() => {
     if (visible.length < MAX_VISIBLE_TOASTS && queued.length > 0) {
-      const promoteCount = Math.min(
-        MAX_VISIBLE_TOASTS - visible.length,
-        queued.length,
-      );
-      const promoted = queued.slice(0, promoteCount);
-      setQueued((q) => q.slice(promoteCount));
-      setVisible((v) => [...v, ...promoted]);
+      // Single atomic update — `s.queued` is the freshest snapshot in
+      // case another add/dismiss interleaved before this effect ran.
+      setQueueState((s) => {
+        if (
+          s.visible.length >= MAX_VISIBLE_TOASTS ||
+          s.queued.length === 0
+        ) {
+          return s;
+        }
+        const promoteCount = Math.min(
+          MAX_VISIBLE_TOASTS - s.visible.length,
+          s.queued.length,
+        );
+        return {
+          visible: [...s.visible, ...s.queued.slice(0, promoteCount)],
+          queued: s.queued.slice(promoteCount),
+        };
+      });
     }
   }, [visible.length, queued]);
 

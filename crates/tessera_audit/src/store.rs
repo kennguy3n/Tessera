@@ -291,9 +291,17 @@ impl AuditStore {
         // without locking the audit-events row out of further reads.
         // Colons in RFC3339 are NOT filesystem-safe on Windows; we
         // substitute dashes so the archive can be opened on any
-        // platform tessera ships to.
+        // platform tessera ships to. Nanosecond precision eliminates
+        // the theoretical sub-second collision window — even if a
+        // future optimization makes rotation faster than the current
+        // mutex-guarded select+gzip+delete path (~hundreds of ms),
+        // two rotations on the same wall-clock nanosecond are
+        // not physically realisable on commodity hardware, and we
+        // can no longer overwrite an earlier archive by accident.
         let now = chrono::Utc::now();
-        let safe_ts = now.to_rfc3339().replace(':', "-");
+        let safe_ts = now
+            .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+            .replace(':', "-");
         let archive_path = archive_dir.join(format!("audit-archive-{safe_ts}.jsonl.gz"));
 
         // Phase 1: select the oldest rows. We acquire the connection
