@@ -66,6 +66,29 @@ export interface SheetTab {
    * `"row,col"` strings; missing entries render plain.
    */
   formats?: Record<string, CellFormat>;
+  /**
+   * Phase 16 Task 16 — per-column pixel widths. Sparse: an entry of
+   * `undefined` (or an index past the array end) means "use the
+   * grid's default column width". Persisted so widths survive
+   * reload.
+   */
+  columnWidths?: (number | undefined)[];
+  /**
+   * Phase 16 Task 16 — per-row pixel heights, sparse like
+   * `columnWidths`.
+   */
+  rowHeights?: (number | undefined)[];
+  /**
+   * Phase 16 Task 19 — number of frozen rows from the top (header
+   * row excluded). 0 / undefined means no freeze. Frozen rows stay
+   * visible while the grid scrolls vertically.
+   */
+  frozenRows?: number;
+  /**
+   * Phase 16 Task 19 — number of frozen columns from the left.
+   * 0 / undefined means no freeze.
+   */
+  frozenCols?: number;
 }
 
 export interface SheetContent {
@@ -110,4 +133,16 @@ export interface SheetContent {
    * named ranges), consumers must tolerate missing or empty arrays.
    */
   namedRanges?: SheetNamedRange[];
+  /**
+   * Phase 16 Task 16 — column widths on the legacy / active sheet.
+   * Mirrored to/from `sheets[activeSheetIndex].columnWidths` when
+   * `sheets` is present.
+   */
+  columnWidths?: (number | undefined)[];
+  /** Phase 16 Task 16 — row heights, mirror of `columnWidths`. */
+  rowHeights?: (number | undefined)[];
+  /** Phase 16 Task 19 — frozen rows on the legacy / active sheet. */
+  frozenRows?: number;
+  /** Phase 16 Task 19 — frozen columns on the legacy / active sheet. */
+  frozenCols?: number;
 }

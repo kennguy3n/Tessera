@@ -8,6 +8,23 @@ import {
 } from "./sheetEditorHelpers";
 import { cellKey, isFormulaError } from "./formulaEngine";
 import type { SheetContent } from "./sheetEditorTypes";
+import {
+  type CellCoord,
+  type Selection,
+  addSelection,
+  extendSelection,
+  moveByArrow,
+  normalizeRange,
+  selectionCells,
+  selectionContains,
+  selectionFromCell,
+} from "./sheetSelection";
+import {
+  applyTSVAt,
+  parseTSV,
+  selectionToTSV,
+} from "./sheetCopyPaste";
+import { type FillDirection, fillSeries } from "./sheetAutoFill";
 
 export type { SheetContent } from "./sheetEditorTypes";
 
@@ -41,6 +58,12 @@ interface SheetEditorProps {
   autoSaveMs?: number;
 }
 
+/** Default per-cell pixel dimensions when no override is set. */
+const DEFAULT_COLUMN_WIDTH = 96;
+const DEFAULT_ROW_HEIGHT = 24;
+const MIN_COLUMN_WIDTH = 32;
+const MIN_ROW_HEIGHT = 16;
+
 export default function SheetEditor({
   content,
   onSave,
@@ -49,13 +72,26 @@ export default function SheetEditor({
 }: SheetEditorProps) {
   const [sheet, setSheet] = useState<SheetContent>(() => parseSheetContent(content));
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
-  // `activeCell` is the cell whose raw formula appears in the formula bar.
-  // It moves on single click (selection) and on edit commit.
-  const [activeCell, setActiveCell] = useState<{ row: number; col: number } | null>(null);
+  // Phase 16 Task 17 — full selection model (anchor + primary range
+  // + disjoint extras). `activeCell` is derived from
+  // `selection.anchor` so existing call-sites that only need a
+  // single coord (formula bar, edit dispatch) keep working without
+  // a refactor.
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const activeCell: CellCoord | null = selection?.anchor ?? null;
   const [editValue, setEditValue] = useState("");
+  // Phase 16 Task 19 — context-menu state: { kind, index, x, y }
+  // backs the right-click freeze menu. `null` when no menu open.
+  const [contextMenu, setContextMenu] = useState<{
+    kind: "row" | "col";
+    index: number;
+    x: number;
+    y: number;
+  } | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const formulaBarRef = useRef<HTMLInputElement>(null);
+  const gridWrapperRef = useRef<HTMLDivElement>(null);
   const lastSavedRef = useRef(content);
 
   const debouncedSave = useCallback(
@@ -177,17 +213,33 @@ export default function SheetEditor({
   const startEdit = (rowIdx: number, colIdx: number) => {
     const value = sheet.rows[rowIdx]?.[colIdx] ?? "";
     setEditingCell({ row: rowIdx, col: colIdx });
-    setActiveCell({ row: rowIdx, col: colIdx });
+    setSelection(selectionFromCell({ row: rowIdx, col: colIdx }));
     setEditValue(value);
   };
 
   /**
-   * Select a cell without entering edit mode. The selected cell's
-   * raw text is mirrored into the formula bar so the user can
-   * inspect formulas without a double-click. Re-clicking the
-   * already-active cell promotes it into edit mode.
+   * Mouse-click dispatcher. Modifier keys steer the selection
+   * model:
+   *   - plain click: collapse to a single cell
+   *   - shift+click: extend the primary range, preserving anchor
+   *   - ctrl/cmd+click: add a disjoint extra range
+   *   - plain re-click on the active cell: promote to edit mode
+   * Phase 16 Task 17.
    */
-  const selectCell = (rowIdx: number, colIdx: number) => {
+  const selectCell = (
+    rowIdx: number,
+    colIdx: number,
+    modifiers: { shift?: boolean; ctrl?: boolean } = {},
+  ) => {
+    const target: CellCoord = { row: rowIdx, col: colIdx };
+    if (modifiers.shift && selection) {
+      setSelection(extendSelection(selection, target));
+      return;
+    }
+    if (modifiers.ctrl && selection) {
+      setSelection(addSelection(selection, target));
+      return;
+    }
     if (
       activeCell &&
       activeCell.row === rowIdx &&
@@ -197,7 +249,7 @@ export default function SheetEditor({
       startEdit(rowIdx, colIdx);
       return;
     }
-    setActiveCell({ row: rowIdx, col: colIdx });
+    setSelection(selectionFromCell(target));
   };
 
   const commitEdit = () => {
@@ -223,16 +275,96 @@ export default function SheetEditor({
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
       commitEdit();
+      // Phase 16 Task 17 — Excel-style post-commit navigation:
+      // Enter → down, Tab → right, Shift+Tab → left.
+      const row = editingCell.row;
+      const col = editingCell.col;
       if (e.key === "Tab") {
-        const nextCol = editingCell.col + 1;
-        if (nextCol < sheet.columns.length) {
-          startEdit(editingCell.row, nextCol);
-        } else if (editingCell.row + 1 < sheet.rows.length) {
-          startEdit(editingCell.row + 1, 0);
+        const nextCol = e.shiftKey ? col - 1 : col + 1;
+        if (nextCol >= 0 && nextCol < sheet.columns.length) {
+          setSelection(selectionFromCell({ row, col: nextCol }));
+        } else if (!e.shiftKey && row + 1 < sheet.rows.length) {
+          setSelection(selectionFromCell({ row: row + 1, col: 0 }));
+        }
+      } else if (e.key === "Enter") {
+        const nextRow = e.shiftKey ? row - 1 : row + 1;
+        if (nextRow >= 0 && nextRow < sheet.rows.length) {
+          setSelection(selectionFromCell({ row: nextRow, col }));
         }
       }
     } else if (e.key === "Escape") {
       setEditingCell(null);
+    }
+  };
+
+  /**
+   * Phase 16 Task 17 — grid-level keyboard handler. Active only
+   * when no cell is currently in edit mode; arrow keys move the
+   * selection, shift+arrow extends, Enter promotes to edit, plain
+   * letter/digit keypress also promotes to edit and seeds the
+   * value with the pressed char (Excel UX).
+   */
+  const handleGridKeyDown = (e: React.KeyboardEvent) => {
+    if (editingCell) return;
+    if (!selection) return;
+    const isArrow =
+      e.key === "ArrowUp" ||
+      e.key === "ArrowDown" ||
+      e.key === "ArrowLeft" ||
+      e.key === "ArrowRight";
+    if (isArrow) {
+      e.preventDefault();
+      const maxRow = Math.max(0, sheet.rows.length - 1);
+      const maxCol = Math.max(0, sheet.columns.length - 1);
+      setSelection(
+        moveByArrow(
+          selection,
+          e.key as "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight",
+          maxRow,
+          maxCol,
+          e.shiftKey,
+        ),
+      );
+      return;
+    }
+    if (e.key === "Enter" || e.key === "F2") {
+      e.preventDefault();
+      const { row, col } = selection.anchor;
+      startEdit(row, col);
+      return;
+    }
+    // A printable single character that isn't a modifier-shortcut
+    // promotes the active cell into edit mode, seeding the value
+    // with the typed character (matches Excel's overwrite UX).
+    if (
+      e.key.length === 1 &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey
+    ) {
+      e.preventDefault();
+      const { row, col } = selection.anchor;
+      setEditingCell({ row, col });
+      setEditValue(e.key);
+      return;
+    }
+    if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      // Clear every cell in the current selection (primary +
+      // extras). One state update so the debounced save fires
+      // once per Delete keystroke, not once per cleared cell.
+      const cells = selectionCells(selection);
+      setSheet((prev) => {
+        const newRows = prev.rows.map((r) => [...r]);
+        for (const { row, col } of cells) {
+          if (newRows[row] && col < newRows[row].length) {
+            newRows[row][col] = "";
+          }
+        }
+        const updated = { ...prev, rows: newRows };
+        debouncedSave(updated);
+        return updated;
+      });
     }
   };
 
@@ -310,6 +442,356 @@ export default function SheetEditor({
     },
     [debouncedSave],
   );
+
+  // ----------------------------------------------------------------
+  // Phase 16 Task 18 — copy / paste via the system clipboard.
+  // ----------------------------------------------------------------
+
+  const copySelection = useCallback(async () => {
+    if (!selection) return;
+    const tsv = selectionToTSV(sheet.rows, selection);
+    // `navigator.clipboard.writeText` requires a secure context;
+    // jsdom (test env) shims it via `document.execCommand`, so we
+    // fall back when the modern API isn't available.
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(tsv);
+      }
+    } catch {
+      // Permissions blocked — swallow; user can still copy via
+      // browser-native shortcut.
+    }
+  }, [selection, sheet.rows]);
+
+  const pasteAt = useCallback(
+    (tsv: string) => {
+      if (!activeCell) return;
+      const parsed = parseTSV(tsv);
+      if (parsed.length === 0) return;
+      setSheet((prev) => {
+        const fakeTab = {
+          name: "__active",
+          columns: prev.columns,
+          rows: prev.rows,
+        };
+        const next = applyTSVAt(fakeTab, activeCell.row, activeCell.col, parsed, {
+          columnLabelFor: columnLabel,
+        });
+        const updated: SheetContent = {
+          ...prev,
+          columns: next.columns,
+          rows: next.rows,
+        };
+        debouncedSave(updated);
+        return updated;
+      });
+    },
+    [activeCell, debouncedSave],
+  );
+
+  // Wire Ctrl/Cmd+C and Ctrl/Cmd+V at the grid level. Listening
+  // on the grid (not document) keeps the shortcuts scoped — the
+  // shortcut only triggers when focus is inside the SheetEditor.
+  const handleClipboardKey = useCallback(
+    (e: KeyboardEvent) => {
+      const wrapper = gridWrapperRef.current;
+      if (!wrapper) return;
+      if (!wrapper.contains(document.activeElement)) return;
+      if (editingCell) return; // let the cell input handle text-edit Ctrl+C/V
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      if (e.key === "c" || e.key === "C") {
+        e.preventDefault();
+        void copySelection();
+      } else if (e.key === "v" || e.key === "V") {
+        e.preventDefault();
+        navigator.clipboard
+          ?.readText?.()
+          .then((text) => pasteAt(text))
+          .catch(() => {
+            /* permissions blocked — ignore */
+          });
+      }
+    },
+    [copySelection, editingCell, pasteAt],
+  );
+
+  useEffect(() => {
+    document.addEventListener("keydown", handleClipboardKey);
+    return () => document.removeEventListener("keydown", handleClipboardKey);
+  }, [handleClipboardKey]);
+
+  // ----------------------------------------------------------------
+  // Phase 16 Task 16 — column / row resize via drag handles.
+  // ----------------------------------------------------------------
+
+  const beginColumnResize = useCallback(
+    (colIdx: number, e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth =
+        sheet.columnWidths?.[colIdx] ?? DEFAULT_COLUMN_WIDTH;
+      const onMove = (ev: MouseEvent) => {
+        const newWidth = Math.max(
+          MIN_COLUMN_WIDTH,
+          startWidth + (ev.clientX - startX),
+        );
+        setSheet((prev) => {
+          const widths = [...(prev.columnWidths ?? [])];
+          while (widths.length <= colIdx) widths.push(undefined);
+          widths[colIdx] = newWidth;
+          const updated = { ...prev, columnWidths: widths };
+          debouncedSave(updated);
+          return updated;
+        });
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [sheet.columnWidths, debouncedSave],
+  );
+
+  const beginRowResize = useCallback(
+    (rowIdx: number, e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startY = e.clientY;
+      const startHeight =
+        sheet.rowHeights?.[rowIdx] ?? DEFAULT_ROW_HEIGHT;
+      const onMove = (ev: MouseEvent) => {
+        const newHeight = Math.max(
+          MIN_ROW_HEIGHT,
+          startHeight + (ev.clientY - startY),
+        );
+        setSheet((prev) => {
+          const heights = [...(prev.rowHeights ?? [])];
+          while (heights.length <= rowIdx) heights.push(undefined);
+          heights[rowIdx] = newHeight;
+          const updated = { ...prev, rowHeights: heights };
+          debouncedSave(updated);
+          return updated;
+        });
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [sheet.rowHeights, debouncedSave],
+  );
+
+  // ----------------------------------------------------------------
+  // Phase 16 Task 19 — freeze rows / columns via right-click menu.
+  // ----------------------------------------------------------------
+
+  const freezeAt = useCallback(
+    (kind: "row" | "col", index: number) => {
+      setSheet((prev) => {
+        const updated: SheetContent =
+          kind === "row"
+            ? { ...prev, frozenRows: index + 1 }
+            : { ...prev, frozenCols: index + 1 };
+        debouncedSave(updated);
+        return updated;
+      });
+      setContextMenu(null);
+    },
+    [debouncedSave],
+  );
+
+  const unfreeze = useCallback(() => {
+    setSheet((prev) => {
+      const updated = { ...prev, frozenRows: 0, frozenCols: 0 };
+      debouncedSave(updated);
+      return updated;
+    });
+    setContextMenu(null);
+  }, [debouncedSave]);
+
+  // Close the context menu on any outside click. Listening on
+  // document with a capture-phase handler is the most reliable
+  // pattern — React onClick wouldn't fire for clicks outside the
+  // menu element.
+  useEffect(() => {
+    if (!contextMenu) return;
+    const onAnyClick = () => setContextMenu(null);
+    document.addEventListener("mousedown", onAnyClick);
+    return () => document.removeEventListener("mousedown", onAnyClick);
+  }, [contextMenu]);
+
+  // ----------------------------------------------------------------
+  // Phase 16 Task 20 — auto-fill drag from the selection handle.
+  // ----------------------------------------------------------------
+
+  const beginAutoFill = useCallback(
+    (e: React.MouseEvent) => {
+      if (!selection) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const { r1, c1, r2, c2 } = normalizeRange(selection.primary);
+      // Track-but-don't-commit until mouse-up; we just need the
+      // final hover target. Find the cell under (x,y) via DOM
+      // ancestry — each <td> is annotated with data-row/data-col
+      // for exactly this lookup.
+      let hoverRow = r2;
+      let hoverCol = c2;
+      const onMove = (ev: MouseEvent) => {
+        const target = document.elementFromPoint(
+          ev.clientX,
+          ev.clientY,
+        );
+        const td = target?.closest("td[data-row]");
+        if (!td) return;
+        const row = Number(td.getAttribute("data-row"));
+        const col = Number(td.getAttribute("data-col"));
+        if (!Number.isFinite(row) || !Number.isFinite(col)) return;
+        hoverRow = row;
+        hoverCol = col;
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        // Determine fill direction + length from the hover target.
+        let direction: FillDirection | null = null;
+        let length = 0;
+        if (hoverRow > r2) {
+          direction = "down";
+          length = hoverRow - r2;
+        } else if (hoverRow < r1) {
+          direction = "up";
+          length = r1 - hoverRow;
+        } else if (hoverCol > c2) {
+          direction = "right";
+          length = hoverCol - c2;
+        } else if (hoverCol < c1) {
+          direction = "left";
+          length = c1 - hoverCol;
+        }
+        if (!direction || length === 0) return;
+        applyAutoFill(direction, length);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selection, sheet, debouncedSave],
+  );
+
+  /**
+   * Apply an auto-fill given a finalised direction + length. Pure
+   * sheet mutation — does not interact with selection state
+   * (selection extension to cover the new range happens separately).
+   */
+  const applyAutoFill = useCallback(
+    (direction: FillDirection, length: number) => {
+      if (!selection) return;
+      const { r1, c1, r2, c2 } = normalizeRange(selection.primary);
+      setSheet((prev) => {
+        const newRows = prev.rows.map((r) => [...r]);
+        // Build source slices column-by-column (for vertical fill)
+        // or row-by-row (for horizontal fill) so each lane fills
+        // its own series independently.
+        if (direction === "down" || direction === "up") {
+          for (let col = c1; col <= c2; col++) {
+            const source: string[] = [];
+            for (let row = r1; row <= r2; row++) {
+              source.push(newRows[row]?.[col] ?? "");
+            }
+            const filled = fillSeries(source, length, direction);
+            for (let i = 0; i < length; i++) {
+              const targetRow =
+                direction === "down" ? r2 + 1 + i : r1 - 1 - i;
+              while (newRows.length <= targetRow) {
+                newRows.push(
+                  new Array(prev.columns.length).fill(""),
+                );
+              }
+              if (targetRow < 0) continue;
+              newRows[targetRow][col] = filled[i];
+            }
+          }
+        } else {
+          for (let row = r1; row <= r2; row++) {
+            const source: string[] = [];
+            for (let col = c1; col <= c2; col++) {
+              source.push(newRows[row]?.[col] ?? "");
+            }
+            const filled = fillSeries(source, length, direction);
+            for (let i = 0; i < length; i++) {
+              const targetCol =
+                direction === "right" ? c2 + 1 + i : c1 - 1 - i;
+              if (targetCol < 0) continue;
+              // Widen if needed.
+              while (newRows[row].length <= targetCol) {
+                newRows[row].push("");
+              }
+              newRows[row][targetCol] = filled[i];
+            }
+          }
+        }
+        const updated = { ...prev, rows: newRows };
+        debouncedSave(updated);
+        return updated;
+      });
+      // Extend the selection's primary range to cover the new
+      // fill region so subsequent operations apply to the whole
+      // visible series.
+      setSelection((prev) => {
+        if (!prev) return prev;
+        const { r1, c1, r2, c2 } = normalizeRange(prev.primary);
+        const newRange =
+          direction === "down"
+            ? extendSelection(prev, { row: r2 + length, col: c2 })
+            : direction === "up"
+              ? extendSelection(prev, { row: Math.max(0, r1 - length), col: c2 })
+              : direction === "right"
+                ? extendSelection(prev, { row: r2, col: c2 + length })
+                : extendSelection(prev, { row: r2, col: Math.max(0, c1 - length) });
+        return newRange;
+      });
+    },
+    [selection, debouncedSave],
+  );
+
+  // Helpers used in render — derived state only.
+  const colWidth = (i: number): number =>
+    sheet.columnWidths?.[i] ?? DEFAULT_COLUMN_WIDTH;
+  const rowHeight = (i: number): number =>
+    sheet.rowHeights?.[i] ?? DEFAULT_ROW_HEIGHT;
+  const isFrozenCol = (i: number): boolean =>
+    (sheet.frozenCols ?? 0) > i;
+  const isFrozenRow = (i: number): boolean =>
+    (sheet.frozenRows ?? 0) > i;
+  // For sticky positioning we need the cumulative `left` / `top`
+  // offset of each frozen index. Memoised against the relevant
+  // dimension arrays so we don't reduce them on every cell.
+  const frozenColLefts = useMemo(() => {
+    const out: number[] = [];
+    let cum = 0;
+    for (let i = 0; i < sheet.columns.length; i++) {
+      out.push(cum);
+      cum += colWidth(i);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheet.columns.length, sheet.columnWidths]);
+  const frozenRowTops = useMemo(() => {
+    const out: number[] = [];
+    let cum = 0;
+    for (let i = 0; i < sheet.rows.length; i++) {
+      out.push(cum);
+      cum += rowHeight(i);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheet.rows.length, sheet.rowHeights]);
 
   return (
     <div className="sheet-editor">
@@ -397,30 +879,103 @@ export default function SheetEditor({
         />
       </div>
 
-      <div className="sheet-grid-wrapper">
+      <div
+        className="sheet-grid-wrapper"
+        ref={gridWrapperRef}
+        tabIndex={0}
+        onKeyDown={handleGridKeyDown}
+      >
         <table className="sheet-grid">
           <thead>
             <tr>
               <th className="sheet-row-number">#</th>
-              {sheet.columns.map((col, ci) => (
-                <th key={ci} className="sheet-col-header">
-                  <span>{col}</span>
-                  <button
-                    type="button"
-                    className="sheet-col-remove"
-                    onClick={() => removeColumn(ci)}
-                    title="Remove column"
+              {sheet.columns.map((col, ci) => {
+                const frozen = isFrozenCol(ci);
+                const stickyStyle: React.CSSProperties = frozen
+                  ? {
+                      position: "sticky",
+                      left: frozenColLefts[ci],
+                      zIndex: 3,
+                      background: "var(--color-bg-secondary, #f5f5f5)",
+                    }
+                  : {};
+                return (
+                  <th
+                    key={ci}
+                    className={`sheet-col-header${frozen ? " frozen" : ""}`}
+                    style={{ width: colWidth(ci), ...stickyStyle }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setContextMenu({
+                        kind: "col",
+                        index: ci,
+                        x: e.clientX,
+                        y: e.clientY,
+                      });
+                    }}
                   >
-                    x
-                  </button>
-                </th>
-              ))}
+                    <span>{col}</span>
+                    <button
+                      type="button"
+                      className="sheet-col-remove"
+                      onClick={() => removeColumn(ci)}
+                      title="Remove column"
+                    >
+                      x
+                    </button>
+                    <span
+                      className="sheet-col-resize-handle"
+                      data-testid={`sheet-col-resize-${ci}`}
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label={`Resize column ${col}`}
+                      onMouseDown={(e) => beginColumnResize(ci, e)}
+                      style={{
+                        position: "absolute",
+                        right: 0,
+                        top: 0,
+                        width: 4,
+                        height: "100%",
+                        cursor: "col-resize",
+                        userSelect: "none",
+                      }}
+                    />
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
-            {sheet.rows.map((row, ri) => (
-              <tr key={ri}>
-                <td className="sheet-row-number">
+            {sheet.rows.map((row, ri) => {
+              const rowFrozen = isFrozenRow(ri);
+              return (
+              <tr
+                key={ri}
+                style={{ height: rowHeight(ri) }}
+              >
+                <td
+                  className={`sheet-row-number${rowFrozen ? " frozen" : ""}`}
+                  style={
+                    rowFrozen
+                      ? {
+                          position: "sticky",
+                          top: frozenRowTops[ri],
+                          zIndex: 2,
+                          background:
+                            "var(--color-bg-secondary, #f5f5f5)",
+                        }
+                      : {}
+                  }
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setContextMenu({
+                      kind: "row",
+                      index: ri,
+                      x: e.clientX,
+                      y: e.clientY,
+                    });
+                  }}
+                >
                   {ri + 1}
                   <button
                     type="button"
@@ -430,20 +985,90 @@ export default function SheetEditor({
                   >
                     x
                   </button>
+                  <span
+                    className="sheet-row-resize-handle"
+                    data-testid={`sheet-row-resize-${ri}`}
+                    role="separator"
+                    aria-orientation="horizontal"
+                    aria-label={`Resize row ${ri + 1}`}
+                    onMouseDown={(e) => beginRowResize(ri, e)}
+                    style={{
+                      position: "absolute",
+                      bottom: 0,
+                      left: 0,
+                      height: 4,
+                      width: "100%",
+                      cursor: "row-resize",
+                      userSelect: "none",
+                    }}
+                  />
                 </td>
                 {sheet.columns.map((_, ci) => {
                   const isEditing =
                     editingCell?.row === ri && editingCell?.col === ci;
                   const isActive =
                     activeCell?.row === ri && activeCell?.col === ci;
+                  const isSelected = selection
+                    ? selectionContains(selection, ri, ci)
+                    : false;
+                  const isFillHandle =
+                    selection &&
+                    !isEditing &&
+                    (() => {
+                      const { r2, c2 } = normalizeRange(
+                        selection.primary,
+                      );
+                      return ri === r2 && ci === c2;
+                    })();
+                  const colFrozen = isFrozenCol(ci);
+                  const stickyStyle: React.CSSProperties =
+                    colFrozen
+                      ? {
+                          position: "sticky",
+                          left: frozenColLefts[ci],
+                          zIndex: rowFrozen ? 3 : 1,
+                          background:
+                            "var(--color-bg-page, #ffffff)",
+                        }
+                      : rowFrozen
+                        ? {
+                            position: "sticky",
+                            top: frozenRowTops[ri],
+                            zIndex: 1,
+                            background:
+                              "var(--color-bg-page, #ffffff)",
+                          }
+                        : {};
                   const rawValue = row[ci] ?? "";
                   return (
                     <td
                       key={ci}
-                      className={`sheet-cell ${isEditing ? "editing" : ""} ${
-                        isActive ? "active" : ""
-                      }`}
-                      onClick={() => selectCell(ri, ci)}
+                      data-row={ri}
+                      data-col={ci}
+                      className={[
+                        "sheet-cell",
+                        isEditing ? "editing" : "",
+                        isActive ? "active" : "",
+                        isSelected ? "selected" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      style={{
+                        width: colWidth(ci),
+                        position: "relative",
+                        outline: isSelected
+                          ? "1px solid var(--color-primary, #1a73e8)"
+                          : isActive
+                            ? "2px solid var(--color-primary, #1a73e8)"
+                            : undefined,
+                        ...stickyStyle,
+                      }}
+                      onClick={(e) =>
+                        selectCell(ri, ci, {
+                          shift: e.shiftKey,
+                          ctrl: e.ctrlKey || e.metaKey,
+                        })
+                      }
                       onDoubleClick={() => startEdit(ri, ci)}
                     >
                       {isEditing ? (
@@ -460,14 +1085,76 @@ export default function SheetEditor({
                           {getCellDisplay(rawValue, ri, ci)}
                         </span>
                       )}
+                      {isFillHandle && (
+                        <span
+                          className="sheet-fill-handle"
+                          data-testid={`sheet-fill-handle-${ri}-${ci}`}
+                          aria-label="Auto-fill drag handle"
+                          role="button"
+                          tabIndex={-1}
+                          onMouseDown={beginAutoFill}
+                          style={{
+                            position: "absolute",
+                            right: -4,
+                            bottom: -4,
+                            width: 8,
+                            height: 8,
+                            background:
+                              "var(--color-primary, #1a73e8)",
+                            border: "1px solid white",
+                            cursor: "crosshair",
+                            zIndex: 4,
+                          }}
+                        />
+                      )}
                     </td>
                   );
                 })}
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
+
+      {contextMenu && (
+        <ul
+          className="sheet-context-menu"
+          data-testid="sheet-context-menu"
+          role="menu"
+          style={{
+            position: "fixed",
+            top: contextMenu.y,
+            left: contextMenu.x,
+            zIndex: 1000,
+            background: "var(--color-bg-page, #fff)",
+            border: "1px solid var(--color-border, #ccc)",
+            padding: "4px 0",
+            margin: 0,
+            listStyle: "none",
+            minWidth: 200,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <li
+            role="menuitem"
+            style={{ padding: "4px 12px", cursor: "pointer" }}
+            onClick={() =>
+              freezeAt(contextMenu.kind, contextMenu.index)
+            }
+          >
+            Freeze up to this {contextMenu.kind === "row" ? "row" : "column"}
+          </li>
+          <li
+            role="menuitem"
+            style={{ padding: "4px 12px", cursor: "pointer" }}
+            onClick={unfreeze}
+          >
+            Unfreeze all
+          </li>
+        </ul>
+      )}
     </div>
   );
 }
