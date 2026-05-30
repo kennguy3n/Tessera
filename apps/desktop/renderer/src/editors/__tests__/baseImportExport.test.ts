@@ -590,6 +590,82 @@ describe("parseCsvToBase — CSV → BaseContent", () => {
     expect(reimported.records[1].Title).toBe("Bravo, with comma");
     expect(reimported.records[1].Active).toBe(false);
   });
+
+  // ────────────────────────────────────────────────────────────────
+  // Empty-CSV-header coverage (PR #79 round 8 — ANALYSIS_…_0004)
+  // ────────────────────────────────────────────────────────────────
+  it("auto-names blank CSV headers as `Column N` (1-based) so the column is still visible (ANALYSIS-0004)", () => {
+    // Excel happily emits `Name,,Score` when a middle column is
+    // empty / unnamed. Previously the trimmed empty string passed
+    // `isReservedFieldName` and became a field literally named `""`,
+    // which rendered as a blank column header / blank filter label /
+    // blank JSON key in every record — confusing the user.
+    const csv = "Name,,Score\r\nAlice,X,10\r\nBob,Y,20";
+    const result = parseCsvToBase(csv);
+    expect(result.fields.map((f) => f.name)).toEqual([
+      "Name",
+      "Column 2",
+      "Score",
+    ]);
+    // The mid-column data must land under the auto-named field — the
+    // column index must be preserved, NOT shifted, after the rename.
+    expect(result.records[0].Name).toBe("Alice");
+    expect(result.records[0]["Column 2"]).toBe("X");
+    // Score column is auto-typed as `text` (no schema supplied), so the
+    // cell stays as the raw string the CSV emitted.
+    expect(result.records[0].Score).toBe("10");
+  });
+
+  it("auto-names multiple blank headers with distinct 1-based indices (Column 2, Column 4)", () => {
+    // Two blank columns: each gets a unique deterministic placeholder
+    // based on its 1-based CSV column index — NOT incremental
+    // `(2)` / `(3)` suffixes, which would lose the column's identity
+    // across re-exports.
+    const csv = "A,,B,\r\nx,1,y,2";
+    const result = parseCsvToBase(csv);
+    expect(result.fields.map((f) => f.name)).toEqual([
+      "A",
+      "Column 2",
+      "B",
+      "Column 4",
+    ]);
+    expect(result.records[0]["Column 2"]).toBe("1");
+    expect(result.records[0]["Column 4"]).toBe("2");
+  });
+
+  it("uniquifies an auto-named blank header that collides with a deliberate `Column 1` (` (2)` suffix)", () => {
+    // If a user already has a column literally named `Column 1` AND
+    // there is *also* a blank column at index 0, the auto-rename
+    // pass would try to name the blank slot `Column 1` and collide
+    // with the deliberate header. The same `uniquify` dedup the
+    // duplicate-header path uses must kick in and bump the auto-
+    // named slot to `Column 1 (2)`. The deliberate `Column 1` keeps
+    // its name (look-ahead reservation) and the auto-named slot
+    // takes the suffix.
+    const csv = ",Column 1\r\nx,y";
+    const result = parseCsvToBase(csv);
+    expect(result.fields.map((f) => f.name)).toEqual([
+      "Column 1 (2)",
+      "Column 1",
+    ]);
+    expect(result.records[0]["Column 1 (2)"]).toBe("x");
+    expect(result.records[0]["Column 1"]).toBe("y");
+  });
+
+  it("does NOT treat blank headers as the reserved `id` column (record id is still auto-minted)", () => {
+    // Sanity check: the blank-header branch must not accidentally
+    // route blanks through the reserved-id pathway. Every row should
+    // get a fresh `makeRecordId()` id.
+    const csv = ",Name\r\nx,Alice";
+    const result = parseCsvToBase(csv);
+    // The blank column became `Column 1`, NOT `id`.
+    expect(result.fields.map((f) => f.name)).toContain("Column 1");
+    expect(result.fields.map((f) => f.name)).not.toContain("id");
+    // Record id is fresh, not the literal `x` from the blank-header
+    // column.
+    expect(result.records[0].id).not.toBe("x");
+    expect((result.records[0].id as string).length).toBeGreaterThan(0);
+  });
 });
 
 describe("parseJsonToBase — JSON → BaseContent", () => {

@@ -443,6 +443,35 @@ export function isComputedFieldType(type: FieldType): boolean {
  * Empty filter strings always match, so a half-typed filter on one
  * column doesn't accidentally hide every row.
  */
+/**
+ * Float-safe equality for filter `=` comparisons.
+ *
+ * Strict `===` is the fast path everywhere else in the codebase, but
+ * the percent filter has a unique footgun: the stored value is a
+ * fraction (`0.333`) and the user types a display percentage (`33.3`),
+ * which we rescale via `n / 100`. `33.3 / 100` evaluates to
+ * `0.33300000000000002` in IEEE-754, so `0.333 === 33.3 / 100` is
+ * `false` and the user's `=33.3` filter would silently match zero rows
+ * — confusing because the value clearly *is* 33.3% in the grid.
+ *
+ * We use a relative epsilon (1e-9 of the larger magnitude, with a 1e-12
+ * absolute floor near zero) which is small enough that any two values
+ * the user would consider visually distinct still compare unequal,
+ * while collapsing every rounding error a single multiply/divide can
+ * introduce. Percent / number / currency / rating / duration all share
+ * this comparator so behaviour is consistent across types.
+ *
+ * Devin Review on PR #79 round 8 (ANALYSIS_…_0001) flagged the strict
+ * equality as a likely user-visible bug on common percentages like
+ * 33.3% / 16.7% / 12.5% (the last is exact but the first two are not).
+ */
+export function numbersApproxEqual(a: number, b: number): boolean {
+  if (a === b) return true;
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  const scale = Math.max(Math.abs(a), Math.abs(b), 1);
+  return Math.abs(a - b) <= 1e-9 * scale;
+}
+
 export function matchesFilter(
   fieldType: FieldType,
   value: unknown,
@@ -488,7 +517,7 @@ export function matchesFilter(
           case "<=":
             return n <= operand;
           case "=":
-            return n === operand;
+            return numbersApproxEqual(n, operand);
         }
       }
       // Operator parse hit, but the displayed value isn't numeric —
@@ -500,7 +529,7 @@ export function matchesFilter(
     const bare = Number(f);
     if (Number.isFinite(bare)) {
       const n = Number(target);
-      if (Number.isFinite(n)) return n === bare;
+      if (Number.isFinite(n)) return numbersApproxEqual(n, bare);
     }
     return target.toLowerCase().includes(f.toLowerCase());
   }
@@ -576,14 +605,14 @@ export function matchesFilter(
         case "<=":
           return n <= operand;
         case "=":
-          return n === operand;
+          return numbersApproxEqual(n, operand);
       }
     }
     // Bare numeric → equals (with percent rescaling).
     const bare = Number(f);
     if (Number.isFinite(bare)) {
       const n = Number(value);
-      return Number.isFinite(n) && n === scaleOperand(bare);
+      return Number.isFinite(n) && numbersApproxEqual(n, scaleOperand(bare));
     }
     // Non-numeric filter on a numeric column: fall back to substring
     // on the rendered string so users can still find a value.

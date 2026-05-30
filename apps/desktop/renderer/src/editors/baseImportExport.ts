@@ -540,15 +540,6 @@ export function parseCsvToBase(
   const fieldForColumn: (BaseField | null)[] = [];
   const usedNames = new Set<string>();
 
-  // Pre-scan the trimmed header list so the disambiguator knows
-  // about *every* deliberate name, including ones that appear
-  // later in the row. This is what stops a header sequence like
-  // `Name, Name, Name (2)` from producing `["Name", "Name (2)",
-  // "Name (2) (2)"]` — the second `Name` would steal the third
-  // column's deliberate name. Looking ahead lets us pick `Name
-  // (3)` for the duplicate and let column 3 keep `Name (2)`.
-  const allHeaderNames = new Set<string>(headers.map((h) => h.trim()));
-
   /**
    * Append a numeric suffix (` (2)`, ` (3)`, …) to `base` until the
    * result is not already in use AND does not collide with any
@@ -556,37 +547,123 @@ export function parseCsvToBase(
    * convention macOS Finder, Windows Explorer, and Google Drive all
    * use for collisions, so it reads as obvious to a user looking
    * at the imported schema.
+   *
+   * `lookAhead` is *only* used to pick a suffix number that avoids
+   * a future deliberate header (so `Name, Name, Name (2)` produces
+   * `Name, Name (3), Name (2)` rather than stealing slot 2's
+   * deliberate name). It does NOT trigger uniquify on its own —
+   * that's still gated by `usedNames` collision, so a deliberate
+   * header's first occurrence keeps its raw name.
    */
-  const uniquify = (base: string): string => {
+  const uniquify = (base: string, lookAhead: Set<string>): string => {
     if (!usedNames.has(base)) return base;
     let i = 2;
     while (
       usedNames.has(`${base} (${i})`) ||
-      allHeaderNames.has(`${base} (${i})`)
+      lookAhead.has(`${base} (${i})`)
     ) {
       i += 1;
     }
     return `${base} (${i})`;
   };
 
-  for (const header of headers) {
-    const name = header.trim();
-    if (isReservedFieldName(name)) {
+  // Headers are processed in **two passes** so deliberate header
+  // names always win over auto-generated `Column N` placeholders:
+  //
+  //   Pass 1 — deliberate names: every non-blank, non-reserved
+  //   header claims its name in `usedNames` (with dedup-suffixing
+  //   against duplicate deliberate headers). This locks the user's
+  //   intent in first.
+  //
+  //   Pass 2 — blank headers: each blank slot mints a `Column <i+1>`
+  //   placeholder (1-based, matching what the user sees in Excel's
+  //   column letter bar). Because `usedNames` already contains every
+  //   deliberate name from pass 1, `uniquify` correctly bumps the
+  //   auto-name to `Column 1 (2)` etc. if a deliberate header took
+  //   the slot — the user's column never silently changes meaning.
+  //
+  // The resulting `fields` array is then re-ordered to match the
+  // original CSV column index so the row-scan below pulls cells
+  // from the right column.
+  //
+  // Why we auto-name blanks at all: a CSV header like `Name,,Score`
+  // (Excel happily emits these for unnamed columns) would otherwise
+  // pass `isReservedFieldName("")` and create a field literally
+  // named `""`, which renders as a blank column header / blank
+  // filter label / blank JSON key. Devin Review round 8 on PR #79
+  // (ANALYSIS_…_0004) flagged this as info-only; the auto-name
+  // closes the edge case properly instead of leaving the
+  // confusing-empty-column behaviour intact.
+  type HeaderSlot =
+    | { kind: "skip" }
+    | { kind: "deliberate"; rawName: string }
+    | { kind: "blank"; placeholderName: string };
+
+  const slots: HeaderSlot[] = headers.map((header, idx) => {
+    const trimmed = header.trim();
+    if (trimmed === "id") return { kind: "skip" };
+    if (trimmed === "") {
+      return { kind: "blank", placeholderName: `Column ${idx + 1}` };
+    }
+    if (isReservedFieldName(trimmed)) return { kind: "skip" };
+    return { kind: "deliberate", rawName: trimmed };
+  });
+
+  // Look-ahead for pass 1: every other deliberate name, so duplicate
+  // deliberates get the right suffix (`Name, Name, Name (2)` →
+  // `Name, Name (3), Name (2)`).
+  const allDeliberateNames = new Set<string>();
+  for (const slot of slots) {
+    if (slot.kind === "deliberate") allDeliberateNames.add(slot.rawName);
+  }
+
+  // Pass 1 — claim deliberate names. Stored per slot index so the
+  // final field order matches CSV column order.
+  const finalNameForSlot: (string | null)[] = new Array(slots.length).fill(
+    null,
+  );
+  for (let i = 0; i < slots.length; i += 1) {
+    const slot = slots[i];
+    if (slot.kind !== "deliberate") continue;
+    const finalName = uniquify(slot.rawName, allDeliberateNames);
+    finalNameForSlot[i] = finalName;
+    usedNames.add(finalName);
+  }
+
+  // Pass 2 — fill in placeholders for blank headers. `usedNames` is
+  // now seeded with every deliberate name, so the placeholder
+  // correctly uniquifies against them.
+  const emptyLookAhead = new Set<string>();
+  for (let i = 0; i < slots.length; i += 1) {
+    const slot = slots[i];
+    if (slot.kind !== "blank") continue;
+    const finalName = uniquify(slot.placeholderName, emptyLookAhead);
+    finalNameForSlot[i] = finalName;
+    usedNames.add(finalName);
+  }
+
+  // Build the fields[] and fieldForColumn[] arrays in CSV column
+  // order. Skipped slots (id / reserved) push `null` so the row-scan
+  // index stays aligned.
+  for (let i = 0; i < slots.length; i += 1) {
+    const slot = slots[i];
+    const finalName = finalNameForSlot[i];
+    if (slot.kind === "skip" || finalName === null) {
       fieldForColumn.push(null);
       continue;
     }
-    const fromSchema = schema?.find((f) => f.name === name);
-    const finalName = uniquify(name);
     // Only re-use the schema field config when the header matched
     // it AND we didn't have to rename it for uniqueness — a
-    // renamed column is no longer logically the same field.
-    const field: BaseField =
-      fromSchema && finalName === name
-        ? fromSchema
-        : { name: finalName, type: "text" };
+    // renamed column is no longer logically the same field. Schema
+    // reuse only applies to deliberate (user-named) headers.
+    const matchesSchemaName =
+      slot.kind === "deliberate" && slot.rawName === finalName;
+    const fromSchema = matchesSchemaName
+      ? schema?.find((f) => f.name === finalName)
+      : undefined;
+    const field: BaseField = fromSchema ?? { name: finalName, type: "text" };
     fields.push(field);
     fieldForColumn.push(field);
-    usedNames.add(finalName);
   }
 
   // Locate the (optional) `id` column once — header layout is
@@ -629,8 +706,13 @@ export function parseCsvToBase(
  *   1. The canonical `{ fields, records }` — same shape we export.
  *   2. A bare array of records (`[{key: val, …}, …]`) — pandas /
  *      Google Sheets / `JSON.stringify(rows)` dump shape.  Fields
- *      are inferred from the union of keys in the first record,
+ *      are inferred from the **union of keys across all records**,
  *      typed as `text` (the importer can't know the original type).
+ *      Heterogeneous arrays — e.g. `[{a:1}, {a:2, b:3}]` — are fully
+ *      supported; every key that appears on *any* record becomes a
+ *      field, with `null` filled in for the records that lacked it.
+ *      An earlier draft of this doc said "first record" only —
+ *      Devin Review round 8 (#79 ANALYSIS_…_0006) flagged the drift.
  *
  * Throws on malformed JSON.  Records without an `id` get a fresh
  * one; the `id` key is never added as a user field.

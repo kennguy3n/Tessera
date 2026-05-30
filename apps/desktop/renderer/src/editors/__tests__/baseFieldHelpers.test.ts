@@ -594,6 +594,37 @@ describe("matchesFilter — per-type filtering", () => {
     expect(matchesFilter("number", 100, ">50")).toBe(true);
     expect(matchesFilter("rating", 4, ">3")).toBe(true);
   });
+
+  // ────────────────────────────────────────────────────────────────
+  // Float-safe equality (PR #79 round 8 — ANALYSIS_…_0001)
+  // ────────────────────────────────────────────────────────────────
+  it("percent `=N` matches non-representable fractions like 33.3% (ANALYSIS-0001)", () => {
+    // The stored value is the literal fraction the user can type
+    // into a percent cell — `0.333` for 33.3%. The user's filter
+    // operand is `33.3` which we rescale to `33.3 / 100`. That
+    // rescale lands at `0.33300000000000002` in IEEE-754, so a
+    // strict `===` comparison would silently match zero rows.
+    // numbersApproxEqual collapses the rounding error so the
+    // intuitive equality fires.
+    expect(matchesFilter("percent", 0.333, "=33.3")).toBe(true);
+    expect(matchesFilter("percent", 0.333, "33.3")).toBe(true); // bare numeric
+    // 16.7% — another common non-representable percentage.
+    expect(matchesFilter("percent", 0.167, "=16.7")).toBe(true);
+    // Sanity: clearly distinct values still compare unequal — the
+    // epsilon is small enough that `0.333` does NOT match `33.4`.
+    expect(matchesFilter("percent", 0.333, "=33.4")).toBe(false);
+  });
+
+  it("number / currency `=N.M` is robust against any single multiply rounding error (ANALYSIS-0001)", () => {
+    // A user storing the result of a single multiply (e.g. tax = price * 0.07)
+    // can hit non-representable values on plain numeric columns too.
+    // Verify the comparator applies symmetrically to every numeric type.
+    expect(matchesFilter("number", 0.1 + 0.2, "=0.3")).toBe(true);
+    expect(matchesFilter("number", 0.1 + 0.2, "0.3")).toBe(true);
+    expect(matchesFilter("currency", 0.1 + 0.2, "=0.3")).toBe(true);
+    // Clearly distinct values still compare unequal.
+    expect(matchesFilter("number", 0.3001, "=0.3")).toBe(false);
+  });
 });
 
 describe("applyFieldRename — atomic cross-pointer rename", () => {
