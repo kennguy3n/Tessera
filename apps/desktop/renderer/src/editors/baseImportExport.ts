@@ -528,6 +528,11 @@ export function parseCsvToBase(
     fieldForColumn.push(field);
   }
 
+  // Locate the (optional) `id` column once — header layout is
+  // immutable across the row scan, so doing this per row would be
+  // O(rows × headers) for no benefit.
+  const idColumnIndex = headers.findIndex((h) => h.trim() === "id");
+
   const records: BaseRecord[] = [];
   for (let r = 1; r < rows.length; r += 1) {
     const row = rows[r];
@@ -536,7 +541,6 @@ export function parseCsvToBase(
     // empty records for those.
     if (row.every((cell) => cell.trim() === "")) continue;
 
-    const idColumnIndex = headers.findIndex((h) => h.trim() === "id");
     const carriedId =
       idColumnIndex >= 0 ? row[idColumnIndex]?.trim() : undefined;
 

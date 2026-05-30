@@ -22,6 +22,7 @@ import {
 import {
   evaluateBaseFormula,
   formatFormulaResult,
+  renameFieldInFormula,
 } from "./baseFormulaEngine";
 import {
   exportBaseCsv,
@@ -222,14 +223,26 @@ export default function BaseEditor({
     [data, updateData],
   );
 
-  // Rename a field in place. Renaming touches THREE places that all
-  // have to stay in lock-step:
+  // Rename a field in place. Renaming touches FIVE places that all
+  // have to stay in lock-step. Skip any of them and the rename
+  // silently breaks part of the editor:
   //   1. `data.fields[*].name` — the column label.
   //   2. Every `record[oldName]` JSON key → `record[newName]`.
   //   3. Any `linkedField` / `targetField` / `linkedDisplayField`
   //      / `formula` that references the old name. Without (3),
   //      a rollup pointing at "Price" would silently `#REF!` after
   //      the user renamed Price to Cost.
+  //   4. UI state: `sortField` (the comparator reads `r[sortField]`,
+  //      which becomes `undefined` after step 2 moves the value to
+  //      the new key) and `filters` (the filter input is keyed by
+  //      field name; the typed text would otherwise vanish even
+  //      though the column still exists).
+  //   5. Non-grid view state: `viewConfig` holds field-name pointers
+  //      (`kanbanGroupField`, `calendarDateField`, …). Without
+  //      patching them, Kanban / Calendar / Timeline / Gallery
+  //      silently render empty because they call
+  //      `fields.find((f) => f.name === config.kanbanGroupField)`
+  //      and miss after the rename.
   const renameField = useCallback(
     (oldName: string, newName: string): { ok: true } | { error: string } => {
       const trimmed = newName.trim();
@@ -241,51 +254,12 @@ export default function BaseEditor({
       if (data.fields.some((f) => f.name === trimmed)) {
         return { error: `Field "${trimmed}" already exists` };
       }
-      // Rewrite formula sources: replace `{oldName}` → `{newName}`,
-      // word-boundary safe via the literal-brace delimiter.
-      const renameFormula = (src: string | undefined): string | undefined => {
-        if (!src) return src;
-        // Walk the string by hand so we don't accidentally touch
-        // braces inside string literals — mirrors the parser scan
-        // in baseFormulaEngine.rewriteFieldRefs.
-        let out = "";
-        let i = 0;
-        let inStr: '"' | "'" | null = null;
-        while (i < src.length) {
-          const ch = src[i];
-          if (inStr) {
-            out += ch;
-            if (ch === "\\" && i + 1 < src.length) {
-              out += src[i + 1];
-              i += 2;
-              continue;
-            }
-            if (ch === inStr) inStr = null;
-            i += 1;
-            continue;
-          }
-          if (ch === '"' || ch === "'") {
-            inStr = ch;
-            out += ch;
-            i += 1;
-            continue;
-          }
-          if (ch === "{") {
-            const close = src.indexOf("}", i + 1);
-            if (close < 0) {
-              out += src.slice(i);
-              break;
-            }
-            const name = src.slice(i + 1, close);
-            out += name === oldName ? `{${trimmed}}` : src.slice(i, close + 1);
-            i = close + 1;
-            continue;
-          }
-          out += ch;
-          i += 1;
-        }
-        return out;
-      };
+      // Rewrite formula sources: replace `{oldName}` → `{newName}`
+      // using the shared escape-aware scanner from `baseFormulaEngine`
+      // so this in-place rewrite, `rewriteFieldRefs`, and
+      // `extractFieldRefs` always agree on what counts as a reference.
+      const renameFormula = (src: string | undefined): string | undefined =>
+        renameFieldInFormula(src, oldName, trimmed);
       const nextFields: BaseField[] = data.fields.map((f) => {
         if (f.name === oldName) {
           return { ...f, name: trimmed, formula: renameFormula(f.formula) };
@@ -306,6 +280,37 @@ export default function BaseEditor({
         return { ...rest, [trimmed]: carried } as BaseRecord;
       });
       updateData({ fields: nextFields, records: nextRecords });
+      // (4) Sort + filter state.
+      setSortField((prev) => (prev === oldName ? trimmed : prev));
+      setFilters((prev) => {
+        if (!(oldName in prev)) return prev;
+        const { [oldName]: carriedFilter, ...rest } = prev;
+        return { ...rest, [trimmed]: carriedFilter };
+      });
+      // (5) Per-view configuration. Loop over the six known
+      // field-name pointers in BaseViewConfig so adding a new
+      // view (e.g. a "color by" pointer) only needs the field
+      // listed here once. Bail out with the same reference if
+      // nothing changed so React skips the re-render.
+      setViewConfig((prev) => {
+        const keys: (keyof BaseViewConfig)[] = [
+          "kanbanGroupField",
+          "calendarDateField",
+          "timelineStartField",
+          "timelineEndField",
+          "galleryCoverField",
+          "titleField",
+        ];
+        let dirty = false;
+        const next: BaseViewConfig = { ...prev };
+        for (const k of keys) {
+          if (prev[k] === oldName) {
+            next[k] = trimmed;
+            dirty = true;
+          }
+        }
+        return dirty ? next : prev;
+      });
       return { ok: true };
     },
     [data, updateData],

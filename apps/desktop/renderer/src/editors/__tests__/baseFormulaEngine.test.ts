@@ -12,6 +12,7 @@ import {
   extractFieldRefs,
   evaluateBaseFormula,
   formatFormulaResult,
+  renameFieldInFormula,
 } from "../baseFormulaEngine";
 import type { BaseField, BaseRecord } from "../baseEditorTypes";
 
@@ -63,6 +64,73 @@ describe("extractFieldRefs", () => {
     expect(extractFieldRefs('"{NotAField}" + {RealField}')).toEqual([
       "RealField",
     ]);
+  });
+
+  it("keeps a brace-pair that begins inside a quoted string but the closing quote is escaped", () => {
+    // `\"` inside the double-quoted literal does NOT close the
+    // string. The scanner must consume `\\"` verbatim so the `{Real}`
+    // outside the string is still seen as a reference, and the
+    // `{Fake}` inside the string is not.
+    expect(
+      extractFieldRefs('"open \\"{Fake}\\" still open" + {Real}'),
+    ).toEqual(["Real"]);
+  });
+});
+
+describe("renameFieldInFormula", () => {
+  // The helper is the single source of truth for `{oldName}` →
+  // `{newName}` rewriting. It is shared between `rewriteFieldRefs`,
+  // `extractFieldRefs`, and `BaseEditor.renameField` so the rules
+  // never drift between scanners. Each test below pins one rule.
+
+  it("replaces every occurrence of the referenced field name", () => {
+    expect(renameFieldInFormula("{Price} + {Price}", "Price", "Cost")).toBe(
+      "{Cost} + {Cost}",
+    );
+  });
+
+  it("leaves unrelated references untouched", () => {
+    expect(
+      renameFieldInFormula("{Price} + {Quantity}", "Price", "Cost"),
+    ).toBe("{Cost} + {Quantity}");
+  });
+
+  it("never touches a `{oldName}` inside a single-quoted string literal", () => {
+    expect(renameFieldInFormula("'{Price}' + {Price}", "Price", "Cost")).toBe(
+      "'{Price}' + {Cost}",
+    );
+  });
+
+  it("never touches a `{oldName}` inside a double-quoted string literal", () => {
+    expect(renameFieldInFormula('"{Price}" + {Price}', "Price", "Cost")).toBe(
+      '"{Price}" + {Cost}',
+    );
+  });
+
+  it("handles escaped quotes inside a string literal — the `{Price}` after the escaped quote stays inside the string", () => {
+    // Before the shared scanner, the old inline rename in BaseEditor
+    // and `rewriteFieldRefs` disagreed on this: one treated the
+    // backslash-quote as ending the string, so it would rewrite
+    // `{Price}` that was actually still inside the literal. Now both
+    // routes consume `\\"` verbatim and treat the trailing `"` as
+    // the real terminator.
+    const src = '"prefix \\"{Price}\\" suffix" + {Price}';
+    expect(renameFieldInFormula(src, "Price", "Cost")).toBe(
+      '"prefix \\"{Price}\\" suffix" + {Cost}',
+    );
+  });
+
+  it("leaves an unmatched opening `{` alone (no closer means no reference)", () => {
+    expect(renameFieldInFormula("{Price", "Price", "Cost")).toBe("{Price");
+  });
+
+  it("is a no-op when the source has no references to oldName", () => {
+    expect(renameFieldInFormula("1 + 2", "Price", "Cost")).toBe("1 + 2");
+  });
+
+  it("passes undefined / empty source through unchanged", () => {
+    expect(renameFieldInFormula(undefined, "Price", "Cost")).toBeUndefined();
+    expect(renameFieldInFormula("", "Price", "Cost")).toBe("");
   });
 });
 
