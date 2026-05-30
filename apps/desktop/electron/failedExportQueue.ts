@@ -80,7 +80,15 @@ export interface FailedExportEntry {
   id: string;
   artifactId: string;
   format: string;
-  /** Original destination path (may be empty if user picked dialog). */
+  /**
+   * Original destination path. ALWAYS a non-empty absolute path:
+   * `enqueueFailedExport` rejects empty / non-absolute inputs at the
+   * write boundary (Devin Review PR #69 ANALYSIS_0003) and
+   * `listFailedExports` silently drops entries on disk that no
+   * longer match (defense in depth against a tampered queue file).
+   * The retry handler and the safe-export allowlist both rely on
+   * this invariant.
+   */
   filePath: string;
   /** Human-readable failure reason from the original exporter throw. */
   errorMessage: string;
