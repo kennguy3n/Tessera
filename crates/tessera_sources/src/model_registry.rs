@@ -321,6 +321,16 @@ pub async fn download_model(
 
 /// Download a single file, verify its SHA-256, then atomically
 /// rename `*.partial` → final path.
+///
+/// On ANY error path between the `File::create(partial_path)` call
+/// and the final atomic `rename`, the partial file is removed before
+/// the error is propagated. Without this cleanup a transient
+/// mid-stream failure (network drop, fsync error, disk-full) would
+/// leave a stale `*.partial` on disk; the next retry would still
+/// work because `File::create` truncates, but the orphan can persist
+/// indefinitely if the user never retries. The SHA-256-mismatch path
+/// already had explicit cleanup; this generalises it to every
+/// post-create failure mode.
 async fn download_and_verify(
     url: &str,
     final_path: &Path,
@@ -347,6 +357,46 @@ async fn download_and_verify(
             .unwrap_or_default(),
     ));
 
+    // Wrap the streaming + verify + rename in an inner async block
+    // so a single `?` chain in the caller (us) cleans up the partial
+    // file on every failure mode below — HTTP status error, stream
+    // chunk error, write error, fsync error, SHA-256 mismatch — by
+    // running `remove_file` on the `Err` arm exactly once. The
+    // `if final_path.exists()` short-circuit above runs BEFORE we
+    // create the partial, so it cannot leak.
+    let result = download_and_verify_inner(
+        url,
+        final_path,
+        &partial_path,
+        expected_sha256,
+        expected_size_hint,
+        progress,
+    )
+    .await;
+
+    if result.is_err() {
+        // Best-effort cleanup: log-silent because the inner Err is
+        // already the actionable message the caller sees. If the
+        // unlink itself fails (file already gone, permissions, etc.)
+        // there is nothing useful to do here — the next download
+        // attempt will truncate-on-create anyway.
+        let _ = tokio::fs::remove_file(&partial_path).await;
+    }
+
+    result
+}
+
+/// Inner streaming-download body. Split out so [`download_and_verify`]
+/// can run a single cleanup branch on any error — see the doc on the
+/// parent function.
+async fn download_and_verify_inner(
+    url: &str,
+    final_path: &Path,
+    partial_path: &Path,
+    expected_sha256: &str,
+    expected_size_hint: u64,
+    progress: Option<ProgressCallback>,
+) -> Result<()> {
     // Reqwest client with a generous timeout. 120 MB on a slow link
     // can take a few minutes; we don't want to false-fail on a
     // residential connection. The default timeout is `None` (no
@@ -418,11 +468,12 @@ async fn download_and_verify(
 
     let observed = format!("{:x}", hasher.finalize());
     if !observed.eq_ignore_ascii_case(expected_sha256) {
-        // Mismatch: unlink the partial file so a retry starts from
-        // scratch, and surface both hashes so the maintainer can
-        // tell whether the upstream changed (update the registry)
-        // vs the file was corrupted (network issue, retry).
-        let _ = tokio::fs::remove_file(&partial_path).await;
+        // Mismatch: surface both hashes so the maintainer can tell
+        // whether the upstream changed (update the registry) vs the
+        // file was corrupted (network issue, retry). The outer
+        // `download_and_verify` wrapper removes the partial file on
+        // this Err return; we no longer need the previously-explicit
+        // cleanup here.
         return Err(Error::Extraction {
             path: final_path.display().to_string(),
             message: format!("SHA-256 mismatch: expected {expected_sha256}, observed {observed}"),
@@ -538,5 +589,68 @@ mod tests {
         let expected = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
         assert!(verify_sha256_sync(tmp.path(), expected).unwrap());
         assert!(!verify_sha256_sync(tmp.path(), "0".repeat(64).as_str()).unwrap());
+    }
+
+    #[tokio::test]
+    async fn download_and_verify_removes_partial_file_on_error() {
+        // Failure path: an unreachable URL. We point at a
+        // localhost port that nothing is listening on so reqwest
+        // surfaces a connect error within tens of ms; no network
+        // round-trip required.
+        //
+        // Goal: verify that even though `download_and_verify`
+        // returns `Err`, the `*.partial` sibling — which would have
+        // been created if any byte made it past the connect — is
+        // not left behind. The current code path can't actually
+        // create the partial before connect fails, so we exercise
+        // both shapes:
+        //   1. connect-error path: no partial existed; nothing to
+        //      clean up; just assert the post-state is clean.
+        //   2. pre-existing-partial path: simulate a leftover from
+        //      a previous interrupted run, then trigger a failed
+        //      download against the same final_path; the leftover
+        //      MUST be removed by the cleanup branch.
+        let tmp = tempfile::tempdir().unwrap();
+        let final_path = tmp.path().join("model.onnx");
+        let partial_path = tmp.path().join("model.onnx.partial");
+
+        // Phase 1: clean dir, unreachable URL → Err, no partial
+        // left behind.
+        let res = download_and_verify(
+            "http://127.0.0.1:1/does-not-exist",
+            &final_path,
+            "00".repeat(32).as_str(),
+            42,
+            None,
+        )
+        .await;
+        assert!(res.is_err(), "unreachable URL must error");
+        assert!(
+            !partial_path.exists(),
+            "no partial should exist after a connect-error path"
+        );
+
+        // Phase 2: simulate a stale partial from a previous run,
+        // then trigger the same failure. The wrapper's cleanup
+        // branch MUST unlink it on the Err return.
+        std::fs::write(
+            &partial_path,
+            b"leftover from a previous interrupted download",
+        )
+        .unwrap();
+        assert!(partial_path.exists(), "test setup: partial should exist");
+        let res = download_and_verify(
+            "http://127.0.0.1:1/does-not-exist",
+            &final_path,
+            "00".repeat(32).as_str(),
+            42,
+            None,
+        )
+        .await;
+        assert!(res.is_err(), "unreachable URL must error");
+        assert!(
+            !partial_path.exists(),
+            "stale partial must be removed by the cleanup branch on Err"
+        );
     }
 }

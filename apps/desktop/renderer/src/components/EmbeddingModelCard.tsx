@@ -365,8 +365,11 @@ export default function EmbeddingModelCard() {
           <strong>Multilingual content detected.</strong>{" "}
           {status?.nonAsciiChunks.toLocaleString()} of{" "}
           {status?.totalChunks.toLocaleString()} indexed chunks contain
-          non-Latin characters. Consider switching to the Multilingual
-          (XLM-R) model for better recall on non-English queries.
+          non-ASCII characters (CJK, Cyrillic, Arabic, etc.&mdash; or
+          rich English typography like smart quotes and em-dashes).
+          If most of these are non-English content, consider switching
+          to the Multilingual (XLM-R) model for better recall on
+          non-English queries.
         </div>
       )}
 

@@ -1220,10 +1220,20 @@ impl DownloadProgressTracker {
         }
     }
 
-    /// Push a (bytes_downloaded, optional bytes_total) update from
-    /// the registry's streaming callback. `total == 0` is the
-    /// sentinel the registry uses for "Content-Length missing";
-    /// surface that as `None` to the renderer.
+    /// Push a `(bytes_downloaded, bytes_total)` update from the
+    /// registry's streaming callback.
+    ///
+    /// Since Phase 19 Task 1's cumulative-progress refactor, the
+    /// registry's `download_model` wrapper always supplies a fixed,
+    /// non-zero `combined_total` derived from the registry hints
+    /// (model + tokenizer sizes), so `bytes_total > 0` always holds
+    /// at this call site in production. The `== 0` branch below is
+    /// retained as defence-in-depth in case a future caller wires
+    /// the tracker to a different progress source that lacks a
+    /// known total (e.g. chunked-encoding without Content-Length);
+    /// in that scenario surfacing `None` lets the renderer fall
+    /// back to an indeterminate progress bar instead of rendering
+    /// "0 % of 0 B".
     pub fn update(&self, bytes_downloaded: u64, bytes_total: u64) {
         if let Ok(mut g) = self.inner.lock() {
             g.bytes_downloaded = bytes_downloaded as f64;

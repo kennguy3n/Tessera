@@ -51,7 +51,7 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use ort::value::Tensor;
 use tessera_core::error::{Error, Result};
-use tokenizers::Tokenizer;
+use tokenizers::{Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
 
 use crate::embedding::EmbeddingProvider;
 
@@ -128,8 +128,38 @@ impl OnnxEmbeddingProvider {
             .commit_from_file(model_path)
             .map_err(onnx_err)?;
 
-        let tokenizer = Tokenizer::from_file(tokenizer_path)
+        let mut tokenizer = Tokenizer::from_file(tokenizer_path)
             .map_err(|e| Error::InvalidConfig(format!("failed to load tokenizer: {e}")))?;
+
+        // Configure truncation on the tokenizer itself rather than
+        // capping `for j in 0..max_len` in `embed_batch_inner`. The
+        // difference matters because BERT / XLM-R post-processors
+        // add the trailing `[SEP]` / `</s>` token AFTER the content
+        // tokens, so naively slicing at `MAX_SEQUENCE_LENGTH` would
+        // drop the trailing special token on inputs that exceed the
+        // cap. Letting `Tokenizer::with_truncation` truncate the
+        // CONTENT tokens (LongestFirst, from the right) and then
+        // letting the post-processor re-add the special tokens
+        // preserves both `[CLS]` and `[SEP]` — matching the reference
+        // sentence-transformers Python implementation
+        // (`AutoTokenizer.from_pretrained(..., model_max_length=128)`
+        // or `tokenizer.enable_truncation(max_length=128)` in the
+        // tokenizers Python bindings). In practice the chunker
+        // already targets ~256 chars / ~64 BPE tokens so most inputs
+        // do not trigger truncation at all, but we want the rare
+        // long-input case to also produce sentence-transformers-
+        // identical embeddings rather than embeddings missing the
+        // trailing delimiter.
+        tokenizer
+            .with_truncation(Some(TruncationParams {
+                max_length: MAX_SEQUENCE_LENGTH,
+                strategy: TruncationStrategy::LongestFirst,
+                stride: 0,
+                direction: TruncationDirection::Right,
+            }))
+            .map_err(|e| {
+                Error::InvalidConfig(format!("failed to set tokenizer truncation: {e}"))
+            })?;
 
         Ok(Self {
             session: Mutex::new(session),
@@ -210,11 +240,19 @@ impl OnnxEmbeddingProvider {
             .map_err(|e| Error::InvalidConfig(format!("tokenizer encode_batch failed: {e}")))?;
 
         let batch = encodings.len();
-        // Pad to the longest sequence in THIS batch, capped at
-        // MAX_SEQUENCE_LENGTH. We do the truncation ourselves so
-        // we don't need the tokenizer's padding/truncation state
-        // to be pre-configured (which it usually is not in the
-        // upstream `tokenizer.json`).
+        // Pad to the longest sequence in THIS batch. The tokenizer is
+        // already configured with `TruncationParams { max_length:
+        // MAX_SEQUENCE_LENGTH }` in `load()`, so every encoding here
+        // is guaranteed to be `<= MAX_SEQUENCE_LENGTH` AND has its
+        // trailing `[SEP]` / `</s>` special token intact (truncation
+        // happens before the post-processor re-adds those, matching
+        // sentence-transformers' reference Python behaviour). The
+        // `.min(MAX_SEQUENCE_LENGTH)` cap below is therefore a
+        // defence-in-depth no-op: it stays as a backstop against a
+        // future tokenizer.json that ships with a higher pre-baked
+        // truncation, but it must NOT be relied on for correctness
+        // because slicing here would re-introduce the dropped-SEP
+        // bug the tokenizer-level truncation was added to fix.
         let max_len = encodings
             .iter()
             .map(|e| e.get_ids().len())
