@@ -294,7 +294,14 @@ describe("parseBaseContent", () => {
     expect(out.fields).toHaveLength(2);
     expect(out.fields[0]).toEqual({ name: "Name", type: "text" });
     expect(out.fields[1]).toEqual({ name: "Status", type: "text" });
-    expect(out.records).toEqual([{ Name: "", Status: "" }]);
+    // ensureRecordIds populates a stable opaque id on every record —
+    // strip it before comparing the user-visible fields.
+    expect(out.records).toHaveLength(1);
+    expect(typeof out.records[0].id).toBe("string");
+    expect(out.records[0].id).toMatch(/^[0-9a-f]{16}$/);
+    const { id: _id, ...rest } = out.records[0];
+    void _id;
+    expect(rest).toEqual({ Name: "", Status: "" });
   });
 
   it("round-trips a serialized BaseContent", () => {
@@ -310,13 +317,35 @@ describe("parseBaseContent", () => {
       ],
     };
     const reparsed = parseBaseContent(JSON.stringify(original));
-    expect(reparsed).toEqual(original);
+    expect(reparsed.fields).toEqual(original.fields);
+    expect(reparsed.records).toHaveLength(2);
+    // IDs are injected on legacy records but the user-visible payload
+    // is preserved exactly.
+    for (let i = 0; i < original.records.length; i++) {
+      expect(reparsed.records[i].id).toMatch(/^[0-9a-f]{16}$/);
+      const { id: _id, ...rest } = reparsed.records[i];
+      void _id;
+      expect(rest).toEqual(original.records[i]);
+    }
+  });
+
+  it("preserves a record id when one is already present", () => {
+    const original = {
+      fields: [{ name: "Name", type: "text" as const }],
+      records: [{ id: "abcdef0123456789", Name: "Pinned" }],
+    };
+    const reparsed = parseBaseContent(JSON.stringify(original));
+    expect(reparsed.records[0].id).toBe("abcdef0123456789");
   });
 
   it("falls back to a single Name record when JSON has no fields[]", () => {
     const out = parseBaseContent("free-form plain text");
     expect(out.fields).toEqual([{ name: "Name", type: "text" }]);
-    expect(out.records).toEqual([{ Name: "free-form plain text" }]);
+    expect(out.records).toHaveLength(1);
+    expect(out.records[0].id).toMatch(/^[0-9a-f]{16}$/);
+    const { id: _id, ...rest } = out.records[0];
+    void _id;
+    expect(rest).toEqual({ Name: "free-form plain text" });
   });
 
   it("falls back when JSON parses but the fields array is missing", () => {

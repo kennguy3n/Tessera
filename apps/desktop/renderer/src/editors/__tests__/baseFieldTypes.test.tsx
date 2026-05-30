@@ -1,0 +1,473 @@
+/**
+ * Integration tests for the Phase 17 PR 4 Base editor field types.
+ * Each new FieldType variant gets a dedicated test covering:
+ *   - default value & initial render
+ *   - the user-facing interaction that changes the cell value
+ *   - that the change is persisted back into the saved JSON
+ *
+ * Where the field is read-only (formula / rollup / lookup /
+ * auto_number) we assert the rendered text matches the helper's
+ * computed result for known inputs.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  render,
+  screen,
+  fireEvent,
+  within,
+  act,
+} from "@testing-library/react";
+import BaseEditor from "../BaseEditor";
+
+function flushSave() {
+  return act(async () => {
+    vi.runAllTimers();
+    await Promise.resolve();
+  });
+}
+
+function renderEditor(content: object) {
+  const onSave = vi.fn();
+  const json = JSON.stringify(content);
+  const utils = render(
+    <BaseEditor content={json} onSave={onSave} autoSaveMs={5} />,
+  );
+  return { onSave, ...utils };
+}
+
+function lastSavedRecords(onSave: ReturnType<typeof vi.fn>) {
+  const call = onSave.mock.calls.at(-1);
+  if (!call) throw new Error("onSave was never called");
+  const parsed = JSON.parse(call[0]);
+  return parsed.records as Array<Record<string, unknown>>;
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+describe("BaseEditor — multi_select field", () => {
+  it("toggles checkbox options and persists string[] back to onSave", async () => {
+    const { onSave } = renderEditor({
+      fields: [
+        {
+          name: "Tags",
+          type: "multi_select",
+          options: ["red", "green", "blue"],
+        },
+      ],
+      records: [{ id: "r1", Tags: [] }],
+    });
+    // The cell renders as a button that opens a checkbox dropdown.
+    fireEvent.click(screen.getByText("—"));
+    fireEvent.click(screen.getByLabelText("red"));
+    fireEvent.click(screen.getByLabelText("blue"));
+    await flushSave();
+    const records = lastSavedRecords(onSave);
+    expect(records[0].Tags).toEqual(["red", "blue"]);
+  });
+});
+
+describe("BaseEditor — formula field", () => {
+  it("renders the computed result inline (read-only)", () => {
+    renderEditor({
+      fields: [
+        { name: "Price", type: "number" },
+        { name: "Qty", type: "number" },
+        { name: "Total", type: "formula", formula: "{Price} * {Qty}" },
+      ],
+      records: [{ id: "r1", Price: 25, Qty: 4, Total: null }],
+    });
+    // Result should appear in the read-only cell.
+    expect(screen.getByText("100")).toBeTruthy();
+  });
+});
+
+describe("BaseEditor — linked_record field", () => {
+  it("adds a link via the + picker and removes via the × chip", async () => {
+    const { onSave } = renderEditor({
+      fields: [
+        { name: "Name", type: "text" },
+        {
+          name: "Owner",
+          type: "linked_record",
+          linkedDisplayField: "Name",
+        },
+      ],
+      records: [
+        { id: "r1", Name: "Alice", Owner: [] },
+        { id: "r2", Name: "Bob", Owner: [] },
+        { id: "r3", Name: "Carol", Owner: [] },
+      ],
+    });
+    // Click the first row's + button (one per cell).
+    const plusButtons = screen.getAllByRole("button", { name: "+" });
+    fireEvent.click(plusButtons[0]);
+    // Now pick "Bob" from the dropdown.
+    fireEvent.click(screen.getByText("Bob"));
+    await flushSave();
+    const records = lastSavedRecords(onSave);
+    expect(records[0].Owner).toEqual(["r2"]);
+  });
+});
+
+describe("BaseEditor — rollup field", () => {
+  it("aggregates SUM over a linked_record's targetField", () => {
+    renderEditor({
+      fields: [
+        { name: "Title", type: "text" },
+        { name: "Cost", type: "number" },
+        { name: "Children", type: "linked_record" },
+        {
+          name: "TotalCost",
+          type: "rollup",
+          linkedField: "Children",
+          targetField: "Cost",
+          aggregation: "SUM",
+        },
+      ],
+      records: [
+        { id: "child1", Title: "C1", Cost: 10, Children: [] },
+        { id: "child2", Title: "C2", Cost: 25, Children: [] },
+        {
+          id: "parent",
+          Title: "P",
+          Cost: 0,
+          Children: ["child1", "child2"],
+        },
+      ],
+    });
+    // The parent row's rollup cell should display 35.
+    expect(screen.getByText("35")).toBeTruthy();
+  });
+
+  it("renders #REF! when linkedField does not exist", () => {
+    renderEditor({
+      fields: [
+        {
+          name: "Bad",
+          type: "rollup",
+          linkedField: "Nonexistent",
+          targetField: "X",
+          aggregation: "SUM",
+        },
+      ],
+      records: [{ id: "r1", Bad: null }],
+    });
+    expect(screen.getByText("#REF!")).toBeTruthy();
+  });
+});
+
+describe("BaseEditor — lookup field", () => {
+  it("pulls field values from linked records and joins them", () => {
+    renderEditor({
+      fields: [
+        { name: "Name", type: "text" },
+        { name: "Email", type: "email" },
+        { name: "Team", type: "linked_record" },
+        {
+          name: "TeamEmails",
+          type: "lookup",
+          linkedField: "Team",
+          targetField: "Email",
+        },
+      ],
+      records: [
+        { id: "m1", Name: "Alice", Email: "a@x.com", Team: [] },
+        { id: "m2", Name: "Bob", Email: "b@x.com", Team: [] },
+        { id: "group", Name: "G", Email: "", Team: ["m1", "m2"] },
+      ],
+    });
+    expect(screen.getByText("a@x.com, b@x.com")).toBeTruthy();
+  });
+});
+
+describe("BaseEditor — attachment field", () => {
+  it("adds an attachment via file picker and persists the file name", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Files", type: "attachment" }],
+      records: [{ id: "r1", Files: [] }],
+    });
+    const fileInputs = document.querySelectorAll(
+      'input[type="file"]',
+    ) as NodeListOf<HTMLInputElement>;
+    expect(fileInputs.length).toBe(1);
+    const file = new File(["hello"], "note.txt", { type: "text/plain" });
+    // Fire change directly — the cell uses a hidden file input.
+    Object.defineProperty(fileInputs[0], "files", {
+      value: [file],
+      configurable: true,
+    });
+    fireEvent.change(fileInputs[0]);
+    await flushSave();
+    const records = lastSavedRecords(onSave);
+    expect(records[0].Files).toEqual(["note.txt"]);
+  });
+});
+
+describe("BaseEditor — long_text field", () => {
+  it("edits inline and persists the new value", async () => {
+    const { onSave, container } = renderEditor({
+      fields: [{ name: "Notes", type: "long_text" }],
+      records: [{ id: "r1", Notes: "" }],
+    });
+    // Disambiguate from the column-header Filter input (both are
+    // role=textbox); pick the actual <textarea> by tag.
+    const textarea = container.querySelector(
+      "textarea.base-cell-longtext",
+    ) as HTMLTextAreaElement;
+    expect(textarea).not.toBeNull();
+    fireEvent.change(textarea, { target: { value: "# Hello\n\nWorld" } });
+    await flushSave();
+    const records = lastSavedRecords(onSave);
+    expect(records[0].Notes).toBe("# Hello\n\nWorld");
+  });
+
+  it("opens the expand modal and saves edits made inside it", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Notes", type: "long_text" }],
+      records: [{ id: "r1", Notes: "initial" }],
+    });
+    fireEvent.click(screen.getByTitle("Expand"));
+    const dialog = screen.getByRole("dialog");
+    const modalTextarea = dialog.querySelector(
+      "textarea.base-longtext-textarea",
+    ) as HTMLTextAreaElement;
+    expect(modalTextarea).not.toBeNull();
+    fireEvent.change(modalTextarea, { target: { value: "edited" } });
+    fireEvent.click(within(dialog).getByText("Save"));
+    await flushSave();
+    const records = lastSavedRecords(onSave);
+    expect(records[0].Notes).toBe("edited");
+  });
+});
+
+describe("BaseEditor — email field", () => {
+  it("renders as an email input and persists changes", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Email", type: "email" }],
+      records: [{ id: "r1", Email: "" }],
+    });
+    const input = screen.getByPlaceholderText("name@example.com") as
+      HTMLInputElement;
+    expect(input.type).toBe("email");
+    fireEvent.change(input, { target: { value: "test@example.com" } });
+    await flushSave();
+    expect(lastSavedRecords(onSave)[0].Email).toBe("test@example.com");
+  });
+});
+
+describe("BaseEditor — phone field", () => {
+  it("renders as a tel input and persists changes", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Phone", type: "phone" }],
+      records: [{ id: "r1", Phone: "" }],
+    });
+    const input = screen.getByPlaceholderText("+1 555-0123") as HTMLInputElement;
+    expect(input.type).toBe("tel");
+    fireEvent.change(input, { target: { value: "555-1234" } });
+    await flushSave();
+    expect(lastSavedRecords(onSave)[0].Phone).toBe("555-1234");
+  });
+});
+
+describe("BaseEditor — currency field", () => {
+  it("shows the configured symbol and stores a Number value", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Cost", type: "currency", currencySymbol: "€" }],
+      records: [{ id: "r1", Cost: null }],
+    });
+    expect(screen.getByText("€")).toBeTruthy();
+    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "19.99" } });
+    await flushSave();
+    expect(lastSavedRecords(onSave)[0].Cost).toBe(19.99);
+  });
+});
+
+describe("BaseEditor — percent field", () => {
+  it("stores the value as a fraction (0..1) of the user input", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Discount", type: "percent", percentPrecision: 1 }],
+      records: [{ id: "r1", Discount: null }],
+    });
+    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "37.5" } });
+    await flushSave();
+    expect(lastSavedRecords(onSave)[0].Discount).toBe(0.375);
+  });
+
+  it("renders existing fractional values back in percent units", () => {
+    renderEditor({
+      fields: [{ name: "Discount", type: "percent", percentPrecision: 0 }],
+      records: [{ id: "r1", Discount: 0.5 }],
+    });
+    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    expect(input.value).toBe("50");
+  });
+});
+
+describe("BaseEditor — rating field", () => {
+  it("clicks a star to set the rating, and clicking the same star clears it", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Score", type: "rating" }],
+      records: [{ id: "r1", Score: null }],
+    });
+    const stars = screen.getAllByRole("radio");
+    expect(stars).toHaveLength(5);
+    fireEvent.click(stars[3]); // pick 4 stars
+    await flushSave();
+    expect(lastSavedRecords(onSave)[0].Score).toBe(4);
+
+    // Clicking the active star clears the rating.
+    const starsAgain = screen.getAllByRole("radio");
+    fireEvent.click(starsAgain[3]);
+    await flushSave();
+    expect(lastSavedRecords(onSave)[0].Score).toBe(0);
+  });
+});
+
+describe("BaseEditor — duration field", () => {
+  it("parses h:mm input and persists integer minutes", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Length", type: "duration" }],
+      records: [{ id: "r1", Length: null }],
+    });
+    const input = screen.getByPlaceholderText("h:mm") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "1:30" } });
+    await flushSave();
+    expect(lastSavedRecords(onSave)[0].Length).toBe(90);
+  });
+
+  it("ignores malformed h:mm input — controlled value remains the parsed value", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Length", type: "duration" }],
+      records: [{ id: "r1", Length: 60 }],
+    });
+    const input = screen.getByPlaceholderText("h:mm") as HTMLInputElement;
+    // Pre-condition: 60 minutes renders as 1:00.
+    expect(input.value).toBe("1:00");
+    fireEvent.change(input, { target: { value: "garbage" } });
+    await flushSave();
+    // The malformed value never reached onChange so the stored
+    // minutes are unchanged, and the controlled input re-renders
+    // the parsed 1:00 representation.
+    expect(input.value).toBe("1:00");
+    expect(onSave).not.toHaveBeenCalled();
+  });
+});
+
+describe("BaseEditor — auto_number field", () => {
+  it("renders a stable 1-based row position regardless of sort", () => {
+    renderEditor({
+      fields: [
+        { name: "Name", type: "text" },
+        { name: "Id", type: "auto_number" },
+      ],
+      records: [
+        { id: "r1", Name: "Alice", Id: null },
+        { id: "r2", Name: "Bob", Id: null },
+        { id: "r3", Name: "Carol", Id: null },
+      ],
+    });
+    // Three rows means rows 1, 2, 3 appear.
+    expect(screen.getAllByText("1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("2").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("3").length).toBeGreaterThan(0);
+  });
+});
+
+describe("BaseEditor — record ID stability", () => {
+  it("preserves record ids across edits", async () => {
+    const initialId = "abcdef0123456789";
+    const { onSave } = renderEditor({
+      fields: [{ name: "Name", type: "text" }],
+      records: [{ id: initialId, Name: "Pinned" }],
+    });
+    const input = screen.getByDisplayValue("Pinned") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Edited" } });
+    await flushSave();
+    expect(lastSavedRecords(onSave)[0].id).toBe(initialId);
+    expect(lastSavedRecords(onSave)[0].Name).toBe("Edited");
+  });
+
+  it("auto-assigns ids when adding a new record", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Name", type: "text" }],
+      records: [{ id: "r1", Name: "Existing" }],
+    });
+    fireEvent.click(screen.getByText("+ Record"));
+    await flushSave();
+    const records = lastSavedRecords(onSave);
+    expect(records).toHaveLength(2);
+    expect(records[1].id).toMatch(/^[0-9a-f]{16}$/);
+    expect(records[1].id).not.toBe("r1");
+  });
+});
+
+describe("BaseEditor — AddFieldDialog", () => {
+  it("creates a new formula field with the entered source", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Name", type: "text" }],
+      records: [{ id: "r1", Name: "Alice" }],
+    });
+    fireEvent.click(screen.getByText("+ Field"));
+    const nameInput = screen.getByPlaceholderText(
+      "Field name",
+    ) as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: "Greeting" } });
+    const typeSelect = screen.getByDisplayValue("Text") as HTMLSelectElement;
+    fireEvent.change(typeSelect, { target: { value: "formula" } });
+    const formulaInput = screen.getByPlaceholderText(
+      "= {Price} * {Quantity}",
+    ) as HTMLInputElement;
+    fireEvent.change(formulaInput, {
+      target: { value: 'CONCATENATE("Hi ", {Name})' },
+    });
+    fireEvent.click(screen.getByText("Add"));
+    await flushSave();
+    const call = onSave.mock.calls.at(-1)!;
+    const parsed = JSON.parse(call[0]);
+    const greetField = parsed.fields.find(
+      (f: { name: string }) => f.name === "Greeting",
+    );
+    expect(greetField).toEqual({
+      name: "Greeting",
+      type: "formula",
+      formula: 'CONCATENATE("Hi ", {Name})',
+    });
+  });
+
+  it("creates a new currency field with the chosen symbol", async () => {
+    const { onSave } = renderEditor({
+      fields: [{ name: "Name", type: "text" }],
+      records: [{ id: "r1", Name: "Alice" }],
+    });
+    fireEvent.click(screen.getByText("+ Field"));
+    fireEvent.change(screen.getByPlaceholderText("Field name"), {
+      target: { value: "Salary" },
+    });
+    fireEvent.change(screen.getByDisplayValue("Text"), {
+      target: { value: "currency" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Currency symbol"), {
+      target: { value: "£" },
+    });
+    fireEvent.click(screen.getByText("Add"));
+    await flushSave();
+    const parsed = JSON.parse(onSave.mock.calls.at(-1)![0]);
+    const salaryField = parsed.fields.find(
+      (f: { name: string }) => f.name === "Salary",
+    );
+    expect(salaryField).toEqual({
+      name: "Salary",
+      type: "currency",
+      currencySymbol: "£",
+    });
+  });
+});
