@@ -767,6 +767,33 @@ describe("nextBlockForTypeChange", () => {
     const textWithoutAlt: SlideBlock = { type: "text", content: "x" };
     expect(nextBlockForTypeChange(textWithoutAlt, "image").alt).toBe("");
   });
+
+  it("returns the input reference unchanged when the type does not change", () => {
+    // Pins the no-op contract: same-type re-selection is a no-op so
+    // callers using `===` short-circuit a re-render (matches the
+    // contract of `moveBlock` / `removeBlock` / `replaceBlock`). The
+    // image-self case is the safety-critical one — without the
+    // early-return, image→image would land in the boundary-clear
+    // branch and destroy the uploaded data URL.
+    const imageBlock: SlideBlock = {
+      type: "image",
+      content: "data:image/png;base64,KEEPME",
+      alt: "logo",
+    };
+    expect(nextBlockForTypeChange(imageBlock, "image")).toBe(imageBlock);
+    const textBlock: SlideBlock = { type: "text", content: "hello" };
+    expect(nextBlockForTypeChange(textBlock, "text")).toBe(textBlock);
+    const diagramBlock: SlideBlock = {
+      type: "diagram",
+      content: "graph TD; A-->B",
+    };
+    expect(nextBlockForTypeChange(diagramBlock, "diagram")).toBe(diagramBlock);
+    const bulletsBlock: SlideBlock = {
+      type: "bullets",
+      content: "- one\n- two",
+    };
+    expect(nextBlockForTypeChange(bulletsBlock, "bullets")).toBe(bulletsBlock);
+  });
 });
 
 describe("slideWordCount", () => {

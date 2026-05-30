@@ -501,6 +501,17 @@ export function nextBlockForTypeChange(
   block: SlideBlock,
   nextType: SlideBlock["type"],
 ): SlideBlock {
+  // Same-type re-selection is a no-op: return the input reference
+  // unchanged so callers using `===` short-circuit a re-render (same
+  // contract as `moveBlock` / `removeBlock` / `replaceBlock`). This
+  // also makes the image→image case safe-by-construction — without
+  // this guard, an image→image call would land in the boundary-clear
+  // branch below and destroy the uploaded data URL. The UI's
+  // `<select onChange>` doesn't fire on same-value re-selection, but
+  // a programmatic caller (e.g. a future copy/paste-as path or a
+  // bulk-edit dialog) could trigger it, and the helper's contract
+  // should not depend on UI quirks.
+  if (block.type === nextType) return block;
   const wasImage = block.type === "image";
   const becomesImage = nextType === "image";
   // Step 1 — clear when the block crosses the `image` boundary in
