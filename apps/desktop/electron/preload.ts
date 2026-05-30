@@ -178,6 +178,14 @@ const api: TesseraApi = {
       ipcRenderer.invoke("sources:search", query, limit),
     getDetail: (id: string) => ipcRenderer.invoke("sources:getDetail", id),
     reindex: (id: string) => ipcRenderer.invoke("sources:reindex", id),
+    // Phase 15 Task 6: bulk re-index. Calls the main-process
+    // `sources:batchReindex` handler registered in `ipc/sources.ts`,
+    // which validates the id list (≤ BATCH_MAX_ITEMS, well-formed
+    // ids) and then runs the per-item handler through the shared
+    // `runBatch()` helper for partial-failure isolation. See
+    // `SourceApi.batchReindex` for the contract.
+    batchReindex: (sourceIds: string[]) =>
+      ipcRenderer.invoke("sources:batchReindex", sourceIds),
     getIndexingProgress: (id: string) =>
       ipcRenderer.invoke("sources:getIndexingProgress", id),
     backfillEmbeddings: (batchSize?: number) =>
@@ -207,6 +215,14 @@ const api: TesseraApi = {
         format,
         contentOverride ?? null,
       ),
+    // Phase 15 Task 6: bulk export. Calls the main-process
+    // `artifacts:batchExport` handler in `ipc/artifacts.ts`,
+    // which validates ids + format and runs the per-item handler
+    // through `runBatch()`. The batch path always exports the
+    // persisted DB content (no `contentOverride`); see
+    // `ArtifactApi.batchExport` for the rationale.
+    batchExport: (artifactIds: string[], format: string) =>
+      ipcRenderer.invoke("artifacts:batchExport", artifactIds, format),
     exportToFile: (
       id: string,
       format: string,

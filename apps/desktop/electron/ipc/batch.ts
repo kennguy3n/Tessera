@@ -25,48 +25,20 @@
  * the same semantics for free.
  */
 
-/**
- * Hard cap on the number of items in a single batch call.
- *
- * The cap is "an order of magnitude above any realistic UI
- * action" — the largest practical bulk action a user might trigger
- * is "re-index every source after a connector schema change",
- * which on a power user's workspace tops out around ~50 sources.
- * 256 leaves plenty of room for "select all" workflows without
- * letting a compromised renderer DOS the bridge.
- */
-export const BATCH_MAX_ITEMS = 256;
+// The wire-format types (`BATCH_MAX_ITEMS`, `BatchItemResult<T>`,
+// `BatchResponse<T>`) live in `apps/desktop/shared/types.ts` so
+// the renderer (which cannot import from `electron/`) can refer
+// to them in its own type signatures. We re-export them here so
+// existing main-process imports of `./batch` continue to compile,
+// and so the per-domain IPC handlers can keep a single import
+// site for both the producer (`runBatch`) and the contract.
+export {
+  BATCH_MAX_ITEMS,
+  type BatchItemResult,
+  type BatchResponse,
+} from "../../shared/types";
 
-/**
- * Per-item result shape returned to the renderer.
- *
- * - `ok` true: `value` is the per-item handler's return value.
- * - `ok` false: `error` is the handler's error message; `value`
- *   is `undefined`.
- *
- * Discriminated union (rather than `value: T | null`) so the
- * renderer's `result.ok` narrowing in TypeScript works without
- * an extra `result.error == null` check.
- */
-export type BatchItemResult<T> =
-  | { id: string; ok: true; value: T }
-  | { id: string; ok: false; error: string };
-
-/**
- * Aggregate response for a batch call.
- *
- * - `total`: number of items submitted.
- * - `succeeded`: count of `ok: true` entries.
- * - `failed`: count of `ok: false` entries.
- * - `results`: per-item outcomes in input order, so the renderer
- *   can render "row 7 of 12 failed" without a second round-trip.
- */
-export interface BatchResponse<T> {
-  total: number;
-  succeeded: number;
-  failed: number;
-  results: BatchItemResult<T>[];
-}
+import type { BatchItemResult, BatchResponse } from "../../shared/types";
 
 /**
  * Run `handler` on each `id` in `ids`, isolating per-item errors

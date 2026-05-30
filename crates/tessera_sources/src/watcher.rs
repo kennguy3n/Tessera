@@ -32,23 +32,6 @@ impl FileEvent {
             Self::Created(p) | Self::Modified(p) | Self::Removed(p) => p,
         }
     }
-
-    /// Numeric priority used when deciding which variant survives
-    /// the per-path dedup in [`coalesce_events`]. Higher wins.
-    /// `Removed` strictly dominates because a delete is the final
-    /// state — if the file was Created+Modified+Removed inside the
-    /// window, only the delete matters to downstream consumers
-    /// (they would otherwise re-index a now-missing file and have
-    /// to handle the `ENOENT` themselves). `Created` beats
-    /// `Modified` because the indexer's "did this path exist
-    /// before?" branch hinges on it.
-    fn priority(&self) -> u8 {
-        match self {
-            Self::Removed(_) => 3,
-            Self::Created(_) => 2,
-            Self::Modified(_) => 1,
-        }
-    }
 }
 
 pub struct FileWatcher {
@@ -109,8 +92,9 @@ impl FileWatcher {
     ///     still terminates the batch promptly.
     ///   * Returns the result of [`coalesce_events`] on the
     ///     accumulated raw events: at most one event per distinct
-    ///     path, with the dominant variant per the priority order
-    ///     `Removed > Created > Modified`.
+    ///     path, with last-event-wins semantics (so an atomic-save
+    ///     `Removed → Modified` correctly resolves to `Modified`).
+    ///     See [`coalesce_events`] for the full rationale.
     ///
     /// This is the entrypoint the bridge layer's watcher tick
     /// should call instead of the raw [`Self::poll_events`] /
@@ -143,39 +127,68 @@ impl FileWatcher {
 }
 
 /// Phase 15 Task 5: collapse a sequence of [`FileEvent`]s into one
-/// event per path, choosing the dominant variant per the priority
-/// order `Removed > Created > Modified`.
+/// event per path using **last-event-wins** semantics — the final
+/// event observed for a given path within the coalescing window is
+/// the one returned.
 ///
-/// The original event ordering is preserved across distinct paths
-/// — i.e. the returned vector is iterated in first-appearance
-/// order of each path, with each entry being the dominant variant
-/// for that path. This matters for the indexer, which processes
-/// events serially: a `Removed` before any `Created` for a
-/// different path lets the indexer free the chunk rows for the
-/// deleted file before allocating new ones for the created one.
+/// Why last-event-wins instead of a static priority order:
+///
+/// The 500 ms coalescing window must reflect the file's *final*
+/// state, not a fixed `Removed > Created > Modified` rank. Atomic-
+/// save patterns produce real `Removed → Modified` and
+/// `Removed → Created` sequences where the file ends up existing
+/// with new content, but a static `Removed`-wins rule would emit a
+/// stale `Removed` and the indexer would drop the file from the
+/// index even though it is present on disk with fresh bytes.
+/// Concrete worked examples we need to handle correctly:
+///
+///   * **`sed -i` / atomic editor save**: editor writes to
+///     `file.tmp`, `unlink(file)`, `rename(file.tmp, file)`. The
+///     `notify` crate emits `Removed(file)` from the unlink and
+///     `Modified(file)` from the rename-to (inotify translates
+///     `IN_MOVED_TO` to `Modify(Name(To))`). Final state is the
+///     file exists with new content → must coalesce to
+///     `Modified(file)`.
+///   * **rsync `--inplace=false`**: writes `.tmp.XXXX`,
+///     `rename(.tmp.XXXX, file)`. Same shape as above for the
+///     destination path.
+///   * **`rm file; cp other file`**: `Removed → Created`. Final
+///     state is the file exists → must coalesce to `Created`.
+///   * **`touch file; rm file`**: `Created → Removed`. Final
+///     state is the file is gone → must coalesce to `Removed`
+///     (which last-event-wins gives us for free).
+///
+/// The original event ordering is preserved across distinct paths:
+/// the returned vector is iterated in first-appearance order of
+/// each path, with each entry being the last variant observed for
+/// that path. First-appearance order matters for the indexer,
+/// which processes events serially: a `Removed` before any
+/// `Created` for a different path lets the indexer free the chunk
+/// rows for the deleted file before allocating new ones for the
+/// created one.
 ///
 /// Pure helper (no I/O, no state) so tests can drive it directly
 /// without standing up a real watcher.
 pub fn coalesce_events(events: Vec<FileEvent>) -> Vec<FileEvent> {
     // `IndexMap`-like behaviour: first-appearance order + O(1)
-    // dedup. We use `HashMap<PathBuf, usize>` for the dedup and a
-    // parallel `Vec<FileEvent>` for the ordered output to avoid
-    // pulling in the `indexmap` crate.
+    // dedup. We use a `Vec<PathBuf>` for the ordered keys and a
+    // parallel `HashMap<PathBuf, FileEvent>` for the value lookup
+    // to avoid pulling in the `indexmap` crate.
     let mut order: Vec<PathBuf> = Vec::with_capacity(events.len());
     let mut by_path: HashMap<PathBuf, FileEvent> = HashMap::with_capacity(events.len());
 
     for ev in events {
         let path = ev.path().to_path_buf();
-        match by_path.get_mut(&path) {
-            Some(existing) => {
-                if ev.priority() > existing.priority() {
-                    *existing = ev;
-                }
-            }
-            None => {
-                order.push(path.clone());
-                by_path.insert(path, ev);
-            }
+        if let Some(existing) = by_path.get_mut(&path) {
+            // Last event wins: the final filesystem state for a
+            // path within the coalescing window is what the
+            // indexer needs to observe. See the function-level doc
+            // comment for the atomic-save / rsync examples that
+            // make this the correct rule.
+            *existing = ev;
+        } else {
+            order.push(path.clone());
+            by_path.insert(path, ev);
         }
     }
 
@@ -232,7 +245,10 @@ mod tests {
     }
 
     #[test]
-    fn coalesce_removed_dominates_created_and_modified() {
+    fn coalesce_create_modify_then_remove_resolves_to_remove() {
+        // The file was created, edited, then deleted. The final
+        // filesystem state is "gone" — the coalesced event must
+        // reflect that so the indexer drops the row.
         let raw = vec![
             FileEvent::Created(p("/a.txt")),
             FileEvent::Modified(p("/a.txt")),
@@ -244,7 +260,11 @@ mod tests {
     }
 
     #[test]
-    fn coalesce_created_dominates_modified() {
+    fn coalesce_modify_create_modify_resolves_to_modify_via_last_event_wins() {
+        // The trailing event is `Modified` — the file exists with
+        // new content. Last-event-wins gives us that, where a
+        // static `Created > Modified` rule would emit a stale
+        // `Created` (Devin Review BUG_0002).
         let raw = vec![
             FileEvent::Modified(p("/a.txt")),
             FileEvent::Created(p("/a.txt")),
@@ -252,7 +272,57 @@ mod tests {
         ];
         let out = coalesce_events(raw);
         assert_eq!(out.len(), 1);
+        assert!(matches!(out[0], FileEvent::Modified(_)));
+    }
+
+    #[test]
+    fn coalesce_atomic_save_remove_then_modify_resolves_to_modify() {
+        // `sed -i` / VS Code atomic save shape: explicit unlink
+        // followed by an inotify `IN_MOVED_TO` (which `notify`
+        // surfaces as `Modify(Name(To))` → `FileEvent::Modified`).
+        // The file ends up existing with new content; the static
+        // `Removed`-wins rule used to emit a stale `Removed` here.
+        let raw = vec![
+            FileEvent::Removed(p("/a.txt")),
+            FileEvent::Modified(p("/a.txt")),
+        ];
+        let out = coalesce_events(raw);
+        assert_eq!(out.len(), 1);
+        assert!(
+            matches!(out[0], FileEvent::Modified(_)),
+            "atomic-save remove→modify must coalesce to Modified, got {:?}",
+            out[0]
+        );
+    }
+
+    #[test]
+    fn coalesce_replace_remove_then_create_resolves_to_create() {
+        // `rm a; cp other a` shape. Final state is the file exists
+        // (possibly with very different content / inode); the
+        // indexer treats `Created` as "this is a fresh file,
+        // re-extract", which is exactly what we want.
+        let raw = vec![
+            FileEvent::Removed(p("/a.txt")),
+            FileEvent::Created(p("/a.txt")),
+        ];
+        let out = coalesce_events(raw);
+        assert_eq!(out.len(), 1);
         assert!(matches!(out[0], FileEvent::Created(_)));
+    }
+
+    #[test]
+    fn coalesce_create_then_remove_resolves_to_remove() {
+        // The file briefly existed within the window then was
+        // deleted. Last-event-wins gives `Removed`, which is what
+        // the indexer needs to know (don't bother extracting a
+        // file that no longer exists).
+        let raw = vec![
+            FileEvent::Created(p("/a.txt")),
+            FileEvent::Removed(p("/a.txt")),
+        ];
+        let out = coalesce_events(raw);
+        assert_eq!(out.len(), 1);
+        assert!(matches!(out[0], FileEvent::Removed(_)));
     }
 
     #[test]

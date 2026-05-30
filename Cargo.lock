@@ -3707,7 +3707,6 @@ dependencies = [
  "ignore",
  "image",
  "kamadak-exif 0.6.1",
- "libc",
  "lopdf",
  "notify",
  "pulldown-cmark",

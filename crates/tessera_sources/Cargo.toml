@@ -31,13 +31,6 @@ rand = { workspace = true }
 zeroize = { workspace = true }
 rayon = { workspace = true }
 
-# macOS-only: `mem::current_rss_bytes()` calls `getrusage(2)` via
-# the libc crate. Other platforms read `/proc/self/status` or
-# return `None`, so the dependency is gated to macOS to keep the
-# Linux / Windows build trees clean.
-[target.'cfg(target_os = "macos")'.dependencies]
-libc = "0.2"
-
 [dev-dependencies]
 tempfile = { workspace = true }
 criterion = { workspace = true }

@@ -68,6 +68,14 @@ const mockApi = {
       lastIndexed: new Date().toISOString(),
       fileCount: 0,
     }),
+    // Phase 15 Task 6: empty-but-well-shaped default for
+    // `sources.batchReindex`. Tests that exercise the bulk
+    // re-index path override this with `vi.fn().mockResolvedValue({
+    // total, succeeded, failed, results })` to drive the specific
+    // outcome shape they need.
+    batchReindex: vi
+      .fn()
+      .mockResolvedValue({ total: 0, succeeded: 0, failed: 0, results: [] }),
     getIndexingProgress: vi.fn().mockResolvedValue({
       status: "idle",
       scanned: 0,
@@ -121,6 +129,12 @@ const mockApi = {
     get: vi.fn(),
     remove: vi.fn(),
     exportArtifact: vi.fn(),
+    // Phase 15 Task 6: empty-but-well-shaped default for
+    // `artifacts.batchExport`. Tests that exercise bulk export
+    // override this with the expected per-item outcomes.
+    batchExport: vi
+      .fn()
+      .mockResolvedValue({ total: 0, succeeded: 0, failed: 0, results: [] }),
     exportToFile: vi.fn().mockResolvedValue(undefined),
     exportMarp: vi.fn().mockResolvedValue(undefined),
     exportTypst: vi.fn().mockResolvedValue(undefined),
