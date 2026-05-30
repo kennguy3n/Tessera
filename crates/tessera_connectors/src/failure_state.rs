@@ -251,18 +251,38 @@ impl SyncFailureState {
             kind: kind.into(),
             message: error.to_string(),
         };
-        let next_retry_count = self.retry_count.saturating_add(1);
-        let next_failed = match kind {
-            FailureKind::Permanent => true,
+        match kind {
+            // Permanent failures do NOT consume a retry slot — the
+            // sticky bit is flipped immediately and retries stop
+            // until the user takes action (re-authorise, fix
+            // config). Keeping `retry_count` unchanged means the
+            // value continues to reflect "how many transient
+            // failures in a row" rather than mixing transient and
+            // permanent counts. This matches the TS-side mirror
+            // (`connectorBackoff.ts::applyFailureToState`) exactly
+            // so both sides agree on what each persisted state
+            // means.
+            FailureKind::Permanent => Self {
+                last_error: Some(persisted),
+                retry_count: self.retry_count,
+                failed_permanently: true,
+            },
             FailureKind::Transient => {
-                self.failed_permanently
-                    || next_retry_count > policy.max_retries_before_permanent
+                let next_retry_count = self.retry_count.saturating_add(1);
+                // `>=` so the threshold value itself trips the
+                // sticky bit (8 transient failures => permanent,
+                // not 9). Matches the TS mirror's documented
+                // behaviour: `MAX_RETRIES_BEFORE_PERMANENT = 8`
+                // covers exactly the cumulative
+                // [2s, 4s, 8s, 16s, 32s, 64s, 128s, 256s] schedule
+                // listed in `connectorBackoff.ts`.
+                let flip = next_retry_count >= policy.max_retries_before_permanent;
+                Self {
+                    last_error: Some(persisted),
+                    retry_count: next_retry_count,
+                    failed_permanently: self.failed_permanently || flip,
+                }
             }
-        };
-        Self {
-            last_error: Some(persisted),
-            retry_count: next_retry_count,
-            failed_permanently: next_failed,
         }
     }
 
@@ -367,7 +387,10 @@ mod tests {
         let policy = SyncBackoffPolicy::default();
         let err = ConnectorError::AuthenticationFailed("expired refresh token".into());
         let next = state.record_failure(&err, &policy);
-        assert_eq!(next.retry_count, 1);
+        // Permanent failures do NOT bump retry_count — the count
+        // tracks transient retries only. See `record_failure` doc
+        // and the TS mirror `connectorBackoff.ts::applyFailureToState`.
+        assert_eq!(next.retry_count, 0);
         assert!(next.failed_permanently);
         let stamped = next.last_error.as_ref().expect("error must be stamped");
         assert_eq!(stamped.kind, PersistedFailureKind::Permanent);
@@ -387,24 +410,31 @@ mod tests {
     }
 
     #[test]
-    fn record_failure_transient_flips_permanent_after_threshold() {
+    fn record_failure_transient_flips_permanent_at_threshold() {
+        // The Nth transient failure (where N = max_retries_before_permanent)
+        // flips the sticky bit. `>=` semantics aligned with the TS mirror.
         let policy = SyncBackoffPolicy::default();
         let mut state = SyncFailureState::default();
         let err = ConnectorError::NetworkError("flaky network".into());
-        // Apply max_retries_before_permanent + 1 failures (8 in default).
-        // The 9th failure (one past the threshold) flips the sticky bit.
-        for i in 1..=policy.max_retries_before_permanent + 1 {
+        for i in 1..=policy.max_retries_before_permanent {
             state = state.record_failure(&err, &policy);
-            if i <= policy.max_retries_before_permanent {
+            // Permanent must remain false UNTIL we hit the threshold
+            // value, then trip on the threshold itself.
+            if i < policy.max_retries_before_permanent {
                 assert!(
                     !state.failed_permanently,
                     "should NOT be permanent after only {i} transient failures (threshold = {})",
                     policy.max_retries_before_permanent,
                 );
+            } else {
+                assert!(
+                    state.failed_permanently,
+                    "should flip permanent ON the {i}-th failure (threshold = {})",
+                    policy.max_retries_before_permanent,
+                );
             }
         }
-        assert!(state.failed_permanently);
-        assert_eq!(state.retry_count, policy.max_retries_before_permanent + 1);
+        assert_eq!(state.retry_count, policy.max_retries_before_permanent);
     }
 
     #[test]

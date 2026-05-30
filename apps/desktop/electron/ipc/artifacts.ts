@@ -420,9 +420,22 @@ export function registerArtifactsHandlers(): void {
     // forecloses the corner case where a malicious file at the
     // path could redirect the write — checking again is cheap and
     // closes the gap structurally.
+    //
+    // Defense-in-depth (Devin Review PR #69 BUG_0003): we ALSO
+    // reject any non-absolute or empty path here. In normal
+    // operation the queue is only populated from `resolvedPath`
+    // (always absolute), but a tampered `failed-exports.json` on
+    // disk could supply a relative path such as `../sensitive/file`
+    // that would otherwise resolve against cwd and slip past the
+    // allowlist check (which exits early on non-absolute inputs).
+    // We treat a non-absolute filePath as untrusted and refuse the
+    // retry rather than letting the bridge resolve it.
+    if (!entry.filePath || !path.isAbsolute(entry.filePath)) {
+      throw new Error(
+        `Retry destination is missing or not absolute (possible tampered queue): ${entry.filePath}`,
+      );
+    }
     if (
-      entry.filePath &&
-      path.isAbsolute(entry.filePath) &&
       !isSafeExportPath(
         entry.filePath,
         getSafeExportRoots(),
