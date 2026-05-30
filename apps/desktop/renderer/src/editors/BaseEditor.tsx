@@ -686,7 +686,17 @@ function CurrencyCell({ field, value, onChange }: CellInputProps) {
 }
 
 function PercentCell({ field, value, onChange }: CellInputProps) {
-  const precision = field.percentPrecision ?? 0;
+  // Defense in depth: `parseBaseContent` runs every field through
+  // `sanitizeBaseField`, which already clamps `percentPrecision` to
+  // [0,20]. We re-clamp here so an in-memory mutation (e.g. a future
+  // codepath that builds a field by hand and skips the parser) can't
+  // hand `toFixed` a value outside its ECMAScript-mandated [0,100]
+  // domain, which would otherwise throw a RangeError mid-render and
+  // unmount the entire editor.
+  const rawPrecision = field.percentPrecision ?? 0;
+  const precision = Number.isFinite(rawPrecision)
+    ? Math.max(0, Math.min(20, Math.floor(rawPrecision)))
+    : 0;
   const numeric = typeof value === "number" ? value : null;
   // Stored as a fraction (0..1) so 50% is 0.5 — same convention as
   // Excel — but the user sees percentage units, so the input is

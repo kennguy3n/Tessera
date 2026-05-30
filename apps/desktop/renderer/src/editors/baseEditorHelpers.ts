@@ -22,6 +22,7 @@
  */
 import type {
   BaseContent,
+  BaseField,
   BaseRecord,
   RollupAggregation,
 } from "./baseEditorTypes";
@@ -78,10 +79,47 @@ export function ensureRecordIds(records: BaseRecord[]): BaseRecord[] {
 }
 
 /**
+ * Sanitize a single field config loaded from JSON. The `AddFieldDialog`
+ * validates user-typed numbers up front, but hand-edited or migrated
+ * artifacts can carry out-of-range / wrong-typed values that would
+ * otherwise crash a render (e.g. `Number.toFixed(-1)` throws a
+ * `RangeError`). This pass normalizes every numeric config to a safe
+ * representable value so downstream cell renderers can trust the
+ * inputs they receive.
+ *
+ * Exported so unit tests can pin the contract independently of the
+ * parser entry point.
+ */
+export function sanitizeBaseField(field: BaseField): BaseField {
+  let out: BaseField | null = null;
+  // percentPrecision: ECMAScript spec accepts only 0..100 for
+  // `Number.prototype.toFixed` and we round to integer; in practice
+  // anything past 20 fractional digits is meaningless for a percent
+  // value, so we cap at 20 to keep the input field's `step` attribute
+  // a representable float.
+  if (field.percentPrecision !== undefined) {
+    const raw = Number(field.percentPrecision);
+    if (!Number.isFinite(raw)) {
+      out = out ?? { ...field };
+      delete out.percentPrecision;
+    } else {
+      const clamped = Math.max(0, Math.min(20, Math.floor(raw)));
+      if (clamped !== field.percentPrecision) {
+        out = out ?? { ...field };
+        out.percentPrecision = clamped;
+      }
+    }
+  }
+  return out ?? field;
+}
+
+/**
  * Decode the artifact's serialized JSON body into the in-memory
  * BaseContent shape the editor mounts. Falls back to a
  * two-field (Name + Status) default when the body is empty or
- * not valid JSON.
+ * not valid JSON. Every field is run through `sanitizeBaseField`
+ * and a non-array `records` is coerced to `[]`, so callers can
+ * treat the return value as fully normalized.
  *
  * Exported so unit tests can pin this independently of the
  * BaseEditor's full render pipeline.
@@ -99,9 +137,14 @@ export function parseBaseContent(content: string): BaseContent {
   try {
     const parsed = JSON.parse(content) as BaseContent;
     if (parsed.fields && Array.isArray(parsed.fields)) {
+      // Hand-edited / migrated JSON can carry `records: null`,
+      // `records: {}`, or even `records: "oops"` — coerce to `[]`
+      // so `ensureRecordIds` (which calls `.map`) doesn't blow up
+      // on the next call.
+      const rawRecords = Array.isArray(parsed.records) ? parsed.records : [];
       return {
-        fields: parsed.fields,
-        records: ensureRecordIds(parsed.records ?? []),
+        fields: parsed.fields.map(sanitizeBaseField),
+        records: ensureRecordIds(rawRecords),
       };
     }
   } catch {

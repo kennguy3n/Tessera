@@ -22,6 +22,7 @@ import {
   findRecordsLinkingTo,
   isReservedFieldName,
   RESERVED_FIELD_NAMES,
+  sanitizeBaseField,
 } from "../baseEditorHelpers";
 import type { BaseRecord } from "../baseEditorTypes";
 
@@ -78,6 +79,95 @@ describe("parseBaseContent — record id integration", () => {
     expect(parsed.records[0].id).toMatch(/^[0-9a-f]{16}$/);
     expect(parsed.records[1].id).toMatch(/^[0-9a-f]{16}$/);
     expect(parsed.records[0].id).not.toBe(parsed.records[1].id);
+  });
+
+  it("coerces non-array records to []", () => {
+    // Devin Review ANALYSIS_0006 — hand-edited JSON can ship
+    // records that don't satisfy the type contract; the parser
+    // must not blow up.
+    const cases = [
+      JSON.stringify({ fields: [{ name: "Name", type: "text" }], records: null }),
+      JSON.stringify({ fields: [{ name: "Name", type: "text" }], records: "oops" }),
+      JSON.stringify({
+        fields: [{ name: "Name", type: "text" }],
+        records: { 0: { Name: "A" } },
+      }),
+    ];
+    for (const c of cases) {
+      const parsed = parseBaseContent(c);
+      expect(Array.isArray(parsed.records)).toBe(true);
+      expect(parsed.records).toHaveLength(0);
+    }
+  });
+
+  it("clamps a malformed percentPrecision into the safe range", () => {
+    // Devin Review BUG_0001 — a hand-edited percentPrecision of
+    // -1 (or NaN, or 999) used to crash PercentCell with a
+    // RangeError on `Number.toFixed`. After sanitization the
+    // value must be in [0,20] or be removed entirely.
+    const json = JSON.stringify({
+      fields: [
+        { name: "Pct", type: "percent", percentPrecision: -1 },
+        { name: "Big", type: "percent", percentPrecision: 999 },
+        { name: "Bogus", type: "percent", percentPrecision: "abc" },
+      ],
+      records: [{ Pct: 0.5, Big: 0.5, Bogus: 0.5 }],
+    });
+    const parsed = parseBaseContent(json);
+    expect(parsed.fields[0].percentPrecision).toBe(0);
+    expect(parsed.fields[1].percentPrecision).toBe(20);
+    // Non-numeric values are stripped so downstream defaults
+    // ((value ?? 0) at the renderer) take effect.
+    expect(parsed.fields[2].percentPrecision).toBeUndefined();
+  });
+});
+
+describe("sanitizeBaseField", () => {
+  it("returns the same object reference when nothing needs clamping", () => {
+    const original = {
+      name: "Pct",
+      type: "percent" as const,
+      percentPrecision: 2,
+    };
+    expect(sanitizeBaseField(original)).toBe(original);
+  });
+
+  it("clamps negative percentPrecision to 0", () => {
+    const out = sanitizeBaseField({
+      name: "Pct",
+      type: "percent",
+      percentPrecision: -3,
+    });
+    expect(out.percentPrecision).toBe(0);
+  });
+
+  it("clamps oversized percentPrecision to 20", () => {
+    const out = sanitizeBaseField({
+      name: "Pct",
+      type: "percent",
+      percentPrecision: 50,
+    });
+    expect(out.percentPrecision).toBe(20);
+  });
+
+  it("removes percentPrecision when the value is non-finite", () => {
+    const out = sanitizeBaseField({
+      name: "Pct",
+      type: "percent",
+      // Trigger NaN via Number(undefined) — easier than embedding
+      // NaN as a JSON-safe literal.
+      percentPrecision: Number.NaN,
+    });
+    expect(out.percentPrecision).toBeUndefined();
+  });
+
+  it("floors a fractional precision so toFixed never sees a non-integer", () => {
+    const out = sanitizeBaseField({
+      name: "Pct",
+      type: "percent",
+      percentPrecision: 3.7,
+    });
+    expect(out.percentPrecision).toBe(3);
   });
 });
 
