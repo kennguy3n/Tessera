@@ -344,9 +344,9 @@ export default function EmbeddingModelCard() {
         }}
       >
         Controls which model converts your indexed content into vectors
-        for semantic search. All options output 384-dimensional vectors,
-        so switching does not change the search index — only the
-        embedding pass that fills it.
+        for semantic search. Switching models triggers a background
+        re-embed pass so existing chunks pick up the new model's
+        vectors; the schema (FTS5 + chunk_embeddings) stays the same.
       </p>
 
       {showMultilingualHint && (

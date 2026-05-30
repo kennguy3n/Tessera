@@ -357,6 +357,19 @@ impl OnnxEmbeddingProvider {
                 self.dim
             )));
         }
+        // BERT-family and XLM-R models always emit one hidden state per input
+        // token, so out_seq must equal the input sequence length we padded to
+        // (max_len). Both currently-shipped models satisfy this invariant; we
+        // assert it here as defence-in-depth so a future encoder with a
+        // different output stride (e.g. one that strips CLS/EOS, or one that
+        // pools internally) fails loudly rather than silently misindexing the
+        // attention_mask vs the pooled-token tensor below.
+        if out_seq != max_len {
+            return Err(Error::InvalidConfig(format!(
+                "ONNX output seq dim {out_seq} != input seq dim {max_len}; \
+                 attention_mask stride would mismatch the pooled-tensor stride"
+            )));
+        }
 
         // Mean-pool over the seq axis, weighted by attention_mask.
         // We then L2-normalise per-batch-row. Vectorised over the

@@ -806,7 +806,7 @@ pub fn bridge_update_hybrid_search_config(
 // =====================================================================
 // Phase 19 Task 1: ONNX embedding-model management exports.
 //
-// Three exports mirror the three IPC channels in
+// Four exports mirror the four IPC channels in
 // `apps/desktop/electron/ipc/settings.ts`:
 //   * `bridge_get_embedding_model_status` — list models + download/loaded status
 //   * `bridge_download_embedding_model` — async download with progress polling

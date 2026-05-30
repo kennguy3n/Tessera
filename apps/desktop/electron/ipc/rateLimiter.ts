@@ -164,12 +164,17 @@ export const RATE_LIMIT_PROFILES = {
     intervalMs: 10_000,
   },
   // Phase 19 Task 1: ONNX model download. A 22 MB or 120 MB
-  // download takes 5-60 s on a typical home connection. The
-  // bridge tracker already prevents two concurrent downloads
-  // (mark_starting overwrites the slot), but the rate limiter is
-  // the defense-in-depth: a runaway component cannot queue dozens
-  // of cancelled-and-restarted downloads against the upstream
-  // HuggingFace CDN (which itself rate-limits aggressively).
+  // download takes 5-60 s on a typical home connection. The bridge
+  // tracker's `mark_starting` resets the progress slot but does NOT
+  // serialise concurrent `DownloadEmbeddingModelTask` instances —
+  // two rapid calls before this rate limiter kicks in could both
+  // spawn libuv workers that proceed in parallel (the SHA-256 /
+  // atomic-rename invariant keeps them safe but their progress
+  // updates would race and waste bandwidth). This rate limiter at
+  // 1 / 5 s is the actual primary serialisation barrier; the SHA
+  // check is the integrity backstop. Both together also keep the
+  // upstream HuggingFace CDN happy under runaway-component
+  // scenarios.
   "settings:downloadEmbeddingModel": {
     tokensPerInterval: 1,
     intervalMs: 5_000,

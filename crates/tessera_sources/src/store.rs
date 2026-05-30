@@ -1,3 +1,6 @@
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
 use rusqlite::params;
 use tessera_core::error::{Error, Result};
 use tessera_core::{
@@ -18,8 +21,25 @@ fn parse_datetime_opt(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         .ok()
 }
 
+/// How long the corpus non-ASCII / total chunk counts returned by
+/// [`SourceStore::count_non_ascii_chunks`] stay fresh before a
+/// recomputation triggers another full table scan. The Settings
+/// page polls model status every 1 s for download progress, but
+/// the corpus stats only feed the "consider the multilingual
+/// model" hint, which is advisory — a 30 s lag is invisible to a
+/// user but cuts the per-poll cost on a 100K-chunk corpus from a
+/// full table scan to a single mutex-guarded `Instant::elapsed`.
+const NON_ASCII_CACHE_TTL: Duration = Duration::from_secs(30);
+
 pub struct SourceStore {
     conn: SharedConnection,
+    /// Memoized result of the last `count_non_ascii_chunks` SQL
+    /// scan + the `Instant` at which it was computed. `None` until
+    /// the first call. Per-instance, not per-connection — the
+    /// staleness window is short enough that two `SourceStore`
+    /// instances sharing a connection will simply each pay a
+    /// 30 s-amortised scan, never collide.
+    non_ascii_cache: Mutex<Option<(Instant, (u64, u64))>>,
 }
 
 impl SourceStore {
@@ -34,7 +54,10 @@ impl SourceStore {
     /// Build a store on top of a [`SharedConnection`] that is already
     /// shared with other stores. Used by the napi bridge.
     pub fn with_shared_conn(conn: SharedConnection) -> Result<Self> {
-        let store = Self { conn };
+        let store = Self {
+            conn,
+            non_ascii_cache: Mutex::new(None),
+        };
         store.init_schema()?;
         Ok(store)
     }
@@ -1439,6 +1462,12 @@ impl SourceStore {
         )
         .map_err(|e| Error::Database(e.to_string()))?;
 
+        // Corpus composition just changed; drop the multilingual-hint cache so
+        // the next status poll re-scans rather than serving stale ratios for up
+        // to NON_ASCII_CACHE_TTL.
+        drop(conn);
+        self.invalidate_non_ascii_cache();
+
         Ok(ids)
     }
 
@@ -1864,6 +1893,11 @@ impl SourceStore {
         )
         .map_err(|e| Error::Database(e.to_string()))?;
 
+        // Same rationale as `insert_chunks_returning_ids`: invalidate the
+        // multilingual-hint cache after a chunk-set mutation.
+        drop(conn);
+        self.invalidate_non_ascii_cache();
+
         Ok(ids)
     }
 
@@ -1884,6 +1918,10 @@ impl SourceStore {
             params![indexed_file_id],
         )
         .map_err(|e| Error::Database(e.to_string()))?;
+        // Same rationale as `insert_chunks_returning_ids`: invalidate the
+        // multilingual-hint cache after a chunk-set mutation.
+        drop(conn);
+        self.invalidate_non_ascii_cache();
         Ok(u32::try_from(deleted).unwrap_or(u32::MAX))
     }
 
@@ -1937,9 +1975,11 @@ impl SourceStore {
     /// counts ("128 of 1,400 chunks contain non-Latin text") which
     /// is more informative than a bare percentage.
     ///
-    /// **Heuristic, not exact.** The check is `content GLOB
-    /// '*[^[:ascii:]]*'`, which counts any chunk that contains at
-    /// least one non-ASCII byte. That includes legitimate non-Latin
+    /// **Heuristic, not exact.** The non-ASCII check is the SQLite
+    /// GLOB `'*[^' || x'01' || '-' || x'7f' || ']*'` (i.e. a byte
+    /// range from 0x01..=0x7F with `[^...]` negation), which counts
+    /// any chunk that contains at least one byte outside the
+    /// printable-ASCII range. That includes legitimate non-Latin
     /// content (CJK, Cyrillic, Arabic, Devanagari, Hangul, …) but
     /// also accidentally trips on smart quotes (`'`, `"`), em-
     /// dashes, and other Unicode punctuation that English-only
@@ -1951,7 +1991,34 @@ impl SourceStore {
     /// every chunk — would cost orders of magnitude more CPU for
     /// no actionable improvement at the suggestion threshold
     /// (10%, see Settings UI).
+    ///
+    /// **Memoized.** The GLOB scan is O(rows) and cannot use an
+    /// index — see `NON_ASCII_CACHE_TTL` above. We compute it at
+    /// most once per [`NON_ASCII_CACHE_TTL`] and serve subsequent
+    /// calls from the in-memory cache so the 1 s status poll the
+    /// Settings page runs does not full-scan the `chunks` table on
+    /// every tick.
     pub fn count_non_ascii_chunks(&self) -> Result<(u64, u64)> {
+        {
+            let cache = self.non_ascii_cache.lock().expect("cache mutex poisoned");
+            if let Some((at, value)) = *cache {
+                if at.elapsed() < NON_ASCII_CACHE_TTL {
+                    return Ok(value);
+                }
+            }
+        }
+        // Cache miss / stale. Drop the cache lock BEFORE acquiring
+        // the connection lock to avoid pinning ordering: every
+        // other call site takes the connection lock and never the
+        // cache lock, so a single-direction acquisition here keeps
+        // the lock-ordering DAG one-edge wide.
+        let value = self.recompute_non_ascii_counts()?;
+        let mut cache = self.non_ascii_cache.lock().expect("cache mutex poisoned");
+        *cache = Some((Instant::now(), value));
+        Ok(value)
+    }
+
+    fn recompute_non_ascii_counts(&self) -> Result<(u64, u64)> {
         let conn = self.conn.lock().expect("connection mutex poisoned");
         let total: i64 = conn
             .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
@@ -1965,6 +2032,16 @@ impl SourceStore {
             )
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok((non_ascii.max(0) as u64, total.max(0) as u64))
+    }
+
+    /// Drop the memoized non-ASCII counts so the next status poll
+    /// recomputes. Called after batches that move the corpus
+    /// composition meaningfully (chunk insert / delete). Public so
+    /// the indexer / bridge can invalidate without owning a
+    /// connection lock.
+    pub fn invalidate_non_ascii_cache(&self) {
+        let mut cache = self.non_ascii_cache.lock().expect("cache mutex poisoned");
+        *cache = None;
     }
 
     /// Block C Task 4 (Phase 13): read the persisted backfill state
@@ -4056,5 +4133,68 @@ mod tests {
         assert!(err.as_deref().unwrap().contains("fresh"));
         assert_eq!(retry_count, 5);
         assert!(failed);
+    }
+
+    #[test]
+    fn count_non_ascii_chunks_is_memoized_and_invalidates_on_insert() {
+        // Phase 19 Task 1 — Devin Review FLAG: the multilingual hint
+        // poll runs at 1 s and the underlying SQL is a GLOB scan that
+        // cannot use an index. We memoize for NON_ASCII_CACHE_TTL and
+        // invalidate the cache from chunk-mutation paths so the hint
+        // stays accurate AND polls stay cheap. This test pins both
+        // halves of that contract.
+        use crate::chunker::Chunk;
+
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/test".to_string());
+        store.add_source(&source).unwrap();
+
+        // Phase 1: empty corpus → (0, 0). Cache is populated.
+        assert_eq!(store.count_non_ascii_chunks().unwrap(), (0, 0));
+
+        // Phase 2: write directly via the raw connection (bypassing
+        // insert_chunks, which would call invalidate_non_ascii_cache).
+        // The next call MUST still return the cached (0, 0) — proving
+        // the cache is doing its job and skipping the GLOB scan.
+        let file_id = store
+            .upsert_indexed_file(&source.id, "/tmp/test/a.txt", "hashA", "2026-01-01")
+            .unwrap();
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO chunks (indexed_file_id, chunk_index, byte_offset, content, hash) \
+                 VALUES (?1, 0, 0, '財務報告', 'h1')",
+                params![file_id],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            store.count_non_ascii_chunks().unwrap(),
+            (0, 0),
+            "cache must hide the raw-SQL insert until invalidated"
+        );
+
+        // Phase 3: now call insert_chunks via the public API. It MUST
+        // invalidate the cache so the next call observes ALL chunks
+        // (both the raw-SQL one from phase 2 AND the public one).
+        let chunks = vec![Chunk {
+            source_path: "/tmp/test/a.txt".to_string(),
+            chunk_index: 1,
+            byte_offset: 100,
+            content: "english only".to_string(),
+            hash: "h2".to_string(),
+            extraction_method: None,
+            extraction_model_id: None,
+        }];
+        store.insert_chunks(file_id, &chunks).unwrap();
+        assert_eq!(
+            store.count_non_ascii_chunks().unwrap(),
+            (1, 2),
+            "insert_chunks must invalidate so the next poll re-scans"
+        );
+
+        // Phase 4: delete_chunks_for_indexed_file also invalidates.
+        store.delete_chunks_for_indexed_file(file_id).unwrap();
+        assert_eq!(store.count_non_ascii_chunks().unwrap(), (0, 0));
     }
 }

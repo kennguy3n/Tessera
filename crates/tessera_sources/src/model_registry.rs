@@ -249,23 +249,72 @@ pub async fn download_model(
     // model is the big one; surfacing its progress first matches the
     // user's mental model of "this 120 MB download is the bulk of
     // the wait."
+    //
+    // Wrap the user-supplied callback so the renderer sees ONE
+    // monotonic stream of `(downloaded, total)` across both files
+    // instead of the progress bar snapping back from 100 % to 0 %
+    // when the tokenizer download starts. The combined total is
+    // the sum of the registry hints; per-file `download_and_verify`
+    // emits per-file `(downloaded, total)` to the wrapper, which
+    // offsets by `cumulative_done` and re-emits against the
+    // combined total. The combined total is fixed (registry hint
+    // sum) rather than recomputed from the per-stream
+    // Content-Length so the bar never widens mid-download.
+    let combined_total = info
+        .model_size_bytes
+        .saturating_add(info.tokenizer_size_bytes);
+    if let Some(cb) = progress.as_ref() {
+        // Anchor the bar at (0, combined_total) before bytes start
+        // flowing. Without this the renderer's first poll between
+        // `download_model` entry and the first stream chunk would
+        // see the IDLE_DOWNLOAD snapshot (bytes_total = None) for a
+        // 100-500 ms window even though the download is logically
+        // in flight.
+        cb(0, combined_total);
+    }
+    let model_progress = progress.as_ref().map(|cb| {
+        let cb = cb.clone();
+        Arc::new(move |downloaded: u64, _total: u64| {
+            cb(downloaded.min(combined_total), combined_total);
+        }) as ProgressCallback
+    });
     download_and_verify(
         info.model_url,
         &info.model_path(models_root),
         info.model_sha256,
         info.model_size_bytes,
-        progress.clone(),
+        model_progress,
     )
     .await?;
 
+    let cumulative_done = info.model_size_bytes;
+    let tokenizer_progress = progress.as_ref().map(|cb| {
+        let cb = cb.clone();
+        Arc::new(move |downloaded: u64, _total: u64| {
+            cb(
+                cumulative_done
+                    .saturating_add(downloaded)
+                    .min(combined_total),
+                combined_total,
+            );
+        }) as ProgressCallback
+    });
     download_and_verify(
         info.tokenizer_url,
         &info.tokenizer_path(models_root),
         info.tokenizer_sha256,
         info.tokenizer_size_bytes,
-        progress,
+        tokenizer_progress,
     )
     .await?;
+
+    if let Some(cb) = progress.as_ref() {
+        // Ensure the renderer sees a final 100 % tick. The last
+        // per-file callback already reports combined_total, but a
+        // final explicit pin guards against rounding when the
+        // server's Content-Length differs from the registry hint.
+        cb(combined_total, combined_total);
+    }
 
     Ok(install_dir)
 }
