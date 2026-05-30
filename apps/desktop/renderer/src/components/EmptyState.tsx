@@ -1,5 +1,6 @@
 import { ReactNode, isValidElement } from "react";
 import { Inbox } from "lucide-react";
+import { useCspNonce } from "../utils/cspNonce";
 
 interface EmptyStateProps {
   /**
@@ -20,6 +21,7 @@ export default function EmptyState({
   message,
   action,
 }: EmptyStateProps) {
+  const cspNonce = useCspNonce();
   let iconNode: ReactNode;
   if (icon === undefined || icon === null) {
     iconNode = <Inbox size={48} strokeWidth={1.5} aria-hidden="true" />;
@@ -36,7 +38,7 @@ export default function EmptyState({
       <h3 className="empty-state-title">{title}</h3>
       <p className="empty-state-message">{message}</p>
       {action && <div className="empty-state-action">{action}</div>}
-      <style>{`
+      <style nonce={cspNonce}>{`
         .empty-state {
           display: flex;
           flex-direction: column;

@@ -63,6 +63,7 @@ import {
   PASSWORD_PROMPT_CANCEL_CHANNEL,
   PASSWORD_PROMPT_SUBMIT_CHANNEL,
 } from "./passwordPromptChannels";
+import { zeroBuffers } from "./secureBuffer";
 
 const pbkdf2Async = promisify(crypto.pbkdf2);
 
@@ -315,11 +316,26 @@ export function decryptWithPasswordKey(blob: Buffer): string {
 
   const decipher = crypto.createDecipheriv("aes-256-gcm", cachedKey, iv);
   decipher.setAuthTag(tag);
+  // Phase 15 Task 27 — sensitive-buffer cleanup.
+  //
+  // `decipher.update(ciphertext)` and `decipher.final()` allocate
+  // intermediate Buffers holding plaintext fragments of the secret.
+  // `Buffer.concat` copies those fragments into a fresh contiguous
+  // Buffer (`plaintext`) which we then convert to a JS string. ALL
+  // THREE buffers must be overwritten before they hit GC so the
+  // pooled slab does not hand the bytes to the next allocation.
+  //
+  // The JS string produced by `toString("utf-8")` is itself a
+  // sensitive value that cannot be zeroed (strings are immutable in
+  // JS). That heap leak is fundamental to the language; we minimise
+  // it by NOT keeping the buffer around once the string is built.
+  let part1: Buffer | null = null;
+  let part2: Buffer | null = null;
+  let plaintext: Buffer | null = null;
   try {
-    const plaintext = Buffer.concat([
-      decipher.update(ciphertext),
-      decipher.final(),
-    ]);
+    part1 = decipher.update(ciphertext);
+    part2 = decipher.final();
+    plaintext = Buffer.concat([part1, part2]);
     return plaintext.toString("utf-8");
   } catch (e) {
     // AES-GCM auth-tag failure throws a generic OpenSSL "Unsupported
@@ -329,6 +345,8 @@ export function decryptWithPasswordKey(blob: Buffer): string {
     throw new WrongVaultPasswordError(
       `Password-vault decryption failed (likely wrong password): ${(e as Error).message}`,
     );
+  } finally {
+    zeroBuffers(part1, part2, plaintext);
   }
 }
 

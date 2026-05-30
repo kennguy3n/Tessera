@@ -4,6 +4,7 @@ import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Modal from "../components/Modal";
 import EmptyState from "../components/EmptyState";
+import { useCspNonce } from "../utils/cspNonce";
 import {
   useAutomationList,
   useAutomationMutations,
@@ -105,6 +106,7 @@ function formatTimestamp(iso: string | null): string {
 }
 
 export default function AutomationsPage() {
+  const cspNonce = useCspNonce();
   const { automations, loading, error, refresh } = useAutomationList();
   const { create, setEnabled, remove } = useAutomationMutations();
   const { sources } = useSourceList();
@@ -648,7 +650,7 @@ export default function AutomationsPage() {
         </div>
       </Modal>
 
-      <style>{`
+      <style nonce={cspNonce}>{`
         .scheduler-status {
           display: flex;
           align-items: center;

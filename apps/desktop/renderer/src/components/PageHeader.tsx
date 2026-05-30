@@ -1,4 +1,5 @@
 import { ReactNode } from "react";
+import { useCspNonce } from "../utils/cspNonce";
 
 interface PageHeaderProps {
   title: string;
@@ -11,6 +12,7 @@ export default function PageHeader({
   description,
   actions,
 }: PageHeaderProps) {
+  const cspNonce = useCspNonce();
   return (
     <div className="page-header">
       <div className="page-header-text">
@@ -18,7 +20,7 @@ export default function PageHeader({
         {description && <p className="page-header-description">{description}</p>}
       </div>
       {actions && <div className="page-header-actions">{actions}</div>}
-      <style>{`
+      <style nonce={cspNonce}>{`
         .page-header {
           display: flex;
           align-items: flex-start;

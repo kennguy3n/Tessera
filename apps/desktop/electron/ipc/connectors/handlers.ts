@@ -342,9 +342,63 @@ import {
 export { NetworkError, NotConnectedError, isNetworkError };
 
 /**
+ * Phase 15 Task 26 — per-provider in-flight refresh registry.
+ *
+ * When two concurrent connector syncs both observe an expired access
+ * token they would each independently call `refreshProviderToken`,
+ * producing two side-effects we don't want:
+ *
+ *   1. **Double network round-trip.** Both refresh exchanges hit
+ *      the provider's token endpoint. Atlassian and OneDrive
+ *      explicitly rotate the refresh token on every successful
+ *      exchange, so the second request would arrive with the
+ *      already-invalidated refresh token if the first finished
+ *      before it sent — silently sign the user out of the connector.
+ *      Google rotates the refresh token "sometimes" (undocumented),
+ *      so the same hazard exists.
+ *
+ *   2. **Lost-update on the token vault.** Both refresh paths
+ *      `ctx.tokenVault.storeTokens(provider, …)` with different
+ *      access tokens (and potentially different rotated refresh
+ *      tokens). Whichever call lands second wins, leaving the vault
+ *      holding a token the provider may already have revoked.
+ *
+ * The fix is a per-provider promise registry: while a refresh is
+ * in-flight for `provider`, any further `getValidAccessToken` call
+ * for the same provider awaits the same Promise. After it resolves,
+ * those waiters all see the fresh token in the vault and return it
+ * without re-issuing a refresh.
+ *
+ * Lifetime: the entry is added before the network call and removed
+ * in a `finally` after `storeTokens`. Two important properties:
+ *
+ *   - The registry is keyed by ProviderId, so a Drive refresh in
+ *     flight does NOT block a concurrent Jira refresh.
+ *   - On failure the entry is removed BEFORE the rejection
+ *     propagates — a transient network error must NOT poison the
+ *     next caller; they should be free to retry.
+ */
+const REFRESH_IN_FLIGHT = new Map<ProviderId, Promise<string>>();
+
+/**
+ * Exported for tests so the suite can introspect / clear the
+ * in-flight registry between cases without poking module internals
+ * through `as unknown`.
+ *
+ * Production code MUST NOT use this — the registry is meant to be
+ * write-only outside of `getValidAccessToken`.
+ */
+export function __resetOAuthRefreshRegistryForTests(): void {
+  REFRESH_IN_FLIGHT.clear();
+}
+
+/**
  * Resolve a fresh access token, refreshing via the refresh token if
  * the access token has expired (or is within 60s of expiry). Throws
  * a clear error if the connector is not connected.
+ *
+ * Phase 15 Task 26: concurrent callers for the same provider share
+ * the in-flight refresh — see `REFRESH_IN_FLIGHT` above.
  */
 async function getValidAccessToken(
   ctx: IpcContext,
@@ -405,43 +459,69 @@ async function getValidAccessToken(
       `${provider} client credentials missing — re-authenticate`,
     );
   }
-  // Wrap the refresh-token exchange so a transport-level failure
-  // (DNS, TCP refused, undici timeout, etc.) escapes via our branded
-  // `NetworkError` rather than as a bare `fetch` rejection. The
-  // outer `runConnectorSync` wrapper keys its `{ status: "offline" }`
-  // fallback on `isNetworkError(err)`, but `getValidAccessToken` runs
-  // OUTSIDE that wrapper's try/catch (so we don't burn the rate-limit
-  // budget on auth-state errors) — without this re-wrap, a refresh
-  // call that fails because the user's wifi dropped would bubble out
-  // as a raw fetch rejection and the renderer would surface a
-  // confusing "fetch failed" error instead of the Offline badge.
-  let refreshed: Awaited<ReturnType<typeof refreshProviderToken>>;
-  try {
-    refreshed = await refreshProviderToken(config, {
-      refreshToken: stored.refreshToken,
+  // Phase 15 Task 26 — collapse concurrent refreshes for the same
+  // provider onto a single in-flight Promise. If another caller is
+  // already refreshing this provider's token, await their result and
+  // return — we MUST NOT issue a second exchange against the
+  // provider's token endpoint (Atlassian/OneDrive/Google may rotate
+  // the refresh token and invalidate the second one's input).
+  const existing = REFRESH_IN_FLIGHT.get(provider);
+  if (existing) {
+    return existing;
+  }
+
+  const refreshPromise = (async (): Promise<string> => {
+    // Wrap the refresh-token exchange so a transport-level failure
+    // (DNS, TCP refused, undici timeout, etc.) escapes via our
+    // branded `NetworkError` rather than as a bare `fetch`
+    // rejection. The outer `runConnectorSync` wrapper keys its
+    // `{ status: "offline" }` fallback on `isNetworkError(err)`,
+    // but `getValidAccessToken` runs OUTSIDE that wrapper's
+    // try/catch (so we don't burn the rate-limit budget on
+    // auth-state errors) — without this re-wrap, a refresh call
+    // that fails because the user's wifi dropped would bubble out
+    // as a raw fetch rejection and the renderer would surface a
+    // confusing "fetch failed" error instead of the Offline badge.
+    let refreshed: Awaited<ReturnType<typeof refreshProviderToken>>;
+    try {
+      refreshed = await refreshProviderToken(config, {
+        refreshToken: stored.refreshToken!,
+        clientId: stored.clientId!,
+        clientSecret: stored.clientSecret!,
+      });
+    } catch (err) {
+      if (isNetworkError(err)) {
+        throw new NetworkError(
+          `Network error while refreshing ${provider} access token: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+          { cause: err },
+        );
+      }
+      throw err;
+    }
+    ctx.tokenVault.storeTokens(provider, {
+      accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken,
+      expiresAt: Date.now() + refreshed.expiresIn * 1000,
+      scopes: stored.scopes,
       clientId: stored.clientId,
       clientSecret: stored.clientSecret,
     });
-  } catch (err) {
-    if (isNetworkError(err)) {
-      throw new NetworkError(
-        `Network error while refreshing ${provider} access token: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-        { cause: err },
-      );
-    }
-    throw err;
+    return refreshed.accessToken;
+  })();
+
+  REFRESH_IN_FLIGHT.set(provider, refreshPromise);
+  try {
+    return await refreshPromise;
+  } finally {
+    // Drop the registry entry regardless of success/failure. A
+    // transient failure must NOT poison the next caller: they
+    // should be free to retry. Success has stored fresh tokens so
+    // the next caller will skip the refresh path entirely via the
+    // `expiresAt` check at the top of this function.
+    REFRESH_IN_FLIGHT.delete(provider);
   }
-  ctx.tokenVault.storeTokens(provider, {
-    accessToken: refreshed.accessToken,
-    refreshToken: refreshed.refreshToken,
-    expiresAt: Date.now() + refreshed.expiresIn * 1000,
-    scopes: stored.scopes,
-    clientId: stored.clientId,
-    clientSecret: stored.clientSecret,
-  });
-  return refreshed.accessToken;
 }
 
 export function getValidAccessTokenForProvider(

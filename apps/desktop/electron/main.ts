@@ -20,6 +20,7 @@ import {
 // and is never needed on the critical-path window-show. Deferring
 // the require keeps the cold-start V8 init off the boot wire.
 import { cspImageSources } from "./cspImageSources";
+import { buildCsp, generateCspNonce } from "./csp";
 import {
   registerAssetProtocolScheme,
   registerAssetProtocolHandler,
@@ -191,6 +192,30 @@ process.on("unhandledRejection", (reason) => {
  * CSP is now a session-level invariant established before any
  * BrowserWindow is constructed.
  */
+/**
+ * Per-session CSP nonce. Generated exactly once at `app.whenReady`
+ * time (see `installContentSecurityPolicy` call site) so:
+ *
+ *   1. The same nonce can be passed to the CSP header AND threaded
+ *      through `webPreferences.additionalArguments` so the preload
+ *      script can expose it to the renderer.
+ *   2. Re-loads of the renderer (devtools refresh, `app.activate`
+ *      re-mount on macOS) reuse the same nonce — the CSP header is
+ *      re-emitted on every response and would not match a freshly
+ *      rotated nonce that the (already-loaded) preload still held.
+ *   3. Per-session is enough — there is no cross-session attacker
+ *      in our threat model. The nonce's job is to make a future
+ *      regression that introduces `'unsafe-inline'` impossible at
+ *      the CSP layer, not to defeat a same-origin XSS chain (we
+ *      already disallow `eval`, inline scripts, and arbitrary HTML
+ *      rendering of untrusted strings).
+ */
+let cspNonce = "";
+
+export function getCspNonce(): string {
+  return cspNonce;
+}
+
 function installContentSecurityPolicy(): void {
   // The CSP `img-src` widening below includes `tessera-asset:` as a
   // recognised source. Chromium will silently strip that source if
@@ -208,37 +233,34 @@ function installContentSecurityPolicy(): void {
   assertAssetProtocolSchemeRegistered();
 
   const isDev = !app.isPackaged;
-  const connectSrc = isDev
-    ? "connect-src 'self' ws://localhost:5173 http://localhost:5173"
-    : "connect-src 'self'";
+  // Generate the per-session nonce on first install. Subsequent
+  // calls (none today, but guard for future re-init) reuse the
+  // existing value so the renderer's exposed nonce stays valid.
+  if (!cspNonce) {
+    cspNonce = generateCspNonce();
+  }
+  const cspHeaderValue = buildCsp({
+    isDev,
+    nonce: cspNonce,
+    imageSources: cspImageSources,
+    assetScheme: TESSERA_ASSET_SCHEME,
+  });
   session.defaultSession.webRequest.onHeadersReceived((_details, callback) => {
     callback({
       responseHeaders: {
         ..._details.responseHeaders,
-        "Content-Security-Policy": [
-          // img-src enumerates the image CDNs of each first-class
-          // connected provider rather than the previous wildcard
-          // `https:` which would allow any HTTPS host. The list is
-          // tracked in `apps/desktop/electron/cspImageSources.ts` so
-          // adding a new connector requires explicitly widening the
-          // allow-list in one place. Browser/tab tracking pixels,
-          // analytics beacons, and the long-tail of arbitrary HTTPS
-          // image hosts that don't belong to a connected provider
-          // are blocked. Scripts and connect-src remain locked to
-          // 'self', so this only narrows the previous policy.
-          // `tessera-asset:` is the custom protocol registered by
-          // `assetProtocol.ts` that serves files under
-          // `<userData>/generated-images/` — i.e. the destination
-          // directory the `imagegen:generate` IPC writes to. Adding
-          // it to `img-src` lets the editors' generated-image
-          // previews render the SDXL output via `<img
-          // src="tessera-asset://generated-images/<artifactId>/<file>">`
-          // without falling back to a multi-megabyte base64 data URL
-          // in the artifact JSON state. The protocol handler enforces
-          // a strict prefix check so this `img-src` widening cannot
-          // be abused to read arbitrary disk paths.
-          `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: ${TESSERA_ASSET_SCHEME}: ${cspImageSources.join(" ")}; ${connectSrc}`,
-        ],
+        // img-src enumerates the image CDNs of each first-class
+        // connected provider via `cspImageSources` rather than the
+        // wildcard `https:` that would allow any HTTPS host. See
+        // `apps/desktop/electron/cspImageSources.ts` for the
+        // single source of truth. `tessera-asset:` is the custom
+        // protocol registered by `assetProtocol.ts` that serves
+        // generated-image files under `<userData>/generated-images/`.
+        // The protocol handler enforces a strict prefix check so
+        // this `img-src` widening cannot be abused to read arbitrary
+        // disk paths. See `csp.ts::buildCsp` for the full directive
+        // rationale (script/style nonce, defense-in-depth directives).
+        "Content-Security-Policy": [cspHeaderValue],
       },
     });
   });
@@ -291,6 +313,13 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // Thread the per-session nonce through to the preload script
+      // so it can `contextBridge.exposeInMainWorld("tesseraCspNonce",
+      // …)` for the renderer's `<style nonce={…}>` blocks. We pass
+      // it as `--tessera-csp-nonce=<value>` rather than a plain
+      // value so the preload can grep `process.argv` by prefix
+      // without depending on positional order.
+      additionalArguments: [`--tessera-csp-nonce=${cspNonce}`],
     },
   });
 

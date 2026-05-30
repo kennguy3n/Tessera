@@ -11,6 +11,7 @@ import PageHeader from "../components/PageHeader";
 import Button from "../components/Button";
 import Modal from "../components/Modal";
 import EmptyState from "../components/EmptyState";
+import { useCspNonce } from "../utils/cspNonce";
 import { useTaskList, useTaskMutations } from "../hooks/useTasks";
 import {
   TASK_PRIORITIES,
@@ -102,6 +103,7 @@ function priorityColor(p: string): string {
 }
 
 export default function TasksPage() {
+  const cspNonce = useCspNonce();
   const { tasks, loading, error, refresh } = useTaskList();
   const { create, update, remove, reorder } = useTaskMutations();
 
@@ -666,7 +668,7 @@ export default function TasksPage() {
         </div>
       </Modal>
 
-      <style>{`
+      <style nonce={cspNonce}>{`
         .tasks-drag-error {
           margin: var(--spacing-md) 0;
           padding: var(--spacing-sm) var(--spacing-md);

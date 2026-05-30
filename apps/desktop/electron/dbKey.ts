@@ -101,6 +101,7 @@ import * as fs from "fs";
 import * as path from "path";
 
 import { keyringUnavailableSentence } from "./vaultCrypto";
+import { zeroBuffer } from "./secureBuffer";
 import {
   decryptWithPasswordKey,
   encryptWithPasswordKey,
@@ -163,7 +164,22 @@ export class EncryptionUnavailableError extends Error {
  * across launches.
  */
 export function generateDbKey(): string {
-  return crypto.randomBytes(KEY_BYTES).toString("hex");
+  // Phase 15 Task 27 — the raw 32-byte OS-RNG buffer IS the
+  // SQLCipher key in its highest-density form. We convert to hex
+  // (the on-wire / on-disk encoding) immediately and zero the raw
+  // buffer in a finally so the pooled slab cannot leak the bytes
+  // to a subsequent allocation. The returned hex string is itself
+  // a sensitive value but JS strings are immutable and cannot be
+  // overwritten — that heap leak is language-level and out of
+  // scope here. The buffer-level cleanup is the strongest tool we
+  // can apply in-process.
+  let raw: Buffer | null = null;
+  try {
+    raw = crypto.randomBytes(KEY_BYTES);
+    return raw.toString("hex");
+  } finally {
+    zeroBuffer(raw);
+  }
 }
 
 /** Matches `tessera_core::db::validate_hex_key`. */

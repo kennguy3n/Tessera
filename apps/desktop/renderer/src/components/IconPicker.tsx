@@ -16,6 +16,7 @@ import {
   resolveIconComponent,
   searchIcons,
 } from "../services/iconResolver";
+import { useCspNonce } from "../utils/cspNonce";
 
 export interface IconPickerValue {
   set: IconSet;
@@ -47,6 +48,7 @@ export default function IconPicker({
   iconSize = 24,
   resultsLimit = 200,
 }: IconPickerProps) {
+  const cspNonce = useCspNonce();
   const [set, setSet] = useState<IconSet>(value?.set ?? "lucide");
   const [weight, setWeight] = useState<PhosphorWeight>(
     value?.weight ?? "regular",
@@ -155,7 +157,7 @@ export default function IconPicker({
         )}
       </div>
 
-      <style>{`
+      <style nonce={cspNonce}>{`
         .icon-picker {
           display: flex;
           flex-direction: column;

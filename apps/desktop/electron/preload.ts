@@ -592,3 +592,31 @@ const api: TesseraApi = {
 };
 
 contextBridge.exposeInMainWorld("tessera", api);
+
+/**
+ * Phase 15 Task 25 — surface the per-session CSP nonce to the
+ * renderer so each component-local `<style>{…}</style>` block can
+ * emit `<style nonce={…}>…</style>` and pass the strict
+ * `style-src-elem 'self' 'nonce-X'` check installed by
+ * `main.ts::installContentSecurityPolicy`.
+ *
+ * Main forwards the nonce as `--tessera-csp-nonce=<base64>` through
+ * `webPreferences.additionalArguments`. Parsing by prefix (rather
+ * than positional) keeps us robust to future flag additions and
+ * lets the value remain unquoted (the nonce is URL-safe base64 by
+ * construction — see `csp.ts::generateCspNonce`).
+ *
+ * If the flag is missing (test harness with a minimal mock, or a
+ * future refactor that drops it) we expose `""`. Consumers MUST
+ * treat the empty string as "no nonce available" rather than
+ * crashing — `<style nonce="">` simply fails the strict CSP check
+ * which produces a visible boot-time error in DevTools, which is
+ * the loud failure we want here.
+ */
+const cspNonceFlag = process.argv.find((arg) =>
+  arg.startsWith("--tessera-csp-nonce="),
+);
+const cspNonce = cspNonceFlag
+  ? cspNonceFlag.slice("--tessera-csp-nonce=".length)
+  : "";
+contextBridge.exposeInMainWorld("tesseraCspNonce", cspNonce);

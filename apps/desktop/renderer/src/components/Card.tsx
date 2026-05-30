@@ -1,4 +1,5 @@
 import { ReactNode, CSSProperties } from "react";
+import { useCspNonce } from "../utils/cspNonce";
 
 interface CardProps {
   children: ReactNode;
@@ -21,6 +22,7 @@ export default function Card({
   onClick,
   "data-testid": dataTestId,
 }: CardProps) {
+  const cspNonce = useCspNonce();
   return (
     <div
       className={`card ${onClick ? "card-clickable" : ""} ${className ?? ""}`}
@@ -41,7 +43,7 @@ export default function Card({
       }
     >
       {children}
-      <style>{`
+      <style nonce={cspNonce}>{`
         .card-clickable {
           cursor: pointer;
         }
