@@ -24,7 +24,7 @@
  * "dismiss + persist" path as the explicit Skip button so the user
  * can never get stuck.
  */
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FolderPlus, LayoutTemplate, Rocket } from "lucide-react";
 import Button from "./Button";
@@ -114,7 +114,26 @@ const FEATURED_TEMPLATES: ReadonlyArray<{
 export default function OnboardingWizard({ onDismiss }: OnboardingWizardProps) {
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>(0);
-  const [persisting, setPersisting] = useState(false);
+  // Re-entrancy guard MUST be a ref, not a useState value (Devin
+  // Review PR #70 BUG_0001). The risk is a fast Escape press while
+  // a Finish click's `await api.settings.update(...)` is still
+  // resolving: the Modal's Escape handler closes over the
+  // `dismiss` reference captured when the modal opened, which in
+  // turn closes over the OLD `persisting === false` value (React
+  // closures capture state at creation time). With a useState
+  // guard the second `dismiss()` would proceed in parallel,
+  // fire `settings.update` twice, and call `onDismiss()` twice
+  // from two separate `finally` blocks. With a ref, every reader
+  // sees the live current value regardless of which closure they
+  // came from, so the second call short-circuits cleanly.
+  //
+  // We keep a separate `disabled` useState for the button visual:
+  // refs do not trigger re-renders, but the button's `disabled`
+  // prop must reflect the in-flight state so the user gets visual
+  // feedback and screen-reader announcements. The ref drives
+  // correctness; the state drives presentation, set in lock-step.
+  const persistingRef = useRef(false);
+  const [disabled, setDisabled] = useState(false);
 
   /**
    * Persist `onboardingCompleted: true` and dismiss. Centralised so
@@ -131,8 +150,9 @@ export default function OnboardingWizard({ onDismiss }: OnboardingWizardProps) {
    * IPC regression.
    */
   const dismiss = useCallback(async () => {
-    if (persisting) return;
-    setPersisting(true);
+    if (persistingRef.current) return;
+    persistingRef.current = true;
+    setDisabled(true);
     try {
       const api = window.tessera;
       if (api?.settings) {
@@ -144,10 +164,17 @@ export default function OnboardingWizard({ onDismiss }: OnboardingWizardProps) {
         err,
       );
     } finally {
-      setPersisting(false);
+      // We intentionally do NOT release `persistingRef` here. The
+      // function dismisses the modal as its terminal step, and the
+      // wizard is single-shot — re-arming the guard would invite a
+      // race where the unmount runs concurrently with a stale
+      // post-`finally` Escape press from a still-focused element.
+      // The component leaves the DOM moments later and the ref is
+      // garbage-collected with it.
+      setDisabled(false);
       onDismiss();
     }
-  }, [persisting, onDismiss]);
+  }, [onDismiss]);
 
   // Escape == Skip. The Modal component already calls `onClose` on
   // Escape; we route that through `dismiss()` so the persist path is
@@ -234,13 +261,13 @@ export default function OnboardingWizard({ onDismiss }: OnboardingWizardProps) {
         )}
 
         <div className="onboarding-actions">
-          <Button onClick={onPrimary} autoFocus disabled={persisting}>
+          <Button onClick={onPrimary} autoFocus disabled={disabled}>
             {copy.primaryLabel}
           </Button>
           <Button
             variant="secondary"
             onClick={handleClose}
-            disabled={persisting}
+            disabled={disabled}
           >
             {step === 2 ? "Close" : "Skip"}
           </Button>

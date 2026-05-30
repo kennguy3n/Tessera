@@ -138,10 +138,26 @@ export default function TemplatesPage() {
     return groups;
   }, [filtered]);
 
-  const flatItems = useMemo(
-    () => Object.values(grouped).flat(),
-    [grouped],
-  );
+  // Devin Review PR #70 ANALYSIS_0005: compute the flat array AND
+  // a `template -> flat index` Map in the same memo. The render
+  // path previously used `flatItems.indexOf(tmpl)` per card,
+  // which is O(n) per call and O(n²) over the whole gallery. At
+  // 14 built-in templates today that's negligible, but the path
+  // is on every render of the page and the count is expected to
+  // grow (user-authored templates, a marketplace). Building the
+  // Map alongside `flatItems` keeps the lookup O(1) without an
+  // extra memo dependency — both derive from `grouped` so they
+  // recompute together. `flatIndex.get(tmpl)` is a reference
+  // lookup (the Map keys are the same `TemplateCardData` objects
+  // that the JSX iterates) so it's safe against duplicate IDs.
+  const { flatItems, flatIndex } = useMemo(() => {
+    const items = Object.values(grouped).flat();
+    const idx = new Map<TemplateCardData, number>();
+    for (let i = 0; i < items.length; i += 1) {
+      idx.set(items[i], i);
+    }
+    return { flatItems: items, flatIndex: idx };
+  }, [grouped]);
 
   // Re-anchor the active index whenever the visible list shrinks or
   // the user types into the search box — without this, an
@@ -333,7 +349,9 @@ export default function TemplatesPage() {
                 {items.map((tmpl) => {
                   // Flat index across all sections — drives the
                   // active-descendant arithmetic and Enter activation.
-                  const flatIdx = flatItems.indexOf(tmpl);
+                  // O(1) Map lookup; see the `flatIndex` doc-comment
+                  // on the memo above for the rationale.
+                  const flatIdx = flatIndex.get(tmpl) ?? -1;
                   const isActive = flatIdx === activeIndex;
                   const Icon = TYPE_ICONS[tmpl.type] ?? FileText;
                   return (

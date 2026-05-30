@@ -155,11 +155,28 @@ export default function SourceHealthDashboard({
       setLoading(false);
       return;
     }
+    // Devin Review PR #70 ANALYSIS_0002: clear the previous error
+    // at the START of a refresh attempt, not just on success.
+    // Otherwise the user simultaneously sees the old error banner,
+    // the dimmed-stale table, AND the "Refreshing…" button text —
+    // a confusing UI surface that suggests the retry has already
+    // failed before the IPC has even resolved. Clearing the error
+    // up-front gives the user clean visual feedback ("we're trying
+    // again") and on failure the banner re-appears with the new
+    // error message. The brief banner flicker on a fast-failing
+    // retry is preferable to the static "stuck on the old error"
+    // appearance during a slow successful retry.
+    //
+    // The stale-table semantics (the regression-test fix from
+    // ANALYSIS_0002 round one) are unchanged: `isStale` is still
+    // derived from `error !== null && report !== null`, so the
+    // dimmed-and-aria-described table only appears after a refresh
+    // has actually failed — not during the in-flight retry.
     setLoading(true);
+    setError(null);
     try {
       const r = await sources.healthReport();
       setReport(r);
-      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
