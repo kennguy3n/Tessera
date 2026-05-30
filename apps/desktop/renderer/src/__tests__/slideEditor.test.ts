@@ -104,6 +104,40 @@ describe("slidesToMarpMarkdown", () => {
     expect(out).toContain("<!-- Slide presenter notes -->");
   });
 
+  it("renders image blocks as Markdown image syntax (not raw data URLs)", () => {
+    // Regression test for BUG_0001 (Devin Review on PR #81):
+    //
+    // Before this fix, image blocks fell through to the catch-all
+    // `else { parts.push(content); }` branch in `renderSlideAsMarp`,
+    // so an image block's data URL was emitted as a bare paragraph in
+    // the Marp source. The PPTX export pipeline (Marp CLI) then
+    // rendered it as visible text instead of an `<img>` element, and
+    // the data URL leaked into the slide body. Rendering the block as
+    // `![alt](url)` lets Marp emit a real image. Brackets in alt text
+    // are stripped so they cannot prematurely close the `[...]` group.
+    const out = slidesToMarpMarkdown([
+      {
+        title: "Cover",
+        blocks: [
+          {
+            type: "image",
+            content: "data:image/png;base64,iVBORw0KGgo=",
+            alt: "Company logo [v2]",
+          },
+          { type: "image", content: "https://example.com/x.png" },
+        ],
+        notes: "",
+      },
+    ]);
+    expect(out).toContain(
+      "![Company logo v2](data:image/png;base64,iVBORw0KGgo=)",
+    );
+    expect(out).toContain("![](https://example.com/x.png)");
+    // The raw data URL must never appear outside the image-syntax
+    // parentheses (i.e. no standalone paragraph dump).
+    expect(out).not.toMatch(/^data:image\//m);
+  });
+
   it("skips empty blocks and slides without titles cleanly", () => {
     const out = slidesToMarpMarkdown([
       { title: "", blocks: [{ type: "text", content: "" }], notes: "" },

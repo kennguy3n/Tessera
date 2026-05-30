@@ -165,6 +165,42 @@ export default function SlideEditor({
     };
   }, [marpMode, marpSource, marpTheme]);
 
+  // Refs for the "+ Add Slide" trigger button and its layout-picker
+  // popover. The click-outside effect below uses these to discriminate
+  // "click inside the menu / on the toggle button" (which it must
+  // ignore, since the toggle and the menu items handle their own
+  // state) from "click outside" (which should dismiss the popover).
+  const layoutMenuRef = useRef<HTMLDivElement | null>(null);
+  const layoutButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  // Close the layout picker when the user clicks anywhere outside it.
+  // We listen on `mousedown` (not `click`) so the dismiss happens
+  // before any focused control inside the popover loses focus on
+  // another input, matching the dismiss model used by other native
+  // popovers (the menu button itself toggles state via its own
+  // onClick, so we deliberately skip events originating from the
+  // button to avoid the "open → outside-handler-closes → button
+  // onClick-reopens" double-toggle).
+  useEffect(() => {
+    if (!layoutMenuOpen) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (layoutMenuRef.current?.contains(target)) return;
+      if (layoutButtonRef.current?.contains(target)) return;
+      setLayoutMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLayoutMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [layoutMenuOpen]);
+
   const debouncedSave = useCallback(
     (updatedSlides: Slide[], marpState?: MarpModeState) => {
       // Serialise eagerly so onDraftChange fires with the same payload
@@ -259,14 +295,35 @@ export default function SlideEditor({
     (index: number) => {
       setSlides((prev) => {
         if (prev.length <= 1) return prev;
+        if (index < 0 || index >= prev.length) return prev;
         const updated = prev.filter((_, i) => i !== index);
-        const newIndex = Math.min(activeIndex, updated.length - 1);
-        setActiveIndex(newIndex);
+        // Adjust the active pointer relative to the deletion point so the
+        // user stays anchored on roughly the same slide:
+        //   • deleting *before* active → all surviving slides shift left
+        //     by one, so the active index must decrement to track the
+        //     same content.
+        //   • deleting *at* active → keep the index but clamp to the new
+        //     last slide so we never point past the end (this leaves the
+        //     focus on what was the next slide; if we deleted the last
+        //     slide, we fall back to the new last slide).
+        //   • deleting *after* active → the active slide is untouched and
+        //     stays at its original index.
+        setActiveIndex((current) => {
+          let next: number;
+          if (index < current) {
+            next = current - 1;
+          } else if (index === current) {
+            next = Math.min(current, updated.length - 1);
+          } else {
+            next = current;
+          }
+          return Math.max(0, Math.min(next, updated.length - 1));
+        });
         debouncedSave(updated);
         return updated;
       });
     },
-    [activeIndex, debouncedSave],
+    [debouncedSave],
   );
 
   const moveSlide = useCallback(
@@ -504,6 +561,7 @@ export default function SlideEditor({
         </div>
         <div className="slide-sidebar-actions">
           <button
+            ref={layoutButtonRef}
             type="button"
             className="btn-sm"
             onClick={() => setLayoutMenuOpen((open) => !open)}
@@ -513,7 +571,7 @@ export default function SlideEditor({
             + Add Slide
           </button>
           {layoutMenuOpen && (
-            <div className="slide-layout-menu" role="menu">
+            <div ref={layoutMenuRef} className="slide-layout-menu" role="menu">
               {LAYOUT_ORDER.map((layout) => (
                 <button
                   key={layout}

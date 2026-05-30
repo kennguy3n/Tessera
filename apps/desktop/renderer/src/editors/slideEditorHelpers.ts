@@ -106,6 +106,17 @@ function renderSlideAsMarp(slide: Slide): string {
       if (lines.length > 0) parts.push(lines.join("\n"));
     } else if (block.type === "diagram") {
       parts.push("```mermaid\n" + content + "\n```");
+    } else if (block.type === "image") {
+      // Render as Markdown image so Marp emits a real <img>.
+      // `content` is the source URL (typically an inlined data:image/…
+      // URL written by `fileToDataUrl`); `alt` falls back to empty when
+      // unset, matching the HTML <img alt=""> convention for decorative
+      // images. We intentionally do not strip the data URL even though
+      // it can be large — the round-trip back through `parseSlideContent`
+      // depends on it being present, and Marp handles base64 data URLs
+      // natively.
+      const alt = (block.alt ?? "").replace(/[[\]]/g, "");
+      parts.push(`![${alt}](${content})`);
     } else {
       parts.push(content);
     }
