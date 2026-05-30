@@ -191,8 +191,32 @@ describe("tokenize — whitespace and prefix", () => {
 });
 
 describe("tokenize — error recovery", () => {
-  it("emits an ERROR token on an illegal character", () => {
+  it("emits an ERROR token on an illegal character, followed by EOF", () => {
+    // The tokenizer halts on the first illegal character but still
+    // appends an EOF sentinel so downstream `peek()`/`expect()` style
+    // helpers don't index past the array (parser short-circuits on
+    // ERROR before the EOF matters, but defensive consumers such as
+    // the formula-bar autocomplete benefit from the invariant).
     const ts = tokenize("1 ` 2");
-    expect(ts[ts.length - 1].type).toBe("ERROR");
+    expect(ts[ts.length - 2].type).toBe("ERROR");
+    expect(ts[ts.length - 1].type).toBe("EOF");
+  });
+
+  it("appends EOF after an unterminated string literal's ERROR", () => {
+    const ts = tokenize('"unterminated');
+    expect(ts[ts.length - 2].type).toBe("ERROR");
+    expect(ts[ts.length - 1].type).toBe("EOF");
+  });
+
+  it("appends EOF after an unterminated sheet-quoted literal's ERROR", () => {
+    const ts = tokenize("'Sheet without close!A1");
+    expect(ts[ts.length - 2].type).toBe("ERROR");
+    expect(ts[ts.length - 1].type).toBe("EOF");
+  });
+
+  it("appends EOF after a row-zero cell-ref's ERROR", () => {
+    const ts = tokenize("A0");
+    expect(ts[ts.length - 2].type).toBe("ERROR");
+    expect(ts[ts.length - 1].type).toBe("EOF");
   });
 });

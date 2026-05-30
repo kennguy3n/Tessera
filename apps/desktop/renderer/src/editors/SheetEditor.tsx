@@ -1,16 +1,12 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
   buildSheetDependencyGraph,
+  evaluateAllSheetFormulas,
   evaluateFormula,
-  evaluateSheetFormula,
   parseCSVLines,
   parseSheetContent,
 } from "./sheetEditorHelpers";
-import {
-  cellKey,
-  isFormulaError,
-  type FormulaValue,
-} from "./formulaEngine";
+import { cellKey, isFormulaError } from "./formulaEngine";
 import type { SheetContent } from "./sheetEditorTypes";
 
 export type { SheetContent } from "./sheetEditorTypes";
@@ -253,23 +249,22 @@ export default function SheetEditor({
   // to keep both representations in lockstep for future
   // incremental-recalc work, and (b) so we can detect references to
   // cells outside `sheet.rows` length and still surface them.
+  //
+  // Phase 16 PR 2 Devin Review fix: instead of looping over formula
+  // cells and calling `evaluateSheetFormula(raw, sheet)` per cell —
+  // which built a fresh resolver each iteration and re-evaluated
+  // shared dependencies N² times — we delegate to
+  // `evaluateAllSheetFormulas`, which threads ONE workbook resolver
+  // (and its per-cell evaluation cache) across the whole grid. A1,
+  // B1, C1 all referencing A2 now evaluate A2 exactly once per
+  // render cycle, regardless of how many dependents touch it.
   const cellCache = useMemo(() => {
-    const cache = new Map<string, FormulaValue>();
     // Building the graph also parses each formula and exposes
     // structural info we'll need when wiring incremental recalc in
     // a later PR. It's cheap (string compare + tokenize) and we
     // already need to walk every cell either way.
     buildSheetDependencyGraph(sheet);
-    for (let ri = 0; ri < sheet.rows.length; ri++) {
-      const row = sheet.rows[ri];
-      if (!row) continue;
-      for (let ci = 0; ci < row.length; ci++) {
-        const raw = row[ci];
-        if (!raw || !raw.startsWith("=")) continue;
-        cache.set(cellKey(ri, ci), evaluateSheetFormula(raw, sheet));
-      }
-    }
-    return cache;
+    return evaluateAllSheetFormulas(sheet);
   }, [sheet]);
 
   const getCellDisplay = (

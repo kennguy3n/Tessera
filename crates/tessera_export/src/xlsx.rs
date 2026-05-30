@@ -37,6 +37,24 @@ struct SheetContent {
     /// named ranges); both cases are treated as "no named ranges".
     #[serde(default, rename = "namedRanges")]
     named_ranges: Vec<NamedRange>,
+    /// Phase 16 Task 13: multi-sheet support. When the artifact contains
+    /// `sheets[]`, each entry becomes its own XLSX worksheet. The legacy
+    /// `columns`/`rows` fields above remain populated for the active tab
+    /// (the TS `fromWorkbook` helper guarantees that invariant) so older
+    /// readers still see a usable spreadsheet.
+    #[serde(default)]
+    sheets: Option<Vec<SheetTab>>,
+    #[serde(default, rename = "activeSheetIndex")]
+    active_sheet_index: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SheetTab {
+    name: String,
+    #[serde(default)]
+    columns: Vec<String>,
+    #[serde(default)]
+    rows: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,19 +87,22 @@ fn parse_sheet(content: &str) -> Option<SheetContent> {
         columns,
         rows,
         named_ranges: Vec::new(),
+        sheets: None,
+        active_sheet_index: None,
     })
 }
 
 /// Export a Tessera Sheet artifact to XLSX bytes.
 pub fn export_xlsx(artifact: &Artifact) -> Vec<u8> {
     let mut workbook = Workbook::new();
-    let sheet_name = sanitize_sheet_name(&artifact.title);
     let parsed = parse_sheet(&artifact.content);
-    // Named ranges must be registered AFTER the worksheet exists (so the
-    // sheet name is resolvable) but BEFORE `save_to_buffer()` flushes the
-    // workbook XML. We extract them now and apply after the worksheet is
-    // populated. Cloning is cheap (`Vec<NamedRange>` is short — typically
-    // <10 entries — and `String`s are owned anyway).
+    let header_fmt = Format::new().set_bold().set_background_color("#EFE7FD");
+
+    // Named ranges must be registered AFTER the worksheets exist (so the
+    // sheet names are resolvable) but BEFORE `save_to_buffer()` flushes
+    // the workbook XML. We extract them now and apply after the
+    // worksheets are populated. Cloning is cheap (`Vec<NamedRange>` is
+    // short — typically <10 entries — and `String`s are owned anyway).
     let named_ranges: Vec<NamedRange> = parsed
         .as_ref()
         .map(|s| {
@@ -94,30 +115,61 @@ pub fn export_xlsx(artifact: &Artifact) -> Vec<u8> {
                 .collect()
         })
         .unwrap_or_default();
-    {
-        let worksheet = workbook
-            .add_worksheet()
-            .set_name(&sheet_name)
-            .expect("worksheet name should be valid after sanitization");
 
-        let header_fmt = Format::new().set_bold().set_background_color("#EFE7FD");
-
-        if let Some(sheet) = parsed {
-            for (col, header) in sheet.columns.iter().enumerate() {
-                worksheet
-                    .write_string_with_format(0, col as u16, header, &header_fmt)
-                    .expect("write header");
-            }
-            for (r, row) in sheet.rows.iter().enumerate() {
-                let row_idx = (r + 1) as u32;
-                for (c, cell) in row.iter().enumerate() {
-                    let col_idx = c as u16;
-                    write_cell(worksheet, row_idx, col_idx, cell);
+    match parsed {
+        // Phase 16 Task 13/15 — multi-sheet artifact. Emit one worksheet
+        // per tab so cross-sheet refs (`Sheet2!A1`) inside formula cells
+        // resolve correctly on open in Excel / Numbers / LibreOffice.
+        Some(sheet) if sheet.sheets.as_ref().is_some_and(|s| !s.is_empty()) => {
+            // De-duplicate sanitized sheet names — Excel rejects a
+            // workbook with two worksheets sharing a name (case-insensitive
+            // in Excel's eyes), and sanitization can introduce collisions
+            // (e.g. two tabs both named "My/Sheet" both become
+            // "My_Sheet"). We append `~2`, `~3`, ... until the name is
+            // unique within the workbook.
+            let tabs = sheet.sheets.unwrap();
+            // Honor the persisted active-tab pointer so the file opens
+            // on the same sheet the user was viewing in Tessera (matches
+            // Excel's save-the-selection-with-the-file semantics). Out-
+            // of-range or missing values fall back to the first tab.
+            let active_idx = sheet
+                .active_sheet_index
+                .filter(|i| *i < tabs.len())
+                .unwrap_or(0);
+            let mut taken: Vec<String> = Vec::with_capacity(tabs.len());
+            for (i, tab) in tabs.iter().enumerate() {
+                let raw = sanitize_sheet_name(&tab.name);
+                let unique = dedupe_sheet_name(&raw, &taken);
+                let worksheet = workbook
+                    .add_worksheet()
+                    .set_name(&unique)
+                    .expect("worksheet name should be valid after sanitization");
+                if i == active_idx {
+                    worksheet.set_active(true);
                 }
+                write_sheet_payload(worksheet, &tab.columns, &tab.rows, &header_fmt);
+                taken.push(unique);
             }
-        } else {
-            // Empty sheet: still emit a header row with the artifact title so
-            // the file opens without a warning.
+        }
+        // Single-sheet artifact — preserve the legacy behaviour of using
+        // the artifact's title as the worksheet name. Existing fixtures
+        // and exports continue to land at byte-identical bytes for this
+        // path so the schema migration is a no-op for the common case.
+        Some(sheet) => {
+            let worksheet = workbook
+                .add_worksheet()
+                .set_name(&sanitize_sheet_name(&artifact.title))
+                .expect("worksheet name should be valid after sanitization");
+            write_sheet_payload(worksheet, &sheet.columns, &sheet.rows, &header_fmt);
+        }
+        None => {
+            // Empty / unparseable artifact: still emit a single
+            // worksheet with a header row carrying the title so the
+            // file opens without a warning.
+            let worksheet = workbook
+                .add_worksheet()
+                .set_name(&sanitize_sheet_name(&artifact.title))
+                .expect("worksheet name should be valid after sanitization");
             worksheet
                 .write_string_with_format(0, 0, &artifact.title, &header_fmt)
                 .expect("write title");
@@ -143,6 +195,60 @@ pub fn export_xlsx(artifact: &Artifact) -> Vec<u8> {
     }
 
     workbook.save_to_buffer().expect("save XLSX to buffer")
+}
+
+/// Populate `worksheet` with a header row and a body. Pulled out of
+/// `export_xlsx` so the multi-sheet and single-sheet branches share
+/// identical row/column emission semantics.
+fn write_sheet_payload(
+    worksheet: &mut rust_xlsxwriter::Worksheet,
+    columns: &[String],
+    rows: &[Vec<String>],
+    header_fmt: &Format,
+) {
+    for (col, header) in columns.iter().enumerate() {
+        worksheet
+            .write_string_with_format(0, col as u16, header, header_fmt)
+            .expect("write header");
+    }
+    for (r, row) in rows.iter().enumerate() {
+        let row_idx = (r + 1) as u32;
+        for (c, cell) in row.iter().enumerate() {
+            let col_idx = c as u16;
+            write_cell(worksheet, row_idx, col_idx, cell);
+        }
+    }
+}
+
+/// Append a numeric suffix until `name` no longer collides
+/// (case-insensitively) with any name in `taken`. Excel rejects a
+/// workbook whose worksheet names differ only in case, so the
+/// comparison must be case-insensitive.
+fn dedupe_sheet_name(name: &str, taken: &[String]) -> String {
+    let lower = name.to_lowercase();
+    if !taken.iter().any(|n| n.to_lowercase() == lower) {
+        return name.to_string();
+    }
+    let mut n = 2u32;
+    loop {
+        let suffix = format!("~{n}");
+        // Re-sanitize the truncated base so we never push the name past
+        // Excel's 31-char limit, then re-check for collisions.
+        let take_chars = 31usize.saturating_sub(suffix.chars().count());
+        let base: String = name.chars().take(take_chars).collect();
+        let candidate = format!("{base}{suffix}");
+        let lower = candidate.to_lowercase();
+        if !taken.iter().any(|t| t.to_lowercase() == lower) {
+            return candidate;
+        }
+        n += 1;
+        if n > 1000 {
+            // Defensive cap — 1000 same-named sheets is absurd and any
+            // such artifact is malformed. Return the candidate anyway
+            // and let rust_xlsxwriter raise the validation error.
+            return candidate;
+        }
+    }
 }
 
 /// Excel defined names must start with a letter or underscore, contain only
@@ -596,5 +702,150 @@ mod tests {
             !xml2.contains("<definedName"),
             "empty namedRanges array produced spurious definedName entries",
         );
+    }
+
+    /// Phase 16 Task 15 — when an artifact carries a `sheets[]` array,
+    /// each tab must become its own worksheet inside the workbook so
+    /// cross-sheet references (e.g. `Sheet2!A1`) inside formula cells
+    /// resolve correctly on open. We also verify that a VLOOKUP across
+    /// sheets is written through `write_formula` so Excel evaluates it
+    /// (rather than being stored as a literal text cell).
+    #[test]
+    fn export_xlsx_emits_one_worksheet_per_tab() {
+        let json = serde_json::json!({
+            "columns": ["Name", "Salary"],
+            "rows": [["Alice", "100"], ["Bob", "200"]],
+            "activeSheetIndex": 1,
+            "sheets": [
+                {
+                    "name": "People",
+                    "columns": ["Name", "Salary"],
+                    "rows": [["Alice", "100"], ["Bob", "200"]],
+                },
+                {
+                    "name": "Lookup",
+                    "columns": ["Who", "Earnings"],
+                    "rows": [
+                        ["Alice", "=VLOOKUP(A2,People!A:B,2,FALSE)"],
+                        ["Bob", "=VLOOKUP(A3,People!A:B,2,FALSE)"],
+                    ],
+                },
+            ],
+        });
+        let mut artifact = Artifact::new("Payroll".to_string(), ArtifactType::Sheet, None);
+        artifact.update_content(json.to_string());
+        let bytes = export_xlsx(&artifact);
+        assert_is_zip(&bytes);
+
+        // Both sheet names appear in workbook.xml (which lists sheets).
+        let xml = read_xlsx_text(&bytes);
+        assert!(
+            xml.contains("name=\"People\""),
+            "missing People worksheet declaration in {xml}",
+        );
+        assert!(
+            xml.contains("name=\"Lookup\""),
+            "missing Lookup worksheet declaration in {xml}",
+        );
+
+        // Two worksheet entries exist on disk inside the zip.
+        let names = list_xlsx_entries(&bytes);
+        let n_sheets = names
+            .iter()
+            .filter(|n| n.starts_with("xl/worksheets/sheet") && n.ends_with(".xml"))
+            .count();
+        assert_eq!(n_sheets, 2, "expected 2 worksheets, got {n_sheets}: {names:?}");
+
+        // The cross-sheet VLOOKUP formula must round-trip as a formula
+        // (the function name reaches an `<f>` element), not as plain text.
+        assert!(
+            xml.contains("VLOOKUP"),
+            "VLOOKUP formula text missing from {xml}",
+        );
+        assert!(
+            xml.contains("<f>VLOOKUP"),
+            "VLOOKUP was written as text, not a formula, in {xml}",
+        );
+    }
+
+    /// `activeSheetIndex` chooses which tab is selected when the file is
+    /// opened in Excel — translated to `set_active(true)` on the matching
+    /// worksheet, which emits `<sheetView tabSelected="1">` for that
+    /// tab. Out-of-range values fall back to the first tab.
+    #[test]
+    fn export_xlsx_honors_active_sheet_index() {
+        let json = serde_json::json!({
+            "columns": ["A"],
+            "rows": [["1"]],
+            "activeSheetIndex": 1,
+            "sheets": [
+                {"name": "First", "columns": ["A"], "rows": [["1"]]},
+                {"name": "Second", "columns": ["A"], "rows": [["2"]]},
+            ],
+        });
+        let mut artifact = Artifact::new("Active".to_string(), ArtifactType::Sheet, None);
+        artifact.update_content(json.to_string());
+        let bytes = export_xlsx(&artifact);
+        let xml = read_xlsx_text(&bytes);
+        // The second worksheet (sheet2.xml) must carry tabSelected="1".
+        assert!(
+            xml.contains("tabSelected=\"1\""),
+            "expected tabSelected=1 to mark the active tab in {xml}",
+        );
+    }
+
+    /// Sanitization collisions across tabs must be deduplicated, since
+    /// Excel rejects two worksheets with the same name. Both tabs below
+    /// sanitize to "My_Sheet" because `/` is illegal; the second must
+    /// land at "My_Sheet~2" (case-insensitive uniqueness within the
+    /// workbook).
+    #[test]
+    fn export_xlsx_deduplicates_colliding_sheet_names() {
+        let json = serde_json::json!({
+            "columns": ["A"],
+            "rows": [["1"]],
+            "sheets": [
+                {"name": "My/Sheet", "columns": ["A"], "rows": [["1"]]},
+                {"name": "My?Sheet", "columns": ["A"], "rows": [["2"]]},
+            ],
+        });
+        let mut artifact = Artifact::new("Dup".to_string(), ArtifactType::Sheet, None);
+        artifact.update_content(json.to_string());
+        let bytes = export_xlsx(&artifact);
+        assert_is_zip(&bytes);
+        let xml = read_xlsx_text(&bytes);
+        assert!(
+            xml.contains("My_Sheet") && xml.contains("My_Sheet~2"),
+            "expected deduplicated sheet names (My_Sheet, My_Sheet~2) in {xml}",
+        );
+    }
+
+    /// dedupe_sheet_name unit test — uniqueness is case-insensitive
+    /// (Excel's rule), and the resulting name still fits within the
+    /// 31-char limit after the `~N` suffix is appended.
+    #[test]
+    fn dedupe_sheet_name_is_case_insensitive_and_respects_length_limit() {
+        assert_eq!(dedupe_sheet_name("Foo", &[]), "Foo");
+        assert_eq!(dedupe_sheet_name("Foo", &["foo".to_string()]), "Foo~2");
+        // 30-char base + "~2" = 32 chars; the base must be trimmed by 1
+        // so the final candidate is exactly 31 chars.
+        let long = "A".repeat(31);
+        let res = dedupe_sheet_name(&long, &[long.clone()]);
+        assert_eq!(res.chars().count(), 31, "result must fit Excel's 31-char limit");
+        assert!(res.ends_with("~2"));
+    }
+
+    /// List entry names inside the XLSX zip so multi-sheet tests can
+    /// assert structural properties (e.g. how many `xl/worksheets/sheetN.xml`
+    /// entries exist).
+    fn list_xlsx_entries(bytes: &[u8]) -> Vec<String> {
+        let cursor = std::io::Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor).expect("XLSX should be a valid zip");
+        let mut names = Vec::with_capacity(archive.len());
+        for i in 0..archive.len() {
+            let entry = archive.by_index(i).expect("entry");
+            names.push(entry.name().to_string());
+        }
+        names
     }
 }
