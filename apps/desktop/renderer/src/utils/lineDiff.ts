@@ -34,6 +34,27 @@
  * preferred over a UI hang or OOM. The compare-view surface in
  * `VersionHistory` displays a banner explaining the degradation so
  * the user knows the diff is approximate.
+ *
+ * Future optimisation paths (deferred — see Devin Review PR #70
+ * ANALYSIS_0004):
+ *
+ *  - Hirschberg's algorithm reduces memory to O(min(m, n)) by
+ *    recursively splitting the problem and keeping only two DP
+ *    rows at a time. Break-even vs. the classical table is roughly
+ *    2-3 K lines on typical hardware because the constant factor
+ *    (recursive allocations, backtracking complexity) outweighs
+ *    the savings on small inputs.
+ *  - Offloading `diffLines` into a Web Worker eliminates the
+ *    main-thread UI hitch entirely — preferable to Hirschberg as
+ *    a first intervention because the existing classical
+ *    implementation is fast enough off the main thread; we just
+ *    don't want it competing with React reconciliation. A worker
+ *    is also the natural home for the future Hirschberg variant.
+ *
+ *  If a real user-facing hitch is reported, the worker offload is
+ *  the lower-risk change; Hirschberg is the longer-term path if
+ *  even the worker thread starts spending too long on the DP
+ *  table.
  */
 
 export type DiffOp = "equal" | "add" | "remove";
