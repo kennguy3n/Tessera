@@ -347,3 +347,195 @@ describe("runConnectorSync — audit emission site", () => {
     expect(bridge.bridgeLogConnectorSynced).toHaveBeenCalledTimes(1);
   });
 });
+
+// =====================================================================
+// Devin Review PR #69 follow-up BUG_0001 regression.
+//
+// Before the fix, `runConnectorSync`'s token-refresh catch block
+// (`getValidAccessToken` failure path, lines 586-604) did not call
+// `recordAllProviderFailures`, even though the doc comment on the
+// runSync catch (line 657-662) explicitly states the design intent:
+// "Even when we degrade to {status: offline} (transient network blip),
+// we still bump retry_count so a chronically offline source eventually
+// flips to permanent." The omission meant a source whose token-refresh
+// chronically failed (e.g. revoked refresh token surfacing as
+// NotConnectedError → `permanent`, or a persistently unreachable OAuth
+// endpoint → `transient`) would NEVER have its retry_count bumped or
+// failed_permanently flipped. The user would click Sync forever with
+// no failure feedback on the source-health badge.
+//
+// The fix mirrors the runSync catch: call `recordAllProviderFailures`
+// at the TOP of the token-refresh catch (before the isNetworkError
+// branch), so BOTH the offline-degrade path AND the hard-throw path
+// record state. These tests pin the symmetry.
+// =====================================================================
+describe("runConnectorSync — token refresh failure-state recording (BUG_0001)", () => {
+  /**
+   * Build a bridge mock that records every
+   * `bridgeRecordSourceSyncFailure(sourceId, json, retry, permanent)`
+   * invocation. Mirrors the shape used by `connectorBackoff.test.ts`
+   * so the field names line up across the suite.
+   */
+  function makeRecordingBridge(opts: {
+    sources: ReadonlyArray<{ id: string; sourceType: string }>;
+  }) {
+    const recorded: Array<{
+      sourceId: string;
+      json: string;
+      retryCount: number;
+      failedPermanently: boolean;
+    }> = [];
+    const bridge = {
+      bridgeListSources: vi.fn(() => opts.sources),
+      bridgeGetSourceSyncFailureState: vi.fn(() => ({
+        lastErrorJson: null,
+        retryCount: 0,
+        failedPermanently: false,
+      })),
+      bridgeRecordSourceSyncFailure: vi.fn(
+        (
+          sourceId: string,
+          json: string,
+          retryCount: number,
+          failedPermanently: boolean,
+        ) => {
+          recorded.push({ sourceId, json, retryCount, failedPermanently });
+        },
+      ),
+      bridgeRecordSourceSyncSuccess: vi.fn(),
+    };
+    return { bridge, recorded };
+  }
+
+  it(
+    "records a `transient` failure on every provider-owned source when " +
+      "the refresh-token exchange dies on a network error — so the " +
+      "source-health badge increments retry_count toward the " +
+      "MAX_RETRIES_BEFORE_PERMANENT clamp",
+    async () => {
+      const { bridge, recorded } = makeRecordingBridge({
+        sources: [
+          { id: "src-1", sourceType: "jira" },
+          { id: "src-2", sourceType: "jira" },
+          // A non-matching source MUST NOT receive the failure stamp —
+          // a token-refresh failure on `jira` does not implicate the
+          // user's Notion or local-folder sources.
+          { id: "src-3", sourceType: "notion" },
+        ],
+      });
+      const { ctx } = makeCtx({ bridge });
+      (ctx.tokenVault as unknown as {
+        getTokens: ReturnType<typeof vi.fn>;
+      }).getTokens.mockReturnValue({
+        accessToken: "AT_OLD",
+        refreshToken: "RT",
+        // Force the expiry check to fail so we take the refresh path.
+        expiresAt: Date.now() - 60_000,
+        scopes: [],
+        clientId: "CLIENT_ID",
+        clientSecret: "CLIENT_SECRET",
+      });
+
+      const originalFetch = globalThis.fetch;
+      const fetchErr = Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(
+          new Error("getaddrinfo ENOTFOUND auth.atlassian.com"),
+          { code: "ENOTFOUND" },
+        ),
+      });
+      globalThis.fetch = vi.fn().mockRejectedValue(fetchErr) as typeof fetch;
+
+      try {
+        const result = await runConnectorSync(ctx, "jira");
+        expect(result).toEqual({
+          added: 0,
+          modified: 0,
+          removed: 0,
+          status: "offline",
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+
+      // Both jira sources got stamped, the notion source did not.
+      expect(recorded).toHaveLength(2);
+      const ids = recorded.map((r) => r.sourceId).sort();
+      expect(ids).toEqual(["src-1", "src-2"]);
+      // Transient → retry_count incremented to 1, failed_permanently
+      // still false. The MAX_RETRIES_BEFORE_PERMANENT clamp in
+      // connectorBackoff will eventually flip it after 8 consecutive
+      // failures — pinned at the policy-constants test in
+      // connectorBackoff.test.ts.
+      for (const r of recorded) {
+        expect(r.retryCount).toBe(1);
+        expect(r.failedPermanently).toBe(false);
+      }
+    },
+  );
+
+  it(
+    "records a `permanent` failure on every provider-owned source when " +
+      "the refresh-token exchange surfaces NotConnectedError (revoked " +
+      "refresh token / missing credentials) — so the source-health UI " +
+      "can immediately surface the re-auth CTA without 8 click-cycles",
+    async () => {
+      const { bridge, recorded } = makeRecordingBridge({
+        sources: [{ id: "src-1", sourceType: "jira" }],
+      });
+      const { ctx } = makeCtx({ bridge });
+      // No tokens stored → `getValidAccessToken` throws
+      // NotConnectedError immediately. `classifyConnectorError` maps
+      // that to `permanent`.
+      (ctx.tokenVault as unknown as {
+        getTokens: ReturnType<typeof vi.fn>;
+      }).getTokens.mockReturnValue(null);
+
+      await expect(runConnectorSync(ctx, "jira")).rejects.toBeInstanceOf(
+        NotConnectedError,
+      );
+
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0].sourceId).toBe("src-1");
+      // Permanent → failed_permanently = true. retryCount is
+      // preserved from prev (=0 here) because applyFailureToState
+      // intentionally does NOT bump it on permanent errors — the
+      // sticky-permanent flag already conveys "this source is
+      // broken; do not retry," so the retry counter would be noise.
+      // The renderer's source-health badge can render the re-auth
+      // CTA on the very first click — no 8-attempt back-off required
+      // to reach the same conclusion.
+      expect(recorded[0].retryCount).toBe(0);
+      expect(recorded[0].failedPermanently).toBe(true);
+    },
+  );
+
+  it(
+    "does NOT swallow the user-facing error when failure-state " +
+      "recording itself throws — recording is observability, not the " +
+      "primary surface",
+    async () => {
+      // Bridge whose `bridgeListSources` throws — recordAllProvider
+      // Failures must catch and log, NOT re-throw, so the original
+      // NotConnectedError still reaches the renderer.
+      const bridge = {
+        bridgeListSources: vi.fn(() => {
+          throw new Error("DB locked");
+        }),
+        bridgeGetSourceSyncFailureState: vi.fn(),
+        bridgeRecordSourceSyncFailure: vi.fn(),
+        bridgeRecordSourceSyncSuccess: vi.fn(),
+      };
+      const { ctx } = makeCtx({ bridge });
+      (ctx.tokenVault as unknown as {
+        getTokens: ReturnType<typeof vi.fn>;
+      }).getTokens.mockReturnValue(null);
+
+      // Caller still gets the NotConnectedError, NOT a "DB locked"
+      // error — recording is best-effort and must not mask the real
+      // user-facing failure.
+      await expect(runConnectorSync(ctx, "jira")).rejects.toBeInstanceOf(
+        NotConnectedError,
+      );
+    },
+  );
+});

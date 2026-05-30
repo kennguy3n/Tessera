@@ -80,7 +80,15 @@ export interface FailedExportEntry {
   id: string;
   artifactId: string;
   format: string;
-  /** Original destination path (may be empty if user picked dialog). */
+  /**
+   * Original destination path. ALWAYS a non-empty absolute path:
+   * `enqueueFailedExport` rejects empty / non-absolute inputs at the
+   * write boundary (Devin Review PR #69 ANALYSIS_0003) and
+   * `listFailedExports` silently drops entries on disk that no
+   * longer match (defense in depth against a tampered queue file).
+   * The retry handler and the safe-export allowlist both rely on
+   * this invariant.
+   */
   filePath: string;
   /** Human-readable failure reason from the original exporter throw. */
   errorMessage: string;
@@ -122,9 +130,14 @@ function filePathFor(): string {
 let writeChain: Promise<unknown> = Promise.resolve();
 
 function serializeWrites<T>(fn: () => Promise<T>): Promise<T> {
-  const next = writeChain.then(() => fn(), () => fn());
-  // Keep the chain alive even if `fn` rejects — without this,
-  // a rejection breaks the chain for every subsequent caller.
+  // Devin Review ANALYSIS-0003: only one callback on `.then()`.
+  // `writeChain` is set to `next.catch(() => undefined)` immediately
+  // after every call, so it can never reach a rejected state — the
+  // two-arg form `then(onFulfilled, onRejected)` would have been
+  // dead code (the rejection branch is unreachable). Keeping the
+  // chain alive across rejections of `fn` itself is still handled
+  // by the `.catch(() => undefined)` below.
+  const next = writeChain.then(() => fn());
   writeChain = next.catch(() => undefined);
   return next;
 }
@@ -174,6 +187,19 @@ export async function listFailedExports(): Promise<FailedExportEntry[]> {
   // UI. We deliberately do NOT throw on per-entry corruption — the
   // worst case ("renderer doesn't see one failed export") is far
   // better than the failure mode ("settings page crashes").
+  //
+  // Defense-in-depth (Devin Review PR #69, store.rs:423 follow-up):
+  // also require `filePath` to be a non-empty ABSOLUTE path. The
+  // queue is only ever written with an already-resolved absolute
+  // destination (see `enqueue` callers), so any entry on disk with
+  // a relative path is the signature of a tampered queue file. We
+  // drop those entries here rather than passing them to the retry
+  // handler, where a relative path would resolve against the
+  // process cwd and could land outside the safe-export allowlist
+  // (the allowlist check exits early on non-absolute inputs). The
+  // retry handler ALSO rejects non-absolute paths as a second
+  // layer of defense; this filter just keeps the renderer-visible
+  // list clean so the user never sees a "broken" retry button.
   const entries = (parsed as { entries: unknown[] }).entries.filter(
     (e): e is FailedExportEntry => {
       if (e === null || typeof e !== "object") return false;
@@ -183,6 +209,8 @@ export async function listFailedExports(): Promise<FailedExportEntry[]> {
         typeof candidate.artifactId === "string" &&
         typeof candidate.format === "string" &&
         typeof candidate.filePath === "string" &&
+        candidate.filePath.length > 0 &&
+        path.isAbsolute(candidate.filePath) &&
         typeof candidate.errorMessage === "string" &&
         typeof candidate.failedAt === "number" &&
         typeof candidate.retryCount === "number"
@@ -239,6 +267,39 @@ export async function enqueueFailedExport(args: {
   filePath: string;
   errorMessage: string;
 }): Promise<FailedExportEntry> {
+  // Devin Review PR #69 ANALYSIS_0003: validate the inputs at the
+  // write boundary, not just at the read boundary. The on-disk
+  // queue file is the source of truth for what the renderer
+  // surfaces as "retry this", and `listFailedExports` already
+  // filters out entries whose `filePath` is empty / non-absolute
+  // because the retry handler (and the safe-export allowlist that
+  // gates it) demand an absolute path. Without a matching
+  // write-side guard, a future caller that passes a relative path
+  // (e.g. `~/exports/foo.pdf` not pre-resolved, or a CWD-relative
+  // path from a future CLI mode) would succeed at enqueue time and
+  // then silently disappear from the renderer on the next refresh
+  // — a phantom write that's almost impossible to debug because
+  // there's no error anywhere on the trace.
+  //
+  // Failing fast at the enqueue boundary surfaces caller bugs
+  // immediately, mirrors the validation the renderer relies on,
+  // and keeps the invariant "every on-disk entry is renderable"
+  // symmetric on both sides of the storage layer. The current
+  // production caller (`artifacts:exportToFile` in
+  // `ipc/artifacts.ts`) already resolves to an absolute path via
+  // `resolvedPath` before calling, so this guard is a regression
+  // catcher rather than a behavioural change for any reachable
+  // code path today.
+  if (typeof args.filePath !== "string" || args.filePath.length === 0) {
+    throw new Error(
+      "enqueueFailedExport: filePath must be a non-empty string",
+    );
+  }
+  if (!path.isAbsolute(args.filePath)) {
+    throw new Error(
+      `enqueueFailedExport: filePath must be absolute, got ${JSON.stringify(args.filePath)}`,
+    );
+  }
   return serializeWrites(async () => {
     const existing = await listFailedExports();
     const entry: FailedExportEntry = {

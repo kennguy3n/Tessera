@@ -83,9 +83,11 @@ describe("diffLines", () => {
 
   it("falls back to a single replace block past the line cap", () => {
     // Build inputs just over the cap. We don't import MAX_LINES;
-    // 60K lines is comfortably over the 50K guard documented in the
-    // source. Build via repeat to avoid timing out from the actual
-    // DP table allocation (the bypass should keep this snappy).
+    // 60K lines is comfortably over the 5K guard documented in the
+    // source (lowered from 50K in commit f125ef1 to prevent a
+    // ~9.3 GB DP-table OOM that V8 cannot satisfy). Built via
+    // Array.from so the test stays snappy — the bypass branch
+    // skips the actual DP allocation entirely.
     const cap = 60_000;
     const a = Array.from({ length: cap }, (_, i) => `a${i}`).join("\n");
     const b = Array.from({ length: cap }, (_, i) => `b${i}`).join("\n");

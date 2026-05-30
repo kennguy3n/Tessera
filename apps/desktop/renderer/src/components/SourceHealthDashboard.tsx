@@ -144,32 +144,106 @@ function HealthBadge({ health }: { health: SourceHealthEntry["health"] }) {
 export default function SourceHealthDashboard({
   api,
 }: SourceHealthDashboardProps = {}) {
-  const sources = api ?? window.tessera?.sources;
   const [report, setReport] = useState<SourceHealthReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    // Devin Review PR #70 follow-up ANALYSIS_0002 (BUG): resolve the
+    // bridge reference INSIDE the refresh callback rather than at
+    // component-render time. Previously the resolution lived above
+    // (`const sources = api ?? window.tessera?.sources`) and was
+    // captured by this `useCallback`'s closure via `[sources]`. If
+    // `window.tessera` was undefined on initial mount (transient
+    // renderer<->preload initialisation window, or a test that
+    // hadn't yet stubbed the bridge), `sources` was undefined, the
+    // first `refresh()` hit the error banner, and the bridge later
+    // becoming defined did NOT cause a re-render of this component
+    // — so the `refresh` closure stayed stuck on `sources=undefined`
+    // forever. Clicking the Refresh button just called the same
+    // stale closure and re-surfaced "Bridge not available" against
+    // a bridge that was actually live by then.
+    //
+    // Re-reading `window.tessera?.sources` on each invocation makes
+    // the Refresh button structurally self-healing: the next click
+    // after the bridge becomes available picks it up and loads
+    // normally. `api` (the test-override prop) is still captured by
+    // the closure because it's a prop that triggers a re-render
+    // when it changes, so test overrides work as before. The
+    // dependency array therefore only needs `[api]` — `window`
+    // identity never changes for the lifetime of the renderer.
+    const sources = api ?? window.tessera?.sources;
     if (!sources) {
+      // Devin Review PR #70 follow-up ANALYSIS_0004: the bridge can
+      // legitimately be unavailable (transient renderer<->main
+      // initialisation window, or `SettingsPage` mounted from a test
+      // that didn't override `api`). Previously the early-return left
+      // `report=null, loading=false, error=null`, so the card body
+      // rendered completely empty — header + Refresh button with no
+      // status text, no error message, and no empty-state placeholder.
+      // The user would see a blank Source Health card and have no
+      // idea whether it was loading, broken, or simply had no data.
+      //
+      // Route the unavailable-bridge case through the existing error
+      // banner so the user gets a clear "Bridge not available …"
+      // explanation, the table is replaced by the banner, and the
+      // Refresh button stays clickable so the user can retry once the
+      // bridge initialises. We deliberately do NOT throw or set
+      // `loading=true` — that would either crash the React tree or
+      // keep the button disabled forever during a slow bridge boot.
       setReport(null);
+      setError(
+        "Bridge not available — Source Health cannot load until the renderer reconnects to the main process.",
+      );
       setLoading(false);
       return;
     }
+    // Devin Review PR #70 ANALYSIS_0002: clear the previous error
+    // at the START of a refresh attempt, not just on success.
+    // Otherwise the user simultaneously sees the old error banner,
+    // the dimmed-stale table, AND the "Refreshing…" button text —
+    // a confusing UI surface that suggests the retry has already
+    // failed before the IPC has even resolved. Clearing the error
+    // up-front gives the user clean visual feedback ("we're trying
+    // again") and on failure the banner re-appears with the new
+    // error message. The brief banner flicker on a fast-failing
+    // retry is preferable to the static "stuck on the old error"
+    // appearance during a slow successful retry.
+    //
+    // The stale-table semantics (the regression-test fix from
+    // ANALYSIS_0002 round one) are unchanged: `isStale` is still
+    // derived from `error !== null && report !== null`, so the
+    // dimmed-and-aria-described table only appears after a refresh
+    // has actually failed — not during the in-flight retry.
     setLoading(true);
+    setError(null);
     try {
       const r = await sources.healthReport();
       setReport(r);
-      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [sources]);
+  }, [api]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Devin Review PR #70 ANALYSIS_0002: when `error` is set AND a
+  // prior `report` exists, the dashboard previously rendered both
+  // the error banner AND the table side-by-side with no indication
+  // that the table data was stale. The architecturally correct fix
+  // is to (1) make the staleness explicit in the error banner copy
+  // (referencing `report.generatedAt`), (2) show a "Last refreshed"
+  // caption whenever a report is loaded so the user always knows
+  // the freshness of what they're looking at, (3) dim the table
+  // visually + wire `aria-describedby` to the error banner so
+  // screen readers also announce "this data is stale". The
+  // graceful-degradation choice (show stale > show blank) is
+  // preserved — we just no longer hide it from the user.
+  const isStale = error !== null && report !== null;
 
   return (
     <Card data-testid="source-health-dashboard">
@@ -192,8 +266,22 @@ export default function SourceHealthDashboard({
         </Button>
       </div>
 
+      {report && (
+        <div
+          data-testid="source-health-last-refreshed"
+          style={{
+            fontSize: "var(--font-size-xs)",
+            color: "var(--color-text-secondary, #6b7280)",
+            marginBottom: "var(--spacing-sm)",
+          }}
+        >
+          Last refreshed: {formatRelativeTime(report.generatedAt)}
+        </div>
+      )}
+
       {error && (
         <div
+          id="source-health-error"
           role="alert"
           style={{
             color: "#b91c1c",
@@ -201,7 +289,9 @@ export default function SourceHealthDashboard({
             marginBottom: "var(--spacing-sm)",
           }}
         >
-          Failed to load source health: {error}
+          {report
+            ? `Failed to refresh source health: ${error}. Showing data from ${formatRelativeTime(report.generatedAt)}.`
+            : `Failed to load source health: ${error}`}
         </div>
       )}
 
@@ -223,8 +313,20 @@ export default function SourceHealthDashboard({
       {report && report.sources.length > 0 && (
         <div
           role="table"
-          aria-label="Source health summary"
-          style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}
+          aria-label={
+            isStale
+              ? "Source health summary (showing stale data, refresh failed)"
+              : "Source health summary"
+          }
+          aria-describedby={isStale ? "source-health-error" : undefined}
+          data-stale={isStale ? "true" : undefined}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.5rem",
+            opacity: isStale ? 0.6 : 1,
+            transition: "opacity 0.15s ease",
+          }}
         >
           <div
             role="row"

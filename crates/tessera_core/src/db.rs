@@ -322,6 +322,19 @@ pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConne
         // Phase 15 Task 7: WAL pragmas go after the open + FK pragma
         // and before the sqlite_master probe so the probe runs under
         // the same journal mode as production reads/writes.
+        //
+        // The `let _ =` discard is LOAD-BEARING (Devin Review PR #69
+        // ANALYSIS_0008): on an encrypted DB opened without a key,
+        // the WAL pragma itself reads a page from the file to
+        // discover the existing journal mode. That page is
+        // encrypted, so the pragma fails with `NotADatabase` /
+        // `FileIsNotADatabase`. If we propagated that error here,
+        // it would replace the clearer diagnostic produced by the
+        // sqlite_master probe below ("the file may be
+        // SQLCipher-encrypted; restore `db.key` from backup, or
+        // delete the database to start fresh"). Suppressing the
+        // WAL error lets the probe run and produce the better
+        // message. Do not remove the `let _ =`.
         let _ = apply_wal_pragmas(&conn);
         // Probe the file matches the no-key expectation: either
         // plaintext SQLite or empty. An encrypted DB opened without

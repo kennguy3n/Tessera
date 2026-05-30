@@ -49,6 +49,38 @@ export default function VersionHistory({
     if (isOpen) loadVersions();
   }, [isOpen, loadVersions]);
 
+  // Devin Review PR #70 follow-up ANALYSIS_0003 (BUG):
+  // every piece of UI state in this panel is scoped to the *current*
+  // artifact — the compare-selection set holds version numbers from
+  // the previously-viewed artifact's history, the preview pane holds
+  // that artifact's content, and the view mode reflects whatever the
+  // user was doing there. When the parent swaps the `artifactId`
+  // prop (tabbed-editing flow: user closes the panel for art-A,
+  // opens it for art-B without unmounting), the `loadVersions`
+  // useCallback recreates and re-fires via the effect above — but
+  // the four per-artifact state slots below remain at their art-A
+  // values. If art-A and art-B both happen to have versions numbered
+  // (1, 2, 3) the bleed manifests as a visible cross-artifact diff
+  // ("Diff: v1 → v3" of art-A's content against art-B's checkboxes).
+  // Even when the version numbers don't collide, the preview pane
+  // briefly shows art-A's content for the previously-selected
+  // version while the version list is being reloaded.
+  //
+  // The fix is to bundle every per-artifact piece of state into a
+  // single reset that fires when `artifactId` changes. We do this in
+  // a dedicated effect (separate from the `loadVersions` effect)
+  // because the dependency arrays are different: load happens on
+  // `isOpen || artifactId` change, reset happens on `artifactId`
+  // change alone. Keeping them separate avoids the "reset fires when
+  // the user just opens/closes the same artifact's panel" foot-gun.
+  useEffect(() => {
+    setPreviewVersion(null);
+    setPreviewContent("");
+    setCompareSet(new Set());
+    setViewMode("preview");
+    setRestoring(false);
+  }, [artifactId]);
+
   const handlePreview = (version: ArtifactVersionInfo) => {
     setViewMode("preview");
     setPreviewVersion(version.version);
@@ -61,12 +93,20 @@ export default function VersionHistory({
       if (next.has(version.version)) {
         next.delete(version.version);
       } else {
-        // Cap at 2 selections — discard the oldest selection if the
-        // user picks a third version so the UI never lands in a
-        // "you must deselect before continuing" dead-end.
+        // Cap at 2 selections. When the user picks a third version we
+        // discard the LOWEST-numbered version currently in the set
+        // (NOT necessarily the first-clicked one — `Set` insertion
+        // order would give us that, but the policy we want is "always
+        // keep the two most recent versions the user has expressed
+        // interest in" and version number is a reliable recency proxy
+        // here because versions are append-only monotonically-
+        // incrementing integers). This keeps the UI out of the
+        // "you must deselect before continuing" dead-end while
+        // gravitating toward the most-recent-pair compare the user
+        // most likely wants.
         if (next.size >= 2) {
-          const oldest = Array.from(next).sort((a, b) => a - b)[0];
-          if (oldest !== undefined) next.delete(oldest);
+          const lowestNumbered = Array.from(next).sort((a, b) => a - b)[0];
+          if (lowestNumbered !== undefined) next.delete(lowestNumbered);
         }
         next.add(version.version);
       }

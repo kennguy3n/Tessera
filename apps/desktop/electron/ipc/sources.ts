@@ -7,6 +7,7 @@
  * the heavy indexing pipeline lives in `crates/tessera_sources` and is
  * reached through the N-API bridge.
  */
+import * as fs from "node:fs/promises";
 import { getBridge } from "../appState";
 import {
   assertId,
@@ -218,7 +219,15 @@ export function registerSourcesHandlers(): void {
     if (!bridge) {
       throw new Error("Native bridge not available");
     }
-    const fs = await import("node:fs/promises");
+    // `fs` (from `node:fs/promises`) is statically imported at the
+    // top of the file. Previously this handler used a dynamic
+    // `await import(...)` to keep the import off the cold-path,
+    // but Node already caches dynamic-import resolution and the
+    // remaining microtask yield was per-call dead weight — every
+    // other handler in this file imports its deps statically, so
+    // hoisting `fs` to the top normalises the style with no
+    // observable behaviour change. (Devin Review PR #70
+    // ANALYSIS_0007.)
     const sources = bridge.bridgeListSources();
     const items = await Promise.all(
       sources.map(async (src) => {

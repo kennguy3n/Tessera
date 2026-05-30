@@ -2,8 +2,8 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
-  useState,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -48,31 +48,79 @@ const AUTO_DISMISS_MS: Record<ToastType, number | null> = {
  */
 const MAX_VISIBLE_TOASTS = 3;
 
-/**
- * Single state atom holding BOTH the visible (DOM-rendered, capped at
- * `MAX_VISIBLE_TOASTS`) toasts AND the FIFO overflow queue. Collapsing
- * the two arrays into one object lets every state transition
- * (add/dismiss/promote) happen in a single functional `setQueueState`
- * call whose updater can read `s.visible.length` and `s.queued` from a
- * consistent snapshot — eliminating the prior pattern of calling
- * `setQueued` from inside `setVisible`'s updater, which is undocumented
- * in React and could break in future versions even though it works
- * correctly under React 18's automatic batching.
- *
- * The two arrays remain conceptually distinct (queued items don't own
- * timers, only visible ones do); the single-atom representation is
- * purely about making the updates atomic.
- */
-type ToastQueueState = {
-  readonly visible: ReadonlyArray<ToastShape>;
-  readonly queued: ReadonlyArray<ToastShape>;
-};
-const EMPTY_QUEUE_STATE: ToastQueueState = { visible: [], queued: [] };
+// Reducer state combines `visible` (the rendered slice, capped at
+// MAX_VISIBLE_TOASTS) and `queued` (FIFO overflow waiting for a slot
+// to open) into a single record. Both `add` and `dismiss` produce
+// the next state in a SINGLE pure transition — including promoting
+// the head of `queued` into `visible` when a slot opens — so we
+// never need to nest one state setter inside another's updater.
+//
+// Devin Review PR #70 BUG_0001: the previous implementation called
+// `setQueued` from inside `setVisible`'s updater. Under React 19
+// `<StrictMode>` (enabled in `main.tsx`), state updaters are
+// double-invoked in development to surface impurities. The nested
+// `setQueued((q) => [...q, toast])` ran twice — and the second
+// invocation received the already-updated queue, appending the same
+// toast a second time. Symptom: in dev mode, a toast queued while
+// three were visible appeared TWICE when a slot freed up. A single
+// reducer transition is the architecturally correct fix because the
+// reducer body is pure-by-construction (no side effects, returns the
+// next state) and StrictMode's double-invoke is safe by design.
+interface ToastState {
+  visible: ToastShape[];
+  queued: ToastShape[];
+}
+
+type ToastAction =
+  | { type: "add"; toast: ToastShape }
+  | { type: "dismiss"; id: number };
+
+const INITIAL_TOAST_STATE: ToastState = { visible: [], queued: [] };
+
+function toastReducer(state: ToastState, action: ToastAction): ToastState {
+  switch (action.type) {
+    case "add": {
+      if (state.visible.length < MAX_VISIBLE_TOASTS) {
+        return {
+          visible: [...state.visible, action.toast],
+          queued: state.queued,
+        };
+      }
+      return {
+        visible: state.visible,
+        queued: [...state.queued, action.toast],
+      };
+    }
+    case "dismiss": {
+      // Remove the toast from whichever bucket it lives in. If it was
+      // in `visible`, promote the head of `queued` (if any) into the
+      // freed slot. Both operations are part of the SAME transition
+      // so the FIFO promotion is deterministic and atomic — no
+      // separate "watch visible.length, then setQueued" effect can
+      // race against a second dismiss landing in the same frame.
+      const wasVisible = state.visible.some((t) => t.id === action.id);
+      const nextVisible = state.visible.filter((t) => t.id !== action.id);
+      // Also strip from queued in the (rare) case where a caller
+      // dismisses an id that's only in the queue — keeps the
+      // invariant "dismissed id appears in neither bucket" simple.
+      let nextQueued = state.queued.filter((t) => t.id !== action.id);
+      if (
+        wasVisible &&
+        nextVisible.length < MAX_VISIBLE_TOASTS &&
+        nextQueued.length > 0
+      ) {
+        const [promoted, ...rest] = nextQueued;
+        nextVisible.push(promoted);
+        nextQueued = rest;
+      }
+      return { visible: nextVisible, queued: nextQueued };
+    }
+  }
+}
 
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const [queueState, setQueueState] =
-    useState<ToastQueueState>(EMPTY_QUEUE_STATE);
-  const { visible, queued } = queueState;
+  const [state, dispatch] = useReducer(toastReducer, INITIAL_TOAST_STATE);
+  const { visible } = state;
   // Track timers per visible toast so manual dismiss cancels the
   // pending auto-dismiss and unmounting doesn't leak a setTimeout.
   // Errors don't have a timer (they persist), so the map may be
@@ -95,15 +143,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       // never accumulate parallel timers for the same toast.
       clearTimer(toast.id);
       const timer = setTimeout(() => {
-        // Defer to dismissToast below by toggling the visible state
-        // inline — we can't reference `dismissToast` here because of
-        // declaration order. The inline removal mirrors what the
-        // public callback does for the visible array.
         timersRef.current.delete(toast.id);
-        setQueueState((s) => ({
-          ...s,
-          visible: s.visible.filter((t) => t.id !== toast.id),
-        }));
+        dispatch({ type: "dismiss", id: toast.id });
       }, ms);
       timersRef.current.set(toast.id, timer);
     },
@@ -113,14 +154,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const dismissToast = useCallback(
     (id: number) => {
       clearTimer(id);
-      // Single atomic update — drop the toast from BOTH arrays in
-      // case it briefly straddled the visible/queued boundary on a
-      // double-dismiss. One functional updater means React sees one
-      // consistent transition.
-      setQueueState((s) => ({
-        visible: s.visible.filter((t) => t.id !== id),
-        queued: s.queued.filter((t) => t.id !== id),
-      }));
+      dispatch({ type: "dismiss", id });
     },
     [clearTimer],
   );
@@ -128,44 +162,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const addToast = useCallback((message: string, type: ToastType = "info") => {
     toastCounter += 1;
     const id = toastCounter;
-    const toast: ToastShape = { id, message, type };
-    // Decide visible-vs-queued from the SAME snapshot we are
-    // returning, in ONE functional updater. No nested setters.
-    setQueueState((s) => {
-      if (s.visible.length < MAX_VISIBLE_TOASTS) {
-        return { ...s, visible: [...s.visible, toast] };
-      }
-      return { ...s, queued: [...s.queued, toast] };
-    });
+    dispatch({ type: "add", toast: { id, message, type } });
   }, []);
-
-  // Whenever `visible` shrinks below the cap AND `queued` has
-  // pending entries, promote the head of the queue into `visible`.
-  // This effect is the single place the queue drains, so the
-  // FIFO order is deterministic and we never race against
-  // multiple dismisses landing in the same frame.
-  useEffect(() => {
-    if (visible.length < MAX_VISIBLE_TOASTS && queued.length > 0) {
-      // Single atomic update — `s.queued` is the freshest snapshot in
-      // case another add/dismiss interleaved before this effect ran.
-      setQueueState((s) => {
-        if (
-          s.visible.length >= MAX_VISIBLE_TOASTS ||
-          s.queued.length === 0
-        ) {
-          return s;
-        }
-        const promoteCount = Math.min(
-          MAX_VISIBLE_TOASTS - s.visible.length,
-          s.queued.length,
-        );
-        return {
-          visible: [...s.visible, ...s.queued.slice(0, promoteCount)],
-          queued: s.queued.slice(promoteCount),
-        };
-      });
-    }
-  }, [visible.length, queued]);
 
   // Start (or restart) auto-dismiss timers when a toast becomes
   // visible. Tracked in a ref so we know which toasts already have

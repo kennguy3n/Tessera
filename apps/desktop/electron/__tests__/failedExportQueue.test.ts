@@ -61,6 +61,42 @@ describe("failedExportQueue: fresh install", () => {
   });
 });
 
+describe("failedExportQueue: write-side path validation", () => {
+  // Devin Review PR #69 ANALYSIS_0003: regression coverage for the
+  // write-time absolute-path guard in `enqueueFailedExport`. Before
+  // the guard, a relative path would land on disk and then silently
+  // disappear from the renderer on the next `listFailedExports`
+  // because the read side already required absoluteness. The
+  // failure mode (phantom write, no error) was effectively
+  // unloggable; failing fast at the enqueue boundary surfaces the
+  // caller bug.
+  it("rejects a relative filePath at enqueue time", async () => {
+    await expect(
+      enqueueFailedExport({
+        artifactId: "art1",
+        format: "pdf",
+        filePath: "exports/foo.pdf",
+        errorMessage: "x",
+      }),
+    ).rejects.toThrow(/filePath must be absolute/);
+    // And the on-disk file must not have been created — if the
+    // throw happened after the write the guard would be useless.
+    await expect(fs.access(queuePath)).rejects.toThrow();
+  });
+
+  it("rejects an empty filePath at enqueue time", async () => {
+    await expect(
+      enqueueFailedExport({
+        artifactId: "art1",
+        format: "pdf",
+        filePath: "",
+        errorMessage: "x",
+      }),
+    ).rejects.toThrow(/non-empty string/);
+    await expect(fs.access(queuePath)).rejects.toThrow();
+  });
+});
+
 describe("failedExportQueue: round-trip", () => {
   it("persists an entry through enqueue / list", async () => {
     const entry = await enqueueFailedExport({

@@ -184,4 +184,166 @@ describe("SourceHealthDashboard", () => {
       expect(screen.getByRole("alert")).toHaveTextContent(/ipc boom/);
     });
   });
+
+  // Devin Review PR #70 ANALYSIS_0002 regression: when a successful
+  // initial load is followed by a failed refresh, the table is kept
+  // (graceful degradation) but the user must be told the data is
+  // stale via (1) updated banner copy citing the freshness, (2)
+  // `aria-describedby` linking the table to the banner, (3) a
+  // `data-stale` attribute the styles use to dim the table.
+  it("marks the table as stale and updates the banner when a refresh fails after a successful load", async () => {
+    const initialReport = makeReport([
+      {
+        sourceId: "src-1",
+        path: "/docs/initial",
+        health: "healthy",
+        chunkCount: 10,
+      },
+    ]);
+    const healthReport = vi
+      .fn()
+      .mockResolvedValueOnce(initialReport)
+      .mockRejectedValueOnce(new Error("refresh boom"));
+    const api = { ...makeApi(initialReport), healthReport } as unknown as SourceApi;
+    render(<SourceHealthDashboard api={api} />);
+    // Wait for the initial successful load to render the row.
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("source-health-row-src-1"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    // The table is fresh on first paint — not yet marked stale.
+    const tableFresh = screen.getByRole("table");
+    expect(tableFresh.getAttribute("data-stale")).toBeNull();
+    // Trigger the refresh which will reject.
+    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    // After the failed refresh: row still there, error banner cites
+    // stale data, table flagged data-stale + aria-describedby.
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /Failed to refresh source health: refresh boom\. Showing data from/i,
+      );
+    });
+    expect(
+      screen.getByTestId("source-health-row-src-1"),
+    ).toBeInTheDocument();
+    const tableStale = screen.getByRole("table");
+    expect(tableStale.getAttribute("data-stale")).toBe("true");
+    expect(tableStale.getAttribute("aria-describedby")).toBe(
+      "source-health-error",
+    );
+  });
+
+  // Devin Review PR #70 follow-up ANALYSIS_0004 regression: when the
+  // bridge is unavailable (transient renderer<->main init window, or
+  // `SettingsPage` mounted from a test that didn't override `api`),
+  // the card body used to render completely empty — header + Refresh
+  // button with no status text. The fix surfaces a "Bridge not
+  // available" error in the standard error banner so the user gets a
+  // clear explanation, and the Refresh button stays clickable so the
+  // user can retry once the bridge initialises.
+  it("surfaces a clear error banner when the bridge is unavailable instead of rendering an empty card body", async () => {
+    // Save and clear `window.tessera` to simulate the bridge being
+    // unavailable. We restore it in `finally` so other tests in the
+    // file are not affected.
+    const originalTessera = (window as unknown as { tessera?: unknown })
+      .tessera;
+    (window as unknown as { tessera?: unknown }).tessera = undefined;
+    try {
+      // Mount the component WITHOUT an `api` prop so it falls back to
+      // `window.tessera?.sources`, which we have just made undefined.
+      render(<SourceHealthDashboard />);
+      // The banner must mention "Bridge not available" so a screen
+      // reader / sighted user is told the failure mode explicitly,
+      // not a blank card body.
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          /Bridge not available/i,
+        );
+      });
+      // The Refresh button must NOT be disabled (otherwise the user
+      // could not retry once the bridge initialises). `loading=false`
+      // after the early-return path means the button label says
+      // "Refresh", not "Refreshing…".
+      const refreshBtn = screen.getByRole("button", { name: /refresh/i });
+      expect(refreshBtn).not.toBeDisabled();
+      expect(refreshBtn).toHaveTextContent(/Refresh$/);
+      // No table / no rows should render — the report is null.
+      expect(screen.queryByRole("table")).toBeNull();
+    } finally {
+      (window as unknown as { tessera?: unknown }).tessera = originalTessera;
+    }
+  });
+
+  /**
+   * Devin Review PR #70 follow-up ANALYSIS_0002 (BUG).
+   *
+   * Scenario: `window.tessera` is undefined when the component first
+   * mounts (renderer<->preload init race), but becomes defined a
+   * moment later. The Refresh button must self-heal — clicking it
+   * after the bridge is live must load the report normally.
+   *
+   * Before the fix, the component captured
+   * `sources = api ?? window.tessera?.sources` at render time and
+   * the `refresh` callback closed over it via `[sources]`. With
+   * `window.tessera` undefined on mount and the component not
+   * re-rendering (no state change, no prop change), the closure
+   * stayed stuck on `sources=undefined` forever. Clicking Refresh
+   * just called the stale closure and surfaced "Bridge not
+   * available" again, even though the bridge was now live.
+   *
+   * After the fix, `sources` is resolved INSIDE the `refresh`
+   * callback on every invocation, so the next click picks up the
+   * newly-available `window.tessera.sources`.
+   */
+  it("Refresh button self-heals when window.tessera becomes available after mount", async () => {
+    const originalTessera = (window as unknown as { tessera?: unknown })
+      .tessera;
+    (window as unknown as { tessera?: unknown }).tessera = undefined;
+    try {
+      // Mount with the bridge unavailable.
+      render(<SourceHealthDashboard />);
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          /Bridge not available/i,
+        );
+      });
+      // Bridge becomes available — install a real mock on the same
+      // global the component reads from.
+      const report = makeReport([
+        {
+          sourceId: "src-late",
+          path: "/docs/late-bridge-source",
+          health: "healthy",
+          chunkCount: 7,
+        },
+      ]);
+      const lateApi = makeApi(report);
+      (
+        window as unknown as { tessera: { sources: SourceApi } }
+      ).tessera = { sources: lateApi };
+      // User clicks Refresh — fix makes the next call pick up the
+      // newly-defined `window.tessera.sources` instead of using a
+      // stale `undefined` closure.
+      const refreshBtn = screen.getByRole("button", { name: /refresh/i });
+      fireEvent.click(refreshBtn);
+      // The "Bridge not available" banner must clear and a real
+      // table row must appear. Without the fix, the alert stays
+      // mounted because the stale closure hits the error branch
+      // again.
+      await waitFor(() => {
+        expect(screen.queryByRole("alert")).toBeNull();
+      });
+      expect(
+        screen.getByText("/docs/late-bridge-source"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("source-health-row-src-late"),
+      ).toBeInTheDocument();
+      expect(lateApi.healthReport).toHaveBeenCalledTimes(1);
+    } finally {
+      (window as unknown as { tessera?: unknown }).tessera = originalTessera;
+    }
+  });
 });

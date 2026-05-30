@@ -110,4 +110,52 @@ describe("OnboardingWizard", () => {
       expect(onDismiss).toHaveBeenCalledTimes(1);
     });
   });
+
+  // Devin Review PR #70 BUG_0001: the previous `persisting`
+  // useState guard captured a stale `false` value across React
+  // closures, so a second dismiss path entering before the IPC
+  // resolved would slip through and fire `settings.update` +
+  // `onDismiss` twice. We pin the fix by holding `settings.update`
+  // open with a manually-controlled promise, firing TWO dismiss
+  // paths (Finish click + ESC press) back-to-back, then resolving
+  // the IPC and asserting each side-effect ran exactly once.
+  it("re-entrancy: rapid double dismiss only persists + calls onDismiss once", async () => {
+    const updateSpy = window.tessera.settings.update as ReturnType<
+      typeof vi.fn
+    >;
+    // TS narrows a `let` variable assigned only inside a callback
+    // to `never`, so we capture the resolve handle into a tuple
+    // and read it back after the Promise constructor returns. This
+    // is purely a typing wrinkle — the runtime path is unchanged.
+    const pending: { resolve: (() => void) | null } = { resolve: null };
+    updateSpy.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          pending.resolve = () => resolve();
+        }),
+    );
+    const { onDismiss } = renderWizard();
+    // Walk to step 3 so we can use Finish (a typical re-entrancy
+    // window — long IPC + multiple dismiss surfaces still on screen).
+    fireEvent.click(screen.getByRole("button", { name: "Add a folder" }));
+    await waitFor(() => screen.getByText("Pick a template"));
+    fireEvent.click(screen.getByRole("button", { name: "Browse templates" }));
+    await waitFor(() => screen.getByText("Your workspace is ready"));
+    // First dismiss path: Finish. This call enters `dismiss`,
+    // flips the ref guard, and `await`s the (still pending) IPC.
+    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+    // Second dismiss path: Close button (which routes through the
+    // same handleClose -> dismiss path as Escape). With a stale
+    // useState guard this would fire a second concurrent
+    // settings.update; with the ref guard it short-circuits.
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    // Release the in-flight IPC. The first dismiss path completes;
+    // the second was rejected by the ref guard at entry.
+    expect(pending.resolve).not.toBeNull();
+    pending.resolve?.();
+    await waitFor(() => {
+      expect(onDismiss).toHaveBeenCalledTimes(1);
+    });
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+  });
 });

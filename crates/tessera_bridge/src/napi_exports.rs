@@ -8,6 +8,7 @@ use tessera_artifacts::automations::AutomationStore;
 use tessera_artifacts::manager::ArtifactManager;
 use tessera_artifacts::tasks::TaskStore;
 use tessera_audit::logger::AuditLogger;
+use tessera_audit::store::AuditStore;
 use tessera_citations::tracker::CitationTracker;
 use tessera_core::open_shared_with_key;
 use tessera_sources::manager::SourceManager;
@@ -2863,11 +2864,32 @@ pub fn bridge_audit_rotate(
     archive_dir: String,
 ) -> napi::Result<Option<AuditRotationResultView>> {
     let s = state()?;
-    let logger = s
-        .audit_logger
-        .lock()
-        .map_err(|e| napi::Error::from_reason(format!("audit logger poisoned: {e}")))?;
-    let outcome = logger
+    // Devin Review ANALYSIS-0001: do NOT go through the outer
+    // `Mutex<AuditLogger>` for the rotation path. Inside
+    // `AuditStore::rotate`, the code intentionally releases the
+    // `SharedConnection` mutex between Phase 1 (SELECT) and Phase
+    // 2 (gzip compression) so concurrent `log_*` IPC calls can
+    // continue appending audit events while a large rotation
+    // compresses tens of thousands of rows. If we acquired
+    // `s.audit_logger` here, that outer mutex would block every
+    // other audit IPC for the full duration of the gzip — hundreds
+    // of milliseconds for a >50k-row rotation — negating the
+    // internal release entirely.
+    //
+    // Instead, we construct a transient `AuditStore` on top of the
+    // already-open `shared_conn`. `with_shared_conn` runs
+    // `init_schema` which is idempotent (all `CREATE TABLE / INDEX
+    // / TRIGGER IF NOT EXISTS`), so the transient construction is
+    // cheap and safe.
+    //
+    // Concurrent rotations across the IPC entry point and any
+    // future scheduled-rotation entry point are still serialized
+    // by the process-wide `AUDIT_ROTATION_SERIALIZER` inside
+    // `AuditStore::rotate` (ANALYSIS-0002), so dropping the outer
+    // mutex does not introduce a duplicate-archive race.
+    let store = AuditStore::with_shared_conn(s.shared_conn.clone())
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let outcome = store
         .rotate(std::path::Path::new(&archive_dir))
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     Ok(outcome.map(|o| AuditRotationResultView {

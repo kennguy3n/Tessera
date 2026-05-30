@@ -1711,7 +1711,13 @@ export interface FailedExportEntry {
   id: string;
   artifactId: string;
   format: string;
-  /** Original destination path (may be empty if user picked dialog). */
+  /**
+   * Original destination path. Always a non-empty absolute path —
+   * the main-process `enqueueFailedExport` rejects empty or
+   * relative inputs at the write boundary, and `listFailedExports`
+   * filters tampered entries on read. Renderer code can rely on
+   * `filePath` being directly usable as a retry destination.
+   */
   filePath: string;
   /** Human-readable failure reason. */
   errorMessage: string;
