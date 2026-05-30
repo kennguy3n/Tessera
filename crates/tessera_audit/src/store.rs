@@ -296,85 +296,62 @@ impl AuditStore {
         let safe_ts = now.to_rfc3339().replace(':', "-");
         let archive_path = archive_dir.join(format!("audit-archive-{safe_ts}.jsonl.gz"));
 
-        let conn = self.conn.lock().expect("connection mutex poisoned");
+        // Phase 1: select the oldest rows. We acquire the connection
+        // mutex ONLY for the read so the gzip compression in Phase 2
+        // (which can take hundreds of ms on large rotations) does not
+        // block concurrent audit appends from IPC handlers, source
+        // indexing, or artifact saves. The DELETE in Phase 3
+        // re-acquires the mutex briefly. Concurrent appends between
+        // Phase 1 and Phase 3 are intentionally safe: the DELETE
+        // targets a captured `ids` list, so any rows inserted in the
+        // gap are simply not part of this rotation cycle and will be
+        // picked up by the next one.
+        let rows: Vec<(String, String, String, String)> = {
+            let conn = self.conn.lock().expect("connection mutex poisoned");
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, event_type, timestamp, details
+                     FROM audit_events
+                     ORDER BY timestamp ASC, id ASC
+                     LIMIT ?1",
+                )
+                .map_err(|e| Error::Database(e.to_string()))?;
+            let collected: Vec<(String, String, String, String)> = stmt
+                .query_map(params![target_rotate as i64], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })
+                .map_err(|e| Error::Database(e.to_string()))?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| Error::Database(e.to_string()))?;
+            collected
+            // `conn` and `stmt` are dropped here, releasing the mutex.
+        };
 
-        // Two-phase rotation. Phase 1: read + write the archive
-        // file to disk. Phase 2: delete the rotated rows from the
-        // live table in a transaction. We do NOT write the archive
-        // file inside the SQL transaction because gzip write can
-        // be slow (compression on tens of thousands of rows) and
-        // we want to release the SQLite write lock as fast as
-        // possible. The delete is a separate, fast statement.
-
-        // Phase 1: select the oldest rows.
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, event_type, timestamp, details
-                 FROM audit_events
-                 ORDER BY timestamp ASC, id ASC
-                 LIMIT ?1",
-            )
-            .map_err(|e| Error::Database(e.to_string()))?;
-        let rows: Vec<(String, String, String, String)> = stmt
-            .query_map(params![target_rotate as i64], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                ))
-            })
-            .map_err(|e| Error::Database(e.to_string()))?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| Error::Database(e.to_string()))?;
-        drop(stmt);
-
-        // Phase 1b: write the gzipped JSONL archive.
-        // Open the file, write each row as `{"id":..., "event_type":..., "timestamp":..., "details":...}\n`,
-        // then flush + close before touching the DB. If any of
-        // these steps fails, the live table is untouched.
-        let file = std::fs::File::create(&archive_path).map_err(|e| {
-            Error::Database(format!(
-                "rotate: failed to create {}: {e}",
-                archive_path.display()
-            ))
-        })?;
-        let mut encoder = GzEncoder::new(file, Compression::default());
         let ids: Vec<String> = rows.iter().map(|(id, _, _, _)| id.clone()).collect();
-        for (id, type_s, ts_s, details) in &rows {
-            // Reconstruct the JSONL line by hand from the four
-            // columns rather than re-deriving an AuditEvent and
-            // serialising — that round-trip would silently drop
-            // rows whose `event_type` does not parse into the
-            // current build's enum (the same forward-compat
-            // posture as `parse_event_row`). For an archive we
-            // want bit-exact preservation of every row regardless
-            // of whether the running build recognises it.
-            let line = serde_json::json!({
-                "id": id,
-                "event_type": serde_json::from_str::<serde_json::Value>(type_s)
-                    .unwrap_or_else(|_| serde_json::Value::String(type_s.clone())),
-                "timestamp": ts_s,
-                "details": details,
-            });
-            let serialised = serde_json::to_string(&line)
-                .map_err(|e| Error::Database(format!("rotate: serialise row: {e}")))?;
-            encoder
-                .write_all(serialised.as_bytes())
-                .map_err(|e| Error::Database(format!("rotate: gz write: {e}")))?;
-            encoder
-                .write_all(b"\n")
-                .map_err(|e| Error::Database(format!("rotate: gz write newline: {e}")))?;
-        }
-        // Flush + close the gz file. `finish()` consumes the
-        // encoder, flushes the buffer, and writes the gzip
-        // trailer; the inner `File` is then dropped to close it.
-        // If finish() succeeds we know the file is durable.
-        encoder
-            .finish()
-            .map_err(|e| Error::Database(format!("rotate: gz finish: {e}")))?;
 
-        // Phase 2: DELETE the rotated rows from the live table.
+        // Phase 2: write the gzipped JSONL archive WITHOUT holding
+        // the SQLite connection mutex. Compression on tens of
+        // thousands of rows takes hundreds of ms; releasing the
+        // mutex here lets the rest of the app continue to append
+        // audit events, run searches, and save artifacts.
+        //
+        // If any I/O step fails, the live table is untouched and we
+        // best-effort delete any partial archive file we created so
+        // a future retry doesn't leave a stale-but-incomplete archive
+        // on disk.
+        let archive_result = write_rotation_archive(&archive_path, &rows);
+        if let Err(e) = archive_result {
+            // Best-effort cleanup of any partial file.
+            let _ = std::fs::remove_file(&archive_path);
+            return Err(e);
+        }
+
+        // Phase 3: DELETE the rotated rows from the live table.
         // The `audit_no_delete` trigger protects against ad-hoc
         // deletion, so we drop it for the duration of the
         // rotation transaction and recreate it before commit.
@@ -382,48 +359,22 @@ impl AuditStore {
         // inside one BEGIN/COMMIT pair so a crash mid-rotation
         // either leaves the trigger intact (no-op) or has fully
         // recreated it (rotation committed).
-        conn.execute_batch("BEGIN IMMEDIATE;")
-            .map_err(|e| Error::Database(e.to_string()))?;
-        let rollback_on_err = |err: rusqlite::Error| -> Error {
-            // Best-effort rollback. If it fails, propagate the
-            // original error — the next connection acquisition
-            // will roll back the partial transaction.
-            let _ = conn.execute_batch("ROLLBACK;");
-            Error::Database(err.to_string())
+        //
+        // If this phase fails — DB locked, IO error, etc. — we
+        // best-effort delete the archive file we just wrote so the
+        // next `rotate()` call doesn't see two archive files for the
+        // same logical rotation window (the documented contract is
+        // "an audit row must never disappear without a durable copy
+        // on disk", and we want the converse too: a durable copy
+        // never persists without the corresponding DELETE).
+        let delete_result = {
+            let conn = self.conn.lock().expect("connection mutex poisoned");
+            execute_rotation_delete(&conn, &ids)
         };
-        conn.execute("DROP TRIGGER IF EXISTS audit_no_delete", [])
-            .map_err(rollback_on_err)?;
-        // Batch the DELETEs by id — sqlite can't bind a list, so
-        // use chunked IN-clause statements. Stay under SQLite's
-        // default 999-parameter limit per statement (the default
-        // SQLITE_MAX_VARIABLE_NUMBER on modern builds is 32766
-        // but 999 is the historical safe minimum and matches the
-        // chunk size we use elsewhere).
-        const CHUNK: usize = 500;
-        for chunk in ids.chunks(CHUNK) {
-            let placeholders = std::iter::repeat("?")
-                .take(chunk.len())
-                .collect::<Vec<_>>()
-                .join(",");
-            let sql = format!("DELETE FROM audit_events WHERE id IN ({placeholders})");
-            let params_rs: Vec<&dyn rusqlite::ToSql> =
-                chunk.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
-            conn.execute(&sql, params_rs.as_slice())
-                .map_err(rollback_on_err)?;
+        if let Err(e) = delete_result {
+            let _ = std::fs::remove_file(&archive_path);
+            return Err(e);
         }
-        // Recreate the trigger so future ad-hoc DELETEs (outside
-        // the rotation API) are still rejected.
-        conn.execute(
-            "CREATE TRIGGER audit_no_delete
-             BEFORE DELETE ON audit_events
-             BEGIN
-                 SELECT RAISE(ABORT, 'audit_events is append-only: DELETE not allowed');
-             END",
-            [],
-        )
-        .map_err(rollback_on_err)?;
-        conn.execute_batch("COMMIT;")
-            .map_err(|e| Error::Database(e.to_string()))?;
 
         Ok(Some(RotationOutcome {
             archive_path,
@@ -468,6 +419,110 @@ impl AuditStore {
         paths.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
         Ok(paths)
     }
+}
+
+/// Write the gzipped JSONL archive of `rows` to `archive_path`.
+/// Pulled out as a free function so [`AuditStore::rotate`] can
+/// invoke it WITHOUT holding the SQLite connection mutex — the
+/// compression of tens of thousands of rows can take hundreds of
+/// milliseconds, and we do not want to block concurrent audit
+/// appends or artifact saves for that long.
+///
+/// On success the file is flushed, the gzip trailer is written, and
+/// the underlying `File` is closed before this returns.
+///
+/// On any I/O error the caller is responsible for cleaning up any
+/// partial file at `archive_path`.
+fn write_rotation_archive(
+    archive_path: &Path,
+    rows: &[(String, String, String, String)],
+) -> Result<()> {
+    let file = std::fs::File::create(archive_path).map_err(|e| {
+        Error::Database(format!(
+            "rotate: failed to create {}: {e}",
+            archive_path.display()
+        ))
+    })?;
+    let mut encoder = GzEncoder::new(file, Compression::default());
+    for (id, type_s, ts_s, details) in rows {
+        // Reconstruct the JSONL line by hand from the four columns
+        // rather than re-deriving an AuditEvent and serialising —
+        // that round-trip would silently drop rows whose
+        // `event_type` does not parse into the current build's enum
+        // (the same forward-compat posture as `parse_event_row`).
+        // For an archive we want bit-exact preservation of every row
+        // regardless of whether the running build recognises it.
+        let line = serde_json::json!({
+            "id": id,
+            "event_type": serde_json::from_str::<serde_json::Value>(type_s)
+                .unwrap_or_else(|_| serde_json::Value::String(type_s.clone())),
+            "timestamp": ts_s,
+            "details": details,
+        });
+        let serialised = serde_json::to_string(&line)
+            .map_err(|e| Error::Database(format!("rotate: serialise row: {e}")))?;
+        encoder
+            .write_all(serialised.as_bytes())
+            .map_err(|e| Error::Database(format!("rotate: gz write: {e}")))?;
+        encoder
+            .write_all(b"\n")
+            .map_err(|e| Error::Database(format!("rotate: gz write newline: {e}")))?;
+    }
+    encoder
+        .finish()
+        .map_err(|e| Error::Database(format!("rotate: gz finish: {e}")))?;
+    Ok(())
+}
+
+/// Run the trigger-drop / chunked-DELETE / trigger-recreate
+/// transaction for [`AuditStore::rotate`] against an already-locked
+/// connection.
+fn execute_rotation_delete(
+    conn: &rusqlite::Connection,
+    ids: &[String],
+) -> Result<()> {
+    conn.execute_batch("BEGIN IMMEDIATE;")
+        .map_err(|e| Error::Database(e.to_string()))?;
+    let rollback_on_err = |err: rusqlite::Error| -> Error {
+        // Best-effort rollback. If it fails, propagate the original
+        // error — the next connection acquisition will roll back
+        // the partial transaction.
+        let _ = conn.execute_batch("ROLLBACK;");
+        Error::Database(err.to_string())
+    };
+    conn.execute("DROP TRIGGER IF EXISTS audit_no_delete", [])
+        .map_err(rollback_on_err)?;
+    // Batch the DELETEs by id — sqlite can't bind a list, so use
+    // chunked IN-clause statements. Stay under SQLite's default
+    // 999-parameter limit per statement (the default
+    // SQLITE_MAX_VARIABLE_NUMBER on modern builds is 32766 but 999
+    // is the historical safe minimum).
+    const CHUNK: usize = 500;
+    for chunk in ids.chunks(CHUNK) {
+        let placeholders = std::iter::repeat("?")
+            .take(chunk.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("DELETE FROM audit_events WHERE id IN ({placeholders})");
+        let params_rs: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        conn.execute(&sql, params_rs.as_slice())
+            .map_err(rollback_on_err)?;
+    }
+    // Recreate the trigger so future ad-hoc DELETEs (outside the
+    // rotation API) are still rejected.
+    conn.execute(
+        "CREATE TRIGGER audit_no_delete
+         BEFORE DELETE ON audit_events
+         BEGIN
+             SELECT RAISE(ABORT, 'audit_events is append-only: DELETE not allowed');
+         END",
+        [],
+    )
+    .map_err(rollback_on_err)?;
+    conn.execute_batch("COMMIT;")
+        .map_err(|e| Error::Database(e.to_string()))?;
+    Ok(())
 }
 
 /// Outcome of one successful [`AuditStore::rotate`] call.

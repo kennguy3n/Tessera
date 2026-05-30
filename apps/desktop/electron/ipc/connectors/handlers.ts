@@ -150,37 +150,88 @@ const PROVIDER_TO_SOURCE_TYPE: Record<ProviderId, string> = {
 /**
  * Phase 15 Task 11: classify a sync error as `transient` or
  * `permanent`. The decision matrix mirrors
- * `tessera_connectors::ConnectorError::failure_kind`:
+ * `tessera_connectors::ConnectorError::failure_kind` row-for-row
+ * so a finding flagged Permanent on the Rust side is ALSO flagged
+ * Permanent here in the same sync cycle — without this alignment a
+ * provider 404 or 403 would silently spend the full
+ * `MAX_RETRIES_BEFORE_PERMANENT` window before flipping the sticky
+ * `failedPermanently` bit, leaving the user staring at a fruitless
+ * retry loop for ~8 minutes.
  *
  *  - `NotConnectedError` (the user is not authenticated, OR their
- *    refresh token was revoked) → `permanent`. The retry loop
- *    would just hit the same auth wall on every attempt; the
- *    user has to re-authorise before any further progress.
+ *    refresh token was revoked → mirrors Rust `AuthenticationFailed`
+ *    / `TokenRevoked`) → `permanent`. The retry loop would just hit
+ *    the same auth wall on every attempt; the user has to
+ *    re-authorise before any further progress.
+ *  - HTTP `401`, `403`, `404`, `410` surfaced through the per-connector
+ *    `throw new Error("<provider> ... returned HTTP <status>")`
+ *    convention (see `notion.ts`, `onedrive.ts`, `drive.ts`) →
+ *    `permanent`. These mirror Rust's `AuthenticationFailed` (401),
+ *    `PermissionDenied` (403), `FileNotFound` (404 / 410) variants.
+ *    Pattern-matching on the message text is necessary because the
+ *    per-connector code path throws plain `Error` rather than a
+ *    structured `HttpError` subclass; we are intentionally avoiding
+ *    a larger refactor to introduce one. A future refactor could
+ *    swap this for a duck-type check (`(err as { httpStatus?: number })`)
+ *    without changing the classification matrix.
  *  - `isNetworkError(err) === true` (EAI_AGAIN / ENOTFOUND /
- *    ETIMEDOUT / ECONNRESET / etc.) → `transient`. These are
- *    classic recoverable network blips.
- *  - `RateLimitError` → `transient`. The provider explicitly
- *    asks us to back off; the next attempt after the backoff
- *    interval will likely succeed.
+ *    ETIMEDOUT / ECONNRESET / etc., or any `NetworkError` instance)
+ *    → `transient`. These are classic recoverable network blips
+ *    that mirror Rust's `NetworkError` and `Io` variants.
+ *  - `RateLimitError` (name match, mirrors Rust `RateLimited`) →
+ *    `transient`. The provider explicitly asks us to back off; the
+ *    next attempt after the backoff interval will likely succeed.
  *  - Anything else → `transient`. We deliberately bias toward
- *    `transient` here so a one-off provider 5xx doesn't flip
- *    the sticky `failedPermanently` bit; the
- *    `MAX_RETRIES_BEFORE_PERMANENT` clamp in `connectorBackoff`
- *    will still flip it to permanent after 8 consecutive
- *    failures, which is enough signal that the source is
- *    actually broken (not just intermittently flaky).
+ *    `transient` here so a one-off provider 5xx doesn't flip the
+ *    sticky `failedPermanently` bit; the
+ *    `MAX_RETRIES_BEFORE_PERMANENT` clamp in `connectorBackoff` will
+ *    still flip it to permanent after 8 consecutive failures, which
+ *    is enough signal that the source is actually broken (not just
+ *    intermittently flaky).
  */
-function classifyConnectorError(err: unknown): FailureKind {
+export function classifyConnectorError(err: unknown): FailureKind {
   if (err == null) return "transient";
   if (typeof err === "object") {
     if ((err as { isNotConnectedError?: boolean }).isNotConnectedError === true) {
       return "permanent";
     }
+    // `isNetworkError` flag is the explicit transient marker —
+    // mirrors `Io`/`NetworkError` on the Rust side.
+    if ((err as { isNetworkError?: boolean }).isNetworkError === true) {
+      return "transient";
+    }
+    // RateLimitError is identified by name (the only thrown type
+    // with that name in this codebase). Transient on both sides.
+    if ((err as { name?: string }).name === "RateLimitError") {
+      return "transient";
+    }
   }
-  // RateLimitError is `transient` (matches Rust `RateLimited`).
-  // We don't import the class here to avoid a circular dep —
-  // the `name` check is sufficient because RateLimitError is the
-  // only thrown type with that name in this codebase.
+  // Pattern-match plain `Error` messages thrown by per-connector
+  // HTTP wrappers. The shape is stable across connectors:
+  //   `<Provider> ... returned HTTP <status> — <details>`
+  // We extract <status> via regex rather than substring matching
+  // to avoid mis-classifying a 5xx body that happens to mention
+  // "401" or "403" in its prose.
+  const message =
+    typeof err === "object" && err !== null
+      ? String((err as Error).message ?? "")
+      : String(err);
+  const httpMatch = message.match(/returned HTTP (\d{3})\b/i);
+  if (httpMatch) {
+    const status = Number(httpMatch[1]);
+    // 401 / 403 / 404 / 410 are the canonical permanent statuses:
+    //   401 → AuthenticationFailed (refresh path is exhausted)
+    //   403 → PermissionDenied (scope dropped / item moved)
+    //   404 / 410 → FileNotFound (resource really is gone)
+    // Other 4xx (400, 422, etc.) are likely caller bugs that the
+    // user can't fix and shouldn't loop on either; we still return
+    // permanent for 400 family ≥ 400 < 500 EXCEPT 408 (timeout) and
+    // 429 (rate-limited) which are explicitly transient.
+    if (status === 408 || status === 429) return "transient";
+    if (status >= 400 && status < 500) return "permanent";
+    // 5xx is provider-side; mirror Rust `ProviderError` (transient).
+    return "transient";
+  }
   return "transient";
 }
 

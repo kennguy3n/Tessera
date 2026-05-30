@@ -135,6 +135,17 @@ const mockApi = {
     batchExport: vi
       .fn()
       .mockResolvedValue({ total: 0, succeeded: 0, failed: 0, results: [] }),
+    // Phase 15 Task 8 (artifact auto-save recovery): default no
+    // recovery journal present and discard-as-noop. Tests that
+    // exercise the recovery flow override these per-case.
+    checkRecovery: vi.fn().mockResolvedValue(null),
+    discardRecovery: vi.fn().mockResolvedValue(undefined),
+    // Phase 15 Task 10 (failed-export queue): default empty queue
+    // and retry/discard as noops. Tests exercising the queue UI
+    // override these per-case with realistic outcomes.
+    failedExports: vi.fn().mockResolvedValue([]),
+    retryExport: vi.fn().mockResolvedValue(undefined),
+    discardFailedExport: vi.fn().mockResolvedValue(undefined),
     exportToFile: vi.fn().mockResolvedValue(undefined),
     exportMarp: vi.fn().mockResolvedValue(undefined),
     exportTypst: vi.fn().mockResolvedValue(undefined),
@@ -555,6 +566,11 @@ const mockApi = {
   },
   audit: {
     listRecent: vi.fn().mockResolvedValue([]),
+    // Phase 15 Task 12 (audit log rotation): default empty
+    // archive list + rotate-as-noop. The Settings page's audit
+    // archive section overrides these per-case.
+    getArchives: vi.fn().mockResolvedValue([]),
+    rotate: vi.fn().mockResolvedValue(null),
   },
 };
 

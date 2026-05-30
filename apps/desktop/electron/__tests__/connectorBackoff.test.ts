@@ -43,6 +43,7 @@ import {
 } from "../connectorBackoff";
 
 import type { TesseraBridge } from "../appState";
+import { classifyConnectorError } from "../ipc/connectors/handlers";
 
 function bridgeMock(initial?: {
   lastErrorJson?: string | null;
@@ -317,6 +318,58 @@ describe("saveSyncFailureState", () => {
     const { bridge, recorded } = bridgeMock();
     saveSyncFailureState(bridge, "src-1", emptySyncFailureState());
     expect(recorded.failure[0]?.json).toBe("{}");
+  });
+});
+
+/**
+ * Phase 15 PR 2 (Devin Review follow-up): pin the classifier
+ * matrix against the Rust `failure_kind` matrix on
+ * `tessera_connectors::ConnectorError`. Each row here corresponds
+ * to a row in the doc-comment on `classifyConnectorError`.
+ */
+describe("classifyConnectorError (mirrors tessera_connectors failure_kind)", () => {
+  it("classifies NotConnectedError as permanent (AuthenticationFailed / TokenRevoked)", () => {
+    const err = Object.assign(new Error("not connected"), {
+      isNotConnectedError: true as const,
+    });
+    expect(classifyConnectorError(err)).toBe("permanent");
+  });
+  it("classifies isNetworkError flag as transient (NetworkError / Io)", () => {
+    const err = Object.assign(new Error("EAI_AGAIN"), {
+      isNetworkError: true as const,
+    });
+    expect(classifyConnectorError(err)).toBe("transient");
+  });
+  it("classifies RateLimitError (by name) as transient (RateLimited)", () => {
+    const err = Object.assign(new Error("429"), { name: "RateLimitError" });
+    expect(classifyConnectorError(err)).toBe("transient");
+  });
+  it.each([
+    ["401", "permanent"],
+    ["403", "permanent"],
+    ["404", "permanent"],
+    ["410", "permanent"],
+    ["422", "permanent"],
+    ["408", "transient"],
+    ["429", "transient"],
+    ["500", "transient"],
+    ["502", "transient"],
+    ["503", "transient"],
+  ])(
+    "classifies plain Error('returned HTTP %s ...') as %s",
+    (status, expected) => {
+      const err = new Error(
+        `Notion blocks API returned HTTP ${status} — body...`,
+      );
+      expect(classifyConnectorError(err)).toBe(expected);
+    },
+  );
+  it("falls back to transient when no signal matches", () => {
+    expect(classifyConnectorError(new Error("some unknown failure"))).toBe(
+      "transient",
+    );
+    expect(classifyConnectorError(null)).toBe("transient");
+    expect(classifyConnectorError("string error")).toBe("transient");
   });
 });
 

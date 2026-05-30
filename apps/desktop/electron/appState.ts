@@ -936,6 +936,38 @@ let visionSidecar: ModelSidecar | null = null;
 // idle-unload reflects bursty user interaction (generate / edit /
 // re-generate) typical of the image-gen workflow.
 let diffusionSidecar: DiffusionSidecar | null = null;
+// Phase 15 Task 1 (Devin Review follow-up): track the lifecycle of
+// the lazy `./diffusionSidecar` module import so callers can
+// distinguish three states that all looked identical when we only
+// stored `diffusionSidecar: DiffusionSidecar | null`:
+//
+//   "unloaded"  — `initAppState()` has not been called yet (or the
+//                 bridge failed to come up). The next `initAppState`
+//                 call may transition this to "loading".
+//   "loading"   — the dynamic `import("./diffusionSidecar")` is in
+//                 flight. The IPC handler should report "Image
+//                 generation is still warming up; retry in a moment"
+//                 rather than the permanent-failure message.
+//   "loaded"    — the constructor ran and `diffusionSidecar` is
+//                 non-null. The handler should call `start()` to
+//                 boot the underlying sd-server process.
+//   "failed"    — the dynamic import threw. The sidecar will not
+//                 self-recover this session; the user must restart
+//                 the app to get image generation back. The handler
+//                 surfaces that explicit instruction so users are
+//                 not left wondering whether to keep retrying.
+//
+// We expose this through `getDiffusionSidecarState()` so the IPC
+// layer can render the right error. The raw nullable accessor stays
+// for the shutdown path which only cares "is there a process to
+// stop?".
+type DiffusionSidecarState =
+  | "unloaded"
+  | "loading"
+  | "loaded"
+  | "failed";
+let diffusionSidecarState: DiffusionSidecarState = "unloaded";
+let diffusionSidecarLoadError: Error | null = null;
 
 function resolveNativeAddon(): NativeBridge | null {
   // The compiled main bundle now lives at `dist-electron/electron/main.js`
@@ -1078,6 +1110,8 @@ export async function initAppState(): Promise<boolean> {
   // propagate: a failed diffusion-sidecar load only impacts the
   // image-generation feature, not the rest of the app, so it must
   // not block boot completion.
+  diffusionSidecarState = "loading";
+  diffusionSidecarLoadError = null;
   import("./diffusionSidecar")
     .then(({ DiffusionSidecar, resolveDiffusionBinary }) => {
       diffusionSidecar = new DiffusionSidecar({
@@ -1090,14 +1124,23 @@ export async function initAppState(): Promise<boolean> {
         port: 8386,
         label: "diffusion",
       });
+      diffusionSidecarState = "loaded";
       console.log(
         "[Tessera] Diffusion sidecar configured (port 8386, lazy-loaded)",
       );
     })
     .catch((err: unknown) => {
+      // Mark the slot as permanently failed for this session. The
+      // IPC handler reads this state and surfaces an actionable
+      // "restart the app" message rather than the generic "not
+      // initialised" message that would otherwise leave the user
+      // wondering whether to keep retrying.
+      diffusionSidecarState = "failed";
+      diffusionSidecarLoadError =
+        err instanceof Error ? err : new Error(String(err));
       console.warn(
         "[Tessera] Diffusion sidecar lazy-load failed; image generation will be unavailable until next launch:",
-        err instanceof Error ? err.message : String(err),
+        diffusionSidecarLoadError.message,
       );
     });
 
@@ -1201,6 +1244,26 @@ export function getVisionSidecar(): ModelSidecar | null {
  */
 export function getDiffusionSidecar(): DiffusionSidecar | null {
   return diffusionSidecar;
+}
+
+/**
+ * Phase 15 Task 1 (Devin Review follow-up): expose the lazy-load
+ * lifecycle of the diffusion sidecar module so IPC handlers can
+ * report the right error to the renderer.
+ *
+ * Returns `{ state, error }` where `state` is one of
+ * `unloaded | loading | loaded | failed` and `error` is the
+ * exception that caused a `failed` transition (so the handler can
+ * surface its `.message` without exposing the stack to the UI).
+ *
+ * Tests injecting fixture state can use `__resetDiffusionSidecarStateForTests`
+ * (test-only, lives at the bottom of this file).
+ */
+export function getDiffusionSidecarState(): {
+  state: DiffusionSidecarState;
+  error: Error | null;
+} {
+  return { state: diffusionSidecarState, error: diffusionSidecarLoadError };
 }
 
 /**
