@@ -106,12 +106,38 @@ export function FindReplacePanel({ editor, onClose }: FindReplacePanelProps) {
     recompute();
   }, [recompute]);
 
-  // Re-run when the doc changes mid-search so the count stays accurate.
+  // Re-run when the doc changes mid-search so the count, the active
+  // match index, and the decoration plugin's highlight descriptor all
+  // stay aligned. Previously this handler only refreshed the React
+  // `matches` mirror, which could leave the status line showing
+  // "5 of 3" until the next navigate (e.g. a paragraph delete shrinks
+  // the match set below `activeIndex`) and could leave the
+  // `find-match-active` class painted on the wrong decoration (or no
+  // decoration at all if `activeIndex` was now out of bounds). Devin
+  // Review PR #80 round 2 (ANALYSIS_…_0003) flagged the cosmetic gap.
+  // We now clamp `activeIndex` and re-dispatch `applyFindHighlight`
+  // so the decoration plugin reseats its descriptor against the new
+  // doc — the plugin's own `else if (tr.docChanged && next.highlight)`
+  // branch already rebuilds decorations on doc change, but with the
+  // OLD `activeIndex`; re-pushing the meta makes the active-vs-passive
+  // class assignment authoritative even when the active match moved.
   useEffect(() => {
     if (!query) return;
     const handler = () => {
       const snapshot = buildDocText(editor.state.doc);
-      setMatches(findAllMatches(snapshot.text, query, opts));
+      const next = findAllMatches(snapshot.text, query, opts);
+      setMatches(next);
+      const nextActive =
+        next.length === 0
+          ? -1
+          : Math.max(0, Math.min(activeIndexRef.current, next.length - 1));
+      if (nextActive !== activeIndexRef.current) {
+        setActiveIndex(nextActive);
+      }
+      // Republish the highlight descriptor so the decoration's
+      // `find-match-active` class follows the clamped index, not the
+      // stale one carried on the plugin's previous descriptor.
+      editor.chain().applyFindHighlight(query, opts, nextActive).run();
     };
     editor.on("update", handler);
     return () => {

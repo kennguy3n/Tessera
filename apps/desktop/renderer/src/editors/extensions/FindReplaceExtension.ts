@@ -131,9 +131,21 @@ export function matchToDocRange(
   const fromPos = snapshot.positions[start];
   const toEndIndex = Math.min(end - 1, snapshot.positions.length - 1);
   const toPos = snapshot.positions[toEndIndex] + 1;
-  // Cross-block detection: if any synthesized `\n` lives strictly
-  // inside [start, end), the match spans a block boundary.
-  for (let i = start; i < toEndIndex; i += 1) {
+  // Cross-block detection: if any synthesized `\n` lives anywhere in
+  // the half-open plain-text range `[start, end)` — i.e. any index
+  // from `start` up to and INCLUDING `toEndIndex` (which is `end - 1`,
+  // the last character of the match) — the match spans a block
+  // boundary and we can't paint it with a single `Decoration.inline`.
+  //
+  // The previous bound `i < toEndIndex` was off-by-one: the loop
+  // never inspected the FINAL character of the match, so a match
+  // ending exactly on the synthesized `\n` separator (e.g. a regex
+  // like `/a\n/` against `<p>Alpha</p><p>Beta</p>` matches the `a`
+  // of "Alpha" + the synthetic `\n`) silently slipped past the
+  // cross-block guard and produced an invalid PM range straddling
+  // the paragraph boundary. Devin Review PR #80 round 2 (BUG_…_0001)
+  // flagged the case with a concrete reproducer.
+  for (let i = start; i <= toEndIndex; i += 1) {
     if (snapshot.text[i] === "\n") return null;
   }
   return { from: fromPos, to: toPos };
@@ -193,27 +205,48 @@ export const FindReplaceExtension = Extension.create({
             const meta = tr.getMeta(PLUGIN_KEY) as
               | { highlight: HighlightDescriptor | null }
               | undefined;
-            let next = prev;
-            if (tr.docChanged && next.decorations !== DecorationSet.empty) {
-              next = {
-                ...next,
-                decorations: next.decorations.map(tr.mapping, tr.doc),
-              };
-            }
+            // Explicit highlight change (the React panel pushed a
+            // fresh descriptor via `applyFindHighlight` /
+            // `clearFindHighlight`): rebuild decorations from
+            // scratch against the post-transaction doc and skip the
+            // map-through path entirely — the descriptor is
+            // authoritative and any prior decoration set would just
+            // be overwritten. Previously we mapped first and then
+            // overwrote, wasting the `DecorationSet.map` cost on
+            // every panel keystroke. Devin Review PR #80 round 2
+            // (ANALYSIS_…_0006) flagged the wasted work.
             if (meta) {
               const highlight = meta.highlight;
               const decorations = highlight
                 ? buildDecorations(tr.doc, highlight)
                 : DecorationSet.empty;
-              next = { highlight, decorations };
-            } else if (tr.docChanged && next.highlight) {
-              // Edit mid-search → recompute against the new doc.
-              next = {
-                ...next,
-                decorations: buildDecorations(tr.doc, next.highlight),
+              return { highlight, decorations };
+            }
+            // No meta but the doc moved AND we still have an active
+            // highlight: recompute matches against the new doc.
+            // (`DecorationSet.map` would reposition existing
+            // decorations correctly, but it can't notice newly-typed
+            // matches or matches that fell out of the doc, so we
+            // rebuild — same call site we used to take after the
+            // meta branch.)
+            if (tr.docChanged && prev.highlight) {
+              return {
+                ...prev,
+                decorations: buildDecorations(tr.doc, prev.highlight),
               };
             }
-            return next;
+            // Pure doc change with no active highlight: nothing to
+            // do. Defensive `map` covers the unlikely case where a
+            // stale decoration set somehow outlived its highlight
+            // (shouldn't be reachable today but the cost is one
+            // pointer compare when the set is empty).
+            if (tr.docChanged && prev.decorations !== DecorationSet.empty) {
+              return {
+                ...prev,
+                decorations: prev.decorations.map(tr.mapping, tr.doc),
+              };
+            }
+            return prev;
           },
         },
         props: {

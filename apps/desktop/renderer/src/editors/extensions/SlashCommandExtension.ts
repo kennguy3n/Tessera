@@ -17,6 +17,11 @@
  *   - Everything after `/` (up to whitespace) is the query.
  *   - A space after `/` cancels the menu.
  *   - Backspacing past the `/` cancels the menu.
+ *   - Pressing `Escape` dismisses the menu and — critically — keeps
+ *     it dismissed even while the `/<query>` text is still on screen.
+ *     The popup is reopened only by clearing the trigger (deleting
+ *     the `/`) and re-entering it, matching the Notion / Linear /
+ *     Coda convention. See `suppressed` on the plugin state below.
  *   - The trigger only fires inside a regular `paragraph` node —
  *     code blocks, headings, list items, etc. don't open the menu.
  */
@@ -36,7 +41,29 @@ export interface SlashTriggerState {
   clientRect: DOMRect | null;
   /** Whether the menu should be visible. */
   visible: boolean;
+  /**
+   * Latch set when the user dismisses the menu (Esc / outside-click)
+   * while the trigger text is still on screen. While `suppressed` is
+   * true, the plugin keeps emitting `visible: false` even if the
+   * paragraph still starts with `/<query>`. The latch is cleared the
+   * moment the trigger conditions are no longer met (the `/` is
+   * deleted, the selection leaves the paragraph, a space is typed,
+   * etc.) so the very next `/` opens the menu fresh. This is the
+   * Notion / Linear / Coda convention and matches what Devin Review
+   * PR #80 round 2 (ANALYSIS_…_0001) flagged as broken — prior to
+   * this, dismissing only cleared React state and the plugin's
+   * unchanged `apply` republished `visible: true` on the very next
+   * keystroke.
+   *
+   * Not part of the public popup contract — React just reads
+   * `visible` — but exposed on the state so `apply` can decide
+   * what to publish without external bookkeeping.
+   */
+  suppressed: boolean;
 }
+
+/** Meta dispatched by the `dismissSlashMenu` command. */
+const DISMISS_META = { dismiss: true } as const;
 
 const PLUGIN_KEY = new PluginKey<SlashTriggerState>("slashCommandTrigger");
 
@@ -45,6 +72,7 @@ const INITIAL: SlashTriggerState = {
   range: null,
   clientRect: null,
   visible: false,
+  suppressed: false,
 };
 
 export interface SlashCommandOptions {
@@ -60,10 +88,14 @@ declare module "@tiptap/core" {
   // Expose a command that lets the popup tell the editor to drop the
   // `/<query>` trigger text before inserting whatever block the user
   // picked. Centralising the splice in the extension means the popup
-  // doesn't need to track positions itself.
+  // doesn't need to track positions itself. `dismissSlashMenu` is the
+  // Escape / outside-click counterpart — see the `suppressed` field
+  // on `SlashTriggerState` for why it has to flow through the plugin
+  // and not just React state.
   interface Commands<ReturnType> {
     slashCommand: {
       deleteSlashTrigger: () => ReturnType;
+      dismissSlashMenu: () => ReturnType;
     };
   }
 }
@@ -100,44 +132,70 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
             return INITIAL;
           },
           apply(tr, prev, _oldState, newState): SlashTriggerState {
-            const { selection } = newState;
-            if (!selection.empty) {
-              if (prev.visible) {
-                const next = INITIAL;
-                publish(next);
-                return next;
+            // Helper: emit a closed state, clearing the suppression
+            // latch as well. Used whenever the trigger conditions
+            // genuinely no longer hold (selection moved, paragraph
+            // emptied, space typed, etc.) so the NEXT valid trigger
+            // opens the menu fresh.
+            const closeAndReset = (): SlashTriggerState => {
+              if (
+                prev.visible ||
+                prev.suppressed ||
+                prev.range !== null ||
+                prev.query !== ""
+              ) {
+                publish(INITIAL);
+                return INITIAL;
               }
               return prev;
+            };
+
+            // The popup tells us "user pressed Esc / clicked away"
+            // via this meta. We latch `suppressed = true` and hide
+            // the menu but keep the `/<query>` text intact — the
+            // user typed it intentionally and we should not destroy
+            // their characters just because they dismissed the
+            // dropdown. Without this latch the plugin's next `apply`
+            // would happily republish `visible: true` because the
+            // paragraph still starts with `/`. Devin Review PR #80
+            // round 2 (ANALYSIS_…_0001) flagged the bounce-back.
+            const meta = tr.getMeta(PLUGIN_KEY) as
+              | { dismiss?: boolean }
+              | undefined;
+            if (meta?.dismiss) {
+              const next: SlashTriggerState = {
+                ...prev,
+                visible: false,
+                suppressed: true,
+              };
+              publish(next);
+              return next;
             }
+
+            const { selection } = newState;
+            if (!selection.empty) return closeAndReset();
             const $from = selection.$from;
             const parent = $from.parent;
             // Only fire inside a regular paragraph — code/heading/list
             // items handle `/` literally.
-            if (parent.type.name !== "paragraph") {
-              if (prev.visible) {
-                const next = INITIAL;
-                publish(next);
-                return next;
-              }
-              return prev;
-            }
+            if (parent.type.name !== "paragraph") return closeAndReset();
             const paragraphText = parent.textContent;
-            if (!paragraphText.startsWith("/")) {
-              if (prev.visible) {
-                const next = INITIAL;
-                publish(next);
-                return next;
-              }
-              return prev;
-            }
+            if (!paragraphText.startsWith("/")) return closeAndReset();
             // Cancel on any whitespace inside the trigger (matches the
             // Notion convention of `/` only firing on one token).
-            if (/\s/.test(paragraphText)) {
-              if (prev.visible) {
-                const next = INITIAL;
-                publish(next);
-                return next;
-              }
+            if (/\s/.test(paragraphText)) return closeAndReset();
+            // Trigger conditions DO hold. If the menu was dismissed
+            // mid-trigger (suppressed latch) we honour the user's
+            // intent and stay closed until the trigger text is
+            // cleared. We still keep `suppressed: true` on the
+            // returned state so the popup stays hidden through every
+            // subsequent keystroke that extends the query.
+            if (prev.suppressed) {
+              // Nothing observable changed for the React panel
+              // (`visible: false` already published), so do NOT
+              // re-publish — publish() would be a no-op anyway, but
+              // we also don't want to overwrite the popup's last
+              // rect with a stale measurement.
               return prev;
             }
             const query = paragraphText.slice(1);
@@ -156,6 +214,7 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
               range: { from: start, to: end },
               clientRect: prev.clientRect,
               visible: true,
+              suppressed: false,
             };
             publish(next);
             return next;
@@ -226,6 +285,22 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
           if (!trigger || !trigger.range) return false;
           if (dispatch) {
             tr.delete(trigger.range.from, trigger.range.to);
+            dispatch(tr);
+          }
+          return true;
+        },
+      // Latch the suppression flag so the menu stays closed until
+      // the user clears + re-enters the `/` trigger. The plugin
+      // state owner is the source of truth for visibility — React
+      // setting its local `slashTrigger` to closed isn't sufficient
+      // because the plugin will republish `visible: true` on the
+      // next keystroke (see Devin Review PR #80 round 2,
+      // ANALYSIS_…_0001).
+      dismissSlashMenu:
+        () =>
+        ({ tr, dispatch }) => {
+          if (dispatch) {
+            tr.setMeta(PLUGIN_KEY, DISMISS_META);
             dispatch(tr);
           }
           return true;

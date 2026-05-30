@@ -207,6 +207,47 @@ describe("matchToDocRange — plain-text indices → PM positions", () => {
     });
     expect(insideBlock).not.toBeNull();
   });
+
+  it("returns null when the synthesized `\\n` is the FINAL character of the match (BUG_0001 off-by-one round 2)", () => {
+    // Round 1 added the cross-block guard but the loop bound was
+    // `i < toEndIndex` — toEndIndex = end - 1 is itself the LAST
+    // character of the match, so a match that ends exactly on the
+    // synthesized newline (e.g. /a\n/ matching the boundary between
+    // "Alpha" and "Beta") fell through the guard. The decoration
+    // plugin then asked PM to paint an inline range from inside
+    // paragraph 1 to a position that PM treats as the open token of
+    // paragraph 2 — PM logs "RangeError: Position N out of range" or
+    // silently renders the highlight onto an unrelated block.
+    // Devin Review PR #80 round 2 (BUG_0001) flagged the case.
+    const editor = makeEditor({
+      initialContent: "<p>Alpha</p><p>Beta</p>",
+    });
+    const snapshot = buildDocText(editor.state.doc);
+    expect(snapshot.text).toBe("Alpha\nBeta");
+    const newlineIdx = snapshot.text.indexOf("\n");
+    // Match `a\n` — start at the `a` of "Alpha" (index 4) through
+    // the `\n` at `newlineIdx` (inclusive in the half-open `end`
+    // sense, so end = newlineIdx + 1).
+    const endsOnNewline = matchToDocRange(snapshot, {
+      start: newlineIdx - 1,
+      end: newlineIdx + 1,
+    });
+    expect(endsOnNewline).toBeNull();
+    // Match `\nB` (starts ON the newline) — also has a `\n` inside,
+    // must also reject.
+    const startsOnNewline = matchToDocRange(snapshot, {
+      start: newlineIdx,
+      end: newlineIdx + 2,
+    });
+    expect(startsOnNewline).toBeNull();
+    // Sanity: a same-block match adjacent to (but not containing)
+    // the boundary still works.
+    const adjacent = matchToDocRange(snapshot, {
+      start: newlineIdx - 2,
+      end: newlineIdx,
+    });
+    expect(adjacent).not.toBeNull();
+  });
 });
 
 describe("FindReplaceExtension — applyFindHighlight / clearFindHighlight", () => {
@@ -329,5 +370,51 @@ describe("SlashCommandExtension — trigger state lifecycle", () => {
     });
     const last = onSlashState.mock.calls.at(-1)![0] as SlashTriggerState;
     expect(last.visible).toBe(false);
+  });
+
+  it("dismissSlashMenu latches `suppressed` so the menu stays hidden on subsequent keystrokes (ANALYSIS_0001 round 2)", () => {
+    // Round 1 closed the menu by clearing React state in the
+    // DocumentEditor's `dismissSlash` callback, but the PM plugin
+    // still observed a paragraph starting with `/` on the very next
+    // transaction and republished `visible: true` — the popup
+    // bounced back. The fix exposes a `dismissSlashMenu` command
+    // that sets a `suppressed` latch on the plugin state; the
+    // latch is cleared only when the trigger conditions themselves
+    // stop holding (e.g. the `/` is deleted or a space is typed).
+    const onSlashState = vi.fn();
+    const editor = makeEditor({ onSlashState });
+    editor.commands.insertContent("/list");
+    // Sanity: menu is open.
+    expect(
+      (onSlashState.mock.calls.at(-1)![0] as SlashTriggerState).visible,
+    ).toBe(true);
+    onSlashState.mockClear();
+    // Dismiss via the new command — equivalent to user pressing Esc.
+    editor.commands.dismissSlashMenu();
+    expect(
+      (onSlashState.mock.calls.at(-1)![0] as SlashTriggerState).visible,
+    ).toBe(false);
+    expect(
+      (onSlashState.mock.calls.at(-1)![0] as SlashTriggerState).suppressed,
+    ).toBe(true);
+    onSlashState.mockClear();
+    // Now extend the query: paragraph becomes `/lists` — trigger
+    // conditions STILL hold, but the latch must keep the menu
+    // closed. Crucially, the plugin should NOT publish a new
+    // `visible: true` state.
+    editor.commands.insertContent("s");
+    const visibleAfterTyping = onSlashState.mock.calls.some(
+      (c) => (c[0] as SlashTriggerState).visible,
+    );
+    expect(visibleAfterTyping).toBe(false);
+    onSlashState.mockClear();
+    // Clear the trigger entirely (delete the whole `/lists`),
+    // then re-enter `/`. The menu must reopen fresh.
+    const end = editor.state.selection.from;
+    editor.commands.deleteRange({ from: end - 6, to: end });
+    editor.commands.insertContent("/");
+    const last = onSlashState.mock.calls.at(-1)![0] as SlashTriggerState;
+    expect(last.visible).toBe(true);
+    expect(last.suppressed).toBe(false);
   });
 });

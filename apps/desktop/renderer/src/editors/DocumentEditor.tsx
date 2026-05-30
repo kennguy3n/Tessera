@@ -62,6 +62,7 @@ const SLASH_TRIGGER_INITIAL: SlashTriggerState = {
   range: null,
   clientRect: null,
   visible: false,
+  suppressed: false,
 };
 
 export default function DocumentEditor({
@@ -285,8 +286,23 @@ export default function DocumentEditor({
   );
 
   const dismissSlash = useCallback(() => {
+    // Latch suppression on the PM plugin so the menu stays closed
+    // until the user clears + re-enters the `/` trigger. Just clearing
+    // React state here would let the plugin republish `visible: true`
+    // on the very next keystroke (the paragraph still starts with
+    // `/`) and the menu would bounce back — the bug Devin Review PR
+    // #80 round 2 (ANALYSIS_…_0001) flagged. The plugin's
+    // onStateChange will then push `visible: false` back through to
+    // `setSlashTrigger`, so the React state stays in sync without us
+    // having to set it directly here. We still touch React state
+    // synchronously as belt-and-braces so the popup unmounts in the
+    // SAME frame as the Esc keystroke (in case the editor command
+    // dispatch is delayed by other extensions in the chain).
+    if (editor) {
+      editor.chain().dismissSlashMenu().run();
+    }
     setSlashTrigger(SLASH_TRIGGER_INITIAL);
-  }, []);
+  }, [editor]);
 
   const onPickImage = useCallback(
     async (e: ChangeEvent<HTMLInputElement>) => {
