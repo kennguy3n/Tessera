@@ -803,7 +803,7 @@ impl SourceStore {
                 params![
                     last_sync_error_json,
                     retry_count as i64,
-                    if failed_permanently { 1_i64 } else { 0 },
+                    i64::from(failed_permanently),
                     id_str,
                 ],
             )
@@ -1926,6 +1926,45 @@ impl SourceStore {
             )
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+
+    /// Phase 19 Task 1: corpus-wide non-ASCII chunk ratio for the
+    /// "you should consider the multilingual embedder" hint in the
+    /// Settings page.
+    ///
+    /// Returns `(non_ascii_chunks, total_chunks)`. The renderer
+    /// computes the ratio so it can also surface the absolute
+    /// counts ("128 of 1,400 chunks contain non-Latin text") which
+    /// is more informative than a bare percentage.
+    ///
+    /// **Heuristic, not exact.** The check is `content GLOB
+    /// '*[^[:ascii:]]*'`, which counts any chunk that contains at
+    /// least one non-ASCII byte. That includes legitimate non-Latin
+    /// content (CJK, Cyrillic, Arabic, Devanagari, Hangul, …) but
+    /// also accidentally trips on smart quotes (`'`, `"`), em-
+    /// dashes, and other Unicode punctuation that English-only
+    /// content frequently carries. We are deliberately accepting
+    /// that false-positive rate: the worst case is suggesting
+    /// the multilingual model to a user whose corpus is actually
+    /// English-with-typography, and the toast is dismissable.
+    /// The alternative — running a full language detector over
+    /// every chunk — would cost orders of magnitude more CPU for
+    /// no actionable improvement at the suggestion threshold
+    /// (10%, see Settings UI).
+    pub fn count_non_ascii_chunks(&self) -> Result<(u64, u64)> {
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let non_ascii: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks \
+                 WHERE content GLOB '*[^\x01-\x7f]*'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok((non_ascii.max(0) as u64, total.max(0) as u64))
     }
 
     /// Block C Task 4 (Phase 13): read the persisted backfill state
@@ -3938,12 +3977,7 @@ mod tests {
         let source = Source::new_local_folder("/tmp/test".to_string());
         store.add_source(&source).unwrap();
         store
-            .record_sync_failure(
-                &source.id,
-                r#"{"kind":"permanent","message":"x"}"#,
-                7,
-                true,
-            )
+            .record_sync_failure(&source.id, r#"{"kind":"permanent","message":"x"}"#, 7, true)
             .unwrap();
 
         store.record_sync_success(&source.id).unwrap();
@@ -3999,7 +4033,10 @@ mod tests {
             let conn = store.conn.lock().unwrap();
             conn.execute(
                 "UPDATE sources SET last_sync_error = ?1 WHERE id = ?2",
-                params!["{\"kind\":\"transient\",\"message\":\"stale\"}", source.id.to_string()],
+                params![
+                    "{\"kind\":\"transient\",\"message\":\"stale\"}",
+                    source.id.to_string()
+                ],
             )
             .unwrap();
         }

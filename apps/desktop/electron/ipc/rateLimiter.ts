@@ -163,6 +163,27 @@ export const RATE_LIMIT_PROFILES = {
     tokensPerInterval: 1,
     intervalMs: 10_000,
   },
+  // Phase 19 Task 1: ONNX model download. A 22 MB or 120 MB
+  // download takes 5-60 s on a typical home connection. The
+  // bridge tracker already prevents two concurrent downloads
+  // (mark_starting overwrites the slot), but the rate limiter is
+  // the defense-in-depth: a runaway component cannot queue dozens
+  // of cancelled-and-restarted downloads against the upstream
+  // HuggingFace CDN (which itself rate-limits aggressively).
+  "settings:downloadEmbeddingModel": {
+    tokensPerInterval: 1,
+    intervalMs: 5_000,
+  },
+  // Switching the active model is cheap (a few hundred ms ONNX
+  // session load) but every switch invalidates the current
+  // model's vectors from the search hot path and queues a
+  // backfill. 1 per second is plenty for an attentive user; a
+  // runaway component would otherwise oscillate the active model
+  // and thrash the search engine's vector cache.
+  "settings:switchEmbeddingModel": {
+    tokensPerInterval: 1,
+    intervalMs: 1_000,
+  },
   "settings:updateHybridSearchConfig": {
     tokensPerInterval: 5,
     intervalMs: 1_000,

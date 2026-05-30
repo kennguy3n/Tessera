@@ -228,7 +228,11 @@ pub fn wal_checkpoint_truncate(conn: &SharedConnection) -> Result<(i64, i64, i64
         .map_err(|e| Error::Database(format!("connection lock poisoned: {e}")))?;
     guard
         .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
         })
         .map_err(|e| Error::Database(format!("wal_checkpoint(TRUNCATE) failed: {e}")))
 }
@@ -889,7 +893,11 @@ mod tests {
             .unwrap()
             .query_row("PRAGMA journal_mode", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(mode.to_lowercase(), "wal", "plain on-disk open should be WAL");
+        assert_eq!(
+            mode.to_lowercase(),
+            "wal",
+            "plain on-disk open should be WAL"
+        );
         drop(plain);
 
         // Keyed (SQLCipher) on-disk open in a separate file so the
@@ -915,8 +923,8 @@ mod tests {
     fn on_disk_open_lands_in_synchronous_normal() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let db_path = tmp.path().join("sync.db");
-        let db = open_shared_with_key(db_path.to_str().unwrap(), Some(TEST_KEY))
-            .expect("keyed open");
+        let db =
+            open_shared_with_key(db_path.to_str().unwrap(), Some(TEST_KEY)).expect("keyed open");
         let sync_mode: i64 = db
             .lock()
             .unwrap()
@@ -967,9 +975,7 @@ mod tests {
         // After TRUNCATE the WAL file should be zero-length (it
         // typically still exists on disk; SQLite truncates rather
         // than unlinks).
-        let wal_size = std::fs::metadata(&wal_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let wal_size = std::fs::metadata(&wal_path).map(|m| m.len()).unwrap_or(0);
         assert_eq!(
             wal_size, 0,
             "wal_checkpoint(TRUNCATE) should leave wal at zero bytes; got {wal_size}"
@@ -983,8 +989,7 @@ mod tests {
     fn integrity_check_on_healthy_db_returns_ok() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let db_path = tmp.path().join("healthy.db");
-        let db = open_shared_with_key(db_path.to_str().unwrap(), Some(TEST_KEY))
-            .expect("open");
+        let db = open_shared_with_key(db_path.to_str().unwrap(), Some(TEST_KEY)).expect("open");
         // Populate so the check has something to walk.
         db.lock()
             .unwrap()

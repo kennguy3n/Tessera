@@ -37,6 +37,9 @@ import type {
   BackfillEmbeddingsResult,
   CitationInfo,
   CompareSourcesResult,
+  EmbeddingDownloadProgressInfo,
+  EmbeddingModelInfo,
+  EmbeddingModelStatusInfo,
   EmbeddingProgressInfo,
   ExportResult,
   HybridSearchConfigInfo,
@@ -107,6 +110,9 @@ export type {
   TaskInfo,
   TemplateInfo,
   ThemeInfo,
+  EmbeddingModelInfo,
+  EmbeddingModelStatusInfo,
+  EmbeddingDownloadProgressInfo,
 } from "../shared/types";
 
 export interface NativeBridge {
@@ -263,6 +269,55 @@ export interface NativeBridge {
     batchSize?: number | null,
   ): Promise<BackfillEmbeddingsResult>;
   bridgeGetEmbeddingProgress(): EmbeddingProgressInfo;
+  /**
+   * Phase 19 Task 1: snapshot of all shipped ONNX embedding models
+   * (catalogue entries with per-model install state) plus the
+   * currently-active embedder's `model_id` plus the in-flight
+   * download tracker. Single round-trip so the Settings UI can
+   * render the picker in one frame.
+   *
+   * `userDataDir` is the Electron app's `app.getPath("userData")`
+   * path — the bridge stores ONNX files under
+   * `${userDataDir}/models/onnx/${slug}/`. Passed explicitly so the
+   * bridge does not need to call Electron APIs (it lives in
+   * `tessera_bridge`, which has no Electron dependency).
+   */
+  bridgeGetEmbeddingModelStatus(userDataDir: string): EmbeddingModelStatusInfo;
+  /**
+   * Phase 19 Task 1: download an ONNX embedding model + tokenizer
+   * to `${userDataDir}/models/onnx/${slug}/`. Returns a Promise
+   * that resolves with the model's final catalogue entry
+   * (`installed: true`, canonical `modelId`) or rejects with the
+   * download error.
+   *
+   * Use `bridgeGetEmbeddingDownloadProgress` to poll progress on a
+   * timer while the Promise is pending. Idempotent: re-running on
+   * an already-installed model returns immediately with
+   * `installed: true`.
+   */
+  bridgeDownloadEmbeddingModel(
+    slug: string,
+    userDataDir: string,
+  ): Promise<EmbeddingModelInfo>;
+  /**
+   * Phase 19 Task 1: lightweight progress poll for in-flight model
+   * downloads. Mirrors `bridgeGetEmbeddingProgress` — bypasses the
+   * source-manager lock so the progress bar updates at full timer
+   * cadence regardless of what else the bridge is doing.
+   */
+  bridgeGetEmbeddingDownloadProgress(): EmbeddingDownloadProgressInfo;
+  /**
+   * Phase 19 Task 1: synchronously swap the active embedder to a
+   * downloaded ONNX model. Returns the freshly-activated model's
+   * catalogue entry. Does NOT trigger a re-embed pass — the caller
+   * (the `settings:switchEmbeddingModel` IPC handler) chains a
+   * `bridgeBackfillEmbeddings` call immediately after so the
+   * progress UI can render the backfill bar.
+   */
+  bridgeSwitchEmbeddingModel(
+    slug: string,
+    userDataDir: string,
+  ): EmbeddingModelInfo;
   bridgeGetHybridSearchConfig(): HybridSearchConfigInfo;
   bridgeUpdateHybridSearchConfig(
     update: HybridSearchConfigUpdate,

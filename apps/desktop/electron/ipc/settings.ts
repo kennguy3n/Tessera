@@ -7,6 +7,7 @@
  * actual API key is *referenced* by `apiKeyRef` but stored encrypted
  * in the OS keychain via `secretsVault`.
  */
+import { app } from "electron";
 import { idempotentHandle } from "./register";
 import { getBridge } from "../appState";
 import {
@@ -23,6 +24,9 @@ import { resolveProviderEndpoint } from "../externalProviderStream";
 import { listExternalProviderModels } from "../externalProviderModels";
 import * as secretsVault from "../secretsVault";
 import type {
+  EmbeddingDownloadProgressInfo,
+  EmbeddingModelInfo,
+  EmbeddingModelStatusInfo,
   ExternalProviderListModelsDraftOverrides,
   HybridSearchConfigInfo,
   HybridSearchConfigUpdate,
@@ -30,12 +34,58 @@ import type {
 } from "../../shared/types";
 import { EXTERNAL_PROVIDER_TYPES } from "../../shared/types";
 import {
+  DownloadableEmbeddingModelSlugInputSchema,
+  EmbeddingModelSlugInputSchema,
   ExternalProviderApiKeySchema,
   ExternalProviderConfigSchema,
   HybridSearchConfigUpdateSchema,
   SettingsUpdateSchema,
 } from "./schemas";
 import { defaultRateLimiter, RATE_LIMIT_PROFILES } from "./rateLimiter";
+
+/**
+ * Phase 19 Task 1: resolve the per-user `userData` directory the
+ * bridge stores ONNX models under (`{userData}/models/onnx/<slug>/`).
+ *
+ * Centralised here so the three embedding-model IPC handlers stay in
+ * agreement and so the `app.getPath` call lives on the Electron
+ * main process side (the bridge is a pure Rust library with no
+ * Electron dependency). A test override is provided to keep the
+ * Vitest IPC suite hermetic — tests can stub this without
+ * monkey-patching the electron `app` module.
+ */
+let userDataDirOverride: (() => string) | null = null;
+export function setUserDataDirForTest(fn: (() => string) | null): void {
+  userDataDirOverride = fn;
+}
+function userDataDir(): string {
+  if (userDataDirOverride) return userDataDirOverride();
+  return app.getPath("userData");
+}
+
+/**
+ * Phase 19 Task 1: audit shim for embedding-model lifecycle events.
+ * We surface model downloads and switches as their own audit field
+ * (`embeddingModel.{download|switch}`) so an operator can answer
+ * "when did the user enable the multilingual model?" with a single
+ * `WHERE field LIKE 'embeddingModel.%'` query, just like the hybrid
+ * search config audit rows above.
+ */
+function auditEmbeddingModelEvent(action: string, slug: string): void {
+  try {
+    getBridge()?.bridgeLogSettingsChanged(`embeddingModel.${action}`, slug);
+  } catch {
+    // best-effort, see auditSettingsField doc comment
+  }
+}
+
+const IDLE_DOWNLOAD: EmbeddingDownloadProgressInfo = {
+  status: "idle",
+  slug: null,
+  bytesTotal: null,
+  bytesDownloaded: 0,
+  lastError: null,
+};
 
 /**
  * Best-effort audit shim for `settings:*` and `externalProvider:*`
@@ -591,6 +641,132 @@ export function registerSettingsHandlers(): void {
         String(effective.candidatePoolSize),
       );
       return effective;
+    },
+  );
+
+  // =====================================================================
+  // Phase 19 Task 1: ONNX embedding-model lifecycle.
+  //
+  // Three channels mirror the bridge exports defined in
+  // `crates/tessera_bridge/src/napi_exports.rs`:
+  //
+  //   * `settings:getEmbeddingModelStatus` — read-only snapshot of
+  //     the catalogue + per-model install state + active model_id +
+  //     in-flight download state. Polled by the Settings UI to
+  //     render the picker and (during a download) the progress bar.
+  //
+  //   * `settings:downloadEmbeddingModel` — async; resolves when
+  //     the requested model's `.onnx` + `tokenizer.json` are on
+  //     disk with the pinned SHA-256. Idempotent on a fully-
+  //     installed model.
+  //
+  //   * `settings:switchEmbeddingModel` — synchronously activates
+  //     a downloaded model AND chains a `bridgeBackfillEmbeddings`
+  //     call so existing chunks get the new model's vectors. The
+  //     backfill runs through the same progress tracker the
+  //     SourceDetailPage already polls, so the Settings UI's
+  //     "switching…" spinner can defer to the existing embedding
+  //     progress banner once the swap returns.
+  //
+  // The renderer never receives push events for downloads — it
+  // polls `settings:getEmbeddingDownloadProgress`. That's the same
+  // architecture as `sources:getEmbeddingProgress` and avoids any
+  // `ThreadsafeFunction` complexity at the napi boundary.
+  // =====================================================================
+
+  idempotentHandle(
+    "settings:getEmbeddingModelStatus",
+    async (): Promise<EmbeddingModelStatusInfo> => {
+      const bridge = getBridge();
+      if (bridge) {
+        return bridge.bridgeGetEmbeddingModelStatus(userDataDir());
+      }
+      // Pre-bridge fallback so the Settings page renders without
+      // throwing during the brief startup window. The UI shows
+      // every model as "not installed" until the bridge wakes up
+      // and replaces this snapshot, which is the conservative
+      // truth — we genuinely don't know what's on disk until the
+      // registry's SHA-256 verifier runs.
+      return {
+        currentModelId: null,
+        models: [],
+        download: IDLE_DOWNLOAD,
+        nonAsciiChunks: 0,
+        totalChunks: 0,
+      };
+    },
+  );
+
+  idempotentHandle(
+    "settings:getEmbeddingDownloadProgress",
+    async (): Promise<EmbeddingDownloadProgressInfo> => {
+      const bridge = getBridge();
+      if (bridge) {
+        return bridge.bridgeGetEmbeddingDownloadProgress();
+      }
+      return IDLE_DOWNLOAD;
+    },
+  );
+
+  idempotentHandle(
+    "settings:downloadEmbeddingModel",
+    async (_event, input: unknown): Promise<EmbeddingModelInfo> => {
+      defaultRateLimiter.consume(
+        "settings:downloadEmbeddingModel",
+        RATE_LIMIT_PROFILES["settings:downloadEmbeddingModel"],
+      );
+      const { slug } = DownloadableEmbeddingModelSlugInputSchema.parse(input);
+      const bridge = getBridge();
+      if (!bridge) {
+        throw new Error("Native bridge not available");
+      }
+      const info = await bridge.bridgeDownloadEmbeddingModel(
+        slug,
+        userDataDir(),
+      );
+      // Audit AFTER success so a failed download (network blip,
+      // SHA-256 mismatch) doesn't leave a phantom "downloaded" row
+      // in the audit log. Matches the contract for hybrid search
+      // config above and every other settings-mutating channel.
+      auditEmbeddingModelEvent("download", slug);
+      return info;
+    },
+  );
+
+  idempotentHandle(
+    "settings:switchEmbeddingModel",
+    async (_event, input: unknown): Promise<EmbeddingModelInfo> => {
+      defaultRateLimiter.consume(
+        "settings:switchEmbeddingModel",
+        RATE_LIMIT_PROFILES["settings:switchEmbeddingModel"],
+      );
+      const { slug } = EmbeddingModelSlugInputSchema.parse(input);
+      const bridge = getBridge();
+      if (!bridge) {
+        throw new Error("Native bridge not available");
+      }
+      const info = bridge.bridgeSwitchEmbeddingModel(slug, userDataDir());
+      auditEmbeddingModelEvent("switch", slug);
+      // Fire-and-forget backfill so the existing chunks get the
+      // new model's vectors. We deliberately do NOT await — the
+      // backfill can take minutes on a large corpus, and the
+      // renderer already has an `useEmbeddingProgress` hook
+      // polling `sources:getEmbeddingProgress` that renders the
+      // progress banner identically whether the backfill was
+      // triggered from the SourceDetailPage's Re-embed button or
+      // from here. Awaiting would block the Settings UI's
+      // "switching…" spinner for the same wall time and offer no
+      // additional information to the user. Errors from the
+      // backfill surface through that same progress channel.
+      void bridge
+        .bridgeBackfillEmbeddings(null)
+        .catch(() => {
+          // Swallowed; the progress tracker captures the error
+          // and the renderer's banner renders it. Logging here
+          // would just duplicate the audit row the bridge already
+          // produces.
+        });
+      return info;
     },
   );
 

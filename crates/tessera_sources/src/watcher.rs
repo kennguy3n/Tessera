@@ -101,11 +101,7 @@ impl FileWatcher {
     /// [`Self::recv_event`] APIs — it gives the indexer one batch
     /// per save burst rather than per-keystroke or per-rename-
     /// fsync event.
-    pub fn recv_coalesced_batch(
-        &self,
-        max_wait: Duration,
-        window: Duration,
-    ) -> Vec<FileEvent> {
+    pub fn recv_coalesced_batch(&self, max_wait: Duration, window: Duration) -> Vec<FileEvent> {
         let Ok(first) = self.receiver.recv_timeout(max_wait) else {
             return Vec::new();
         };
@@ -372,8 +368,7 @@ mod tests {
             std::fs::write(&file_path, format!("rev-{i}")).unwrap();
         }
 
-        let batch = watcher
-            .recv_coalesced_batch(Duration::from_secs(2), DEFAULT_COALESCE_WINDOW);
+        let batch = watcher.recv_coalesced_batch(Duration::from_secs(2), DEFAULT_COALESCE_WINDOW);
 
         assert!(
             !batch.is_empty(),
@@ -404,8 +399,8 @@ mod tests {
         // No filesystem activity; the call should time out and
         // return an empty batch within ~100 ms.
         let started = std::time::Instant::now();
-        let batch = watcher
-            .recv_coalesced_batch(Duration::from_millis(100), DEFAULT_COALESCE_WINDOW);
+        let batch =
+            watcher.recv_coalesced_batch(Duration::from_millis(100), DEFAULT_COALESCE_WINDOW);
         assert!(batch.is_empty());
         // Belt-and-suspenders: the empty-batch path must NOT also
         // pay the `window` cost. Allow ~50 ms slop for slow CI.

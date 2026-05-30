@@ -45,9 +45,7 @@ fn indexing_10k_synthetic_chunks_stays_under_200mb_peak_rss() {
     // "peak since process start" rather than "current" so the
     // delta assertion is unreliable.
     let Some(baseline) = current_rss_bytes() else {
-        eprintln!(
-            "skipping memory_profile test: current_rss_bytes() unavailable on this platform",
-        );
+        eprintln!("skipping memory_profile test: current_rss_bytes() unavailable on this platform",);
         return;
     };
     if !cfg!(target_os = "linux") {

@@ -4,9 +4,7 @@ use napi_derive::napi;
 use serde::{Deserialize, Serialize};
 use tessera_core::SourceId;
 use tessera_sources::hybrid::{HybridSearchConfig, HybridSearchConfigInput};
-use tessera_sources::manager::{
-    KchatPostSearchHit, KchatThreadContextMessage, SourceManager,
-};
+use tessera_sources::manager::{KchatPostSearchHit, KchatThreadContextMessage, SourceManager};
 use tessera_sources::progress::{EmbeddingProgressTracker, EmbeddingStatus};
 use tessera_sources::search::SearchResult;
 use tessera_sources::source::Source;
@@ -706,8 +704,8 @@ pub fn fetch_kchat_thread_context(
     source_id: &str,
     post_id: &str,
 ) -> BridgeResult<Vec<KchatThreadContextMessageInfo>> {
-    let uuid = uuid::Uuid::parse_str(source_id)
-        .map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
+    let uuid =
+        uuid::Uuid::parse_str(source_id).map_err(|e| BridgeError::InvalidArgs(e.to_string()))?;
     let results = manager
         .fetch_kchat_thread_context(&SourceId(uuid), post_id)
         .map_err(BridgeError::Core)?;
@@ -1031,6 +1029,383 @@ pub fn update_hybrid_search_config(
     })?;
     Ok(HybridSearchConfigInfo::from(&new_cfg))
 }
+
+// =====================================================================
+// Phase 19 Task 1: ONNX embedding model management.
+//
+// Three IPC-shaped helpers wrap the [`tessera_sources::model_registry`]
+// + [`tessera_sources::onnx_embedder`] layers so the renderer can
+// (a) discover which models exist and which are currently installed,
+// (b) trigger a download of a not-yet-installed model with progress
+// reporting, and (c) swap the live embedder to a downloaded model
+// without restarting the bridge.
+//
+// The download progress is published through a [`DownloadProgressTracker`]
+// owned by the bridge's `AppState`, mirroring the existing
+// embedding-progress / indexing-progress polling architecture: the
+// renderer never receives push events; it polls. This keeps the
+// IPC boundary one-way (renderer → main) and avoids any
+// `ThreadsafeFunction` dance, which historically has been the most
+// painful part of N-API surface in this codebase.
+// =====================================================================
+
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+use tessera_sources::model_registry::{self, ModelInfo, SHIPPED_MODELS};
+use tessera_sources::onnx_embedder::OnnxEmbeddingProvider;
+
+/// Public wire-shape for a single shipped embedding model.
+///
+/// Mirrors [`ModelInfo`] with two derived fields the renderer
+/// needs to render the model picker UI:
+///   - `installed`: whether the model is fully downloaded AND
+///     its SHA-256 matches the pinned hash on disk (the partial-
+///     download recovery contract from `model_registry`).
+///   - `model_id`: the canonical id this model would be tagged
+///     with in `chunk_embeddings.model_id` once active, so the
+///     renderer can show "current model" with the same string
+///     the search hot path actually uses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[napi(object)]
+pub struct EmbeddingModelInfo {
+    pub slug: String,
+    pub display_name: String,
+    pub dim: u32,
+    /// Approximate ONNX file size in bytes — used to render the
+    /// "120 MB download" hint before the user opts into the
+    /// download.
+    pub model_size_bytes: f64,
+    /// Approximate tokenizer.json size in bytes.
+    pub tokenizer_size_bytes: f64,
+    pub languages: String,
+    pub installed: bool,
+    pub model_id: String,
+}
+
+impl EmbeddingModelInfo {
+    fn from_info(info: &ModelInfo, models_root: &std::path::Path) -> Self {
+        Self {
+            slug: info.slug.to_string(),
+            display_name: info.display_name.to_string(),
+            dim: u32::try_from(info.dim).unwrap_or(u32::MAX),
+            // f64 because napi-rs's `u64` mapping requires the
+            // `BigInt` ergonomics on the JS side and renderer
+            // code consistently uses `number` for sizes.
+            model_size_bytes: info.model_size_bytes as f64,
+            tokenizer_size_bytes: info.tokenizer_size_bytes as f64,
+            languages: info.languages.to_string(),
+            installed: info.is_installed(models_root),
+            model_id: format!("onnx:{}:{}d", info.slug, info.dim),
+        }
+    }
+}
+
+/// Wire shape returned by `getEmbeddingModelStatus`. Combines the
+/// model catalogue with the current bridge-level state in a single
+/// payload so the Settings UI can render with one round trip
+/// instead of three sequential calls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[napi(object)]
+pub struct EmbeddingModelStatusInfo {
+    /// `model_id` of the currently-active embedder. `None` if the
+    /// manager has no embedder attached, which happens in test
+    /// builds and during the brief startup window before the
+    /// default HashTrick is plumbed in.
+    pub current_model_id: Option<String>,
+    /// Catalogue of every shipped ONNX model with per-entry
+    /// install state. Always returns all entries (in display
+    /// order) regardless of which one is active — the renderer
+    /// uses this to populate the picker.
+    pub models: Vec<EmbeddingModelInfo>,
+    /// Current download progress snapshot (status + counters).
+    /// Always present so the renderer can render the progress
+    /// banner without a second IPC; reports `status="idle"` when
+    /// no download is in flight.
+    pub download: DownloadProgressInfo,
+    /// Phase 19 Task 1: number of currently-indexed chunks whose
+    /// content contains at least one non-ASCII byte. The Settings
+    /// UI uses `non_ascii_chunks / total_chunks > 0.10` to render
+    /// a "your corpus looks multilingual — consider the XLM-R
+    /// model" hint. `f64` (not `u64`) so we can return both
+    /// counts inside the napi-derive JS object shape without
+    /// overflowing the `Number` precision boundary on extreme
+    /// corpora — a chunk count above 2^53 is impossible in
+    /// practice but `napi-derive` lacks BigInt support and we
+    /// want the field shape to be stable.
+    pub non_ascii_chunks: f64,
+    /// Phase 19 Task 1: total indexed chunks across all sources.
+    /// Companion to `non_ascii_chunks` — the renderer needs the
+    /// denominator to compute the ratio and also surfaces the
+    /// absolute counts ("128 of 1,400 chunks contain non-Latin
+    /// text") for transparency.
+    pub total_chunks: f64,
+}
+
+/// Status of an in-flight model download.
+///
+/// Matches the spirit of [`EmbeddingProgressInfo`]: a single
+/// snapshot the renderer polls on a timer. The renderer uses
+/// `bytes_downloaded / bytes_total` to render the progress bar
+/// and `status == "done" || "failed"` to dismiss it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[napi(object)]
+pub struct DownloadProgressInfo {
+    /// `"idle" | "downloading" | "done" | "failed"`. Strings
+    /// rather than a typed enum at the IPC boundary so the
+    /// renderer's type-narrowing code can use a discriminated
+    /// union with literal types without depending on the napi
+    /// crate's enum encoding.
+    pub status: String,
+    /// Slug of the model being / last downloaded. `None` before
+    /// the first download in the session.
+    pub slug: Option<String>,
+    /// Total bytes the active download expects. `None` when the
+    /// upstream `Content-Length` was missing (rare on HF CDN);
+    /// the renderer should fall back to an indeterminate bar.
+    pub bytes_total: Option<f64>,
+    /// Bytes downloaded so far. Always >= 0.
+    pub bytes_downloaded: f64,
+    /// Last error message when `status == "failed"`. `None`
+    /// otherwise. Surfaced verbatim from the registry / network
+    /// layer so a user can copy-paste it into a bug report.
+    pub last_error: Option<String>,
+}
+
+/// Shared download-progress state owned by `AppState`. Wrapped in
+/// a [`Mutex`] because the only writers are (a) the async download
+/// task (one at a time) and (b) the snapshot-read path used by
+/// `bridge_get_embedding_download_progress`. Mutex contention is
+/// negligible: writers update on every streamed chunk (~64 KiB)
+/// while readers poll on a renderer timer (typically 500 ms).
+#[derive(Debug)]
+pub struct DownloadProgressTracker {
+    inner: Mutex<DownloadProgressInfo>,
+}
+
+impl Default for DownloadProgressTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DownloadProgressTracker {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(DownloadProgressInfo {
+                status: "idle".to_string(),
+                slug: None,
+                bytes_total: None,
+                bytes_downloaded: 0.0,
+                last_error: None,
+            }),
+        }
+    }
+
+    /// Reset the snapshot for a new download. Called synchronously
+    /// from the bridge entry point before the async task spawns,
+    /// to defuse the same race the embedding-backfill tracker has:
+    /// the renderer's first poll for a new download MUST see
+    /// `status=downloading` instead of the previous run's
+    /// terminal status (`done` or `failed`).
+    pub fn mark_starting(&self, slug: &str) {
+        if let Ok(mut g) = self.inner.lock() {
+            *g = DownloadProgressInfo {
+                status: "downloading".to_string(),
+                slug: Some(slug.to_string()),
+                bytes_total: None,
+                bytes_downloaded: 0.0,
+                last_error: None,
+            };
+        }
+    }
+
+    /// Push a (bytes_downloaded, optional bytes_total) update from
+    /// the registry's streaming callback. `total == 0` is the
+    /// sentinel the registry uses for "Content-Length missing";
+    /// surface that as `None` to the renderer.
+    pub fn update(&self, bytes_downloaded: u64, bytes_total: u64) {
+        if let Ok(mut g) = self.inner.lock() {
+            g.bytes_downloaded = bytes_downloaded as f64;
+            g.bytes_total = if bytes_total == 0 {
+                None
+            } else {
+                Some(bytes_total as f64)
+            };
+        }
+    }
+
+    pub fn mark_done(&self) {
+        if let Ok(mut g) = self.inner.lock() {
+            g.status = "done".to_string();
+            g.last_error = None;
+        }
+    }
+
+    pub fn mark_failed(&self, msg: &str) {
+        if let Ok(mut g) = self.inner.lock() {
+            g.status = "failed".to_string();
+            g.last_error = Some(msg.to_string());
+        }
+    }
+
+    pub fn snapshot(&self) -> DownloadProgressInfo {
+        self.inner.lock().ok().map_or_else(
+            || DownloadProgressInfo {
+                status: "failed".to_string(),
+                slug: None,
+                bytes_total: None,
+                bytes_downloaded: 0.0,
+                last_error: Some("download tracker mutex poisoned".to_string()),
+            },
+            |g| g.clone(),
+        )
+    }
+}
+
+/// Construct the `models_root` path the registry expects from a
+/// renderer-supplied data dir.
+///
+/// The renderer passes `app.getPath("userData")` (e.g.
+/// `~/.config/Tessera`). The registry lays files out at
+/// `{models_root}/onnx/{slug}/{model,tokenizer}.{onnx,json}`, and
+/// other capabilities (vision, imagegen) live under
+/// `{models_root}/{vision,imagegen}/`, so `models_root` is the
+/// `models` subdirectory of userData. We resolve it here once so
+/// every entry point gets the same path semantics.
+fn models_root_for(user_data_dir: &str) -> PathBuf {
+    PathBuf::from(user_data_dir).join("models")
+}
+
+/// Resolve and return the catalogue + active model id + download
+/// state in a single payload. See [`EmbeddingModelStatusInfo`] for
+/// the wire shape.
+pub fn get_embedding_model_status(
+    manager: &SourceManager,
+    tracker: &DownloadProgressTracker,
+    user_data_dir: &str,
+) -> BridgeResult<EmbeddingModelStatusInfo> {
+    let models_root = models_root_for(user_data_dir);
+    let models = SHIPPED_MODELS
+        .iter()
+        .map(|info| EmbeddingModelInfo::from_info(info, &models_root))
+        .collect();
+    // Phase 19 Task 1: pull the non-ASCII chunk stats inside the
+    // same call so the renderer doesn't need a second IPC just to
+    // decide whether to render the multilingual hint. The cost is
+    // two index-only `COUNT(*)` scans against the chunks table —
+    // amortised vs. the registry-scan I/O the call already does.
+    let (non_ascii_chunks, total_chunks) = manager.count_non_ascii_chunks()?;
+    Ok(EmbeddingModelStatusInfo {
+        current_model_id: manager.current_embedder_model_id(),
+        models,
+        download: tracker.snapshot(),
+        non_ascii_chunks: non_ascii_chunks as f64,
+        total_chunks: total_chunks as f64,
+    })
+}
+
+/// Download a registered ONNX embedding model to disk.
+///
+/// Drives [`model_registry::download_model`] with a progress
+/// callback that publishes into the shared [`DownloadProgressTracker`].
+/// The caller (the napi `AsyncTask`) is responsible for marking
+/// the tracker `done` / `failed` based on this function's result,
+/// because the registry function returns *after* the file has been
+/// atomically renamed and so a `Ok` from here unambiguously means
+/// the files are in place.
+///
+/// Returns the install directory containing the downloaded
+/// `model.onnx` + `tokenizer.json`.
+pub async fn download_embedding_model(
+    slug: &str,
+    user_data_dir: &str,
+    tracker: Arc<DownloadProgressTracker>,
+) -> BridgeResult<PathBuf> {
+    let models_root = models_root_for(user_data_dir);
+    let cb_tracker = Arc::clone(&tracker);
+    let cb: model_registry::ProgressCallback =
+        Arc::new(move |downloaded, total| cb_tracker.update(downloaded, total));
+    let install_dir = model_registry::download_model(slug, &models_root, Some(cb))
+        .await
+        .map_err(|e| {
+            // Surface the registry's structured error verbatim —
+            // it already encodes whether the failure was a
+            // network error, an SHA-256 mismatch, or a missing
+            // slug, all of which the renderer renders identically
+            // ("download failed, retry") but the audit log
+            // needs to distinguish.
+            BridgeError::Core(e)
+        })?;
+    Ok(install_dir)
+}
+
+/// Switch the active embedding provider to a downloaded ONNX model.
+///
+/// Validates that the requested model is fully installed (matching
+/// SHA-256) before constructing the [`OnnxEmbeddingProvider`] so a
+/// mid-download switch doesn't silently activate a corrupted
+/// model. After the swap, the caller is expected to invoke
+/// [`SourceManager::backfill_embeddings_tracked`] so the new
+/// model's vectors are populated for existing chunks — that is
+/// scheduled by the IPC layer rather than fired here so the
+/// renderer can drive the progress UI.
+pub fn switch_embedding_model(
+    manager: &mut SourceManager,
+    user_data_dir: &str,
+    slug: &str,
+) -> BridgeResult<EmbeddingModelInfo> {
+    let models_root = models_root_for(user_data_dir);
+    // Phase 19 Task 1: the slug `"hash-trick"` is a reserved pseudo-
+    // slug that reverts the active embedder to the bundled offline
+    // HashTrick provider. It never appears in `SHIPPED_MODELS` (it
+    // has no `.onnx` file to download), but the IPC layer and the
+    // renderer's picker need to be able to round-trip it through
+    // this same channel so "switch back to fast / offline" stays
+    // symmetric with switching to one of the ONNX models. The
+    // returned `EmbeddingModelInfo` reports `installed: true` and
+    // `model_size_bytes: 0.0` (no on-disk artefact) so the
+    // renderer can render the HashTrick option uniformly with the
+    // ONNX ones.
+    if slug == HASH_TRICK_SLUG {
+        use tessera_sources::embedding::EmbeddingProvider as _;
+        let provider = tessera_sources::embedding::HashTrickEmbedding::default_config();
+        let model_id = provider.model_id().to_string();
+        let arc_provider: Arc<dyn tessera_sources::embedding::EmbeddingProvider> =
+            Arc::new(provider);
+        manager.set_embedder(Some(arc_provider));
+        return Ok(EmbeddingModelInfo {
+            slug: HASH_TRICK_SLUG.to_string(),
+            display_name: "Fast (offline, no download)".to_string(),
+            dim: 256,
+            model_size_bytes: 0.0,
+            tokenizer_size_bytes: 0.0,
+            languages: "any (lexical only)".to_string(),
+            installed: true,
+            model_id,
+        });
+    }
+    let info = model_registry::lookup(slug)
+        .ok_or_else(|| BridgeError::InvalidArgs(format!("unknown embedding model slug: {slug}")))?;
+    if !info.is_installed(&models_root) {
+        return Err(BridgeError::InvalidArgs(format!(
+            "model {slug} is not installed (run download_embedding_model first)"
+        )));
+    }
+    let model_path = info.model_path(&models_root);
+    let tokenizer_path = info.tokenizer_path(&models_root);
+    let provider = OnnxEmbeddingProvider::load(&model_path, &tokenizer_path, slug, info.dim)
+        .map_err(BridgeError::Core)?;
+    let arc_provider: Arc<dyn tessera_sources::embedding::EmbeddingProvider> = Arc::new(provider);
+    manager.set_embedder(Some(arc_provider));
+    Ok(EmbeddingModelInfo::from_info(info, &models_root))
+}
+
+/// Phase 19 Task 1: reserved pseudo-slug for the bundled offline
+/// HashTrick embedder. Exposed as a `pub const` so the napi
+/// exports layer + tests can reference the canonical string
+/// without a magic literal scattered through the codebase.
+pub const HASH_TRICK_SLUG: &str = "hash-trick";
 
 #[cfg(test)]
 mod tests {

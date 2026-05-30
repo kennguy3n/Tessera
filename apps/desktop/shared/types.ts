@@ -84,6 +84,82 @@ export interface BackfillEmbeddingsResult {
 }
 
 /**
+ * Phase 19 Task 1: per-model catalogue entry returned by
+ * `settings:getEmbeddingModelStatus`. Mirrors
+ * `tessera_bridge::sources::EmbeddingModelInfo`. The Settings page
+ * uses this to render the three-way embedding-tier picker:
+ *   - "Fast (HashTrick — offline, no download)"
+ *   - "Semantic — English (MiniLM)"
+ *   - "Semantic — Multilingual (XLM-R)"
+ */
+export interface EmbeddingModelInfo {
+  /** Stable URL-safe identifier, e.g. `all-MiniLM-L6-v2`. */
+  slug: string;
+  /** Human-readable label for the picker. */
+  displayName: string;
+  /** Output vector dimensionality (always 384 today). */
+  dim: number;
+  /** Approximate ONNX file size in bytes. */
+  modelSizeBytes: number;
+  /** Approximate tokenizer.json size in bytes. */
+  tokenizerSizeBytes: number;
+  /** Comma-separated list of supported language families. */
+  languages: string;
+  /** True iff the files exist on disk AND match the pinned SHA-256. */
+  installed: boolean;
+  /**
+   * Canonical `model_id` this model would be tagged with in
+   * `chunk_embeddings.model_id`. Format `onnx:{slug}:{dim}d`.
+   */
+  modelId: string;
+}
+
+/**
+ * Phase 19 Task 1: status of an in-flight ONNX model download.
+ * Mirrors `tessera_bridge::sources::DownloadProgressInfo`. Polled
+ * on a timer by the Settings page to render the progress bar.
+ */
+export interface EmbeddingDownloadProgressInfo {
+  status: "idle" | "downloading" | "done" | "failed";
+  /** Slug of the model being / last downloaded. Null before first download. */
+  slug: string | null;
+  /** Total bytes expected, or null when Content-Length was missing. */
+  bytesTotal: number | null;
+  /** Bytes received so far (always >= 0). */
+  bytesDownloaded: number;
+  /** Verbatim error message from the last failed download. */
+  lastError: string | null;
+}
+
+/**
+ * Phase 19 Task 1: combined catalogue + per-model state + active
+ * download state returned by `settings:getEmbeddingModelStatus`.
+ * Single round trip so the Settings page renders in one frame.
+ */
+export interface EmbeddingModelStatusInfo {
+  /** `model_id` of the currently-active embedder, or null. */
+  currentModelId: string | null;
+  /** All shipped ONNX models in display order, with per-model state. */
+  models: EmbeddingModelInfo[];
+  /** Current download state (idle when no download is in flight). */
+  download: EmbeddingDownloadProgressInfo;
+  /**
+   * Phase 19 Task 1: number of currently-indexed chunks whose
+   * content contains at least one non-ASCII byte. The Settings
+   * UI shows a "consider the XLM-R model" hint when
+   * `nonAsciiChunks / totalChunks > 0.10` (and `totalChunks` is
+   * large enough to be statistically meaningful — see the
+   * EmbeddingModelCard for the exact rule). Heuristic: GLOB
+   * counts smart quotes as non-ASCII too. See
+   * `SourceStore::count_non_ascii_chunks` for the full
+   * trade-off rationale.
+   */
+  nonAsciiChunks: number;
+  /** Total indexed chunks across all sources (denominator). */
+  totalChunks: number;
+}
+
+/**
  * Wire shape for the hybrid retrieval config exposed to the renderer.
  * Mirrors `tessera_bridge::sources::HybridSearchConfigInfo` — the
  * Rust side surfaces "no recency decay" as the explicit
@@ -1785,6 +1861,39 @@ export interface SettingsApi {
   updateHybridSearchConfig: (
     update: HybridSearchConfigUpdate,
   ) => Promise<HybridSearchConfigInfo>;
+  /**
+   * Phase 19 Task 1: snapshot of every shipped ONNX embedding
+   * model + per-model install state + the active embedder's
+   * `modelId` + the in-flight download state, in one round trip.
+   * Polled on a 1 s timer by the embedding-model card so the UI
+   * stays in sync with downloads triggered from elsewhere
+   * (multiple Settings windows, future scriptable IPC, etc.).
+   */
+  getEmbeddingModelStatus: () => Promise<EmbeddingModelStatusInfo>;
+  /**
+   * Phase 19 Task 1: lightweight progress poll for in-flight model
+   * downloads. Returns the latest tracker snapshot — cheap enough
+   * to call at 500 ms cadence so the progress bar feels live.
+   */
+  getEmbeddingDownloadProgress: () => Promise<EmbeddingDownloadProgressInfo>;
+  /**
+   * Phase 19 Task 1: trigger a model download. Resolves with the
+   * model's catalogue entry (with `installed: true`) on success;
+   * rejects with the download error on network / checksum failure.
+   * Idempotent — calling on an already-installed model returns
+   * immediately. Rate-limited at 1 call / 5 s.
+   */
+  downloadEmbeddingModel: (slug: string) => Promise<EmbeddingModelInfo>;
+  /**
+   * Phase 19 Task 1: activate a downloaded model and fire a
+   * fire-and-forget background backfill so existing chunks get
+   * the new model's vectors. Returns the freshly-activated
+   * model's catalogue entry. Rate-limited at 1 call / 1 s.
+   * Surfaces backfill progress through the existing
+   * `sources:getEmbeddingProgress` channel; this channel returns
+   * as soon as the swap itself is durable.
+   */
+  switchEmbeddingModel: (slug: string) => Promise<EmbeddingModelInfo>;
 }
 
 export interface ExternalProviderApi {

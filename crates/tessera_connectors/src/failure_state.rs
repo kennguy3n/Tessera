@@ -179,21 +179,11 @@ impl SyncBackoffPolicy {
 ///     Only the user can clear this (via "Retry now" /
 ///     "Re-authorize") so we never silently resume hammering a
 ///     broken provider.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SyncFailureState {
     pub last_error: Option<PersistedSyncError>,
     pub retry_count: u32,
     pub failed_permanently: bool,
-}
-
-impl Default for SyncFailureState {
-    fn default() -> Self {
-        Self {
-            last_error: None,
-            retry_count: 0,
-            failed_permanently: false,
-        }
-    }
 }
 
 /// On-disk shape of a persisted sync error. Captures enough
@@ -377,7 +367,10 @@ mod tests {
         // jitter_fraction = 0.0 — every rand_unit returns the exact
         // interval, no perturbation.
         for r in [0.0, 0.25, 0.5, 0.75, 0.999] {
-            assert_eq!(p.apply_jitter(Duration::from_millis(42), r), Duration::from_millis(42));
+            assert_eq!(
+                p.apply_jitter(Duration::from_millis(42), r),
+                Duration::from_millis(42)
+            );
         }
     }
 

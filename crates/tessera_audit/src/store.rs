@@ -542,10 +542,7 @@ fn write_rotation_archive(
 /// Run the trigger-drop / chunked-DELETE / trigger-recreate
 /// transaction for [`AuditStore::rotate`] against an already-locked
 /// connection.
-fn execute_rotation_delete(
-    conn: &rusqlite::Connection,
-    ids: &[String],
-) -> Result<()> {
+fn execute_rotation_delete(conn: &rusqlite::Connection, ids: &[String]) -> Result<()> {
     conn.execute_batch("BEGIN IMMEDIATE;")
         .map_err(|e| Error::Database(e.to_string()))?;
     let rollback_on_err = |err: rusqlite::Error| -> Error {
@@ -564,8 +561,7 @@ fn execute_rotation_delete(
     // is the historical safe minimum).
     const CHUNK: usize = 500;
     for chunk in ids.chunks(CHUNK) {
-        let placeholders = std::iter::repeat("?")
-            .take(chunk.len())
+        let placeholders = std::iter::repeat_n("?", chunk.len())
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!("DELETE FROM audit_events WHERE id IN ({placeholders})");
@@ -969,7 +965,10 @@ mod tests {
             rotation_outcomes, 1,
             "exactly one of the racing rotations should have produced rows; the other should see the table back below threshold and return None",
         );
-        assert_eq!(rotated_total, 5, "the rotated rows should be the 5 above threshold");
+        assert_eq!(
+            rotated_total, 5,
+            "the rotated rows should be the 5 above threshold"
+        );
 
         let archives = AuditStore::list_archives(dir.path()).unwrap();
         assert_eq!(

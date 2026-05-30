@@ -58,6 +58,32 @@ rand = { version = "0.8", default-features = false, features = ["std", "std_rng"
 zeroize = { version = "1.8", default-features = false, features = ["zeroize_derive"] }
 rayon = "1.10"
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+# Phase 19 Task 1: ONNX Runtime + HuggingFace tokenizers for the
+# semantic embedding providers (all-MiniLM-L6-v2 English, paraphrase-
+# multilingual-MiniLM-L12-v2 multilingual). Pinned to the 2.0 release
+# candidate line because the 1.x API does not expose the borrow-free
+# `Session::run` shape the OnnxEmbeddingProvider uses for batch
+# inference. `download-binaries` fetches the ONNX Runtime shared
+# library at build time so contributors don't need a system-installed
+# `onnxruntime` package — this is the same posture the Python
+# `onnxruntime` wheel uses.
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["ndarray", "std", "download-binaries"] }
+ort-sys = { version = "=2.0.0-rc.10", default-features = false }
+ndarray = { version = "0.16", default-features = false, features = ["std"] }
+# `default-features = false` strips `progressbar` (indicatif),
+# `esaxx_fast` (C++ build), and `http` (hf-hub) — we don't train
+# tokenizers in-process, we don't draw progress bars from inside the
+# Rust crate, and we fetch tokenizer.json via our own `reqwest`-based
+# download path in `model_registry.rs`. The crate still needs SOME
+# regex backend to satisfy `tokenizers::utils::SysRegex`, so we
+# enable `unstable_wasm`, which (despite the name) just swaps the
+# default Oniguruma C bindings for the pure-Rust `fancy-regex` crate.
+# Using `fancy-regex` avoids dragging in Oniguruma C headers on every
+# build target (Linux, macOS-x64, macOS-arm64, Windows). The
+# `getrandom/js` feature toggled on by `unstable_wasm` is a no-op on
+# native targets — it only activates the WASM JavaScript RNG when
+# compiling to `wasm32-unknown-unknown`.
+tokenizers = { version = "0.20", default-features = false, features = ["unstable_wasm"] }
 flate2 = "1.0"
 
 [workspace.lints.rust]

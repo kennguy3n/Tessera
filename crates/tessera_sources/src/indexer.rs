@@ -124,6 +124,18 @@ impl Indexer {
         self
     }
 
+    /// `&mut self` setter for the embedding provider. Pairs with
+    /// [`Indexer::with_embedder`] (the builder form) so the bridge
+    /// can swap the active embedder at runtime (e.g. when the user
+    /// switches from HashTrick to one of the ONNX models in
+    /// Settings) without rebuilding the indexer. Passing `None`
+    /// detaches any current embedder — newly indexed chunks will
+    /// then skip the vector column until a new embedder is
+    /// attached and `backfill_embeddings_tracked` runs.
+    pub fn set_embedder(&mut self, embedder: Option<Arc<dyn EmbeddingProvider>>) {
+        self.embedder = embedder;
+    }
+
     /// Attach a vision extractor. Subsequent indexing passes will
     /// add a VLM-described chunk for every image file (in
     /// addition to the always-emitted metadata chunk). The
