@@ -654,6 +654,27 @@ describe("replaceBlock", () => {
     expect(replaceBlock(slide, 5, { type: "text", content: "x" })).toBe(slide);
     expect(replaceBlock(slide, -1, { type: "text", content: "x" })).toBe(slide);
   });
+
+  it("returns the same reference when the replacement is === the existing block", () => {
+    // Pins the second short-circuit branch. Without this guard, the
+    // `nextBlockForTypeChange` same-type optimisation (which returns
+    // the input block unchanged when `block.type === nextType`)
+    // would be defeated end-to-end: `replaceBlock` would still build
+    // a fresh array and a fresh `Slide`, the parent component's
+    // `if (updatedSlide === slide) return prev` short-circuit would
+    // miss, and `debouncedSave` would fire on a no-op type-select.
+    const existing: SlideBlock = { type: "text", content: "keep me" };
+    const slide: Slide = {
+      title: "T",
+      blocks: [
+        { type: "bullets", content: "- a" },
+        existing,
+        { type: "text", content: "z" },
+      ],
+      notes: "",
+    };
+    expect(replaceBlock(slide, 1, existing)).toBe(slide);
+  });
 });
 
 describe("nextBlockForTypeChange", () => {

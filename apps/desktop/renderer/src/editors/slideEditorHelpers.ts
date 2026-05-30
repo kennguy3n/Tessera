@@ -438,9 +438,22 @@ export function appendBlock(slide: Slide, block: SlideBlock): Slide {
 
 /**
  * Replace the block at `index` with `block`. Returns a new `Slide`.
- * Out-of-range indices are no-ops. Used by the per-block type select
- * and the per-block content textarea so the existing `updateSlide`
- * call site can stay a one-liner.
+ *
+ * Two no-op short-circuits keep the reference-stable contract that
+ * `moveBlock` / `removeBlock` follow:
+ *   - Out-of-range `index` → return input slide reference unchanged.
+ *   - `block` is referentially identical to the block already at
+ *     `index` → return input slide reference unchanged. This is what
+ *     preserves the `nextBlockForTypeChange` same-type optimisation
+ *     end-to-end: that helper returns the input block unchanged when
+ *     `block.type === nextType`, and without this identity check
+ *     `replaceBlock` would still build a fresh array and a fresh
+ *     `Slide`, defeating the optimisation and firing a redundant
+ *     `debouncedSave`.
+ *
+ * Used by the per-block type select and the per-block content
+ * textarea so the existing `updateSlide` call site can stay a
+ * one-liner.
  */
 export function replaceBlock(
   slide: Slide,
@@ -448,6 +461,7 @@ export function replaceBlock(
   block: SlideBlock,
 ): Slide {
   if (index < 0 || index >= slide.blocks.length) return slide;
+  if (slide.blocks[index] === block) return slide;
   const next = [...slide.blocks];
   next[index] = block;
   return { ...slide, blocks: next };

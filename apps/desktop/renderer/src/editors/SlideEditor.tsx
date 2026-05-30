@@ -478,6 +478,23 @@ export default function SlideEditor({
   // race-condition during a tab close) we log to the console rather
   // than surfacing an error to the user, because the block is still
   // in a valid empty state.
+  //
+  // Concurrent-upload race: the user can pick file A, then immediately
+  // pick file B before A's FileReader completes. Without coordination,
+  // whichever read finishes LAST wins — regardless of which was picked
+  // last (FileReader resolution order is not deterministic across
+  // sizes; a large A picked first then a small B could resolve in B-A
+  // order, but the opposite is also possible). We solve this with a
+  // per-block sequence counter: every upload bumps the counter for
+  // its (slideIndex, blockIndex) key and captures the post-bump value
+  // as its token. After awaiting, the resolver checks whether the
+  // counter has advanced past its token — if so, a newer upload has
+  // started, and the stale result is discarded silently.
+  //
+  // The key is composed of the index pair because PR 7 blocks don't
+  // carry stable IDs yet. The keying will switch to `block.id` in
+  // PR 8 once stable IDs land; the contract above is unchanged.
+  const uploadTokensRef = useRef<Map<string, number>>(new Map());
 
   const onImageUpload = useCallback(
     async (
@@ -485,8 +502,15 @@ export default function SlideEditor({
       blockIndex: number,
       file: File,
     ) => {
+      const tokenKey = `${slideIndex}|${blockIndex}`;
+      const nextToken = (uploadTokensRef.current.get(tokenKey) ?? 0) + 1;
+      uploadTokensRef.current.set(tokenKey, nextToken);
       try {
         const dataUrl = await fileToDataUrl(file);
+        // Race guard: if another upload to the same block has started
+        // after this one began, drop the stale result so the newer
+        // upload's URL is the one that lands in the block.
+        if (uploadTokensRef.current.get(tokenKey) !== nextToken) return;
         setSlides((prev) => {
           const slide = prev[slideIndex];
           if (!slide) return prev;
@@ -506,7 +530,11 @@ export default function SlideEditor({
       } catch (err) {
         // Surface the failure in the dev console; the block stays in
         // its previous (probably empty) state so the user can retry.
-        console.warn("Failed to read image file:", err);
+        // Only log if this is still the latest upload for the block
+        // — a stale rejection is just noise.
+        if (uploadTokensRef.current.get(tokenKey) === nextToken) {
+          console.warn("Failed to read image file:", err);
+        }
       }
     },
     [debouncedSave],
