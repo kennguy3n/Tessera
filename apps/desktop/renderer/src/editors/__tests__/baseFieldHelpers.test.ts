@@ -26,8 +26,11 @@ import {
   matchesFilter,
   applyFieldRename,
   isComputedFieldType,
+  pruneViewStateAgainstFields,
+  VIEW_CONFIG_FIELD_POINTERS,
 } from "../baseEditorHelpers";
 import type { BaseField, BaseRecord } from "../baseEditorTypes";
+import type { BaseViewConfig } from "../baseviews/types";
 
 describe("makeRecordId", () => {
   it("produces a 16-character lowercase hex id", () => {
@@ -524,6 +527,73 @@ describe("matchesFilter — per-type filtering", () => {
     expect(matchesFilter("number", "12abc34", "ABC")).toBe(true);
     expect(matchesFilter("number", "12abc34", "xyz")).toBe(false);
   });
+
+  // BUG_pr-review-job-b04adfa7…-0001: `Number(null) === 0` causes
+  // every empty numeric cell to match a filter typed as "0", "=0",
+  // ">=0", "<=0", or "<1". The old filter code (pre-PR-5) had an
+  // explicit `if (val == null) return false;` that this matcher must
+  // preserve.
+  it("numeric: stored null / undefined / '' never matches a numeric filter (BUG-0001)", () => {
+    for (const filter of ["0", "=0", ">=0", "<=0", "<1", ">-1", ">=-99"]) {
+      expect(matchesFilter("number", null, filter)).toBe(false);
+      expect(matchesFilter("number", undefined, filter)).toBe(false);
+      expect(matchesFilter("number", "", filter)).toBe(false);
+      expect(matchesFilter("currency", null, filter)).toBe(false);
+      expect(matchesFilter("rating", null, filter)).toBe(false);
+      expect(matchesFilter("duration", null, filter)).toBe(false);
+      expect(matchesFilter("percent", null, filter)).toBe(false);
+    }
+    // Sanity: a populated cell still matches the same filters.
+    expect(matchesFilter("number", 0, "0")).toBe(true);
+    expect(matchesFilter("number", 5, "<10")).toBe(true);
+  });
+
+  // ANALYSIS_pr-review-job-b04adfa7…-0001: the computed-type branch
+  // has the same `Number("") === 0` foot-gun as the numeric branch —
+  // an empty display string would otherwise match "0", ">=0", etc.
+  // The fix short-circuits any numeric comparison when the display
+  // is empty / whitespace-only.
+  it("computed: empty display never matches a numeric filter (ANALYSIS-0001)", () => {
+    for (const filter of ["0", "=0", ">=0", "<=0", "<1", ">-1"]) {
+      expect(matchesFilter("formula", "ignored", filter, "")).toBe(false);
+      expect(matchesFilter("formula", "ignored", filter, " ")).toBe(false);
+      expect(matchesFilter("rollup", "ignored", filter, "\t")).toBe(false);
+      expect(matchesFilter("lookup", "ignored", filter)).toBe(false); // no display passed
+      expect(matchesFilter("auto_number", null, filter, "")).toBe(false);
+    }
+    // Sanity: non-empty display still matches.
+    expect(matchesFilter("formula", "ignored", "0", "0")).toBe(true);
+    expect(matchesFilter("auto_number", null, ">5", "7")).toBe(true);
+  });
+
+  // ANALYSIS_pr-review-job-b04adfa7…-0006: percent stores fractions
+  // but the user sees percentages. `>10` on a stored `0.5` (= 50%)
+  // must match (50% > 10%), not return false because `0.5 > 10`.
+  it("percent: filter operand is interpreted as a display percentage (ANALYSIS-0006)", () => {
+    // `>10` means ">10%". Stored 0.5 (50%) matches; stored 0.05 (5%)
+    // does not.
+    expect(matchesFilter("percent", 0.5, ">10")).toBe(true);
+    expect(matchesFilter("percent", 0.05, ">10")).toBe(false);
+    // Boundary checks for `=` / `>=` / `<=` / `<`.
+    expect(matchesFilter("percent", 0.5, "=50")).toBe(true);
+    expect(matchesFilter("percent", 0.5, ">=50")).toBe(true);
+    expect(matchesFilter("percent", 0.5, "<=50")).toBe(true);
+    expect(matchesFilter("percent", 0.5, "<50")).toBe(false);
+    expect(matchesFilter("percent", 0.4, "<50")).toBe(true);
+    // Bare numeric → equals (also rescaled).
+    expect(matchesFilter("percent", 0.25, "25")).toBe(true);
+    expect(matchesFilter("percent", 0.25, "30")).toBe(false);
+    // Non-numeric filter (free text) still falls back to substring
+    // on the rendered stored value — no rescaling because there is
+    // no operand to rescale.
+    expect(matchesFilter("percent", 0.5, "0.5")).toBe(false); // not "50" → no match
+    // Other numeric types are NOT rescaled — `currency` stored as
+    // `100` matches `>50` literally (not >0.5).
+    expect(matchesFilter("currency", 100, ">50")).toBe(true);
+    expect(matchesFilter("currency", 100, "<50")).toBe(false);
+    expect(matchesFilter("number", 100, ">50")).toBe(true);
+    expect(matchesFilter("rating", 4, ">3")).toBe(true);
+  });
 });
 
 describe("applyFieldRename — atomic cross-pointer rename", () => {
@@ -637,5 +707,124 @@ describe("applyFieldRename — atomic cross-pointer rename", () => {
     const out = applyFieldRename(f, "Price", "Cost");
     // Field name moved, but formula source is byte-for-byte the same.
     expect(out.formula).toBe("{Price} + {Tax}");
+  });
+});
+
+describe("pruneViewStateAgainstFields — drop stale references after import", () => {
+  // The helper is the single source of truth for which view-state
+  // domains we clean up on schema replacement. Devin Review flagged
+  // a gap in the viewConfig cleanup on PR #79; these tests pin the
+  // contract so future regressions can't slip past.
+  const fields = (...names: string[]): BaseField[] =>
+    names.map((name) => ({ name, type: "text" }));
+
+  const viewConfigWith = (
+    overrides: Partial<BaseViewConfig> = {},
+  ): BaseViewConfig => ({
+    kanbanGroupField: null,
+    calendarDateField: null,
+    timelineStartField: null,
+    timelineEndField: null,
+    galleryCoverField: null,
+    titleField: null,
+    ...overrides,
+  });
+
+  it("VIEW_CONFIG_FIELD_POINTERS enumerates every field-name pointer in BaseViewConfig", () => {
+    // Anti-bitrot guard: if a new pointer is added to BaseViewConfig
+    // (or one is removed), `VIEW_CONFIG_FIELD_POINTERS` must be
+    // updated in lock-step or the rename / import cleanup paths will
+    // silently drift.
+    const sample = viewConfigWith();
+    const expected = new Set(Object.keys(sample));
+    const actual = new Set(VIEW_CONFIG_FIELD_POINTERS as readonly string[]);
+    expect(actual).toEqual(expected);
+  });
+
+  it("drops sortField when its target no longer exists", () => {
+    const out = pruneViewStateAgainstFields(fields("A", "B"), {
+      sortField: "Removed",
+      filters: {},
+      viewConfig: viewConfigWith(),
+    });
+    expect(out.sortField).toBe(null);
+  });
+
+  it("keeps sortField when its target still exists (referential equality)", () => {
+    const prev = {
+      sortField: "A",
+      filters: {},
+      viewConfig: viewConfigWith(),
+    };
+    const out = pruneViewStateAgainstFields(fields("A", "B"), prev);
+    expect(out.sortField).toBe("A");
+    // Object reused when nothing changed.
+    expect(out.filters).toBe(prev.filters);
+    expect(out.viewConfig).toBe(prev.viewConfig);
+  });
+
+  it("removes filter entries whose key was dropped, keeps survivors", () => {
+    const out = pruneViewStateAgainstFields(fields("A", "C"), {
+      sortField: null,
+      filters: { A: "foo", B: "bar", C: "baz" },
+      viewConfig: viewConfigWith(),
+    });
+    expect(out.filters).toEqual({ A: "foo", C: "baz" });
+  });
+
+  it("nulls out kanban / calendar / timeline / gallery / title pointers when their target is gone (ANALYSIS-0002)", () => {
+    const out = pruneViewStateAgainstFields(fields("Title"), {
+      sortField: null,
+      filters: {},
+      viewConfig: viewConfigWith({
+        kanbanGroupField: "Status",
+        calendarDateField: "DueDate",
+        timelineStartField: "Start",
+        timelineEndField: "End",
+        galleryCoverField: "Cover",
+        titleField: "Title",
+      }),
+    });
+    // Every pointer except Title is gone; Title survives.
+    expect(out.viewConfig.kanbanGroupField).toBe(null);
+    expect(out.viewConfig.calendarDateField).toBe(null);
+    expect(out.viewConfig.timelineStartField).toBe(null);
+    expect(out.viewConfig.timelineEndField).toBe(null);
+    expect(out.viewConfig.galleryCoverField).toBe(null);
+    expect(out.viewConfig.titleField).toBe("Title");
+  });
+
+  it("returns the input viewConfig by-reference when nothing needs nulling", () => {
+    const prev = {
+      sortField: null,
+      filters: {},
+      viewConfig: viewConfigWith({
+        kanbanGroupField: "Status",
+        titleField: "Name",
+      }),
+    };
+    const out = pruneViewStateAgainstFields(
+      fields("Status", "Name", "Other"),
+      prev,
+    );
+    // No-op cleanup must preserve referential equality so React skips
+    // the re-render. (`setViewConfig(prev => prev)` is a documented
+    // bail-out path; the helper is consumed by exactly that pattern.)
+    expect(out.viewConfig).toBe(prev.viewConfig);
+  });
+
+  it("handles all three domains in one pass when the schema changed completely", () => {
+    const out = pruneViewStateAgainstFields(fields("New1", "New2"), {
+      sortField: "OldSort",
+      filters: { OldFilter: "x", New1: "keep" },
+      viewConfig: viewConfigWith({
+        kanbanGroupField: "OldStatus",
+        titleField: "OldTitle",
+      }),
+    });
+    expect(out.sortField).toBe(null);
+    expect(out.filters).toEqual({ New1: "keep" });
+    expect(out.viewConfig.kanbanGroupField).toBe(null);
+    expect(out.viewConfig.titleField).toBe(null);
   });
 });

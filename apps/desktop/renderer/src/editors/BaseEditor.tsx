@@ -20,6 +20,7 @@ import {
   matchesFilter,
   applyFieldRename,
   isComputedFieldType,
+  VIEW_CONFIG_FIELD_POINTERS,
 } from "./baseEditorHelpers";
 import {
   evaluateBaseFormula,
@@ -296,23 +297,16 @@ export default function BaseEditor({
         const { [oldName]: carriedFilter, ...rest } = prev;
         return { ...rest, [trimmed]: carriedFilter };
       });
-      // (5) Per-view configuration. Loop over the six known
-      // field-name pointers in BaseViewConfig so adding a new
-      // view (e.g. a "color by" pointer) only needs the field
-      // listed here once. Bail out with the same reference if
-      // nothing changed so React skips the re-render.
+      // (5) Per-view configuration. Loop over the known field-name
+      // pointers in BaseViewConfig (centralised in
+      // `VIEW_CONFIG_FIELD_POINTERS`) so adding a new view (e.g. a
+      // "color by" pointer) only needs the field listed once and both
+      // rename + import paths pick it up. Bail out with the same
+      // reference if nothing changed so React skips the re-render.
       setViewConfig((prev) => {
-        const keys: (keyof BaseViewConfig)[] = [
-          "kanbanGroupField",
-          "calendarDateField",
-          "timelineStartField",
-          "timelineEndField",
-          "galleryCoverField",
-          "titleField",
-        ];
         let dirty = false;
         const next: BaseViewConfig = { ...prev };
-        for (const k of keys) {
+        for (const k of VIEW_CONFIG_FIELD_POINTERS) {
           if (prev[k] === oldName) {
             next[k] = trimmed;
             dirty = true;
@@ -477,15 +471,29 @@ export default function BaseEditor({
     );
   }, [data, triggerDownload]);
 
-  // After an import we must also drop sort / filter state that
-  // references fields the imported schema doesn't have, otherwise
-  // the header would still show a typed-in filter on a column that
-  // no longer exists and the sort indicator would point at
-  // nothing.  `filteredAndSorted` already tolerates the stale
-  // state (missing fields are skipped), but the UI looks broken
-  // until the user manually clears each one — a Devin Review
-  // finding on PR #79 flagged this as a paper-cut.
+  // After an import we must drop sort / filter / view-config state
+  // that references fields the imported schema doesn't have — the
+  // grid header would still show a typed-in filter on a column that
+  // no longer exists, the sort indicator would point at nothing, and
+  // Kanban / Calendar / Timeline / Gallery would silently render
+  // empty because they look up `fields.find((f) => f.name ===
+  // config.kanbanGroupField)` and miss. `filteredAndSorted` already
+  // tolerates the stale state but the UI looks broken until the user
+  // manually clears each one. Devin Review on PR #79 flagged both
+  // halves of this (sort+filter in round 3, viewConfig in round 4)
+  // so a single shared helper now owns the entire cleanup and stays
+  // symmetric with `renameField`'s pointer-rewrite list.
   const dropStaleViewState = useCallback((nextFields: BaseField[]) => {
+    // Each setter is independent React state, so we read the latest
+    // value via the functional-updater signature and run the same
+    // prune logic the helper centralises. We can't call
+    // `pruneViewStateAgainstFields` once for all three because the
+    // three `prev` values live in separate `useState` slots — but the
+    // helper still lives in `baseEditorHelpers` (and is unit-tested
+    // there) to document the contract, and `renameField` shares the
+    // `VIEW_CONFIG_FIELD_POINTERS` constant so both call sites stay
+    // in lock-step when a new field-name pointer is added to
+    // `BaseViewConfig`.
     const names = new Set(nextFields.map((f) => f.name));
     setSortField((prev) => (prev !== null && !names.has(prev) ? null : prev));
     setFilters((prev) => {
@@ -499,6 +507,18 @@ export default function BaseEditor({
         }
       }
       return dirty ? out : prev;
+    });
+    setViewConfig((prev) => {
+      let dirty = false;
+      const next: BaseViewConfig = { ...prev };
+      for (const k of VIEW_CONFIG_FIELD_POINTERS) {
+        const ref = prev[k];
+        if (ref !== null && !names.has(ref)) {
+          next[k] = null;
+          dirty = true;
+        }
+      }
+      return dirty ? next : prev;
     });
   }, []);
 

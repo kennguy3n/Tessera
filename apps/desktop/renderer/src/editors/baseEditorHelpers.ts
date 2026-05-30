@@ -27,6 +27,7 @@ import type {
   FieldType,
   RollupAggregation,
 } from "./baseEditorTypes";
+import type { BaseViewConfig } from "./baseviews/types";
 
 /**
  * Names the user must not assign to a field. `id` is the stable
@@ -407,12 +408,18 @@ export function isComputedFieldType(type: FieldType): boolean {
  * column. We want that input to feel right for the underlying field
  * type without forcing the user to learn a query DSL:
  *
- *   - **Numeric** types (`number`, `currency`, `percent`, `rating`,
- *     `duration`): support comparison operators
- *     `>`, `>=`, `<`, `<=`, `=` (e.g. `>10`, `<=5`). A bare numeric
- *     input is treated as `equals`. A non-numeric input falls back
- *     to substring on the rendered string so the column doesn't
- *     become un-filterable.
+ *   - **Numeric** types (`number`, `currency`, `rating`, `duration`):
+ *     support comparison operators `>`, `>=`, `<`, `<=`, `=`
+ *     (e.g. `>10`, `<=5`). A bare numeric input is treated as
+ *     `equals`. A non-numeric input falls back to substring on the
+ *     rendered string so the column doesn't become un-filterable.
+ *     **Null / undefined stored values never match a numeric filter**
+ *     (so "0" or ">=0" on an empty cell hides the row rather than
+ *     reporting a false positive — `Number(null) === 0` would
+ *     otherwise lie).
+ *   - **Percent**: stored as a fraction (`0.5` = 50%) but the user
+ *     thinks in display percentages. The filter operand is rescaled
+ *     so `>10` means ">10%", matching what the placeholder hints at.
  *   - **Checkbox**: matches `true` / `false` (case-insensitive), or
  *     `1` / `0`.
  *   - **Multi-valued** types (`multi_select`, `attachment`,
@@ -424,12 +431,14 @@ export function isComputedFieldType(type: FieldType): boolean {
  *   - **Computed** types (`formula`, `rollup`, `lookup`,
  *     `auto_number`): callers compute the **display string** for
  *     the record (typically via `formatValueForCsv`) and pass it as
- *     `displayValue`.  Numeric comparison operators (`>`, `<=`,
+ *     `displayValue`. Numeric comparison operators (`>`, `<=`,
  *     etc.) then parse that display string as a number; everything
  *     else falls back to case-insensitive substring on the same
  *     string.  This makes `auto_number > 5` behave the way the
  *     placeholder text (`e.g. >10`) promises, because the matcher
- *     no longer sees `null` / `0` for every row.
+ *     no longer sees `null` / `0` for every row. **Empty display
+ *     strings never match a numeric filter** — same `Number("")===0`
+ *     guard as the stored-value branch.
  *
  * Empty filter strings always match, so a half-typed filter on one
  * column doesn't accidentally hide every row.
@@ -452,8 +461,19 @@ export function matchesFilter(
   // displays.
   if (isComputedFieldType(fieldType)) {
     const target = displayValue ?? "";
+    // `Number("")` is `0`, which would make every empty-display row
+    // match `"0"` / `">=0"` / `"<1"` etc. Treat an empty display
+    // string as "no value here" and short-circuit before any
+    // numeric comparison can produce a false positive. The substring
+    // fall-through below would also lie on a literal empty filter
+    // input, but `f === ""` is already filtered out above so this
+    // only fires when the user typed something. The companion
+    // `target.trim() === ""` covers `" "`-only display strings
+    // emitted by formatters that pad with a non-breaking space.
+    const targetEmpty = target.trim() === "";
     const m = f.match(/^\s*(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)\s*$/);
     if (m) {
+      if (targetEmpty) return false;
       const op = m[1];
       const operand = Number(m[2]);
       const n = Number(target);
@@ -476,6 +496,7 @@ export function matchesFilter(
       // row, not silently fall back to substring matching.
       return false;
     }
+    if (targetEmpty) return false;
     const bare = Number(f);
     if (Number.isFinite(bare)) {
       const n = Number(target);
@@ -521,11 +542,28 @@ export function matchesFilter(
     "duration",
   ];
   if (numericTypes.includes(fieldType)) {
+    // An empty cell (`null`/`undefined`/`""`) should never match a
+    // numeric filter — `Number(null) === 0` and `Number("") === 0`
+    // both lie, so without this guard the filter `"0"` (or `">=0"`,
+    // `"<1"`, etc.) would highlight every empty row. The old filter
+    // code that this matcher replaced had an explicit `if (val ==
+    // null) return false;` and the unit tests only happened to
+    // cover `> 0` (which returns `false` for the wrong reason —
+    // `0 > 0` is false). Devin Review caught this on PR #79
+    // (BUG_pr-review-job-b04adfa7…-0001).
+    if (value === null || value === undefined || value === "") return false;
+    // For `percent` the stored value is a fraction (`0.5` = 50%) but
+    // the user thinks (and sees) in display percentages. Rescale the
+    // user's operand so `>10` means ">10%" — matching what the
+    // type-aware filter placeholder (`"e.g. >10"`) advertises. Devin
+    // Review flagged this on PR #79 (ANALYSIS_pr-review-job-b04…-0006).
+    const scaleOperand = (n: number): number =>
+      fieldType === "percent" ? n / 100 : n;
     // Match `>=`, `<=`, `>`, `<`, `=` then a number.
     const m = f.match(/^\s*(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)\s*$/);
     if (m) {
       const op = m[1];
-      const operand = Number(m[2]);
+      const operand = scaleOperand(Number(m[2]));
       const n = Number(value);
       if (!Number.isFinite(n) || !Number.isFinite(operand)) return false;
       switch (op) {
@@ -541,11 +579,11 @@ export function matchesFilter(
           return n === operand;
       }
     }
-    // Bare numeric → equals.
+    // Bare numeric → equals (with percent rescaling).
     const bare = Number(f);
     if (Number.isFinite(bare)) {
       const n = Number(value);
-      return Number.isFinite(n) && n === bare;
+      return Number.isFinite(n) && n === scaleOperand(bare);
     }
     // Non-numeric filter on a numeric column: fall back to substring
     // on the rendered string so users can still find a value.
@@ -558,4 +596,103 @@ export function matchesFilter(
   // select): case-insensitive substring on the stored string.
   if (value == null) return false;
   return String(value).toLowerCase().includes(f.toLowerCase());
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// View-state stale-pointer cleanup
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The six `BaseViewConfig` keys that store a field-name pointer. Kept
+ * here (next to `pruneViewStateAgainstFields`) so the list is
+ * enumerated **once** across the codebase — `BaseEditor.renameField`
+ * and `BaseEditor.dropStaleViewState` both consume this constant
+ * instead of redeclaring it inline, so adding a new field-name
+ * pointer in `BaseViewConfig` (e.g. a "color by" field) only needs to
+ * be added here once and both call sites pick it up.
+ *
+ * Devin Review on PR #79 flagged the duplication between rename and
+ * import paths.
+ */
+export const VIEW_CONFIG_FIELD_POINTERS: ReadonlyArray<keyof BaseViewConfig> = [
+  "kanbanGroupField",
+  "calendarDateField",
+  "timelineStartField",
+  "timelineEndField",
+  "galleryCoverField",
+  "titleField",
+];
+
+/**
+ * After replacing the entire Base content via import (or any other
+ * schema-changing operation), drop sort / filter / view-config state
+ * that points at fields that no longer exist.
+ *
+ * Returns a tuple of `[nextSortField, nextFilters, nextViewConfig]`.
+ * Each entry preserves referential equality with its input when
+ * nothing changed, so React `setX(prev => helperReturn[i])` calls
+ * don't trigger unnecessary re-renders.
+ *
+ * Without this:
+ *   - the grid header would still show a typed-in filter on a column
+ *     that no longer exists and the sort indicator would point at
+ *     nothing;
+ *   - Kanban / Calendar / Timeline / Gallery would silently render
+ *     empty because they call
+ *     `fields.find((f) => f.name === config.kanbanGroupField)` and
+ *     miss when the imported schema dropped that field.
+ *
+ * `filteredAndSorted` already tolerates the stale state (missing
+ * fields are skipped), but the UI looks broken until the user
+ * manually clears each one. Devin Review on PR #79 flagged this in
+ * two rounds — sort+filter in round 3, viewConfig in round 4 — so
+ * we own the entire cleanup in one helper now.
+ */
+export function pruneViewStateAgainstFields(
+  fields: BaseField[],
+  prev: {
+    sortField: string | null;
+    filters: Record<string, string>;
+    viewConfig: BaseViewConfig;
+  },
+): {
+  sortField: string | null;
+  filters: Record<string, string>;
+  viewConfig: BaseViewConfig;
+} {
+  const names = new Set(fields.map((f) => f.name));
+
+  // Sort pointer.
+  const nextSort =
+    prev.sortField !== null && !names.has(prev.sortField)
+      ? null
+      : prev.sortField;
+
+  // Filter map: keep entries whose key still exists.
+  let filtersDirty = false;
+  const nextFilters: Record<string, string> = {};
+  for (const [k, v] of Object.entries(prev.filters)) {
+    if (names.has(k)) {
+      nextFilters[k] = v;
+    } else {
+      filtersDirty = true;
+    }
+  }
+
+  // View-config: null out every pointer whose target was dropped.
+  let viewDirty = false;
+  const nextView: BaseViewConfig = { ...prev.viewConfig };
+  for (const k of VIEW_CONFIG_FIELD_POINTERS) {
+    const ref = prev.viewConfig[k];
+    if (ref !== null && !names.has(ref)) {
+      nextView[k] = null;
+      viewDirty = true;
+    }
+  }
+
+  return {
+    sortField: nextSort,
+    filters: filtersDirty ? nextFilters : prev.filters,
+    viewConfig: viewDirty ? nextView : prev.viewConfig,
+  };
 }
