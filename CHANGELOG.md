@@ -10,6 +10,130 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Phase 15 — Production quality & E2E reliability (six themes,
+  30 tasks).**
+
+  - **Performance & startup (PR 1, Tasks 1-6).** `performance.mark()` /
+    `performance.measure()` instrumentation at every cold-start stage
+    (app ready, bridge init, DB open, window show); heavy modules
+    (`marpExport`, `typstExport`, `diffusionSidecar`, `autoUpdater`)
+    converted to dynamic `import()` so they no longer block the first
+    render. Indexer + extractor moved to a `rayon` thread pool bounded
+    to `num_cpus / 2` (UI headroom preserved); content-hash gate keeps
+    incremental re-index correct. Hybrid search picks up a covering
+    index on `chunk_hash`+`source_id` and an idle `PRAGMA optimize`
+    pass; n-gram hash table now caches across queries. Streaming bulk
+    indexing in batches of 500 keeps peak RSS under the 200 MB
+    integration-test budget on a 10 K-chunk corpus. File watcher
+    coalesces events in a 500 ms window and dedupes per-path, so
+    write+rename storms (atomic-save pattern) fire one re-index. New
+    `sources:batchReindex` and `artifacts:batchExport` IPC channels
+    collapse N round-trips to 1 and report per-item success/error.
+  - **Reliability & crash recovery (PR 2, Tasks 7-12).** SQLCipher DB
+    now opens in WAL mode with `wal_checkpoint(TRUNCATE)` on graceful
+    shutdown and `integrity_check` on startup; an unrecoverable DB
+    surfaces a typed error rather than silently truncating. Editors
+    write a `.tessera-recovery` JSON sidecar before each auto-save
+    and the renderer offers to restore via `artifacts:checkRecovery`
+    /`artifacts:discardRecovery`. Sidecar lifecycle now records PIDs
+    to `{userData}/tessera-sidecar.pid`, orphan-cleans them at next
+    startup, and escalates SIGTERM→5 s grace→SIGKILL on `will-quit`.
+    Failed exports land in a persistent queue (`failedExportQueue.ts`)
+    and surface via `artifacts:failedExports` / `artifacts:retryExport`;
+    the queue survives restart through `config.json`. Connector sync
+    errors are classified transient (timeout / 429 / 503) vs permanent
+    (401 / 403 / 404) and retried with exponential backoff (base 2 s,
+    max 5 min, jitter); per-source last-error + retry-count is
+    persisted. Audit log rotates at 100 K rows to
+    `audit-archive-<ts>.jsonl.gz` and exposes archives via
+    `audit:getArchives`.
+  - **Export fidelity & platform parity (PR 3, Tasks 13-18).** Five
+    DOCX golden fixtures (headings / lists / tables / code blocks /
+    citations) pin byte-stable output AND OOXML-schema validity.
+    XLSX export now preserves SUM / AVERAGE / COUNT / MIN / MAX
+    formulas as strings (not computed values) and round-trips named
+    ranges. PDF export pre-renders Mermaid blocks to SVG and embeds
+    them through the Typst pipeline so a flowchart no longer leaks as
+    raw source. Linux smoke harness (`scripts/smoke-test-linux.sh` +
+    `scripts/Dockerfile.smoke`) builds the `.deb` and AppImage,
+    installs in an `ubuntu:22.04` container, launches under
+    `xvfb-run`, asserts main-window ready, and round-trips one IPC.
+    Windows portable-zip verifier (`scripts/verify-windows-package.ps1`)
+    asserts the NSIS exe + portable zip both ship `Tessera.exe`,
+    `resources/`, and the native `.node` addon. macOS verifier
+    (`scripts/verify-macos-package.sh`) asserts the native addon is
+    universal (`lipo -info` reports both `x86_64` and `arm64` slices)
+    or splits into two architecture-specific DMGs.
+  - **UX completeness (PR 4, Tasks 19-24).** Three-step first-run
+    onboarding wizard (`OnboardingWizard.tsx`) fires only when the
+    workspace is empty and persists `onboarding_completed` in config.
+    Every list page (Sources / Tasks / Automations / Templates) now
+    renders a Lucide-iconified empty state with descriptive copy and
+    a primary CTA. Toast provider enforces stack-max-3, 5 s
+    auto-dismiss for non-errors, persistence-until-dismissed for
+    errors, focus trap on hover, and Escape to dismiss. Settings
+    grows a Source Health dashboard backed by a new `sources:healthReport`
+    IPC (last sync time, status, indexed chunk count, storage size).
+    Template gallery is fully keyboard-navigable (roving tabindex,
+    arrow keys, Enter to select, Tab between filter and grid,
+    `aria-activedescendant`). Version history supports a section /
+    cell / record-level diff between any two versions of an artifact
+    via an in-tree LCS implementation (no external diff library).
+  - **Security & compliance (PR 5, Tasks 25-28).** CSP is now nonce-
+    based — `script-src` and `style-src-elem` no longer carry
+    `'unsafe-inline'`; a fresh 32-byte nonce per session flows main →
+    preload (`additionalArguments`) → renderer (`useCspNonce()` hook)
+    and is applied to every app-owned `<style>` tag. `connect-src` is
+    locked to `'self'` + `127.0.0.1` (sidecar) + explicitly configured
+    external provider endpoints. OAuth refresh races are coalesced
+    onto a single in-flight `Promise` via a per-provider mutex in
+    `ipc/connectors/handlers.ts` — concurrent expired-token detections
+    now produce exactly one upstream call. Sensitive buffers (SQLCipher
+    key in `dbKey.ts`, password-vault decryption fragments in
+    `passwordVault.ts`) are zeroed in `finally` blocks via the new
+    `secureBuffer.ts` helper. The KChat loopback API now enforces a
+    sliding-window per-IP rate limit (`kchatRateLimiter.ts`, default
+    100 req / 60 s, 429 + `Retry-After` clamped ≥ 1 s per RFC 7231),
+    applied BEFORE host / bearer checks so an attacker cannot drain
+    a legitimate caller's budget via malformed traffic.
+  - **Documentation & verification (PR 6, Tasks 29-30).** Linux
+    consistency pass across `README.md` / `ARCHITECTURE.md` /
+    `CONTRIBUTING.md` — Linux prerequisites (libsecret-1-dev,
+    libgtk-3-dev, libnss3-dev, libasound2-dev, libxss1, libxtst6,
+    xdg-utils), Linux packaging (AppImage, `.deb`, arm64), Linux
+    runtime detection (AVX2 / AVX-512 VNNI / NEON / dotprod / Vulkan
+    / CUDA / ROCm) now mentioned on equal footing with macOS /
+    Windows everywhere they belong. `sidecars/scripts/download-llama-server.sh`
+    documents Linux arm64 explicitly. `PHASES.md` carries a Phase 15
+    row; `PROGRESS.md` carries the 30-task table with every box
+    checked.
+
+### Changed
+
+- **CSP `script-src` / `style-src-elem`** — replaced `'unsafe-inline'`
+  with `'nonce-<random>'`. App-owned `<style>` tags carry the same
+  nonce via the new `useCspNonce()` hook. `style-src-attr` retains
+  `'unsafe-inline'` to cover trusted framework-generated `style="…"`
+  attributes from React/lucide-react.
+- **`napi` crate** documented as targeting **macOS, Windows, AND Linux**
+  (x64 + arm64) — previous wording listed only macOS and Windows.
+
+### Tests
+
+- 50+ new Vitest + Rust integration tests across the six PRs:
+  startup-perf guard, indexing/search Criterion benches, memory peak
+  RSS budget test, watcher coalescing test, batch-IPC tests, WAL +
+  integrity crash-recovery test, artifact recovery sidecar tests,
+  sidecar PID registry tests, failed-export queue tests, connector
+  backoff classification tests, audit rotation test, DOCX golden +
+  OOXML schema tests, XLSX formula + named-range round-trip tests,
+  PDF Mermaid embedding test, Linux smoke-test exit-code gate,
+  Windows / macOS package-verifier tests, onboarding wizard +
+  empty-state + toast + source-health + keyboard-nav + version-diff
+  Vitest suites, CSP nonce assembly + no-unsafe-inline tests, OAuth
+  refresh race tests, secret zero-on-free tests, sliding-window
+  rate-limiter unit + HTTP integration tests.
+
 - **KChat Desktop integration via `.kcz` extension + loopback HTTP API
   + deeplinks (Phase 14).** Replaces Phase 13's socket-bridge
   integration with the correct architecture: Tessera and KChat
