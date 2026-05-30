@@ -202,6 +202,17 @@ export function extractFieldRefs(source: string): string[] {
  * preserving everything else verbatim. Used by
  * `BaseEditor.renameField` to keep formula sources in lock-step with
  * field renames without forking yet another scanner.
+ *
+ * When `source` doesn't contain a single `{oldName}` reference the
+ * function returns the **original `source` reference**, not a freshly
+ * concatenated equivalent string. `BaseEditor.renameField`'s
+ * `rewritten === renamed.formula` short-circuit relies on that
+ * reference equality to skip allocating a new field object for every
+ * field that has a formula source but doesn't actually reference the
+ * renamed column — otherwise renaming any one field re-builds every
+ * formula field's object on the way through. Devin Review PR #79
+ * round 14 (ANALYSIS_…_0001) flagged the always-concatenate path as
+ * dead-code-ing the intended optimisation.
  */
 export function renameFieldInFormula(
   source: string | undefined,
@@ -210,14 +221,20 @@ export function renameFieldInFormula(
 ): string | undefined {
   if (!source) return source;
   let out = "";
+  let changed = false;
   for (const tok of walkFormulaSource(source)) {
     if (tok.kind === "text") {
       out += tok.text;
       continue;
     }
-    out += tok.name === oldName ? `{${newName}}` : tok.raw;
+    if (tok.name === oldName) {
+      out += `{${newName}}`;
+      changed = true;
+    } else {
+      out += tok.raw;
+    }
   }
-  return out;
+  return changed ? out : source;
 }
 
 /**

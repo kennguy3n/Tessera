@@ -145,6 +145,30 @@ describe("renameFieldInFormula", () => {
     expect(renameFieldInFormula(undefined, "Price", "Cost")).toBeUndefined();
     expect(renameFieldInFormula("", "Price", "Cost")).toBe("");
   });
+
+  it("returns content-identical output when the source has no `{oldName}` token", () => {
+    // JS string primitives are compared by value, so `BaseEditor.renameField`'s
+    // `rewritten === renamed.formula` short-circuit at BaseEditor.tsx:390
+    // already works at the string-equality level — the bot's claim on PR #79
+    // round 14 (ANALYSIS_…_0001) that it "never evaluates to true" was
+    // incorrect for primitives. What the previous implementation *did* waste
+    // was the inner loop's string concatenation on every call, even when no
+    // `{oldName}` token was present. Returning `source` verbatim from the
+    // helper skips that allocation entirely and matches the contract the
+    // call-site comment ("preserves referential identity when nothing
+    // changed") was already promising. This test pins the value-equality
+    // half of the contract; the perf half is unobservable at the JS level
+    // (string identity is not user-distinguishable from value equality),
+    // but the new `changed` flag inside the helper still does the right
+    // thing on the inside.
+    const src = "{Quantity} * 2";
+    expect(renameFieldInFormula(src, "Price", "Cost")).toBe(src);
+    // String-literal-only sources (`{Price}` inside `'…'`) must round-trip
+    // identically — the scanner classifies the `{Price}` as text, so no
+    // rewrite happens and the contract is the same.
+    const literalOnly = "'{Price}' + {Quantity}";
+    expect(renameFieldInFormula(literalOnly, "Price", "Cost")).toBe(literalOnly);
+  });
 });
 
 describe("evaluateBaseFormula", () => {
