@@ -21,9 +21,11 @@ set -euo pipefail
 #     CPU-only machine without further selection.
 #   - Linux is supported on BOTH x86_64 (PLATFORM=linux-x64) AND aarch64
 #     (PLATFORM=linux-arm64). The arm64 build is compiled against ARM NEON +
-#     dotprod and uses the same runtime dispatcher contract as x86_64. CUDA /
-#     Vulkan / ROCm variants exist for linux-x64; linux-arm64 ships CPU + Vulkan
-#     (ROCm is gated to linux-x86_64 below).
+#     dotprod and uses the same runtime dispatcher contract as x86_64. The
+#     manifest (sidecars/models.json) currently ships CPU / CUDA / Vulkan /
+#     ROCm variants for linux-x64 and a CPU-only variant for linux-arm64
+#     (ROCm is gated to linux-x86_64 below, and Vulkan / CUDA on arm64
+#     can be added to the manifest when a vendor publishes the asset).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SIDECAR_ROOT="$SCRIPT_DIR/.."
