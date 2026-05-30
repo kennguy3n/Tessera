@@ -1,4 +1,4 @@
-import { app, BrowserWindow, safeStorage, session } from "electron";
+import { app, BrowserWindow, ipcMain, safeStorage, session } from "electron";
 import * as path from "path";
 import { registerIpcHandlers } from "./ipc";
 import { replayPersistedHybridSearchConfigToBridge } from "./ipc/settings";
@@ -799,8 +799,37 @@ app.whenReady().then(async () => {
       initAutoUpdater();
     })
     .catch((err: unknown) => {
-      getLogger().error("autoUpdater.dynamicImport failed", {
-        message: err instanceof Error ? err.message : String(err),
+      // Devin Review BUG ANALYSIS_0002 (PR #69): if the dynamic
+      // import rejects we previously logged the error and returned,
+      // which left the `updates:*` IPC channels unregistered for
+      // the whole session. The renderer's "Check for updates"
+      // button in Settings would then reject with an opaque
+      // "No handler registered for 'updates:check'" error.
+      //
+      // Architecturally correct recovery: register fallback
+      // handlers that return a meaningful `status: "error"` shape
+      // so the renderer can surface "Auto-updater is unavailable:
+      // <reason>" instead of crashing. The fallbacks match the
+      // real handlers' return contract (same shape as
+      // `UpdateStatusEvent`) so the renderer's reducer doesn't
+      // need a separate code path.
+      const message = err instanceof Error ? err.message : String(err);
+      getLogger().error("autoUpdater.dynamicImport failed", { message });
+      const reason = `Auto-updater failed to initialise: ${message}`;
+      const errorStatus = { status: "error" as const, message: reason };
+      // `idempotentHandle` semantics inline: if `ipc.ts` decides
+      // to register `updates:*` synchronously in the future, the
+      // remove+handle pair below stays safe.
+      const handleFallback = (channel: string, handler: () => unknown) => {
+        ipcMain.removeHandler(channel);
+        ipcMain.handle(channel, async () => handler());
+      };
+      handleFallback("updates:status", () => errorStatus);
+      handleFallback("updates:check", () => errorStatus);
+      handleFallback("updates:install", () => errorStatus);
+      handleFallback("updates:getAutoUpdateEnabled", () => false);
+      handleFallback("updates:setAutoUpdateEnabled", () => {
+        throw new Error(reason);
       });
     });
 
