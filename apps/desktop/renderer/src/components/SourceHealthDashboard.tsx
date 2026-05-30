@@ -144,12 +144,35 @@ function HealthBadge({ health }: { health: SourceHealthEntry["health"] }) {
 export default function SourceHealthDashboard({
   api,
 }: SourceHealthDashboardProps = {}) {
-  const sources = api ?? window.tessera?.sources;
   const [report, setReport] = useState<SourceHealthReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    // Devin Review PR #70 follow-up ANALYSIS_0002 (BUG): resolve the
+    // bridge reference INSIDE the refresh callback rather than at
+    // component-render time. Previously the resolution lived above
+    // (`const sources = api ?? window.tessera?.sources`) and was
+    // captured by this `useCallback`'s closure via `[sources]`. If
+    // `window.tessera` was undefined on initial mount (transient
+    // renderer<->preload initialisation window, or a test that
+    // hadn't yet stubbed the bridge), `sources` was undefined, the
+    // first `refresh()` hit the error banner, and the bridge later
+    // becoming defined did NOT cause a re-render of this component
+    // — so the `refresh` closure stayed stuck on `sources=undefined`
+    // forever. Clicking the Refresh button just called the same
+    // stale closure and re-surfaced "Bridge not available" against
+    // a bridge that was actually live by then.
+    //
+    // Re-reading `window.tessera?.sources` on each invocation makes
+    // the Refresh button structurally self-healing: the next click
+    // after the bridge becomes available picks it up and loads
+    // normally. `api` (the test-override prop) is still captured by
+    // the closure because it's a prop that triggers a re-render
+    // when it changes, so test overrides work as before. The
+    // dependency array therefore only needs `[api]` — `window`
+    // identity never changes for the lifetime of the renderer.
+    const sources = api ?? window.tessera?.sources;
     if (!sources) {
       // Devin Review PR #70 follow-up ANALYSIS_0004: the bridge can
       // legitimately be unavailable (transient renderer<->main
@@ -202,7 +225,7 @@ export default function SourceHealthDashboard({
     } finally {
       setLoading(false);
     }
-  }, [sources]);
+  }, [api]);
 
   useEffect(() => {
     refresh();

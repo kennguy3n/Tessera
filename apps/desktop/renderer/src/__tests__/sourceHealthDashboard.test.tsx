@@ -275,4 +275,75 @@ describe("SourceHealthDashboard", () => {
       (window as unknown as { tessera?: unknown }).tessera = originalTessera;
     }
   });
+
+  /**
+   * Devin Review PR #70 follow-up ANALYSIS_0002 (BUG).
+   *
+   * Scenario: `window.tessera` is undefined when the component first
+   * mounts (renderer<->preload init race), but becomes defined a
+   * moment later. The Refresh button must self-heal — clicking it
+   * after the bridge is live must load the report normally.
+   *
+   * Before the fix, the component captured
+   * `sources = api ?? window.tessera?.sources` at render time and
+   * the `refresh` callback closed over it via `[sources]`. With
+   * `window.tessera` undefined on mount and the component not
+   * re-rendering (no state change, no prop change), the closure
+   * stayed stuck on `sources=undefined` forever. Clicking Refresh
+   * just called the stale closure and surfaced "Bridge not
+   * available" again, even though the bridge was now live.
+   *
+   * After the fix, `sources` is resolved INSIDE the `refresh`
+   * callback on every invocation, so the next click picks up the
+   * newly-available `window.tessera.sources`.
+   */
+  it("Refresh button self-heals when window.tessera becomes available after mount", async () => {
+    const originalTessera = (window as unknown as { tessera?: unknown })
+      .tessera;
+    (window as unknown as { tessera?: unknown }).tessera = undefined;
+    try {
+      // Mount with the bridge unavailable.
+      render(<SourceHealthDashboard />);
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          /Bridge not available/i,
+        );
+      });
+      // Bridge becomes available — install a real mock on the same
+      // global the component reads from.
+      const report = makeReport([
+        {
+          sourceId: "src-late",
+          path: "/docs/late-bridge-source",
+          health: "healthy",
+          chunkCount: 7,
+        },
+      ]);
+      const lateApi = makeApi(report);
+      (
+        window as unknown as { tessera: { sources: SourceApi } }
+      ).tessera = { sources: lateApi };
+      // User clicks Refresh — fix makes the next call pick up the
+      // newly-defined `window.tessera.sources` instead of using a
+      // stale `undefined` closure.
+      const refreshBtn = screen.getByRole("button", { name: /refresh/i });
+      fireEvent.click(refreshBtn);
+      // The "Bridge not available" banner must clear and a real
+      // table row must appear. Without the fix, the alert stays
+      // mounted because the stale closure hits the error branch
+      // again.
+      await waitFor(() => {
+        expect(screen.queryByRole("alert")).toBeNull();
+      });
+      expect(
+        screen.getByText("/docs/late-bridge-source"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("source-health-row-src-late"),
+      ).toBeInTheDocument();
+      expect(lateApi.healthReport).toHaveBeenCalledTimes(1);
+    } finally {
+      (window as unknown as { tessera?: unknown }).tessera = originalTessera;
+    }
+  });
 });
