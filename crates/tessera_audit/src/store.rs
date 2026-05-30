@@ -577,8 +577,23 @@ fn execute_rotation_delete(
         [],
     )
     .map_err(rollback_on_err)?;
-    conn.execute_batch("COMMIT;")
-        .map_err(|e| Error::Database(e.to_string()))?;
+    // Devin Review PR #69 BUG_0001: route COMMIT failure through the
+    // same rollback_on_err path as every other failable step. If
+    // COMMIT itself errors (e.g. SQLITE_FULL, disk write failure, or
+    // the rare WAL-corruption case) we must NOT leave the connection
+    // sitting on an open transaction with the `audit_no_delete`
+    // trigger dropped and the rotated rows already removed — the
+    // SharedConnection is process-wide, so the next caller's
+    // `BEGIN IMMEDIATE` would fail with "cannot start a transaction
+    // within a transaction" and the append-only guarantee for
+    // `audit_events` would be silently disabled for the rest of the
+    // session. Rolling back restores: (a) the trigger as it was on
+    // disk before this rotation, (b) the rows in their live-table
+    // positions. The caller's outer `delete_result.is_err()` branch
+    // already best-effort removes the archive file we wrote in
+    // Phase 2, so a COMMIT failure leaves the database exactly as
+    // it was pre-rotation.
+    conn.execute_batch("COMMIT;").map_err(rollback_on_err)?;
     Ok(())
 }
 

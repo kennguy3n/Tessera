@@ -752,7 +752,23 @@ impl SourceStore {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         );
         match row {
-            Ok((err, retry, perm)) => Ok((err, retry as u32, perm != 0)),
+            // Devin Review PR #69 ANALYSIS_0008: defense-in-depth
+            // against a tampered `sources.db` where someone has
+            // manually written a negative or out-of-range value into
+            // `retry_count`. `record_sync_failure` only ever writes a
+            // `u32` widened to `i64`, so the persisted value SHOULD
+            // always be in `[0, u32::MAX]` (and realistically `[0,
+            // 8]` per `maxRetriesBeforePermanent`). But a SQLite file
+            // is user-writable, and `as u32` would silently wrap a
+            // negative or huge value into garbage that the
+            // connectors layer would then interpret as "millions of
+            // retries already attempted, escalate to permanent
+            // immediately." Explicit `try_into` collapses any
+            // out-of-range value to 0 — i.e. "treat as never
+            // failed", which is the safe default for downstream
+            // logic (the next sync attempt is allowed to run, and
+            // the retry counter starts fresh).
+            Ok((err, retry, perm)) => Ok((err, u32::try_from(retry).unwrap_or(0), perm != 0)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok((None, 0, false)),
             Err(e) => Err(Error::Database(e.to_string())),
         }
