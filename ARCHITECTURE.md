@@ -215,7 +215,7 @@ The substrate is composed of modular Rust crates:
 | `agent_contract` | Lifecycle and promotion logic for agent-generated claims |
 | `crypto` | PQC primitives, DEK management, XChaCha20-Poly1305 |
 | `ffi` | UniFFI bridge for iOS (Swift) and Android (Kotlin) |
-| `napi` | Node.js / Electron bindings for macOS and Windows |
+| `napi` | Node.js / Electron bindings for macOS, Windows, and Linux (x64 + arm64) |
 | `export_plane` | Governance, policy simulation, data egress controls |
 
 ### Hybrid retrieval pipeline
@@ -855,6 +855,43 @@ notes in [`docs/IPC_AUDIT.md`](docs/IPC_AUDIT.md). A summary:
 | `kchat:fetchThreadContext` | Thread root + up to 2 earlier replies (3 rows total) for a threaded hit |
 | `kchat:backfillProgress` | Live counters during historical backfill |
 | `sources:addKchatChannel` / `sources:backfillKchatChannel` | Add a channel as a source + manual backfill trigger |
+
+### Phase 15 IPC channels (production quality & E2E reliability)
+
+Added in Phase 15 across the six PRs. Full validation + rate-limit
+notes live in [`docs/IPC_AUDIT.md`](docs/IPC_AUDIT.md).
+
+| Channel | Purpose |
+|---|---|
+| `sources:batchReindex` | Re-index N sources in a single bridge call; replaces N round-trips with one, shares the IPC rate-limit budget (PR 1 / Task 6) |
+| `artifacts:batchExport` | Export N artifacts (same format) in a single bridge call with per-item success/error reporting (PR 1 / Task 6) |
+| `artifacts:checkRecovery` / `artifacts:discardRecovery` | Inspect / discard the `.tessera-recovery` JSON sidecar an editor leaves on crash mid-save so the user can recover unsaved state on next open (PR 2 / Task 8) |
+| `artifacts:failedExports` / `artifacts:retryExport` | Read the persistent failed-export queue + retry one entry; queue survives restart via `config.json` (PR 2 / Task 10) |
+| `audit:getArchives` | List rotated audit-log archives (`audit-archive-<ts>.jsonl.gz`) for the Settings page; rotation fires when the audit table exceeds 100 K rows (PR 2 / Task 12) |
+| `sources:healthReport` | Per-source last-sync time, sync status (healthy / warning / error), indexed chunk count, storage size estimate — drives the Settings → Source Health dashboard (PR 4 / Task 22) |
+
+### Phase 15 new Electron modules
+
+| File | Purpose |
+|---|---|
+| `electron/csp.ts` + `renderer/src/utils/cspNonce.ts` | Per-session 32-byte CSP nonce + React hook; nonce flows main → preload → renderer via `additionalArguments`. Removes `'unsafe-inline'` from `script-src` and `style-src-elem`. (PR 5 / Task 25) |
+| `electron/secureBuffer.ts` | `zeroBuffer()` / `zeroBuffers()` helpers for `finally`-block buffer zeroing of plaintext keys, tokens, and passphrases. Used by `passwordVault.decryptWithPasswordKey()` and `dbKey.generateDbKey()`. (PR 5 / Task 27) |
+| `electron/kchat/kchatRateLimiter.ts` | Sliding-window per-IP rate limiter (default 100 req / 60 s) on the loopback KChat API; emits 429 with `Retry-After` clamped to ≥ 1 s per RFC 7231. (PR 5 / Task 28) |
+| `electron/artifactRecovery.ts` | Editor recovery-sidecar journaling; pairs with `artifacts:checkRecovery`. (PR 2 / Task 8) |
+| `electron/sidecarPidRegistry.ts` (in `sidecar.ts` / `diffusionSidecar.ts`) | PID-file orphan-cleanup at startup + SIGTERM→5s grace→SIGKILL escalation on `will-quit`. (PR 2 / Task 9) |
+| `electron/failedExportQueue.ts` | Persistent queue for failed exports, retryable via `artifacts:retryExport`. (PR 2 / Task 10) |
+| `electron/connectorBackoff.ts` | Per-source backoff policy (base 2 s, max 5 min, jitter); distinguishes transient (timeout / 429 / 503) vs permanent (401 / 403 / 404) failures. (PR 2 / Task 11) |
+
+### Phase 15 new Rust modules
+
+| Crate / file | Purpose |
+|---|---|
+| `crates/tessera_sources` benches (`indexing_bench.rs`, `search_bench.rs`) | Criterion benchmarks for indexing throughput at 100 small / 10 large / mixed corpora and hybrid search at 1K / 10K / 100K chunk corpus sizes. (PR 1 / Tasks 2-3) |
+| `crates/tessera_sources::watcher` coalescing | 500 ms watch-event window dedupes per-path rapid write+rename storms before triggering re-index. (PR 1 / Task 5) |
+| `crates/tessera_audit` rotation | 100 K-row rotation threshold writes a compressed `audit-archive-<ts>.jsonl.gz` and trims the live table. (PR 2 / Task 12) |
+| `crates/tessera_export` regression suites (`tests/docx_regression.rs`, inline `#[cfg(test)]` in `src/xlsx.rs`, `tests/pdf_mermaid.rs`) | Golden-file DOCX + OOXML schema validation, XLSX formula + named-range preservation, PDF Mermaid SVG embedding. (PR 3 / Tasks 13-15) |
+| `scripts/smoke-test-linux.sh` + `scripts/Dockerfile.smoke` | Linux `.deb`/AppImage Docker smoke harness (ubuntu:22.04 + `xvfb-run` + IPC probe). (PR 3 / Task 16) |
+| `scripts/verify-windows-package.ps1` / `scripts/verify-macos-package.sh` | Windows portable-`.zip` integrity + macOS universal-binary verification (`lipo -info` per slice). (PR 3 / Tasks 17-18) |
 
 ---
 

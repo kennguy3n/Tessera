@@ -182,7 +182,7 @@ it locally with `npm run build:kchat-extension` (output:
 ### Google Drive connector
 
 - **OAuth 2.0** — standard consent flow via system browser, localhost redirect, token refresh
-- **Secure token storage** — OS keychain via Electron safeStorage (macOS Keychain, Windows Credential Manager)
+- **Secure token storage** — OS keychain via Electron safeStorage (macOS Keychain, Windows Credential Manager, Linux libsecret / GNOME Keyring / KWallet). On headless Linux or other environments where no keyring is reachable, Tessera falls back to the password-vault path documented under "Security & hardening" below.
 - **File/folder picker** — browse and multi-select files from Drive within Tessera
 - **Incremental sync** — Google Drive Changes API for efficient delta updates
 - **Metadata sync** — name, mimeType, modifiedTime, size, permissions, parents
