@@ -24,6 +24,7 @@ import type {
   BaseContent,
   BaseField,
   BaseRecord,
+  FieldType,
   RollupAggregation,
 } from "./baseEditorTypes";
 
@@ -319,4 +320,126 @@ export function findRecordsLinkingTo(
     }
   }
   return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Per-field-type filter matcher
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The user-facing filter for the grid is a single text input per
+ * column. We want that input to feel right for the underlying field
+ * type without forcing the user to learn a query DSL:
+ *
+ *   - **Numeric** types (`number`, `currency`, `percent`, `rating`,
+ *     `duration`, `auto_number`): support comparison operators
+ *     `>`, `>=`, `<`, `<=`, `=` (e.g. `>10`, `<=5`). A bare numeric
+ *     input is treated as `equals`. A non-numeric input falls back
+ *     to substring on the rendered string so the column doesn't
+ *     become un-filterable.
+ *   - **Checkbox**: matches `true` / `false` (case-insensitive), or
+ *     `1` / `0`.
+ *   - **Multi-valued** types (`multi_select`, `attachment`,
+ *     `linked_record`): the filter matches if ANY element of the
+ *     stored array contains the search term (case-insensitive).
+ *   - **Date**: substring on the ISO string the cell stores.
+ *   - **Text-like**, **select**: case-insensitive substring on the
+ *     stored string.
+ *   - **Computed** types (`formula`, `rollup`, `lookup`): substring
+ *     on the *displayed* value (caller computes that via
+ *     `formatValueForCsv` or similar; we accept it pre-formatted as
+ *     the `displayValue` arg so this helper stays decoupled from the
+ *     formula engine).
+ *
+ * Empty filter strings always match, so a half-typed filter on one
+ * column doesn't accidentally hide every row.
+ */
+export function matchesFilter(
+  fieldType: FieldType,
+  value: unknown,
+  filter: string,
+  displayValue?: string,
+): boolean {
+  const f = filter.trim();
+  if (f === "") return true;
+
+  // Computed types: caller passes the rendered string; we substring-match.
+  if (
+    fieldType === "formula" ||
+    fieldType === "rollup" ||
+    fieldType === "lookup"
+  ) {
+    const target = (displayValue ?? "").toLowerCase();
+    return target.includes(f.toLowerCase());
+  }
+
+  // Multi-valued types: match if ANY element contains the filter.
+  if (
+    fieldType === "multi_select" ||
+    fieldType === "attachment" ||
+    fieldType === "linked_record"
+  ) {
+    if (!Array.isArray(value)) return false;
+    const needle = f.toLowerCase();
+    return value.some(
+      (v) => typeof v === "string" && v.toLowerCase().includes(needle),
+    );
+  }
+
+  // Checkbox: literal true/false/1/0.
+  if (fieldType === "checkbox") {
+    const lower = f.toLowerCase();
+    const truthy = lower === "true" || lower === "1" || lower === "yes";
+    const falsy = lower === "false" || lower === "0" || lower === "no";
+    if (!truthy && !falsy) return false;
+    return Boolean(value) === truthy;
+  }
+
+  // Numeric types: support operator prefixes.
+  const numericTypes: FieldType[] = [
+    "number",
+    "currency",
+    "percent",
+    "rating",
+    "duration",
+    "auto_number",
+  ];
+  if (numericTypes.includes(fieldType)) {
+    // Match `>=`, `<=`, `>`, `<`, `=` then a number.
+    const m = f.match(/^\s*(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)\s*$/);
+    if (m) {
+      const op = m[1];
+      const operand = Number(m[2]);
+      const n = Number(value);
+      if (!Number.isFinite(n) || !Number.isFinite(operand)) return false;
+      switch (op) {
+        case ">":
+          return n > operand;
+        case ">=":
+          return n >= operand;
+        case "<":
+          return n < operand;
+        case "<=":
+          return n <= operand;
+        case "=":
+          return n === operand;
+      }
+    }
+    // Bare numeric → equals.
+    const bare = Number(f);
+    if (Number.isFinite(bare)) {
+      const n = Number(value);
+      return Number.isFinite(n) && n === bare;
+    }
+    // Non-numeric filter on a numeric column: fall back to substring
+    // on the rendered string so users can still find a value.
+    return String(value ?? "")
+      .toLowerCase()
+      .includes(f.toLowerCase());
+  }
+
+  // Everything else (text, long_text, email, phone, url, date,
+  // select): case-insensitive substring on the stored string.
+  if (value == null) return false;
+  return String(value).toLowerCase().includes(f.toLowerCase());
 }

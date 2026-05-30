@@ -23,6 +23,7 @@ import {
   isReservedFieldName,
   RESERVED_FIELD_NAMES,
   sanitizeBaseField,
+  matchesFilter,
 } from "../baseEditorHelpers";
 import type { BaseRecord } from "../baseEditorTypes";
 
@@ -356,5 +357,91 @@ describe("isReservedFieldName", () => {
 
   it("exposes RESERVED_FIELD_NAMES as a ReadonlySet containing 'id'", () => {
     expect(RESERVED_FIELD_NAMES.has("id")).toBe(true);
+  });
+});
+
+describe("matchesFilter — per-type filtering", () => {
+  it("empty filter always matches (so a half-typed input doesn't hide rows)", () => {
+    expect(matchesFilter("text", "anything", "")).toBe(true);
+    expect(matchesFilter("text", "anything", "   ")).toBe(true);
+    expect(matchesFilter("number", 42, "")).toBe(true);
+  });
+
+  it("text/select: case-insensitive substring on the stored string", () => {
+    expect(matchesFilter("text", "Hello World", "WORLD")).toBe(true);
+    expect(matchesFilter("text", "Hello World", "xyz")).toBe(false);
+    expect(matchesFilter("email", "alice@example.com", "EXAMPLE")).toBe(true);
+    expect(matchesFilter("select", "Open", "ope")).toBe(true);
+    expect(matchesFilter("text", null, "anything")).toBe(false);
+  });
+
+  it("numeric: bare number means equality", () => {
+    expect(matchesFilter("number", 42, "42")).toBe(true);
+    expect(matchesFilter("number", 42, "43")).toBe(false);
+    expect(matchesFilter("currency", 1234.5, "1234.5")).toBe(true);
+  });
+
+  it("numeric: > / >= / < / <= / = operators", () => {
+    expect(matchesFilter("number", 5, ">3")).toBe(true);
+    expect(matchesFilter("number", 5, ">=5")).toBe(true);
+    expect(matchesFilter("number", 5, ">5")).toBe(false);
+    expect(matchesFilter("number", 5, "<=5")).toBe(true);
+    expect(matchesFilter("number", 5, "<5")).toBe(false);
+    expect(matchesFilter("number", 5, "=5")).toBe(true);
+    expect(matchesFilter("rating", 4, ">=3")).toBe(true);
+    expect(matchesFilter("rating", 2, ">=3")).toBe(false);
+  });
+
+  it("numeric on non-numeric value returns false", () => {
+    expect(matchesFilter("number", "notanumber", ">0")).toBe(false);
+    expect(matchesFilter("number", null, ">0")).toBe(false);
+  });
+
+  it("checkbox: literal true/false/1/0/yes/no", () => {
+    expect(matchesFilter("checkbox", true, "true")).toBe(true);
+    expect(matchesFilter("checkbox", true, "yes")).toBe(true);
+    expect(matchesFilter("checkbox", true, "1")).toBe(true);
+    expect(matchesFilter("checkbox", false, "false")).toBe(true);
+    expect(matchesFilter("checkbox", false, "no")).toBe(true);
+    expect(matchesFilter("checkbox", true, "false")).toBe(false);
+    expect(matchesFilter("checkbox", false, "true")).toBe(false);
+    // Non-boolean filter: no match.
+    expect(matchesFilter("checkbox", true, "maybe")).toBe(false);
+  });
+
+  it("multi-valued: ANY array element substring-matches the filter", () => {
+    expect(matchesFilter("multi_select", ["red", "blue", "green"], "blu")).toBe(
+      true,
+    );
+    expect(matchesFilter("multi_select", ["red", "blue", "green"], "yellow")).toBe(
+      false,
+    );
+    expect(matchesFilter("linked_record", ["abc123", "def456"], "DEF")).toBe(
+      true,
+    );
+    expect(matchesFilter("attachment", ["foo.png", "bar.pdf"], "PDF")).toBe(
+      true,
+    );
+    // Wrong-type input on a multi-valued column.
+    expect(matchesFilter("multi_select", "not-an-array", "x")).toBe(false);
+  });
+
+  it("computed types substring-match the supplied displayValue", () => {
+    expect(matchesFilter("formula", "ignored", "USD", "$1,234.56 USD")).toBe(
+      true,
+    );
+    expect(matchesFilter("rollup", "ignored", "sum", "total: 42")).toBe(false);
+    expect(matchesFilter("lookup", "ignored", "alice", "Alice")).toBe(true);
+    // Missing displayValue (defensive default) matches empty string only.
+    expect(matchesFilter("formula", "ignored", "x")).toBe(false);
+  });
+
+  it("falls back to substring on the raw value for a non-numeric filter on a numeric column", () => {
+    // A bare numeric filter triggers equality (123 !== 234) — the
+    // fallback only kicks in when the filter itself isn't numeric.
+    // Useful for free-typed text like "ab" against a column that
+    // happens to store numeric ids.
+    expect(matchesFilter("number", "12abc34", "ABC")).toBe(true);
+    expect(matchesFilter("number", "12abc34", "xyz")).toBe(false);
   });
 });

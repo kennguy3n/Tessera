@@ -17,11 +17,19 @@ import {
   lookupValues,
   computeAutoNumber,
   isReservedFieldName,
+  matchesFilter,
 } from "./baseEditorHelpers";
 import {
   evaluateBaseFormula,
   formatFormulaResult,
 } from "./baseFormulaEngine";
+import {
+  exportBaseCsv,
+  exportBaseJson,
+  formatValueForCsv,
+  parseCsvToBase,
+  parseJsonToBase,
+} from "./baseImportExport";
 import type {
   BaseField,
   BaseContent,
@@ -67,6 +75,25 @@ export default function BaseEditor({
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [showAddField, setShowAddField] = useState(false);
+  // Bulk-select state: a Set of record ids the user has ticked. The
+  // header checkbox toggles all *currently visible* (post-filter)
+  // rows so a filter narrows what "select all" means without the
+  // user re-clicking each one.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  // Field-management dialog state. Drives the "Manage Fields" modal
+  // where the user can reorder rows (move-up / move-down) and rename
+  // them in-place. Kept here rather than in a sibling component so a
+  // future "delete" action can call back into `removeField`.
+  const [showManageFields, setShowManageFields] = useState(false);
+  // Import dialogs surface CSV / JSON file pickers. We do NOT auto-
+  // trigger from a hidden `<input type="file">` ref because tests
+  // need to inject the file contents directly; instead a small modal
+  // accepts a paste of the file body, with file-pick on top.
+  const [importDialog, setImportDialog] = useState<
+    "csv" | "json" | null
+  >(null);
   // Keyed by record `id`, not array index — a deletion of another
   // record while this modal is open would otherwise shift the
   // target index and silently rewrite the wrong record's value.
@@ -177,6 +204,113 @@ export default function BaseEditor({
     [data, updateData],
   );
 
+  // Move a field one slot up or down in `data.fields`. The grid /
+  // gallery / kanban / calendar all iterate `data.fields` in order,
+  // so this single ordering controls every view's column / chip /
+  // cover-card layout. Records keep the same JSON keys — we never
+  // reshape per-record data because field order is presentational.
+  const reorderField = useCallback(
+    (fieldName: string, direction: "up" | "down") => {
+      const idx = data.fields.findIndex((f) => f.name === fieldName);
+      if (idx < 0) return;
+      const target = direction === "up" ? idx - 1 : idx + 1;
+      if (target < 0 || target >= data.fields.length) return;
+      const next = [...data.fields];
+      [next[idx], next[target]] = [next[target], next[idx]];
+      updateData({ ...data, fields: next });
+    },
+    [data, updateData],
+  );
+
+  // Rename a field in place. Renaming touches THREE places that all
+  // have to stay in lock-step:
+  //   1. `data.fields[*].name` — the column label.
+  //   2. Every `record[oldName]` JSON key → `record[newName]`.
+  //   3. Any `linkedField` / `targetField` / `linkedDisplayField`
+  //      / `formula` that references the old name. Without (3),
+  //      a rollup pointing at "Price" would silently `#REF!` after
+  //      the user renamed Price to Cost.
+  const renameField = useCallback(
+    (oldName: string, newName: string): { ok: true } | { error: string } => {
+      const trimmed = newName.trim();
+      if (trimmed === "") return { error: "Field name cannot be empty" };
+      if (trimmed === oldName) return { ok: true };
+      if (isReservedFieldName(trimmed)) {
+        return { error: `"${trimmed}" is a reserved name` };
+      }
+      if (data.fields.some((f) => f.name === trimmed)) {
+        return { error: `Field "${trimmed}" already exists` };
+      }
+      // Rewrite formula sources: replace `{oldName}` → `{newName}`,
+      // word-boundary safe via the literal-brace delimiter.
+      const renameFormula = (src: string | undefined): string | undefined => {
+        if (!src) return src;
+        // Walk the string by hand so we don't accidentally touch
+        // braces inside string literals — mirrors the parser scan
+        // in baseFormulaEngine.rewriteFieldRefs.
+        let out = "";
+        let i = 0;
+        let inStr: '"' | "'" | null = null;
+        while (i < src.length) {
+          const ch = src[i];
+          if (inStr) {
+            out += ch;
+            if (ch === "\\" && i + 1 < src.length) {
+              out += src[i + 1];
+              i += 2;
+              continue;
+            }
+            if (ch === inStr) inStr = null;
+            i += 1;
+            continue;
+          }
+          if (ch === '"' || ch === "'") {
+            inStr = ch;
+            out += ch;
+            i += 1;
+            continue;
+          }
+          if (ch === "{") {
+            const close = src.indexOf("}", i + 1);
+            if (close < 0) {
+              out += src.slice(i);
+              break;
+            }
+            const name = src.slice(i + 1, close);
+            out += name === oldName ? `{${trimmed}}` : src.slice(i, close + 1);
+            i = close + 1;
+            continue;
+          }
+          out += ch;
+          i += 1;
+        }
+        return out;
+      };
+      const nextFields: BaseField[] = data.fields.map((f) => {
+        if (f.name === oldName) {
+          return { ...f, name: trimmed, formula: renameFormula(f.formula) };
+        }
+        // Patch dangling references in OTHER fields' configs.
+        const patched: BaseField = { ...f };
+        if (patched.linkedField === oldName) patched.linkedField = trimmed;
+        if (patched.targetField === oldName) patched.targetField = trimmed;
+        if (patched.linkedDisplayField === oldName) {
+          patched.linkedDisplayField = trimmed;
+        }
+        if (patched.formula) patched.formula = renameFormula(patched.formula);
+        return patched;
+      });
+      const nextRecords: BaseRecord[] = data.records.map((r) => {
+        if (!(oldName in r)) return r;
+        const { [oldName]: carried, ...rest } = r;
+        return { ...rest, [trimmed]: carried } as BaseRecord;
+      });
+      updateData({ fields: nextFields, records: nextRecords });
+      return { ok: true };
+    },
+    [data, updateData],
+  );
+
   const addRecord = useCallback(() => {
     const record: BaseRecord = { id: makeRecordId() };
     for (const field of data.fields) {
@@ -248,8 +382,111 @@ export default function BaseEditor({
         records: cleaned,
       };
       updateData(updated);
+      // Drop the deleted id from the selection set so a future
+      // "Delete Selected" doesn't try to remove a phantom record.
+      setSelectedIds((prev) => {
+        if (!removedId || !prev.has(removedId)) return prev;
+        const next = new Set(prev);
+        next.delete(removedId);
+        return next;
+      });
     },
     [data, updateData],
+  );
+
+  // Bulk delete every record in `selectedIds`. Runs the same
+  // cascade-clean as `removeRecord` so the resulting JSON has no
+  // dangling linked_record ids — important when the user deletes,
+  // e.g., a whole category's worth of records that other categories
+  // were linking to.
+  const removeSelectedRecords = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    const toRemove = selectedIds;
+    const linkedFields = data.fields.filter(
+      (f) => f.type === "linked_record",
+    );
+    const survivors = data.records.filter((r) => !toRemove.has(r.id));
+    const cleaned =
+      linkedFields.length > 0
+        ? survivors.map((record) => {
+            let next: BaseRecord | null = null;
+            for (const field of linkedFields) {
+              const v = record[field.name];
+              if (!Array.isArray(v)) continue;
+              const filtered = (v as string[]).filter(
+                (id) => !toRemove.has(id),
+              );
+              if (filtered.length === v.length) continue;
+              if (next === null) next = { ...record };
+              next[field.name] = filtered;
+            }
+            return next ?? record;
+          })
+        : survivors;
+    updateData({ ...data, records: cleaned });
+    setSelectedIds(new Set());
+  }, [data, selectedIds, updateData]);
+
+  // Export the current Base to a downloadable file. In a browser the
+  // Blob/anchor dance is the canonical way to trigger a save without
+  // a backend. Tests bypass this entirely via `exportBaseCsv` /
+  // `exportBaseJson` on the helper, which is why this stays a thin
+  // wrapper.
+  const triggerDownload = useCallback(
+    (filename: string, body: string, mime: string) => {
+      const blob = new Blob([body], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    },
+    [],
+  );
+
+  const handleExportCsv = useCallback(() => {
+    triggerDownload(
+      "base.csv",
+      exportBaseCsv(data),
+      "text/csv;charset=utf-8",
+    );
+  }, [data, triggerDownload]);
+
+  const handleExportJson = useCallback(() => {
+    triggerDownload(
+      "base.json",
+      exportBaseJson(data),
+      "application/json;charset=utf-8",
+    );
+  }, [data, triggerDownload]);
+
+  // Importing replaces the entire base content. The dialog confirms
+  // before doing so for any non-empty existing base, but the action
+  // itself is `updateData` — same debounced-save path as everything
+  // else, so undo via version restore still works.
+  const handleImportCsv = useCallback(
+    (text: string) => {
+      // Reuse the *current* fields as a schema so column types are
+      // recovered for a re-import of an exported CSV.
+      const next = parseCsvToBase(text, data.fields);
+      updateData(next);
+      setImportDialog(null);
+      setSelectedIds(new Set());
+    },
+    [data.fields, updateData],
+  );
+
+  const handleImportJson = useCallback(
+    (text: string) => {
+      const next = parseJsonToBase(text);
+      updateData(next);
+      setImportDialog(null);
+      setSelectedIds(new Set());
+    },
+    [updateData],
   );
 
   const updateCell = useCallback(
@@ -277,29 +514,40 @@ export default function BaseEditor({
   const filteredAndSorted = useMemo(() => {
     let records = [...data.records];
 
-    // Apply filters
-    for (const [field, filterVal] of Object.entries(filters)) {
+    // Apply per-field filters via the type-aware matcher.
+    // Computed types (formula/rollup/lookup) need a rendered
+    // display string, which `formatValueForCsv` already computes
+    // identically to the cell-render path.
+    for (const [fieldName, filterVal] of Object.entries(filters)) {
       if (!filterVal.trim()) continue;
-      const lower = filterVal.toLowerCase();
+      const field = data.fields.find((f) => f.name === fieldName);
+      if (!field) continue;
       records = records.filter((r) => {
-        const val = r[field];
-        if (val == null) return false;
-        return String(val).toLowerCase().includes(lower);
+        const display =
+          field.type === "formula" ||
+          field.type === "rollup" ||
+          field.type === "lookup"
+            ? formatValueForCsv(field, r, data.records, data.fields)
+            : undefined;
+        return matchesFilter(field.type, r[fieldName], filterVal, display);
       });
     }
 
-    // Apply sort
+    // Apply sort. Numeric-aware locale-compare keeps "10" after
+    // "2", which is the user-expected behavior in a grid.
     if (sortField) {
       records.sort((a, b) => {
         const va = a[sortField] ?? "";
         const vb = b[sortField] ?? "";
-        const cmp = String(va).localeCompare(String(vb), undefined, { numeric: true });
+        const cmp = String(va).localeCompare(String(vb), undefined, {
+          numeric: true,
+        });
         return sortDir === "asc" ? cmp : -cmp;
       });
     }
 
     return records;
-  }, [data.records, filters, sortField, sortDir]);
+  }, [data.records, data.fields, filters, sortField, sortDir]);
 
   // Shared props passed to every non-grid view. The grid view stays
   // inline below because it has filter/sort behavior the others
@@ -331,6 +579,65 @@ export default function BaseEditor({
         </button>
         <button type="button" className="btn-sm" onClick={() => setShowAddField(true)}>
           + Field
+        </button>
+        <button
+          type="button"
+          className="btn-sm"
+          onClick={() => setShowManageFields(true)}
+        >
+          Manage Fields
+        </button>
+        {selectedIds.size > 0 && (
+          <button
+            type="button"
+            className="btn-sm danger"
+            onClick={removeSelectedRecords}
+            aria-label={`Delete ${selectedIds.size} selected`}
+          >
+            Delete {selectedIds.size} selected
+          </button>
+        )}
+        <span
+          aria-hidden="true"
+          style={{
+            display: "inline-block",
+            width: "1px",
+            height: "1.25rem",
+            background: "var(--color-border, #e5e7eb)",
+            margin: "0 0.25rem",
+          }}
+        />
+        <button
+          type="button"
+          className="btn-sm"
+          onClick={handleExportCsv}
+          title="Download all records as CSV"
+        >
+          Export CSV
+        </button>
+        <button
+          type="button"
+          className="btn-sm"
+          onClick={handleExportJson}
+          title="Download all records as JSON"
+        >
+          Export JSON
+        </button>
+        <button
+          type="button"
+          className="btn-sm"
+          onClick={() => setImportDialog("csv")}
+          title="Replace records with a CSV"
+        >
+          Import CSV
+        </button>
+        <button
+          type="button"
+          className="btn-sm"
+          onClick={() => setImportDialog("json")}
+          title="Replace records with a JSON"
+        >
+          Import JSON
         </button>
         <div style={{ flex: 1 }} />
         <div
@@ -376,6 +683,25 @@ export default function BaseEditor({
         />
       )}
 
+      {showManageFields && (
+        <ManageFieldsDialog
+          fields={data.fields}
+          onRename={renameField}
+          onReorder={reorderField}
+          onRemove={removeField}
+          onClose={() => setShowManageFields(false)}
+        />
+      )}
+
+      {importDialog !== null && (
+        <ImportDialog
+          kind={importDialog}
+          recordCount={data.records.length}
+          onImport={importDialog === "csv" ? handleImportCsv : handleImportJson}
+          onCancel={() => setImportDialog(null)}
+        />
+      )}
+
       {view === "kanban" && <KanbanView {...viewProps} />}
       {view === "calendar" && <CalendarView {...viewProps} />}
       {view === "timeline" && <TimelineView {...viewProps} />}
@@ -386,6 +712,41 @@ export default function BaseEditor({
         <table className="base-grid">
           <thead>
             <tr>
+              <th className="base-select-cell">
+                {/* Select-all checks/unchecks every record currently
+                    visible after the active filter, not every record
+                    in the table — matches what a spreadsheet's
+                    select-all-in-filter-view does. */}
+                <input
+                  type="checkbox"
+                  aria-label="Select all visible records"
+                  checked={
+                    filteredAndSorted.length > 0 &&
+                    filteredAndSorted.every((r) => selectedIds.has(r.id))
+                  }
+                  ref={(el) => {
+                    if (!el) return;
+                    const some = filteredAndSorted.some((r) =>
+                      selectedIds.has(r.id),
+                    );
+                    const all =
+                      filteredAndSorted.length > 0 &&
+                      filteredAndSorted.every((r) => selectedIds.has(r.id));
+                    el.indeterminate = some && !all;
+                  }}
+                  onChange={(e) => {
+                    setSelectedIds((prev) => {
+                      const next = new Set(prev);
+                      if (e.target.checked) {
+                        for (const r of filteredAndSorted) next.add(r.id);
+                      } else {
+                        for (const r of filteredAndSorted) next.delete(r.id);
+                      }
+                      return next;
+                    });
+                  }}
+                />
+              </th>
               <th className="base-row-num">#</th>
               {data.fields.map((field) => (
                 <th key={field.name} className="base-col-header">
@@ -410,7 +771,7 @@ export default function BaseEditor({
                   </div>
                   <input
                     className="base-filter-input"
-                    placeholder="Filter..."
+                    placeholder={filterPlaceholderForType(field.type)}
                     value={filters[field.name] ?? ""}
                     onChange={(e) =>
                       setFilters((prev) => ({ ...prev, [field.name]: e.target.value }))
@@ -424,8 +785,27 @@ export default function BaseEditor({
           <tbody>
             {filteredAndSorted.map((record, ri) => {
               const originalIndex = data.records.indexOf(record);
+              const isSelected = selectedIds.has(record.id);
               return (
-                <tr key={record.id || originalIndex}>
+                <tr
+                  key={record.id || originalIndex}
+                  className={isSelected ? "base-row-selected" : undefined}
+                >
+                  <td className="base-select-cell">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select record ${ri + 1}`}
+                      checked={isSelected}
+                      onChange={(e) => {
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(record.id);
+                          else next.delete(record.id);
+                          return next;
+                        });
+                      }}
+                    />
+                  </td>
                   <td className="base-row-num">{ri + 1}</td>
                   {data.fields.map((field) => (
                     <td key={field.name} className="base-cell">
@@ -1648,6 +2028,419 @@ function AddFieldDialog({
         <button type="button" className="btn-sm" onClick={onCancel}>
           Cancel
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Per-type filter input placeholder.
+// Hints at the syntax the matcher will accept so the user doesn't
+// have to guess (e.g. `>10` on a number column).
+// ──────────────────────────────────────────────────────────────────────
+function filterPlaceholderForType(type: FieldType): string {
+  switch (type) {
+    case "number":
+    case "currency":
+    case "percent":
+    case "rating":
+    case "duration":
+    case "auto_number":
+      return "e.g. >10";
+    case "checkbox":
+      return "true / false";
+    case "multi_select":
+    case "attachment":
+      return "Any tag…";
+    case "linked_record":
+      return "Linked id…";
+    case "date":
+      return "yyyy-mm-dd…";
+    default:
+      return "Filter…";
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// ManageFieldsDialog — reorder + rename + remove fields in one place.
+// A single modal keeps the actions discoverable; per-column inline
+// rename is gated behind this dialog so the grid header doesn't grow
+// a third action button per column.
+// ──────────────────────────────────────────────────────────────────────
+interface ManageFieldsDialogProps {
+  fields: BaseField[];
+  onRename: (
+    oldName: string,
+    newName: string,
+  ) => { ok: true } | { error: string };
+  onReorder: (fieldName: string, direction: "up" | "down") => void;
+  onRemove: (fieldName: string) => void;
+  onClose: () => void;
+}
+
+function ManageFieldsDialog({
+  fields,
+  onRename,
+  onReorder,
+  onRemove,
+  onClose,
+}: ManageFieldsDialogProps) {
+  // Per-row local draft so editing one name doesn't churn re-renders
+  // on the others. `editingName` tracks which row is in edit mode;
+  // `draft` is the in-progress text.
+  const [editingName, setEditingName] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+
+  const beginEdit = (name: string) => {
+    setEditingName(name);
+    setDraft(name);
+    setRenameError(null);
+  };
+
+  const commitEdit = () => {
+    if (editingName === null) return;
+    const result = onRename(editingName, draft);
+    if ("error" in result) {
+      setRenameError(result.error);
+      return;
+    }
+    setEditingName(null);
+    setDraft("");
+    setRenameError(null);
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-label="Manage fields"
+      className="base-modal"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.35)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 100,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="base-modal-content"
+        style={{
+          background: "var(--color-surface, #fff)",
+          padding: "1.25rem",
+          borderRadius: "0.5rem",
+          minWidth: "420px",
+          maxWidth: "640px",
+          maxHeight: "80vh",
+          overflow: "auto",
+        }}
+      >
+        <h3 style={{ marginTop: 0 }}>Manage fields</h3>
+        <table
+          style={{
+            width: "100%",
+            borderCollapse: "collapse",
+            fontSize: "0.9rem",
+          }}
+        >
+          <tbody>
+            {fields.map((field, idx) => (
+              <tr key={field.name}>
+                <td
+                  style={{
+                    padding: "0.25rem 0.5rem",
+                    width: "1.5rem",
+                    color: "var(--color-muted, #6b7280)",
+                  }}
+                >
+                  {idx + 1}
+                </td>
+                <td style={{ padding: "0.25rem 0.5rem" }}>
+                  {editingName === field.name ? (
+                    <div>
+                      <input
+                        autoFocus
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitEdit();
+                          if (e.key === "Escape") {
+                            setEditingName(null);
+                            setRenameError(null);
+                          }
+                        }}
+                        aria-label={`Rename ${field.name}`}
+                        style={{ width: "100%" }}
+                      />
+                      {renameError && (
+                        <div
+                          role="alert"
+                          style={{
+                            color: "var(--color-danger, #b91c1c)",
+                            fontSize: "0.8rem",
+                            marginTop: "0.25rem",
+                          }}
+                        >
+                          {renameError}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="base-manage-field-name"
+                      onClick={() => beginEdit(field.name)}
+                      title="Click to rename"
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        padding: 0,
+                        font: "inherit",
+                        cursor: "pointer",
+                        textAlign: "left",
+                      }}
+                    >
+                      {field.name}
+                      <span
+                        style={{
+                          color: "var(--color-muted, #6b7280)",
+                          marginLeft: "0.4rem",
+                        }}
+                      >
+                        ({field.type})
+                      </span>
+                    </button>
+                  )}
+                </td>
+                <td
+                  style={{
+                    padding: "0.25rem 0.5rem",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {editingName === field.name ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn-sm"
+                        onClick={commitEdit}
+                      >
+                        Save
+                      </button>{" "}
+                      <button
+                        type="button"
+                        className="btn-sm"
+                        onClick={() => {
+                          setEditingName(null);
+                          setRenameError(null);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="btn-sm"
+                        aria-label={`Move ${field.name} up`}
+                        disabled={idx === 0}
+                        onClick={() => onReorder(field.name, "up")}
+                      >
+                        ↑
+                      </button>{" "}
+                      <button
+                        type="button"
+                        className="btn-sm"
+                        aria-label={`Move ${field.name} down`}
+                        disabled={idx === fields.length - 1}
+                        onClick={() => onReorder(field.name, "down")}
+                      >
+                        ↓
+                      </button>{" "}
+                      <button
+                        type="button"
+                        className="btn-sm danger"
+                        aria-label={`Delete ${field.name}`}
+                        onClick={() => {
+                          onRemove(field.name);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div
+          style={{
+            marginTop: "1rem",
+            display: "flex",
+            justifyContent: "flex-end",
+          }}
+        >
+          <button type="button" className="btn-sm" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// ImportDialog — paste or pick a CSV / JSON file. We deliberately let
+// the user paste the file body in addition to the file picker so
+// power users (and tests) can drive imports without disk I/O.
+// ──────────────────────────────────────────────────────────────────────
+interface ImportDialogProps {
+  kind: "csv" | "json";
+  recordCount: number;
+  onImport: (text: string) => void;
+  onCancel: () => void;
+}
+
+function ImportDialog({
+  kind,
+  recordCount,
+  onImport,
+  onCancel,
+}: ImportDialogProps) {
+  const [text, setText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    file
+      .text()
+      .then((body) => setText(body))
+      .catch((err: unknown) =>
+        setError(err instanceof Error ? err.message : String(err)),
+      );
+  };
+
+  const submit = () => {
+    if (text.trim() === "") {
+      setError("Paste or pick a file first.");
+      return;
+    }
+    try {
+      onImport(text);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-label={`Import ${kind.toUpperCase()}`}
+      className="base-modal"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.35)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 100,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
+      <div
+        className="base-modal-content"
+        style={{
+          background: "var(--color-surface, #fff)",
+          padding: "1.25rem",
+          borderRadius: "0.5rem",
+          minWidth: "480px",
+          maxWidth: "720px",
+        }}
+      >
+        <h3 style={{ marginTop: 0 }}>Import {kind.toUpperCase()}</h3>
+        {recordCount > 0 && (
+          <p
+            style={{
+              color: "var(--color-danger, #b91c1c)",
+              marginTop: 0,
+              fontSize: "0.9rem",
+            }}
+          >
+            ⚠ This will REPLACE the current {recordCount} record(s).
+          </p>
+        )}
+        <input
+          type="file"
+          accept={kind === "csv" ? ".csv,text/csv" : ".json,application/json"}
+          onChange={onFileChange}
+          aria-label={`Choose ${kind.toUpperCase()} file`}
+          style={{ display: "block", marginBottom: "0.5rem" }}
+        />
+        <p
+          style={{
+            fontSize: "0.85rem",
+            color: "var(--color-muted, #6b7280)",
+            margin: "0 0 0.25rem 0",
+          }}
+        >
+          Or paste the file contents:
+        </p>
+        <textarea
+          aria-label={`${kind.toUpperCase()} body`}
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value);
+            setError(null);
+          }}
+          rows={10}
+          style={{
+            width: "100%",
+            fontFamily: "monospace",
+            fontSize: "0.85rem",
+          }}
+        />
+        {error && (
+          <div
+            role="alert"
+            style={{
+              color: "var(--color-danger, #b91c1c)",
+              fontSize: "0.85rem",
+              marginTop: "0.4rem",
+            }}
+          >
+            {error}
+          </div>
+        )}
+        <div
+          style={{
+            marginTop: "1rem",
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: "0.5rem",
+          }}
+        >
+          <button type="button" className="btn-sm" onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn-sm primary"
+            onClick={submit}
+          >
+            Import
+          </button>
+        </div>
       </div>
     </div>
   );
