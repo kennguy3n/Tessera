@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Button from "./Button";
 import type { ArtifactVersionInfo } from "../types/ipc";
+import { diffLines } from "../utils/lineDiff";
 
 interface VersionHistoryProps {
   artifactId: string;
@@ -8,6 +9,8 @@ interface VersionHistoryProps {
   onClose: () => void;
   onRestore: () => void;
 }
+
+type ViewMode = "preview" | "compare";
 
 export default function VersionHistory({
   artifactId,
@@ -20,6 +23,13 @@ export default function VersionHistory({
   const [previewVersion, setPreviewVersion] = useState<number | null>(null);
   const [previewContent, setPreviewContent] = useState<string>("");
   const [restoring, setRestoring] = useState(false);
+  // Phase 15 Task 24: side-by-side diff for two versions. The
+  // compare-selection set is a Set rather than a tuple so the user
+  // can click any two versions in either order; the diff direction
+  // is "oldest → newest" by version number regardless of click order
+  // so users don't have to think about the direction semantics.
+  const [compareSet, setCompareSet] = useState<Set<number>>(new Set());
+  const [viewMode, setViewMode] = useState<ViewMode>("preview");
 
   const loadVersions = useCallback(async () => {
     setLoading(true);
@@ -40,8 +50,51 @@ export default function VersionHistory({
   }, [isOpen, loadVersions]);
 
   const handlePreview = (version: ArtifactVersionInfo) => {
+    setViewMode("preview");
     setPreviewVersion(version.version);
     setPreviewContent(version.content);
+  };
+
+  const handleToggleCompare = (version: ArtifactVersionInfo) => {
+    setCompareSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(version.version)) {
+        next.delete(version.version);
+      } else {
+        // Cap at 2 selections — discard the oldest selection if the
+        // user picks a third version so the UI never lands in a
+        // "you must deselect before continuing" dead-end.
+        if (next.size >= 2) {
+          const oldest = Array.from(next).sort((a, b) => a - b)[0];
+          if (oldest !== undefined) next.delete(oldest);
+        }
+        next.add(version.version);
+      }
+      return next;
+    });
+  };
+
+  const compareSelections = useMemo(
+    () => Array.from(compareSet).sort((a, b) => a - b),
+    [compareSet],
+  );
+  const canCompare = compareSelections.length === 2;
+
+  const compareDiff = useMemo(() => {
+    if (viewMode !== "compare" || !canCompare) return null;
+    const [vA, vB] = compareSelections;
+    const a = versions.find((v) => v.version === vA);
+    const b = versions.find((v) => v.version === vB);
+    if (!a || !b) return null;
+    const { entries, summary } = diffLines(a.content, b.content);
+    return { entries, summary, aVersion: vA, bVersion: vB };
+  }, [viewMode, canCompare, compareSelections, versions]);
+
+  const handleStartCompare = () => {
+    if (!canCompare) return;
+    setViewMode("compare");
+    setPreviewVersion(null);
+    setPreviewContent("");
   };
 
   const handleRestore = async () => {
@@ -74,28 +127,57 @@ export default function VersionHistory({
       ) : versions.length === 0 ? (
         <p className="version-empty">No previous versions available.</p>
       ) : (
-        <div className="version-list">
-          {versions.map((version) => (
-            <div
-              key={version.version}
-              className={`version-item ${previewVersion === version.version ? "active" : ""}`}
+        <>
+          <div className="version-history-compare-bar">
+            <span className="version-history-compare-hint">
+              {compareSelections.length === 0
+                ? "Tick two versions to compare."
+                : compareSelections.length === 1
+                  ? "Pick one more version to compare."
+                  : `Comparing v${compareSelections[0]} ↔ v${compareSelections[1]}`}
+            </span>
+            <Button
+              variant="secondary"
+              onClick={handleStartCompare}
+              disabled={!canCompare}
             >
-              <button
-                type="button"
-                className="version-item-btn"
-                onClick={() => handlePreview(version)}
-              >
-                <span className="version-number">v{version.version}</span>
-                <span className="version-date">
-                  {new Date(version.createdAt).toLocaleString()}
-                </span>
-              </button>
-            </div>
-          ))}
-        </div>
+              Compare
+            </Button>
+          </div>
+          <div className="version-list">
+            {versions.map((version) => {
+              const isSelectedForCompare = compareSet.has(version.version);
+              return (
+                <div
+                  key={version.version}
+                  className={`version-item ${previewVersion === version.version ? "active" : ""}`}
+                >
+                  <label className="version-compare-checkbox">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select v${version.version} for comparison`}
+                      checked={isSelectedForCompare}
+                      onChange={() => handleToggleCompare(version)}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="version-item-btn"
+                    onClick={() => handlePreview(version)}
+                  >
+                    <span className="version-number">v{version.version}</span>
+                    <span className="version-date">
+                      {new Date(version.createdAt).toLocaleString()}
+                    </span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
 
-      {previewVersion != null && (
+      {viewMode === "preview" && previewVersion != null && (
         <div className="version-preview">
           <div className="version-preview-header">
             <span>Preview: v{previewVersion}</span>
@@ -104,6 +186,42 @@ export default function VersionHistory({
             </Button>
           </div>
           <pre className="version-preview-content">{previewContent}</pre>
+        </div>
+      )}
+
+      {viewMode === "compare" && compareDiff && (
+        <div className="version-diff" aria-label="Version comparison">
+          <div className="version-diff-header">
+            <span>
+              Diff: v{compareDiff.aVersion} → v{compareDiff.bVersion}
+            </span>
+            <span className="version-diff-summary">
+              <span className="version-diff-added">
+                +{compareDiff.summary.added}
+              </span>
+              <span className="version-diff-removed">
+                −{compareDiff.summary.removed}
+              </span>
+              <span className="version-diff-unchanged">
+                ={compareDiff.summary.unchanged}
+              </span>
+            </span>
+          </div>
+          <pre className="version-diff-content">
+            {compareDiff.entries.map((entry, idx) => {
+              const prefix =
+                entry.op === "add" ? "+" : entry.op === "remove" ? "−" : " ";
+              return (
+                <div
+                  key={`${entry.op}-${idx}`}
+                  className={`version-diff-line version-diff-line-${entry.op}`}
+                >
+                  <span className="version-diff-prefix">{prefix}</span>
+                  <span className="version-diff-text">{entry.text}</span>
+                </div>
+              );
+            })}
+          </pre>
         </div>
       )}
     </div>

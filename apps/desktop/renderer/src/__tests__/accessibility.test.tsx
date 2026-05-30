@@ -180,6 +180,7 @@ vi.mock("../hooks/useSettings", () => ({
       defaultExportFormat: "markdown",
       ignorePatterns: [".git", "node_modules"],
       watchPatterns: ["**/*.md"],
+      onboardingCompleted: true,
     },
     loading: false,
     refresh: vi.fn(),

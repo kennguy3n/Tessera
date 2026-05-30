@@ -267,12 +267,18 @@ const mockApi = {
       defaultExportFormat: "markdown",
       ignorePatterns: [".git", "node_modules"],
       watchPatterns: ["**/*.md"],
+      // Phase 15 Task 19: default mock treats the test environment as
+      // "already-onboarded" so existing page-level tests don't
+      // accidentally render the wizard. Wizard-specific tests
+      // override this field explicitly.
+      onboardingCompleted: true,
     }),
     update: vi.fn().mockResolvedValue({
       theme: "light",
       defaultExportFormat: "markdown",
       ignorePatterns: [".git", "node_modules"],
       watchPatterns: ["**/*.md"],
+      onboardingCompleted: true,
     }),
     // Hybrid search config lives on `settings` (not `sources`)
     // because the channel name is `settings:*` and the handler is

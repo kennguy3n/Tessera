@@ -1,5 +1,20 @@
-import { useState, useMemo } from "react";
+import {
+  useState,
+  useMemo,
+  useRef,
+  useEffect,
+  useCallback,
+  useLayoutEffect,
+} from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  LayoutTemplate,
+  SearchX,
+  FileText,
+  Presentation,
+  Table as TableIcon,
+  Database,
+} from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import Card from "../components/Card";
 import SearchInput from "../components/SearchInput";
@@ -37,17 +52,52 @@ const TYPE_LABELS: Record<string, string> = {
   base: "Bases",
 };
 
-const TYPE_ICONS: Record<string, string> = {
-  document: "\uD83D\uDCC4",
-  slides: "\uD83D\uDCCA",
-  sheet: "\uD83D\uDCCA",
-  base: "\uD83D\uDDC3\uFE0F",
+/**
+ * Phase 15 Task 20 follow-up: Lucide icon set replaces the emoji
+ * sprinkle. Components are 14px-aligned so they render the same on
+ * every desktop OS (emoji had three different glyphs across Linux /
+ * macOS / Windows for the same code point).
+ */
+const TYPE_ICONS: Record<string, typeof FileText> = {
+  document: FileText,
+  slides: Presentation,
+  sheet: TableIcon,
+  base: Database,
 };
+
+/**
+ * Phase 15 Task 23 — keyboard-navigable template gallery.
+ *
+ * The gallery is rendered as a single ARIA `listbox` (across all
+ * category sections) with arrow-key navigation, Enter to select, and
+ * the `aria-activedescendant` pattern instead of roving tabindex.
+ * The container holds focus and announces the active option to AT
+ * by id; this keeps Tab from cycling through every card and gives
+ * screen-reader users a single focus stop for the entire grid.
+ *
+ * Column count is computed dynamically from the rendered DOM: the
+ * grid uses `repeat(auto-fill, minmax(260px, 1fr))` so the column
+ * count varies with the viewport. We measure the first row's items
+ * via `getBoundingClientRect()` on a ResizeObserver tick. Up/Down
+ * arrows then move by `cols`, Left/Right by 1.
+ *
+ * Categories still render as visually grouped sections, but the
+ * underlying keyboard order is the flat visible list so screen
+ * readers and arrow keys see a single coherent gallery. The
+ * `flatItems` memo is the source of truth for both rendering and
+ * navigation arithmetic.
+ */
+const LISTBOX_ID = "template-gallery-listbox";
+const optionDomId = (templateId: string) =>
+  `template-option-${templateId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
 
 export default function TemplatesPage() {
   const navigate = useNavigate();
   const { templates, loading } = useTemplateList();
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [columns, setColumns] = useState(1);
+  const gridRef = useRef<HTMLDivElement | null>(null);
 
   const displayTemplates: TemplateCardData[] = useMemo(() => {
     if (templates.length > 0) {
@@ -72,6 +122,12 @@ export default function TemplatesPage() {
     );
   }, [displayTemplates, searchQuery]);
 
+  /**
+   * Flatten the visible templates in their rendered order (group by
+   * category, preserve in-group order). This is the canonical list
+   * for both keyboard navigation and `aria-activedescendant` id
+   * lookup.
+   */
   const grouped = useMemo(() => {
     const groups: Record<string, TemplateCardData[]> = {};
     for (const tmpl of filtered) {
@@ -81,6 +137,125 @@ export default function TemplatesPage() {
     }
     return groups;
   }, [filtered]);
+
+  const flatItems = useMemo(
+    () => Object.values(grouped).flat(),
+    [grouped],
+  );
+
+  // Re-anchor the active index whenever the visible list shrinks or
+  // the user types into the search box — without this, an
+  // activeIndex of 5 against a 2-item filter would silently address
+  // nothing.
+  useEffect(() => {
+    if (flatItems.length === 0) {
+      setActiveIndex(0);
+    } else if (activeIndex >= flatItems.length) {
+      setActiveIndex(flatItems.length - 1);
+    }
+  }, [flatItems, activeIndex]);
+
+  /**
+   * Measure the rendered grid's column count by walking the first
+   * row of cards and counting how many share the same `offsetTop`.
+   * Recomputed on layout via ResizeObserver so a window resize
+   * adjusts Up/Down arrow arithmetic without a full re-render.
+   * Falls back to 1 column when nothing is rendered yet (which is
+   * the correct degenerate value — arrow Down then visits the next
+   * item, identical to Right).
+   */
+  const measureColumns = useCallback(() => {
+    const grid = gridRef.current;
+    if (!grid) {
+      setColumns(1);
+      return;
+    }
+    const cells = Array.from(
+      grid.querySelectorAll<HTMLElement>("[data-template-option]"),
+    );
+    if (cells.length === 0) {
+      setColumns(1);
+      return;
+    }
+    const firstTop = cells[0].offsetTop;
+    let count = 0;
+    for (const c of cells) {
+      if (c.offsetTop === firstTop) count += 1;
+      else break;
+    }
+    setColumns(Math.max(1, count));
+  }, []);
+
+  useLayoutEffect(() => {
+    measureColumns();
+  }, [flatItems, measureColumns]);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
+    const grid = gridRef.current;
+    if (!grid) return;
+    const obs = new ResizeObserver(() => measureColumns());
+    obs.observe(grid);
+    return () => obs.disconnect();
+  }, [measureColumns]);
+
+  /**
+   * Keyboard handler on the listbox container. Tab is NOT
+   * intercepted — it falls through to the browser so focus can
+   * leave the gallery. The handler implements:
+   *   - ArrowRight / ArrowLeft → +/- 1, no wrap (avoid surprising
+   *     jumps to far rows). Clamps at the ends.
+   *   - ArrowDown / ArrowUp → +/- columns, clamped at the ends.
+   *   - Home → first item; End → last item.
+   *   - Enter / Space → activate the selected template.
+   */
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (flatItems.length === 0) return;
+      let next = activeIndex;
+      switch (e.key) {
+        case "ArrowRight":
+          next = Math.min(flatItems.length - 1, activeIndex + 1);
+          break;
+        case "ArrowLeft":
+          next = Math.max(0, activeIndex - 1);
+          break;
+        case "ArrowDown":
+          next = Math.min(flatItems.length - 1, activeIndex + columns);
+          break;
+        case "ArrowUp":
+          next = Math.max(0, activeIndex - columns);
+          break;
+        case "Home":
+          next = 0;
+          break;
+        case "End":
+          next = flatItems.length - 1;
+          break;
+        case "Enter":
+        case " ": {
+          e.preventDefault();
+          const tmpl = flatItems[activeIndex];
+          if (tmpl) navigate(`/create?template=${tmpl.id}`);
+          return;
+        }
+        default:
+          return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      if (next !== activeIndex) setActiveIndex(next);
+      // Scroll the newly active card into view for sighted users.
+      const targetId = flatItems[next] ? optionDomId(flatItems[next].id) : null;
+      if (targetId) {
+        const el = document.getElementById(targetId);
+        if (el && typeof el.scrollIntoView === "function") {
+          el.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }
+      }
+    },
+    [activeIndex, columns, flatItems, navigate],
+  );
 
   if (loading) {
     return (
@@ -95,6 +270,10 @@ export default function TemplatesPage() {
   }
 
   const hasTemplates = displayTemplates.length > 0;
+  const activeTemplate = flatItems[activeIndex];
+  const activeDescendantId = activeTemplate
+    ? optionDomId(activeTemplate.id)
+    : undefined;
 
   return (
     <div>
@@ -115,51 +294,104 @@ export default function TemplatesPage() {
 
       {!hasTemplates ? (
         <EmptyState
-          icon="\uD83D\uDCCB"
+          icon={<LayoutTemplate size={48} strokeWidth={1.5} aria-hidden="true" />}
           title="No templates available"
           message="Template files could not be loaded. Check your templates directory."
         />
       ) : Object.keys(grouped).length === 0 ? (
         <EmptyState
-          icon="\uD83D\uDD0D"
+          icon={<SearchX size={48} strokeWidth={1.5} aria-hidden="true" />}
           title="No matching templates"
           message={`No templates match "${searchQuery}". Try a different search.`}
         />
       ) : (
-        Object.entries(grouped).map(([category, items]) => (
-          <section key={category} style={{ marginBottom: "var(--spacing-xl)" }}>
-            <h2 style={{ marginBottom: "var(--spacing-md)" }}>{category}</h2>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
-                gap: "var(--spacing-md)",
-              }}
+        <div
+          ref={gridRef}
+          role="listbox"
+          id={LISTBOX_ID}
+          aria-label="Template gallery"
+          aria-activedescendant={activeDescendantId}
+          tabIndex={0}
+          onKeyDown={onKeyDown}
+          data-testid="template-gallery"
+          style={{ outline: "none" }}
+        >
+          {Object.entries(grouped).map(([category, items]) => (
+            <section
+              key={category}
+              style={{ marginBottom: "var(--spacing-xl)" }}
             >
-              {items.map((tmpl) => (
-                <Card
-                  key={tmpl.id}
-                  onClick={() => navigate(`/create?template=${tmpl.id}`)}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "var(--spacing-sm)",
-                      marginBottom: "var(--spacing-sm)",
-                    }}
-                  >
-                    <span>{TYPE_ICONS[tmpl.type] ?? "\uD83D\uDCC4"}</span>
-                    <span className="card-title" style={{ margin: 0 }}>
-                      {tmpl.name}
-                    </span>
-                  </div>
-                  <div className="card-description">{tmpl.description}</div>
-                </Card>
-              ))}
-            </div>
-          </section>
-        ))
+              <h2 style={{ marginBottom: "var(--spacing-md)" }}>{category}</h2>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns:
+                    "repeat(auto-fill, minmax(260px, 1fr))",
+                  gap: "var(--spacing-md)",
+                }}
+              >
+                {items.map((tmpl) => {
+                  // Flat index across all sections — drives the
+                  // active-descendant arithmetic and Enter activation.
+                  const flatIdx = flatItems.indexOf(tmpl);
+                  const isActive = flatIdx === activeIndex;
+                  const Icon = TYPE_ICONS[tmpl.type] ?? FileText;
+                  return (
+                    <div
+                      key={tmpl.id}
+                      id={optionDomId(tmpl.id)}
+                      role="option"
+                      aria-selected={isActive}
+                      data-template-option
+                      data-template-id={tmpl.id}
+                      data-template-index={flatIdx}
+                    >
+                      <Card
+                        onClick={() => {
+                          setActiveIndex(flatIdx);
+                          navigate(`/create?template=${tmpl.id}`);
+                        }}
+                        className={isActive ? "card-active" : undefined}
+                        style={
+                          isActive
+                            ? {
+                                outline: "2px solid var(--color-primary, #4f46e5)",
+                                outlineOffset: "2px",
+                              }
+                            : undefined
+                        }
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "var(--spacing-sm)",
+                            marginBottom: "var(--spacing-sm)",
+                          }}
+                        >
+                          <Icon
+                            size={16}
+                            strokeWidth={1.75}
+                            aria-hidden="true"
+                          />
+                          <span
+                            className="card-title"
+                            style={{ margin: 0 }}
+                          >
+                            {tmpl.name}
+                          </span>
+                        </div>
+                        <div className="card-description">
+                          {tmpl.description}
+                        </div>
+                      </Card>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
       )}
     </div>
   );
