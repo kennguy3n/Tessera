@@ -50,6 +50,7 @@ import {
 import {
   getBridge,
   getDiffusionSidecar,
+  getDiffusionSidecarState,
   isBridgeAvailable,
 } from "../appState";
 import { pathToAssetUrl, resolveAssetAllowedRoot } from "../assetProtocol";
@@ -144,7 +145,36 @@ export async function probeImagegenAvailable(): Promise<boolean> {
 export async function ensureDiffusionSidecarRunning(): Promise<void> {
   const sidecar = getDiffusionSidecar();
   if (!sidecar) {
-    throw new Error("Diffusion sidecar not initialised");
+    // Phase 15 Task 1 (Devin Review follow-up): replace the generic
+    // "not initialised" message with an error that reflects the
+    // actual lazy-load state. The three states the renderer can
+    // act on are:
+    //   loading — show a transient "warming up" toast and let the
+    //             user retry in a few seconds (the module import
+    //             usually completes in <300 ms).
+    //   failed  — show a permanent-failure toast that explicitly
+    //             instructs the user to restart the app, because the
+    //             import will not be re-attempted in this session.
+    //   unloaded — `initAppState()` never ran (e.g. bridge missing
+    //              in fallback mode). Surface the same
+    //              "image generation unavailable" message we used
+    //              before because there is no recovery path that
+    //              doesn't also fix the underlying bridge.
+    const { state, error } = getDiffusionSidecarState();
+    if (state === "loading") {
+      throw new Error(
+        "Image generation is still warming up — please retry in a few seconds.",
+      );
+    }
+    if (state === "failed") {
+      const detail = error?.message ? ` (${error.message})` : "";
+      throw new Error(
+        `Image generation is unavailable until the app is restarted${detail}.`,
+      );
+    }
+    throw new Error(
+      "Image generation is unavailable: the native bridge has not been initialised.",
+    );
   }
   if (sidecar.isRunning) return;
 

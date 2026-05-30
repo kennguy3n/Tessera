@@ -34,6 +34,18 @@ import {
 import { MarpExportSchema, TypstExportSchema } from "./schemas";
 import { getSafeExportRoots, getDenyExportRoots } from "./shared";
 import { BATCH_MAX_ITEMS, runBatch } from "./batch";
+import {
+  writeRecovery,
+  loadRecovery,
+  clearRecovery,
+} from "../artifactRecovery";
+import {
+  enqueueFailedExport,
+  listFailedExports,
+  removeFailedExport,
+  bumpRetryCount,
+  getFailedExport,
+} from "../failedExportQueue";
 
 export function registerArtifactsHandlers(): void {
   idempotentHandle(
@@ -67,10 +79,112 @@ export function registerArtifactsHandlers(): void {
         allowEmpty: true,
       });
       const bridge = getBridge();
-      if (bridge) {
-        return bridge.bridgeUpdateArtifactContent(aId, c);
+      if (!bridge) {
+        throw new Error("Native bridge not available");
       }
-      throw new Error("Native bridge not available");
+      // Phase 15 Task 8: write the recovery sidecar BEFORE the bridge
+      // call so a crash inside the N-API boundary still leaves a
+      // restorable copy on disk. The sidecar is removed AFTER the
+      // bridge call returns successfully; if recovery-write itself
+      // fails we still attempt the bridge save (the recovery layer
+      // is defence-in-depth, not the primary persistence path) but
+      // log so a disk-full / permission regression is visible.
+      try {
+        await writeRecovery(aId, c);
+      } catch (e) {
+        console.error(
+          `[tessera] artifact recovery sidecar write failed (id=${aId}); proceeding with bridge save:`,
+          e,
+        );
+      }
+      // If the bridge save throws (DB locked, disk full, etc.)
+      // we deliberately let the exception propagate to the
+      // renderer WITHOUT clearing the recovery sidecar — the
+      // sidecar contains the user's latest in-flight edits and
+      // is exactly what we want to keep on disk so the next
+      // launch can offer to restore them. Letting the throw
+      // bubble naturally (rather than wrapping in a try/catch +
+      // re-throw) keeps eslint's `no-useless-catch` happy AND
+      // matches the implicit contract that the sidecar lifecycle
+      // is: written before bridge, cleared only after bridge ack.
+      const result = bridge.bridgeUpdateArtifactContent(aId, c);
+      // Bridge confirmed the new content is in the DB — sidecar
+      // is now redundant. Failure to clear is non-fatal (a stale
+      // sidecar will be detected at next open and the
+      // `checkRecovery` handler's timestamp comparison will
+      // resolve it correctly because the DB row's `updated_at`
+      // is newer).
+      await clearRecovery(aId).catch((e) => {
+        console.warn(
+          `[tessera] failed to clear recovery sidecar after successful save (id=${aId}); will be cleared at next open:`,
+          e,
+        );
+      });
+      return result;
+    },
+  );
+
+  // Phase 15 Task 8: recovery-check entrypoint. Called by the
+  // renderer when an artifact is opened, to decide whether to show
+  // the "Restore unsaved changes from <time>?" prompt. Returns the
+  // recovery envelope if there's a sidecar newer than the DB row's
+  // `updated_at`, otherwise `null` (no prompt).
+  //
+  // We could have folded this into `artifacts:get`, but keeping it a
+  // separate handler means a renderer that doesn't know about
+  // recovery just doesn't call this channel and pays no cost — and
+  // the `artifacts:get` IPC shape stays unchanged for older callers.
+  idempotentHandle(
+    "artifacts:checkRecovery",
+    async (_event, id: unknown) => {
+      const aId = assertId(id, "artifactId");
+      const env = await loadRecovery(aId);
+      if (env === null) return null;
+      const bridge = getBridge();
+      if (!bridge) {
+        // No bridge means we can't compare against the DB row, so
+        // we conservatively return the envelope and let the
+        // renderer decide. In practice this only fires in tests
+        // and headless harnesses.
+        return env;
+      }
+      // The bridge's `bridgeGetArtifact` returns the canonical row
+      // including `updatedAt` in ISO-8601 form. We compare against
+      // the sidecar's epoch-ms `timestamp` and only surface the
+      // envelope if the sidecar is STRICTLY newer — a sidecar
+      // older than the DB row indicates the save succeeded and we
+      // missed the post-save cleanup (the recovery is stale).
+      let dbUpdatedAtMs: number | null = null;
+      try {
+        const artifact = bridge.bridgeGetArtifact(aId);
+        if (artifact && typeof artifact.updatedAt === "string") {
+          const parsed = Date.parse(artifact.updatedAt);
+          if (!Number.isNaN(parsed)) dbUpdatedAtMs = parsed;
+        }
+      } catch {
+        // Unknown artifact id — fall through and surface the
+        // envelope; the renderer will reject if the id is bogus.
+      }
+      if (dbUpdatedAtMs !== null && env.timestamp <= dbUpdatedAtMs) {
+        // DB row caught up; clear the stale sidecar so the next
+        // open doesn't have to make this decision again.
+        await clearRecovery(aId).catch(() => undefined);
+        return null;
+      }
+      return env;
+    },
+  );
+
+  // Phase 15 Task 8: explicit-discard entrypoint. Renderer calls
+  // this when the user clicks "Discard" on the restore prompt.
+  // Idempotent (the underlying `clearRecovery` swallows `ENOENT`),
+  // so a duplicate click is harmless.
+  idempotentHandle(
+    "artifacts:discardRecovery",
+    async (_event, id: unknown) => {
+      const aId = assertId(id, "artifactId");
+      await clearRecovery(aId);
+      return true;
     },
   );
 
@@ -242,8 +356,121 @@ export function registerArtifactsHandlers(): void {
       // Make sure the parent directory exists before the Rust bridge
       // writes.
       await fsp.mkdir(path.dirname(resolvedPath), { recursive: true });
-      bridge.bridgeExportArtifactToFile(aId, fmt, resolvedPath, co);
+      // Phase 15 Task 10: wrap the bridge call so any failure
+      // (Typst syntax error, disk full, permission denied during
+      // the actual write) is enqueued into the failed-export
+      // queue. The user can then inspect / one-click-retry from
+      // Settings. We do NOT enqueue when the user explicitly
+      // cancelled the save dialog above (handled by the earlier
+      // `return null` path).
+      try {
+        bridge.bridgeExportArtifactToFile(aId, fmt, resolvedPath, co);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        // Best-effort enqueue: a queue-write failure here is
+        // doubly unfortunate (the export already failed) but
+        // must not mask the original export error from the
+        // renderer, so we just log.
+        await enqueueFailedExport({
+          artifactId: aId,
+          format: fmt,
+          filePath: resolvedPath,
+          errorMessage: message,
+        }).catch((qe) =>
+          console.warn(
+            `[tessera] failed to enqueue failed-export (id=${aId}, fmt=${fmt}):`,
+            qe,
+          ),
+        );
+        throw e;
+      }
       return resolvedPath;
+    },
+  );
+
+  // Phase 15 Task 10: list the persisted failed-export queue. Read-
+  // only; the renderer's Settings page polls this to render the
+  // "Failed exports" card. Snapshot read — no consistency concerns
+  // because the atomic-rename writer guarantees we see a
+  // self-consistent file.
+  idempotentHandle("artifacts:failedExports", async () => {
+    return listFailedExports();
+  });
+
+  // Phase 15 Task 10: one-click retry of a previously failed export.
+  // Pulls the original arguments from the queue and re-runs them
+  // through the bridge. Two outcomes:
+  //   * success → dequeues the entry and returns the resolved path.
+  //   * failure → bumps `retryCount` and re-throws so the renderer
+  //     can show the error inline.
+  // Idempotent against duplicate clicks: if the entry is already
+  // gone (concurrent removal), returns null.
+  idempotentHandle("artifacts:retryExport", async (_event, id: unknown) => {
+    const entryId = assertString(id, "exportId", { maxLen: 128 });
+    const entry = await getFailedExport(entryId);
+    if (!entry) return null;
+    const bridge = getBridge();
+    if (!bridge) {
+      throw new Error("Native bridge not available");
+    }
+    // Re-check the destination path against the safe-export
+    // allowlist before retry. A path that was safe when originally
+    // attempted might not be safe now if the allowlist tightened
+    // (e.g. the user reset the Downloads override). This also
+    // forecloses the corner case where a malicious file at the
+    // path could redirect the write — checking again is cheap and
+    // closes the gap structurally.
+    //
+    // Defense-in-depth (Devin Review PR #69 BUG_0003): we ALSO
+    // reject any non-absolute or empty path here. In normal
+    // operation the queue is only populated from `resolvedPath`
+    // (always absolute), but a tampered `failed-exports.json` on
+    // disk could supply a relative path such as `../sensitive/file`
+    // that would otherwise resolve against cwd and slip past the
+    // allowlist check (which exits early on non-absolute inputs).
+    // We treat a non-absolute filePath as untrusted and refuse the
+    // retry rather than letting the bridge resolve it.
+    if (!entry.filePath || !path.isAbsolute(entry.filePath)) {
+      throw new Error(
+        `Retry destination is missing or not absolute (possible tampered queue): ${entry.filePath}`,
+      );
+    }
+    if (
+      !isSafeExportPath(
+        entry.filePath,
+        getSafeExportRoots(),
+        getDenyExportRoots(),
+      )
+    ) {
+      throw new Error(
+        `Retry destination is no longer in the safe-export allowlist: ${entry.filePath}`,
+      );
+    }
+    await fsp.mkdir(path.dirname(entry.filePath), { recursive: true });
+    try {
+      bridge.bridgeExportArtifactToFile(
+        entry.artifactId,
+        entry.format,
+        entry.filePath,
+        null,
+      );
+      await removeFailedExport(entryId);
+      return entry.filePath;
+    } catch (e) {
+      await bumpRetryCount(entryId).catch(() => undefined);
+      throw e;
+    }
+  });
+
+  // Phase 15 Task 10: explicit-discard for a failed-export entry.
+  // Used when the user clicks "Dismiss" instead of "Retry" — e.g.
+  // because the artifact has since been deleted and retry is no
+  // longer meaningful.
+  idempotentHandle(
+    "artifacts:discardFailedExport",
+    async (_event, id: unknown) => {
+      const entryId = assertString(id, "exportId", { maxLen: 128 });
+      return removeFailedExport(entryId);
     },
   );
 

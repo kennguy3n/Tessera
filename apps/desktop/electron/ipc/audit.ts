@@ -20,7 +20,9 @@
  *     read avoids that coupling.
  */
 
+import path from "node:path";
 import type { IpcMainInvokeEvent } from "electron";
+import { app } from "electron";
 import { getBridge } from "../appState";
 import { idempotentHandle } from "./register";
 import { assertNumber } from "./validate";
@@ -80,6 +82,53 @@ export function registerAuditHandlers(): void {
       // shape (id/eventType/timestamp/details). No further mapping
       // needed beyond the JSON-safe re-shape that napi performs.
       return bridge.bridgeRecentAuditEvents(limit, offset);
+    },
+  );
+
+  // ---------------------------------------------------------------------
+  // Phase 15 Task 12: audit log rotation.
+  //
+  // `audit:getArchives` is the read API the Settings page calls to
+  // list every `audit-archive-*.jsonl.gz` file in the
+  // `<userData>/audit-archives/` directory. `audit:rotate` triggers
+  // a manual rotation (the same logic the future scheduled
+  // background task will call). Both are intentionally kept tiny —
+  // path construction lives here so the renderer never has to know
+  // the userData layout, and the bridge call is a single line.
+  //
+  // We don't expose a way for the renderer to choose a different
+  // archive directory: the path is derived from `app.getPath('userData')`
+  // so user-initiated rotations always agree with scheduler-driven
+  // ones (otherwise a user might rotate into directory A while the
+  // scheduler rotates into directory B, leaving two disjoint
+  // archive sets the UI can't render).
+  function getAuditArchiveDir(): string {
+    return path.join(app.getPath("userData"), "audit-archives");
+  }
+
+  idempotentHandle(
+    "audit:getArchives",
+    async (_event: IpcMainInvokeEvent): Promise<string[]> => {
+      const bridge = getBridge();
+      if (!bridge) {
+        // Bridge not yet ready — degrade to empty rather than
+        // throwing, matching the `audit:listRecent` posture.
+        return [];
+      }
+      return bridge.bridgeAuditListArchives(getAuditArchiveDir());
+    },
+  );
+
+  idempotentHandle(
+    "audit:rotate",
+    async (
+      _event: IpcMainInvokeEvent,
+    ): Promise<{ archivePath: string; rotatedCount: number } | null> => {
+      const bridge = getBridge();
+      if (!bridge) {
+        return null;
+      }
+      return bridge.bridgeAuditRotate(getAuditArchiveDir());
     },
   );
 }

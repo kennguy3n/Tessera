@@ -1,5 +1,6 @@
 pub mod confluence;
 pub mod error;
+pub mod failure_state;
 pub mod figma;
 pub mod gdrive;
 pub mod jira;
@@ -13,7 +14,10 @@ pub mod types;
 pub mod url_encode;
 
 pub use confluence::ConfluenceConnector;
-pub use error::{ConnectorError, ConnectorResult};
+pub use error::{ConnectorError, ConnectorResult, FailureKind};
+pub use failure_state::{
+    PersistedFailureKind, PersistedSyncError, SyncBackoffPolicy, SyncFailureState,
+};
 pub use figma::FigmaConnector;
 pub use gdrive::GoogleDriveConnector;
 pub use jira::JiraConnector;

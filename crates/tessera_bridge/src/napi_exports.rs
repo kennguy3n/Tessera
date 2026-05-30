@@ -8,6 +8,7 @@ use tessera_artifacts::automations::AutomationStore;
 use tessera_artifacts::manager::ArtifactManager;
 use tessera_artifacts::tasks::TaskStore;
 use tessera_audit::logger::AuditLogger;
+use tessera_audit::store::AuditStore;
 use tessera_citations::tracker::CitationTracker;
 use tessera_core::open_shared_with_key;
 use tessera_sources::manager::SourceManager;
@@ -75,6 +76,12 @@ struct AppState {
     /// a `bridge_backfill_embeddings` `AsyncTask` is in flight on a
     /// libuv worker thread holding the `source_manager` lock.
     embedding_progress: Arc<EmbeddingProgressTracker>,
+    /// Phase 15 Task 7: Arc clone of the shared SQLite connection so
+    /// `bridge_dispose` can run `wal_checkpoint(TRUNCATE)` without
+    /// going through any individual store's lock. Holding it here
+    /// also keeps the connection alive even if every individual
+    /// store is dropped or replaced during shutdown.
+    shared_conn: tessera_core::SharedConnection,
 }
 
 /// Initialise the bridge. `db_key`, when non-empty, is a 64-character
@@ -121,6 +128,15 @@ pub fn init_bridge(
     let conn = open_shared_with_key(&db_path, key_ref)
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
+    // Phase 15 Task 7: run `PRAGMA integrity_check` (with one
+    // retry after `wal_checkpoint(TRUNCATE)`) before any store
+    // touches the database. If corruption persists past the retry
+    // we surface a structured error to the renderer rather than
+    // letting the first store-level write fail with a less helpful
+    // SQLite-internal message.
+    tessera_core::db::integrity_check_with_retry(&conn)
+        .map_err(|e| napi::Error::from_reason(format!("database integrity check failed: {e}")))?;
+
     let mut source_manager = SourceManager::with_shared_conn(conn.clone(), &[])
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
@@ -147,7 +163,7 @@ pub fn init_bridge(
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     let task_store = TaskStore::with_shared_conn(conn.clone())
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    let automation_store = AutomationStore::with_shared_conn(conn)
+    let automation_store = AutomationStore::with_shared_conn(conn.clone())
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
     let embedding_progress = source_manager.embedding_progress_handle();
@@ -162,10 +178,32 @@ pub fn init_bridge(
             automation_store: Mutex::new(automation_store),
             template_dir,
             embedding_progress,
+            shared_conn: conn,
         })
         .map_err(|_| napi::Error::from_reason("Bridge already initialized"))?;
 
     Ok(())
+}
+
+/// Phase 15 Task 7: graceful-shutdown hook. Runs
+/// `PRAGMA wal_checkpoint(TRUNCATE)` so the on-disk WAL is folded
+/// back into the main database file and shrunk to zero bytes
+/// before the process exits. The Electron side calls this from
+/// `app.on("will-quit", ...)` so the next cold-start does not need
+/// to replay WAL frames, and so backup tools see a single self-
+/// contained file.
+///
+/// Safe to call before `init_bridge` (returns `Ok(())` as a no-op)
+/// so the renderer doesn't need to guard against the bridge
+/// failing to initialise.
+#[napi]
+pub fn bridge_dispose() -> napi::Result<()> {
+    let Some(state) = APP_STATE.get() else {
+        return Ok(());
+    };
+    tessera_core::db::wal_checkpoint_truncate(&state.shared_conn)
+        .map(|_| ())
+        .map_err(|e| napi::Error::from_reason(format!("wal checkpoint failed: {e}")))
 }
 
 fn state() -> napi::Result<&'static AppState> {
@@ -402,6 +440,88 @@ pub fn bridge_remove_source(source_id: String) -> napi::Result<()> {
         let _ = logger.log_source_removed(&source_id);
     }
     Ok(())
+}
+
+// -- Phase 15 Task 11: sync-failure persistence napi exports ------------
+//
+// The TS-side `runConnectorSync` calls these three functions in
+// the failure / success paths to durably persist a source's
+// `last_sync_error` + `retry_count` + `failed_permanently`
+// columns. The actual retry-and-backoff policy (when to flip
+// "permanent", how long to wait between retries) is computed in
+// TS (`connectorBackoff.ts`) so the connectors layer remains the
+// single classification authority — this bridge surface is pure
+// CRUD.
+
+/// JS-facing shape mirroring `SourceStore::get_sync_failure_state`'s
+/// `(Option<String>, u32, bool)` tuple. Returned to the renderer
+/// (and to the TS connector orchestrator) as a structured object
+/// so the call site cannot transpose the fields.
+#[napi(object)]
+pub struct SourceSyncFailureStateView {
+    /// JSON-serialised `PersistedSyncError` (`{"kind": ...,
+    /// "message": ...}`) or `None` when the source has never
+    /// failed.
+    pub last_error_json: Option<String>,
+    /// Consecutive transient failures since the last successful
+    /// sync. Reset to 0 on success.
+    pub retry_count: u32,
+    /// Sticky bit set when a Permanent-classified failure is
+    /// observed OR when `retry_count` exceeds the policy
+    /// threshold. Only cleared by a successful sync.
+    pub failed_permanently: bool,
+}
+
+#[napi]
+pub fn bridge_get_source_sync_failure_state(
+    source_id: String,
+) -> napi::Result<SourceSyncFailureStateView> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let (last_error_json, retry_count, failed_permanently) =
+        sources::get_source_sync_failure_state(&mgr, &source_id)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(SourceSyncFailureStateView {
+        last_error_json,
+        retry_count,
+        failed_permanently,
+    })
+}
+
+#[napi]
+pub fn bridge_record_source_sync_failure(
+    source_id: String,
+    last_sync_error_json: String,
+    retry_count: u32,
+    failed_permanently: bool,
+) -> napi::Result<()> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::record_source_sync_failure(
+        &mgr,
+        &source_id,
+        &last_sync_error_json,
+        retry_count,
+        failed_permanently,
+    )
+    .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+#[napi]
+pub fn bridge_record_source_sync_success(source_id: String) -> napi::Result<()> {
+    let s = state()?;
+    let mgr = s
+        .source_manager
+        .lock()
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    sources::record_source_sync_success(&mgr, &source_id)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 #[napi]
@@ -2715,6 +2835,81 @@ pub struct AuditEventView {
     pub event_type: String,
     pub timestamp: String,
     pub details: String,
+}
+
+/// Phase 15 Task 12: rotate the audit log if it has grown above
+/// the threshold. Returns the archive path and rotated-row count
+/// when a rotation occurred; returns `null` when the table is at
+/// or below the threshold.
+///
+/// `archive_dir` is the absolute path of the user-data directory
+/// where the renderer wants archives to live (typically
+/// `<userData>/audit-archives/`). The bridge does NOT pick this
+/// path itself — the Electron process owns the userData location,
+/// so it must pass an explicit path so a rotation kicked off via
+/// IPC always agrees with one kicked off via the scheduled
+/// background task.
+#[napi(object)]
+pub struct AuditRotationResultView {
+    pub archive_path: String,
+    /// `u32` rather than `u64` because napi-rs does not support
+    /// JS BigInt return types on every platform we ship to, and
+    /// `u32::MAX` (~4 billion rows) is well above any realistic
+    /// audit-log size.
+    pub rotated_count: u32,
+}
+
+#[napi]
+pub fn bridge_audit_rotate(
+    archive_dir: String,
+) -> napi::Result<Option<AuditRotationResultView>> {
+    let s = state()?;
+    // Devin Review ANALYSIS-0001: do NOT go through the outer
+    // `Mutex<AuditLogger>` for the rotation path. Inside
+    // `AuditStore::rotate`, the code intentionally releases the
+    // `SharedConnection` mutex between Phase 1 (SELECT) and Phase
+    // 2 (gzip compression) so concurrent `log_*` IPC calls can
+    // continue appending audit events while a large rotation
+    // compresses tens of thousands of rows. If we acquired
+    // `s.audit_logger` here, that outer mutex would block every
+    // other audit IPC for the full duration of the gzip — hundreds
+    // of milliseconds for a >50k-row rotation — negating the
+    // internal release entirely.
+    //
+    // Instead, we construct a transient `AuditStore` on top of the
+    // already-open `shared_conn`. `with_shared_conn` runs
+    // `init_schema` which is idempotent (all `CREATE TABLE / INDEX
+    // / TRIGGER IF NOT EXISTS`), so the transient construction is
+    // cheap and safe.
+    //
+    // Concurrent rotations across the IPC entry point and any
+    // future scheduled-rotation entry point are still serialized
+    // by the process-wide `AUDIT_ROTATION_SERIALIZER` inside
+    // `AuditStore::rotate` (ANALYSIS-0002), so dropping the outer
+    // mutex does not introduce a duplicate-archive race.
+    let store = AuditStore::with_shared_conn(s.shared_conn.clone())
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let outcome = store
+        .rotate(std::path::Path::new(&archive_dir))
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(outcome.map(|o| AuditRotationResultView {
+        archive_path: o.archive_path.display().to_string(),
+        rotated_count: o.rotated_count.min(u32::MAX as u64) as u32,
+    }))
+}
+
+/// Phase 15 Task 12: list the audit-archive files in
+/// `archive_dir`, newest-first. The Settings page renders this
+/// list with download links. Returns `[]` when the directory does
+/// not yet exist (no rotations have happened).
+#[napi]
+pub fn bridge_audit_list_archives(archive_dir: String) -> napi::Result<Vec<String>> {
+    let paths = AuditLogger::list_archives(std::path::Path::new(&archive_dir))
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(paths
+        .into_iter()
+        .map(|p| p.display().to_string())
+        .collect())
 }
 
 /// Return the `limit` most recent audit rows, newest first.

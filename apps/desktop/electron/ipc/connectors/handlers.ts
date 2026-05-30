@@ -36,6 +36,15 @@ import type { IpcContext } from "../context";
 import { assertProvider, assertString } from "../validate";
 import { RateLimitError } from "../rateLimiter";
 import {
+  applyFailureToState,
+  emptySyncFailureState,
+  loadSyncFailureState,
+  saveSyncFailureState,
+  clearSyncFailureState,
+  type FailureKind,
+  type SyncFailureState,
+} from "../../connectorBackoff";
+import {
   exchangeAuthorizationCode,
   generatePkcePair,
   getProviderOAuthConfig,
@@ -114,6 +123,226 @@ function safeAudit(ctx: IpcContext, fn: (b: ReturnType<IpcContext["requireBridge
   } catch (err) {
     ctx.log.warn("audit log failed (continuing)", {
       error: (err as Error).message,
+    });
+  }
+}
+
+/**
+ * Phase 15 Task 11: maps a `ProviderId` (the OAuth-layer label
+ * used in this file) to the `sourceType` string the bridge
+ * surfaces on each `SourceInfo` row (mirror of Rust
+ * `SourceType` enum serialised as snake_case).
+ *
+ * Every `ProviderId` MUST have a `sourceType` entry: a missing
+ * entry would silently skip failure-state updates for that
+ * provider, which is exactly the class of bug Task 11 exists to
+ * prevent.
+ */
+const PROVIDER_TO_SOURCE_TYPE: Record<ProviderId, string> = {
+  google_drive: "google_drive",
+  onedrive: "onedrive",
+  notion: "notion",
+  jira: "jira",
+  confluence: "confluence",
+  figma: "figma",
+};
+
+/**
+ * Phase 15 Task 11: classify a sync error as `transient` or
+ * `permanent`. The decision matrix aligns with
+ * `tessera_connectors::ConnectorError::failure_kind` for the canonical
+ * cases (401, 403, 404, 410, network errors, rate-limit) so a finding
+ * flagged Permanent on the Rust side is ALSO flagged Permanent here in
+ * the same sync cycle — without this alignment a provider 404 or 403
+ * would silently spend the full `MAX_RETRIES_BEFORE_PERMANENT` window
+ * before flipping the sticky `failedPermanently` bit, leaving the user
+ * staring at a fruitless retry loop for ~8 minutes.
+ *
+ * Divergence from the Rust matrix (intentional, pinned by
+ * `connectorBackoff.test.ts`): the TS classifier sees raw `Error`
+ * objects with HTTP-status-in-message rather than typed Rust variants,
+ * so a generic 4xx (e.g. 400, 422 — anything other than 408/429) is
+ * mapped to `permanent` here even though the Rust side would route the
+ * same HTTP response through `ConnectorError::ProviderError` and call
+ * it transient. The rationale is that a generic 4xx surfaced through
+ * our per-connector wrappers almost always means the caller's request
+ * shape is wrong (malformed payload, missing scope, removed field) —
+ * looping on the same request will never succeed, so we'd rather flip
+ * `failedPermanently` immediately and surface a "re-authorise / re-
+ * configure" prompt than spend 8 retry attempts on a guaranteed
+ * failure. If a connector ever needs the Rust semantics (treat a
+ * specific 4xx as transient because the provider documents it as
+ * recoverable), the connector should throw a structured error with
+ * `isNetworkError: true` or `name: "RateLimitError"` rather than the
+ * default "<provider> ... returned HTTP <status>" shape.
+ *
+ *  - `NotConnectedError` (the user is not authenticated, OR their
+ *    refresh token was revoked → mirrors Rust `AuthenticationFailed`
+ *    / `TokenRevoked`) → `permanent`. The retry loop would just hit
+ *    the same auth wall on every attempt; the user has to
+ *    re-authorise before any further progress.
+ *  - HTTP `401`, `403`, `404`, `410` surfaced through the per-connector
+ *    `throw new Error("<provider> ... returned HTTP <status>")`
+ *    convention (see `notion.ts`, `onedrive.ts`, `drive.ts`) →
+ *    `permanent`. These mirror Rust's `AuthenticationFailed` (401),
+ *    `PermissionDenied` (403), `FileNotFound` (404 / 410) variants.
+ *    Pattern-matching on the message text is necessary because the
+ *    per-connector code path throws plain `Error` rather than a
+ *    structured `HttpError` subclass; we are intentionally avoiding
+ *    a larger refactor to introduce one. A future refactor could
+ *    swap this for a duck-type check (`(err as { httpStatus?: number })`)
+ *    without changing the classification matrix.
+ *  - `isNetworkError(err) === true` (EAI_AGAIN / ENOTFOUND /
+ *    ETIMEDOUT / ECONNRESET / etc., or any `NetworkError` instance)
+ *    → `transient`. These are classic recoverable network blips
+ *    that mirror Rust's `NetworkError` and `Io` variants.
+ *  - `RateLimitError` (name match, mirrors Rust `RateLimited`) →
+ *    `transient`. The provider explicitly asks us to back off; the
+ *    next attempt after the backoff interval will likely succeed.
+ *  - Anything else → `transient`. We deliberately bias toward
+ *    `transient` here so a one-off provider 5xx doesn't flip the
+ *    sticky `failedPermanently` bit; the
+ *    `MAX_RETRIES_BEFORE_PERMANENT` clamp in `connectorBackoff` will
+ *    still flip it to permanent after 8 consecutive failures, which
+ *    is enough signal that the source is actually broken (not just
+ *    intermittently flaky).
+ */
+export function classifyConnectorError(err: unknown): FailureKind {
+  if (err == null) return "transient";
+  if (typeof err === "object") {
+    if ((err as { isNotConnectedError?: boolean }).isNotConnectedError === true) {
+      return "permanent";
+    }
+    // `isNetworkError` flag is the explicit transient marker —
+    // mirrors `Io`/`NetworkError` on the Rust side.
+    if ((err as { isNetworkError?: boolean }).isNetworkError === true) {
+      return "transient";
+    }
+    // RateLimitError is identified by name (the only thrown type
+    // with that name in this codebase). Transient on both sides.
+    if ((err as { name?: string }).name === "RateLimitError") {
+      return "transient";
+    }
+  }
+  // Pattern-match plain `Error` messages thrown by per-connector
+  // HTTP wrappers. The shape is stable across connectors:
+  //   `<Provider> ... returned HTTP <status> — <details>`
+  // We extract <status> via regex rather than substring matching
+  // to avoid mis-classifying a 5xx body that happens to mention
+  // "401" or "403" in its prose.
+  const message =
+    typeof err === "object" && err !== null
+      ? String((err as Error).message ?? "")
+      : String(err);
+  const httpMatch = message.match(/returned HTTP (\d{3})\b/i);
+  if (httpMatch) {
+    const status = Number(httpMatch[1]);
+    // 401 / 403 / 404 / 410 are the canonical permanent statuses
+    // (these align row-for-row with the Rust matrix):
+    //   401 → AuthenticationFailed (refresh path is exhausted)
+    //   403 → PermissionDenied (scope dropped / item moved)
+    //   404 / 410 → FileNotFound (resource really is gone)
+    // Other 4xx (400, 422, etc.) DIVERGE from Rust: the Rust side
+    // would surface these through `ProviderError` → transient, but
+    // a generic 4xx from one of our connector wrappers almost
+    // always means a malformed request and looping on it will
+    // never succeed — see the doc-comment block above. We still
+    // return permanent for the full 4xx range EXCEPT 408 (timeout)
+    // and 429 (rate-limited), which are unambiguously transient.
+    if (status === 408 || status === 429) return "transient";
+    if (status >= 400 && status < 500) return "permanent";
+    // 5xx is provider-side; mirror Rust `ProviderError` (transient).
+    return "transient";
+  }
+  return "transient";
+}
+
+/**
+ * Phase 15 Task 11: stamp a successful sync onto every source
+ * row that belongs to `provider`. Clearing per-source is
+ * intentional — a single provider's sync may touch multiple
+ * sources (e.g. multiple Drive folders), and any of them that
+ * had a previous failure recorded must have its state cleared so
+ * the UI's "permanently failed" badge disappears.
+ *
+ * Failures inside this helper are logged but NOT propagated:
+ * recording success is observability, not correctness. The user
+ * just saw their sync succeed — we must not turn that into a
+ * thrown error because a downstream DB write hiccuped.
+ */
+function clearAllProviderFailureStates(ctx: IpcContext, provider: ProviderId): void {
+  const targetType = PROVIDER_TO_SOURCE_TYPE[provider];
+  if (targetType == null) return;
+  try {
+    const bridge = ctx.requireBridge();
+    const sources = bridge.bridgeListSources();
+    for (const src of sources) {
+      if (src.sourceType !== targetType) continue;
+      try {
+        clearSyncFailureState(bridge, src.id);
+      } catch (inner) {
+        ctx.log.warn("clear sync-failure state failed (continuing)", {
+          provider,
+          sourceId: src.id,
+          error: (inner as Error).message,
+        });
+      }
+    }
+  } catch (err) {
+    ctx.log.warn("could not enumerate sources for failure-state clear", {
+      provider,
+      error: (err as Error).message,
+    });
+  }
+}
+
+/**
+ * Phase 15 Task 11: stamp a failed sync onto every source row
+ * that belongs to `provider`, applying the policy in
+ * `connectorBackoff` to the previous state to compute the new
+ * `(retry_count, failed_permanently)` tuple.
+ *
+ * Same logging-not-throwing posture as `clearAllProviderFailureStates`
+ * — recording is observability and must never override the
+ * actual error the caller is about to surface.
+ */
+function recordAllProviderFailures(
+  ctx: IpcContext,
+  provider: ProviderId,
+  err: unknown,
+): void {
+  const targetType = PROVIDER_TO_SOURCE_TYPE[provider];
+  if (targetType == null) return;
+  const kind = classifyConnectorError(err);
+  const message =
+    err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
+  try {
+    const bridge = ctx.requireBridge();
+    const sources = bridge.bridgeListSources();
+    for (const src of sources) {
+      if (src.sourceType !== targetType) continue;
+      try {
+        const prev: SyncFailureState = (() => {
+          try {
+            return loadSyncFailureState(bridge, src.id);
+          } catch {
+            return emptySyncFailureState();
+          }
+        })();
+        const next = applyFailureToState(prev, { kind, message });
+        saveSyncFailureState(bridge, src.id, next);
+      } catch (inner) {
+        ctx.log.warn("record sync-failure state failed (continuing)", {
+          provider,
+          sourceId: src.id,
+          error: (inner as Error).message,
+        });
+      }
+    }
+  } catch (err2) {
+    ctx.log.warn("could not enumerate sources for failure-state record", {
+      provider,
+      error: (err2 as Error).message,
     });
   }
 }
@@ -355,6 +584,27 @@ export async function runConnectorSync(
   try {
     token = await getValidAccessToken(ctx, provider);
   } catch (err) {
+    // Devin Review PR #69 follow-up BUG_0001: record the failure on
+    // every provider source BEFORE we branch into the offline-return
+    // or hard-throw paths. The original Task 11 wiring only recorded
+    // failures from the `runSync` catch below, so a token-refresh
+    // failure — whether the refresh-token exchange dropped on the
+    // network (transient) or the provider revoked the refresh token
+    // (NotConnectedError → permanent in classifyConnectorError) —
+    // would silently bypass the retry-count bump and the
+    // failed_permanently flip. The user would then click Sync forever
+    // with no failure feedback on the source-health badge. Mirroring
+    // the runSync catch closes the asymmetry: transient failures
+    // still bump retry_count toward MAX_RETRIES_BEFORE_PERMANENT, and
+    // a revoked refresh token immediately flips the source to
+    // permanent so the renderer surfaces the re-auth CTA.
+    //
+    // The call is intentionally placed BEFORE the isNetworkError
+    // branch so it runs on both the offline-degrade path AND the
+    // hard-throw path; `recordAllProviderFailures` swallows its own
+    // bridge errors so it cannot mask the user-facing error the
+    // caller is about to surface.
+    recordAllProviderFailures(ctx, provider, err);
     // A refresh-token exchange that fails because the network dropped
     // must still surface as "offline" to the renderer; otherwise the
     // user clicks Sync, sees a raw `fetch failed` and has no idea the
@@ -415,9 +665,23 @@ export async function runConnectorSync(
           result.removed,
         ),
       );
+      // Phase 15 Task 11: a successful sync clears any previously
+      // recorded failure state. Done AFTER the audit log emits so
+      // a hypothetical race where the clear happens but the audit
+      // does not still leaves the audit pipeline as the source of
+      // truth — but well after the actual sync committed, so
+      // there is no "phantom success" risk from clearing.
+      clearAllProviderFailureStates(ctx, provider);
     }
     return result;
   } catch (err) {
+    // Phase 15 Task 11: record failure BEFORE the offline-result
+    // branch returns. The renderer's source-health UI relies on
+    // this to render the retry-count badge on every source the
+    // provider owns. Even when we degrade to `{ status: "offline" }`
+    // (transient network blip), we still bump retry_count so a
+    // chronically offline source eventually flips to permanent.
+    recordAllProviderFailures(ctx, provider, err);
     if (isNetworkError(err)) {
       ctx.log.warn("connector sync hit network failure", {
         provider,

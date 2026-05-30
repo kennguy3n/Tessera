@@ -71,6 +71,85 @@ impl From<reqwest::Error> for ConnectorError {
 
 pub type ConnectorResult<T> = std::result::Result<T, ConnectorError>;
 
+/// Phase 15 Task 11: classification of a `ConnectorError` for the
+/// sync-failure resilience layer. The sync loop inspects this value
+/// to decide whether to schedule another retry (and bump
+/// `retry_count`) or to mark the source as `failed_permanently` and
+/// surface a "re-authorize required" prompt in the UI.
+///
+/// The classification is deliberately conservative: anything we
+/// can't prove is permanent is treated as `Transient` so we don't
+/// false-alarm on what would have recovered on the next attempt.
+/// `Permanent` is reserved for the small set of errors that
+/// require user intervention to resolve (auth, missing resource,
+/// permission scope changes, invalid config).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureKind {
+    /// The error is likely to clear on its own (transient
+    /// network issue, provider 5xx, rate-limit). The caller
+    /// should retry with exponential backoff.
+    Transient,
+    /// The error requires the user to take action (re-authorize,
+    /// re-grant a missing scope, re-add a deleted source). The
+    /// caller should stop retrying, surface a status badge, and
+    /// only re-attempt after the user explicitly re-triggers
+    /// the sync.
+    Permanent,
+}
+
+impl ConnectorError {
+    /// Classify this error as a transient or permanent failure.
+    ///
+    /// Decision matrix (kept here, not at every call site, so all
+    /// seven connectors apply the same policy):
+    ///
+    /// | Variant                    | Kind       | Reasoning |
+    /// |----------------------------|------------|-----------|
+    /// | `AuthenticationFailed`     | Permanent  | 401-like; needs re-auth |
+    /// | `TokenExpired`             | Transient  | refresh path can recover automatically (next sync) |
+    /// | `TokenRevoked`             | Permanent  | user explicitly de-authorized; needs re-auth |
+    /// | `NetworkError`             | Transient  | reqwest transport / DNS / TLS handshake |
+    /// | `RateLimited { .. }`       | Transient  | 429 with Retry-After |
+    /// | `FileNotFound`             | Permanent  | 404; the underlying resource is gone |
+    /// | `PermissionDenied`         | Permanent  | 403; scope dropped or item moved to a closed folder |
+    /// | `ProviderError { .. }`     | Transient  | provider 5xx-ish; conservative default |
+    /// | `InvalidConfig`            | Permanent  | bad URL / missing field; user must edit |
+    /// | `StorageError`             | Transient  | local SQLite blip; retry succeeds |
+    /// | `SyncConflict`             | Transient  | concurrent edit; the merge logic resolves on retry |
+    /// | `Io`                       | Transient  | local filesystem hiccup |
+    ///
+    /// `TokenExpired` is Transient (not Permanent) because the
+    /// per-connector token-refresh code path catches it and
+    /// transparently swaps in a fresh access token. If refresh
+    /// itself fails (which surfaces as `AuthenticationFailed` or
+    /// `TokenRevoked`), classification flips to Permanent.
+    pub fn failure_kind(&self) -> FailureKind {
+        match self {
+            ConnectorError::AuthenticationFailed(_)
+            | ConnectorError::TokenRevoked
+            | ConnectorError::FileNotFound(_)
+            | ConnectorError::PermissionDenied(_)
+            | ConnectorError::InvalidConfig(_) => FailureKind::Permanent,
+            ConnectorError::TokenExpired
+            | ConnectorError::NetworkError(_)
+            | ConnectorError::RateLimited { .. }
+            | ConnectorError::ProviderError { .. }
+            | ConnectorError::StorageError(_)
+            | ConnectorError::SyncConflict(_)
+            | ConnectorError::Io(_) => FailureKind::Transient,
+        }
+    }
+
+    /// Convenience: true when this error is transient and the
+    /// caller should retry. Mirror of `failure_kind() ==
+    /// Transient` — exposed so call sites that do not need to
+    /// pattern-match the enum can write `if err.is_transient() {
+    /// retry() } else { mark_permanent() }`.
+    pub fn is_transient(&self) -> bool {
+        self.failure_kind() == FailureKind::Transient
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,5 +259,107 @@ mod tests {
             message: "x".into(),
         };
         assert!(std::error::Error::source(&err).is_none());
+    }
+
+    /// Phase 15 Task 11: pin the failure-kind classification for
+    /// every variant. The sync-failure resilience layer keys its
+    /// retry-vs-give-up decision off this matrix, so silently
+    /// reclassifying a variant from Permanent to Transient (or
+    /// vice versa) would change every connector's UX without any
+    /// other code change being visible. This test holds the
+    /// matrix in place.
+    #[test]
+    fn failure_kind_classification_is_pinned() {
+        // Permanent — needs user intervention.
+        assert_eq!(
+            ConnectorError::AuthenticationFailed("x".into()).failure_kind(),
+            FailureKind::Permanent,
+        );
+        assert_eq!(
+            ConnectorError::TokenRevoked.failure_kind(),
+            FailureKind::Permanent,
+        );
+        assert_eq!(
+            ConnectorError::FileNotFound("x".into()).failure_kind(),
+            FailureKind::Permanent,
+        );
+        assert_eq!(
+            ConnectorError::PermissionDenied("x".into()).failure_kind(),
+            FailureKind::Permanent,
+        );
+        assert_eq!(
+            ConnectorError::InvalidConfig("x".into()).failure_kind(),
+            FailureKind::Permanent,
+        );
+
+        // Transient — auto-retry.
+        assert_eq!(
+            ConnectorError::TokenExpired.failure_kind(),
+            FailureKind::Transient,
+        );
+        assert_eq!(
+            ConnectorError::NetworkError("timeout".into()).failure_kind(),
+            FailureKind::Transient,
+        );
+        assert_eq!(
+            ConnectorError::RateLimited {
+                retry_after_secs: 30,
+            }
+            .failure_kind(),
+            FailureKind::Transient,
+        );
+        assert_eq!(
+            ConnectorError::ProviderError {
+                provider: "notion".into(),
+                message: "5xx".into(),
+            }
+            .failure_kind(),
+            FailureKind::Transient,
+        );
+        assert_eq!(
+            ConnectorError::StorageError("disk".into()).failure_kind(),
+            FailureKind::Transient,
+        );
+        assert_eq!(
+            ConnectorError::SyncConflict("etag".into()).failure_kind(),
+            FailureKind::Transient,
+        );
+        assert_eq!(
+            ConnectorError::Io(std::io::Error::other("x")).failure_kind(),
+            FailureKind::Transient,
+        );
+    }
+
+    /// `is_transient()` must be a pure mirror of
+    /// `failure_kind() == Transient`. Pin to lock the convenience
+    /// helper to the underlying matrix.
+    #[test]
+    fn is_transient_mirrors_failure_kind() {
+        let variants: Vec<ConnectorError> = vec![
+            ConnectorError::AuthenticationFailed("x".into()),
+            ConnectorError::TokenExpired,
+            ConnectorError::TokenRevoked,
+            ConnectorError::NetworkError("x".into()),
+            ConnectorError::RateLimited {
+                retry_after_secs: 1,
+            },
+            ConnectorError::FileNotFound("x".into()),
+            ConnectorError::PermissionDenied("x".into()),
+            ConnectorError::ProviderError {
+                provider: "x".into(),
+                message: "x".into(),
+            },
+            ConnectorError::InvalidConfig("x".into()),
+            ConnectorError::StorageError("x".into()),
+            ConnectorError::SyncConflict("x".into()),
+            ConnectorError::Io(std::io::Error::other("x")),
+        ];
+        for err in &variants {
+            assert_eq!(
+                err.is_transient(),
+                err.failure_kind() == FailureKind::Transient,
+                "is_transient mismatch for {err:?}",
+            );
+        }
     }
 }

@@ -82,10 +82,19 @@ vi.mock("electron", () => ({
   BrowserWindow: { fromWebContents: () => null },
 }));
 
+// Phase 15 Task 1 (Devin Review follow-up): the IPC handler now
+// distinguishes loading / loaded / failed / unloaded lifecycle
+// states. Tests can override `diffusionSidecarStateStub` to assert
+// the per-state error message is surfaced.
+let diffusionSidecarStateStub: {
+  state: "unloaded" | "loading" | "loaded" | "failed";
+  error: Error | null;
+} = { state: "unloaded", error: null };
 vi.mock("../appState", () => ({
   getBridge: () => bridgeStub,
   isBridgeAvailable: () => bridgeStub !== null,
   getDiffusionSidecar: () => diffusionSidecarStub,
+  getDiffusionSidecarState: () => diffusionSidecarStateStub,
 }));
 
 vi.mock("../modelManagement", async () => {
@@ -353,10 +362,30 @@ describe("imagegen IPC handlers", () => {
       );
     });
 
-    it("rejects when the diffusion sidecar slot is null", async () => {
+    it("rejects with a loading-state message when the diffusion module import is still in flight", async () => {
       diffusionSidecarStub = null;
+      diffusionSidecarStateStub = { state: "loading", error: null };
       await expect(ensureDiffusionSidecarRunning()).rejects.toThrow(
-        /not initialised/,
+        /still warming up/,
+      );
+    });
+
+    it("rejects with a failed-state message instructing the user to restart when the module import threw", async () => {
+      diffusionSidecarStub = null;
+      diffusionSidecarStateStub = {
+        state: "failed",
+        error: new Error("ENOENT: sd-server binary missing"),
+      };
+      await expect(ensureDiffusionSidecarRunning()).rejects.toThrow(
+        /unavailable until the app is restarted.*sd-server binary missing/,
+      );
+    });
+
+    it("rejects with the bridge-missing message when the slot was never loaded (unloaded state)", async () => {
+      diffusionSidecarStub = null;
+      diffusionSidecarStateStub = { state: "unloaded", error: null };
+      await expect(ensureDiffusionSidecarRunning()).rejects.toThrow(
+        /native bridge has not been initialised/,
       );
     });
   });

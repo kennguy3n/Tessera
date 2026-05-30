@@ -1697,6 +1697,41 @@ impl SourceManager {
         self.store.get_source(source_id)
     }
 
+    /// Phase 15 Task 11: read the persisted sync-failure state for
+    /// a source row. Pass-through to [`SourceStore::get_sync_failure_state`].
+    /// Returns `Ok((None, 0, false))` when the row has never failed.
+    pub fn get_sync_failure_state(
+        &self,
+        source_id: &SourceId,
+    ) -> Result<(Option<String>, u32, bool)> {
+        self.store.get_sync_failure_state(source_id)
+    }
+
+    /// Phase 15 Task 11: stamp a failed sync attempt. Pass-through
+    /// to [`SourceStore::record_sync_failure`]. The connectors
+    /// layer (TS-side `runConnectorSync`) calls this via the napi
+    /// bridge after classifying the error.
+    pub fn record_sync_failure(
+        &self,
+        source_id: &SourceId,
+        last_sync_error_json: &str,
+        retry_count: u32,
+        failed_permanently: bool,
+    ) -> Result<()> {
+        self.store.record_sync_failure(
+            source_id,
+            last_sync_error_json,
+            retry_count,
+            failed_permanently,
+        )
+    }
+
+    /// Phase 15 Task 11: clear failure state on a successful sync.
+    /// Pass-through to [`SourceStore::record_sync_success`].
+    pub fn record_sync_success(&self, source_id: &SourceId) -> Result<()> {
+        self.store.record_sync_success(source_id)
+    }
+
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
         // Clone the snapshot under the lock and drop the guard
         // before any I/O so concurrent `update_hybrid_config` calls

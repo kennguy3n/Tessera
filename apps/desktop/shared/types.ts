@@ -1595,6 +1595,97 @@ export interface ArtifactApi {
   ) => Promise<string>;
   exportMarp: (req: MarpExportRequest) => Promise<string | null>;
   exportTypst: (req: TypstExportRequest) => Promise<TypstExportResult>;
+  /**
+   * Phase 15 Task 8: artifact auto-save recovery probe. Called when
+   * an artifact is opened to decide whether to surface a "Restore
+   * unsaved changes from <time>?" prompt.
+   *
+   * Returns the {@link ArtifactRecoveryEnvelope} when a sidecar
+   * file exists and is strictly newer than the DB row's
+   * `updatedAt`, otherwise `null` (no prompt). The handler also
+   * silently clears stale sidecars (sidecar timestamp ≤ DB
+   * `updatedAt`) so subsequent opens don't have to re-decide.
+   */
+  checkRecovery: (id: string) => Promise<ArtifactRecoveryEnvelope | null>;
+  /**
+   * Phase 15 Task 8: explicit-discard for the auto-save recovery
+   * sidecar. Invoked when the user clicks "Discard" on the restore
+   * prompt. Idempotent — calling for an artifact with no sidecar
+   * is a successful no-op.
+   */
+  discardRecovery: (id: string) => Promise<boolean>;
+  /**
+   * Phase 15 Task 10: list pending failed exports persisted under
+   * `<userData>/failed-exports.json`. Powers the Settings page's
+   * "Failed exports" card.
+   */
+  failedExports: () => Promise<FailedExportEntry[]>;
+  /**
+   * Phase 15 Task 10: one-click retry of a previously failed
+   * export. Resolves to the destination path on success, `null` if
+   * the entry has already been removed (race with another retry
+   * or with `discardFailedExport`), and rejects with the
+   * underlying export error if the retry itself fails (the queue
+   * entry stays in place with `retryCount` incremented).
+   */
+  retryExport: (exportId: string) => Promise<string | null>;
+  /**
+   * Phase 15 Task 10: discard a failed-export entry without
+   * retrying. Used when the user clicks "Dismiss" — the artifact
+   * has been deleted or they no longer want the export.
+   */
+  discardFailedExport: (exportId: string) => Promise<boolean>;
+}
+
+/**
+ * Phase 15 Task 10: persisted shape of one failed export entry.
+ * Identical to the on-disk envelope in
+ * `apps/desktop/electron/failedExportQueue.ts:FailedExportEntry` —
+ * lifted to `shared/types.ts` so the renderer's Settings UI can
+ * type-check against the same shape the main-process layer
+ * persists.
+ */
+export interface FailedExportEntry {
+  /** Stable ID generated server-side at enqueue time. */
+  id: string;
+  artifactId: string;
+  format: string;
+  /**
+   * Original destination path. Always a non-empty absolute path —
+   * the main-process `enqueueFailedExport` rejects empty or
+   * relative inputs at the write boundary, and `listFailedExports`
+   * filters tampered entries on read. Renderer code can rely on
+   * `filePath` being directly usable as a retry destination.
+   */
+  filePath: string;
+  /** Human-readable failure reason. */
+  errorMessage: string;
+  /** Epoch ms at enqueue time. */
+  failedAt: number;
+  /** Cumulative retry attempts since initial failure. */
+  retryCount: number;
+}
+
+/**
+ * Phase 15 Task 8: shape returned by `artifacts:checkRecovery`. A
+ * non-null value means the main-process side observed a recovery
+ * sidecar strictly newer than the DB row's `updatedAt`, so the
+ * renderer should surface the restore prompt with `timestamp` (epoch
+ * ms) as the "Unsaved since…" label and `content` as the body to
+ * restore on user confirmation.
+ *
+ * `version` mirrors the on-disk envelope version (see
+ * `apps/desktop/electron/artifactRecovery.ts`). A future format
+ * bump would surface as an envelope with a different value here,
+ * which the renderer can reject without misinterpreting the
+ * payload.
+ */
+export interface ArtifactRecoveryEnvelope {
+  version: 1;
+  artifactId: string;
+  content: string;
+  /** Epoch ms at the moment the sidecar was written by main. */
+  timestamp: number;
 }
 
 export interface TemplateApi {
@@ -2357,6 +2448,21 @@ export interface AuditEventView {
   details: string;
 }
 
+/**
+ * Phase 15 Task 12: outcome of one successful audit-log rotation
+ * call. `archivePath` is the absolute on-disk path of the gzipped
+ * JSONL archive the rotation wrote — the renderer surfaces it in
+ * the Settings UI so the user can copy / inspect it.
+ *
+ * `rotatedCount` is the number of rows that were archived AND
+ * deleted from the live table — matches the number of JSONL
+ * lines in `archivePath`.
+ */
+export interface AuditRotationResult {
+  archivePath: string;
+  rotatedCount: number;
+}
+
 export interface AuditApi {
   /**
    * Return the `limit` most recent audit rows, newest first.
@@ -2365,4 +2471,16 @@ export interface AuditApi {
    * page backwards through history.
    */
   listRecent: (limit?: number, offset?: number) => Promise<AuditEventView[]>;
+  /**
+   * Phase 15 Task 12: list audit-archive file paths in the
+   * userData/audit-archives directory, newest first. Returns
+   * `[]` when no rotations have ever happened.
+   */
+  getArchives: () => Promise<string[]>;
+  /**
+   * Phase 15 Task 12: trigger an immediate audit-log rotation.
+   * Returns `null` when the live table is at or below the
+   * threshold (no rotation occurred).
+   */
+  rotate: () => Promise<AuditRotationResult | null>;
 }

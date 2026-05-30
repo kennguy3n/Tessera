@@ -1,5 +1,9 @@
 import { ChildProcess, spawn, SpawnOptions } from "child_process";
 import * as path from "path";
+import {
+  writePidFileSync,
+  clearPidFileSync,
+} from "./sidecarPidRegistry";
 
 export interface SidecarOptions {
   binaryPath: string;
@@ -235,9 +239,48 @@ export class ModelSidecar {
           // EPERM would mean we lost the right to signal it, which
           // shouldn't happen for a child we spawned.
         }
+        // Phase 15 Task 9: also remove the PID file at the same
+        // moment we deliver the synchronous SIGKILL — the file is
+        // strictly tied to the lifetime of this process, and
+        // leaving a stale entry would make the next launch's
+        // reaper do extra work. Synchronous unlink is mandatory
+        // here because Node's `exit` handlers cannot await
+        // promises.
+        try {
+          clearPidFileSync(this.options.label);
+        } catch {
+          // Best-effort during shutdown.
+        }
       };
       process.on("exit", handler);
       this.crashCleanupHandler = handler;
+    }
+
+    // Phase 15 Task 9: record the spawned PID under
+    // `<userData>/tessera-sidecar-pids/<label>.pid` so the next
+    // cold-launch's `reapOrphanedSidecars` can detect and kill
+    // this child if the parent crashes hard before our normal
+    // stop() path runs. Synchronous so we have an on-disk record
+    // before control returns to the caller. See
+    // `sidecarPidRegistry.ts` for the file-format / safety
+    // contract.
+    if (typeof this.process.pid === "number") {
+      try {
+        writePidFileSync(
+          this.options.label,
+          this.process.pid,
+          this.options.binaryPath,
+        );
+      } catch (e) {
+        // PID-file write failure is not fatal — the sidecar still
+        // starts, we just lose orphan-reaper coverage for this
+        // run. Log so a disk-full / permission regression is
+        // visible.
+        console.warn(
+          `[tessera] failed to write sidecar PID file for ${this.options.label}:`,
+          e,
+        );
+      }
     }
 
     this.process.on("exit", (code) => {
@@ -248,6 +291,16 @@ export class ModelSidecar {
       // needed and would attempt to signal a dead PID (harmlessly but
       // noisily).
       this.clearCrashCleanup();
+      // Phase 15 Task 9: drop the PID-registry entry now that the
+      // child is gone. Synchronous because Node child-process
+      // `exit` listeners can fire from inside the synchronous
+      // process-exit path and we must not leave behind a stale
+      // record.
+      try {
+        clearPidFileSync(this.options.label);
+      } catch {
+        // Best-effort.
+      }
       if (this._isTerminating) return;
       if (code !== 0 && code !== null) {
         this.restartCount++;

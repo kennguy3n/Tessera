@@ -43,6 +43,13 @@ const fixtures = [
 function makeApi(rows = fixtures): typeof window.tessera.audit {
   return {
     listRecent: vi.fn().mockResolvedValue(rows),
+    // Phase 15 Task 12: rotation/archive endpoints exist on the
+    // API surface but are not exercised by this component. Stub
+    // them with empty returns so the type-checker sees a complete
+    // AuditApi shape — production behaviour is covered by the
+    // dedicated rotation tests in `tessera_audit::store::tests`.
+    getArchives: vi.fn().mockResolvedValue([]),
+    rotate: vi.fn().mockResolvedValue(null),
   };
 }
 
@@ -92,6 +99,8 @@ describe("AuditActivityCard", () => {
   it("surfaces an error when listRecent rejects", async () => {
     const api: typeof window.tessera.audit = {
       listRecent: vi.fn().mockRejectedValue(new Error("db locked")),
+      getArchives: vi.fn().mockResolvedValue([]),
+      rotate: vi.fn().mockResolvedValue(null),
     };
     render(<AuditActivityCard api={api} />);
     expect(await screen.findByTestId("audit-error")).toHaveTextContent("db locked");

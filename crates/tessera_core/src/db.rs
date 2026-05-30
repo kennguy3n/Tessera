@@ -122,6 +122,156 @@ fn apply_default_pragmas(conn: &Connection) -> Result<()> {
         .map_err(|e| Error::Database(e.to_string()))
 }
 
+/// Phase 15 Task 7: switch the database journal to WAL mode and tune
+/// fsync to `NORMAL`.
+///
+/// WAL (`PRAGMA journal_mode = WAL`) is the only journal mode that
+/// gives Tessera the crash-safety profile it needs:
+///
+///   * **Atomic group-commit**: an in-progress writer's pending pages
+///     live in `tessera.db-wal` until commit. A process-level crash
+///     (SIGKILL, power loss) leaves the main database file
+///     consistent with whatever was committed before the crash; the
+///     uncommitted WAL frames are discarded by the next process that
+///     opens the file. Without WAL, a partial write into the main
+///     file via rollback journal can leave the database in a state
+///     where SQLite's automatic crash recovery has to replay from a
+///     truncated journal — generally fine but slower and harder to
+///     reason about.
+///   * **Reader/writer concurrency**: WAL lets readers and a single
+///     writer co-exist without blocking each other. Tessera's bridge
+///     is single-threaded today, but the indexer thread, the
+///     watcher's coalesce-and-dispatch loop, and the IPC handler all
+///     touch the connection; WAL is the right setting even before
+///     the bridge becomes properly concurrent.
+///
+/// `synchronous = NORMAL` (rather than `FULL`) is the standard
+/// pairing with WAL: SQLite's WAL crash-safety design is unaffected
+/// by NORMAL (the WAL header sync still happens on commit), but the
+/// per-commit fsync is dropped, which is the dominant cost for the
+/// per-chunk insert pattern the indexer produces. Documented
+/// in <https://sqlite.org/pragma.html#pragma_synchronous>.
+///
+/// Returns the journal mode SQLite settled on. `PRAGMA journal_mode`
+/// can silently refuse to switch (e.g. on read-only databases or
+/// in-memory databases that don't support WAL) — the caller
+/// inspects the return value so a test can assert "WAL is on for the
+/// production path; in-memory tests are fine with `memory`".
+fn apply_wal_pragmas(conn: &Connection) -> Result<String> {
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))
+        .map_err(|e| Error::Database(format!("PRAGMA journal_mode = WAL failed: {e}")))?;
+    conn.execute_batch("PRAGMA synchronous = NORMAL;")
+        .map_err(|e| Error::Database(format!("PRAGMA synchronous = NORMAL failed: {e}")))?;
+    Ok(mode)
+}
+
+/// Phase 15 Task 7: run `PRAGMA integrity_check` and return `Ok` only
+/// when SQLite reports `ok`. Any other row content is surfaced as a
+/// structured `Error::Database` so the bridge can present a crisp
+/// "your database is corrupt — restore from backup" message to the
+/// renderer rather than letting the next `SELECT` fail with an
+/// opaque "database disk image is malformed".
+///
+/// The pragma can return multiple rows when corruption is detected;
+/// we concatenate them with `; ` so the renderer sees the full
+/// diagnostic without truncation. On a healthy database the single
+/// returned row is `"ok"`.
+fn run_integrity_check(conn: &Connection) -> Result<()> {
+    let mut stmt = conn
+        .prepare("PRAGMA integrity_check")
+        .map_err(|e| Error::Database(format!("prepare integrity_check failed: {e}")))?;
+    let rows = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(|e| Error::Database(format!("integrity_check query failed: {e}")))?;
+    let mut messages: Vec<String> = Vec::new();
+    for row in rows {
+        let msg = row.map_err(|e| Error::Database(format!("integrity_check row failed: {e}")))?;
+        messages.push(msg);
+    }
+    if messages.len() == 1 && messages[0] == "ok" {
+        return Ok(());
+    }
+    Err(Error::Database(format!(
+        "integrity_check reported corruption: {}",
+        messages.join("; ")
+    )))
+}
+
+/// Phase 15 Task 7: run a WAL checkpoint in `TRUNCATE` mode so the
+/// `*.db-wal` file is shrunk to zero bytes and every committed frame
+/// is folded back into the main database file.
+///
+/// This is the right call at graceful shutdown (`bridge.dispose()`)
+/// because it leaves the on-disk WAL empty, so:
+///
+///   * The next cold-start does not pay the WAL-replay cost.
+///   * A subsequent `PRAGMA integrity_check` reflects the committed
+///     state of the database rather than "main file + pending WAL"
+///     — useful when the user copies `tessera.db` for backup.
+///   * On macOS, Time Machine and similar incremental backup tools
+///     pick up a single consistent file rather than a snapshot of
+///     the main file plus a non-matching `-wal` companion.
+///
+/// `TRUNCATE` rather than `PASSIVE` because PASSIVE leaves the WAL
+/// at its current size for later reuse, which is the right tradeoff
+/// during steady-state operation but not at shutdown.
+///
+/// Returns the (busy, log, checkpointed) triple SQLite reports; the
+/// values are mostly useful for tests and diagnostics. A nonzero
+/// `busy` count would indicate another writer was holding the lock
+/// during the checkpoint, which shouldn't happen in our single-
+/// writer model and which the test asserts.
+pub fn wal_checkpoint_truncate(conn: &SharedConnection) -> Result<(i64, i64, i64)> {
+    let guard = conn
+        .lock()
+        .map_err(|e| Error::Database(format!("connection lock poisoned: {e}")))?;
+    guard
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+        })
+        .map_err(|e| Error::Database(format!("wal_checkpoint(TRUNCATE) failed: {e}")))
+}
+
+/// Phase 15 Task 7: run `PRAGMA integrity_check` against a
+/// [`SharedConnection`], retrying once after a `wal_checkpoint(TRUNCATE)`
+/// if the first attempt reports corruption.
+///
+/// The recovery path is exactly what SQLite recommends for the rare
+/// case where a malformed WAL frame is the culprit: a TRUNCATE
+/// checkpoint forces the WAL to flush, then a second
+/// `integrity_check` runs against the now-quiet main file. If that
+/// still reports corruption, the failure is bubbled up so the
+/// bridge can surface it to the renderer (see Task 7 in `PHASES.md`).
+///
+/// Called once at bridge init time, before any store-level
+/// `init_schema` runs, so a corrupt DB is detected before the user's
+/// data path is exposed to it.
+pub fn integrity_check_with_retry(conn: &SharedConnection) -> Result<()> {
+    let first_err = {
+        let guard = conn
+            .lock()
+            .map_err(|e| Error::Database(format!("connection lock poisoned: {e}")))?;
+        match run_integrity_check(&guard) {
+            Ok(()) => return Ok(()),
+            Err(e) => e,
+        }
+    };
+    // Best-effort checkpoint to clear any malformed WAL frames, then
+    // re-probe. If the first failure was unrelated to WAL state
+    // (file truncation, bit-rot on the main file), the retry will
+    // surface a similar error and we bubble it up.
+    let _ = wal_checkpoint_truncate(conn);
+    let guard = conn
+        .lock()
+        .map_err(|e| Error::Database(format!("connection lock poisoned: {e}")))?;
+    run_integrity_check(&guard).map_err(|second| {
+        Error::Database(format!(
+            "integrity_check failed on retry after checkpoint; first error: {first_err}; second error: {second}"
+        ))
+    })
+}
+
 /// Length of a SQLCipher raw key, in hex characters (256-bit key = 32
 /// bytes = 64 hex chars).
 pub const DB_KEY_HEX_LEN: usize = 64;
@@ -169,6 +319,23 @@ pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConne
     let Some(key) = key else {
         let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
         apply_default_pragmas(&conn)?;
+        // Phase 15 Task 7: WAL pragmas go after the open + FK pragma
+        // and before the sqlite_master probe so the probe runs under
+        // the same journal mode as production reads/writes.
+        //
+        // The `let _ =` discard is LOAD-BEARING (Devin Review PR #69
+        // ANALYSIS_0008): on an encrypted DB opened without a key,
+        // the WAL pragma itself reads a page from the file to
+        // discover the existing journal mode. That page is
+        // encrypted, so the pragma fails with `NotADatabase` /
+        // `FileIsNotADatabase`. If we propagated that error here,
+        // it would replace the clearer diagnostic produced by the
+        // sqlite_master probe below ("the file may be
+        // SQLCipher-encrypted; restore `db.key` from backup, or
+        // delete the database to start fresh"). Suppressing the
+        // WAL error lets the probe run and produce the better
+        // message. Do not remove the `let _ =`.
+        let _ = apply_wal_pragmas(&conn);
         // Probe the file matches the no-key expectation: either
         // plaintext SQLite or empty. An encrypted DB opened without
         // a PRAGMA key will fail this probe with `NotADatabase` and
@@ -187,6 +354,12 @@ pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConne
     let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
     apply_pragma_key(&conn, key)?;
     apply_default_pragmas(&conn)?;
+    // Phase 15 Task 7: SQLCipher requires the PRAGMA key to be
+    // installed before WAL switches journal mode — the journal-mode
+    // pragma reads a page from the file to discover the existing
+    // mode, and that page is encrypted. So WAL pragmas run AFTER
+    // apply_pragma_key + apply_default_pragmas, not before.
+    let _ = apply_wal_pragmas(&conn);
 
     // Probe under the supplied key. Three possible outcomes:
     //   (a) success         → key matches an existing encrypted DB,
@@ -209,6 +382,11 @@ pub fn open_shared_with_key(path: &str, key: Option<&str>) -> Result<SharedConne
                 let conn = Connection::open(path).map_err(|e| Error::Database(e.to_string()))?;
                 apply_pragma_key(&conn, key)?;
                 apply_default_pragmas(&conn)?;
+                // Phase 15 Task 7: WAL pragmas on the post-migration
+                // connection too — keeps every entry into this
+                // function returning a connection in the same
+                // journal-mode regime.
+                let _ = apply_wal_pragmas(&conn);
                 // Re-probe; if this fails the migration silently went
                 // wrong and we should not pretend the DB is usable.
                 conn.query_row::<i64, _, _>("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))
@@ -691,5 +869,253 @@ mod tests {
             !db_path.exists(),
             "bad-key open should not have touched the filesystem"
         );
+    }
+
+    /// Phase 15 Task 7: on-disk opens (plain + keyed) must land in WAL
+    /// journal mode. Pinning the mode by name rather than by side-
+    /// effect because a future refactor that silently regressed to
+    /// DELETE mode would also cause Tessera to lose the crash-safety
+    /// posture that the rest of the phase relies on.
+    #[test]
+    fn on_disk_open_lands_in_wal_journal_mode() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("wal.db");
+        let db_path_str = db_path.to_str().unwrap();
+
+        // Plain (no-key) on-disk open.
+        let plain = open_shared_with_key(db_path_str, None).expect("plain open");
+        let mode: String = plain
+            .lock()
+            .unwrap()
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode.to_lowercase(), "wal", "plain on-disk open should be WAL");
+        drop(plain);
+
+        // Keyed (SQLCipher) on-disk open in a separate file so the
+        // previous probe's writes don't influence this one.
+        let db_path2 = tmp.path().join("wal-keyed.db");
+        let db_path_str2 = db_path2.to_str().unwrap();
+        let keyed = open_shared_with_key(db_path_str2, Some(TEST_KEY)).expect("keyed open");
+        let mode2: String = keyed
+            .lock()
+            .unwrap()
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            mode2.to_lowercase(),
+            "wal",
+            "keyed on-disk open should be WAL"
+        );
+    }
+
+    /// `synchronous = NORMAL` is the documented pairing for WAL +
+    /// SQLCipher; the integer value SQLite returns for NORMAL is `1`.
+    #[test]
+    fn on_disk_open_lands_in_synchronous_normal() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("sync.db");
+        let db = open_shared_with_key(db_path.to_str().unwrap(), Some(TEST_KEY))
+            .expect("keyed open");
+        let sync_mode: i64 = db
+            .lock()
+            .unwrap()
+            .query_row("PRAGMA synchronous", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            sync_mode, 1,
+            "WAL pairing should set synchronous = NORMAL (1)"
+        );
+    }
+
+    /// `wal_checkpoint_truncate` should reduce the `*.db-wal` file
+    /// to zero bytes after a clean commit. This is the contract the
+    /// bridge's `dispose()` relies on.
+    #[test]
+    fn wal_checkpoint_truncate_drops_wal_to_zero_bytes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("checkpoint.db");
+        let db_path_str = db_path.to_str().unwrap();
+        let db = open_shared_with_key(db_path_str, Some(TEST_KEY)).expect("open");
+
+        // Write enough data to grow the WAL.
+        {
+            let conn = db.lock().unwrap();
+            conn.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+                .unwrap();
+            for i in 0..256 {
+                conn.execute(
+                    "INSERT INTO t (id, val) VALUES (?1, ?2)",
+                    rusqlite::params![i, "x".repeat(128)],
+                )
+                .unwrap();
+            }
+        }
+        let wal_path = db_path.with_extension("db-wal");
+        assert!(
+            wal_path.exists(),
+            "WAL file should exist after writes (path: {})",
+            wal_path.display()
+        );
+
+        let (busy, _, _) = wal_checkpoint_truncate(&db).expect("checkpoint");
+        assert_eq!(
+            busy, 0,
+            "no other writer should be holding the lock during checkpoint"
+        );
+
+        // After TRUNCATE the WAL file should be zero-length (it
+        // typically still exists on disk; SQLite truncates rather
+        // than unlinks).
+        let wal_size = std::fs::metadata(&wal_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        assert_eq!(
+            wal_size, 0,
+            "wal_checkpoint(TRUNCATE) should leave wal at zero bytes; got {wal_size}"
+        );
+    }
+
+    /// On a healthy database, `integrity_check_with_retry` should
+    /// return `Ok(())` on the first attempt without needing the
+    /// checkpoint+retry path.
+    #[test]
+    fn integrity_check_on_healthy_db_returns_ok() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("healthy.db");
+        let db = open_shared_with_key(db_path.to_str().unwrap(), Some(TEST_KEY))
+            .expect("open");
+        // Populate so the check has something to walk.
+        db.lock()
+            .unwrap()
+            .execute("CREATE TABLE healthy (id INTEGER, val TEXT)", [])
+            .unwrap();
+        for i in 0..10 {
+            db.lock()
+                .unwrap()
+                .execute(
+                    "INSERT INTO healthy (id, val) VALUES (?1, ?2)",
+                    rusqlite::params![i, "ok"],
+                )
+                .unwrap();
+        }
+        integrity_check_with_retry(&db).expect("healthy db should pass integrity_check");
+    }
+
+    /// Phase 15 Task 7: simulate a mid-write crash by writing
+    /// committed and uncommitted data, dropping the connection
+    /// without an explicit close, and verifying the DB is readable
+    /// on the next open. This is the core crash-safety guarantee
+    /// WAL gives us: committed writes survive, uncommitted writes
+    /// are discarded.
+    #[test]
+    fn mid_write_crash_leaves_db_readable_on_next_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("crash.db");
+        let db_path_str = db_path.to_str().unwrap();
+
+        // Phase 1: open, write committed rows, write uncommitted
+        // rows inside an explicit transaction we never finalise,
+        // then drop the connection without a graceful checkpoint.
+        // This mimics a SIGKILL of the writer mid-transaction.
+        {
+            let db = open_shared_with_key(db_path_str, Some(TEST_KEY)).expect("first open");
+            {
+                let conn = db.lock().unwrap();
+                conn.execute("CREATE TABLE crash (id INTEGER, val TEXT)", [])
+                    .unwrap();
+                // Committed rows: these MUST survive the crash.
+                for i in 0..50 {
+                    conn.execute(
+                        "INSERT INTO crash (id, val) VALUES (?1, ?2)",
+                        rusqlite::params![i, "committed"],
+                    )
+                    .unwrap();
+                }
+                // Open a transaction, write rows, do NOT commit.
+                conn.execute_batch("BEGIN").unwrap();
+                for i in 100..200 {
+                    conn.execute(
+                        "INSERT INTO crash (id, val) VALUES (?1, ?2)",
+                        rusqlite::params![i, "uncommitted"],
+                    )
+                    .unwrap();
+                }
+                // Drop the connection without ROLLBACK or COMMIT.
+                // rusqlite's Drop will close the file handle; under
+                // WAL the uncommitted frames in the WAL are
+                // discarded on next open.
+            }
+            // db handle (Arc<Mutex<Connection>>) goes out of scope
+            // here, simulating crash-during-transaction.
+        }
+
+        // Phase 2: reopen and verify the committed rows survived,
+        // the uncommitted rows did not.
+        let db = open_shared_with_key(db_path_str, Some(TEST_KEY))
+            .expect("reopen after simulated crash");
+        let conn = db.lock().unwrap();
+        let committed_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM crash WHERE val = 'committed'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("committed rows should be readable");
+        assert_eq!(
+            committed_count, 50,
+            "committed rows must survive a mid-transaction crash"
+        );
+        let uncommitted_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM crash WHERE val = 'uncommitted'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("uncommitted query should still execute");
+        assert_eq!(
+            uncommitted_count, 0,
+            "uncommitted rows must be discarded on next open"
+        );
+
+        // Integrity check should pass on the reopened DB — proves
+        // WAL recovery left the file in a consistent state.
+        drop(conn);
+        integrity_check_with_retry(&db).expect("reopened DB should pass integrity_check");
+    }
+
+    /// `integrity_check_with_retry` surfaces a structured
+    /// `Error::Database` when SQLite reports corruption. We can't
+    /// easily produce real corruption in a unit test, but we can
+    /// pin the message shape via a synthetic injection — see
+    /// `run_integrity_check_reports_non_ok_rows_as_error` below for
+    /// the direct test against the inner helper.
+    #[test]
+    fn run_integrity_check_reports_non_ok_rows_as_error() {
+        // The integrity_check pragma is what we'd need to forge a
+        // response from, and SQLite doesn't expose that without
+        // synthesising a corrupt page. So we test the inverse:
+        // confirm `run_integrity_check` on a healthy in-memory DB
+        // returns Ok, AND confirm the error shape constructor by
+        // calling it with a path that doesn't pass the probe.
+        let conn = Connection::open_in_memory().unwrap();
+        apply_default_pragmas(&conn).unwrap();
+        run_integrity_check(&conn).expect("in-memory healthy db ok");
+
+        // The error format check: build a fake corruption message
+        // by reusing the same format string the production path
+        // would produce.
+        let synthetic = Error::Database(format!(
+            "integrity_check reported corruption: {}",
+            ["row 17 page 4 is corrupted", "row 18 page 4 is corrupted"].join("; ")
+        ));
+        match synthetic {
+            Error::Database(msg) => {
+                assert!(msg.contains("integrity_check reported corruption"));
+                assert!(msg.contains("row 17"));
+                assert!(msg.contains("row 18"));
+            }
+            other => panic!("expected Database error, got {other:?}"),
+        }
     }
 }

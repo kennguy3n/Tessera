@@ -1,10 +1,11 @@
-import { app, BrowserWindow, safeStorage, session } from "electron";
+import { app, BrowserWindow, ipcMain, safeStorage, session } from "electron";
 import * as path from "path";
 import { registerIpcHandlers } from "./ipc";
 import { replayPersistedHybridSearchConfigToBridge } from "./ipc/settings";
 import { loadConfig, saveWindowState } from "./config";
-import { initAppState, stopAllSidecars } from "./appState";
+import { initAppState, stopAllSidecars, getBridge } from "./appState";
 import { detectComputeBackends } from "./modelManagement";
+import { reapOrphanedSidecars } from "./sidecarPidRegistry";
 import { startScheduler, stopScheduler } from "./scheduler";
 import { getLogger } from "./logger";
 import {
@@ -612,6 +613,41 @@ app.whenReady().then(async () => {
   // `maybeInitPasswordVault()` has cached the vault key. See the
   // call site below for the full sequencing rationale.
 
+  // Phase 15 Task 9: reap any sidecar processes left orphaned by a
+  // hard-crash of the prior Tessera launch BEFORE we attempt to
+  // spawn our own sidecars in `initAppState`. The reaper is
+  // safe-by-default (it cross-checks PID + binary basename before
+  // delivering SIGKILL and refuses to kill anything that doesn't
+  // match the recorded sidecar identity, see
+  // `sidecarPidRegistry.ts` for the contract).
+  //
+  // Why this position in the boot sequence: it must run BEFORE any
+  // sidecar.start() can fire (otherwise we'd race the reaper
+  // against our own freshly-spawned PIDs) but AFTER `app.whenReady`
+  // because `app.getPath("userData")` is unstable before then.
+  // `initAppState` (which spawns sidecars on first model use) runs
+  // strictly later in this block, so the ordering holds.
+  try {
+    const outcome = await reapOrphanedSidecars();
+    if (outcome.killed.length > 0) {
+      console.log(
+        `[tessera] sidecar reaper killed ${outcome.killed.length} orphan(s) from prior launch:`,
+        outcome.killed,
+      );
+    }
+    if (outcome.skipped.length > 0) {
+      console.log(
+        `[tessera] sidecar reaper skipped ${outcome.skipped.length} entry(ies):`,
+        outcome.skipped,
+      );
+    }
+  } catch (e) {
+    // Reaper failure must NOT block startup — the worst case is we
+    // bind on a stale port and the user sees a "sidecar already
+    // running" toast, which is strictly less bad than the app
+    // failing to launch.
+    console.warn("[tessera] sidecar reaper failed:", e);
+  }
   // Install the session-level CSP BEFORE any window (including the
   // password prompt) is created, so the policy is in effect for
   // every page load — not just for windows created after the main
@@ -763,8 +799,37 @@ app.whenReady().then(async () => {
       initAutoUpdater();
     })
     .catch((err: unknown) => {
-      getLogger().error("autoUpdater.dynamicImport failed", {
-        message: err instanceof Error ? err.message : String(err),
+      // Devin Review BUG ANALYSIS_0002 (PR #69): if the dynamic
+      // import rejects we previously logged the error and returned,
+      // which left the `updates:*` IPC channels unregistered for
+      // the whole session. The renderer's "Check for updates"
+      // button in Settings would then reject with an opaque
+      // "No handler registered for 'updates:check'" error.
+      //
+      // Architecturally correct recovery: register fallback
+      // handlers that return a meaningful `status: "error"` shape
+      // so the renderer can surface "Auto-updater is unavailable:
+      // <reason>" instead of crashing. The fallbacks match the
+      // real handlers' return contract (same shape as
+      // `UpdateStatusEvent`) so the renderer's reducer doesn't
+      // need a separate code path.
+      const message = err instanceof Error ? err.message : String(err);
+      getLogger().error("autoUpdater.dynamicImport failed", { message });
+      const reason = `Auto-updater failed to initialise: ${message}`;
+      const errorStatus = { status: "error" as const, message: reason };
+      // `idempotentHandle` semantics inline: if `ipc.ts` decides
+      // to register `updates:*` synchronously in the future, the
+      // remove+handle pair below stays safe.
+      const handleFallback = (channel: string, handler: () => unknown) => {
+        ipcMain.removeHandler(channel);
+        ipcMain.handle(channel, async () => handler());
+      };
+      handleFallback("updates:status", () => errorStatus);
+      handleFallback("updates:check", () => errorStatus);
+      handleFallback("updates:install", () => errorStatus);
+      handleFallback("updates:getAutoUpdateEnabled", () => false);
+      handleFallback("updates:setAutoUpdateEnabled", () => {
+        throw new Error(reason);
       });
     });
 
@@ -912,6 +977,16 @@ export async function handleWillQuit(
     // the other shutdown steps.
     stopKchatLocalApi: () => Promise<void>;
     detachKchatDeeplinkBridge: () => void;
+    /**
+     * Phase 15 Task 7: graceful database checkpoint, run after the
+     * scheduler and every sidecar have been drained so no further
+     * writes can land in the WAL between our checkpoint and process
+     * exit. Optional so existing willQuit tests don't have to wire
+     * a new mock just to keep compiling; production passes the real
+     * bridge dispose closure (see the `app.on("will-quit")`
+     * registration below).
+     */
+    disposeBridge?: () => void;
     quit: () => void;
   },
 ): Promise<void> {
@@ -979,6 +1054,20 @@ export async function handleWillQuit(
     } catch (e) {
       console.error("[tessera] kchatDeeplink detach failed:", e);
     }
+    try {
+      // Phase 15 Task 7: run `PRAGMA wal_checkpoint(TRUNCATE)` LAST,
+      // after the scheduler and every sidecar have been drained, so
+      // no further writes can land in the WAL between our checkpoint
+      // and the process exit. This keeps the on-disk file self-
+      // contained: backup tooling, copy / sync utilities, and the
+      // next cold start all see a single `.db` with an empty
+      // `.db-wal` rather than having to replay frames out of the WAL
+      // on next open. Optional in the deps contract so existing
+      // tests don't have to wire a new spy.
+      deps.disposeBridge?.();
+    } catch (e) {
+      console.error("[tessera] bridge dispose failed:", e);
+    }
   } finally {
     deps.quit();
   }
@@ -1003,6 +1092,18 @@ app.on("will-quit", (event) => {
     stopAllSidecars,
     stopKchatLocalApi: stopKchatLocalApiServer,
     detachKchatDeeplinkBridge,
+    disposeBridge: () => {
+      // Phase 15 Task 7: graceful DB checkpoint, called last so the
+      // WAL is folded into the main file before the process exits.
+      // `getBridge()` returns `null` if `init_bridge` never ran
+      // successfully (early boot crash, headless test environment),
+      // in which case there is no WAL to checkpoint and skipping is
+      // correct.
+      const bridge = getBridge();
+      if (bridge && typeof bridge.bridgeDispose === "function") {
+        bridge.bridgeDispose();
+      }
+    },
     quit: () => app.quit(),
   }).catch((e) => {
     console.error("[tessera] handleWillQuit rejected during quit:", e);

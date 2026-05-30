@@ -121,6 +121,21 @@ export interface NativeBridge {
    * unencrypted (only used in fallback / test paths).
    */
   initBridge(dbPath: string, templateDir: string, dbKey?: string | null): void;
+  /**
+   * Phase 15 Task 7: graceful shutdown hook. Runs
+   * `PRAGMA wal_checkpoint(TRUNCATE)` so the on-disk WAL file is
+   * folded back into the main database file before the process
+   * exits. The `will-quit` handler (`apps/desktop/electron/main.ts`)
+   * calls this after the scheduler and sidecars are drained so the
+   * next cold start does not pay a WAL-replay cost and backup
+   * tooling sees a single self-contained file.
+   *
+   * Safe to call before {@link initBridge} — the Rust side returns
+   * `Ok(())` as a no-op when the bridge hasn't been initialised,
+   * so the will-quit handler doesn't need to guard against early
+   * boot failures.
+   */
+  bridgeDispose(): void;
   bridgeAddLocalFolder(path: string): SourceInfo;
   bridgeAddLocalFile(path: string): SourceInfo;
   /**
@@ -661,6 +676,61 @@ export interface NativeBridge {
     timestamp: string;
     details: string;
   }>;
+  /**
+   * Phase 15 Task 12: rotate the audit log (archive + delete the
+   * oldest rows once the live table exceeds 100K rows). Returns
+   * `null` when the table is below the threshold, otherwise an
+   * object describing where the gzipped JSONL archive was
+   * written.
+   *
+   * `archiveDir` is the absolute path the renderer wants archives
+   * in — typically `<userData>/audit-archives/`. Owning the path
+   * choice in the renderer (rather than letting the bridge pick)
+   * keeps the rotation kicked off via IPC consistent with the one
+   * a future scheduler invokes from the main process.
+   */
+  bridgeAuditRotate(archiveDir: string): {
+    archivePath: string;
+    rotatedCount: number;
+  } | null;
+  /**
+   * Phase 15 Task 12: list the audit-archive filenames in
+   * `archiveDir`, newest-first. Returns `[]` when the directory
+   * does not yet exist.
+   */
+  bridgeAuditListArchives(archiveDir: string): string[];
+  /**
+   * Phase 15 Task 11: read the persisted sync-failure state for
+   * one source row. Returns `last_error_json = null`, `retry_count
+   * = 0`, `failed_permanently = false` when the row has never
+   * failed (and when the row does not exist at all — the two
+   * cases are indistinguishable to the renderer by design).
+   */
+  bridgeGetSourceSyncFailureState(sourceId: string): {
+    lastErrorJson: string | null;
+    retryCount: number;
+    failedPermanently: boolean;
+  };
+  /**
+   * Phase 15 Task 11: atomic persistence of all three failure-
+   * state columns. The caller (TS-side connectorBackoff) computes
+   * the new `retryCount` and `failedPermanently` flag by applying
+   * the policy in `connectorBackoff.ts` to the previous state +
+   * the just-classified error.
+   */
+  bridgeRecordSourceSyncFailure(
+    sourceId: string,
+    lastSyncErrorJson: string,
+    retryCount: number,
+    failedPermanently: boolean,
+  ): void;
+  /**
+   * Phase 15 Task 11: clear failure-state columns. Resets
+   * `last_sync_error → NULL`, `retry_count → 0`,
+   * `failed_permanently → false`. Called from the success branch
+   * of `runConnectorSync`.
+   */
+  bridgeRecordSourceSyncSuccess(sourceId: string): void;
   // --- Vision + image generation ---
   //
   // Async bridges that talk to local sidecars:
@@ -866,6 +936,58 @@ let visionSidecar: ModelSidecar | null = null;
 // idle-unload reflects bursty user interaction (generate / edit /
 // re-generate) typical of the image-gen workflow.
 let diffusionSidecar: DiffusionSidecar | null = null;
+// Phase 15 Task 1 (Devin Review follow-up): track the lifecycle of
+// the lazy `./diffusionSidecar` module import so callers can
+// distinguish three states that all looked identical when we only
+// stored `diffusionSidecar: DiffusionSidecar | null`:
+//
+//   "unloaded"  — `initAppState()` has not been called yet (or the
+//                 bridge failed to come up). The next `initAppState`
+//                 call may transition this to "loading".
+//   "loading"   — the dynamic `import("./diffusionSidecar")` is in
+//                 flight. The IPC handler should report "Image
+//                 generation is still warming up; retry in a moment"
+//                 rather than the permanent-failure message.
+//   "loaded"    — the constructor ran and `diffusionSidecar` is
+//                 non-null. The handler should call `start()` to
+//                 boot the underlying sd-server process.
+//   "failed"    — the dynamic import threw. The sidecar will not
+//                 self-recover this session; the user must restart
+//                 the app to get image generation back. The handler
+//                 surfaces that explicit instruction so users are
+//                 not left wondering whether to keep retrying.
+//
+// We expose this through `getDiffusionSidecarState()` so the IPC
+// layer can render the right error. The raw nullable accessor stays
+// for the shutdown path which only cares "is there a process to
+// stop?".
+type DiffusionSidecarState =
+  | "unloaded"
+  | "loading"
+  | "loaded"
+  | "failed";
+let diffusionSidecarState: DiffusionSidecarState = "unloaded";
+let diffusionSidecarLoadError: Error | null = null;
+// Phase 15 PR 2 Devin Review follow-up: track the in-flight
+// `import("./diffusionSidecar")` promise so the shutdown path can
+// await it before deciding whether the sidecar slot is null.
+//
+// Without this, `stopAllSidecars()` had a race window: if
+// `handleWillQuit` fires while the dynamic import is still resolving,
+// the function sees `diffusionSidecar === null` and skips the slot.
+// The import then resolves, the constructor runs, and the resulting
+// `DiffusionSidecar` instance is never stopped — orphaning any future
+// `start()` call's sd-server process if the constructor ever grows a
+// side-effect (port probing, binary extraction, file lock).
+//
+// The constructor is side-effect-free today (it only stores config),
+// but waiting on the import promise is the architecturally correct
+// fix: it closes the race regardless of what the constructor does in
+// the future. The wait is bounded by `LOAD_AWAIT_TIMEOUT_MS` so a
+// truly hung import does NOT block `app.quit()`; the process.exit
+// SIGKILL fallback in `main.ts` is the final backstop.
+let diffusionSidecarLoadPromise: Promise<void> | null = null;
+const DIFFUSION_LOAD_AWAIT_TIMEOUT_MS = 2_000;
 
 function resolveNativeAddon(): NativeBridge | null {
   // The compiled main bundle now lives at `dist-electron/electron/main.js`
@@ -1008,7 +1130,14 @@ export async function initAppState(): Promise<boolean> {
   // propagate: a failed diffusion-sidecar load only impacts the
   // image-generation feature, not the rest of the app, so it must
   // not block boot completion.
-  import("./diffusionSidecar")
+  diffusionSidecarState = "loading";
+  diffusionSidecarLoadError = null;
+  // Retain the promise so `stopAllSidecars()` can await it (with a
+  // bounded timeout) and observe the resolved sidecar before the
+  // shutdown path decides whether to skip the slot. Cleared in the
+  // terminal `.finally()` so a stale promise reference doesn't keep
+  // the module record alive after the load settles.
+  diffusionSidecarLoadPromise = import("./diffusionSidecar")
     .then(({ DiffusionSidecar, resolveDiffusionBinary }) => {
       diffusionSidecar = new DiffusionSidecar({
         binaryPath: resolveDiffusionBinary(
@@ -1020,15 +1149,30 @@ export async function initAppState(): Promise<boolean> {
         port: 8386,
         label: "diffusion",
       });
+      diffusionSidecarState = "loaded";
       console.log(
         "[Tessera] Diffusion sidecar configured (port 8386, lazy-loaded)",
       );
     })
     .catch((err: unknown) => {
+      // Mark the slot as permanently failed for this session. The
+      // IPC handler reads this state and surfaces an actionable
+      // "restart the app" message rather than the generic "not
+      // initialised" message that would otherwise leave the user
+      // wondering whether to keep retrying.
+      diffusionSidecarState = "failed";
+      diffusionSidecarLoadError =
+        err instanceof Error ? err : new Error(String(err));
       console.warn(
         "[Tessera] Diffusion sidecar lazy-load failed; image generation will be unavailable until next launch:",
-        err instanceof Error ? err.message : String(err),
+        diffusionSidecarLoadError.message,
       );
+    })
+    .finally(() => {
+      // The promise has resolved either to a constructed sidecar or
+      // a permanent-failure state. Either way the load is no longer
+      // "in flight" and the shutdown path has nothing to wait on.
+      diffusionSidecarLoadPromise = null;
     });
 
   console.log(
@@ -1131,6 +1275,26 @@ export function getVisionSidecar(): ModelSidecar | null {
  */
 export function getDiffusionSidecar(): DiffusionSidecar | null {
   return diffusionSidecar;
+}
+
+/**
+ * Phase 15 Task 1 (Devin Review follow-up): expose the lazy-load
+ * lifecycle of the diffusion sidecar module so IPC handlers can
+ * report the right error to the renderer.
+ *
+ * Returns `{ state, error }` where `state` is one of
+ * `unloaded | loading | loaded | failed` and `error` is the
+ * exception that caused a `failed` transition (so the handler can
+ * surface its `.message` without exposing the stack to the UI).
+ *
+ * Tests injecting fixture state can use `__resetDiffusionSidecarStateForTests`
+ * (test-only, lives at the bottom of this file).
+ */
+export function getDiffusionSidecarState(): {
+  state: DiffusionSidecarState;
+  error: Error | null;
+} {
+  return { state: diffusionSidecarState, error: diffusionSidecarLoadError };
 }
 
 /**
@@ -1614,11 +1778,39 @@ export function resetKchatEventForwarder(
  * shutdowns apart.
  */
 export async function stopAllSidecars(): Promise<void> {
+  // If the diffusion sidecar's dynamic import is still in flight,
+  // wait for it (bounded) so we observe the resolved sidecar slot
+  // before deciding whether to stop it. See the comment on
+  // `diffusionSidecarLoadPromise` for the race-window rationale.
+  await awaitDiffusionLoadOrTimeout(DIFFUSION_LOAD_AWAIT_TIMEOUT_MS);
   await stopSidecarsList([
     { label: "text", sidecar: modelSidecar },
     { label: "vision", sidecar: visionSidecar },
     { label: "diffusion", sidecar: diffusionSidecar },
   ]);
+}
+
+/**
+ * Internal helper used by [`stopAllSidecars`] (and exported only
+ * for the lazy-load-race test). Returns when either the in-flight
+ * `import("./diffusionSidecar")` settles OR `timeoutMs` elapses.
+ * Settled means the constructor ran (or the import threw) and
+ * `diffusionSidecar` is now in its final shutdown-visible state.
+ * The timeout is the safety belt: a truly hung import must not
+ * block `app.quit()`.
+ */
+export async function awaitDiffusionLoadOrTimeout(
+  timeoutMs: number,
+): Promise<void> {
+  const pending = diffusionSidecarLoadPromise;
+  if (pending === null) return;
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  const timeoutP = new Promise<void>((resolve) => {
+    timeoutHandle = setTimeout(resolve, timeoutMs);
+    if (typeof timeoutHandle.unref === "function") timeoutHandle.unref();
+  });
+  await Promise.race([pending, timeoutP]);
+  if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
 }
 
 /**

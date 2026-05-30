@@ -351,6 +351,30 @@ impl SourceStore {
         for (column, ty) in [
             ("kchat_backfill_oldest_post_id", "TEXT"),
             ("kchat_backfill_completed_at", "TEXT"),
+            // Phase 15 Task 11: connector sync error resilience.
+            // Three nullable / defaulted columns added in the same
+            // idempotent migration loop so older databases pick
+            // them up on first open without a separate migration
+            // step.
+            //
+            // - `last_sync_error` — JSON-encoded
+            //   `tessera_connectors::PersistedSyncError` (`kind`
+            //   discriminant + `message`). NULL on rows that have
+            //   never failed or whose last attempt succeeded.
+            // - `retry_count` — consecutive transient failures
+            //   since the last successful sync. Reset to 0 on
+            //   success. Used by the scheduler to compute the next
+            //   exponential-backoff retry instant.
+            // - `failed_permanently` — sticky bit (0/1). Set when
+            //   a `Permanent`-classified failure is observed or
+            //   when `retry_count` exceeds the policy threshold.
+            //   Only the user can clear it (via "Retry now" or
+            //   "Re-authorize") — `record_sync_success` does this
+            //   automatically once a successful sync proves the
+            //   source is healthy again.
+            ("last_sync_error", "TEXT"),
+            ("retry_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("failed_permanently", "INTEGER NOT NULL DEFAULT 0"),
         ] {
             let existing: bool = conn
                 .query_row(
@@ -697,6 +721,123 @@ impl SourceStore {
                 params![status_str, id_str],
             )
             .map_err(|e| Error::Database(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Phase 15 Task 11: persisted sync-failure state for a single
+    /// source row.
+    ///
+    /// Returned tuple is `(last_sync_error_json, retry_count,
+    /// failed_permanently)` — primitives because the SourceStore
+    /// crate intentionally does NOT depend on `tessera_connectors`
+    /// (that would introduce a dependency cycle). Callers in the
+    /// connectors layer deserialise the JSON into a
+    /// `PersistedSyncError` themselves.
+    ///
+    /// Returns `Ok((None, 0, false))` for a row that has never
+    /// failed AND for a row that does not exist — both are
+    /// indistinguishable from the caller's perspective ("no
+    /// failure state to surface").
+    pub fn get_sync_failure_state(
+        &self,
+        source_id: &SourceId,
+    ) -> Result<(Option<String>, u32, bool)> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let row: std::result::Result<(Option<String>, i64, i64), rusqlite::Error> = conn.query_row(
+            "SELECT last_sync_error, retry_count, failed_permanently
+             FROM sources WHERE id = ?1",
+            params![id_str],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        );
+        match row {
+            // Devin Review PR #69 ANALYSIS_0008: defense-in-depth
+            // against a tampered `sources.db` where someone has
+            // manually written a negative or out-of-range value into
+            // `retry_count`. `record_sync_failure` only ever writes a
+            // `u32` widened to `i64`, so the persisted value SHOULD
+            // always be in `[0, u32::MAX]` (and realistically `[0,
+            // 8]` per `maxRetriesBeforePermanent`). But a SQLite file
+            // is user-writable, and `as u32` would silently wrap a
+            // negative or huge value into garbage that the
+            // connectors layer would then interpret as "millions of
+            // retries already attempted, escalate to permanent
+            // immediately." Explicit `try_into` collapses any
+            // out-of-range value to 0 — i.e. "treat as never
+            // failed", which is the safe default for downstream
+            // logic (the next sync attempt is allowed to run, and
+            // the retry counter starts fresh).
+            Ok((err, retry, perm)) => Ok((err, u32::try_from(retry).unwrap_or(0), perm != 0)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok((None, 0, false)),
+            Err(e) => Err(Error::Database(e.to_string())),
+        }
+    }
+
+    /// Phase 15 Task 11: stamp a failed sync attempt onto the
+    /// source row. The connectors layer constructs the JSON
+    /// payload via `PersistedSyncError` + `serde_json::to_string`
+    /// and passes it here as an opaque string.
+    ///
+    /// Atomic: a single UPDATE statement writes all three columns,
+    /// so a reader between the previous-state and new-state never
+    /// observes a half-written row (e.g. stamped error message but
+    /// stale retry_count). Crucial because the renderer polls
+    /// these three columns to render the source-health badge.
+    pub fn record_sync_failure(
+        &self,
+        source_id: &SourceId,
+        last_sync_error_json: &str,
+        retry_count: u32,
+        failed_permanently: bool,
+    ) -> Result<()> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let n = conn
+            .execute(
+                "UPDATE sources
+                 SET last_sync_error = ?1,
+                     retry_count = ?2,
+                     failed_permanently = ?3
+                 WHERE id = ?4",
+                params![
+                    last_sync_error_json,
+                    retry_count as i64,
+                    if failed_permanently { 1_i64 } else { 0 },
+                    id_str,
+                ],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        if n == 0 {
+            return Err(Error::Database(format!(
+                "record_sync_failure: no source with id {id_str}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Phase 15 Task 11: clear sync-failure state on a successful
+    /// sync. Resets `last_sync_error` to NULL, `retry_count` to 0,
+    /// and `failed_permanently` to 0 — proving the source is back
+    /// online means the user should not have to dismiss a stale
+    /// "permanently failed" badge after a manual re-authorize.
+    pub fn record_sync_success(&self, source_id: &SourceId) -> Result<()> {
+        let id_str = source_id.to_string();
+        let conn = self.conn.lock().expect("connection mutex poisoned");
+        let n = conn
+            .execute(
+                "UPDATE sources
+                 SET last_sync_error = NULL,
+                     retry_count = 0,
+                     failed_permanently = 0
+                 WHERE id = ?1",
+                params![id_str],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        if n == 0 {
+            return Err(Error::Database(format!(
+                "record_sync_success: no source with id {id_str}"
+            )));
         }
         Ok(())
     }
@@ -3736,5 +3877,147 @@ mod tests {
             other_count, 7,
             "embeddings for one model must not satisfy the missing count for another"
         );
+    }
+
+    // -- Phase 15 Task 11 sync-failure persistence tests --------------------
+    //
+    // The connectors crate doesn't depend on tessera_sources (and
+    // tessera_sources doesn't depend on tessera_connectors — would
+    // be a cycle), so these tests exercise the storage layer
+    // directly with raw JSON strings rather than constructing a
+    // `PersistedSyncError`. The shape-level round-trip is
+    // covered in `tessera_connectors::failure_state` tests; this
+    // module pins the *persistence* contract.
+
+    #[test]
+    fn sync_failure_state_defaults_to_empty_for_pristine_source() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/test".to_string());
+        store.add_source(&source).unwrap();
+
+        let (err, retry_count, failed) = store.get_sync_failure_state(&source.id).unwrap();
+        assert!(err.is_none());
+        assert_eq!(retry_count, 0);
+        assert!(!failed);
+    }
+
+    #[test]
+    fn record_sync_failure_then_read_round_trips_all_fields() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/test".to_string());
+        store.add_source(&source).unwrap();
+
+        let payload = r#"{"kind":"transient","message":"timeout"}"#;
+        store
+            .record_sync_failure(&source.id, payload, 3, false)
+            .unwrap();
+
+        let (err, retry_count, failed) = store.get_sync_failure_state(&source.id).unwrap();
+        assert_eq!(err.as_deref(), Some(payload));
+        assert_eq!(retry_count, 3);
+        assert!(!failed);
+    }
+
+    #[test]
+    fn record_sync_failure_with_permanent_flag_persists_sticky_bit() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/test".to_string());
+        store.add_source(&source).unwrap();
+
+        let payload = r#"{"kind":"permanent","message":"revoked"}"#;
+        store
+            .record_sync_failure(&source.id, payload, 1, true)
+            .unwrap();
+        let (_, _, failed) = store.get_sync_failure_state(&source.id).unwrap();
+        assert!(failed, "permanent failure must set the sticky bit");
+    }
+
+    #[test]
+    fn record_sync_success_clears_failure_state_completely() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/test".to_string());
+        store.add_source(&source).unwrap();
+        store
+            .record_sync_failure(
+                &source.id,
+                r#"{"kind":"permanent","message":"x"}"#,
+                7,
+                true,
+            )
+            .unwrap();
+
+        store.record_sync_success(&source.id).unwrap();
+
+        let (err, retry_count, failed) = store.get_sync_failure_state(&source.id).unwrap();
+        assert!(err.is_none());
+        assert_eq!(retry_count, 0);
+        assert!(
+            !failed,
+            "success must clear the permanently-failed sticky bit so the user does not have to dismiss a stale badge"
+        );
+    }
+
+    #[test]
+    fn record_sync_failure_for_missing_source_id_errors_loudly() {
+        let store = SourceStore::open_in_memory().unwrap();
+        let phantom = SourceId(uuid::Uuid::new_v4());
+        let err = store.record_sync_failure(&phantom, r#"{}"#, 1, false);
+        assert!(
+            err.is_err(),
+            "writing to a non-existent source id must surface an error"
+        );
+    }
+
+    #[test]
+    fn get_sync_failure_state_for_missing_source_id_returns_empty_tuple() {
+        // The reader path treats "no row" and "fresh row" as the
+        // same thing because the renderer cannot do anything
+        // meaningful with the distinction. Pin this contract.
+        let store = SourceStore::open_in_memory().unwrap();
+        let phantom = SourceId(uuid::Uuid::new_v4());
+        let (err, retry_count, failed) = store.get_sync_failure_state(&phantom).unwrap();
+        assert!(err.is_none());
+        assert_eq!(retry_count, 0);
+        assert!(!failed);
+    }
+
+    #[test]
+    fn sync_failure_writes_are_atomic_across_all_three_columns() {
+        // Pin that record_sync_failure is a single statement that
+        // updates all three columns together. Achieved by writing
+        // ONLY the JSON column first (impossible via the public
+        // API — this test simulates a corrupt-on-disk partial
+        // write by raw SQL) then asserting `record_sync_failure`
+        // rewrites all three together.
+        let store = SourceStore::open_in_memory().unwrap();
+        let source = Source::new_local_folder("/tmp/test".to_string());
+        store.add_source(&source).unwrap();
+
+        // Simulate a torn write on disk: stamp the JSON column
+        // but leave retry_count + failed_permanently as defaults.
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE sources SET last_sync_error = ?1 WHERE id = ?2",
+                params!["{\"kind\":\"transient\",\"message\":\"stale\"}", source.id.to_string()],
+            )
+            .unwrap();
+        }
+
+        // Now call record_sync_failure — the new state must
+        // completely replace the partial state.
+        store
+            .record_sync_failure(
+                &source.id,
+                r#"{"kind":"permanent","message":"fresh"}"#,
+                5,
+                true,
+            )
+            .unwrap();
+
+        let (err, retry_count, failed) = store.get_sync_failure_state(&source.id).unwrap();
+        assert!(err.as_deref().unwrap().contains("fresh"));
+        assert_eq!(retry_count, 5);
+        assert!(failed);
     }
 }
