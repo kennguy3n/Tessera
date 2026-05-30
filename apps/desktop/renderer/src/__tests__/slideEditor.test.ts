@@ -718,13 +718,18 @@ describe("replaceBlock", () => {
     // a fresh array and a fresh `Slide`, the parent component's
     // `if (updatedSlide === slide) return prev` short-circuit would
     // miss, and `debouncedSave` would fire on a no-op type-select.
-    const existing: SlideBlock = { type: "text", content: "keep me" };
+    const existing: SlideBlock = {
+      id: "test-b-id-existing",
+      type: "text",
+      content: "keep me",
+    };
     const slide: Slide = {
+      id: "test-s-id-rb",
       title: "T",
       blocks: [
-        { type: "bullets", content: "- a" },
+        { id: "test-b-id-a", type: "bullets", content: "- a" },
         existing,
-        { type: "text", content: "z" },
+        { id: "test-b-id-c", type: "text", content: "z" },
       ],
       notes: "",
     };
