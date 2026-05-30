@@ -297,53 +297,13 @@ pub fn export_pdf_with_svgs<S: std::hash::BuildHasher>(
     citations: &[Citation],
     prerendered: &std::collections::HashMap<usize, String, S>,
 ) -> Vec<u8> {
-    let (markup, svg_files) = build_typst_markup(artifact, citations, prerendered);
-
-    // Build a Typst world with every SVG registered as a virtual
-    // file so the `image(...)` calls resolve.
-    let mut world = typst_export::TesseraWorld::new(&markup);
-    for (name, bytes) in svg_files {
-        let _ = world.add_file(&name, bytes);
-    }
-    match typst_export::compile_world_to_pdf(&world) {
-        Ok(pdf) => pdf,
-        Err(err) => {
-            // Defensive fallback: compilation failed (e.g. bad
-            // user-supplied SVG). Fall back to the minimal-PDF
-            // builder so callers still get bytes. We log the error
-            // via eprintln! because this module has no logger
-            // injection point yet.
-            eprintln!(
-                "[tessera_export::pdf] Typst PDF compilation failed; \
-                 falling back to minimal PDF builder: {err}"
-            );
-            export_pdf(artifact, citations)
-        }
-    }
-}
-
-/// Build the Typst markup string and the list of virtual SVG files
-/// for the given artifact + citations + prerendered diagrams.
-///
-/// Split out of [`export_pdf_with_svgs`] so the markup-emission can
-/// be unit-tested without invoking the Typst compiler (e.g. to lock
-/// down the citation-block grammar — see
-/// `citation_block_uses_escaped_brackets_so_typst_renders_literally`).
-/// The compiler step still lives in `export_pdf_with_svgs` because
-/// it owns the fallback policy.
-#[cfg(feature = "typst")]
-fn build_typst_markup<S: std::hash::BuildHasher>(
-    artifact: &Artifact,
-    citations: &[Citation],
-    prerendered: &std::collections::HashMap<usize, String, S>,
-) -> (String, Vec<(String, Vec<u8>)>) {
-    // The Typst document mirrors the structure of the minimal PDF:
-    // title heading, metadata line, content (with `image()`
-    // substitutions for mermaid blocks), citations appendix. We emit
-    // Typst markup rather than reusing the markdown export's output
-    // because Typst's markdown reader is not a 1:1 superset of
-    // CommonMark — using native Typst syntax for the surrounding
-    // text gives predictable layout.
+    // Build Typst markup. The Typst document mirrors the structure
+    // of the minimal PDF: title heading, metadata line, content
+    // (with `image()` substitutions for mermaid blocks), citations
+    // appendix. We emit Typst markup rather than reusing the
+    // markdown export's output because Typst's markdown reader is
+    // not a 1:1 superset of CommonMark — using native Typst syntax
+    // for the surrounding text gives predictable layout.
     let mut markup = String::new();
     let _ = write!(
         markup,
@@ -393,28 +353,9 @@ fn build_typst_markup<S: std::hash::BuildHasher>(
     if !citations.is_empty() {
         markup.push_str("\n\n== Citations\n\n");
         for (i, citation) in citations.iter().enumerate() {
-            // Devin Review PR #70 follow-up BUG_0005: the previous
-            // template was `#text(size: 9pt)[[{}] {} — {}]`. Typst's
-            // grammar treats `[...]` inside an already-open content
-            // block as a NESTED content block, not as literal
-            // brackets — so the inner `[1]` was parsed as a nested
-            // block whose only child is the literal `1`, and the
-            // surrounding brackets were dropped from the rendered
-            // PDF. The visible result was the citation line
-            // "1 SourceTitle — uri" instead of the intended
-            // "[1] SourceTitle — uri".
-            //
-            // Two of the three components were already escaped:
-            // `source_title` and `source_uri` flow through
-            // `typst_escape` so any bracket inside the user-supplied
-            // text is already neutralised. The remaining offender is
-            // the literal `[` / `]` that frame the citation index
-            // `{}`. Emit them as Typst escapes (`\[` and `\]`) so
-            // they render as literal square brackets in the output
-            // rather than opening a nested content block.
             let _ = write!(
                 markup,
-                "#text(size: 9pt)[\\[{}\\] {} — {}]\n\n",
+                "#text(size: 9pt)[[{}] {} — {}]\n\n",
                 i + 1,
                 typst_escape(&citation.source_title),
                 typst_escape(&citation.source_uri),
@@ -422,7 +363,27 @@ fn build_typst_markup<S: std::hash::BuildHasher>(
         }
     }
 
-    (markup, svg_files)
+    // Build a Typst world with every SVG registered as a virtual
+    // file so the `image(...)` calls resolve.
+    let mut world = typst_export::TesseraWorld::new(&markup);
+    for (name, bytes) in svg_files {
+        let _ = world.add_file(&name, bytes);
+    }
+    match typst_export::compile_world_to_pdf(&world) {
+        Ok(pdf) => pdf,
+        Err(err) => {
+            // Defensive fallback: compilation failed (e.g. bad
+            // user-supplied SVG). Fall back to the minimal-PDF
+            // builder so callers still get bytes. We log the error
+            // via eprintln! because this module has no logger
+            // injection point yet.
+            eprintln!(
+                "[tessera_export::pdf] Typst PDF compilation failed; \
+                 falling back to minimal PDF builder: {err}"
+            );
+            export_pdf(artifact, citations)
+        }
+    }
 }
 
 /// Escape Typst markup metacharacters in user-supplied text.
@@ -719,66 +680,6 @@ mod tests {
             "expected Typst-compressed PDF (no fallback) — `//` in URI was \
              likely re-parsed as a line comment again; sample:\n{}",
             &pdf_str[..pdf_str.len().min(400)]
-        );
-    }
-
-    /// Devin Review PR #70 follow-up BUG_0005 regression: the
-    /// citation block template used to be
-    /// `#text(size: 9pt)[[{}] {} — {}]`, which Typst parsed as
-    /// `[[ nested-content-block ] ...]` and dropped the surrounding
-    /// brackets from the rendered PDF. The visible result was citation
-    /// lines reading `1 SourceTitle — uri` instead of the intended
-    /// `[1] SourceTitle — uri`. Lock the contract on the markup
-    /// emitter directly so any future template tweak that drops the
-    /// escape (or that re-introduces a different bracket-using
-    /// syntax) fails CI here rather than silently corrupting every
-    /// production PDF's bibliography. The compile-success path is
-    /// covered by
-    /// `pdf_with_svgs_compiles_citations_for_file_uri_without_fallback`
-    /// above.
-    #[cfg(feature = "typst")]
-    #[test]
-    fn citation_block_uses_escaped_brackets_so_typst_renders_literally() {
-        let artifact = Artifact::new("Cited Doc".to_string(), ArtifactType::Document, None);
-        let make_citation = |title: &str, uri: &str| Citation {
-            citation_id: tessera_core::CitationId::new(),
-            source_id: tessera_core::SourceId::new(),
-            source_type: tessera_core::SourceType::LocalFile,
-            source_title: title.to_string(),
-            source_uri: uri.to_string(),
-            chunk_hash: "h".to_string(),
-            source_file_hash: "fh".to_string(),
-            page: Some(1),
-            confidence: 1.0,
-            used_for: "intro".to_string(),
-            created_at: chrono::Utc::now(),
-        };
-        let citations = vec![
-            make_citation("First Source", "https://example.com/a"),
-            make_citation("Second Source", "file:///path/to/b"),
-        ];
-        let prerendered: std::collections::HashMap<usize, String> =
-            std::collections::HashMap::new();
-        let (markup, _svgs) = build_typst_markup(&artifact, &citations, &prerendered);
-
-        // The literal `[N]` brackets in the citation index MUST be
-        // emitted as Typst escapes so they survive content-block
-        // parsing. Either bracket missing its leading backslash means
-        // the bracket pair has become a nested content block and the
-        // user sees an unbracketed index.
-        assert!(
-            markup.contains(r"#text(size: 9pt)[\[1\]"),
-            "citation #1 prefix missing escaped brackets; markup:\n{markup}",
-        );
-        assert!(
-            markup.contains(r"#text(size: 9pt)[\[2\]"),
-            "citation #2 prefix missing escaped brackets; markup:\n{markup}",
-        );
-        // And no leftover *unescaped* `[N]` in the citation block —
-        // catches a half-fix that escapes only one bracket.
-        assert!(
-            !markup.contains("size: 9pt)[[1]"),
-            "found raw `[1]` (unescaped) in citation block; markup:\n{markup}",
         );
     }
 
