@@ -27,7 +27,11 @@ import {
   type CellResolver,
   type FormulaValue,
 } from "./formulaEngine";
-import type { SheetContent } from "./sheetEditorTypes";
+import type {
+  CellFormat,
+  SheetContent,
+  SheetTab,
+} from "./sheetEditorTypes";
 
 /** Parse CSV text respecting RFC 4180 quoted fields (handles commas inside quotes). */
 export function parseCSVLines(text: string): string[][] {
@@ -122,6 +126,99 @@ export function parseSheetContent(content: string): SheetContent {
 }
 
 /**
+ * Phase 16 Task 13 — in-memory multi-sheet view of a `SheetContent`.
+ * Pure-functional: `toWorkbook` always succeeds (the legacy
+ * single-sheet shape wraps into one tab named "Sheet1"), and
+ * `fromWorkbook` mirrors the active sheet back into the legacy
+ * `columns`/`rows` fields so the artifact stays readable by the
+ * pre-Phase-16 XLSX exporter and any other downstream tooling that
+ * has not yet been updated.
+ */
+export interface Workbook {
+  /** Always at least one sheet; never empty. */
+  sheets: SheetTab[];
+  /** Zero-based index into `sheets` for the currently-active tab. */
+  activeSheetIndex: number;
+}
+
+export function toWorkbook(content: SheetContent): Workbook {
+  if (content.sheets && content.sheets.length > 0) {
+    const activeRaw = content.activeSheetIndex ?? 0;
+    const active = Math.min(
+      Math.max(0, Math.trunc(activeRaw)),
+      content.sheets.length - 1,
+    );
+    // Defensive deep-copy of sheet metadata so a caller mutation
+    // doesn't bleed back into the original `SheetContent`.
+    return {
+      sheets: content.sheets.map((s) => ({
+        name: s.name,
+        columns: [...s.columns],
+        rows: s.rows.map((r) => [...r]),
+        formats: s.formats ? { ...s.formats } : undefined,
+      })),
+      activeSheetIndex: active,
+    };
+  }
+  return {
+    sheets: [
+      {
+        name: "Sheet1",
+        columns: [...content.columns],
+        rows: content.rows.map((r) => [...r]),
+        formats: content.formats ? { ...content.formats } : undefined,
+      },
+    ],
+    activeSheetIndex: 0,
+  };
+}
+
+export function fromWorkbook(
+  workbook: Workbook,
+  baseContent?: SheetContent,
+): SheetContent {
+  const active =
+    workbook.sheets[Math.min(workbook.activeSheetIndex, workbook.sheets.length - 1)];
+  const out: SheetContent = {
+    ...(baseContent ?? {}),
+    columns: [...active.columns],
+    rows: active.rows.map((r) => [...r]),
+    sheets: workbook.sheets.map((s) => ({
+      name: s.name,
+      columns: [...s.columns],
+      rows: s.rows.map((r) => [...r]),
+      formats: s.formats ? { ...s.formats } : undefined,
+    })),
+    activeSheetIndex: workbook.activeSheetIndex,
+    formats: active.formats ? { ...active.formats } : undefined,
+  };
+  // Legacy single-sheet artifacts keep their compact JSON shape: if
+  // the workbook has exactly one default-named sheet, drop the
+  // `sheets`/`activeSheetIndex`/`formats` fields so re-saving the
+  // artifact doesn't bloat the file or break tools that key on
+  // `.sheets` being absent.
+  if (
+    workbook.sheets.length === 1 &&
+    workbook.sheets[0].name === "Sheet1" &&
+    !workbook.sheets[0].formats
+  ) {
+    delete out.sheets;
+    delete out.activeSheetIndex;
+    delete out.formats;
+  }
+  return out;
+}
+
+/** Look up the per-cell `CellFormat` for `(row, col)` on `sheet`. */
+export function getCellFormat(
+  sheet: SheetTab,
+  row: number,
+  col: number,
+): CellFormat | undefined {
+  return sheet.formats?.[`${row},${col}`];
+}
+
+/**
  * Promote a raw cell-text value to a typed `FormulaValue` for the
  * resolver. Mirrors how Excel/Google Sheets interpret untyped cell
  * input: bare numbers become numbers, `TRUE`/`FALSE` become
@@ -154,6 +251,11 @@ export function literalFromCellText(raw: string | undefined): FormulaValue {
  *     evaluation, which is how chains like `A1=B1`, `B1=A1` get
  *     promoted to `#CIRCULAR!` instead of stack-overflowing.
  *
+ * Multi-sheet (Phase 16 Task 13): when the artifact contains a
+ * `sheets[]` array (or the user has added a second tab in the
+ * editor), pass a `Workbook` instead — the resolver routes
+ * sheet-qualified refs (`Sheet2!A1`) to the right tab.
+ *
  * The shared visiting set is returned alongside the resolver so the
  * top-level driver (`evaluateSheetFormula`) can hand it to
  * `defaultContext()` instead of having the resolver clobber it on
@@ -163,16 +265,68 @@ function makeResolver(sheet: SheetContent): {
   resolver: CellResolver;
   visiting: Set<string>;
 } {
+  return makeWorkbookResolver(toWorkbook(sheet));
+}
+
+/**
+ * Workbook-aware resolver. The `sheet` arg on `getRaw`/`getEvaluated`
+ * (added in Phase 16 Task 13) names a sibling tab; when absent, the
+ * lookup targets `workbook.sheets[workbook.activeSheetIndex]`.
+ *
+ * Returns the shared `visiting` set so the top-level driver can
+ * inject it into `defaultContext()` for cycle detection.
+ */
+export function makeWorkbookResolver(workbook: Workbook): {
+  resolver: CellResolver;
+  visiting: Set<string>;
+} {
   const cache = new Map<string, FormulaValue>();
   const visiting = new Set<string>();
+  // Sheet names are matched case-insensitively to mirror Excel /
+  // Google Sheets behaviour, but the canonical (case-preserving)
+  // name is what we use everywhere downstream (cache keys, dep
+  // graph keys, the active-tab swap, the `#REF!` diagnostic).
+  const sheetByName = new Map<string, SheetTab>();
+  for (const s of workbook.sheets) sheetByName.set(s.name.toLowerCase(), s);
+  // `activeName` is the "currently evaluating" sheet (canonical
+  // case). It starts at the workbook's active tab and gets swapped
+  // to the owning sheet whenever the resolver recurses into a
+  // formula on another tab, so that unqualified refs inside *that*
+  // formula stay local. We use a single mutable holder rather than
+  // a Set so cleanup is O(1) on the recursion exit.
+  let activeName = workbook.sheets[workbook.activeSheetIndex].name;
+
+  const lookupTab = (sheet: string | undefined): SheetTab | undefined =>
+    sheetByName.get((sheet ?? activeName).toLowerCase());
+
   const resolver: CellResolver = {
-    getRaw(row, col) {
-      return sheet.rows[row]?.[col];
+    getRaw(row, col, sheet) {
+      return lookupTab(sheet)?.rows[row]?.[col];
     },
-    getEvaluated(row, col) {
-      const key = cellKey(row, col);
+    getEvaluated(row, col, sheet) {
+      const tab = lookupTab(sheet);
+      // Use the canonical sheet name for cache + cycle keys so that
+      // case-variant references (e.g. `SHEET1!A1`, `Sheet1!A1`)
+      // share a single cache entry instead of producing two
+      // independent evaluation paths.
+      const canonicalName = tab?.name ?? sheet ?? activeName;
+      const key = cellKey(row, col, canonicalName);
+      // Cross-sheet reference to a non-existent tab → #REF! (Excel
+      // raises this when a sheet is deleted out from under a
+      // formula). Cache so a workbook recompute doesn't re-parse
+      // the same dangling reference repeatedly.
+      if (!tab) {
+        if (cache.has(key)) return cache.get(key)!;
+        const err: FormulaValue = {
+          kind: "error",
+          code: "#REF!",
+          message: `unknown sheet "${sheet ?? activeName}"`,
+        };
+        cache.set(key, err);
+        return err;
+      }
       if (cache.has(key)) return cache.get(key)!;
-      const raw = sheet.rows[row]?.[col];
+      const raw = tab.rows[row]?.[col];
       if (raw === undefined) {
         cache.set(key, null);
         return null;
@@ -188,16 +342,16 @@ function makeResolver(sheet: SheetContent): {
           cache.set(key, err);
           return err;
         }
-        // Push the cell on the shared visiting set so any nested
-        // lookup that points back at us (directly or transitively)
-        // is caught by the evaluator's cycle check.
         visiting.add(key);
+        const previousActive = activeName;
+        activeName = tab.name;
         try {
           const ctx = defaultContext(resolver, { visiting });
           const v = evaluate(parsed.ast, ctx);
           cache.set(key, v);
           return v;
         } finally {
+          activeName = previousActive;
           visiting.delete(key);
         }
       }
@@ -206,6 +360,7 @@ function makeResolver(sheet: SheetContent): {
       return v;
     },
   };
+
   return { resolver, visiting };
 }
 
@@ -213,8 +368,9 @@ function makeResolver(sheet: SheetContent): {
  * Evaluate a formula expression against the supplied sheet state
  * and return a display-ready value (string / number / boolean).
  * Backed by the full formula engine in `./formulaEngine/` — supports
- * ~30 functions (math / conditional / logic), cell references,
- * nested expressions, and Excel-compatible error sentinels.
+ * ~55 functions (math / conditional / logic / text / lookup / date /
+ * stats), cell references, nested expressions, and Excel-compatible
+ * error sentinels.
  *
  * Returns:
  *   - `number` for numeric results
@@ -255,6 +411,24 @@ export function evaluateSheetFormula(
 }
 
 /**
+ * Workbook-aware evaluation. Cross-sheet formulas resolve through
+ * the workbook resolver; unqualified refs target the workbook's
+ * active sheet.
+ */
+export function evaluateWorkbookFormula(
+  formula: string,
+  workbook: Workbook,
+): FormulaValue {
+  const { resolver, visiting } = makeWorkbookResolver(workbook);
+  const parsed = parseFormula(formula);
+  if (!parsed.ok) {
+    return { kind: "error", code: parsed.code, message: parsed.message };
+  }
+  const ctx = defaultContext(resolver, { visiting });
+  return evaluate(parsed.ast, ctx);
+}
+
+/**
  * Build a fresh `DependencyGraph` describing every formula cell in
  * `sheet`. Cells whose text starts with `=` are parsed once each;
  * non-formula cells contribute no edges. Used by the SheetEditor
@@ -280,16 +454,47 @@ export function buildSheetDependencyGraph(sheet: SheetContent): DependencyGraph 
 }
 
 /**
+ * Workbook-aware dep graph. Keys are fully qualified
+ * (`"Sheet1!3,2"`) so cross-sheet dependencies are tracked without
+ * collision between same-coordinate cells on different sheets.
+ */
+export function buildWorkbookDependencyGraph(
+  workbook: Workbook,
+): DependencyGraph {
+  const graph = new DependencyGraph();
+  for (const tab of workbook.sheets) {
+    for (let r = 0; r < tab.rows.length; r++) {
+      const row = tab.rows[r];
+      if (!row) continue;
+      for (let c = 0; c < row.length; c++) {
+        const raw = row[c];
+        if (!raw || !raw.startsWith("=")) continue;
+        const parsed = parseFormula(raw);
+        if (!parsed.ok) continue;
+        graph.setDependencies(
+          cellKey(r, c, tab.name),
+          extractReferences(parsed.ast, tab.name),
+        );
+      }
+    }
+  }
+  return graph;
+}
+
+/**
  * Convenience: parse a single cell's formula and return the set of
  * cells it depends on. Returns an empty set for non-formula text
  * or syntactically invalid formulas (the cell itself will surface
  * the parse error at evaluation time).
  */
-export function dependenciesOfCell(rawText: string | undefined): Set<string> {
+export function dependenciesOfCell(
+  rawText: string | undefined,
+  activeSheet?: string,
+): Set<string> {
   if (!rawText || !rawText.startsWith("=")) return new Set<string>();
   const parsed = parseFormula(rawText);
   if (!parsed.ok) return new Set<string>();
-  return extractReferences(parsed.ast);
+  return extractReferences(parsed.ast, activeSheet);
 }
 
 /** Walk `ast` (testing aid). Re-exported from the engine for callers. */

@@ -26,47 +26,96 @@
  */
 import type { AstNode } from "./parser";
 
-/** Canonical `"row,col"` cell key (zero-based). */
-export function cellKey(row: number, col: number): string {
+/**
+ * Canonical cell key.
+ *
+ * Phase 16 Task 13 added optional `sheet` for multi-sheet workbooks
+ * (`"sheet1!3,2"`). For backward compatibility, omitting `sheet`
+ * keeps the legacy `"row,col"` format — single-sheet artifacts
+ * (the most common case) and existing tests stay byte-identical.
+ *
+ * The `!` separator is illegal in a row/column number, so the key
+ * remains uniquely decodable in both shapes.
+ *
+ * Sheet names are folded to lowercase so the key is case-insensitive
+ * (matching Excel / Google Sheets — `SHEET1!A1`, `Sheet1!A1`, and
+ * `sheet1!a1` all reference the same cell). Callers that need the
+ * canonical display name should consult the `Workbook.sheets[].name`
+ * directly rather than parsing it out of the key.
+ */
+export function cellKey(row: number, col: number, sheet?: string): string {
+  if (sheet !== undefined && sheet !== "") {
+    return `${sheet.toLowerCase()}!${row},${col}`;
+  }
   return `${row},${col}`;
 }
 
-export function parseCellKey(key: string): { row: number; col: number } {
-  const idx = key.indexOf(",");
+/**
+ * Decode a key produced by `cellKey`. Returns `sheet === undefined`
+ * for legacy single-sheet keys.
+ */
+export function parseCellKey(key: string): {
+  row: number;
+  col: number;
+  sheet?: string;
+} {
+  const bang = key.lastIndexOf("!");
+  if (bang === -1) {
+    const idx = key.indexOf(",");
+    return {
+      row: parseInt(key.slice(0, idx), 10),
+      col: parseInt(key.slice(idx + 1), 10),
+    };
+  }
+  const sheet = key.slice(0, bang);
+  const rest = key.slice(bang + 1);
+  const idx = rest.indexOf(",");
   return {
-    row: parseInt(key.slice(0, idx), 10),
-    col: parseInt(key.slice(idx + 1), 10),
+    sheet,
+    row: parseInt(rest.slice(0, idx), 10),
+    col: parseInt(rest.slice(idx + 1), 10),
   };
 }
 
-/** Walk `ast` and collect every cell (`row,col`) it depends on. */
-export function extractReferences(ast: AstNode): Set<string> {
+/**
+ * Walk `ast` and collect every cell it depends on. For multi-sheet
+ * workbooks, pass `activeSheet` — unqualified references are bound
+ * to that sheet so all dep-graph keys are fully qualified. For
+ * single-sheet (legacy) callers, omit `activeSheet` and keys remain
+ * plain `"row,col"` (matching the original Phase 16 PR 1 contract).
+ */
+export function extractReferences(
+  ast: AstNode,
+  activeSheet?: string,
+): Set<string> {
   const out = new Set<string>();
-  walk(ast, out);
+  walk(ast, out, activeSheet);
   return out;
 }
 
-function walk(node: AstNode, out: Set<string>): void {
+function walk(node: AstNode, out: Set<string>, activeSheet?: string): void {
   switch (node.type) {
     case "cell":
-      out.add(cellKey(node.row, node.col));
+      out.add(cellKey(node.row, node.col, node.sheet ?? activeSheet));
       return;
-    case "range":
+    case "range": {
+      const sheet = node.sheet ?? activeSheet;
       for (let r = node.start.row; r <= node.end.row; r++) {
         for (let c = node.start.col; c <= node.end.col; c++) {
-          out.add(cellKey(r, c));
+          out.add(cellKey(r, c, sheet));
         }
       }
       return;
+    }
     case "function":
-      for (const arg of node.args) walk(arg, out);
+      for (const arg of node.args) walk(arg, out, activeSheet);
       return;
     case "unary":
-      walk(node.operand, out);
+      walk(node.operand, out, activeSheet);
       return;
     case "binary":
-      walk(node.left, out);
-      walk(node.right, out);
+      walk(node.left, out, activeSheet);
+      walk(node.right, out, activeSheet);
       return;
     case "number":
     case "string":
