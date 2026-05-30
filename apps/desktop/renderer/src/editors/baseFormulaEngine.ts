@@ -230,9 +230,14 @@ export function evaluateBaseFormulaInner(
       if (Array.isArray(raw)) return raw.join(", ");
       if (typeof raw === "string") {
         // Coerce numeric strings so `{Price} * {Quantity}` works on
-        // text-typed columns the user filled with numbers.
+        // text-typed columns the user filled with numbers. `Number.isFinite`
+        // (rather than `!Number.isNaN`) rejects the literal strings
+        // `"Infinity"` and `"-Infinity"` — those parse to numeric
+        // `Infinity` and would otherwise propagate as a real numeric
+        // infinity through arithmetic, mirroring how the sheet
+        // engine's evaluator does the same coercion check.
         const trimmed = raw.trim();
-        if (trimmed !== "" && !Number.isNaN(Number(trimmed))) {
+        if (trimmed !== "" && Number.isFinite(Number(trimmed))) {
           return Number(trimmed);
         }
         return raw;

@@ -630,3 +630,146 @@ describe("BaseEditor — formula cycle detection", () => {
     expect(cells.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe("BaseEditor — record deletion cascades linked_record cleanup", () => {
+  it("deleting a record strips its id from every other record's linked_record array", async () => {
+    const { onSave } = renderEditor({
+      fields: [
+        { name: "Title", type: "text" },
+        { name: "Refs", type: "linked_record", linkedDisplayField: "Title" },
+      ],
+      records: [
+        { id: "r1", Title: "Alpha", Refs: ["r2", "r3"] },
+        { id: "r2", Title: "Beta", Refs: ["r3"] },
+        { id: "r3", Title: "Gamma", Refs: [] },
+      ],
+    });
+    // Delete record r3 (the Gamma row, 3rd "Del" button).
+    const delButtons = screen.getAllByRole("button", { name: "Del" });
+    fireEvent.click(delButtons[2]);
+    await flushSave();
+    const records = lastSavedRecords(onSave);
+    // Two records survive: Alpha and Beta, and neither still
+    // references the deleted r3.
+    expect(records).toHaveLength(2);
+    const r1 = records.find((r) => r.id === "r1");
+    const r2 = records.find((r) => r.id === "r2");
+    expect(r1?.Refs).toEqual(["r2"]);
+    expect(r2?.Refs).toEqual([]);
+  });
+
+  it("records that did not reference the deleted id keep their original array identity", async () => {
+    // This is a regression guard: the cleanup pass must not
+    // unnecessarily clone records that weren't pointing at the
+    // deleted id, so React reconciliation can skip them.
+    const { onSave } = renderEditor({
+      fields: [
+        { name: "Title", type: "text" },
+        { name: "Refs", type: "linked_record", linkedDisplayField: "Title" },
+      ],
+      records: [
+        { id: "r1", Title: "Alpha", Refs: [] },
+        { id: "r2", Title: "Beta", Refs: [] },
+      ],
+    });
+    const delButtons = screen.getAllByRole("button", { name: "Del" });
+    fireEvent.click(delButtons[1]); // delete Beta (r2)
+    await flushSave();
+    const records = lastSavedRecords(onSave);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.id).toBe("r1");
+    expect(records[0]?.Refs).toEqual([]);
+  });
+});
+
+describe("BaseEditor — base formula numeric string coercion", () => {
+  it("treats the literal string 'Infinity' as a non-numeric token (no numeric infinity propagation)", () => {
+    // A text-typed source field containing the user-entered string
+    // "Infinity" must NOT be coerced into a numeric Infinity that
+    // would silently propagate through downstream arithmetic. With
+    // the old `!Number.isNaN` check, `{Source} + 0` would have
+    // rendered as "Infinity"; with `Number.isFinite` the string is
+    // passed through to the engine, which then surfaces #VALUE!
+    // for the type mismatch.
+    renderEditor({
+      fields: [
+        { name: "Source", type: "text" },
+        { name: "Doubled", type: "formula", formula: "{Source} * 2" },
+      ],
+      records: [{ id: "r1", Source: "Infinity" }],
+    });
+    expect(screen.queryByText("Infinity")).toBeNull();
+    expect(screen.queryByText("-Infinity")).toBeNull();
+  });
+
+  it("still coerces normal numeric strings so `{Price} * 2` works on a text column of digits", () => {
+    renderEditor({
+      fields: [
+        { name: "Price", type: "text" },
+        { name: "Doubled", type: "formula", formula: "{Price} * 2" },
+      ],
+      records: [{ id: "r1", Price: "21" }],
+    });
+    expect(screen.getByText("42")).toBeInTheDocument();
+  });
+});
+
+describe("BaseEditor — dropdown click-outside behavior", () => {
+  it("multi_select dropdown closes when the user clicks outside the cell", () => {
+    renderEditor({
+      fields: [{ name: "Tags", type: "multi_select", options: ["a", "b"] }],
+      records: [{ id: "r1", Tags: [] }],
+    });
+    // Open the dropdown via the trigger button.
+    const trigger = screen.getByRole("button", { name: /—|^$/ });
+    fireEvent.click(trigger);
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    // Dispatch a mousedown on the document body — the click-outside
+    // hook listens on mousedown so it fires before any subsequent
+    // click handler would re-open a different popover.
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("linked_record dropdown closes when the user clicks outside the cell", () => {
+    renderEditor({
+      fields: [
+        { name: "Title", type: "text" },
+        { name: "Refs", type: "linked_record", linkedDisplayField: "Title" },
+      ],
+      records: [
+        { id: "r1", Title: "Alpha", Refs: [] },
+        { id: "r2", Title: "Beta", Refs: [] },
+      ],
+    });
+    const plusButtons = screen.getAllByRole("button", { name: "+" });
+    fireEvent.click(plusButtons[0]);
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+});
+
+describe("BaseEditor — expanded modal auto-closes when target record is deleted", () => {
+  it("clears `expandedCell` after the record currently being edited is removed", async () => {
+    renderEditor({
+      fields: [{ name: "Body", type: "long_text" }],
+      records: [
+        { id: "r1", Body: "first" },
+        { id: "r2", Body: "second" },
+      ],
+    });
+    // Open the long-text modal on r1 by clicking its expand button.
+    const expandButtons = screen.getAllByTitle("Expand");
+    fireEvent.click(expandButtons[0]);
+    // The modal opens (dialog role with name `Edit Body`).
+    expect(screen.getByRole("dialog", { name: /Edit Body/ })).toBeInTheDocument();
+    // Now delete r1 from the grid. With the cleanup effect in
+    // place, the modal should disappear because expandedCell is
+    // cleared to null.
+    const delButtons = screen.getAllByRole("button", { name: "Del" });
+    fireEvent.click(delButtons[0]);
+    await flushSave();
+    expect(screen.queryByRole("dialog", { name: /Edit Body/ })).toBeNull();
+  });
+});

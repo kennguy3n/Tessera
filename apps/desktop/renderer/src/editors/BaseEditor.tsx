@@ -96,6 +96,24 @@ export default function BaseEditor({
     }
   }, [content]);
 
+  // If the record currently behind the expand modal disappears
+  // (deleted in the grid, or replaced by an out-of-band content
+  // sync), drop `expandedCell` to null. The render path already
+  // hides the modal in that case, but the dangling state would
+  // otherwise force `data.records.findIndex(...)` to scan a -1
+  // miss on every subsequent render until the user clicks Expand
+  // again. We can't call setState during render — this is the
+  // architecturally correct place for that cleanup.
+  useEffect(() => {
+    if (!expandedCell) return;
+    const stillExists = data.records.some(
+      (r) => r.id === expandedCell.recordId,
+    );
+    if (!stillExists) {
+      setExpandedCell(null);
+    }
+  }, [data.records, expandedCell]);
+
   const updateData = useCallback(
     (updated: BaseContent) => {
       setData(updated);
@@ -179,9 +197,40 @@ export default function BaseEditor({
 
   const removeRecord = useCallback(
     (index: number) => {
+      const removed = data.records[index];
+      const removedId = removed?.id;
+      // After dropping the target row, walk every remaining record
+      // and strip the deleted id from any `linked_record` field that
+      // still points at it. Without this pass the JSON we persist
+      // carries dangling ids that re-render to empty chips but
+      // silently inflate `rollup` / `lookup` counts if a future
+      // record happens to be minted with the same id (16-hex
+      // collisions are astronomically unlikely, but the cleanup is
+      // also what makes "delete a record" reversible by re-adding
+      // its id back).
+      const linkedFields = data.fields.filter(
+        (f) => f.type === "linked_record",
+      );
+      const survivors = data.records.filter((_, i) => i !== index);
+      const cleaned =
+        removedId && linkedFields.length > 0
+          ? survivors.map((record) => {
+              let next: BaseRecord | null = null;
+              for (const field of linkedFields) {
+                const v = record[field.name];
+                if (!Array.isArray(v)) continue;
+                if (!v.includes(removedId)) continue;
+                if (next === null) next = { ...record };
+                next[field.name] = (v as string[]).filter(
+                  (id) => id !== removedId,
+                );
+              }
+              return next ?? record;
+            })
+          : survivors;
       const updated: BaseContent = {
         ...data,
-        records: data.records.filter((_, i) => i !== index),
+        records: cleaned,
       };
       updateData(updated);
     },
@@ -420,6 +469,44 @@ export default function BaseEditor({
       })()}
     </div>
   );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// useClickOutside — closes an "open" popover when the user clicks or
+// touches anywhere outside the bound ref. Shared between the
+// multi_select and linked_record dropdowns (both of which are
+// rendered absolutely-positioned inside their owning cell, so the
+// natural blur-based close doesn't work — clicking another cell
+// would otherwise leave the previous dropdown still open).
+//
+// The listener attaches only while `active` is true so an idle cell
+// doesn't pay any per-click cost, and it uses `mousedown` /
+// `touchstart` (rather than `click`) so the dropdown closes *before*
+// the new target receives its click — this prevents the next cell's
+// own toggle from immediately re-opening a different popover.
+// ──────────────────────────────────────────────────────────────────────
+
+function useClickOutside(
+  ref: React.RefObject<HTMLElement | null>,
+  active: boolean,
+  onOutside: () => void,
+) {
+  useEffect(() => {
+    if (!active) return;
+    const handler = (e: MouseEvent | TouchEvent) => {
+      const node = ref.current;
+      if (!node) return;
+      const target = e.target as Node | null;
+      if (target && node.contains(target)) return;
+      onOutside();
+    };
+    document.addEventListener("mousedown", handler);
+    document.addEventListener("touchstart", handler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("touchstart", handler);
+    };
+  }, [ref, active, onOutside]);
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -737,6 +824,11 @@ function MultiSelectCell({ field, value, onChange }: CellInputProps) {
     : [];
   const options = field.options ?? [];
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // Memoize the close callback so the listener doesn't churn its
+  // add/remove cycle on every render.
+  const close = useCallback(() => setOpen(false), []);
+  useClickOutside(rootRef, open, close);
 
   const toggle = (opt: string) => {
     const next = selected.includes(opt)
@@ -746,7 +838,11 @@ function MultiSelectCell({ field, value, onChange }: CellInputProps) {
   };
 
   return (
-    <div className="base-cell-multiselect" style={{ position: "relative" }}>
+    <div
+      ref={rootRef}
+      className="base-cell-multiselect"
+      style={{ position: "relative" }}
+    >
       <button
         type="button"
         className="base-cell-input"
@@ -853,6 +949,12 @@ function LinkedRecordCell({
   const linkedRecords = resolveLinkedRecords(links, allRecords);
   const display = field.linkedDisplayField;
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // Same close-on-outside-click behavior as MultiSelectCell. Memoize
+  // the handler so the document listener add/remove cycle is stable
+  // across re-renders.
+  const close = useCallback(() => setOpen(false), []);
+  useClickOutside(rootRef, open, close);
 
   const removeLink = (id: string) =>
     onChange(links.filter((l) => l !== id));
@@ -860,7 +962,11 @@ function LinkedRecordCell({
     onChange(Array.from(new Set([...links, id])));
 
   return (
-    <div className="base-cell-linkedrecord" style={{ position: "relative" }}>
+    <div
+      ref={rootRef}
+      className="base-cell-linkedrecord"
+      style={{ position: "relative" }}
+    >
       <div style={{ display: "inline-flex", gap: "0.25rem", flexWrap: "wrap" }}>
         {linkedRecords.map((r) => (
           <span
