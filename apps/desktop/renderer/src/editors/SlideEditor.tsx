@@ -499,23 +499,29 @@ export default function SlideEditor({
   // sizes; a large A picked first then a small B could resolve in B-A
   // order, but the opposite is also possible). We solve this with a
   // per-block sequence counter: every upload bumps the counter for
-  // its (slideIndex, blockIndex) key and captures the post-bump value
+  // its (slideIndex, blockId) key and captures the post-bump value
   // as its token. After awaiting, the resolver checks whether the
   // counter has advanced past its token — if so, a newer upload has
   // started, and the stale result is discarded silently.
   //
-  // The key is composed of the index pair because PR 7 blocks don't
-  // carry stable IDs yet. The keying will switch to `block.id` in
-  // PR 8 once stable IDs land; the contract above is unchanged.
+  // The key uses `block.id` (stable across drag-reorders) rather than
+  // the block's array index, because PR 8 introduces drag-and-drop
+  // reorder of blocks within a slide. If the user picks a file, then
+  // drags the target block to a new position before the FileReader
+  // resolves, an index-based key would (a) misroute the result onto
+  // whichever block now occupies the old index — silent corruption —
+  // and (b) silently lose the upload if a non-image block now sits at
+  // that index. Keying off `block.id` makes the upload follow the
+  // block through any reorder.
   const uploadTokensRef = useRef<Map<string, number>>(new Map());
 
   const onImageUpload = useCallback(
     async (
       slideIndex: number,
-      blockIndex: number,
+      blockId: string,
       file: File,
     ) => {
-      const tokenKey = `${slideIndex}|${blockIndex}`;
+      const tokenKey = `${slideIndex}|${blockId}`;
       const nextToken = (uploadTokensRef.current.get(tokenKey) ?? 0) + 1;
       uploadTokensRef.current.set(tokenKey, nextToken);
       try {
@@ -527,8 +533,14 @@ export default function SlideEditor({
         setSlides((prev) => {
           const slide = prev[slideIndex];
           if (!slide) return prev;
+          // Look the block up by id, not by index — a drag-reorder
+          // between dragstart and FileReader resolution could have
+          // shifted positions. If the block no longer exists in the
+          // slide (user removed it mid-upload), bail out cleanly.
+          const blockIndex = slide.blocks.findIndex((b) => b.id === blockId);
+          if (blockIndex < 0) return prev;
           const block = slide.blocks[blockIndex];
-          if (!block || block.type !== "image") return prev;
+          if (block.type !== "image") return prev;
           const updatedSlide = replaceBlock(slide, blockIndex, {
             id: block.id,
             type: "image",
@@ -908,7 +920,10 @@ export default function SlideEditor({
                     });
                   }}
                   onImageFile={(file) => {
-                    onImageUpload(activeIndex, bi, file);
+                    // Pass `block.id` (not `bi`) so that an in-flight
+                    // upload still lands on the right block after a
+                    // drag-reorder shifts indices.
+                    onImageUpload(activeIndex, block.id, file);
                   }}
                   onMoveUp={() => onBlockMove(activeIndex, bi, bi - 1)}
                   onMoveDown={() => onBlockMove(activeIndex, bi, bi + 1)}

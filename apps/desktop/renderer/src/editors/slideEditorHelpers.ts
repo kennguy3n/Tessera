@@ -98,8 +98,12 @@ export function backfillSlideIds(slides: readonly Slide[]): Slide[] {
       }
       nextBlocks.push({ ...block, id: newSlideId("block") });
     }
-    const hasNewId = !slide.id;
-    if (!hasNewId && !nextBlocks) {
+    // `needsNewId` is true when this slide is missing its `id`. The
+    // earlier `hasNewId` name was inverted — read as "has a new id"
+    // but actually meant "needs one assigned" — so the polarity is
+    // restored here for readability.
+    const needsNewId = !slide.id;
+    if (!needsNewId && !nextBlocks) {
       // Slide is already fully migrated. Pass through unchanged —
       // only copy it into `nextSlides` if a previous slide forced us
       // to clone the outer array.
