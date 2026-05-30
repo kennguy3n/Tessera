@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -21,6 +22,39 @@ use crate::event::{AuditEvent, AuditEventType};
 /// snappy without losing access to long-tail history (older rows
 /// remain on disk inside the archives directory).
 pub const AUDIT_ROTATION_THRESHOLD: u64 = 100_000;
+
+/// Phase 15 Task 12 (Devin Review ANALYSIS-0002): process-wide
+/// serializer for concurrent calls to [`AuditStore::rotate`].
+///
+/// `rotate(&self)` takes a shared reference, so two callers can
+/// invoke it simultaneously — for example, a scheduled rotation
+/// fired by an interval timer overlapping with a user-triggered
+/// "Rotate now" click from Settings. Without serialization both
+/// callers would SELECT the same oldest rows, write separate
+/// archive files with different RFC3339 timestamps (Phase 2), and
+/// DELETE the same row IDs (the second DELETE would affect 0
+/// rows). The net result is two archive files holding the same
+/// rows — the data isn't lost but the archives directory
+/// accumulates redundant copies.
+///
+/// We defend with a process-wide mutex rather than an instance
+/// field because Tessera opens exactly one audit database per
+/// process (every `AuditStore` constructed via `with_shared_conn`
+/// points at the same underlying SQLite file), and the napi
+/// bridge constructs transient `AuditStore` instances on the
+/// rotation path to bypass the outer `Mutex<AuditLogger>`
+/// (ANALYSIS-0001 fix in `bridge_audit_rotate`). An instance
+/// mutex would not serialize across those transient instances.
+///
+/// The mutex is held for the *entire* `rotate()` call — Phase 1
+/// (SELECT), Phase 2 (gzip), and Phase 3 (DELETE) — but this is
+/// not a latency regression for normal audit logging, because
+/// `rotate()` never holds the inner `SharedConnection` lock
+/// across Phase 2's gzip work, so concurrent `log_*` calls (which
+/// only need the connection lock) proceed unblocked. The only
+/// thing this serializer blocks is *another* `rotate()` call,
+/// which is what we want.
+static AUDIT_ROTATION_SERIALIZER: Mutex<()> = Mutex::new(());
 
 fn parse_datetime(s: &str) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::parse_from_rfc3339(s)
@@ -273,6 +307,29 @@ impl AuditStore {
     ///
     /// `archive_dir` is created (mkdir -p) if it does not exist.
     pub fn rotate(&self, archive_dir: &Path) -> Result<Option<RotationOutcome>> {
+        // Devin Review ANALYSIS-0002: serialize concurrent rotations
+        // process-wide so a scheduled rotation and a user-triggered
+        // "Rotate now" click cannot produce duplicate archive files
+        // for the same logical rotation window. See the docstring on
+        // [`AUDIT_ROTATION_SERIALIZER`] for the full rationale.
+        //
+        // We acquire BEFORE the live-count probe so two rotations
+        // racing on a table that's at exactly `THRESHOLD + 1` rows
+        // cannot both decide they have work to do — the second
+        // entrant runs `count()` after the first has DELETEd and
+        // returns `Ok(None)` because the table is back below the
+        // threshold. The lock is held for the entire rotation,
+        // including the Phase 2 gzip; concurrent `log_*` calls are
+        // unaffected because they only need the inner SQLite
+        // connection mutex, which Phase 2 releases.
+        //
+        // We deliberately ignore poisoning (`unwrap_or_else`) — a
+        // previous rotation panic should not prevent us from
+        // attempting a fresh rotation on a healthy table.
+        let _rotation_guard = AUDIT_ROTATION_SERIALIZER
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
         let live_count = self.count()?;
         if live_count <= AUDIT_ROTATION_THRESHOLD {
             return Ok(None);
@@ -831,6 +888,77 @@ mod tests {
         assert!(
             res.is_err(),
             "audit_no_delete trigger must still be installed after rotation"
+        );
+    }
+
+    #[test]
+    fn concurrent_rotations_are_serialized_no_duplicate_archives() {
+        // Devin Review ANALYSIS-0002: two threads racing into
+        // `rotate()` against the same logical table must produce
+        // ONE archive file containing the rotated rows, not two
+        // archive files containing the same rows. The process-wide
+        // `AUDIT_ROTATION_SERIALIZER` enforces this regardless of
+        // whether the threads call into the same `AuditStore`
+        // instance (here) or transient instances built via
+        // `with_shared_conn` (the napi path).
+        //
+        // We populate the table to `THRESHOLD + 5` rows, spawn two
+        // threads that both call `rotate()`, then assert (a) the
+        // archive directory contains exactly one
+        // `audit-archive-*.jsonl.gz` file, (b) the live table has
+        // been trimmed to exactly `THRESHOLD` rows, and (c) the
+        // combined rotated_count across both threads equals 5
+        // (one thread does the work, the other returns `None`).
+        let conn = open_shared_in_memory().unwrap();
+        let store = AuditStore::with_shared_conn(conn.clone()).unwrap();
+        let target = AUDIT_ROTATION_THRESHOLD + 5;
+        for i in 0..target {
+            let mut ev = AuditEvent::new(AuditEventType::SettingsChanged, format!("change {i}"));
+            ev.timestamp =
+                chrono::DateTime::<chrono::Utc>::from_timestamp(1_700_000_000 + i as i64, 0)
+                    .unwrap();
+            store.append(&ev).unwrap();
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path_a = dir.path().to_path_buf();
+        let dir_path_b = dir.path().to_path_buf();
+        let conn_a = conn.clone();
+        let conn_b = conn.clone();
+        let h_a = std::thread::spawn(move || {
+            let s = AuditStore::with_shared_conn(conn_a).unwrap();
+            s.rotate(&dir_path_a)
+        });
+        let h_b = std::thread::spawn(move || {
+            let s = AuditStore::with_shared_conn(conn_b).unwrap();
+            s.rotate(&dir_path_b)
+        });
+        let res_a = h_a.join().unwrap().unwrap();
+        let res_b = h_b.join().unwrap().unwrap();
+
+        let mut rotated_total: u64 = 0;
+        let mut rotation_outcomes = 0;
+        for r in [res_a, res_b].into_iter().flatten() {
+            rotated_total += r.rotated_count;
+            rotation_outcomes += 1;
+        }
+        assert_eq!(
+            rotation_outcomes, 1,
+            "exactly one of the racing rotations should have produced rows; the other should see the table back below threshold and return None",
+        );
+        assert_eq!(rotated_total, 5, "the rotated rows should be the 5 above threshold");
+
+        let archives = AuditStore::list_archives(dir.path()).unwrap();
+        assert_eq!(
+            archives.len(),
+            1,
+            "concurrent rotations must NOT produce duplicate archive files",
+        );
+
+        assert_eq!(
+            store.count().unwrap(),
+            AUDIT_ROTATION_THRESHOLD,
+            "live table must be trimmed exactly once",
         );
     }
 

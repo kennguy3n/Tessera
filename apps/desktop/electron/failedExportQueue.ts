@@ -122,9 +122,14 @@ function filePathFor(): string {
 let writeChain: Promise<unknown> = Promise.resolve();
 
 function serializeWrites<T>(fn: () => Promise<T>): Promise<T> {
-  const next = writeChain.then(() => fn(), () => fn());
-  // Keep the chain alive even if `fn` rejects — without this,
-  // a rejection breaks the chain for every subsequent caller.
+  // Devin Review ANALYSIS-0003: only one callback on `.then()`.
+  // `writeChain` is set to `next.catch(() => undefined)` immediately
+  // after every call, so it can never reach a rejected state — the
+  // two-arg form `then(onFulfilled, onRejected)` would have been
+  // dead code (the rejection branch is unreachable). Keeping the
+  // chain alive across rejections of `fn` itself is still handled
+  // by the `.catch(() => undefined)` below.
+  const next = writeChain.then(() => fn());
   writeChain = next.catch(() => undefined);
   return next;
 }
