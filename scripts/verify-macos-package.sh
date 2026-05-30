@@ -85,13 +85,33 @@ saw_x64=0
 saw_arm64=0
 saw_universal=0
 
+# Devin Review PR #70 ANALYSIS_0005: a per-iteration `trap ... RETURN`
+# only ever cleans up the LAST mount_dir on unexpected exit, because
+# each iteration's trap overwrites the previous one and RETURN itself
+# only fires when a *function* returns — not when the loop body
+# finishes. Switch to a single accumulating EXIT trap (which fires on
+# script exit for any reason: explicit `exit`, signal, error) plus a
+# cleanup function that walks every mount we've recorded. We still
+# call the explicit `hdiutil detach` + `rm -rf` on the success path
+# (lines below) so the snapshot stays tidy under normal runs; the trap
+# is purely a safety net for unexpected aborts.
+declare -a _mounts_to_cleanup=()
+_cleanup_all_mounts() {
+  local m
+  for m in "${_mounts_to_cleanup[@]}"; do
+    [[ -n "$m" && -d "$m" ]] || continue
+    hdiutil detach "$m" -quiet -force 2>/dev/null || true
+    rm -rf "$m"
+  done
+}
+trap _cleanup_all_mounts EXIT
+
 for dmg in "${dmgs[@]}"; do
   echo ""
   echo "==> verifying $(basename "$dmg")"
 
   mount_dir="$(mktemp -d)"
-  # Detach on exit regardless of which subshell errored.
-  trap 'hdiutil detach "$mount_dir" -quiet -force 2>/dev/null || true; rm -rf "$mount_dir"' RETURN
+  _mounts_to_cleanup+=("$mount_dir")
 
   hdiutil attach "$dmg" -mountpoint "$mount_dir" -nobrowse -readonly -quiet
 
