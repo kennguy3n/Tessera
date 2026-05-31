@@ -698,6 +698,39 @@ describe("parseCsvToBase — CSV → BaseContent", () => {
     schema[0].options.push("orange");
     expect(result.fields[0].options).toEqual(["red", "green", "blue", "purple"]);
   });
+
+  // Devin Review PR #82 (ANALYSIS_…_0005): `parseCsvToBase` reuses
+  // schema field configs but historically did NOT run them through
+  // `sanitizeBaseField`, while `parseJsonToBase` did. The asymmetry
+  // was harmless because the only caller passes already-sanitised
+  // `data.fields`, but any future caller handing in an un-sanitised
+  // schema (CLI importer, paste-from-external-source, hand-rolled
+  // schema) would leak e.g. a `percentPrecision: 200` through to the
+  // next export and crash with `RangeError: toFixed() digits must be
+  // between 0 and 100`. The fix funnels every cloned-schema and
+  // auto-`text` field through `sanitizeBaseField` so the contract
+  // matches `parseJsonToBase`.
+  it("sanitizes percentPrecision on cloned schema fields (matches parseJsonToBase contract)", () => {
+    // Hostile schema: percentPrecision above the 20-cap that
+    // `Number.prototype.toFixed` accepts.
+    const schema: BaseField[] = [
+      {
+        name: "Score",
+        type: "percent",
+        // 200 is way beyond `toFixed`'s 0..100 range and the [0,20]
+        // cap `sanitizeBaseField` enforces. If the CSV-import path
+        // didn't sanitise, this would survive into the resulting
+        // BaseContent and crash the next `exportBaseCsv` (which calls
+        // `n.toFixed(digits)`).
+        percentPrecision: 200,
+      } as BaseField,
+    ];
+    const csv = "Score\r\n0.5";
+    const result = parseCsvToBase(csv, schema);
+    expect(result.fields).toHaveLength(1);
+    // Sanitiser caps percentPrecision at 20.
+    expect(result.fields[0].percentPrecision).toBe(20);
+  });
 });
 
 describe("parseJsonToBase — JSON → BaseContent", () => {

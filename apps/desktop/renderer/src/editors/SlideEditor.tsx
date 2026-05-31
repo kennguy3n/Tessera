@@ -242,14 +242,44 @@ export default function SlideEditor({
     };
   }, []);
 
-  // Sync external content prop changes (e.g., version restore)
+  // Sync external content prop changes (e.g., version restore).
+  //
+  // A version restore is a hard swap of the deck — every per-slide /
+  // per-block piece of in-flight state attached to the *old* deck has
+  // to be torn down or it ends up pointing at slides / blocks that no
+  // longer exist:
+  //
+  //   * `activeIndex` is clamped against the new deck length, mirroring
+  //     the careful index-management `removeSlide` already does. Without
+  //     this, restoring an older version with fewer slides leaves the
+  //     canvas blank (the JSX guards on `activeSlide &&` so we don't
+  //     crash, but the user has to manually click a thumbnail to recover).
+  //     Devin Review PR #82 (ANALYSIS_…_0001) flagged the asymmetry with
+  //     `removeSlide`.
+  //   * `draggedSlideId` / `draggedBlockId` cleared so an in-flight drag
+  //     started before the restore can't fall through to `onDrop` with a
+  //     dead source id (the source slide / block has been swapped out
+  //     from under the drag).
+  //   * `uploadTokensRef` cleared because every entry is keyed by
+  //     `(slideId|blockId)` and those ids no longer resolve to anything
+  //     in the new deck. Leaving stale tokens means a late-resolving
+  //     `fileToDataUrl` from before the restore would see a
+  //     `currentToken !== ownToken` mismatch (good, it bails) but the
+  //     entry itself would persist forever — same leak the round 7 fix
+  //     closed for block deletion, just at the deck level.
   useEffect(() => {
     if (content !== lastSavedRef.current) {
       const parsed = parseSlideContent(content);
       setSlides(parsed.slides);
+      setActiveIndex((prev) =>
+        Math.min(prev, Math.max(0, parsed.slides.length - 1)),
+      );
       setMarpMode(parsed.marpMode);
       setMarpSource(parsed.marpSource);
       setMarpTheme(parsed.marpTheme ?? "default");
+      setDraggedSlideId(null);
+      setDraggedBlockId(null);
+      uploadTokensRef.current.clear();
       lastSavedRef.current = content;
     }
   }, [content]);

@@ -692,9 +692,29 @@ export function parseCsvToBase(
     const fromSchema = matchesSchemaName
       ? schema?.find((f) => f.name === finalName)
       : undefined;
-    const field: BaseField = fromSchema
-      ? cloneBaseField(fromSchema)
-      : { name: finalName, type: "text" };
+    // Mirror `parseJsonToBase` (line ~831 below): every imported field
+    // is funnelled through `sanitizeBaseField` so the resulting
+    // `BaseContent.fields` carries the same invariants that
+    // `parseBaseContent` guarantees for the artifact-loader path
+    // (e.g. `percentPrecision` clamped to `[0, 20]`, the range
+    // `Number.prototype.toFixed` accepts without `RangeError`).
+    // Today the CSV-side cap is harmless because the only caller
+    // (`BaseEditor` import dialog) passes its already-sanitised
+    // `data.fields` as the `schema`, but the defensive contract should
+    // be uniform across import entry points — otherwise a future caller
+    // (e.g. a CLI importer, a paste-from-external-source helper) that
+    // hands `parseCsvToBase` an un-sanitised schema would silently leak
+    // a `percentPrecision: 200` into the next CSV export and crash with
+    // `RangeError: toFixed() digits argument must be between 0 and 100`.
+    // `sanitizeBaseField` returns the same reference identity when
+    // nothing needs clamping, so the auto-`text` fallback path is a
+    // pointer pass-through (no extra allocation). Devin Review PR #82
+    // (ANALYSIS_…_0005) flagged the asymmetry with `parseJsonToBase`.
+    const field: BaseField = sanitizeBaseField(
+      fromSchema
+        ? cloneBaseField(fromSchema)
+        : { name: finalName, type: "text" },
+    );
     fields.push(field);
     fieldForColumn.push(field);
   }

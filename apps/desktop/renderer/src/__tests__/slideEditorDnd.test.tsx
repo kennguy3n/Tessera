@@ -214,3 +214,114 @@ describe("SlideEditor — block-row drag clears draggedBlockId on lookup-miss ea
     expect(firstBlockRow.className).not.toMatch(/is-dragging/);
   });
 });
+
+describe("SlideEditor — content prop sync clamps activeIndex", () => {
+  // Devin Review PR #82 (ANALYSIS_…_0001): a version restore (external
+  // `content` prop swap) used to leave `activeIndex` pointing at a
+  // slot that the new deck no longer has, blanking the canvas until
+  // the user manually clicked a thumbnail. The fix clamps
+  // `activeIndex` against the new deck length in the same way
+  // `removeSlide` already does.
+  it("clamps activeIndex when a restored deck has fewer slides than the current active index", () => {
+    const initial = JSON.stringify({
+      slides: [
+        {
+          title: "Alpha",
+          blocks: [{ type: "text", content: "alpha body" }],
+          notes: "",
+        },
+        {
+          title: "Beta",
+          blocks: [{ type: "text", content: "beta body" }],
+          notes: "",
+        },
+        {
+          title: "Gamma",
+          blocks: [{ type: "text", content: "gamma body" }],
+          notes: "",
+        },
+      ],
+    });
+    const { rerender } = render(
+      <SlideEditor content={initial} onSave={vi.fn()} />,
+    );
+
+    // Move focus to the last slide so a restore-to-shorter-deck would
+    // otherwise leave activeIndex out of range.
+    fireEvent.click(screen.getByRole("button", { name: /3 Gamma/ }));
+    expect(screen.getByDisplayValue("Gamma")).toBeTruthy();
+
+    // Simulate a version restore to a one-slide deck. Devin Review's
+    // pre-fix behaviour: activeIndex stays at 2, slides[2] is
+    // undefined, and the canvas (guarded by `activeSlide &&`) renders
+    // blank. The fix clamps to length-1 = 0 so the surviving slide's
+    // editor is rendered.
+    const restored = JSON.stringify({
+      slides: [
+        {
+          title: "OnlySurvivor",
+          blocks: [{ type: "text", content: "survivor body" }],
+          notes: "",
+        },
+      ],
+    });
+    rerender(<SlideEditor content={restored} onSave={vi.fn()} />);
+
+    // The canvas (slide-title input) should now show the surviving
+    // slide's title, not be empty.
+    expect(screen.getByDisplayValue("OnlySurvivor")).toBeTruthy();
+    // And the editor for that slide should have its block rendered.
+    expect(screen.getByDisplayValue("survivor body")).toBeTruthy();
+  });
+
+  it("leaves activeIndex unchanged when the restored deck still contains the current index", () => {
+    const initial = JSON.stringify({
+      slides: [
+        {
+          title: "Alpha",
+          blocks: [{ type: "text", content: "alpha body" }],
+          notes: "",
+        },
+        {
+          title: "Beta",
+          blocks: [{ type: "text", content: "beta body" }],
+          notes: "",
+        },
+      ],
+    });
+    const { rerender } = render(
+      <SlideEditor content={initial} onSave={vi.fn()} />,
+    );
+
+    // Move to slide 2.
+    fireEvent.click(screen.getByRole("button", { name: /2 Beta/ }));
+    expect(screen.getByDisplayValue("Beta")).toBeTruthy();
+
+    // Restore a deck that ALSO has at least 2 slides — activeIndex
+    // (1) is still in range, so the clamp is a no-op and the user
+    // stays on the slot they were editing.
+    const restored = JSON.stringify({
+      slides: [
+        {
+          title: "NewAlpha",
+          blocks: [{ type: "text", content: "new alpha" }],
+          notes: "",
+        },
+        {
+          title: "NewBeta",
+          blocks: [{ type: "text", content: "new beta" }],
+          notes: "",
+        },
+        {
+          title: "NewGamma",
+          blocks: [{ type: "text", content: "new gamma" }],
+          notes: "",
+        },
+      ],
+    });
+    rerender(<SlideEditor content={restored} onSave={vi.fn()} />);
+
+    // Active slide should still be index 1 (NewBeta), not 0.
+    expect(screen.getByDisplayValue("NewBeta")).toBeTruthy();
+  });
+});
