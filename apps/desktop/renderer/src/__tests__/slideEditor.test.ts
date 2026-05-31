@@ -1491,6 +1491,35 @@ describe("computeDeckWordCounts", () => {
     expect(result.perSlide).toEqual([1]);
     expect(result.total).toBe(1);
   });
+
+  it("treats a cached value of 0 as a hit (defensive against `=== undefined` regression)", () => {
+    // Phase 19 PR 11 round 3 — pinning test for ANALYSIS_0002.
+    // `slideWordCount({ title:'', blocks:[], notes:'' })` legitimately
+    // returns 0, so the cache lookup must distinguish "not in cache"
+    // (undefined) from "cached value is zero". A falsy check (`!count`)
+    // would silently treat the zero as a miss and recompute every
+    // render, defeating the optimisation on every empty slide in the
+    // deck.
+    const empty: Slide = { id: "e", title: "", blocks: [], notes: "" }; // real = 0
+    const full: Slide = { id: "f", title: "a b c", blocks: [], notes: "" }; // real = 3
+    const cache = new WeakMap<Slide, number>();
+    // Pre-seed the empty slide's REAL value (0) — same shape as what
+    // a previous render would have stored. Pre-seed the full slide
+    // with a deliberately-wrong value so we can distinguish "the
+    // helper hit our cache for empty" from "the helper recomputed
+    // and happened to get 0 anyway".
+    cache.set(empty, 0);
+    cache.set(full, 42); // wrong on purpose
+    const result = computeDeckWordCounts([empty, full], cache);
+    // If the helper used a falsy check, it would have recomputed
+    // `empty` and gotten 0 — same value, indistinguishable from a
+    // cache hit. The `full` slot disambiguates: a hit on `full`
+    // returns 42 (the seeded value), proving the cache is being
+    // consulted via `=== undefined` (not falsy).
+    expect(result.perSlide[0]).toBe(0); // hit on cache, not recompute
+    expect(result.perSlide[1]).toBe(42); // hit on cache (deliberately wrong seed)
+    expect(result.total).toBe(42);
+  });
 });
 
 describe("findInSlides", () => {
