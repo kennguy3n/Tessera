@@ -685,6 +685,407 @@ Theme 6 — Documentation & verification (Tasks 29–30, PR 6)
 
 ---
 
+## Phase 16 — Sheet editor: formula engine + multi-sheet + Sheet UX
+
+**Status:** `DONE`
+
+**Goal:** Tessera's `sheet` artifact type becomes a real spreadsheet —
+not a CSV-as-grid stand-in. Users get a formula engine with the
+Google-Sheets / Excel function surface they already know
+(`SUM`, `VLOOKUP`, `IF`, `DATEDIF`, …), multi-sheet workbooks with
+cross-sheet refs, and the UX primitives a real editor needs
+(resize, selection, copy/paste, freeze, auto-fill).
+
+### Architecture
+
+The formula engine lives at
+`apps/desktop/renderer/src/editors/formulaEngine/` and is built
+as four ordered passes plus a function registry:
+
+1. **`tokenizer.ts`** — character-by-character lexer that emits
+   `Number` / `String` / `Boolean` / `Error` / `CellRef`
+   (`A1`, `$B$2`, `Sheet2!A1`) / `Range` (`A1:B10`) / `Identifier` /
+   `Operator` / `Comma` / `Paren` tokens. Quoted strings handle
+   doubled-quote escapes (`""` → `"`); cell refs handle each
+   row/column component being absolute (`$`) independently;
+   sheet-qualified refs (`Sheet2!A1`) recognise both quoted
+   (`'Sheet 2'!A1`) and bare sheet names.
+2. **`parser.ts`** — Pratt-style precedence-climbing parser
+   producing a typed AST. Precedence order (low → high): unary
+   `+`/`-` → `^` (right-assoc) → `*`/`/`/`%` → `+`/`-` →
+   comparisons (`=`, `<>`, `<`, `<=`, `>`, `>=`) → string-concat
+   (`&`). Function calls are parsed as `Call { name, args[] }`;
+   ranges as `Range { from, to }`; cell refs as
+   `CellRef { sheet?, col, colAbs, row, rowAbs }`.
+3. **`evaluator.ts`** — tree-walking evaluator. Reads
+   `FunctionImpl` from `FUNCTION_REGISTRY` (built in
+   `functions/index.ts` from per-category modules — see
+   functions list below) and dispatches by upper-cased name. The
+   evaluator's `EvaluationContext` exposes the workbook
+   (`sheets[]` + the active sheet id), cell-resolution callbacks
+   for direct refs and ranges, and an optional `random` hook so
+   `RAND()` is testable.
+4. **`depGraph.ts`** — forward + reverse adjacency graph driving
+   topological recompute. When a cell changes, the graph walks
+   reverse-edges to enqueue dependents and emits a recompute
+   order that respects ordering (a cell evaluates after every
+   cell it reads from). Cyclic dependencies are detected and
+   reported as `#CYCLE!`.
+
+Function categories live in `formulaEngine/functions/`:
+
+- **`math.ts`** — `SUM`, `AVERAGE`, `COUNT`, `COUNTA`, `MIN`, `MAX`,
+  `PRODUCT`, `ABS`, `CEILING`, `FLOOR`, `INT`, `MOD`, `POWER`, `SQRT`,
+  `RAND`, `ROUND`, `ROUNDDOWN`, `ROUNDUP` (18 functions).
+- **`conditional.ts`** — `SUMIF`, `SUMIFS`, `AVERAGEIF`, `AVERAGEIFS`,
+  `COUNTIF`, `COUNTIFS` (6 functions).
+- **`logic.ts`** — `IF`, `IFS`, `IFERROR`, `SWITCH`, `AND`, `OR`,
+  `NOT` (7 functions).
+- **`text.ts`** — `CONCAT`, `CONCATENATE`, `LEFT`, `RIGHT`, `MID`,
+  `LEN`, `LOWER`, `UPPER`, `TRIM`, `SUBSTITUTE`, `FIND`, `SEARCH`,
+  `TEXT`, `VALUE` (14 functions).
+- **`lookup.ts`** — `VLOOKUP`, `HLOOKUP`, `INDEX`, `MATCH`, `XLOOKUP`
+  (5 functions).
+- **`date.ts`** — `DATE`, `TODAY`, `NOW`, `YEAR`, `MONTH`, `DAY`,
+  `DATEVALUE`, `DATEDIF` (8 functions). `DATEDIF` supports the
+  full Excel unit set (`Y`, `M`, `D`, `MD`, `YM`, `YD`).
+- **`stats.ts`** — `MEDIAN`, `PERCENTILE`, `STDEV`, `STDEVP`, `VAR`,
+  `RANK` (6 functions).
+
+**Total: 64 functions** across seven categories — well beyond the
+"31 functions" originally targeted in PR 1.
+
+`SheetEditor.tsx` wires the engine into the renderer through an
+`EvaluationContext` built from the workbook's
+`sheets[].cells[row][col]` matrix. The active sheet id, `random`
+seed (for `RAND()` test pinning), and `now` clock (for
+`TODAY()` / `NOW()` test pinning) are injected via context so
+helper-level tests (`baseFormulaEngine.test.ts`,
+`formulaEngine/__tests__/*.test.ts`) cover the dispatcher
+without a React tree.
+
+Multi-sheet workbooks (`sheetEditorTypes.ts → SheetContent`)
+carry `sheets: SheetData[]` plus an `activeSheetId`. Cross-sheet
+refs (`Sheet2!A1`) are resolved by the evaluator looking up the
+target sheet in the workbook before reading the cell. The tab
+UI lives in `SheetEditor.tsx`.
+
+Sheet UX is split across three focused helpers:
+
+- **`sheetSelection.ts`** — rectangular range selection state
+  machine (`{ anchor, head }`), `extendSelection` for shift-arrow
+  navigation, `addRange` for ctrl-click multi-selection.
+- **`sheetCopyPaste.ts`** — TSV serialisation compatible with
+  Excel and Google Sheets clipboard (tab-separated cells,
+  newline-separated rows). Paste shifts relative refs by the
+  source-to-target offset so a formula copied from `=A1+B1` in
+  row 5 to row 10 becomes `=A6+B6`; absolute refs (`$A$1`) stay
+  pinned.
+- **`sheetAutoFill.ts`** — drag-handle auto-fill with three
+  modes detected from the seed cells: arithmetic series
+  (constant delta — `1, 2, 3`), date series (day / month / year
+  delta), and literal fill (same value repeated). For formulas,
+  the source formula's relative refs are shifted by the
+  destination-row delta on every cell of the fill range.
+
+Cell formatting is stored on the cell (`format: CellFormat`) so
+the same cell can be `currency-USD-2dp` while a neighbour is
+`percent-1dp`. XLSX export rebuilds formula text from the AST
+via `format.ts` so a round-trip through XLSX preserves both the
+formula syntax and the cell format.
+
+### Build
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Formula engine core — tokenizer + Pratt parser + evaluator + `DependencyGraph` with topological recompute + 31-function baseline (math / conditional / logic). `EvaluationContext` exposes the workbook and a deterministic `random` hook. `baseFormulaEngine.test.ts` (renderer-side helper integration) plus per-category tests in `formulaEngine/__tests__/`. | `DONE` (PR #75) |
+| 2 | Text / lookup / date / statistical functions — extends the registry to 64 functions across `text.ts` (14), `lookup.ts` (5), `date.ts` (8), `stats.ts` (6). Multi-sheet workbooks (`sheets[]` schema + cross-sheet refs `Sheet2!A1`). Cell formatting (number / currency / percent / date / scientific; bold / italic / alignment; background). XLSX export rebuilds formula text from the AST + preserves formats + named ranges. `multiSheet.test.ts` pins the cross-sheet ref + tab-UI contracts. | `DONE` (PR #76) |
+| 3 | Sheet UX — `sheetSelection.ts` (rectangular and ctrl-click multi-cell), `sheetCopyPaste.ts` (TSV round-trip with relative-ref shift on paste), `sheetAutoFill.ts` (arithmetic / date / literal series, formula relative-ref adjustment), column / row resize with persistent widths, freeze rows / cols with sticky-position CSS. Helper-level tests: `sheetSelection.test.ts`, `sheetCopyPaste.test.ts`, `sheetAutoFill.test.ts`; component-level UX tests in `sheetEditorUX.test.tsx` and `sheetEditorIntegration.test.tsx`. | `DONE` (PR #77) |
+
+### Exit criteria
+
+- [x] **PR #75** — formula engine evaluates expressions involving the math / conditional / logic registry against real worksheet cells; `DependencyGraph` recomputes dependents in topological order on cell change and reports `#CYCLE!` for cyclic dependencies.
+- [x] **PR #76** — text / lookup / date / statistical functions match Excel / Google-Sheets semantics on fixtures; cross-sheet refs (`Sheet2!A1`) resolve through `EvaluationContext`; XLSX export round-trips formula text and cell formats.
+- [x] **PR #77** — selection, clipboard, freeze, resize, and auto-fill all reachable from the renderer and pin contracts in the helper-level test suites listed above.
+- [x] All renderer Vitest suites green; lint and type-check clean.
+
+---
+
+## Phase 17 — Base editor: field types + import/export + bulk operations
+
+**Status:** `DONE`
+
+**Goal:** Tessera's `base` artifact type (Airtable-style record store
+with field-typed columns) becomes a fully-featured workspace — every
+field type a user would expect, importable from CSV and JSON, with
+bulk-edit and per-type filtering.
+
+### Architecture
+
+`baseEditorTypes.ts → BaseFieldType` is a discriminated union of
+20 field types:
+
+- **Six baseline**: `text`, `number`, `date`, `select`, `checkbox`,
+  `url`.
+- **Seven advanced**:
+  - `multi_select` — array of option ids, rendered as chips with
+    per-option color in the field's `config.options[]`.
+  - `formula` — evaluated via `evaluateBaseFormula` over sibling
+    fields. The formula language is a strict subset of the
+    Phase-16 formula engine (no cell refs, only sibling-field
+    refs by name) so the AST is reusable.
+  - `linked_record` — foreign-key reference to a record in
+    another base (or the same base). The Base editor's
+    `recordIndexById` (`baseEditorHelpers.ts`) lifts lookups to
+    O(1) per render (Phase 19 PR #84 perf).
+  - `rollup` — aggregation across linked records
+    (`SUM` / `AVG` / `MIN` / `MAX` / `COUNT` over a chosen
+    target field).
+  - `lookup` — single-field projection through a
+    `linked_record` (carry a target field's value into the
+    current record's row).
+  - `attachment` — `File` → data URL inlining via the shared
+    `inlineImage.ts` with `MAX_INLINE_IMAGE_BYTES = 5 MiB` cap
+    and human-readable rejection (same path as the Document and
+    Slide editors).
+  - `long_text` — multi-line `<textarea>` with paragraph
+    rendering in cell preview.
+- **Seven simple**: `email`, `phone`, `currency` (with
+  `currencySymbol` config), `percent` (with `percentPrecision`
+  clamped 0–10 by `sanitizeBaseField`), `rating` (1–N stars,
+  configurable N), `duration` (HH:MM:SS), `auto_number` (per-row
+  auto-incrementing integer).
+
+Each `BaseField` carries a `config` object whose shape depends on
+the field type. `sanitizeBaseField` (in `baseFieldHelpers.ts`)
+clamps invalid configs into the legal range on every persisted hop
+(parse / import / migration) — e.g. `percentPrecision: 200` is
+clamped to 10, `ratingMax: -3` is clamped to 1. The sanitiser
+returns the same object reference when no clamp is needed, so
+the symmetry holds without extra allocations.
+
+`BaseEditor.tsx` renders each field type via a per-type
+`<FieldRenderer>` component, with the type registry living in
+`baseFieldTypes.tsx`. Cell editing is in-place; edit state lives
+on a `(recordId, fieldName)`-keyed `expandedCell` slot
+(Phase 19 PR #82 stability fix).
+
+Import / export lives at `baseImportExport.ts`:
+
+- **`parseCsvToBase(csv, schema?)`** — RFC-4180 with embedded
+  quote (`""` → `"`), embedded newlines (within quoted fields),
+  and embedded commas (within quoted fields). When a `schema` is
+  supplied, values are type-parsed (`"123"` → `123` for a
+  `number` field; `"true"` → `true` for `checkbox`; etc.).
+  Without a schema, parsed fields default to `text`. Schema
+  fields run through `sanitizeBaseField` so a hostile saved
+  schema can't poison the parse.
+- **`parseJsonToBase(json)`** — accepts either the canonical
+  `{ fields, records }` envelope or the legacy flat-rows shape
+  (`Record<string, unknown>[]`). Both paths funnel through
+  `sanitizeBaseField`.
+- **`exportBaseCsv(data)`** — emits a header row from `fields[]`
+  followed by `records[]` × `fields[]` rows. Escapes embedded
+  quotes by doubling, wraps any cell containing a comma /
+  newline / quote in double-quotes. Round-trips through
+  `parseCsvToBase`.
+- **`exportBaseJson(data)`** — pretty-printed two-space JSON of
+  the canonical `{ fields, records }` envelope.
+
+Bulk operations live in `BaseEditor.tsx`:
+
+- **Bulk-select** — row checkboxes; click for single, shift-click
+  for range; header checkbox for select-all; selected ids in
+  `selectedIds: Set<string>` keyed by `record.id`. Bulk delete
+  is gated by a confirm dialog.
+- **Manage-fields dialog** — reorder via Move ↑ / Move ↓
+  buttons; rename with in-place input (the `field.name` is also
+  the React key, but `commitEdit` clears `editingName` before
+  the rename so the key-change-triggered remount shows the
+  button, not a stale input); type-change with data migration
+  (e.g. `text` → `number` parses; mismatches become `null`);
+  delete with confirm.
+- **Per-type filters** in the view bar — text contains / equals;
+  number ranges (`>=`, `<=`); date ranges; select equals;
+  checkbox boolean.
+
+### Build
+
+| # | Item | Status |
+|---|---|---|
+| 4 | 20 field types discriminated via `BaseFieldType` — 6 baseline + 7 advanced + 7 simple. Per-type rendering in `baseFieldTypes.tsx`; per-type config sanitisation in `baseFieldHelpers.ts → sanitizeBaseField`. Helper-level tests in `baseFieldHelpers.test.ts` (sanitiser contracts, type-migration paths) and component-level tests in `baseFieldTypes.test.tsx` (each field type's render + edit cycle). | `DONE` (PR #78) |
+| 5 | Import / export — `parseCsvToBase` (RFC-4180 with embedded quotes / newlines / commas; schema-aware), `parseJsonToBase` (canonical + legacy + sanitised), `exportBaseCsv` (round-trip-clean), `exportBaseJson` (pretty-printed). Bulk-select (checkboxes + shift-click range + select-all + bulk-delete confirm). Manage-fields dialog (reorder + rename + type-migration + delete-confirm). Per-type filters in the view bar. Helper-level tests in `baseImportExport.test.ts`; component-level coverage in `baseViews.test.tsx` and `editorParsers.test.ts`. | `DONE` (PR #79) |
+
+### Exit criteria
+
+- [x] **PR #78** — every one of the 20 field types renders, accepts input, and round-trips through save → reload; `sanitizeBaseField` clamps invalid configs into the legal range; helper + component test suites green.
+- [x] **PR #79** — CSV / JSON import-export round-trip every field type; bulk-select + manage-fields + filters all reachable from the renderer and pin in the test suite; `parseCsvToBase` and `parseJsonToBase` both run sanitisation symmetrically so hostile schemas can't break downstream callers.
+- [x] All renderer Vitest suites green; lint and type-check clean.
+
+---
+
+## Phase 18 — Document & Slide editors: TipTap polish, layouts, stable IDs, drag-and-drop
+
+**Status:** `DONE`
+
+**Goal:** Tessera's `document` and `slide` artifact types become
+real editors. The document editor gains the TipTap surface the
+modern equivalent (Notion / Google Docs / Confluence) ships out
+of the box; the slide editor gains layouts, block reorder, inline
+image uploads, deck-wide find, and — critically — stable IDs that
+let drag-and-drop work without React losing component identity on
+reorder.
+
+### Architecture
+
+**`DocumentEditor.tsx`** is a TipTap-based editor with the full
+StarterKit plus carefully-chosen extensions:
+
+- **Marks**: `Underline`, `Highlight`, `TextAlign`, `Link`.
+- **Block nodes**: `Image`, `Table` (`TableRow` / `TableCell` /
+  `TableHeader`), `TaskList` (`TaskItem`), `CodeBlockLowlight`
+  (lowlight registry with 30+ languages — JavaScript, TypeScript,
+  Python, Rust, Go, JSON, YAML, Bash, etc.).
+- **Custom extensions**:
+  - **`FindReplaceExtension`** (`extensions/FindReplaceExtension.ts`)
+    — adds find-highlight marks via meta-only ProseMirror
+    dispatches (`tr.docChanged === false` so the rebuild path in
+    the doc-change handler bails). Supports case-sensitive and
+    whole-word toggles; replace and replaceAll. The find panel
+    UI is `components/FindReplacePanel.tsx`; it programmatically
+    moves the ProseMirror selection on Prev / Next without ever
+    calling `.focus()` on the editor (which would yank focus
+    away from the find input — matches Chrome's Ctrl+F UX).
+  - **`SlashCommandExtension`** (`extensions/SlashCommandExtension.ts`)
+    — popover keyed off `/` with keyboard nav
+    (ArrowUp / Down / Enter / Escape). Suggestions cover
+    headings, lists, code, blockquote, task list, divider,
+    table. Command dispatch goes through
+    `chain().setNode().run()` (for heading / paragraph
+    transforms) or `chain().toggleList().run()` (for list
+    nodes).
+
+The outline panel extracts H1–H6 from the doc and offers
+click-to-scroll. Toolbar buttons show active state via the
+TipTap `editor.isActive('mark')` API.
+
+**`SlideEditor.tsx`** is a custom (non-TipTap) editor because
+slides have a fundamentally different model: each slide is a
+container of typed blocks (text / bullets / image / diagram /
+code), not a single rich-text document. The slide model lives in
+`slideEditorTypes.ts`:
+
+```typescript
+type SlideLayout = "blank" | "title" | "titleContent" | "twoColumn" | "imageCaption";
+
+interface Slide {
+  id: string;          // crypto.randomUUID() — see "Stable IDs" below.
+  title: string;
+  blocks: SlideBlock[];
+  notes: string;
+}
+
+interface SlideBlock {
+  id: string;          // crypto.randomUUID() per block.
+  type: "text" | "bullets" | "image" | "diagram" | "code";
+  content: string;
+  alt?: string;        // image-block only.
+}
+```
+
+`buildSlideFromLayout(layout)` produces a fresh `Slide` with the
+layout's pre-defined block composition; the user is free to
+mutate any block, add more, or delete down to zero — the layout
+is **NOT** persisted on the Slide, only governs the initial
+state.
+
+Helper primitives in `slideEditorHelpers.ts`:
+
+- `parseSlideContent(json)` / `slidesToMarpMarkdown(slides)` —
+  JSON round-trip and Marp export. The Marp branch emits
+  `![alt](dataUrl)` syntax for image blocks (PR #81 originally
+  shipped a `else { parts.push(content); }` fall-through that
+  rendered the raw data URL as visible paragraph text; fixed in
+  the same PR).
+- `buildSlideFromLayout` / `duplicateSlideAt` — both generate
+  fresh `id`s for the new slide and every block. A duplicate
+  must NOT share its source's id, otherwise React would lose
+  track of component identity.
+- `moveSlide(slides, from, to)` / `moveBlock(slide, from, to)` —
+  immutable array splice + insert; the unchanged slides survive
+  by reference so PR #11 perf (Phase 19) can short-circuit the
+  word-count cache.
+- `backfillSlideIds(slides)` — retrofits ids onto slides parsed
+  from an older save that didn't have them. Idempotent — slides
+  that already have an id keep it.
+- `slideWordCount(slide)` / `deckWordCount(slides)` — title +
+  blocks + notes; image alt text counts, base64 content does NOT.
+- `findInSlides(slides, needle, opts?)` — deck-wide find
+  returning `{slideIndex, blockIndex, field, offset, length}`
+  results (where `field` is one of `title` / `block` / `notes`).
+  Empty needles short-circuit (avoid exponential blowup); a
+  zero-length match guard walks forward by `needle.length` so
+  the helper never matches overlapping occurrences.
+
+**Stable IDs + drag-and-drop reorder** (PR #82) is the headline
+architectural change. React keys must be stable across reorder
+or React tears down and remounts components, losing focus state,
+cursor position, and in-flight FileReader uploads. Pre-PR-82 the
+SlideEditor keyed on array index — every reorder caused every
+slide downstream of the moved one to remount. PR #82 introduces
+`crypto.randomUUID()`-derived ids for every Slide and every
+SlideBlock, persisted in the saved JSON, with `backfillSlideIds`
+running on parse for older saves.
+
+Drag-and-drop uses native HTML5 events on
+`.slide-thumb-row` (slide-level) and `.slide-block` (block-level):
+
+- `onDragStart` sets the source id via `e.dataTransfer.setData`
+  and triggers the `is-dragging` className for visual feedback.
+- `onDragOver` calls `e.preventDefault()` to mark the row as a
+  valid drop target.
+- `onDrop` reads the source id, looks up source and target
+  indices via id (not via the index-captured-at-render time —
+  the indices may have shifted), and calls
+  `setSlides(prev => moveSlide(prev, srcIdx, tgtIdx))`.
+- `onDragEnd` clears the dragged-id state on any termination
+  path (drop on self, drop outside any row, drop on a
+  re-keyed row).
+
+In-flight FileReader callbacks for image uploads are keyed by
+`uploadTokenKey(slideId, blockId)`. If the user reorders or
+deletes a slide / block while a `fileToDataUrl` is awaiting,
+the post-await `findIndex(s => s.id === slideId)` correctly
+routes the data URL to the originally-targeted block, or
+discards it if the target was deleted. The same key is used to
+cancel stale uploads (`discardUploadTokensForSlide`,
+`discardUploadTokensForBlock`) on delete / content-sync.
+
+Every interactive child of a draggable element carries an
+explicit `draggable={false}` to opt out of native HTML5
+drag-inheritance — the slide-thumb button, the
+duplicate / delete buttons, the block-type `<select>`, the
+move ↑ / move ↓ / × buttons, etc. Without this, touch /
+accessibility tooling can mis-tap an interactive child as a
+drag-start.
+
+### Build
+
+| # | Item | Status |
+|---|---|---|
+| 6 | Document editor — TipTap with `StarterKit` + `Underline` + `Highlight` + `TextAlign` + `Link` + `Image` + `Table` + `TaskList` + `CodeBlockLowlight` (30+ languages). Toolbar with active-state buttons. `FindReplaceExtension` (case-sensitive / whole-word toggles; replace / replaceAll; meta-only ProseMirror dispatches so the rebuild path bails). `SlashCommandExtension` (popover at `/` with keyboard nav). Outline panel extracts H1–H6 and click-scrolls. Tests in `documentEditorHelpers.test.ts` (helpers) and `documentEditorExtensions.test.ts` (FindReplace + SlashCommand integration). | `DONE` (PR #80) |
+| 7 | Slide editor — 5 layouts (`blank`, `title`, `titleContent`, `twoColumn`, `imageCaption`); block reorder via Move ↑/↓ buttons; per-block type-change `<select>`; per-block delete; image uploads via shared `inlineImage.ts` (5 MiB cap, human-readable rejection); per-slide word count via `slideWordCount` and deck total via `deckWordCount` (image alt text counts, base64 content doesn't); deck-wide find panel via `findInSlides` returning offsets across title / blocks / notes. Marp export emits `![alt](url)` for image blocks. Tests in `slideEditor.test.ts` (helpers). | `DONE` (PR #81) |
+| 8 | Stable IDs + drag-and-drop reorder — every Slide and SlideBlock carries a `crypto.randomUUID()` id persisted in saved JSON. `backfillSlideIds` retrofits older saves on parse. React keys use `slide.id` / `block.id`. Native HTML5 drag-and-drop on `.slide-thumb-row` and `.slide-block` with source-id lookup via `findIndex(s => s.id === ...)` so concurrent reorder doesn't corrupt the drop target. `uploadTokenKey(slideId, blockId)` keys in-flight FileReader callbacks so reorder / delete cancels stale uploads. Every interactive child of a draggable carries explicit `draggable={false}`. The `activeIndex` clamp on content-sync also clears `draggedSlideId` / `draggedBlockId` / `uploadTokensRef` so a version restore can't leak per-deck state. Tests in `slideEditorDnd.test.tsx` (component-level DnD contracts). | `DONE` (PR #82) |
+
+### Exit criteria
+
+- [x] **PR #80** — document editor opens with toolbar, outline panel, find/replace panel (Ctrl+F), and slash menu reachable. All TipTap extensions wire cleanly. Tests pin the find-replace + slash-command contracts.
+- [x] **PR #81** — slide editor exposes layout picker, per-block reorder/delete, image uploads (with size cap), per-slide and deck word counts, and deck-wide find panel. Marp export emits proper image markdown for image blocks.
+- [x] **PR #82** — drag-reorder slides and blocks survives concurrent FileReader uploads; React keys use stable ids; the content-sync useEffect clamps `activeIndex` and tears down per-deck in-flight state on a restore.
+- [x] All renderer Vitest suites green; lint and type-check clean.
+
+---
+
 ## Phase 19 — Multilingual semantic search via ONNX Runtime
 
 **Status:** `IN PROGRESS`

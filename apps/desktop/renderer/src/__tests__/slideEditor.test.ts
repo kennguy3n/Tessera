@@ -19,6 +19,7 @@ import {
   buildBlock,
   slideWordCount,
   deckWordCount,
+  computeDeckWordCounts,
   findInSlides,
   nextBlockForTypeChange,
   DEFAULT_DIAGRAM_DSL,
@@ -1398,6 +1399,126 @@ describe("deckWordCount", () => {
 
   it("returns 0 for an empty deck", () => {
     expect(deckWordCount([])).toBe(0);
+  });
+});
+
+describe("computeDeckWordCounts", () => {
+  // Phase 19 PR 11 perf helper. The SlideEditor toolbar reads
+  // `<active> / <total>` on every render, which previously walked
+  // every slide twice per keystroke. `computeDeckWordCounts` is the
+  // single-pass replacement with optional WeakMap caching.
+
+  it("returns per-slide AND deck-total counts in one pass", () => {
+    const a = slideOf("A B", "one two three");
+    const b = slideOf("X", "", "speaker note");
+    const c = slideOf("", "foo bar baz quux");
+    const result = computeDeckWordCounts([a, b, c]);
+    // a=5, b=3, c=4 → total 12.
+    expect(result.perSlide).toEqual([5, 3, 4]);
+    expect(result.total).toBe(12);
+  });
+
+  it("matches `slideWordCount` per slide AND `deckWordCount` total exactly", () => {
+    // Pin: the new helper MUST agree with the existing helpers slot-by-slot.
+    // Otherwise a switch to it would cause the user-visible toolbar number
+    // to disagree with itself across the change. Property-style cross-check
+    // over a 4-slide deck.
+    const slides: Slide[] = [
+      slideOf("Alpha", "one two"),
+      slideOf("Beta gamma", "three four five", "a note"),
+      slideOf("", "", "only notes here"),
+      slideOf("D", ""),
+    ];
+    const result = computeDeckWordCounts(slides);
+    for (let i = 0; i < slides.length; i += 1) {
+      expect(result.perSlide[i]).toBe(slideWordCount(slides[i]));
+    }
+    expect(result.total).toBe(deckWordCount(slides));
+  });
+
+  it("returns empty perSlide + total=0 for an empty deck", () => {
+    const result = computeDeckWordCounts([]);
+    expect(result.perSlide).toEqual([]);
+    expect(result.total).toBe(0);
+  });
+
+  it("hits the cache for unchanged Slide references across renders", () => {
+    // The whole point of the optional cache is that an immutable
+    // update which keeps unchanged Slide objects by reference can
+    // skip re-walking them. Counter pattern: wrap `slideWordCount`
+    // behaviour by inserting bogus cache entries and verifying the
+    // returned counts come from the cache (not from a fresh walk).
+    const a: Slide = { id: "a", title: "a b", blocks: [], notes: "" }; // real = 2
+    const b: Slide = { id: "b", title: "c d", blocks: [], notes: "" }; // real = 2
+    const cache = new WeakMap<Slide, number>();
+    // Pre-seed with a deliberately wrong count so we can observe the
+    // helper returning the cached value rather than recomputing.
+    cache.set(a, 999);
+    const result = computeDeckWordCounts([a, b], cache);
+    expect(result.perSlide[0]).toBe(999); // came from the cache
+    expect(result.perSlide[1]).toBe(2); // freshly computed + stored
+    expect(result.total).toBe(1001);
+    // After the run, b should now be cached at the freshly-computed
+    // value so a second run is fully cache-served.
+    expect(cache.get(b)).toBe(2);
+  });
+
+  it("computes and caches new Slide references encountered on subsequent calls", () => {
+    // Simulates the keystroke-on-deck pattern: render N=1 with a
+    // single slide → second render the user adds a slide → only the
+    // new slide must be walked.
+    const a: Slide = { id: "a", title: "alpha beta", blocks: [], notes: "" }; // 2 words
+    const cache = new WeakMap<Slide, number>();
+    computeDeckWordCounts([a], cache);
+    expect(cache.get(a)).toBe(2);
+
+    // New slide added.
+    const b: Slide = { id: "b", title: "x y z", blocks: [], notes: "" }; // 3 words
+    const result = computeDeckWordCounts([a, b], cache);
+    expect(result.perSlide).toEqual([2, 3]);
+    expect(result.total).toBe(5);
+    expect(cache.get(b)).toBe(3);
+  });
+
+  it("does not poison the cache when called WITHOUT a cache (cache arg optional)", () => {
+    const slide: Slide = {
+      id: "x",
+      title: "alpha",
+      blocks: [],
+      notes: "",
+    };
+    const result = computeDeckWordCounts([slide]); // no cache passed
+    expect(result.perSlide).toEqual([1]);
+    expect(result.total).toBe(1);
+  });
+
+  it("treats a cached value of 0 as a hit (defensive against `=== undefined` regression)", () => {
+    // Phase 19 PR 11 round 3 — pinning test for ANALYSIS_0002.
+    // `slideWordCount({ title:'', blocks:[], notes:'' })` legitimately
+    // returns 0, so the cache lookup must distinguish "not in cache"
+    // (undefined) from "cached value is zero". A falsy check (`!count`)
+    // would silently treat the zero as a miss and recompute every
+    // render, defeating the optimisation on every empty slide in the
+    // deck.
+    const empty: Slide = { id: "e", title: "", blocks: [], notes: "" }; // real = 0
+    const full: Slide = { id: "f", title: "a b c", blocks: [], notes: "" }; // real = 3
+    const cache = new WeakMap<Slide, number>();
+    // Pre-seed the empty slide's REAL value (0) — same shape as what
+    // a previous render would have stored. Pre-seed the full slide
+    // with a deliberately-wrong value so we can distinguish "the
+    // helper hit our cache for empty" from "the helper recomputed
+    // and happened to get 0 anyway".
+    cache.set(empty, 0);
+    cache.set(full, 42); // wrong on purpose
+    const result = computeDeckWordCounts([empty, full], cache);
+    // If the helper used a falsy check, it would have recomputed
+    // `empty` and gotten 0 — same value, indistinguishable from a
+    // cache hit. The `full` slot disambiguates: a hit on `full`
+    // returns 42 (the seeded value), proving the cache is being
+    // consulted via `=== undefined` (not falsy).
+    expect(result.perSlide[0]).toBe(0); // hit on cache, not recompute
+    expect(result.perSlide[1]).toBe(42); // hit on cache (deliberately wrong seed)
+    expect(result.total).toBe(42);
   });
 });
 

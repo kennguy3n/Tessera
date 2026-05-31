@@ -855,9 +855,57 @@ export function slideWordCount(slide: Slide): number {
  * Total word count across every slide in the deck. Used in the
  * SlideEditor toolbar header alongside the slide counter so the user
  * has a quick "how much content is in this deck" signal.
+ *
+ * Prefer `computeDeckWordCounts` when both per-slide AND deck totals
+ * are needed in the same render pass — that variant shares the
+ * per-slide tally between both callers and supports an opt-in cache.
  */
 export function deckWordCount(slides: Slide[]): number {
   return slides.reduce((acc, slide) => acc + slideWordCount(slide), 0);
+}
+
+/**
+ * Per-slide and deck-total word counts in one O(N + W) pass, where
+ * `N` is the number of slides and `W` the total content length.
+ *
+ * Phase 19 PR 11 perf: the SlideEditor toolbar shows
+ * `Words: <active> / <total>` on every render. Before this helper
+ * existed, the active count was computed inline (a fresh
+ * `slideWordCount(activeSlide)` per render) AND `deckWordCount(slides)`
+ * was memoised against `slides` — but a single keystroke on a 50-slide
+ * deck produces a *new* `slides` reference (immutable update) and
+ * blows the memo, re-tallying every slide every keystroke.
+ *
+ * With the optional `cache` parameter the caller (`SlideEditor.tsx`)
+ * passes a long-lived `WeakMap<Slide, number>` held in a `useRef`.
+ * Because the immutable-update pattern only allocates a new `Slide`
+ * object for the slide(s) that actually changed, every unchanged
+ * slide hits the cache in O(1) — a one-slide edit on an N-slide deck
+ * drops from O(N * W) to O(W_changed_slide) per render.
+ *
+ * The cache survives the component lifetime (held by `useRef`) but is
+ * a `WeakMap` so it doesn't pin abandoned Slide objects in memory
+ * after they're replaced by an edit. Mirrors the same caching pattern
+ * `BaseEditor` uses for `resolveLinkedRecords` (PR #84) and that
+ * `SheetEditor` uses for its formula evaluation cache (PR #83).
+ */
+export function computeDeckWordCounts(
+  slides: Slide[],
+  cache?: WeakMap<Slide, number>,
+): { perSlide: number[]; total: number } {
+  const perSlide: number[] = new Array(slides.length);
+  let total = 0;
+  for (let i = 0; i < slides.length; i += 1) {
+    const slide = slides[i];
+    let count = cache?.get(slide);
+    if (count === undefined) {
+      count = slideWordCount(slide);
+      cache?.set(slide, count);
+    }
+    perSlide[i] = count;
+    total += count;
+  }
+  return { perSlide, total };
 }
 
 /**
