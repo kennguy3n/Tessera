@@ -13,6 +13,22 @@
  * the live editor or from a test.
  */
 
+// Inline-image helpers live in `./inlineImage` so the slide editor's
+// upload path can share the same size cap and FileReader plumbing.
+// Re-exported here under the historical names so existing imports
+// (`import { fileToDataUrl, MAX_IMAGE_BYTES } from
+// "./documentEditorHelpers"`) keep working without a churn-y rename
+// across DocumentEditor.tsx and its tests. Devin Review PR #82
+// ANALYSIS_…_0001 / BUG_…_0001 flagged the duplicate implementation
+// and the missing size cap on the slide-editor copy; centralising
+// here fixes both in one place. Re-exports live at the file top
+// with the imports per CONTRIBUTING.md (Devin Review PR #82
+// ANALYSIS_…_0005).
+export {
+  MAX_INLINE_IMAGE_BYTES as MAX_IMAGE_BYTES,
+  fileToDataUrl,
+} from "./inlineImage";
+
 // ─────────────────────────────────────────────────────────────────────
 // Content normalisation
 // ─────────────────────────────────────────────────────────────────────
@@ -459,20 +475,6 @@ export function replaceAll(
   return out;
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Image embedding
-// ─────────────────────────────────────────────────────────────────────
-
-// Inline-image helpers live in `./inlineImage` so the slide editor's
-// upload path can share the same size cap and FileReader plumbing.
-// Re-exported here under the historical names so existing imports
-// (`import { fileToDataUrl, MAX_IMAGE_BYTES } from
-// "./documentEditorHelpers"`) keep working without a churn-y rename
-// across DocumentEditor.tsx and its tests. Devin Review PR #82
-// ANALYSIS_…_0001 / BUG_…_0001 flagged the duplicate implementation
-// and the missing size cap on the slide-editor copy; centralising
-// here fixes both in one place.
-export {
-  MAX_INLINE_IMAGE_BYTES as MAX_IMAGE_BYTES,
-  fileToDataUrl,
-} from "./inlineImage";
+// (Inline-image helpers are re-exported from `./inlineImage` at the
+// top of this file, grouped with the regular imports per
+// CONTRIBUTING.md — see the comment block above the re-export.)

@@ -20,6 +20,18 @@ import type {
   SlideLayout,
 } from "./slideEditorTypes";
 
+// Inline-image upload path: re-export the shared helper from
+// `./inlineImage` rather than maintaining a second copy. The previous
+// hand-rolled implementation had no size cap (Devin Review PR #82
+// BUG_…_0001), which let a user inline a multi-MB image into the slide
+// JSON and slow down every subsequent debounced save. Routing through
+// the shared helper inherits the 5 MiB cap and the human-readable
+// rejection message used by the document editor, keeping both editors
+// in lock-step (Devin Review PR #82 ANALYSIS_…_0001). Re-exports are
+// grouped with the regular imports at the file top per CONTRIBUTING.md
+// (Devin Review PR #82 ANALYSIS_…_0005).
+export { MAX_INLINE_IMAGE_BYTES, fileToDataUrl } from "./inlineImage";
+
 export interface ParsedSlideContent {
   slides: Slide[];
   marpMode: boolean;
@@ -945,15 +957,6 @@ export function findInSlides(
   return results;
 }
 
-// Inline-image upload path: re-export the shared helper from
-// `./inlineImage` rather than maintaining a second copy. The previous
-// hand-rolled implementation had no size cap (Devin Review PR #82
-// BUG_…_0001), which let a user inline a multi-MB image into the slide
-// JSON and slow down every subsequent debounced save. Routing through
-// the shared helper inherits the 5 MiB cap and the human-readable
-// rejection message used by the document editor, keeping both editors
-// in lock-step (Devin Review PR #82 ANALYSIS_…_0001).
-export {
-  MAX_INLINE_IMAGE_BYTES,
-  fileToDataUrl,
-} from "./inlineImage";
+// (Inline-image helpers are re-exported from `./inlineImage` at the
+// top of this file, grouped with the regular imports per
+// CONTRIBUTING.md — see the comment block above the import list.)
