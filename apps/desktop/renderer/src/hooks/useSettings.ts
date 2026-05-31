@@ -32,6 +32,20 @@ const DEFAULT_SETTINGS: SettingsData = {
   // future change to the default propagates without a renderer
   // edit).
   modelIdleTimeoutSecs: DEFAULT_MODEL_IDLE_TIMEOUT_SECS,
+  // Phase 19 PR 10 Task 9 — telemetry defaults OFF (opt-in).
+  // The renderer placeholder mirrors the main-process default in
+  // `electron/config.ts:DEFAULT_CONFIG` so a slow IPC response
+  // never causes a flash of "telemetry on" in the Privacy settings
+  // panel for a previously-opted-out user.
+  telemetryEnabled: false,
+  // Phase 19 PR 10 Task 10 — app-lock defaults to "off" so the
+  // lock overlay never blocks first-run users; user opts in from
+  // Settings → Security.
+  appLockMode: "off",
+  // Phase 19 PR 10 Task 7 — auto-updater signature enforcement
+  // defaults to ON; the Settings UI surfaces a checkbox that
+  // toggles this so power users on dev builds can disable it.
+  enforceUpdateSignature: true,
 };
 
 // Touch the cap consts so the import isn't tree-shaken — they're

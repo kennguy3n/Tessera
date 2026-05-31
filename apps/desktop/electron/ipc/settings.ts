@@ -23,6 +23,14 @@ import { createEmptyTokenUsage } from "../tokenCounter";
 import { resolveProviderEndpoint } from "../externalProviderStream";
 import { listExternalProviderModels } from "../externalProviderModels";
 import * as secretsVault from "../secretsVault";
+import {
+  enableTelemetry,
+  disableTelemetry,
+  getEventsSnapshot,
+  readPersistedEvents,
+  recordCounter,
+  type TelemetryEvent,
+} from "../telemetrySink";
 import type {
   EmbeddingDownloadProgressInfo,
   EmbeddingModelInfo,
@@ -274,6 +282,14 @@ export function registerSettingsHandlers(): void {
       // to `DEFAULT_MODEL_IDLE_TIMEOUT_SECS` if corrupted) so a fresh
       // install or healed config sees a usable bucket on first render.
       modelIdleTimeoutSecs: config.modelIdleTimeoutSecs,
+      // Phase 19 PR 10 Task 7/9/10: surface the security flags so
+      // the renderer Settings UI can render the corresponding
+      // toggles. The on-disk schema heals all three to safe
+      // defaults if corrupted (`telemetryEnabled: false`,
+      // `appLockMode: "off"`, `enforceUpdateSignature: true`).
+      telemetryEnabled: config.telemetryEnabled,
+      appLockMode: config.appLockMode,
+      enforceUpdateSignature: config.enforceUpdateSignature,
     } as SettingsData;
   });
 
@@ -358,6 +374,37 @@ export function registerSettingsHandlers(): void {
         );
       }
     }
+    // Phase 19 PR 10 Task 9 — telemetry toggle. Apply the new
+    // state to the live sink BEFORE auditing so a failed audit
+    // doesn't leave the sink half-enabled. The persisted-config
+    // read above already reflects the new on-disk value, so the
+    // next `loadConfig()` (at startup) would re-init from the
+    // same source of truth.
+    if (parsed.telemetryEnabled !== undefined) {
+      if (parsed.telemetryEnabled) {
+        enableTelemetry();
+      } else {
+        disableTelemetry();
+      }
+      auditSettingsField(
+        "telemetryEnabled",
+        String(parsed.telemetryEnabled),
+      );
+    }
+    // Phase 19 PR 10 Task 10 — app-lock mode change. The actual
+    // PIN / biometric setup happens via dedicated `appLock:*`
+    // handlers; here we only record the user's mode preference.
+    if (parsed.appLockMode !== undefined)
+      auditSettingsField("appLockMode", parsed.appLockMode);
+    // Phase 19 PR 10 Task 7 — updater signature enforcement
+    // toggle. The auto-updater reads this on every download to
+    // decide whether to gate `quitAndInstall` on a successful
+    // Ed25519 verify.
+    if (parsed.enforceUpdateSignature !== undefined)
+      auditSettingsField(
+        "enforceUpdateSignature",
+        String(parsed.enforceUpdateSignature),
+      );
     return {
       theme: persisted.theme,
       defaultExportFormat: persisted.defaultExportFormat,
@@ -367,8 +414,45 @@ export function registerSettingsHandlers(): void {
       pinnedArtifactIds: persisted.pinnedArtifactIds,
       recentArtifactIds: persisted.recentArtifactIds,
       modelIdleTimeoutSecs: persisted.modelIdleTimeoutSecs,
+      telemetryEnabled: persisted.telemetryEnabled,
+      appLockMode: persisted.appLockMode,
+      enforceUpdateSignature: persisted.enforceUpdateSignature,
     } as SettingsData;
   });
+
+  // Phase 19 PR 10 Task 9 — read-only telemetry inspection. The
+  // renderer's "audit my telemetry" panel calls this so the user
+  // can see exactly what's been recorded. No write surface here —
+  // adding raw-event support would defeat the whitelisted-key
+  // privacy guarantee documented in `telemetrySink.ts`.
+  idempotentHandle(
+    "telemetry:getEvents",
+    async (): Promise<TelemetryEvent[]> => {
+      return getEventsSnapshot();
+    },
+  );
+
+  idempotentHandle(
+    "telemetry:getPersistedEvents",
+    async (): Promise<TelemetryEvent[]> => {
+      return readPersistedEvents();
+    },
+  );
+
+  // Phase 19 PR 10 Task 9 — single-write surface for the renderer
+  // to record a whitelisted event. The schema validation in
+  // `telemetry:record` rejects non-whitelisted keys at the IPC
+  // boundary; `recordCounter` itself ALSO validates so a
+  // compromised renderer / preload can't bypass the whitelist by
+  // calling the IPC directly with a forged key. Defense in depth.
+  idempotentHandle(
+    "telemetry:recordCounter",
+    async (_event, keyRaw: unknown, incrementRaw: unknown): Promise<void> => {
+      if (typeof keyRaw !== "string") return;
+      const increment = typeof incrementRaw === "number" ? incrementRaw : 1;
+      recordCounter(keyRaw, increment);
+    },
+  );
 
   idempotentHandle("externalProvider:get", async () => {
     const config = loadConfig();

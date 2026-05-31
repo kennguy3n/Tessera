@@ -55,6 +55,13 @@ import {
   runRedirectServer,
   type ProviderId,
 } from "./providerOAuth";
+import {
+  MissingScopeError,
+  assertScopesGranted,
+  compareScopes,
+  getRequestedScopes,
+  type ScopeComparison,
+} from "../../oauthScope";
 import { disconnectOneDrive, syncOneDrive } from "./onedrive";
 import { disconnectNotion, syncNotion } from "./notion";
 import { disconnectJira, syncJira } from "./jira";
@@ -522,11 +529,17 @@ async function getValidAccessToken(
       }
       throw err;
     }
+    // Phase 19 PR 10 Task 8 — RFC 6749 allows the refresh response
+    // to narrow scope (return a `scope` field listing a smaller
+    // set). Trust the refresh response when present; fall back to
+    // the previously-stored grant when the provider omits the
+    // field (which is the common case for Microsoft / Google /
+    // Atlassian since the grant cannot widen on refresh).
     ctx.tokenVault.storeTokens(provider, {
       accessToken: refreshed.accessToken,
       refreshToken: refreshed.refreshToken,
       expiresAt: Date.now() + refreshed.expiresIn * 1000,
-      scopes: stored.scopes,
+      scopes: refreshed.grantedScopes ?? stored.scopes,
       clientId: stored.clientId,
       clientSecret: stored.clientSecret,
     });
@@ -704,6 +717,40 @@ export async function runConnectorSync(
     }
     throw err;
   }
+  // Phase 19 PR 10 Task 8 — validate the user has granted every
+  // required OAuth scope before we burn rate-limit budget and start
+  // hitting provider APIs. A narrowed grant would otherwise surface
+  // as opaque 403s deep inside the per-provider sync impl; here we
+  // throw a structured `MissingScopeError` that carries the precise
+  // missing-scope list to the renderer.
+  //
+  // Placement matters: AFTER `getValidAccessToken` (which silently
+  // refreshes if needed; the refresh response may narrow the
+  // persisted grant), and BEFORE `rateLimiter.consume` (a
+  // permanent scope failure should not eat the 30s budget — the
+  // user will re-authorize and immediately want to retry).
+  const oauthConfig = getProviderOAuthConfig(provider);
+  const requestedScopes = getRequestedScopes(oauthConfig);
+  if (requestedScopes.length > 0) {
+    const storedTokens = ctx.tokenVault.getTokens(provider);
+    const grantedScopes = storedTokens?.scopes ?? [];
+    try {
+      assertScopesGranted(provider, requestedScopes, grantedScopes);
+    } catch (err) {
+      if (err instanceof MissingScopeError) {
+        ctx.log.warn("connector sync blocked by missing scopes", {
+          provider,
+          missing: err.missing,
+          granted: err.granted,
+        });
+        // Record on every per-provider source so the source-health
+        // badge reflects "needs re-auth" rather than "syncing".
+        // `recordAllProviderFailures` swallows its own bridge errors.
+        recordAllProviderFailures(ctx, provider, err);
+      }
+      throw err;
+    }
+  }
   try {
     ctx.rateLimiter.consume(`connectors:sync:${provider}`, {
       tokensPerInterval: 1,
@@ -870,14 +917,41 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
         clientSecret,
         codeVerifier: pkce?.verifier,
       });
+      // Phase 19 PR 10 Task 8 — persist the scopes the provider
+      // actually granted (`tokens.grantedScopes`), not just the
+      // scopes we requested. If the provider's response omitted the
+      // `scope` field entirely (e.g. Notion integration tokens) we
+      // fall back to the requested scopes so we still have a record
+      // of what the connector is meant to be allowed to do.
+      const requestedScopes = config.scope
+        .split(/\s+/)
+        .filter(Boolean);
+      const persistedScopes =
+        tokens.grantedScopes ?? requestedScopes;
       ctx.tokenVault.storeTokens(provider, {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
         expiresAt: Date.now() + tokens.expiresIn * 1000,
-        scopes: config.scope.split(/\s+/).filter(Boolean),
+        scopes: persistedScopes,
         clientId,
         clientSecret,
       });
+      // Warn (in the structured log) when the user narrowed
+      // consent. The connector card surfaces the same diff in the
+      // UI; this log line gives a forensic trail for support.
+      if (tokens.grantedScopes !== null) {
+        const missing = requestedScopes.filter(
+          (s) => !tokens.grantedScopes!.includes(s),
+        );
+        if (missing.length > 0) {
+          ctx.log.warn("connector scopes narrowed by user", {
+            provider,
+            requested: requestedScopes,
+            granted: tokens.grantedScopes,
+            missing,
+          });
+        }
+      }
       ctx.log.info("connector authenticated", { provider });
       // log the connect event AFTER the tokens
       // have been written to the vault. A failed audit append must
@@ -980,6 +1054,30 @@ export function registerConnectorHandlers(ctx: IpcContext): void {
       // handler (also routed through `runConnectorSync`) gets audited
       // automatically. See the doc comment in `runConnectorSync`.
       return await runConnectorSync(ctx, provider);
+    },
+  );
+
+  // Phase 19 PR 10 Task 8 — surface the requested-vs-granted scope
+  // diff to the renderer so the connector card can render a
+  // "scopes narrowed" warning + reconnect CTA without the user
+  // having to attempt a sync first.
+  //
+  // The handler is intentionally read-only: it inspects the stored
+  // token's `scopes` field and the OAuth config's `scope`, returns
+  // a structured `ScopeComparison`, and never touches the network
+  // (no refresh, no provider API call). Renderers can poll cheaply.
+  idempotentHandle(
+    "connectors:inspectScopes",
+    async (
+      _event,
+      providerRaw: unknown,
+    ): Promise<ScopeComparison | null> => {
+      const provider = assertProvider(providerRaw, "provider");
+      const stored = ctx.tokenVault.getTokens(provider);
+      if (!stored) return null;
+      const config = getProviderOAuthConfig(provider);
+      const requested = getRequestedScopes(config);
+      return compareScopes(provider, requested, stored.scopes ?? []);
     },
   );
 }

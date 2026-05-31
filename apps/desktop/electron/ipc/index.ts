@@ -8,6 +8,7 @@
  * `ipc.ts` so a stack trace from a hot-reload double-registration
  * crash points at the same module the contributor was just editing.
  */
+import { registerAppLockHandlers } from "./appLock";
 import { registerAutomationsHandlers } from "./automations";
 import { registerArtifactsHandlers } from "./artifacts";
 import { registerAuditHandlers } from "./audit";
@@ -40,4 +41,9 @@ export function registerAllIpcHandlers(): void {
   registerDialogHandlers();
   registerKchatHandlers();
   registerAuditHandlers();
+  // Phase 19 PR 10 Task 10 — PIN / biometric app-lock IPC. Wired
+  // last so the lock surface is available after all stateful
+  // handlers; ordering is only cosmetic since registration is
+  // idempotent.
+  registerAppLockHandlers();
 }
