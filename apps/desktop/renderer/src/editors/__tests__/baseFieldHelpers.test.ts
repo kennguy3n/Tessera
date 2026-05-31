@@ -132,6 +132,29 @@ describe("parseBaseContent — record id integration", () => {
     }
   });
 
+  it("drops null / primitive / array elements from the fields array (defensive against hand-edited JSON)", () => {
+    // Devin Review round-5 finding — `parsed.fields` is array-checked
+    // but individual elements are unvalidated. `sanitizeBaseField(null)`
+    // would crash on `field.percentPrecision`. The parser must
+    // filter these out at the per-element level so the editor mounts
+    // cleanly instead of unmounting with a TypeError.
+    const json = JSON.stringify({
+      fields: [
+        null,
+        42,
+        "oops",
+        [],
+        { name: "Good", type: "text" },
+        { name: "AlsoGood", type: "number" },
+      ],
+      records: [{ Good: "value", AlsoGood: 5 }],
+    });
+    const parsed = parseBaseContent(json);
+    expect(parsed.fields).toHaveLength(2);
+    expect(parsed.fields[0].name).toBe("Good");
+    expect(parsed.fields[1].name).toBe("AlsoGood");
+  });
+
   it("clamps a malformed percentPrecision into the safe range", () => {
     // Devin Review BUG_0001 — a hand-edited percentPrecision of
     // -1 (or NaN, or 999) used to crash PercentCell with a
