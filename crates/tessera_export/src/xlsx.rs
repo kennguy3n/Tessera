@@ -158,7 +158,7 @@ pub fn export_xlsx(artifact: &Artifact) -> Vec<u8> {
         Some(sheet) => {
             let worksheet = workbook
                 .add_worksheet()
-                .set_name(&sanitize_sheet_name(&artifact.title))
+                .set_name(sanitize_sheet_name(&artifact.title))
                 .expect("worksheet name should be valid after sanitization");
             write_sheet_payload(worksheet, &sheet.columns, &sheet.rows, &header_fmt);
         }
@@ -168,7 +168,7 @@ pub fn export_xlsx(artifact: &Artifact) -> Vec<u8> {
             // file opens without a warning.
             let worksheet = workbook
                 .add_worksheet()
-                .set_name(&sanitize_sheet_name(&artifact.title))
+                .set_name(sanitize_sheet_name(&artifact.title))
                 .expect("worksheet name should be valid after sanitization");
             worksheet
                 .write_string_with_format(0, 0, &artifact.title, &header_fmt)
@@ -752,7 +752,12 @@ mod tests {
         let names = list_xlsx_entries(&bytes);
         let n_sheets = names
             .iter()
-            .filter(|n| n.starts_with("xl/worksheets/sheet") && n.ends_with(".xml"))
+            .filter(|n| {
+                n.starts_with("xl/worksheets/sheet")
+                    && std::path::Path::new(n.as_str())
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("xml"))
+            })
             .count();
         assert_eq!(
             n_sheets, 2,
