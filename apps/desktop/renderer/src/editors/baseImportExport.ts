@@ -323,7 +323,13 @@ export function formatValueForCsv(
       // cell would show.
       const linkedFieldName = field.linkedField;
       const targetFieldName = field.targetField;
-      const aggregation = field.aggregation ?? "CONCAT";
+      // Default aggregation must match `RollupCell` (`BaseEditor.tsx`)
+      // and the `AddFieldDialog`'s `useState<RollupAggregation>("SUM")`
+      // initial state — otherwise hand-edited JSON (no explicit
+      // `aggregation` key) renders differently in the grid vs. CSV
+      // export / filter pipeline. Devin Review PR #84 ANALYSIS-0004
+      // flagged the prior `"CONCAT"` fallback as a drift bug.
+      const aggregation = field.aggregation ?? "SUM";
       if (!linkedFieldName || !targetFieldName) return "";
       const linkedFieldDef = allFields.find((f) => f.name === linkedFieldName);
       if (!linkedFieldDef || linkedFieldDef.type !== "linked_record") {

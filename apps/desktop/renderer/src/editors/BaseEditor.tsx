@@ -1584,6 +1584,51 @@ function MultiSelectCell({ field, value, onChange }: CellInputProps) {
   );
 }
 
+/**
+ * Custom `React.memo` comparator for read-only computed cells
+ * (`FormulaCell` / `RollupCell` / `LookupCell`). Compares only the
+ * props these cells actually consume (`field`, `record`, `allFields`,
+ * `recordsById`), and deliberately **ignores** `onChange` / `onExpand`
+ * because they're constructed inline in the grid render — a fresh
+ * closure per cell per render. Without skipping them, the default
+ * shallow comparator would short-circuit `false` on every render and
+ * defeat the memo entirely, re-running `evaluateBaseFormula` /
+ * `aggregateValues` / `lookupValues` for every cell in the grid on
+ * every unrelated keystroke (Devin Review PR #84 ANALYSIS-0001).
+ *
+ * The structural prop refs (`field`, `record`, `allFields`,
+ * `recordsById`) all flow through `useMemo` / direct array refs at
+ * the `BaseEditor` level — a no-op render keeps them stable, so the
+ * comparator returns `true` and the cell skips re-render entirely.
+ *
+ * We deliberately also ignore `value`, `allRecords`, and `recordIndex`:
+ * computed cells derive their displayed value from `record` +
+ * `recordsById` (not the `value` prop, which is the raw record field
+ * — same data, derived differently); `allRecords` is upstream of
+ * `recordsById` (any change to one forces a new ref of the other);
+ * and `recordIndex` is a render-position index that never affects the
+ * computed output.
+ */
+const computedCellPropsEqual = (
+  prev: CellInputProps,
+  next: CellInputProps,
+): boolean =>
+  prev.field === next.field &&
+  prev.record === next.record &&
+  prev.allFields === next.allFields &&
+  prev.recordsById === next.recordsById;
+
+/**
+ * Discriminated result returned by the `useMemo` inside `RollupCell` /
+ * `LookupCell`. Using an `{ ok: true | false }` tag instead of a magic
+ * `"#REF!"` string sentinel removes the (theoretical) ambiguity that
+ * occurs when an aggregated value legitimately equals the literal
+ * `"#REF!"` — e.g. a `CONCAT` rollup over a column where a record's
+ * target value is the string `"#REF!"`. Devin Review PR #84
+ * ANALYSIS-0005 flagged the collision.
+ */
+type ComputedCellResult = { ok: true; value: string | null } | { ok: false };
+
 const FormulaCell = React.memo(function FormulaCell({
   field,
   record,
@@ -1602,7 +1647,10 @@ const FormulaCell = React.memo(function FormulaCell({
   // `BaseEditor` rebuilds `data.fields` / a single record only when
   // they actually change, ref-equality of these inputs is the right
   // cache key — a no-op render keeps the same refs and skips the
-  // formula engine entirely.
+  // formula engine entirely. The outer `React.memo` uses the
+  // `computedCellPropsEqual` comparator (above) so the unstable
+  // `onChange` / `onExpand` callbacks the grid constructs inline
+  // don't defeat the memo's short-circuit.
   const src = field.formula ?? "";
   const result = useMemo(
     () => evaluateBaseFormula(src, allFields, record, field.name),
@@ -1617,7 +1665,7 @@ const FormulaCell = React.memo(function FormulaCell({
       {formatFormulaResult(result)}
     </span>
   );
-});
+}, computedCellPropsEqual);
 
 function LinkedRecordCell({
   field,
@@ -1766,6 +1814,12 @@ const RollupCell = React.memo(function RollupCell({
   // on the inputs that actually feed into the result — if a parent
   // re-renders without touching this record or any sibling field
   // definition, we hit the cache.
+  //
+  // The aggregated result uses the `ComputedCellResult` discriminated
+  // union (rather than a `"#REF!"` string sentinel) so a legitimate
+  // aggregated value of the literal `"#REF!"` (e.g. a `CONCAT` over a
+  // column containing the literal string) cannot collide with the
+  // misconfiguration error state.
   const linkedFieldName = field.linkedField;
   const targetFieldName = field.targetField;
   const aggregation: RollupAggregation = field.aggregation ?? "SUM";
@@ -1776,15 +1830,16 @@ const RollupCell = React.memo(function RollupCell({
         : undefined,
     [allFields, linkedFieldName],
   );
-  const aggregated = useMemo(() => {
-    if (!linkedFieldName || !targetFieldName) return null;
+  const aggregated = useMemo<ComputedCellResult>(() => {
+    if (!linkedFieldName || !targetFieldName)
+      return { ok: true, value: null };
     if (!linkedFieldDef || linkedFieldDef.type !== "linked_record") {
-      return "#REF!";
+      return { ok: false };
     }
     const ids = record[linkedFieldName];
     const linkedRecords = resolveLinkedRecords(ids, recordsById);
     const values = linkedRecords.map((r) => r[targetFieldName]);
-    return aggregateValues(values, aggregation);
+    return { ok: true, value: aggregateValues(values, aggregation) };
   }, [
     linkedFieldName,
     targetFieldName,
@@ -1796,7 +1851,7 @@ const RollupCell = React.memo(function RollupCell({
   if (!linkedFieldName || !targetFieldName) {
     return <span className="base-cell-readonly">—</span>;
   }
-  if (aggregated === "#REF!") {
+  if (!aggregated.ok) {
     return (
       <span
         className="base-cell-readonly"
@@ -1806,8 +1861,8 @@ const RollupCell = React.memo(function RollupCell({
       </span>
     );
   }
-  return <span className="base-cell-readonly">{aggregated}</span>;
-});
+  return <span className="base-cell-readonly">{aggregated.value}</span>;
+}, computedCellPropsEqual);
 
 const LookupCell = React.memo(function LookupCell({
   field,
@@ -1817,7 +1872,10 @@ const LookupCell = React.memo(function LookupCell({
 }: CellInputProps) {
   // Mirror of `RollupCell` minus the aggregation step — same
   // memoisation strategy: shared `recordsById` index + `useMemo`
-  // gating compute on the inputs that genuinely participate.
+  // gating compute on the inputs that genuinely participate. Uses
+  // the same `ComputedCellResult` discriminated union as RollupCell
+  // so a legitimate lookup value of the literal `"#REF!"` cannot
+  // collide with the misconfiguration error state.
   const linkedFieldName = field.linkedField;
   const targetFieldName = field.targetField;
   const linkedFieldDef = useMemo(
@@ -1827,14 +1885,15 @@ const LookupCell = React.memo(function LookupCell({
         : undefined,
     [allFields, linkedFieldName],
   );
-  const looked = useMemo(() => {
-    if (!linkedFieldName || !targetFieldName) return null;
+  const looked = useMemo<ComputedCellResult>(() => {
+    if (!linkedFieldName || !targetFieldName)
+      return { ok: true, value: null };
     if (!linkedFieldDef || linkedFieldDef.type !== "linked_record") {
-      return "#REF!";
+      return { ok: false };
     }
     const ids = record[linkedFieldName];
     const linkedRecords = resolveLinkedRecords(ids, recordsById);
-    return lookupValues(linkedRecords, targetFieldName);
+    return { ok: true, value: lookupValues(linkedRecords, targetFieldName) };
   }, [
     linkedFieldName,
     targetFieldName,
@@ -1845,7 +1904,7 @@ const LookupCell = React.memo(function LookupCell({
   if (!linkedFieldName || !targetFieldName) {
     return <span className="base-cell-readonly">—</span>;
   }
-  if (looked === "#REF!") {
+  if (!looked.ok) {
     return (
       <span
         className="base-cell-readonly"
@@ -1855,8 +1914,8 @@ const LookupCell = React.memo(function LookupCell({
       </span>
     );
   }
-  return <span className="base-cell-readonly">{looked}</span>;
-});
+  return <span className="base-cell-readonly">{looked.value}</span>;
+}, computedCellPropsEqual);
 
 function AttachmentCell({ value, onChange }: CellInputProps) {
   const paths: string[] = Array.isArray(value)
