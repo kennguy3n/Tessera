@@ -463,44 +463,16 @@ export function replaceAll(
 // Image embedding
 // ─────────────────────────────────────────────────────────────────────
 
-/**
- * Read a `File` (from a paste / drop / file-picker) as a data URL so
- * the editor can embed it inline as an `<img src="data:...">` node.
- *
- * Data URLs are intentionally chosen over an out-of-band upload
- * pipeline because Tessera artifacts are self-contained JSON blobs
- * stored locally — embedding the bytes keeps the artifact portable
- * (export, version restore, copy/paste across machines) without
- * needing a separate asset-store schema. The trade-off is artifact
- * size, which the call-site bounds via `MAX_IMAGE_BYTES`.
- */
-export const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MiB — soft cap
-
-export function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (file.size > MAX_IMAGE_BYTES) {
-      reject(
-        new Error(
-          `Image is ${(file.size / 1024 / 1024).toFixed(1)} MiB; the inline-embed cap is ${(
-            MAX_IMAGE_BYTES /
-            1024 /
-            1024
-          ).toFixed(0)} MiB.`,
-        ),
-      );
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== "string") {
-        reject(new Error("FileReader produced a non-string result"));
-        return;
-      }
-      resolve(result);
-    };
-    reader.onerror = () =>
-      reject(reader.error ?? new Error("Failed to read image file"));
-    reader.readAsDataURL(file);
-  });
-}
+// Inline-image helpers live in `./inlineImage` so the slide editor's
+// upload path can share the same size cap and FileReader plumbing.
+// Re-exported here under the historical names so existing imports
+// (`import { fileToDataUrl, MAX_IMAGE_BYTES } from
+// "./documentEditorHelpers"`) keep working without a churn-y rename
+// across DocumentEditor.tsx and its tests. Devin Review PR #82
+// ANALYSIS_…_0001 / BUG_…_0001 flagged the duplicate implementation
+// and the missing size cap on the slide-editor copy; centralising
+// here fixes both in one place.
+export {
+  MAX_INLINE_IMAGE_BYTES as MAX_IMAGE_BYTES,
+  fileToDataUrl,
+} from "./inlineImage";

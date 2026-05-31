@@ -945,29 +945,15 @@ export function findInSlides(
   return results;
 }
 
-/**
- * Convert a `File` (from a `<input type="file">` or a drag-drop event)
- * to a base64 `data:` URL. Used by the image-block upload path so the
- * resulting URL can be inlined into the slide JSON. Returns a promise
- * that rejects if the file cannot be read.
- *
- * NOTE: this is `FileReader`-based to stay browser-only — no Node
- * `Buffer` imports — because the SlideEditor is a renderer-side
- * component and must work in the existing jsdom test harness without
- * a node:fs polyfill.
- */
-export function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== "string") {
-        reject(new Error("Image read returned non-string result"));
-        return;
-      }
-      resolve(result);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error("Image read failed"));
-    reader.readAsDataURL(file);
-  });
-}
+// Inline-image upload path: re-export the shared helper from
+// `./inlineImage` rather than maintaining a second copy. The previous
+// hand-rolled implementation had no size cap (Devin Review PR #82
+// BUG_…_0001), which let a user inline a multi-MB image into the slide
+// JSON and slow down every subsequent debounced save. Routing through
+// the shared helper inherits the 5 MiB cap and the human-readable
+// rejection message used by the document editor, keeping both editors
+// in lock-step (Devin Review PR #82 ANALYSIS_…_0001).
+export {
+  MAX_INLINE_IMAGE_BYTES,
+  fileToDataUrl,
+} from "./inlineImage";
