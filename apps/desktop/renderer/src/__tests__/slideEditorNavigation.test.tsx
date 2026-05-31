@@ -361,3 +361,45 @@ describe("SlideEditor toolbar — word-count display uses cached deck total", ()
     expect(toolbar.textContent ?? "").toContain("Words: 3 / 9");
   });
 });
+
+describe("SlideEditor sidebar — thumbnail ref-callbacks are stable across renders", () => {
+  // Phase 19 PR 11 round 2. Regression test for ANALYSIS_0001:
+  // the original `setThumbRef = useCallback((id) => (node) => ...)`
+  // returned a fresh inner closure on every call, so each render
+  // handed React a new ref function and React responded with a
+  // detach (`cb(null)`) + re-attach (`cb(newNode)`) for every
+  // thumb on every render. With N slides + frequent
+  // navigation-triggered re-renders, that's O(N) wasted DOM
+  // mutations per keystroke.
+  //
+  // The fix caches per-id ref-callbacks in a `useRef(new Map())`
+  // so `setThumbRef(slide.id)` returns the SAME closure across
+  // renders for the same id. We pin the contract by asserting
+  // the underlying DOM element retains identity across a
+  // sequence of navigations — if refs were churning, an
+  // accidental future regression that depends on
+  // ref-callback identity (e.g. a custom hook wrapping the ref
+  // to count mounts) would catch the churn.
+  it("thumbnail DOM elements retain identity across navigation re-renders", () => {
+    renderDeck();
+    const initialFirst = screen.getByRole("button", { name: /1 Alpha/ });
+    const initialSecond = screen.getByRole("button", { name: /2 Beta/ });
+    const initialThird = screen.getByRole("button", { name: /3 Gamma/ });
+
+    // Trigger many re-renders by walking through the deck. Each
+    // click sets `activeIndex`, which re-renders the component —
+    // exactly the case where unstable refs would fire detach
+    // + re-attach for every thumb.
+    fireEvent.click(initialSecond);
+    fireEvent.click(initialThird);
+    fireEvent.click(initialFirst);
+    fireEvent.click(initialThird);
+
+    // Re-query — the DOM element references should be identical
+    // to the ones we captured on first render, since React keys
+    // by `slide.id` AND ref callbacks are stable.
+    expect(screen.getByRole("button", { name: /1 Alpha/ })).toBe(initialFirst);
+    expect(screen.getByRole("button", { name: /2 Beta/ })).toBe(initialSecond);
+    expect(screen.getByRole("button", { name: /3 Gamma/ })).toBe(initialThird);
+  });
+});

@@ -452,9 +452,19 @@ export default function SlideEditor({
   //   * the sidebar Arrow-Up / Arrow-Down handler.
   //
   // Uses the functional `setActiveIndex` form so the closure doesn't
-  // capture a stale `activeIndex`, and reads `slides.length` from the
-  // dep array so a rapid sequence of navigates during a deck-size
-  // change clamps against the current length, not a captured one.
+  // capture a stale `activeIndex` — `current` is always the freshest
+  // committed value at update-time.
+  //
+  // `slides.length` IS captured from the closure at callback-creation
+  // time (not dynamically re-read on each invocation), but listing it
+  // in `useCallback`'s dep array means React re-creates `navigateBy`
+  // on every length change. Combined with the inline
+  // `navigateByRef.current = navigateBy` re-binding (line below), the
+  // document-level keydown listener always invokes a navigateBy whose
+  // captured length matches the latest committed render — so a key
+  // press fired after the deck shrinks still clamps against the new,
+  // smaller length, not a stale pre-shrink value.
+  //
   // Clamping (rather than wrapping or no-oping past the edge) matches
   // LibreOffice Impress and Google Slides behaviour: holding the key
   // at the last slide is a no-op, not a wrap-to-first.
@@ -511,23 +521,40 @@ export default function SlideEditor({
     new Map(),
   );
 
-  // Ref-callback factory bound to a specific `slide.id`. Stable
-  // across renders for the same id (so React doesn't see a new ref
-  // function every render and detach/re-attach the DOM node). We
-  // memoise the factory itself via `useCallback`; the per-id
-  // closure is recreated on each call but React's ref-callback
-  // protocol only cares about reference-stability for the SAME id,
-  // which this gives.
-  const setThumbRef = useCallback(
-    (id: string) => (node: HTMLButtonElement | null) => {
-      if (node) {
-        thumbRefs.current.set(id, node);
-      } else {
-        thumbRefs.current.delete(id);
-      }
-    },
-    [],
-  );
+  // Per-id ref-callback cache. React's ref protocol detaches and
+  // re-attaches the DOM node whenever the ref-callback's identity
+  // changes between renders, so handing each thumb a fresh closure
+  // on every render (the obvious `(id) => (node) => ...` shape)
+  // means every commit fires N detach + N attach calls for an
+  // N-slide deck. With this cache, `setThumbRef(slide.id)` returns
+  // the SAME closure across renders for the same id, so React sees
+  // a stable ref and skips the churn entirely.
+  //
+  // The cache entry is deleted alongside the `thumbRefs` entry
+  // when React calls the ref with `null` on unmount, so removing
+  // a slide reclaims both the DOM-pointer entry AND the closure
+  // entry. Re-mounting a previously-seen id (rare — only happens
+  // if a deleted slide is re-added via undo) mints a fresh
+  // closure on the next `setThumbRef(id)` call.
+  const thumbRefCallbacksRef = useRef<
+    Map<string, (node: HTMLButtonElement | null) => void>
+  >(new Map());
+  const setThumbRef = useCallback((id: string) => {
+    const cache = thumbRefCallbacksRef.current;
+    let cb = cache.get(id);
+    if (!cb) {
+      cb = (node: HTMLButtonElement | null) => {
+        if (node) {
+          thumbRefs.current.set(id, node);
+        } else {
+          thumbRefs.current.delete(id);
+          thumbRefCallbacksRef.current.delete(id);
+        }
+      };
+      cache.set(id, cb);
+    }
+    return cb;
+  }, []);
 
   // Arrow-key navigation handler attached to each thumb's <button>.
   // Mirrors the standard listbox-pattern keyboard contract:
