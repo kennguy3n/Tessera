@@ -1645,26 +1645,60 @@ const formulaCellPropsEqual = (
 
 /**
  * Custom `React.memo` comparator for `RollupCell` / `LookupCell`.
- * Same general shape as `formulaCellPropsEqual` but ALSO compares
- * `recordsById` because rollup and lookup actually consume it:
- * they follow the row's linked-record ID array through to the
- * target records via `recordsById`, so if any of those target
- * records' field values change (which produces a new `recordsById`
- * map ref at the `BaseEditor` level) the rollup / lookup output
- * must re-render. Ignores the unstable `onChange` / `onExpand`
- * callbacks for the same reason as `formulaCellPropsEqual`.
+ * Same general shape as `formulaCellPropsEqual` but with two
+ * important differences:
  *
- * `allRecords` / `value` / `recordIndex` are deliberately ignored
- * for the same reasons documented on `formulaCellPropsEqual`.
+ *  1. **Slice-level record check.** We compare
+ *     `record[field.linkedField]` instead of the whole `record`
+ *     object. Rollup / lookup cells only read the linked-record ID
+ *     array from the host row — never any other field on the same
+ *     row. `updateCell` rebuilds the host row via
+ *     `{ ...r, [fieldName]: value }` for every edit, so
+ *     `prev.record !== next.record` would return `false` for every
+ *     unrelated same-row edit and defeat the memo (the inner
+ *     `useMemo` would still short-circuit, but the vdom diff would
+ *     run unnecessarily). The spread preserves the unchanged
+ *     `linkedField`'s array reference, so the slice-level check
+ *     correctly skips the re-render when the user edits some other
+ *     column in the row. (Devin Review PR #84 round 3
+ *     ANALYSIS-0001.)
+ *  2. **`recordsById` is checked.** Rollup / lookup follow the
+ *     host row's linked IDs *through* `recordsById` to the target
+ *     records, so when any target record's field value changes
+ *     (producing a new `recordsById` map ref at the `BaseEditor`
+ *     level) the rollup / lookup output must re-render.
+ *
+ * Edge cases:
+ *  - If `field.linkedField` is `undefined` (mis-configured field),
+ *    the cell renders a static "Configure rollup/lookup field"
+ *    hint that doesn't depend on `record` at all, so we ignore the
+ *    record entirely on that branch.
+ *  - If `field` itself changed (`prev.field !== next.field`), we
+ *    return `false` early so a field-config edit always re-renders
+ *    even if `linkedField` happens to be the same name.
+ *
+ * Ignores the unstable `onChange` / `onExpand` callbacks for the
+ * same reason as `formulaCellPropsEqual`. `allRecords` / `value` /
+ * `recordIndex` are deliberately ignored for the same reasons
+ * documented on `formulaCellPropsEqual`.
  */
 const linkedCellPropsEqual = (
   prev: CellInputProps,
   next: CellInputProps,
-): boolean =>
-  prev.field === next.field &&
-  prev.record === next.record &&
-  prev.allFields === next.allFields &&
-  prev.recordsById === next.recordsById;
+): boolean => {
+  if (prev.field !== next.field) return false;
+  if (prev.allFields !== next.allFields) return false;
+  if (prev.recordsById !== next.recordsById) return false;
+  const linkedFieldName = next.field.linkedField;
+  if (linkedFieldName === undefined) {
+    // Mis-configured rollup / lookup field: the render path is a
+    // static placeholder that doesn't touch `record`, so the memo
+    // can short-circuit on the field / allFields / recordsById
+    // checks alone.
+    return true;
+  }
+  return prev.record[linkedFieldName] === next.record[linkedFieldName];
+};
 
 /**
  * Discriminated result returned by the `useMemo` inside `RollupCell` /
