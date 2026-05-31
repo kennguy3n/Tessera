@@ -451,3 +451,49 @@ describe("BaseEditor.removeField — drops stale view state (BUG-0003)", () => {
     expect(screen.queryByText(/Doing \(1\)/)).toBeNull();
   });
 });
+
+describe("BaseEditor sort header — rapid successive clicks toggle direction (ANALYSIS-0002)", () => {
+  // Devin Review PR #79 flagged a theoretical stale-closure concern
+  // in `handleSort`: if two click handlers ever fire against the
+  // same closure (without a re-render between them), the second
+  // would still read the pre-update `sortField` and would re-enter
+  // the "set field + asc" branch instead of toggling to "desc".
+  //
+  // In practice React commits state updates and re-renders between
+  // separate native click events, so each click sees a fresh
+  // closure. Pin the contract here: clicking the same sort header
+  // twice in a row must take the toggle path (asc → desc), not
+  // re-claim the field at asc.
+  it("toggles sortDir on second click of the same column header (asc → desc)", () => {
+    renderEditor({
+      fields: [
+        { name: "Title", type: "text" },
+        { name: "Score", type: "number" },
+      ],
+      records: [
+        { Title: "Alpha", Score: 30 },
+        { Title: "Bravo", Score: 10 },
+      ],
+    });
+
+    const scoreHeader = screen.getByRole("button", { name: /^Score/ });
+
+    // Click 1: claim Score as the sort field, asc indicator ▲.
+    fireEvent.click(scoreHeader);
+    expect(scoreHeader.textContent).toMatch(/▲/);
+    expect(scoreHeader.textContent).not.toMatch(/▼/);
+
+    // Click 2: toggle direction, desc indicator ▼. The bot's
+    // stale-closure concern would surface here — if the second
+    // click read a stale `sortField=null` from the first click's
+    // closure, the handler would take the `else` branch and stay
+    // at ▲.
+    fireEvent.click(scoreHeader);
+    expect(scoreHeader.textContent).toMatch(/▼/);
+    expect(scoreHeader.textContent).not.toMatch(/▲/);
+
+    // Click 3: toggle back to asc.
+    fireEvent.click(scoreHeader);
+    expect(scoreHeader.textContent).toMatch(/▲/);
+  });
+});
