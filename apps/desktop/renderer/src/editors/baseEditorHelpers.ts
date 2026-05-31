@@ -162,8 +162,21 @@ export function parseBaseContent(content: string): BaseContent {
       // so `ensureRecordIds` (which calls `.map`) doesn't blow up
       // on the next call.
       const rawRecords = Array.isArray(parsed.records) ? parsed.records : [];
+      // `parsed.fields` is array-checked but individual elements
+      // are unvalidated user input. Hand-edited JSON like
+      // `fields: [null, {…}]` or `fields: [42, "oops", {…}]`
+      // would crash `sanitizeBaseField(null)` on its first
+      // `field.percentPrecision` access. Drop primitives / null /
+      // arrays at the per-element level — the survivors are real
+      // objects so the type assertion is sound.
+      const sanitizedFields: BaseField[] = [];
+      for (const raw of parsed.fields as unknown[]) {
+        if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+          sanitizedFields.push(sanitizeBaseField(raw as BaseField));
+        }
+      }
       return {
-        fields: parsed.fields.map(sanitizeBaseField),
+        fields: sanitizedFields,
         records: ensureRecordIds(rawRecords),
       };
     }
