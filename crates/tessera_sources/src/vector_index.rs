@@ -21,22 +21,28 @@
 //! ("inverted file with flat quantisation") index over the cached
 //! embedding rows:
 //!
-//!   1. Run k-means with `K = max(8, ⌊√N⌋)` cells, deterministically
-//!      seeded so two builds over the same input produce the same
-//!      index (matters for test stability and for the cache contract
-//!      below).
+//!   1. Run k-means with `K = ⌈√N⌉.clamp(MIN_CENTROIDS, MAX_CENTROIDS).min(N)`
+//!      cells (defaults: `MIN_CENTROIDS = 8`, `MAX_CENTROIDS = 256`),
+//!      deterministically seeded so two builds over the same input
+//!      produce the same index (matters for test stability and for
+//!      the cache contract below). See [`pick_k`] for the exact
+//!      formula.
 //!   2. Each vector is assigned to its nearest centroid; the
 //!      assignments form `K` inverted lists.
 //!   3. To answer a top-k query, rank centroids by cosine to the
-//!      query, probe the top `nprobe = max(4, ⌊√K⌋)` cells, and
-//!      brute-force inside the probed cells only.
+//!      query, probe the top `nprobe = ⌈√K⌉.max(1).min(K)` cells
+//!      (see [`pick_nprobe`]), and brute-force inside the probed
+//!      cells only.
 //!
 //! Total query work: `O(K * D + nprobe * (N/K) * D)`. With
-//! `K = √N` and `nprobe = √K`, that simplifies to roughly
+//! `K ≈ √N` and `nprobe ≈ √K`, that simplifies to roughly
 //! `O(√N * D + N^(3/4) * D)`, i.e. sublinear in N. For
 //! N=50K, D=384: ~3M ops vs ~19M for brute force, a ~6×
 //! speedup at typical Tessera scale and an even larger one as
-//! the corpus grows.
+//! the corpus grows. (The `MAX_CENTROIDS = 256` clamp means K
+//! tops out at 256 around N≈65K; above that, cell occupancy
+//! grows linearly with N rather than `√N`, but the asymptotic
+//! shape still beats brute force.)
 //!
 //! ## What this module does NOT do
 //!
