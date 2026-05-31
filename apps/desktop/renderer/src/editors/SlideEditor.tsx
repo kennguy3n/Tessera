@@ -1116,10 +1116,23 @@ function SlideBlockRow({
       onDragEnd={onDragEndBlock}
     >
       <div className="slide-block-toolbar">
+        {/*
+         * `draggable={false}` on every interactive child of the
+         * toolbar so the parent `.slide-block` wrapper's `draggable`
+         * can't be triggered by accessibility tools, touch-emulation,
+         * or millimetre-jitter taps that the browser would otherwise
+         * interpret as a drag-start. Mirrors the existing defensive
+         * pattern on the textarea / file-input / alt-text input
+         * further down in this component, and the slide-thumbnail-row
+         * buttons in the parent component (Devin Review PR #82
+         * ANALYSIS-0002 — extends round 6's slide-row fix to the
+         * block-row toolbar that was missed in that pass).
+         */}
         <select
           value={block.type}
           onChange={(e) => onTypeChange(e.target.value as SlideBlockType)}
           aria-label={`Block ${blockIndex + 1} type`}
+          draggable={false}
         >
           <option value="text">Text</option>
           <option value="bullets">Bullets</option>
@@ -1133,6 +1146,7 @@ function SlideBlockRow({
           disabled={blockIndex === 0}
           aria-label={`Move block ${blockIndex + 1} up`}
           title="Move block up"
+          draggable={false}
         >
           ↑
         </button>
@@ -1143,6 +1157,7 @@ function SlideBlockRow({
           disabled={blockIndex === totalBlocks - 1}
           aria-label={`Move block ${blockIndex + 1} down`}
           title="Move block down"
+          draggable={false}
         >
           ↓
         </button>
@@ -1152,6 +1167,7 @@ function SlideBlockRow({
           onClick={onRemove}
           aria-label={`Remove block ${blockIndex + 1}`}
           title="Remove block"
+          draggable={false}
         >
           ×
         </button>

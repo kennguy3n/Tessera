@@ -91,6 +91,38 @@ describe("SlideEditor — slide-thumbnail draggable={false} on interactive child
   });
 });
 
+describe("SlideEditor — block-row draggable={false} on toolbar children", () => {
+  it("opts every interactive child of the SlideBlockRow toolbar out of the parent's drag inheritance", () => {
+    // Companion to the slide-thumb-row test above. Round 6 added
+    // `draggable={false}` to the slide-thumbnail-row buttons but
+    // missed the SAME pattern on the block-row toolbar: the
+    // `<select>` for type-switching plus the ↑ / ↓ / × buttons all
+    // live inside a `<div className="slide-block">` that is itself
+    // marked `draggable`. Devin Review PR #82 ANALYSIS-0002 flagged
+    // the inconsistency. This test pins the contract that ALL
+    // toolbar children carry the explicit opt-out.
+    renderDeck();
+    const slideBlock = document.querySelector(".slide-block") as HTMLElement;
+    expect(slideBlock).not.toBeNull();
+    expect(slideBlock.getAttribute("draggable")).toBe("true");
+
+    const toolbar = slideBlock.querySelector(
+      ".slide-block-toolbar",
+    ) as HTMLElement;
+    expect(toolbar).not.toBeNull();
+
+    // Every interactive descendant of the toolbar must carry the
+    // explicit `draggable="false"` attribute. We iterate so that a
+    // future addition (e.g. a "duplicate block" button) automatically
+    // gets the pin without test churn.
+    const interactive = toolbar.querySelectorAll("select, button, input");
+    expect(interactive.length).toBeGreaterThanOrEqual(4);
+    interactive.forEach((el) => {
+      expect(el.getAttribute("draggable")).toBe("false");
+    });
+  });
+});
+
 describe("SlideEditor — slide-row drag clears draggedSlideId on lookup-miss early-return", () => {
   it("removes the is-dragging class even when the drop target finds no source slide", () => {
     renderDeck();
